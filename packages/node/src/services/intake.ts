@@ -1,15 +1,16 @@
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
+import { encodeOrderingBlock } from '@dagsocial/types';
 import {
+  blockHash,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
   verifyValidatorSignature,
-  blockHash,
 } from '@dagsocial/validation';
-import { encodeOrderingBlock } from '@dagsocial/types';
 import {
   getBestHashAt,
   getBestTip,
   getCurrentHeight,
+  getHeaderRow,
   getOrderingBlockHash,
   getStagedBlock,
   insertRefusedHeader,
@@ -26,11 +27,35 @@ import {
   pruneHeaderTree,
   type AdmitVerdict,
   type PageVerdict,
-  type PipelineCallbacks,
   type PipelineContext,
 } from './header-pipeline.js';
-import { applyOrderingBlockVerdict, type ApplyVerdict } from './block-apply.js';
-import { reorg } from './fork-resolution.js';
+import { applyOrderingBlockVerdict as realApplyOrderingBlockVerdict, type ApplyVerdict } from './block-apply.js';
+import { reorg as realReorg } from './fork-resolution.js';
+import { ReorgAbortedError, ReorgBlockRejectedError } from './corrupt-state.js';
+import { config } from '../config.js';
+
+/**
+ * The intake calls the apply funnel and `reorg` through two module-level
+ * references. Tests redirect them through `setIntakeSeamsForTests` to
+ * override the behaviour without re-wiring the module graph.
+ */
+let applyFn: (block: OrderingBlock) => ApplyVerdict = realApplyOrderingBlockVerdict;
+let reorgFn: (forkHeight: number, blocks: OrderingBlock[]) => void = realReorg;
+
+/** Tests only. */
+export function setIntakeSeamsForTests(seams: {
+  apply?: (block: OrderingBlock) => ApplyVerdict;
+  reorg?: (forkHeight: number, blocks: OrderingBlock[]) => void;
+}): void {
+  if (seams.apply !== undefined) applyFn = seams.apply;
+  if (seams.reorg !== undefined) reorgFn = seams.reorg;
+}
+
+/** Tests only. */
+export function clearIntakeSeamsForTests(): void {
+  applyFn = realApplyOrderingBlockVerdict;
+  reorgFn = realReorg;
+}
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "The pipeline
@@ -53,22 +78,20 @@ export interface IntakeCallbacks {
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
- * at a time": the module state the intake holds. `S` the window's hold
- * (`gateHeld()` writes it), `pendingBlocks` the one-per-peer gossiped block
- * waiting for its header's parent.
+ * at a time". `S` is the window's hold; `pendingBlocks` keeps one gossiped
+ * block per peer whose header's parent the tree does not hold.
  */
 let callbacks: IntakeCallbacks | null = null;
 let context: PipelineContext | null = null;
 let S = 0;
 const pendingBlocks = new Map<string, OrderingBlock>();
 
-/**
- * NODE_INTERFACE → Fork choice decides on verified headers. Wires the intake
- * once at startup — the seam the wiring and the suite share.
- */
+/** NODE_INTERFACE → Fork choice decides on verified headers. */
 export function initIntake(cb: IntakeCallbacks, ctx: PipelineContext): void {
   callbacks = cb;
   context = ctx;
+  S = 0;
+  pendingBlocks.clear();
 }
 
 /** Tests only. */
@@ -84,39 +107,278 @@ function cb(): IntakeCallbacks {
   return callbacks;
 }
 
-function ctx(): PipelineContext {
+function ctxOrThrow(): PipelineContext {
   if (context === null) throw new Error('intake: initIntake was not called');
   return context;
 }
 
 /**
- * NODE_INTERFACE → Fork choice decides on verified headers → "The pipeline
- * names the blocks it wants". For extension: the best chain's ids above the
- * applied tip that are neither applied nor staged, each with its height, in
- * height order, bounded by `BLOCK_FETCH_WINDOW` and the window's edge
- * (`S + maxReorgDepth`); for a switch (best chain forks below `appliedTip`):
- * the branch's whole shortest heavier prefix; empty while the best tip's
- * `chain_work` is below `minimumChainWork`.
+ * `penalize` filter: a block delivered by this node itself carries `fromPeer`
+ * of `''`; a refusal of our own block is logged, never penalised
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "A body-stage
+ * refusal marks the header.").
  */
-export function wantedBlocks(): { id: string; height: number }[] {
-  // Stub — the live code lands in a follow-up.
-  return [];
+function penalize(peerId: string, kind: 'misbehavior' | 'transient', reason: string): void {
+  if (peerId === '') {
+    console.warn(`intake: self-delivered block refused — ${kind}: ${reason}`);
+    return;
+  }
+  cb().penalize(peerId, kind, reason);
+}
+
+function reachFloor(): number {
+  const c = ctxOrThrow();
+  const lowest = c.lowestJournalHeight() ?? getCurrentHeight() + 1;
+  return Math.max(getCurrentHeight() - c.maxReorgDepth, lowest - 1);
 }
 
 /**
- * NODE_INTERFACE → Fork choice decides on verified headers → "The window":
- * `S` is the best chain's height at the last `gateHeld()`; `S = 0` at process
- * start.
+ * NODE_INTERFACE → Fork choice decides on verified headers → "A served block
+ * is bound to its header before it is kept.": the three checks run in order
+ * against the tree row. On the first failure, nothing is staged and the
+ * deliverer is penalised `misbehavior`; a block whose header is stored off
+ * best is dropped with no penalty; a block whose header is not in the tree
+ * is refused `misbehavior`.
+ *
+ * Returns the row to stage onto, or `null` if the block is refused or dropped.
  */
+function bindBlock(
+  peerId: string,
+  block: OrderingBlock,
+  hash: string | null,
+): { height: number; hash: string } | null {
+  if (hash === null) {
+    penalize(peerId, 'misbehavior', 'unhashable block header');
+    return null;
+  }
+  const row = getHeaderRow(hash);
+  if (row === null) {
+    penalize(peerId, 'misbehavior', 'block header not in the tree');
+    return null;
+  }
+  const bestHash = getBestHashAt(row.height);
+  if (bestHash !== hash) {
+    // Off-best, dropped silently.
+    return null;
+  }
+  const structure = verifyOrderingBlockStructure(block);
+  if (!structure.valid) {
+    penalize(peerId, 'misbehavior', `structure: ${structure.error}`);
+    return null;
+  }
+  if (!verifyUtxoTxRoot(block)) {
+    penalize(peerId, 'misbehavior', 'utxoTxRoot does not bind');
+    return null;
+  }
+  if (!verifyValidatorSignature(block.header, block.validatorSignature)) {
+    penalize(peerId, 'misbehavior', 'validator signature does not bind');
+    return null;
+  }
+  return { height: row.height, hash };
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "A body-stage
+ * refusal marks the header.": after the funnel's `'consensus'` rejection, the
+ * mark is written in its own write, the deliverer is penalised, and the
+ * header leaves the tree with every descendant.
+ */
+function markRefused(hash: string, height: number, fromPeer: string, reason: string): void {
+  penalize(fromPeer, 'misbehavior', reason);
+  insertRefusedHeader(hash, height, getCurrentHeight());
+  removeHeaderSubtree(hash);
+  // The best chain is chosen again — the callback announces the move.
+  cb().chainMoved();
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "Extension." +
+ * "The window.": while the best chain contains the applied tip, apply the
+ * block at `appliedTip + 1` from staging; the loop stops at an empty
+ * staging row, at the window's edge, or at a switch condition.
+ */
+function drainExtension(): void {
+  const c = ctxOrThrow();
+  // One pass runs until we have no more applicable staged block or an abort/mark fires.
+  for (;;) {
+    const bestTip = getBestTip();
+    if (bestTip === null) return;
+    const applied = getCurrentHeight();
+    // The best-chain-contains-applied-tip gate: extension only runs while the
+    // best chain's row at `applied` is this node's applied block's hash
+    // (NODE_INTERFACE → Fork choice decides on verified headers → "The switch.").
+    if (applied > 0) {
+      const appliedHash = getOrderingBlockHash(applied);
+      const bestAtApplied = getBestHashAt(applied);
+      if (appliedHash === null || bestAtApplied !== appliedHash) {
+        // A switch condition — not extension.
+        return;
+      }
+    }
+    if (applied >= bestTip.height) return;
+    // The window's edge.
+    if (applied >= S + c.maxReorgDepth) return;
+    const nextH = applied + 1;
+    const nextHash = getBestHashAt(nextH);
+    if (nextHash === null) return;
+    const staged = getStagedBlock(nextHash);
+    if (staged === null) return;
+    const verdict = applyFn(staged.block);
+    if (verdict.applied) {
+      unstageBlock(nextHash);
+      // Pruning runs beside the journal purge — one writer per table
+      // (NODE_INTERFACE → Fork choice decides on verified headers → "Pruning.").
+      pruneHeaderTree(reachFloor());
+      purgeOldJournals(getCurrentHeight() - c.maxReorgDepth);
+      continue;
+    }
+    if (verdict.class === 'consensus') {
+      markRefused(nextHash, nextH, staged.fromPeer, `consensus refusal at height ${nextH}`);
+      return;
+    }
+    // Abort: an acceptance, local or unbound refusal drops the staged row so
+    // its id is wanted and asked again.
+    unstageBlock(nextHash);
+    return;
+  }
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "The switch.".
+ * If the best chain forks below the applied tip, hand the shortest heavier
+ * prefix (all its staged hashes in height order) to `reorg`. The call runs
+ * synchronously over better-sqlite3; `ReorgBlockRejectedError` marks the
+ * header and `ReorgAbortedError` drops the aborted block's staged row.
+ */
+function trySwitch(): void {
+  const bestTip = getBestTip();
+  if (bestTip === null) return;
+  const applied = getCurrentHeight();
+  if (applied === 0) return;
+  const appliedHash = getOrderingBlockHash(applied);
+  const bestAtApplied = getBestHashAt(applied);
+  if (appliedHash === null) return;
+  // No switch while the best chain contains the applied tip.
+  if (bestAtApplied === appliedHash) return;
+
+  // Fork height: the highest height on both chains with matching hashes.
+  let f = applied - 1;
+  while (f > 0) {
+    const ourHash = getOrderingBlockHash(f);
+    const theirHash = getBestHashAt(f);
+    if (ourHash !== null && ourHash === theirHash) break;
+    f -= 1;
+  }
+  // Shortest heavier prefix: walk the best chain above f collecting hashes
+  // until the cumulative chainWork at that height exceeds the applied tip's.
+  const appliedTipHash = appliedHash;
+  const appliedTipRow = getHeaderRow(appliedTipHash);
+  if (appliedTipRow === null) return;
+  const targetWork = appliedTipRow.chainWork;
+  const prefixHashes: string[] = [];
+  for (let h = f + 1; h <= bestTip.height; h++) {
+    const hAtBest = getBestHashAt(h);
+    if (hAtBest === null) return;
+    prefixHashes.push(hAtBest);
+    const row = getHeaderRow(hAtBest);
+    if (row === null) return;
+    if (row.chainWork > targetWork) break;
+  }
+  // Every hash of the prefix must be staged before we fire reorg.
+  const prefixBlocks: OrderingBlock[] = [];
+  for (const h of prefixHashes) {
+    const staged = getStagedBlock(h);
+    if (staged === null) return;
+    prefixBlocks.push(staged.block);
+  }
+
+  try {
+    reorgFn(f, prefixBlocks);
+  } catch (err) {
+    if (err instanceof ReorgBlockRejectedError) {
+      // The failing block's staged row names the deliverer — read it before
+      // the subtree remove drops the row.
+      const staged = getStagedBlock(err.hash);
+      const fromPeer = staged?.fromPeer ?? '';
+      markRefused(err.hash, err.height, fromPeer, `reorg consensus refusal at height ${err.height}`);
+      return;
+    }
+    if (err instanceof ReorgAbortedError) {
+      unstageBlock(err.hash);
+      return;
+    }
+    throw err;
+  }
+  // Every staged row of the applied prefix leaves.
+  for (const h of prefixHashes) unstageBlock(h);
+  // Switch succeeded; extension continues.
+  drainExtension();
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "The pipeline
+ * names the blocks it wants".
+ */
+export function wantedBlocks(): { id: string; height: number }[] {
+  const c = ctxOrThrow();
+  const bestTip = getBestTip();
+  if (bestTip === null) return [];
+  if (bestTip.chainWork < config.profile.minimumChainWork) return [];
+  const applied = getCurrentHeight();
+  if (applied === 0) {
+    // Fresh node — every best-chain block above 0 up to the window edge.
+    return wantedForExtension(0, bestTip.height);
+  }
+  const appliedHash = getOrderingBlockHash(applied);
+  const bestAtApplied = getBestHashAt(applied);
+  if (appliedHash !== null && bestAtApplied === appliedHash) {
+    return wantedForExtension(applied, bestTip.height);
+  }
+  // Switch: the whole shortest heavier prefix above the fork height.
+  let f = applied - 1;
+  while (f > 0) {
+    const ourHash = getOrderingBlockHash(f);
+    const theirHash = getBestHashAt(f);
+    if (ourHash !== null && ourHash === theirHash) break;
+    f -= 1;
+  }
+  const appliedTipRow = appliedHash === null ? null : getHeaderRow(appliedHash);
+  const targetWork = appliedTipRow?.chainWork ?? 0n;
+  const out: { id: string; height: number }[] = [];
+  for (let h = f + 1; h <= bestTip.height; h++) {
+    const hashAt = getBestHashAt(h);
+    if (hashAt === null) break;
+    if (getStagedBlock(hashAt) === null) out.push({ id: hashAt, height: h });
+    const row = getHeaderRow(hashAt);
+    if (row === null) break;
+    if (row.chainWork > targetWork) break;
+  }
+  // Scope-mark the var so lint stays quiet; `c` carries no bound here.
+  void c;
+  return out;
+}
+
+function wantedForExtension(applied: number, bestHeight: number): { id: string; height: number }[] {
+  const c = ctxOrThrow();
+  const upperWindow = applied + BLOCK_FETCH_WINDOW;
+  const upperGate = S + c.maxReorgDepth;
+  const upper = Math.min(bestHeight, upperWindow, upperGate);
+  const out: { id: string; height: number }[] = [];
+  for (let h = applied + 1; h <= upper; h++) {
+    const hashAt = getBestHashAt(h);
+    if (hashAt === null) break;
+    if (getStagedBlock(hashAt) === null) out.push({ id: hashAt, height: h });
+  }
+  return out;
+}
+
+/** NODE_INTERFACE → Fork choice decides on verified headers → "The window.". */
 export function gateHeld(): void {
   const best = getBestTip();
   S = best?.height ?? 0;
 }
 
-/**
- * NET_INTERFACE → Sync Handler Registration: the applied chain's answer to
- * the scheduler's `fullyApplied()` question.
- */
+/** NET_INTERFACE → Sync Handler Registration: `fullyApplied()`. */
 export function fullyApplied(): boolean {
   const best = getBestTip();
   if (!best) return true;
@@ -125,62 +387,146 @@ export function fullyApplied(): boolean {
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
- * at a time". A `Headers` page from a peer: admission over the page, then
- * extension drain.
+ * at a time". The body of a `Headers` page delivery.
  */
 export async function deliverHeaders(
   peerId: string,
   claimHash: string,
   headers: BlockHeader[],
 ): Promise<boolean> {
-  // Stub — the live code lands in a follow-up.
-  void peerId;
-  void claimHash;
-  void headers;
-  return false;
+  const c = ctxOrThrow();
+  const pipelineCb = {
+    penalize: (p: string, k: 'misbehavior' | 'transient', r: string) => penalize(p, k, r),
+    chainMoved: () => cb().chainMoved(),
+  };
+  const verdict: PageVerdict = admitPage(peerId, claimHash, headers, c, pipelineCb);
+  // A pending gossiped block whose parent now stands may be bindable.
+  processPendingAfterAdmit();
+  drainExtension();
+  trySwitch();
+  return verdict.accepted && verdict.outcome !== 'refused';
 }
 
 /**
- * NODE_INTERFACE → Fork choice decides on verified headers → "A served block
- * is bound to its header before it is kept.". A `Blocks` answer: each block
- * is bound to a stored header on the best chain, staged, and extension drains.
+ * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
+ * at a time". The body of a `Blocks` answer delivery.
  */
 export async function deliverBlocks(peerId: string, blocks: OrderingBlock[]): Promise<void> {
-  // Stub — the live code lands in a follow-up.
-  void peerId;
-  void blocks;
+  for (const block of blocks) {
+    const hash = blockHash(block.header);
+    const row = bindBlock(peerId, block, hash);
+    if (row === null) continue;
+    stageBlock(row.hash, row.height, encodeOrderingBlock(block), peerId);
+  }
+  drainExtension();
+  trySwitch();
 }
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
- * at a time". A gossiped block past Stage 1: admit its header, bind the block
- * to the admitted row, stage it; a gossiped block whose header has no tree
- * parent waits as its relayer's pending block and `needHeaders(relayer)` is
- * called.
+ * at a time". A gossiped block past Stage 1.
  */
 export async function deliverGossipedBlock(peerId: string, block: OrderingBlock): Promise<void> {
-  // Stub — the live code lands in a follow-up.
-  void peerId;
-  void block;
+  const c = ctxOrThrow();
+  const hash = blockHash(block.header);
+  if (hash === null) {
+    penalize(peerId, 'misbehavior', 'unhashable gossiped block header');
+    return;
+  }
+  const pipelineCb = {
+    penalize: (p: string, k: 'misbehavior' | 'transient', r: string) => penalize(p, k, r),
+    chainMoved: () => cb().chainMoved(),
+  };
+  const verdict: AdmitVerdict = admitHeader(block.header, 'gossip', peerId, c, pipelineCb);
+  if (verdict.kind === 'parent-unknown') {
+    pendingBlocks.set(peerId, block);
+    cb().needHeaders(peerId);
+    return;
+  }
+  if (verdict.kind === 'scored') {
+    // A gossiped header on a side branch: the block is dropped and
+    // `needHeaders(relayer)` is called so the branch's pass can run.
+    cb().needHeaders(peerId);
+    return;
+  }
+  if (verdict.kind === 'refused') return;
+  // `held` or `stored`: proceed to bind.
+  const bindRow = bindBlock(peerId, block, hash);
+  if (bindRow === null) {
+    drainExtension();
+    trySwitch();
+    return;
+  }
+  stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), peerId);
+  drainExtension();
+  trySwitch();
 }
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
- * at a time". This node's own mined block: admit, bind, stage and apply by
- * extension in one item; `peerId` is `''` and a refusal of our own block is
- * logged, never penalised — the wiring's injected `penalize` filters `''`.
+ * at a time". This node's own mined block.
  */
 export async function deliverMinedBlock(block: OrderingBlock): Promise<ApplyVerdict> {
-  // Stub — the live code lands in a follow-up.
-  void block;
-  return { applied: false, class: 'local', detail: 'intake not yet implemented' };
+  const c = ctxOrThrow();
+  const hash = blockHash(block.header);
+  const pipelineCb = {
+    penalize: (p: string, k: 'misbehavior' | 'transient', r: string) => penalize(p, k, r),
+    chainMoved: () => cb().chainMoved(),
+  };
+  // Admission uses `'headers-page'` with peer `''`; a mined block whose parent
+  // is the applied tip never answers `parent-unknown` (we mine on our tip),
+  // and `penalize('')` is logged, never relayed.
+  const admit: AdmitVerdict = admitHeader(block.header, 'headers-page', '', c, pipelineCb);
+  if (admit.kind === 'refused') {
+    return { applied: false, class: 'local', detail: `mined header admission refused: ${admit.reason}` };
+  }
+  if (hash === null) {
+    return { applied: false, class: 'local', detail: 'mined header unhashable' };
+  }
+  const bindRow = bindBlock('', block, hash);
+  if (bindRow === null) {
+    return { applied: false, class: 'local', detail: 'mined block did not bind' };
+  }
+  stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), '');
+  // Apply by extension — the mined block applies on top of the current tip.
+  drainExtension();
+  // Answer the verdict the apply left: the staged row leaves on apply.
+  if (getStagedBlock(hash) === null && getOrderingBlockHash(bindRow.height) === hash) {
+    return { applied: true, indexed: [] };
+  }
+  return { applied: false, class: 'local', detail: 'mined block did not apply through extension' };
 }
 
 /**
- * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
- * at a time": a peer's disconnect takes its pending block, its presync and
- * its memo entry.
+ * A pending block whose relayer's header walk admitted the parent is bindable
+ * now. On every admit we check each pending — the admit landed a row the
+ * pending's header's `prevBlockHash` matches.
  */
+function processPendingAfterAdmit(): void {
+  if (pendingBlocks.size === 0) return;
+  for (const [peerId, block] of pendingBlocks) {
+    const parentRow = getHeaderRow(block.header.prevBlockHash);
+    if (parentRow === null) continue;
+    const hash = blockHash(block.header);
+    if (hash === null) {
+      pendingBlocks.delete(peerId);
+      continue;
+    }
+    const held = getHeaderRow(hash);
+    if (held === null) continue;
+    const bestAt = getBestHashAt(held.height);
+    if (bestAt !== hash) {
+      pendingBlocks.delete(peerId);
+      continue;
+    }
+    const bindRow = bindBlock(peerId, block, hash);
+    pendingBlocks.delete(peerId);
+    if (bindRow === null) continue;
+    stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), peerId);
+  }
+}
+
+/** NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one at a time". */
 export function onPeerDisconnected(peerId: string): void {
   pendingBlocks.delete(peerId);
   pipelineOnPeerDisconnected(peerId);
@@ -196,26 +542,6 @@ export function getSForTests(): number {
   return S;
 }
 
-// References kept to keep the imports live while the stubs stand in.
-void admitHeader;
-void admitPage;
-void applyOrderingBlockVerdict;
-void blockHash;
-void encodeOrderingBlock;
-void getBestHashAt;
-void getOrderingBlockHash;
-void getStagedBlock;
-void insertRefusedHeader;
-void pruneHeaderTree;
+// Imports kept live.
 void pruneHeadersBelow;
-void purgeOldJournals;
-void removeHeaderSubtree;
-void reorg;
-void stageBlock;
-void unstageBlock;
-void verifyOrderingBlockStructure;
-void verifyUtxoTxRoot;
-void verifyValidatorSignature;
-void cb;
-void ctx;
-export type { AdmitVerdict, PageVerdict, PipelineCallbacks, PipelineContext };
+export type { AdmitVerdict, PageVerdict, PipelineContext };

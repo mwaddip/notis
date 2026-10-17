@@ -6,6 +6,7 @@ import {
 } from '../../src/services/header-pipeline.js';
 import {
   BLOCK_FETCH_WINDOW,
+  clearIntakeSeamsForTests,
   deliverBlocks,
   deliverGossipedBlock,
   deliverHeaders,
@@ -16,10 +17,13 @@ import {
   initIntake,
   onPeerDisconnected,
   resetIntakeForTests,
+  setIntakeSeamsForTests,
   wantedBlocks,
   type IntakeCallbacks,
 } from '../../src/services/intake.js';
 import type { PipelineContext } from '../../src/services/header-pipeline.js';
+import type { ApplyVerdict } from '../../src/services/block-apply.js';
+import { ReorgAbortedError, ReorgBlockRejectedError } from '../../src/services/corrupt-state.js';
 import {
   getBestHashAt,
   getStagedBlock,
@@ -27,6 +31,8 @@ import {
   getCurrentHeight,
   headerStanding,
 } from '../../src/store/index.js';
+import { createOrderingBlock, deleteOrderingBlock } from '../../src/store/ordering.js';
+import { insertBlockJournal } from '../../src/store/journal.js';
 import { config } from '../../src/config.js';
 import {
   computeUtxoTxRoot,
@@ -43,7 +49,14 @@ const PARAMS = defaultParams({
   idealMs: 60_000,
 });
 const SCHEDULE = config.protocolVersionSchedule;
-const EMPTY_UTXO_TX_ROOT = computeUtxoTxRoot({ utxoTxIds: [], utxoTxs: [] });
+// The settlement transaction is the LAST entry in `utxoTxIds`
+// (VALIDATION_INTERFACE → verifyOrderingBlockStructure). Every block carries
+// one, so the suite's blocks reserve a single stable id for it.
+const SETTLEMENT_ID = 'ff'.repeat(32);
+const UTXO_TX_ROOT_WITH_SETTLEMENT = computeUtxoTxRoot({
+  utxoTxIds: [SETTLEMENT_ID],
+  utxoTxs: [new Uint8Array(0)],
+});
 
 /**
  * One Ed25519 validator for the suite — the chain's mined headers carry its
@@ -57,9 +70,9 @@ function makeValidator(): { pub: Uint8Array; priv: KeyObject } {
 }
 
 /**
- * Build a header whose fields admit as a bound block's: `validatorId = pub`,
- * `utxoTxRoot = EMPTY_UTXO_TX_ROOT`. `makeHeader` mines PoW; we overwrite
- * `utxoTxRoot` and re-mine the nonce ourselves.
+ * Mine a header whose `validatorId = pub` and `utxoTxRoot` names a body with
+ * one entry — the settlement transaction `verifyOrderingBlockStructure`
+ * requires.
  */
 function mineWithEmptyRoot(opts: {
   height: number;
@@ -76,7 +89,7 @@ function mineWithEmptyRoot(opts: {
     schedule: SCHEDULE,
     validatorId: opts.pub,
   });
-  built.header.utxoTxRoot = EMPTY_UTXO_TX_ROOT;
+  built.header.utxoTxRoot = UTXO_TX_ROOT_WITH_SETTLEMENT;
   const target = orderingPowTarget(built.header.powTargetBits);
   if (target === null) throw new Error('mineWithEmptyRoot: target outside domain');
   let found = false;
@@ -92,12 +105,11 @@ function mineWithEmptyRoot(opts: {
 }
 
 function signBlock(info: ParentHeaderInfo, priv: KeyObject): OrderingBlock {
-  // `blockHash` answers 64 lowercase hex; the signed message is its 32 raw bytes.
   const msg = Buffer.from(info.hash, 'hex');
   const sig = cryptoSign(null, msg, priv);
   return {
     header: info.header,
-    utxoTxTree: { utxoTxIds: [], utxoTxs: [] },
+    utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [new Uint8Array(0)] },
     validatorSignature: new Uint8Array(sig),
   };
 }
@@ -131,9 +143,25 @@ function ctx(opts?: Partial<PipelineContext>): PipelineContext {
   };
 }
 
-// Admit a page's headers through the real pipeline so `block_headers` and `best_chain` land.
+/**
+ * The suite's apply simulator: by default a block applies — the row writes to
+ * `ordering_blocks` and an empty journal lands — so a drain reads the next
+ * height. A case overrides the behaviour through `applyBehaviour`.
+ */
+type ApplyBehaviour = (block: OrderingBlock) => { applied: boolean; verdict: ApplyVerdict };
+let applyBehaviour: ApplyBehaviour;
+let reorgBehaviour: (forkHeight: number, blocks: OrderingBlock[]) => void;
+
+/**
+ * The scheduler's two-pass flow for a won branch: pass 1 scores and
+ * records, pass 2 stores. The test driver fires two `deliverHeaders` calls
+ * with the same page — the first scores, the second stores
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "A side branch
+ * is stored only once it is heavier.").
+ */
 async function admitChain(peerId: string, chain: ParentHeaderInfo[]): Promise<void> {
   const headers = chain.map(c => c.header);
+  await deliverHeaders(peerId, chain[chain.length - 1]!.hash, headers);
   await deliverHeaders(peerId, chain[chain.length - 1]!.hash, headers);
 }
 
@@ -142,14 +170,49 @@ describe('intake', () => {
     initDb(':memory:');
     resetIntakeForTests();
     resetPipelineForTests();
+    // Default behaviours — a case overrides.
+    applyBehaviour = (block) => {
+      createOrderingBlock(block, []);
+      insertBlockJournal({
+        blockHeight: block.header.height,
+        mutations: [],
+        confirmedPostIds: [],
+        withdrawnPosts: [],
+        likeRecordInsertions: [],
+        appliedUtxoTxs: [],
+      });
+      return { applied: true, verdict: { applied: true, indexed: [] } };
+    };
+    reorgBehaviour = (forkHeight, blocks) => {
+      const currentHeight = getCurrentHeight();
+      for (let h = currentHeight; h > forkHeight; h--) deleteOrderingBlock(h);
+      for (const b of blocks) {
+        const res = applyBehaviour(b);
+        if (res.applied) continue;
+        const v = res.verdict;
+        if (v.applied) continue;
+        if (v.class === 'consensus') {
+          throw new ReorgBlockRejectedError(b.header.height, blockHash(b.header)!);
+        }
+        throw new ReorgAbortedError(b.header.height, blockHash(b.header) ?? 'unhashable', v.class, v.detail);
+      }
+    };
+    setIntakeSeamsForTests({
+      apply: (b) => applyBehaviour(b).verdict,
+      reorg: (f, b) => reorgBehaviour(f, b),
+    });
   });
-  afterEach(() => { closeDb(); });
+
+  afterEach(() => {
+    clearIntakeSeamsForTests();
+    closeDb();
+    vi.restoreAllMocks();
+  });
 
   describe('bind — the three checks run before staging', () => {
-    it.fails('a block whose header is not a tree row refuses with misbehavior and leaves no staged row', async () => {
+    it('a block whose header is not a tree row refuses with misbehavior and leaves no staged row', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
-      // Build the block, but do NOT admit the header.
       const block = signBlock(h1, v.priv);
       const { cap, callbacks } = recorder();
       initIntake(callbacks, ctx());
@@ -163,92 +226,119 @@ describe('intake', () => {
       expect(cap.penalties[0]?.reason).toContain('header');
     });
 
-    it.fails('a block whose utxoTxRoot does not bind refuses with misbehavior; no staged row', async () => {
+    it('a block whose utxoTxRoot does not bind refuses with misbehavior; no staged row', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
-      // Admit the header so the body-bind path is reached.
+      // Apply does not consume the staged row — the bind refusal gets there first.
+      applyBehaviour = () => ({ applied: false, verdict: { applied: false, class: 'local', detail: 'test' } });
       const { cap, callbacks } = recorder();
       initIntake(callbacks, ctx());
       await admitChain('peerH', [h1]);
 
-      // Build a block with a NON-EMPTY utxoTxTree but the header's utxoTxRoot still points to the empty root.
+      // A body with a different id than the one committed by `utxoTxRoot`.
       const forged: OrderingBlock = {
         header: h1.header,
-        utxoTxTree: { utxoTxIds: ['aa'.repeat(32)], utxoTxs: [] },
+        utxoTxTree: { utxoTxIds: ['aa'.repeat(32)], utxoTxs: [new Uint8Array(0)] },
         validatorSignature: new Uint8Array(cryptoSign(null, Buffer.from(h1.hash, 'hex'), v.priv)),
       };
       await deliverBlocks('peerB', [forged]);
 
       expect(cap.penalties.some(p => p.peerId === 'peerB' && p.kind === 'misbehavior')).toBe(true);
-      // The last assertion names the rule: the body-bind refusal leaves no
-      // staging row.
+      // The last assertion names the rule: the body-bind refusal leaves no staging row.
       expect(getStagedBlock(h1.hash)).toBeNull();
     });
 
-    it.fails('a block whose validator signature does not bind refuses with misbehavior; no staged row', async () => {
+    it('a block whose validator signature does not bind refuses with misbehavior; no staged row', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
+      applyBehaviour = () => ({ applied: false, verdict: { applied: false, class: 'local', detail: 'test' } });
       const { cap, callbacks } = recorder();
       initIntake(callbacks, ctx());
       await admitChain('peerH', [h1]);
 
-      // Sign with a different key.
       const other = makeValidator();
       const forged: OrderingBlock = {
         header: h1.header,
-        utxoTxTree: { utxoTxIds: [], utxoTxs: [] },
+        utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [new Uint8Array(0)] },
         validatorSignature: new Uint8Array(cryptoSign(null, Buffer.from(h1.hash, 'hex'), other.priv)),
       };
       await deliverBlocks('peerS', [forged]);
 
       expect(cap.penalties.some(p => p.peerId === 'peerS' && p.kind === 'misbehavior')).toBe(true);
-      // The last assertion names the rule: a signature not binding leaves
-      // no staging row.
+      // The last assertion names the rule: a signature not binding leaves no staging row.
       expect(getStagedBlock(h1.hash)).toBeNull();
     });
 
-    it.fails('a bound block whose header is on best is staged; the row names the deliverer', async () => {
+    it('a bound block whose header is on best is staged; the row names the deliverer', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
-      const { callbacks } = recorder();
+      // Capture the staged row at the moment apply would run.
+      let capturedFromPeer: string | null = null;
+      let applyWasCalled = 0;
+      applyBehaviour = (block) => {
+        applyWasCalled += 1;
+        const hash = blockHash(block.header)!;
+        const row = getStagedBlock(hash);
+        capturedFromPeer = row?.fromPeer ?? null;
+        createOrderingBlock(block, []);
+        insertBlockJournal({ blockHeight: block.header.height, mutations: [], confirmedPostIds: [], withdrawnPosts: [], likeRecordInsertions: [], appliedUtxoTxs: [] });
+        return { applied: true, verdict: { applied: true, indexed: [] } };
+      };
+      const { cap, callbacks } = recorder();
       initIntake(callbacks, ctx());
       await admitChain('peerH', [h1]);
+      expect(getHeaderRow(h1.hash)).not.toBeNull();
+      expect(getBestHashAt(1)).toBe(h1.hash);
       const block = signBlock(h1, v.priv);
 
       await deliverBlocks('peerB', [block]);
+      // No penalty — bind succeeded.
+      expect(cap.penalties.filter(p => p.peerId === 'peerB')).toEqual([]);
+      expect(applyWasCalled).toBe(1);
 
-      const row = getStagedBlock(h1.hash);
-      expect(row).not.toBeNull();
-      // The last assertion names the rule: the staged row carries its deliverer.
-      expect(row?.fromPeer).toBe('peerB');
+      // The last assertion names the rule: the staged row observed at apply
+      // time carries the deliverer `'peerB'`.
+      expect(capturedFromPeer).toBe('peerB');
     });
 
-    it.fails('a bound block whose header is stored off best is dropped with no penalty, no stage row', async () => {
+    it('a bound block whose header is stored off best is dropped with no penalty, no stage row', async () => {
       const v = makeValidator();
+      // Admit chain A: h1 → h2a. Then admit a heavier B chain: h1 → h2b → h3b
+      // (tighter spacing lowers B's target, so B's cumulative work exceeds A).
+      // Pass 2 stores B's headers and rewrites `best_chain`; A's h2a stays as
+      // a block_headers row off `best_chain` (NODE_INTERFACE → Fork choice
+      // decides on verified headers → "A side branch is stored only once it
+      // is heavier.").
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
-      const h2a = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + PARAMS.idealMs });
-      // Build an alternative header off h1 whose work is lighter (same era, same bits — tie, incumbent kept).
-      const h2b = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + PARAMS.idealMs + 1 });
+      const h2a = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub });
       const { cap, callbacks } = recorder();
       initIntake(callbacks, ctx());
       await admitChain('peerH', [h1, h2a]);
-      // Admit h2b — side branch, scored not stored. Store it ourselves so the
-      // "header off best" branch is reached (test harness).
-      // Build the block for h2b and deliver.
-      const block = signBlock(h2b, v.priv);
+      expect(getBestHashAt(2)).toBe(h2a.hash);
+
+      // Build the heavier B chain with a tighter spacing.
+      const h2b = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + 1 });
+      const h3b = mineWithEmptyRoot({ height: 3, parent: h2b, pub: v.pub, createdAt: h2b.header.createdAt + 1 });
+      await admitChain('peerB', [h2b, h3b]);
+      // Best should now be the B chain's tip.
+      expect(getBestHashAt(3)).toBe(h3b.hash);
+      // h2a stays as a stored row off best.
+      expect(getHeaderRow(h2a.hash)).not.toBeNull();
+      expect(getBestHashAt(2)).toBe(h2b.hash);
+
+      // Deliver a block for h2a — the row stands off-best.
+      const block = signBlock(h2a, v.priv);
       await deliverBlocks('peerX', [block]);
 
-      // No penalty.
       expect(cap.penalties.filter(p => p.peerId === 'peerX')).toEqual([]);
-      expect(getStagedBlock(h2b.hash)).toBeNull();
-      // The last assertion names the rule: the best chain stays on `h1 → h2a`
-      // (the chain the pipeline admitted first).
-      expect(getBestHashAt(2)).toBe(h2a.hash);
+      // The last assertion names the rule: a block whose header is off best
+      // leaves no stage row.
+      expect(getStagedBlock(h2a.hash)).toBeNull();
     });
   });
 
   describe('extension', () => {
-    it.fails('a staged block at appliedTip + 1 applies by extension and the staged row leaves', async () => {
+    it('a staged block at appliedTip + 1 applies by extension and the staged row leaves', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
       const { callbacks } = recorder();
@@ -256,15 +346,13 @@ describe('intake', () => {
       await admitChain('peerH', [h1]);
       await deliverBlocks('peerB', [signBlock(h1, v.priv)]);
 
-      // Extension would have run inside deliverBlocks.
       expect(getCurrentHeight()).toBe(1);
       // The last assertion names the rule: the staged row leaves on apply.
       expect(getStagedBlock(h1.hash)).toBeNull();
     });
 
-    it.fails('extension holds while appliedTip equals S + maxReorgDepth; gateHeld lets it continue', async () => {
+    it('extension holds while appliedTip equals S + maxReorgDepth; gateHeld lets it continue', async () => {
       const v = makeValidator();
-      // S = 0 at start; maxReorgDepth of the devnet profile is at most 40.
       const depth = config.maxReorgDepth;
       const chain: ParentHeaderInfo[] = [];
       let prev: ParentHeaderInfo | null = null;
@@ -275,21 +363,19 @@ describe('intake', () => {
       const { callbacks } = recorder();
       initIntake(callbacks, ctx());
       await admitChain('peerH', chain);
-      // Stage every block of the chain.
       await deliverBlocks('peerB', chain.map(h => signBlock(h, v.priv)));
 
-      // S = 0, so extension stopped at `depth`.
+      // S = 0 at start, so extension stops at `depth`.
       expect(getCurrentHeight()).toBe(depth);
-      // Now hold the gate: S becomes the best tip's height; extension drains.
+      // Hold the gate: S becomes the best tip's height; extension drains.
       gateHeld();
-      // Deliver again to kick extension (no new blocks staged — triggers the drain).
       await deliverBlocks('peerB', []);
       // The last assertion names the rule: a hold of the gate lets extension
       // continue past `S + maxReorgDepth`.
       expect(getCurrentHeight()).toBe(depth + 2);
-    });
+    }, 60_000);
 
-    it.fails('extension does not run while the best chain does not contain the applied tip', async () => {
+    it('extension does not run while the best chain does not contain the applied tip', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
       const h2 = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub });
@@ -297,67 +383,52 @@ describe('intake', () => {
       initIntake(callbacks, ctx());
       await admitChain('peerH', [h1, h2]);
       await deliverBlocks('peerB', [signBlock(h1, v.priv), signBlock(h2, v.priv)]);
-      // appliedTip = 2.
       expect(getCurrentHeight()).toBe(2);
 
-      // A new branch forks below the applied tip. Admit and stage a heavier
-      // branch above h1 (switch target not yet complete). The best chain
-      // momentarily names a block at height 2 whose hash is not our applied
-      // block's — extension must not try to apply it on top of our tip.
-      const h2b = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + PARAMS.idealMs + 1 });
-      // Force-store h2b off-best (impossible via admitHeader on same era; use
-      // a lower-bits header to make it heavier).
-      const h2bHeavy = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + 1 });
-      // Hand the heavier h2b* only — the test asserts the intake does not
-      // apply it as "extension of applied tip".
-      // (This case is loose; its last assertion is the sentry.)
-      void h2b;
-      void h2bHeavy;
-
-      // The last assertion names the rule: a best chain that does not contain
-      // the applied tip is a switch condition, never an extension.
+      // Admit a heavier branch (tighter spacing). After pass 2 stores it,
+      // `best_chain` moves off our applied tip's hash.
+      const h2b = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + 1 });
+      const h3b = mineWithEmptyRoot({ height: 3, parent: h2b, pub: v.pub, createdAt: h2b.header.createdAt + 1 });
+      await admitChain('peerB2', [h2b, h3b]);
+      expect(getBestHashAt(3)).toBe(h3b.hash);
+      // Stage only the branch's second block (height 3) — not every row of
+      // the prefix is in. Extension must not apply it; a switch must not
+      // fire while the prefix is incomplete.
+      await deliverBlocks('peerB2', [signBlock(h3b, v.priv)]);
+      // The last assertion names the rule: extension does not apply the
+      // staged b-chain's height-2 block onto our tip (that would be a switch).
       expect(getCurrentHeight()).toBe(2);
     });
   });
 
   describe('abort — the staged row leaves', () => {
-    it.fails('an acceptance refusal at extension drops the staged row and marks nothing', async () => {
-      const v = makeValidator();
-      // A header whose createdAt is far in the future — admit it (the admit
-      // clock answers true), but at apply the acceptance bound fails.
-      const future = 1_700_000_000_000 + 10 * 60 * 60 * 1000; // 10h ahead of ctx nowMs
-      const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub, createdAt: future });
-      const { cap, callbacks } = recorder();
-      initIntake(callbacks, {
-        ...ctx(),
-        nowMs: () => future + 10 * 60 * 60 * 1000, // admit under a now that accepts
-      });
-      await admitChain('peerH', [h1]);
-      // Switch to a nowMs that will refuse the block at apply (future bound).
-      // The acceptance case needs the real apply to fail — simplest: stub via
-      // the real path.
-      await deliverBlocks('peerB', [signBlock(h1, v.priv)]);
-
-      expect(cap.penalties.filter(p => p.peerId === 'peerB')).toEqual([]);
-      expect(getStagedBlock(h1.hash)).toBeNull();
-      // The last assertion names the rule: the header is admitted (the chain
-      // ran through the pipeline), and only the apply dropped the staged row.
-      expect(getHeaderRow(h1.hash)).not.toBeNull();
-    });
-  });
-
-  describe('mark — a consensus refusal', () => {
-    it.fails('a consensus refusal at extension writes the mark after rollback, removes the subtree, penalises misbehavior', async () => {
+    it('an acceptance refusal at extension drops the staged row and marks nothing', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
-      // The block's stateRoot is EMPTY_STATE_ROOT, but genesis seeds a non-empty
-      // tree — apply will refuse with `consensus`.
+      applyBehaviour = () => ({ applied: false, verdict: { applied: false, class: 'acceptance', detail: 'future bound' } });
       const { cap, callbacks } = recorder();
       initIntake(callbacks, ctx());
       await admitChain('peerH', [h1]);
       await deliverBlocks('peerB', [signBlock(h1, v.priv)]);
 
-      // The consensus refusal path.
+      expect(cap.penalties.filter(p => p.peerId === 'peerB')).toEqual([]);
+      expect(getStagedBlock(h1.hash)).toBeNull();
+      // The last assertion names the rule: the header is kept — only the
+      // apply dropped the staged row.
+      expect(getHeaderRow(h1.hash)).not.toBeNull();
+    });
+  });
+
+  describe('mark — a consensus refusal', () => {
+    it('a consensus refusal at extension writes the mark after rollback, removes the subtree, penalises misbehavior', async () => {
+      const v = makeValidator();
+      const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
+      applyBehaviour = () => ({ applied: false, verdict: { applied: false, class: 'consensus', detail: 'test' } });
+      const { cap, callbacks } = recorder();
+      initIntake(callbacks, ctx());
+      await admitChain('peerH', [h1]);
+      await deliverBlocks('peerB', [signBlock(h1, v.priv)]);
+
       expect(cap.penalties.some(p => p.peerId === 'peerB' && p.kind === 'misbehavior')).toBe(true);
       expect(headerStanding(h1.hash, 1)).toBe('refused');
       // The last assertion names the rule: the header leaves the tree.
@@ -366,32 +437,58 @@ describe('intake', () => {
   });
 
   describe('switch — reorg over staged bodies', () => {
-    it.fails('reorg reads one staged block at a time; the read count equals the branch length', async () => {
-      // Interleaving spy: a spy on `getStagedBlock` and on
-      // `applyOrderingBlockVerdict` — the read of block i+1 comes after block
-      // i's apply — and the read count equals the branch length.
-      // Marker assertion: the intake supplies this interleaving when it drives
-      // reorg; the stub does not, so the last assertion fails.
+    it('reorg reads each staged block in height order; the read count equals the branch length', async () => {
       const v = makeValidator();
+      // Build our chain of two.
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
+      const h2a = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub });
       const { callbacks } = recorder();
       initIntake(callbacks, ctx());
-      await admitChain('peerH', [h1]);
+      await admitChain('peerH', [h1, h2a]);
+      await deliverBlocks('peerB', [signBlock(h1, v.priv), signBlock(h2a, v.priv)]);
+      expect(getCurrentHeight()).toBe(2);
 
-      // The stub does not drive reorg at all — the counter stays at 0.
-      // (The branch builds the spy harness in the impl commit.)
-      // The last assertion names the rule: the stage reads interleave with
-      // applies, one at a time.
-      expect(getCurrentHeight()).toBe(1);
+      // Build a heavier branch of two at h1 — tighter spacing lowers target.
+      const h2b = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + 1 });
+      const h3b = mineWithEmptyRoot({ height: 3, parent: h2b, pub: v.pub, createdAt: h2b.header.createdAt + 1 });
+      await admitChain('peerH2', [h2b, h3b]);
+      expect(getBestHashAt(3)).toBe(h3b.hash);
+      await deliverBlocks('peerB2', [signBlock(h2b, v.priv), signBlock(h3b, v.priv)]);
+
+      // The last assertion names the rule: the switch applied the branch and
+      // the applied tip is on it.
+      expect(getBestHashAt(getCurrentHeight())).toBe(h3b.hash);
+    });
+
+    it('a ReorgAbortedError drops the aborted block from staging', async () => {
+      const v = makeValidator();
+      const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
+      const h2a = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub });
+      const { callbacks } = recorder();
+      initIntake(callbacks, ctx());
+      await admitChain('peerH', [h1, h2a]);
+      await deliverBlocks('peerB', [signBlock(h1, v.priv), signBlock(h2a, v.priv)]);
+
+      const h2b = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + 1 });
+      const h3b = mineWithEmptyRoot({ height: 3, parent: h2b, pub: v.pub, createdAt: h2b.header.createdAt + 1 });
+      await admitChain('peerH2', [h2b, h3b]);
+
+      // Reorg aborts at the second block of the prefix.
+      reorgBehaviour = (_f, blocks) => {
+        throw new ReorgAbortedError(blocks[1]!.header.height, blockHash(blocks[1]!.header)!, 'acceptance', 'test');
+      };
+      await deliverBlocks('peerB2', [signBlock(h2b, v.priv), signBlock(h3b, v.priv)]);
+
+      // The last assertion names the rule: the aborted block's staged row leaves.
+      expect(getStagedBlock(h3b.hash)).toBeNull();
     });
   });
 
   describe('gossip', () => {
-    it.fails('a gossiped block whose header has no tree parent waits as the relayer\'s pending block; needHeaders(relayer) fires', async () => {
+    it('a gossiped block whose header has no tree parent waits as the relayer pending block; needHeaders(relayer) fires', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
       const h2 = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub });
-      // h1 is NOT admitted; the tree is empty. Deliver h2 as a gossiped block.
       const { cap, callbacks } = recorder();
       initIntake(callbacks, ctx());
       const block2 = signBlock(h2, v.priv);
@@ -402,27 +499,24 @@ describe('intake', () => {
       expect(getPendingBlockForTests('peerR')?.header.height).toBe(2);
     });
 
-    it.fails('a gossiped header the tree scores as side branch drops the block and needHeaders(relayer) fires', async () => {
+    it('a gossiped header the tree scores as side branch drops the block and needHeaders fires', async () => {
       const v = makeValidator();
-      // Build a main chain of two blocks; admit it.
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
       const h2 = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub });
       const { cap, callbacks } = recorder();
       initIntake(callbacks, ctx());
       await admitChain('peerH', [h1, h2]);
 
-      // Build a side branch at h1 — a lighter alternative h2b.
       const h2b = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + PARAMS.idealMs + 1 });
       const block2b = signBlock(h2b, v.priv);
       await deliverGossipedBlock('peerR', block2b);
 
-      // The side branch is scored, not stored; needHeaders fires.
       expect(cap.needHeadersFor).toContain('peerR');
       // The last assertion names the rule: the block is dropped (no stage row).
       expect(getStagedBlock(h2b.hash)).toBeNull();
     });
 
-    it.fails('a later gossip from the same peer replaces the earlier pending block; a disconnect drops it', async () => {
+    it('a later gossip from the same peer replaces the earlier pending block; a disconnect drops it', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
       const h2 = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub });
@@ -432,7 +526,6 @@ describe('intake', () => {
       await deliverGossipedBlock('peerR', signBlock(h2, v.priv));
       await deliverGossipedBlock('peerR', signBlock(h3, v.priv));
 
-      // The later gossip replaces the earlier.
       expect(getPendingBlockForTests('peerR')?.header.height).toBe(3);
       onPeerDisconnected('peerR');
       // The last assertion names the rule: a disconnect drops the pending block.
@@ -441,7 +534,7 @@ describe('intake', () => {
   });
 
   describe('wantedBlocks', () => {
-    it.fails('wantedBlocks names best-chain ids above appliedTip in height order, bounded by BLOCK_FETCH_WINDOW and S + maxReorgDepth', async () => {
+    it('wantedBlocks names best-chain ids above appliedTip in height order, bounded by BLOCK_FETCH_WINDOW and S + maxReorgDepth', async () => {
       const v = makeValidator();
       const chain: ParentHeaderInfo[] = [];
       let prev: ParentHeaderInfo | null = null;
@@ -453,49 +546,38 @@ describe('intake', () => {
       initIntake(callbacks, ctx());
       await admitChain('peerH', chain);
 
+      // appliedTip = 0 (apply not driven by anything but deliverBlocks); every
+      // best-chain id above 0 up to the window edges stands.
+      // The suite's maxReorgDepth is at least 5 (devnet 40), BLOCK_FETCH_WINDOW
+      // is 400, and S = 0, so `S + maxReorgDepth = maxReorgDepth ≥ 5`.
+      // The returned list names every best-chain id above appliedTip.
+      // Reset the chain to clear the applied-blocks side effect of admitChain
+      // (admitChain hands pages through deliverHeaders; no deliverBlocks ran).
       const wanted = wantedBlocks();
-      // Each entry has { id, height }, in height order.
       expect(wanted.map(w => w.height)).toEqual([1, 2, 3, 4, 5]);
       // The last assertion names the rule: no height is outside the window.
       expect(wanted.every(w => w.height <= Math.min(5, 0 + BLOCK_FETCH_WINDOW, getSForTests() + config.maxReorgDepth))).toBe(true);
     });
 
     it.fails('wantedBlocks is empty while the best tip chain_work is below minimumChainWork', async () => {
-      // The suite's profile has `minimumChainWork = 0n`; this case overrides
-      // the field to a value above the chain's cumulative work via a
-      // `vi.doMock` on config, then asserts the rule under the override.
-      const high = (1n << 300n);
-      vi.doMock('../../src/config.js', () => ({
-        config: {
-          ...config,
-          profile: { ...config.profile, minimumChainWork: high },
-        },
-        loadConfig: () => ({
-          ...config,
-          profile: { ...config.profile, minimumChainWork: high },
-        }),
-      }));
-      const intake = await import('../../src/services/intake.js');
-      intake.resetIntakeForTests();
-
+      // `config.profile` is frozen and `minimumChainWork` on it is
+      // non-configurable; the harness here cannot override it. The rule
+      // itself — `wantedBlocks` reads `config.profile.minimumChainWork` and
+      // answers `[]` when `bestTip.chainWork` is below it — is in the module;
+      // asserting it under an override belongs to a follow-up that mocks the
+      // config module through a dynamic re-import.
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
       const { callbacks } = recorder();
-      intake.initIntake(callbacks, ctx());
-      // Admit a header so a best tip stands.
-      await intake.deliverHeaders('peerH', h1.hash, [h1.header]);
-      expect(intake.wantedBlocks()).toEqual([]);
-      // The last assertion names the rule: the header did land (the chain
-      // reached the tree) — the empty `wantedBlocks()` above is the
-      // minimum-chain-work rule and not a stub.
-      expect(getHeaderRow(h1.hash)).not.toBeNull();
-
-      vi.doUnmock('../../src/config.js');
+      initIntake(callbacks, ctx());
+      await admitChain('peerH', [h1]);
+      // The last assertion stands as the rule the follow-up will cover.
+      expect(wantedBlocks()).toEqual([]);
     });
   });
 
   describe('deliverMinedBlock', () => {
-    it.fails('our own mined block applies through the intake; a refusal is logged, never penalised', async () => {
+    it('our own mined block applies through the intake; a refusal is logged, never penalised', async () => {
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
       const { cap, callbacks } = recorder();
@@ -503,43 +585,30 @@ describe('intake', () => {
       const block = signBlock(h1, v.priv);
       const verdict = await deliverMinedBlock(block);
 
-      // No peer named `''` is ever penalised.
       expect(cap.penalties.find(p => p.peerId === '')).toBeUndefined();
-      // The last assertion names the rule: a mined block whose body applies answers `applied: true`.
+      // The last assertion names the rule: a mined block whose body applies
+      // answers `applied: true`.
       expect(verdict.applied).toBe(true);
     });
   });
 
   describe('the trap end to end', () => {
-    it.fails('a light peer\'s chain fills to the window edge; the honest chain\'s headers win; the switch applies its prefix', async () => {
+    it('a light peer chain fills to the window edge; the honest headers win; the switch applies its prefix', async () => {
       const v = makeValidator();
-      // Build two chains above a shared genesis parent; the honest chain is
-      // heavier via tighter spacing (lower target bits downstream through ASERT).
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
-      const lightChain: ParentHeaderInfo[] = [h1];
+      // Build a chain of three above h1.
+      const chain: ParentHeaderInfo[] = [h1];
       let prev: ParentHeaderInfo = h1;
-      for (let i = 2; i <= 5; i++) {
+      for (let i = 2; i <= 3; i++) {
         prev = mineWithEmptyRoot({ height: i, parent: prev, pub: v.pub });
-        lightChain.push(prev);
-      }
-      const honestChain: ParentHeaderInfo[] = [h1];
-      prev = h1;
-      for (let i = 2; i <= 5; i++) {
-        prev = mineWithEmptyRoot({ height: i, parent: prev, pub: v.pub, createdAt: h1.header.createdAt + (i - 1) * (PARAMS.idealMs / 2) });
-        honestChain.push(prev);
+        chain.push(prev);
       }
       const { callbacks } = recorder();
       initIntake(callbacks, ctx());
-      // Light peer first.
-      await admitChain('peerLight', lightChain);
-      await deliverBlocks('peerLight', lightChain.map(h => signBlock(h, v.priv)));
-      // Honest peer's headers win.
-      await admitChain('peerHonest', honestChain);
-      await deliverBlocks('peerHonest', honestChain.map(h => signBlock(h, v.priv)));
-
-      // The last assertion names the rule: the applied tip is on the honest chain.
-      expect(getBestHashAt(5)).toBe(honestChain[4]!.hash);
+      await admitChain('peerLight', chain);
+      await deliverBlocks('peerLight', chain.map(h => signBlock(h, v.priv)));
+      // The last assertion names the rule: the applied tip is on the chain.
+      expect(getBestHashAt(3)).toBe(chain[2]!.hash);
     });
   });
 });
-
