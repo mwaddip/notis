@@ -298,9 +298,9 @@ export class SyncMachine {
   }
 
   handleMessage(peerId: string, code: number, body: Uint8Array): void {
-    // NET_INTERFACE → Sync Handler Registration → "A code no arm serves is
-    // closed unanswered, so it reads as 'I cannot answer'". The scheduler
-    // decodes only `SyncInfo`; every other code is dropped silently.
+    // NET_INTERFACE → Sync Handler Registration. The scheduler decodes
+    // only `SyncInfo`; every other code is dropped silently as a code
+    // no arm serves.
     if (code !== MSG_SYNC_INFO) return;
     const info = decodeSyncInfo(body);
     if (!info) {
@@ -310,12 +310,12 @@ export class SyncMachine {
     this.pushControl({ type: 'sync-info', peerId, info });
   }
 
-  /** NET_INTERFACE → Pipeline events — "needHeaders(peerId)". */
+  /** NET_INTERFACE → Pipeline events. */
   needHeaders(peerId: string): void {
     this.pushControl({ type: 'need-headers', peerId });
   }
 
-  /** NET_INTERFACE → Pipeline events — "chainMoved()". */
+  /** NET_INTERFACE → Pipeline events. */
   chainMoved(): void {
     this.pushControl({ type: 'chain-moved' });
   }

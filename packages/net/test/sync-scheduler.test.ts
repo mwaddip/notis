@@ -437,7 +437,7 @@ describe('needHeaders asks the named relayer when it is Active and unmarked', ()
 });
 
 // ---------------------------------------------------------------------------
-// chainMoved (NET_INTERFACE → Pipeline events → "chainMoved()")
+// chainMoved (NET_INTERFACE → Pipeline events)
 // ---------------------------------------------------------------------------
 
 describe('chainMoved re-asks knowsTip for every retained claim', () => {
@@ -461,7 +461,7 @@ describe('chainMoved re-asks knowsTip for every retained claim', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Marks' bounds (CONSTANTS → net → MAX_STALL_MARKS)
+// Marks' bounds (CONSTANTS → net)
 // ---------------------------------------------------------------------------
 
 describe("marks' bounds — MAX_STALL_MARKS + 1 drops the oldest", () => {

@@ -163,8 +163,7 @@ describe('config magic', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unknown codes (NET_INTERFACE → Sync Handler Registration → "A code no arm
-// serves is closed unanswered")
+// Unknown codes (NET_INTERFACE → Sync Handler Registration)
 // ---------------------------------------------------------------------------
 
 describe('unknown message types', () => {

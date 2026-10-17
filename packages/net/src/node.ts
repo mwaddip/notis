@@ -1384,10 +1384,9 @@ export class NetNode {
         return;
       }
 
-      // NET_INTERFACE → Sync Handler Registration → "A code no arm serves
-      // is closed unanswered, so it reads as 'I cannot answer'". The
-      // scheduler reads only `SyncInfo` through `handleMessage`; any other
-      // code reaching this fallthrough is dropped as unknown.
+      // NET_INTERFACE → Sync Handler Registration. The scheduler reads
+      // only `SyncInfo` through `handleMessage`; any other code reaching
+      // this fallthrough is dropped as unknown.
       if (code === MSG_SYNC_INFO) {
         try {
           this.syncMachine?.handleMessage(peerId, code, body);
