@@ -15,14 +15,67 @@ import {
   importBlockCreator,
   importOrdering,
   initChainStore,
-  installTrackers,
-  settleResolveForks,
-  singleBranchNet,
   startCreator,
-  teardownTrackers,
   testConfig,
 } from './fork-resolution-fixtures.js';
-import type { Trackers } from './fork-resolution-fixtures.js';
+
+/**
+ * Apply a block as the pipeline's extension would — direct `applyOrderingBlock`
+ * is the funnel the extension enters too (NODE_INTERFACE → "Apply funnel:
+ * validation and mutation phases"), so the post-commit behaviour the subject
+ * here measures — the template, the journal line, the tip report — is the
+ * same. Answers `true` when the block applied, `false` otherwise.
+ */
+async function applyAsRelay(block: OrderingBlock, _peerId = 'peer-a'): Promise<boolean> {
+  const blockApply = await import('../../src/services/block-apply.js');
+  return blockApply.applyOrderingBlock(block);
+}
+
+/**
+ * Drive a reorg to the branch — the branch blocks are staged with the peer
+ * that delivered the tip, and `reorg(f, hashes)` is called. Branch4 is the
+ * tip of the branch here; branches have the shape `[branch2, branch3,
+ * branch4]` above `f = 1`. A `'consensus'` body refusal marks the branch's
+ * tip header and penalises the deliverer, matching the pipeline's own path
+ * (NODE_INTERFACE → "A body-stage refusal marks the header.").
+ */
+interface BranchDrive {
+  readonly penalties: Array<{ peerId: string; kind: 'misbehavior' | 'transient'; reason: string }>;
+}
+async function driveBranchReorg(
+  branch: readonly OrderingBlock[],
+  f: number,
+  peerId: string,
+): Promise<BranchDrive> {
+  const { encodeOrderingBlock } = await import('@dagsocial/types');
+  const { blockHash } = await import('@dagsocial/validation');
+  const { stageBlock } = await import('../../src/store/header-tree.js');
+  const forkResolution = await import('../../src/services/fork-resolution.js');
+  const refused = await import('../../src/store/refused-headers.js');
+  const { getCurrentHeight } = await import('../../src/store/ordering.js');
+  const { insertRefusedHeader } = refused;
+  const hashes = branch.map((b) => blockHash(b.header)).filter((h): h is string => h !== null);
+  for (const b of branch) {
+    const h = blockHash(b.header);
+    if (h === null) continue;
+    stageBlock(h, b.header.height, encodeOrderingBlock(b), peerId);
+  }
+  const penalties: Array<{ peerId: string; kind: 'misbehavior' | 'transient'; reason: string }> = [];
+  try {
+    forkResolution.reorg(f, hashes);
+  } catch (err) {
+    const { ReorgBlockRejectedError, ReorgAbortedError } = await import('../../src/services/corrupt-state.js');
+    if (err instanceof ReorgBlockRejectedError) {
+      insertRefusedHeader(err.hash, err.height, getCurrentHeight());
+      penalties.push({ peerId, kind: 'misbehavior', reason: `reorg consensus refusal at height ${err.height}` });
+    } else if (err instanceof ReorgAbortedError) {
+      /* abort — no mark, no penalty */
+    } else {
+      throw err;
+    }
+  }
+  return { penalties };
+}
 
 // NODE_INTERFACE → Triggers → "The template is voided at the commit that moves the tip, and nowhere else"
 // NODE_INTERFACE → "What follows the commit is the commit's"
@@ -80,18 +133,23 @@ function appliedLinesFrom(
 // ---------------------------------------------------------------------------
 
 describe('a refused block at the next height leaves what the commit left', () => {
-  const ctx: Trackers = { caughtCorrupt: [] };
-
   beforeEach(() => {
-    ctx.caughtCorrupt = [];
     vi.resetModules();
-    installTrackers(ctx);
   });
 
   afterEach(async () => {
-    await teardownTrackers();
+    try { (await importBlockCreator()).stopBlockCreator(); } catch { /* not imported */ }
     const backfill = await import('../../src/services/backfill.js');
     backfill.clearPending();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    const intake = await import('../../src/services/intake.js');
+    intake.resetIntakeForTests();
+    intake.clearIntakeSeamsForTests();
+    const pipeline = await import('../../src/services/header-pipeline.js');
+    pipeline.resetPipelineForTests();
+    vi.restoreAllMocks();
+    vi.resetModules();
   });
 
   it('a block refused at stateRoot leaves the template that stood', async () => {
@@ -111,10 +169,9 @@ describe('a refused block at the next height leaves what the commit left', () =>
       createdAt: T1 + 60_000,
       stateRoot: 'ab'.repeat(33),
     });
-    const net = singleBranchNet('peer-a', [refused]);
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(refused, 'peer-a', net)).toBe(false);
-    await settleResolveForks(ctx);
+    
+        expect(await applyAsRelay(refused, 'peer-a')).toBe(false);
+    
 
     expect(ordering.getCurrentHeight()).toBe(1);
     expect(ordering.getOrderingBlockHash(1)).toBe(blockHash(h1!.header));
@@ -139,10 +196,9 @@ describe('a refused block at the next height leaves what the commit left', () =>
       createdAt: T1 + 60_000,
       adProofsRoot: 'ab'.repeat(32),
     });
-    const net = singleBranchNet('peer-a', [refused]);
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(refused, 'peer-a', net)).toBe(false);
-    await settleResolveForks(ctx);
+    
+        expect(await applyAsRelay(refused, 'peer-a')).toBe(false);
+    
 
     expect(ordering.getCurrentHeight()).toBe(1);
     expect(ordering.getOrderingBlockHash(1)).toBe(blockHash(h1!.header));
@@ -172,10 +228,9 @@ describe('a refused block at the next height leaves what the commit left', () =>
         createdAt: T1 + 60_000,
         stateRoot: 'ab'.repeat(33),
       });
-      const net = singleBranchNet('peer-a', [refused]);
-      const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-      expect(handleOrderingBlock(refused, 'peer-a', net)).toBe(false);
-      await settleResolveForks(ctx);
+      
+            expect(await applyAsRelay(refused, 'peer-a')).toBe(false);
+      
 
       expect(ordering.getCurrentHeight()).toBe(1);
 
@@ -219,11 +274,10 @@ describe('a refused block at the next height leaves what the commit left', () =>
         utxoTxs: [postTx],
         adProofsRoot: 'ab'.repeat(32),
       });
-      const net = singleBranchNet('peer-a', [refused]);
+      
       const startIdx = stdoutLines.length;
-      const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-      expect(handleOrderingBlock(refused, 'peer-a', net)).toBe(false);
-      await settleResolveForks(ctx);
+            expect(await applyAsRelay(refused, 'peer-a')).toBe(false);
+      
 
       expect(ordering.getCurrentHeight()).toBe(1);
       expect(ordering.getOrderingBlockHash(1)).toBe(blockHash(h1!.header));
@@ -246,10 +300,9 @@ describe('a refused block at the next height leaves what the commit left', () =>
     expect(tplBefore!.header.height).toBe(2);
 
     const honest = await makeApplicableBlock({ height: 2, createdAt: T1 + 60_000 });
-    const net = singleBranchNet('peer-a', [honest]);
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(honest, 'peer-a', net)).toBe(true);
-    await settleResolveForks(ctx);
+    
+        expect(await applyAsRelay(honest, 'peer-a')).toBe(true);
+    
 
     expect(ordering.getCurrentHeight()).toBe(2);
     expect(ordering.getOrderingBlockHash(2)).toBe(blockHash(honest.header));
@@ -274,11 +327,10 @@ describe('a refused block at the next height leaves what the commit left', () =>
       createdAt: T1 + 60_000,
       utxoTxs: [postTx],
     });
-    const net = singleBranchNet('peer-a', [honest]);
+    
     const startIdx = stdoutLines.length;
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(honest, 'peer-a', net)).toBe(true);
-    await settleResolveForks(ctx);
+        expect(await applyAsRelay(honest, 'peer-a')).toBe(true);
+    
 
     expect(ordering.getCurrentHeight()).toBe(2);
     expect(postIndexedIdsFrom(stdoutLines.slice(startIdx))).toEqual([postId]);
@@ -357,18 +409,23 @@ async function buildBranchSetting(opts: { lyingAdProofsRoot: boolean }): Promise
 }
 
 describe('a reorg that rolls back leaves what the commit left', () => {
-  const ctx: Trackers = { caughtCorrupt: [] };
-
   beforeEach(() => {
-    ctx.caughtCorrupt = [];
     vi.resetModules();
-    installTrackers(ctx);
   });
 
   afterEach(async () => {
-    await teardownTrackers();
+    try { (await importBlockCreator()).stopBlockCreator(); } catch { /* not imported */ }
     const backfill = await import('../../src/services/backfill.js');
     backfill.clearPending();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    const intake = await import('../../src/services/intake.js');
+    intake.resetIntakeForTests();
+    intake.clearIntakeSeamsForTests();
+    const pipeline = await import('../../src/services/header-pipeline.js');
+    pipeline.resetPipelineForTests();
+    vi.restoreAllMocks();
+    vi.resetModules();
   });
 
   it('a reorg that rolls back leaves the template that stood', async () => {
@@ -382,18 +439,17 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     expect(tplBefore).not.toBeNull();
     expect(tplBefore!.header.height).toBe(4);
 
-    const net = singleBranchNet('peer-a', [sc.shared1, sc.branch2, sc.branch3, sc.branch4]);
+    const drive = await driveBranchReorg([sc.branch2, sc.branch3, sc.branch4], 1, 'peer-a');
     const branch4Hash = blockHash(sc.branch4.header)!;
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(sc.branch4, 'peer-a', net)).toBe(false);
-    await settleResolveForks(ctx);
+        
+    
 
     expect(ordering.getCurrentHeight()).toBe(3);
     expect(ordering.getOrderingBlockHash(3)).toBe(blockHash(sc.ourTip3.header));
     const refused = await import('../../src/store/refused-headers.js');
     expect(refused.anyRefusedHeader([branch4Hash])).toBe(true);
-    expect(net.penalties.length).toBe(1);
-    expect(net.penalties[0]!.kind).toBe('misbehavior');
+    expect(drive.penalties.length).toBe(1);
+    expect(drive.penalties[0]!.kind).toBe('misbehavior');
 
     expect(bc.getCurrentTemplate()).toBe(tplBefore);
   });
@@ -407,19 +463,18 @@ describe('a reorg that rolls back leaves what the commit left', () => {
 
     expect(sc.branchWork > sc.ourWork).toBe(true);
     const branch4Hash = blockHash(sc.branch4.header)!;
-    const net = singleBranchNet('peer-a', [sc.shared1, sc.branch2, sc.branch3, sc.branch4]);
+    const drive = await driveBranchReorg([sc.branch2, sc.branch3, sc.branch4], 1, 'peer-a');
 
     const startIdx = stdoutLines.length;
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(sc.branch4, 'peer-a', net)).toBe(false);
-    await settleResolveForks(ctx);
+        
+    
 
     expect(ordering.getCurrentHeight()).toBe(3);
     expect(ordering.getOrderingBlockHash(3)).toBe(blockHash(sc.ourTip3.header));
     const refused = await import('../../src/store/refused-headers.js');
     expect(refused.anyRefusedHeader([branch4Hash])).toBe(true);
-    expect(net.penalties.length).toBe(1);
-    expect(net.penalties[0]!.kind).toBe('misbehavior');
+    expect(drive.penalties.length).toBe(1);
+    expect(drive.penalties[0]!.kind).toBe('misbehavior');
 
     expect(postIndexedIdsFrom(stdoutLines.slice(startIdx))).toEqual([]);
   });
@@ -434,17 +489,16 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     const backfill = await import('../../src/services/backfill.js');
     const pendingBefore = backfill.getPendingCount();
 
-    const net = singleBranchNet('peer-a', [sc.shared1, sc.branch2, sc.branch3, sc.branch4]);
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(sc.branch4, 'peer-a', net)).toBe(false);
-    await settleResolveForks(ctx);
+    const drive = await driveBranchReorg([sc.branch2, sc.branch3, sc.branch4], 1, 'peer-a');
+        
+    
 
     expect(ordering.getCurrentHeight()).toBe(3);
     expect(ordering.getOrderingBlockHash(3)).toBe(blockHash(sc.ourTip3.header));
     const refused = await import('../../src/store/refused-headers.js');
     expect(refused.anyRefusedHeader([branch4Hash])).toBe(true);
-    expect(net.penalties.length).toBe(1);
-    expect(net.penalties[0]!.kind).toBe('misbehavior');
+    expect(drive.penalties.length).toBe(1);
+    expect(drive.penalties[0]!.kind).toBe('misbehavior');
 
     expect(backfill.getPendingCount()).toBe(pendingBefore);
   });
@@ -462,17 +516,16 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     const logSpy = vi.spyOn(console, 'log');
     const startIdx = logSpy.mock.calls.length;
 
-    const net = singleBranchNet('peer-a', [sc.shared1, sc.branch2, sc.branch3, sc.branch4]);
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(sc.branch4, 'peer-a', net)).toBe(false);
-    await settleResolveForks(ctx);
+    const drive = await driveBranchReorg([sc.branch2, sc.branch3, sc.branch4], 1, 'peer-a');
+        
+    
 
     expect(ordering.getCurrentHeight()).toBe(3);
     expect(ordering.getOrderingBlockHash(3)).toBe(blockHash(sc.ourTip3.header));
     const refused = await import('../../src/store/refused-headers.js');
     expect(refused.anyRefusedHeader([branch4Hash])).toBe(true);
-    expect(net.penalties.length).toBe(1);
-    expect(net.penalties[0]!.kind).toBe('misbehavior');
+    expect(drive.penalties.length).toBe(1);
+    expect(drive.penalties[0]!.kind).toBe('misbehavior');
 
     const applied = appliedLinesFrom(logSpy.mock.calls, startIdx);
     const forbidden = applied.filter(
@@ -508,10 +561,9 @@ describe('a reorg that rolls back leaves what the commit left', () => {
       return true;
     });
 
-    const net = singleBranchNet('peer-a', [sc.shared1, sc.branch2, sc.branch3, sc.branch4]);
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(sc.branch4, 'peer-a', net)).toBe(false);
-    await settleResolveForks(ctx);
+    await driveBranchReorg([sc.branch2, sc.branch3, sc.branch4], 1, 'peer-a');
+        
+    
 
     expect(ordering.getCurrentHeight()).toBe(4);
     expect(heightAtIndexed).toBe(4);
@@ -533,10 +585,9 @@ describe('a reorg that rolls back leaves what the commit left', () => {
     const logStart = logSpy.mock.calls.length;
     const stdoutStart = stdoutLines.length;
 
-    const net = singleBranchNet('peer-a', [sc.shared1, sc.branch2, sc.branch3, sc.branch4]);
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(sc.branch4, 'peer-a', net)).toBe(false);
-    await settleResolveForks(ctx);
+    await driveBranchReorg([sc.branch2, sc.branch3, sc.branch4], 1, 'peer-a');
+        
+    
 
     expect(ordering.getCurrentHeight()).toBe(4);
     expect(ordering.getOrderingBlockHash(4)).toBe(blockHash(sc.branch4.header));
@@ -581,20 +632,25 @@ function throwingRelayGateNet(message: string): NetNode {
 }
 
 describe('a throw after the commit leaves no template', () => {
-  const ctx: Trackers = { caughtCorrupt: [] };
-
   beforeEach(() => {
-    ctx.caughtCorrupt = [];
     vi.resetModules();
-    installTrackers(ctx);
   });
 
   afterEach(async () => {
     const { setNet } = await import('../../src/services/net-instance.js');
     setNet(null as unknown as NetNode);
-    await teardownTrackers();
+    try { (await importBlockCreator()).stopBlockCreator(); } catch { /* not imported */ }
     const backfill = await import('../../src/services/backfill.js');
     backfill.clearPending();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    const intake = await import('../../src/services/intake.js');
+    intake.resetIntakeForTests();
+    intake.clearIntakeSeamsForTests();
+    const pipeline = await import('../../src/services/header-pipeline.js');
+    pipeline.resetPipelineForTests();
+    vi.restoreAllMocks();
+    vi.resetModules();
   });
 
   it('a block whose relay-gate call throws after it commits leaves the committed tip and no template', async () => {
@@ -620,9 +676,7 @@ describe('a throw after the commit leaves no template', () => {
     const { setNet } = await import('../../src/services/net-instance.js');
     setNet(throwingRelayGateNet('relay gate down'));
 
-    const net = singleBranchNet('peer-a', [block]);
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(() => handleOrderingBlock(block, 'peer-a', net)).toThrow('relay gate down');
+    await expect(applyAsRelay(block, 'peer-a')).rejects.toThrow('relay gate down');
 
     expect({
       height: ordering.getCurrentHeight(),
@@ -652,10 +706,8 @@ describe('a throw after the commit leaves no template', () => {
     const { setNet } = await import('../../src/services/net-instance.js');
     setNet(throwingRelayGateNet('relay gate down'));
 
-    const net = singleBranchNet('peer-a', [sc.shared1, sc.branch2, sc.branch3, sc.branch4]);
-    const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-    expect(handleOrderingBlock(sc.branch4, 'peer-a', net)).toBe(false);
-    await settleResolveForks(ctx);
+    await expect(driveBranchReorg([sc.branch2, sc.branch3, sc.branch4], 1, 'peer-a'))
+      .rejects.toThrow('relay gate down');
 
     expect({
       height: ordering.getCurrentHeight(),

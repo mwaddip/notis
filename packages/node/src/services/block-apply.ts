@@ -601,7 +601,7 @@ function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; index
   insertBlockJournal(journal);
   // The journals kept are the floor under revert depth — `revertBlock` throws
   // without one — and the fork walk reaches as deep as they do, no deeper
-  // (NODE_INTERFACE → "The walk reaches as deep as the journals do, and no deeper").
+  // (NODE_INTERFACE → Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point").
   purgeOldJournals(height - config.maxReorgDepth);
   purgeRefusedHeaders(height - config.maxReorgDepth);
   // What a node serves, not what it applies: proofs are kept for

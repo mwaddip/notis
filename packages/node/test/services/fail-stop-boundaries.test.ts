@@ -6,75 +6,16 @@ import {
   beforeEach,
   afterEach,
 } from 'vitest';
-import type { ForkResolutionNet } from '../../src/services/fork-resolution.js';
 import { makeBlock, insertPoisonedBlock } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
-// Boundary pins that drive the real wiring — `pullBlocksHandler`,
-// `guardStoreRead(getOrderingBlock)`, and the blocks router factory over a
-// store whose tip row is poisoned (NODE_INTERFACE → Relay handlers / Sync
-// handlers).
+// Boundary pins that drive the real wiring —
+// `guardStoreRead(getOrderingBlock)` and the blocks router factory over a
+// store whose tip row is poisoned (NODE_INTERFACE → Sync handlers; → "Reach
+// is the live argument, not the halt"). The pull-path boundary — a poisoned
+// read reaching `failStopIfCorruptChain` through the chain view registered
+// by `wireNet` — is `test/services/pipeline-wiring.test.ts`'s.
 // ---------------------------------------------------------------------------
-
-const stubNet: ForkResolutionNet = {
-  getConnectedPeers: () => [],
-  requestHeaders: async () => [],
-  requestBlocks: async () => [],
-  penalizePeer: () => {},
-  peerTipHeight: () => null,
-};
-
-// ---------------------------------------------------------------------------
-// Pull-path boundary — pullBlocksHandler over a poisoned store
-// ---------------------------------------------------------------------------
-
-describe('pull-path boundary (real wiring)', () => {
-  beforeEach(() => { vi.resetModules(); });
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.resetModules();
-  });
-
-  async function poisonTip() {
-    const { initDb, getDb } = await import('../../src/store/db.js');
-    initDb(':memory:');
-    const ordering = await import('../../src/store/ordering.js');
-    insertPoisonedBlock(getDb(), makeBlock(1, -1));
-    expect(ordering.getCurrentHeight()).toBe(1);
-    return ordering;
-  }
-
-  it('a poisoned tip fires exit through the real pull handler', async () => {
-    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit');
-    }) as never);
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    await poisonTip();
-    const { pullBlocksHandler } = await import(
-      '../../src/services/handle-block.js'
-    );
-
-    const handler = pullBlocksHandler(stubNet);
-    expect(() => handler(makeBlock(2, 1000), 'peer1')).toThrow('process.exit');
-    expect(exit).toHaveBeenCalledWith(1);
-  });
-
-  it('an already-held block returns true', async () => {
-    const { initDb } = await import('../../src/store/db.js');
-    initDb(':memory:');
-    const ordering = await import('../../src/store/ordering.js');
-    const clean = makeBlock(1, 100);
-    ordering.createOrderingBlock(clean, []);
-
-    const { pullBlocksHandler } = await import(
-      '../../src/services/handle-block.js'
-    );
-
-    const handler = pullBlocksHandler(stubNet);
-    expect(handler(clean, 'peer1')).toBe(true);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Provider boundary — guardStoreRead(getOrderingBlock) over a poisoned store

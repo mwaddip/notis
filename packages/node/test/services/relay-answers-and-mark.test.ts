@@ -1,11 +1,11 @@
-// NODE_INTERFACE → Relay handlers; NET_INTERFACE → Stage 1 → "A transaction's
-// signatures are checked at Stage 1"; NODE_INTERFACE → Refused headers.
+// NODE_INTERFACE → Relay handlers (mempool-based); NET_INTERFACE → Stage 1 →
+// "A transaction's signatures are checked at Stage 1"; NODE_INTERFACE →
+// Refused headers.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { MAX_BLOCK_BODY_BYTES } from '@dagsocial/types';
 import type { OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
-import type { ForkResolutionNet } from '../../src/services/fork-resolution.js';
 import {
   liveProver,
   makeApplicableBlock,
@@ -38,14 +38,44 @@ async function importDb(): Promise<DbModule> {
   return (await import('../../src/store/db.js')) as unknown as DbModule;
 }
 
-async function importHandleBlock() {
-  return (await import('../../src/services/handle-block.js')) as unknown as {
-    handleOrderingBlock: (
-      block: OrderingBlock,
-      fromPeerId: string,
-      net: ForkResolutionNet,
-    ) => boolean;
-  };
+/**
+ * Deliver a block as a gossiped block through the intake, then answer the
+ * old `handleOrderingBlock` shape — `true` iff the apply moved the tip.
+ * The intake admits the header, binds, stages and applies by extension; the
+ * verdict reaches the deliverer through the intake's log and the applied-tip
+ * read (NODE_INTERFACE → Fork choice decides on verified headers).
+ */
+async function deliverRelay(
+  block: OrderingBlock,
+  fromPeerId: string,
+): Promise<boolean> {
+  const { config } = await import('../../src/config.js');
+  const intake = await import('../../src/services/intake.js');
+  const headerPipeline = await import('../../src/services/header-pipeline.js');
+  const difficulty = await import('../../src/services/difficulty.js');
+  const { getCurrentHeight, getLowestJournalHeight } = await import('../../src/store/index.js');
+  if (!intake.isIntakeInitialized()) {
+    intake.initIntake(
+      {
+        penalize: () => {},
+        chainMoved: () => {},
+        needHeaders: () => {},
+      },
+      {
+        params: difficulty.retargetParams(),
+        schedule: config.protocolVersionSchedule,
+        nowMs: difficulty.nowMs,
+        maxReorgDepth: config.maxReorgDepth,
+        genesisId: config.profile.genesisId,
+        lowestJournalHeight: () => getLowestJournalHeight(),
+        appliedTipHeight: () => getCurrentHeight(),
+      },
+    );
+  }
+  void headerPipeline;
+  const before = getCurrentHeight();
+  await intake.deliverGossipedBlock(fromPeerId, block);
+  return getCurrentHeight() > before;
 }
 
 async function importBlockApply() {
@@ -70,16 +100,6 @@ async function importRefusedHeaders() {
   return await import('../../src/store/refused-headers.js');
 }
 
-/** A trivial net surface — the extends arm and the no-op arm never touch it. */
-function silentNet(): ForkResolutionNet {
-  return {
-    getConnectedPeers: () => [],
-    requestHeaders: async () => [],
-    requestBlocks: async () => [],
-    penalizePeer: () => {},
-    peerTipHeight: () => null,
-  };
-}
 
 async function initChainStore(): Promise<void> {
   const db = await importDb();
@@ -353,7 +373,7 @@ describe('a consensus refusal marks the header, nothing else does', () => {
     'a bound-body consensus refusal marks the header, and a second delivery is a no-op',
     async () => {
       await initChainStore();
-      const handleBlock = await importHandleBlock();
+      
       const refused = await importRefusedHeaders();
       const warned: string[] = [];
       vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
@@ -371,7 +391,7 @@ describe('a consensus refusal marks the header, nothing else does', () => {
       const hash = blockHash(bad.header);
       if (hash === null) throw new Error('block has an unencodable header');
 
-      const first = handleBlock.handleOrderingBlock(bad, 'peer-a', silentNet());
+      const first = await deliverRelay(bad, 'peer-a');
       expect(first).toBe(false);
       expect(refused.anyRefusedHeader([hash])).toBe(true);
       const warnedAfterFirst = warned.filter((l) =>
@@ -381,7 +401,7 @@ describe('a consensus refusal marks the header, nothing else does', () => {
 
       // The second delivery — the funnel is not entered. The warn count for
       // the stateRoot mismatch stays at 1.
-      const second = handleBlock.handleOrderingBlock(bad, 'peer-a', silentNet());
+      const second = await deliverRelay(bad, 'peer-a');
       expect(second).toBe(false);
       const warnedAfterSecond = warned.filter((l) =>
         l.includes('stateRoot mismatch'),
@@ -394,11 +414,13 @@ describe('a consensus refusal marks the header, nothing else does', () => {
     'a validator-signature refusal and a body-root refusal are not marked, and the honest block then applies',
     async () => {
       await initChainStore();
-      const handleBlock = await importHandleBlock();
+      
       const refused = await importRefusedHeaders();
       vi.spyOn(console, 'warn').mockImplementation(() => {});
       vi.spyOn(console, 'log').mockImplementation(() => {});
       vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const { removeHeaderSubtree } = await import('../../src/store/header-tree.js');
 
       // Validator signature refusal: forger does the PoW and signs under
       // their own key, which is not the one `validatorId` names.
@@ -406,8 +428,13 @@ describe('a consensus refusal marks the header, nothing else does', () => {
       const forged = await makeApplicableBlock({ signWith: forger.privateKey });
       const forgedHash = blockHash(forged.header);
       if (forgedHash === null) throw new Error('block has an unencodable header');
-      expect(handleBlock.handleOrderingBlock(forged, 'peer-a', silentNet())).toBe(false);
+      expect(await deliverRelay(forged, 'peer-a')).toBe(false);
       expect(refused.anyRefusedHeader([forgedHash])).toBe(false);
+      // The admitted header stays in the tree without a mark; the binding's
+      // refusal persists nothing beyond the per-peer penalty. Clear it so
+      // the next delivery's header admits as height 1's first (the test's
+      // old entry re-ran the funnel directly, which held no header tree).
+      removeHeaderSubtree(forgedHash);
 
       // Body-root refusal: a body belonging to another header rides under
       // this one — `verifyUtxoTxRoot` refuses.
@@ -416,12 +443,13 @@ describe('a consensus refusal marks the header, nothing else does', () => {
       const swapped: OrderingBlock = { ...bad, utxoTxTree: other.utxoTxTree };
       const swappedHash = blockHash(swapped.header);
       if (swappedHash === null) throw new Error('block has an unencodable header');
-      expect(handleBlock.handleOrderingBlock(swapped, 'peer-a', silentNet())).toBe(false);
+      expect(await deliverRelay(swapped, 'peer-a')).toBe(false);
       expect(refused.anyRefusedHeader([swappedHash])).toBe(false);
+      removeHeaderSubtree(swappedHash);
 
       // The honest version of this header's own block applies.
       const good = await makeApplicableBlock({});
-      expect(handleBlock.handleOrderingBlock(good, 'peer-a', silentNet())).toBe(true);
+      expect(await deliverRelay(good, 'peer-a')).toBe(true);
       const ordering = await importOrdering();
       expect(ordering.getCurrentHeight()).toBe(1);
     },
@@ -431,7 +459,7 @@ describe('a consensus refusal marks the header, nothing else does', () => {
     'a block beyond the future bound is refused and nothing is marked',
     async () => {
       await initChainStore();
-      const handleBlock = await importHandleBlock();
+      
       const refused = await importRefusedHeaders();
       const { MAX_FUTURE_DRIFT_MS } = await import('@dagsocial/types');
       const { setClock, nowMs } = await import('../../src/services/difficulty.js');
@@ -447,7 +475,7 @@ describe('a consensus refusal marks the header, nothing else does', () => {
         const hash = blockHash(bad.header);
         if (hash === null) throw new Error('block has an unencodable header');
 
-        expect(handleBlock.handleOrderingBlock(bad, 'peer-a', silentNet())).toBe(false);
+        expect(await deliverRelay(bad, 'peer-a')).toBe(false);
         expect(refused.anyRefusedHeader([hash])).toBe(false);
       } finally {
         setClock(null);
@@ -470,7 +498,7 @@ describe('headerStanding answers from the store', () => {
     'held for a stored block, refused for a marked hash, null otherwise',
     async () => {
       await initChainStore();
-      const handleBlock = await importHandleBlock();
+      
       const ordering = await importOrdering();
       const refused = await importRefusedHeaders();
       vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -478,7 +506,7 @@ describe('headerStanding answers from the store', () => {
       vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const good = await makeApplicableBlock({});
-      expect(handleBlock.handleOrderingBlock(good, 'peer-a', silentNet())).toBe(true);
+      expect(await deliverRelay(good, 'peer-a')).toBe(true);
       const heldHash = ordering.getOrderingBlockHash(1);
       expect(heldHash).not.toBeNull();
 

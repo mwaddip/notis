@@ -313,14 +313,3 @@ export function getLastHeaders(n: number): BlockHeader[] {
   return decodeHeaderRows(rows, 'getLastHeaders');
 }
 
-/**
- * Headers above `height`, ascending, at most `n`. The caller bounds `n`:
- * fork resolution needs every header above the fork for `ourWork`, which can
- * be up to `maxReorgDepth` (NODE_INTERFACE → Ordering blocks).
- */
-export function getHeadersAbove(height: number, n: number): BlockHeader[] {
-  const rows = getDb()
-    .prepare('SELECT header_bytes, height FROM ordering_blocks WHERE height > ? ORDER BY height ASC LIMIT ?')
-    .all(height, n) as Array<{ header_bytes: Buffer; height: number }>;
-  return decodeHeaderRows(rows, 'getHeadersAbove');
-}

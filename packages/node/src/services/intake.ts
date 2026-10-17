@@ -12,6 +12,7 @@ import {
   getCurrentHeight,
   getHeaderRow,
   getOrderingBlockHash,
+  getPlaceholdersAt,
   getStagedBlock,
   insertRefusedHeader,
   pruneHeadersBelow,
@@ -19,6 +20,7 @@ import {
   stageBlock,
   unstageBlock,
 } from '../store/index.js';
+import { onBlockApplied, registerPlaceholder } from './backfill.js';
 import {
   admitHeader,
   admitPage,
@@ -238,6 +240,15 @@ function drainExtension(): void {
     const verdict = applyFn(staged.block);
     if (verdict.applied) {
       unstageBlock(nextHash);
+      // NODE_INTERFACE → Posts → "Backfill after sync": placeholders this
+      // block's commit left are handed to the body puller, naming the peer
+      // the block came through.
+      for (const p of getPlaceholdersAt(nextH)) {
+        registerPlaceholder(p.id, p.contentHash, nextH, staged.fromPeer);
+      }
+      onBlockApplied(nextH).catch((err) =>
+        console.warn(`Backfill error at height ${nextH}: ${String(err)}`),
+      );
       // Pruning runs at each apply (NODE_INTERFACE → Fork choice decides on
       // verified headers → "Pruning."). The journals are purged by
       // `applyBlockBody`'s own call to `purgeOldJournals`.

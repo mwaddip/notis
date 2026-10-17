@@ -272,7 +272,7 @@ export class InconsistentStateTreeError extends CorruptChainStateError {
 
 /**
  * A block journal at or above the lowest one kept is absent
- * (NODE_INTERFACE → "The walk reaches as deep as the journals do, and no deeper").
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point").
  *
  * The fork walk bounds its lowest examined height by `lowestJournal − 1` so
  * every fork point it answers sits at `lowestJournal − 1` or above, and

@@ -18,13 +18,9 @@ import {
   T1,
   buildAndApply,
   initChainStore,
-  installTrackers,
-  singleBranchNet,
   startCreator,
-  teardownTrackers,
   testConfig,
 } from './fork-resolution-fixtures.js';
-import type { Trackers } from './fork-resolution-fixtures.js';
 
 // NODE_INTERFACE → Store Interface → Posts DAG → "Backfill after sync".
 
@@ -114,24 +110,39 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 async function applyNext(block: OrderingBlock, peerId = 'peer-a'): Promise<void> {
-  const stub = singleBranchNet(peerId, [block]);
-  const { handleOrderingBlock } = await import('../../src/services/handle-block.js');
-  expect(handleOrderingBlock(block, peerId, stub)).toBe(true);
+  // Direct-apply funnel + the placeholder registrations and backfill the
+  // pipeline's extension performs on an applied block (NODE_INTERFACE →
+  // Posts → "Backfill after sync"): the subject here is the body puller.
+  // The backfill call is fire-and-forget, matching the pipeline's own path.
+  const blockApply = await import('../../src/services/block-apply.js');
+  expect(blockApply.applyOrderingBlock(block)).toBe(true);
+  const backfill = await import('../../src/services/backfill.js');
+  const { getPlaceholdersAt } = await import('../../src/store/index.js');
+  for (const p of getPlaceholdersAt(block.header.height)) {
+    backfill.registerPlaceholder(p.id, p.contentHash, block.header.height, peerId);
+  }
+  backfill.onBlockApplied(block.header.height).catch(() => {});
 }
 
 describe('the body puller', () => {
-  const ctx: Trackers = { caughtCorrupt: [] };
-
   beforeEach(() => {
-    ctx.caughtCorrupt = [];
     vi.resetModules();
-    installTrackers(ctx);
   });
 
   afterEach(async () => {
-    await teardownTrackers();
+    const bc = await import('../../src/services/block-creator.js');
+    try { bc.stopBlockCreator(); } catch { /* not imported */ }
     const backfill = await import('../../src/services/backfill.js');
     backfill.clearPending();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    const intake = await import('../../src/services/intake.js');
+    intake.resetIntakeForTests();
+    intake.clearIntakeSeamsForTests();
+    const pipeline = await import('../../src/services/header-pipeline.js');
+    pipeline.resetPipelineForTests();
+    vi.restoreAllMocks();
+    vi.resetModules();
   });
 
   it('a placeholder is asked once while its request is open', async () => {
