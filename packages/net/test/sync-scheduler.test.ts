@@ -595,6 +595,20 @@ describe('needHeaders asks the named relayer when it is Active and unmarked', ()
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
+  it('needHeaders for a peer not in connectedPeers plants no openHeaderRuns entry', () => {
+    const sch = makeScheduler({ nextPage: new Error('held') });
+    // 'ghost' is NOT in sch.connected. `flush` drains the control
+    // event synchronously; `startHeaderRun` runs synchronously up to
+    // its first `await`. Without the launch connected-set check, the
+    // run adds the ghost to `openHeaderRuns` here — only runHeaders'
+    // own isConnected returns on the next microtask.
+    needHeaders(sch, 'ghost');
+    const openRuns = (sch.machine as unknown as { getOpenHeaderRunsForTest(): Set<string> })
+      .getOpenHeaderRunsForTest();
+    expect(openRuns.has('ghost')).toBe(false);
+    expect(sch.requests.length).toBe(0);
+  });
+
   it('needHeaders asks the unmarked relayer and not the marked one', async () => {
     const sch = makeScheduler({ nextPage: [] });
     peerActive(sch, 'bad', 1);

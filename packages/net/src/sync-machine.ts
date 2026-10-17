@@ -293,6 +293,12 @@ export class SyncMachine {
     return this.pendingSyncInfo;
   }
 
+  /** Test introspection — the peers whose header run has been added
+   * but not yet removed. */
+  getOpenHeaderRunsForTest(): Set<string> {
+    return this.openHeaderRuns;
+  }
+
   /** Test hook — mark a peer; the run loop reads the mark at its next
    * iteration. */
   markPeerForTest(peerId: string): void {
@@ -479,19 +485,17 @@ export class SyncMachine {
   // -------- Pipeline events --------
 
   private handleNeedHeaders(peerId: string): void {
-    if (!this.isConnected(peerId)) return;
     // NET_INTERFACE → Pull Requests → "A gossiped block's relayer is asked
     // for the headers the tree lacks": with no claim, the run reads the
     // claim as it arrives at each iteration; a run that stays no-claim
-    // ends on the first short page. A marked peer's run returns at
-    // `runHeaders`' mark check; `startHeaderRun` holds one-run-per-peer.
+    // ends on the first short page. The connected-set, mark and
+    // one-run-per-peer gates live on `startHeaderRun`.
     void this.startHeaderRun(peerId);
   }
 
   private handleChainMoved(): void {
     if (!this.chainView) return;
     for (const [peerId, claim] of this.claims) {
-      if (!this.isConnected(peerId)) continue;
       if (!this.chainView.knowsTip(peerId, claim.tipHash)) {
         void this.startHeaderRun(peerId);
       }
