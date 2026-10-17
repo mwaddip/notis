@@ -309,11 +309,10 @@ describe('NETWORK_PROFILES', () => {
   });
 
   // TYPES_INTERFACE → Network profiles: the least work a best chain must carry before any block is
-  // fetched along it. 0n on all three networks. Read by index, so the case compiles with the field
-  // absent from the interface.
+  // fetched along it. 0n on all three networks.
   it('every profile carries minimumChainWork, a bigint equal to 0n', () => {
     for (const p of Object.values(NETWORK_PROFILES)) {
-      const value = (p as unknown as Record<string, unknown>)['minimumChainWork'];
+      const value = p.minimumChainWork;
       expect(typeof value, `${p.networkType}.minimumChainWork`).toBe('bigint');
       expect(value, `${p.networkType}.minimumChainWork`).toBe(0n);
     }
