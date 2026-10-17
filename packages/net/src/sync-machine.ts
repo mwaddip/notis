@@ -288,6 +288,11 @@ export class SyncMachine {
     return this.directions.get(peerId) ?? null;
   }
 
+  /** Test introspection — the pending `SyncInfo` held by its peer id. */
+  getPendingSyncInfoForTest(): Map<string, SyncInfo> {
+    return this.pendingSyncInfo;
+  }
+
   // -------- Public events --------
 
   onPeerActive(peerId: string, peerHeight: number, direction: 'inbound' | 'outbound' = 'outbound'): void {

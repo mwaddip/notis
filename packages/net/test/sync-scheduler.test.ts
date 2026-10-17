@@ -240,6 +240,22 @@ describe('an event for a peer not in the connected set plants nothing', () => {
     expect(sch.sent.filter(m => m.peerId === 'stranger').length).toBe(0);
   });
 
+  it("a ghost's second SyncInfo inside the interval plants no pending entry", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const sch = makeScheduler();
+    syncInfo(sch, 'stranger', 10);
+    vi.advanceTimersByTime(10); // inside SYNC_INFO_MIN_INTERVAL_MS
+    syncInfo(sch, 'stranger', 20);
+    // Removing `handleSyncInfoMsg`'s connected-set check would hand the
+    // first report to `actOnSyncInfo` (planting the acted-on stamp) and
+    // store the second as the ghost's pending — the tick would then
+    // act on it on expiry.
+    const introspect = sch.machine as unknown as { getPendingSyncInfoForTest(): Map<string, unknown> };
+    expect(introspect.getPendingSyncInfoForTest().has('stranger')).toBe(false);
+    vi.useRealTimers();
+  });
+
   it('a peer-active for a peer not in connectedPeers() records no direction and sends nothing', () => {
     const sch = makeScheduler();
     sch.machine.onPeerActive('ghost', 10, 'outbound');
