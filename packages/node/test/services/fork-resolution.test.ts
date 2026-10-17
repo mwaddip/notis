@@ -1429,7 +1429,8 @@ describe('reorg', () => {
     // Now apply competing chain: blocks 2A, 3A (using same blocks for test simplicity)
     // In a real reorg, these would be different blocks from a peer
     // For the test, we apply the same blocks to verify the mechanism works
-    forkResolution.reorg(1, await stagePrefix([block2!, block3!]));
+    const prefixHashes = await stagePrefix([block2!, block3!]);
+    forkResolution.reorg(1, prefixHashes);
 
     expect(ordering.getCurrentHeight()).toBe(3);
     expect(ordering.getOrderingBlock(2)).not.toBeNull();
@@ -1440,6 +1441,14 @@ describe('reorg', () => {
     expect(journalStore.getBlockJournal(1)).not.toBeNull();
     expect(journalStore.getBlockJournal(2)).not.toBeNull();
     expect(journalStore.getBlockJournal(3)).not.toBeNull();
+
+    // NODE_INTERFACE → Fork choice decides on verified headers → "A bound
+    // block is staged, and applied from staging.": `reorg`'s in-transaction
+    // `unstageBlock` on apply removes every staged row of the prefix.
+    const headerTree = await import('../../src/store/header-tree.js');
+    for (const hash of prefixHashes) {
+      expect(headerTree.getStagedBlock(hash)).toBeNull();
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -1669,6 +1678,17 @@ describe('reorg abort', () => {
     const postDigest = avl!.prover.digest();
     expect(postDigest).not.toBeNull();
     expect(Buffer.from(postDigest!).equals(Buffer.from(preDigest))).toBe(true);
+
+    // NODE_INTERFACE → Fork choice decides on verified headers → "A bound
+    // block is staged, and applied from staging.": `reorg`'s in-transaction
+    // `unstageBlock(hash)` runs inside the SQLite transaction, so a thrown
+    // `ReorgBlockRejectedError` rolls both the unstage and the apply back —
+    // every staged row of the prefix is still there, so the block ids
+    // remain `wanted`.
+    const headerTree = await import('../../src/store/header-tree.js');
+    for (const hash of prefixHashes) {
+      expect(headerTree.getStagedBlock(hash)).not.toBeNull();
+    }
   });
 
   it('failed mid-reorg apply leaves dagTipHeight at the pre-reorg tip', async () => {
