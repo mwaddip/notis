@@ -141,8 +141,8 @@ function workOrZero(bits: number): bigint {
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers →
- * "An admitted header is stored when it extends the best chain or outweighs
- * it". A `stored` verdict extends best; a side-branch header is `scored`.
+ * "An admitted header is stored when it extends the best chain." A `stored`
+ * verdict extends best; a side-branch header is `scored`.
  */
 function tryStoreOrSwitch(
   header: BlockHeader,
