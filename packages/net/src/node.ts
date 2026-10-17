@@ -344,16 +344,20 @@ export function serveHeadersResponse(
  * stops before exceeding `MAX_SERVE_BODY_BYTES`, and **always includes the
  * first block**, so a request is never answered with nothing while the
  * server holds what was asked (NET_INTERFACE → `GetHeaders` / `GetBlocks`
- * responses → "always include the first block"). An id asked twice is
- * served twice: the arm reads the ids in order, keeps no cross-id state,
- * and the byte bound stops the response long before the duplication
- * matters; the contract is silent on dedup and the requester paid for
- * both.
+ * responses → "always include the first block"). NET_INTERFACE →
+ * `GetHeaders` / `GetBlocks` responses → "An id asked twice is answered
+ * twice": the arm reads the ids in order and keeps no cross-id state.
+ *
+ * `ourHeight` is unread here: `heightByBlockId` answers only heights of
+ * the applied chain, in the same synchronous call as the one `chainHeight()`
+ * reads, so a height above the tip is unreachable through this seam. The
+ * parameter stands for the shared `serveChainQuery` signature the arm's
+ * caller passes it under.
  */
 export function serveBlocksResponse(
   magic: number,
   request: GetBlocksMsg,
-  ourHeight: number,
+  _ourHeight: number,
   heightByBlockId: (id: string) => number | null,
   getBlock: (height: number) => OrderingBlock | null,
 ): Uint8Array {
@@ -361,7 +365,7 @@ export function serveBlocksResponse(
   let bodyBytes = 0;
   for (const id of request.ids) {
     const height = heightByBlockId(id);
-    if (height === null || height > ourHeight) continue;
+    if (height === null) continue;
     const block = getBlock(height);
     if (!block) continue;
     const data = encodeOrderingBlock(block);
