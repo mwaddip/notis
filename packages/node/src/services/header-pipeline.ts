@@ -163,16 +163,12 @@ function workOrZero(bits: number): bigint {
 }
 
 /**
- * The interlinks a header commits to — read from the parent's vector via
- * `updateInterlinks` (TYPES_INTERFACE → Interlink vector). A parent whose
- * `level` the yardstick cannot answer contributes no new entry; the vector
- * passes through unchanged.
+ * The interlinks a header commits to — the one rule
+ * (TYPES_INTERFACE → Interlink vector), through `updateInterlinks` with the
+ * level `level` answers.
  */
 function interlinksCommitFromParent(parent: HeaderRow, anchorBits: number): string[] {
-  if (parent.height === 0 && parent.hash === GENESIS_PREV_BLOCK_HASH) return [];
-  const parentLevel = level(parent.header, anchorBits);
-  if (parentLevel === null) return parent.interlinks;
-  return updateInterlinks(parent.interlinks, parent.hash, parentLevel);
+  return updateInterlinks(parent.interlinks, parent.hash, level(parent.header, anchorBits));
 }
 
 /**
