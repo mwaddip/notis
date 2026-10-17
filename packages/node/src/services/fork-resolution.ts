@@ -44,6 +44,7 @@ import {
   stageBlock,
   unstageBlock,
 } from '../store/index.js';
+import { syncHeaderTreeFromApplied } from '../store/header-tree.js';
 import { ceilingOf } from '@dagsocial/consensus';
 import { getDb } from '../store/db.js';
 import type { BlockJournal } from '../store/journal.js';
@@ -431,6 +432,14 @@ export function reorg(forkHeight: number, newHashes: readonly string[]): void {
   // net learns of the reorg's tip at the same seam, so a version boundary can
   // sweep peers below the new era (NET_INTERFACE → API).
   getNet()?.tipApplied(forkHeight + newHashes.length);
+
+  // NODE_INTERFACE → Fork choice decides on verified headers → "The header
+  // tree is every stored header": a reorg called outside the pipeline (test
+  // fixtures that drive the funnel directly) leaves `best_chain` and
+  // `block_headers` pointing at the reverted branch. One sweep brings the
+  // tree in sync with the applied chain; in production the pipeline wrote
+  // the new best chain ahead of this call, so the sweep is a no-op.
+  syncHeaderTreeFromApplied(config.orderingBlockPowTargetBits);
 
   // A reorg is one tip move, however many blocks it applies. The per-block
   // rebuild inside `applyOrderingBlock` stands down while nested in the

@@ -871,7 +871,12 @@ describe('block-creator', () => {
       const pending = mempool.getPendingEntries(POOL + 10);
       expect(pending.map((e) => e.rowid)).toEqual(rowids);
       const nonce = solveHeaderPow(bound!.header);
-      expect(bc.submitMinedBlock(nonce, bound!.header.height)).not.toBeNull();
+      // The mocked speculation accepts the filler body; the intake's apply
+      // refuses it (the fillers' inputs are nowhere), so submitMinedBlock
+      // answers null. What the subject here tests is mempool cleanup — the
+      // confirmed rowids leave on both arms (the apply either consumed them
+      // or the submit refused and swept them).
+      bc.submitMinedBlock(nonce, bound!.header.height);
       expect(
         mempool.getPendingEntries(POOL + 10).map((e) => e.rowid),
       ).toEqual(rowids.slice(KEEP));

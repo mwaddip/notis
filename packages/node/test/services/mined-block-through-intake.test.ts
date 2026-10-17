@@ -34,6 +34,20 @@ function makeSpyNet(spy: NetSpy): unknown {
   };
 }
 
+/**
+ * Minimal wire surface for `wireNet` — the registration methods it reads, each
+ * swallowing its callback since the mined-block path never fires one.
+ */
+function makeFakeWireableNet(base: unknown): unknown {
+  return {
+    ...(base as object),
+    setPipeline: () => {},
+    setChainView: () => {},
+    onOrderingBlock: () => {},
+    onPeerDisconnected: () => {},
+  };
+}
+
 describe('a mined block applies through the pipeline\'s intake', () => {
   beforeEach(async () => {
     await initChainStore();
@@ -49,10 +63,13 @@ describe('a mined block applies through the pipeline\'s intake', () => {
     vi.resetModules();
   });
 
-  it.fails('a mined block is admitted to the header tree before it applies', async () => {
+  it('a mined block is admitted to the header tree before it applies', async () => {
     const spy: NetSpy = { broadcast: [] };
     const { setNet } = await import('../../src/services/net-instance.js');
-    setNet(makeSpyNet(spy) as never);
+    const net = makeSpyNet(spy);
+    setNet(net as never);
+    const { wireNet } = await import('../../src/services/net-wiring.js');
+    wireNet(makeFakeWireableNet(net) as never);
 
     await startCreator(testConfig);
     const bc = await importBlockCreator();
@@ -70,7 +87,7 @@ describe('a mined block applies through the pipeline\'s intake', () => {
     expect(getHeaderRow(minedHash!)).not.toBeNull();
   });
 
-  it.fails('submitMinedBlock answers null when the intake refuses the mined block', async () => {
+  it('submitMinedBlock answers null when the intake refuses the mined block', async () => {
     // A refusal here means the intake does not apply the block — the one
     // path that produces that without a corrupt-state throw is a template
     // whose header the mined nonce does not satisfy. The route's PoW check
@@ -78,10 +95,11 @@ describe('a mined block applies through the pipeline\'s intake', () => {
     // replacing the apply seam.
     const spy: NetSpy = { broadcast: [] };
     const { setNet } = await import('../../src/services/net-instance.js');
-    setNet(makeSpyNet(spy) as never);
+    const net = makeSpyNet(spy);
+    setNet(net as never);
+    const { wireNet } = await import('../../src/services/net-wiring.js');
+    wireNet(makeFakeWireableNet(net) as never);
 
-    const db = await importDb();
-    const dbh = db.getDb();
     // Build a template through the creator, then arrange for apply to refuse.
     await startCreator(testConfig);
     const bc = await importBlockCreator();
@@ -102,7 +120,5 @@ describe('a mined block applies through the pipeline\'s intake', () => {
     // refused block (nothing re-propagated).
     expect(spy.broadcast).toEqual([]);
     intake.clearIntakeSeamsForTests();
-    // Keep the db reference live until afterEach.
-    void dbh;
   });
 });

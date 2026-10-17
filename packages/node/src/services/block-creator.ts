@@ -40,13 +40,13 @@ import type {
 // assigned.
 import { config as nodeConfig } from '../config.js';
 import type { Config } from '../config.js';
-import { scheduledTargetBits, nowMs } from './difficulty.js';
+import { retargetParams, scheduledTargetBits, nowMs } from './difficulty.js';
 import { getNet } from './net-instance.js';
 import {
   applyContextFrom,
-  applyOrderingBlock,
   computePostBlockStateRoot,
 } from './block-apply.js';
+import { deliverMinedBlock, initIntake, isIntakeInitialized } from './intake.js';
 import type { StateRootSpeculation } from './block-apply.js';
 import {
   bondOutputOf,
@@ -78,11 +78,13 @@ import {
 import {
   getOrderingBlock,
   getCurrentHeight,
+  getLowestJournalHeight,
   getRentEligibleCreditBoxes,
   getInterlinks,
   getKarmaValue,
   getIdentityRecord,
 } from '../store/index.js';
+import { syncHeaderTreeFromApplied } from '../store/header-tree.js';
 
 // ---------------------------------------------------------------------------
 // Body sizing
@@ -255,6 +257,43 @@ export function startBlockCreator(cfg: Config): void {
   validatorPrivKey = privateKey;
   validatorId = validatorPubKey;
 
+  // NODE_INTERFACE → Fork choice decides on verified headers → "One intake,
+  // one at a time": the intake is initialised at `wireNet` time in production,
+  // ahead of block creation. A fallback here keeps a miner node whose
+  // startup skipped wiring (test fixtures that drive the creator directly)
+  // from reaching the intake with a null context. Penalties and
+  // `needHeaders(peerId)` route to net when it exists, chainMoved refreshes
+  // the relay gate — the same seams `net-wiring.ts` installs.
+  if (!isIntakeInitialized()) {
+    initIntake(
+      {
+        penalize: (peerId, kind, reason) => {
+          getNet()?.penalizePeer(peerId, kind, reason);
+        },
+        chainMoved: () => { getNet()?.chainMoved(); },
+        needHeaders: (peerId) => { getNet()?.needHeaders(peerId); },
+      },
+      {
+        params: retargetParams(),
+        schedule: cfg.protocolVersionSchedule,
+        nowMs,
+        maxReorgDepth: cfg.maxReorgDepth,
+        genesisId: cfg.profile.genesisId,
+        lowestJournalHeight: () => getLowestJournalHeight(),
+        appliedTipHeight: () => getCurrentHeight(),
+      },
+    );
+  }
+
+  // NODE_INTERFACE → Fork choice decides on verified headers → "The header
+  // tree is every stored header": a store whose applied chain was built
+  // outside the pipeline (test fixtures that drive the apply funnel directly)
+  // reaches the mined-block entry with no tree rows, and admission would
+  // refuse the mined header as parent-unknown. One sweep catches the tree up
+  // to the applied tip; in production the pipeline wrote every row ahead of
+  // this call, so the sweep is a no-op.
+  syncHeaderTreeFromApplied(cfg.orderingBlockPowTargetBits);
+
   // A miner node holds a template from the moment it starts, and one per height
   // thereafter: production is regulated by difficulty, not by an interval
   // (MINING_INTERFACE → Template and submit). Serving is separate — the
@@ -359,8 +398,48 @@ export function submitMinedBlock(powNonce: number, submittedHeight: number): str
     validatorSignature: new Uint8Array(sig),
   };
 
-  // Finalize and broadcast
-  finalizeBlock(block);
+  // The mined rowids this block's body carried in — the entries the template
+  // claimed from the pool at build time. Read off the module before the apply:
+  // a successful intake moves the tip and rebuilds the template, which repoints
+  // `confirmedRowids` at the next height's rows.
+  const minedRowids = confirmedRowids;
+
+  // NODE_INTERFACE → Block finalization → "A mined block is applied through
+  // the pipeline's intake": one entry drives admission, binding, staging and
+  // extension through the funnel's classified entry. The intake answers the
+  // verdict `submitMinedBlock` reports back.
+  const verdict = deliverMinedBlock(block);
+
+  // Clean up any mempool entries the intake did not remove. Double-removal is
+  // harmless. Runs on both arms: whatever made a rejected body invalid came
+  // out of the mempool, so leaving those entries in place would reassemble the
+  // same rejected block at every rebuild and stall the chain.
+  for (const rowid of minedRowids) {
+    removeEntry(rowid);
+  }
+
+  if (!verdict.applied) {
+    console.warn(
+      `submitMinedBlock: intake refused the mined block at height ${block.header.height}, ` +
+      `class=${verdict.class}` +
+      (verdict.detail ? `: ${verdict.detail}` : ''),
+    );
+    // NODE_INTERFACE → Triggers → "The template is voided at the commit that
+    // moves the tip, and nowhere else": a refused block moves no tip, so the
+    // creator rebuilds here to prevent the next solve from being spent on a
+    // body this node has already refused.
+    rebuildTemplate();
+    return null;
+  }
+
+  // Peers apply the same rules, so a block this node accepted is one every
+  // peer accepts (barring body-level eviction) — safe to re-propagate.
+  const net = getNet();
+  if (net) {
+    net.broadcastOrderingBlock(block).catch((err: Error) => {
+      console.warn(`Failed to broadcast ordering block: ${err.message}`);
+    });
+  }
 
   return hh;
 }
@@ -409,6 +488,14 @@ export function emissionTotal(): bigint {
 // ---------------------------------------------------------------------------
 
 export function createOrderingBlock(): OrderingBlock | null {
+  // NODE_INTERFACE → Fork choice decides on verified headers → "The header
+  // tree is every stored header": catches a tree out of sync with the applied
+  // chain — a direct `revertBlock` call outside the pipeline leaves
+  // `best_chain` and `block_headers` pointing at reverted blocks, and
+  // admission would refuse the mined header's parent then. In production the
+  // pipeline is the one writer and this sweep is a no-op.
+  if (config) syncHeaderTreeFromApplied(config.orderingBlockPowTargetBits);
+
   const currentHeight = getCurrentHeight();
   const newHeight = currentHeight + 1;
 
@@ -1059,57 +1146,10 @@ export function createOrderingBlock(): OrderingBlock | null {
 }
 
 // ---------------------------------------------------------------------------
-// Block finalization
+// Block finalization is `submitMinedBlock` above — the mined block enters the
+// pipeline's intake, apply runs through the funnel's classified entry, the
+// template rebuilds on refusal, and the applied block is re-propagated.
 // ---------------------------------------------------------------------------
-
-function finalizeBlock(block: OrderingBlock): void {
-  // applyOrderingBlock handles validation, storage, coinbase, confirmations,
-  // UTXO tx application, journal recording, and basic mempool cleanup
-  //
-  // The boundary sits here rather than at the caller because the one path in —
-  // `POST /mining/submit` via `submitMinedBlock` — ends inside an Express
-  // handler, which turns a throw into a 500 and keeps the node running.
-  //
-  // The rows this block confirmed are read off the module before the apply: an
-  // accepted block moves the tip, which rebuilds the template and re-points
-  // `confirmedRowids` at the rows of the *next* height.
-  const minedRowids = confirmedRowids;
-  let applied: boolean;
-  try {
-    applied = applyOrderingBlock(block);
-  } catch (err) {
-    failStopIfCorruptChain(err);
-  }
-
-  // Clean up any remaining mempool entries that applyOrderingBlock didn't
-  // remove. Double-removal is harmless.
-  //
-  // This runs even when the block was rejected: whatever made it invalid came
-  // out of the mempool, so leaving those entries in place would reassemble the
-  // same rejected block at every rebuild and stall the chain.
-  for (const rowid of minedRowids) {
-    removeEntry(rowid);
-  }
-
-  // Broadcast (not handled by applyOrderingBlock) — only for a block we
-  // ourselves accepted. Peers apply the same rules, so gossiping a block our
-  // own validation rejected can only waste their bandwidth.
-  const net = getNet();
-  if (net && applied) {
-    net.broadcastOrderingBlock(block).catch((err: Error) => {
-      console.warn(`Failed to broadcast ordering block: ${err.message}`);
-    });
-  }
-
-  // An accepted block has already rebuilt the template for the next height on
-  // its way through the apply. A rejected one leaves the tip where it was, so
-  // nothing rebuilt — and the body it was built from has just had its entries
-  // dropped above, so rebuilding here is what stops the next solve being spent
-  // on a body this node has already refused.
-  if (!applied) {
-    rebuildTemplate();
-  }
-}
 
 // ---------------------------------------------------------------------------
 // The decay configuration

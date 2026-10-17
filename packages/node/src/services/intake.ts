@@ -28,7 +28,8 @@ import {
   type PageVerdict,
   type PipelineContext,
 } from './header-pipeline.js';
-import { applyOrderingBlockVerdict as realApplyOrderingBlockVerdict, type ApplyVerdict } from './block-apply.js';
+import * as blockApply from './block-apply.js';
+import type { ApplyVerdict } from './block-apply.js';
 import { reorg as realReorg } from './fork-resolution.js';
 import { ReorgAbortedError, ReorgBlockRejectedError, UnreachableForkPointError } from './corrupt-state.js';
 import { config } from '../config.js';
@@ -36,23 +37,30 @@ import { config } from '../config.js';
 /**
  * The intake calls the apply funnel and `reorg` through two module-level
  * references. Tests redirect them through `setIntakeSeamsForTests` to
- * override the behaviour without re-wiring the module graph.
+ * override the behaviour without re-wiring the module graph. `applyFn` reads
+ * through the `blockApply` namespace so a module cycle (block-apply →
+ * block-creator → intake → block-apply) resolves on live binding instead of
+ * capturing a `undefined` at load time.
  */
-let applyFn: (block: OrderingBlock) => ApplyVerdict = realApplyOrderingBlockVerdict;
+let applyOverride: ((block: OrderingBlock) => ApplyVerdict) | null = null;
 let reorgFn: (forkHeight: number, hashes: readonly string[]) => void = realReorg;
+
+function applyFn(block: OrderingBlock): ApplyVerdict {
+  return (applyOverride ?? blockApply.applyOrderingBlockVerdict)(block);
+}
 
 /** Tests only. */
 export function setIntakeSeamsForTests(seams: {
   apply?: (block: OrderingBlock) => ApplyVerdict;
   reorg?: (forkHeight: number, hashes: readonly string[]) => void;
 }): void {
-  if (seams.apply !== undefined) applyFn = seams.apply;
+  if (seams.apply !== undefined) applyOverride = seams.apply;
   if (seams.reorg !== undefined) reorgFn = seams.reorg;
 }
 
 /** Tests only. */
 export function clearIntakeSeamsForTests(): void {
-  applyFn = realApplyOrderingBlockVerdict;
+  applyOverride = null;
   reorgFn = realReorg;
 }
 
@@ -91,6 +99,11 @@ export function initIntake(cb: IntakeCallbacks, ctx: PipelineContext): void {
   context = ctx;
   S = 0;
   pendingBlocks.clear();
+}
+
+/** Whether `initIntake` was called since the last reset. */
+export function isIntakeInitialized(): boolean {
+  return callbacks !== null && context !== null;
 }
 
 /** Tests only. */
@@ -492,7 +505,7 @@ export async function deliverGossipedBlock(peerId: string, block: OrderingBlock)
  * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
  * at a time". This node's own mined block.
  */
-export async function deliverMinedBlock(block: OrderingBlock): Promise<ApplyVerdict> {
+export function deliverMinedBlock(block: OrderingBlock): ApplyVerdict {
   const c = ctxOrThrow();
   const hash = blockHash(block.header);
   const pipelineCb = {
@@ -514,7 +527,12 @@ export async function deliverMinedBlock(block: OrderingBlock): Promise<ApplyVerd
     return { applied: false, class: 'local', detail: 'mined block did not bind' };
   }
   stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), '');
-  // Apply by extension — the mined block applies on top of the current tip.
+  // NODE_INTERFACE → Fork choice decides on verified headers → "The window.":
+  // S is net's gate. For a mined block the node trusts the chain by
+  // construction — the window is a bound on applying peer-delivered blocks,
+  // not on applying one this node mined. Lift S to the new best tip's height
+  // so the extension drains this height.
+  gateHeld();
   drainExtension();
   // Answer the verdict the apply left: the staged row leaves on apply.
   if (getStagedBlock(hash) === null && getOrderingBlockHash(bindRow.height) === hash) {

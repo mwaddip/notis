@@ -5,7 +5,9 @@ import {
   decodeOrderingBlock,
   encodeHeader,
   encodeInterlinks,
+  updateInterlinks,
 } from '@dagsocial/types';
+import { blockWork, level } from '@dagsocial/validation';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import { UnreadableStoredBlockError } from '../services/corrupt-state.js';
 
@@ -249,4 +251,107 @@ export function getStagedBlock(
 export function unstageBlock(hash: string): void {
   const db = getDb();
   db.prepare('DELETE FROM staged_blocks WHERE hash = ?').run(hash);
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "The header tree
+ * is every stored header": in production, admission writes each row before
+ * apply. A node whose chain was built outside the pipeline — fixtures that
+ * drive the apply funnel directly, a store seeded by other means — reaches
+ * the pipeline with headers in `ordering_blocks` and no rows in
+ * `block_headers`. This function walks the applied chain once and inserts
+ * missing rows, and drops any `best_chain` row above the applied tip (left
+ * by a revert whose caller did not rewrite the tree), bringing the tree in
+ * sync with the applied chain so a mined block or a page admitted next finds
+ * its parent.
+ *
+ * Idempotent per row: a row already present is left as it stands. The
+ * `anchorBits` is the profile's anchor bits for `level` on the parent header.
+ */
+export function syncHeaderTreeFromApplied(anchorBits: number): void {
+  const db = getDb();
+  const tipRow = db.prepare('SELECT MAX(height) AS h FROM ordering_blocks').get() as { h: number | null };
+  const tipHeight = tipRow?.h ?? 0;
+  // Drop best_chain and block_headers rows above the applied tip: a revert
+  // whose caller did not rewrite the tree leaves them pointing at reverted
+  // blocks, and admission reads best_chain for both "the extension gate" and
+  // "the switch" — a stale row would refuse mining or score the mined block
+  // as a side branch.
+  db.prepare('DELETE FROM best_chain WHERE height > ?').run(tipHeight);
+  db.prepare('DELETE FROM block_headers WHERE height > ?').run(tipHeight);
+  if (tipHeight <= 0) return;
+  // Iterate heights 1..tipHeight, caching the previous row to carry
+  // chainWork, interlinks and pathTa forward.
+  let prevRow: HeaderRow | null = null;
+  let prevHashHex: string | null = null;
+  for (let h = 1; h <= tipHeight; h++) {
+    const row = db.prepare('SELECT header_bytes, interlinks, block_hash FROM ordering_blocks WHERE height = ?').get(h) as
+      | { header_bytes: Buffer; interlinks: Buffer; block_hash: string }
+      | undefined;
+    if (row === undefined) break;
+    const hashHex = row.block_hash;
+    // The best chain tracks the applied chain — a stale best_chain row at
+    // this height (from an earlier branch that got reverted) is overwritten
+    // to match the applied block.
+    const bestAt = db.prepare('SELECT hash FROM best_chain WHERE height = ?').get(h) as { hash: string } | undefined;
+    if (bestAt !== undefined && bestAt.hash !== hashHex) {
+      db.prepare('DELETE FROM best_chain WHERE height = ?').run(h);
+    }
+    const already = db.prepare('SELECT hash FROM block_headers WHERE hash = ?').get(hashHex) as { hash: string } | undefined;
+    if (already !== undefined) {
+      // Keep the row; make sure best_chain names it.
+      const bestNow = db.prepare('SELECT hash FROM best_chain WHERE height = ?').get(h) as { hash: string } | undefined;
+      if (bestNow === undefined) {
+        db.prepare('INSERT INTO best_chain (height, hash) VALUES (?, ?)').run(h, hashHex);
+      }
+      prevRow = getHeaderRow(hashHex);
+      prevHashHex = hashHex;
+      continue;
+    }
+    let header: BlockHeader;
+    try {
+      header = decodeHeader(new Uint8Array(row.header_bytes));
+    } catch (err) {
+      throw new UnreadableStoredBlockError('syncHeaderTreeFromApplied', h, err);
+    }
+    const workHere = blockWork(header.powTargetBits);
+    if (workHere === null) {
+      // A stored header outside the work domain is local corruption — same
+      // class a decode refuses raises.
+      throw new UnreadableStoredBlockError('syncHeaderTreeFromApplied', h, new Error('powTargetBits outside domain'));
+    }
+    const parentChainWork = prevRow?.chainWork ?? 0n;
+    const chainWork = parentChainWork + workHere;
+    // The interlinks the header commits to — the vector built from the
+    // parent's interlinks and `level(parent, anchorBits)`. For height 1 the
+    // vector is empty.
+    let interlinks: string[];
+    if (h === 1 || prevRow === null) {
+      interlinks = [];
+    } else {
+      const parentLevel = level(prevRow.header, anchorBits);
+      interlinks = parentLevel === null
+        ? prevRow.interlinks
+        : updateInterlinks(prevRow.interlinks, prevHashHex!, parentLevel);
+    }
+    const pathTa = h === 1 ? (header.createdAt ?? 0) : (prevRow?.pathTa ?? 0);
+    insertHeader({
+      hash: hashHex,
+      height: h,
+      prevHash: header.prevBlockHash,
+      header,
+      interlinks,
+      chainWork,
+      pathTa,
+    });
+    // The best chain tracks the applied chain — a sync inserts the row and
+    // the best_chain entry together (NODE_INTERFACE → "An admitted header is
+    // stored when it extends the best chain.").
+    const bestHere = db.prepare('SELECT hash FROM best_chain WHERE height = ?').get(h) as { hash: string } | undefined;
+    if (bestHere === undefined) {
+      db.prepare('INSERT INTO best_chain (height, hash) VALUES (?, ?)').run(h, hashHex);
+    }
+    prevRow = getHeaderRow(hashHex);
+    prevHashHex = hashHex;
+  }
 }
