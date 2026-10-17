@@ -71,6 +71,10 @@ export interface NetworkProfile {
   // (→ Chain reorganisation). A duration in blocks; the mechanic is universal, the number per network.
   readonly maxReorgDepth: number;
 
+  // Sync — the least work a best chain must carry before any block is fetched along it
+  // (NODE_INTERFACE → Fork choice decides on verified headers). 0n until a release is cut on a running chain.
+  readonly minimumChainWork: bigint;
+
   // Protocol versioning — the eras this network's version runs through; the version in force at a
   // height is the last era whose fromHeight is at or below it (TYPES_INTERFACE → Version).
   readonly protocolVersionSchedule: readonly ProtocolEra[];
@@ -219,6 +223,9 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // TYPES_INTERFACE → Chain reorganisation
   maxReorgDepth: 60,
 
+  // TYPES_INTERFACE → Network profiles
+  minimumChainWork: 0n,
+
   // Its own literal on every network, never spread from another: a bump adds an era row to the network
   // it lands on, and mainnet's schedule may end at an earlier version than testnet's under one build
   // (TYPES_INTERFACE → Version). Frozen at both levels — Object.freeze does not reach a nested array or
@@ -287,6 +294,9 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   faucetPublicKey: '7d501686ebf18b2618c5a9394445bd14922a72478d2a4c36a82a8cfc2a66cce7',
   // TYPES_INTERFACE → Chain reorganisation
   maxReorgDepth: 240,
+
+  // TYPES_INTERFACE → Network profiles
+  minimumChainWork: 0n,
 
   // Overridden, not inherited: the spread above would hand testnet mainnet's schedule array, and the
   // schedule exists so a network can diverge — a mainnet era row must never ride into testnet through
@@ -373,6 +383,9 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
 
   // TYPES_INTERFACE → Chain reorganisation
   maxReorgDepth: 40,
+
+  // TYPES_INTERFACE → Network profiles
+  minimumChainWork: 0n,
 
   // Its own literal, frozen at both levels — like every network's (TYPES_INTERFACE → Version).
   protocolVersionSchedule: Object.freeze([Object.freeze({ version: 1, fromHeight: 0 })]),
