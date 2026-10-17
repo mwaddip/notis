@@ -139,18 +139,56 @@ export function getBestHashAt(height: number): string | null {
 
 /**
  * NODE_INTERFACE → Header tree. `rewriteBestChain`: entries above `forkHeight`
- * replaced by `hashes`, in one transaction. `hashes[i]` lands at height
- * `forkHeight + 1 + i`.
+ * replaced by `hashes`, and the `staged_blocks` rows of the hashes that leave
+ * the index deleted, in one transaction. A hash rewritten in place keeps its
+ * staged row.
  */
 export function rewriteBestChain(forkHeight: number, hashes: readonly string[]): void {
   const db = getDb();
   db.transaction(() => {
+    // The hashes that leave: those above `forkHeight` in `best_chain` whose
+    // hash is not one of `hashes`. Deleted from `staged_blocks` first so the
+    // next step may free the index row.
+    const kept = new Set(hashes);
+    const leaving = db
+      .prepare('SELECT hash FROM best_chain WHERE height > ?')
+      .all(forkHeight) as Array<{ hash: string }>;
+    const unstageOne = db.prepare('DELETE FROM staged_blocks WHERE hash = ?');
+    for (const row of leaving) {
+      if (!kept.has(row.hash)) unstageOne.run(row.hash);
+    }
     db.prepare('DELETE FROM best_chain WHERE height > ?').run(forkHeight);
     const ins = db.prepare('INSERT INTO best_chain (height, hash) VALUES (?, ?)');
     for (let i = 0; i < hashes.length; i++) {
       ins.run(forkHeight + 1 + i, hashes[i]);
     }
   })();
+}
+
+/**
+ * NODE_INTERFACE → Header tree. `heaviestHeaders`: rows in descending
+ * `chain_work` over `idx_block_headers_work`, read one at a time; a reader
+ * stops as soon as its first reachable branch is found (Fork choice decides on
+ * verified headers → "The best chain is the heaviest reachable branch.").
+ */
+export function* heaviestHeaders(): Iterable<HeaderRow> {
+  const db = getDb();
+  const stmt = db.prepare('SELECT * FROM block_headers ORDER BY chain_work DESC');
+  for (const row of stmt.iterate() as Iterable<Row>) {
+    yield rowToHeaderRow(row);
+  }
+}
+
+/**
+ * NODE_INTERFACE → Header tree. `hasStagedBlock`: point read, no decode;
+ * whether an id is staged (for `wantedBlocks` and the switch's wait).
+ */
+export function hasStagedBlock(hash: string): boolean {
+  const db = getDb();
+  const row = db.prepare('SELECT 1 AS one FROM staged_blocks WHERE hash = ?').get(hash) as
+    | { one: number }
+    | undefined;
+  return row !== undefined;
 }
 
 /**
@@ -231,13 +269,16 @@ export function getStagedBlock(
 ): { block: OrderingBlock; fromPeer: string } | null {
   const db = getDb();
   const row = db
-    .prepare('SELECT block_bytes, from_peer FROM staged_blocks WHERE hash = ?')
-    .get(hash) as { block_bytes: Buffer; from_peer: string } | undefined;
+    .prepare('SELECT height, block_bytes, from_peer FROM staged_blocks WHERE hash = ?')
+    .get(hash) as { height: number; block_bytes: Buffer; from_peer: string } | undefined;
   if (!row) return null;
-  return {
-    block: decodeOrderingBlock(new Uint8Array(row.block_bytes)),
-    fromPeer: row.from_peer,
-  };
+  let block: OrderingBlock;
+  try {
+    block = decodeOrderingBlock(new Uint8Array(row.block_bytes));
+  } catch (err) {
+    throw new UnreadableStoredBlockError('getStagedBlock', row.height, err);
+  }
+  return { block, fromPeer: row.from_peer };
 }
 
 /**

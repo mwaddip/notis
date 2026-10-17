@@ -221,6 +221,7 @@ const MIGRATIONS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_block_headers_prev   ON block_headers(prev_hash)`,
   `CREATE INDEX IF NOT EXISTS idx_block_headers_height ON block_headers(height)`,
+  `CREATE INDEX IF NOT EXISTS idx_block_headers_work   ON block_headers(chain_work)`,
 
   `CREATE TABLE IF NOT EXISTS best_chain (
     height  INTEGER PRIMARY KEY,
