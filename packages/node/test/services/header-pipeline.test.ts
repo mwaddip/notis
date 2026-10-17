@@ -68,7 +68,7 @@ describe('header-pipeline', () => {
   afterEach(() => { closeDb(); });
 
   describe('admitHeader — the four checks', () => {
-    it.fails('an unhashable header refuses with misbehavior', () => {
+    it('an unhashable header refuses with misbehavior', () => {
       const bad = makeHeader({ height: 1, params: PARAMS, schedule: SCHEDULE, minePow: false });
       // Break the domain: validatorId wrong length makes blockHash() answer null.
       bad.header.validatorId = new Uint8Array(31);
@@ -81,7 +81,7 @@ describe('header-pipeline', () => {
       expect(getBestTip()).toBeNull();
     });
 
-    it.fails('a header already held returns a no-op', () => {
+    it('a header already held returns a no-op', () => {
       const [h1] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: c1 } = recorder();
       const first = admitHeader(h1!.header, 'headers-page', 'peerA', ctx(), c1);
@@ -94,7 +94,7 @@ describe('header-pipeline', () => {
       expect(v.kind).toBe('held');
     });
 
-    it.fails('a header marked in refused_headers refuses with misbehavior', () => {
+    it('a header marked in refused_headers refuses with misbehavior', () => {
       const [h1] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
       insertRefusedHeader(h1!.hash, 1, 1);
       const { cap, callbacks } = recorder();
@@ -106,7 +106,7 @@ describe('header-pipeline', () => {
       expect(cap.penalties[0]!.kind).toBe('misbehavior');
     });
 
-    it.fails('a parent in a Headers page that the tree does not hold refuses with misbehavior', () => {
+    it('a parent in a Headers page that the tree does not hold refuses with misbehavior', () => {
       const orphan = makeHeader({ height: 1, params: PARAMS, schedule: SCHEDULE });
       orphan.header.height = 2;
       orphan.header.prevBlockHash = 'ab'.repeat(32);
@@ -120,7 +120,7 @@ describe('header-pipeline', () => {
       expect(cap.penalties[0]!.kind).toBe('misbehavior');
     });
 
-    it.fails('a parent in a gossiped block the tree does not hold is parent-unknown, no penalty', () => {
+    it('a parent in a gossiped block the tree does not hold is parent-unknown, no penalty', () => {
       const orphan = makeHeader({ height: 2, parent: { hash: 'cd'.repeat(32), header: { height: 1, createdAt: 1_700_000_000_000 } as import('@dagsocial/types').BlockHeader, interlinks: [], pathTa: 1_700_000_000_000 }, params: PARAMS, schedule: SCHEDULE, prevBlockHash: 'cd'.repeat(32) });
       const { cap, callbacks } = recorder();
       const v = admitHeader(orphan.header, 'gossip', 'peerA', ctx(), callbacks);
@@ -130,7 +130,7 @@ describe('header-pipeline', () => {
       expect(v.kind).toBe('parent-unknown');
     });
 
-    it.fails('a height-1 header whose hash is not the pinned genesisId refuses with misbehavior', () => {
+    it('a height-1 header whose hash is not the pinned genesisId refuses with misbehavior', () => {
       const [h1] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
       const pinned = 'ff'.repeat(32);
       const { cap, callbacks } = recorder();
@@ -141,7 +141,7 @@ describe('header-pipeline', () => {
       expect(cap.penalties[0]!.kind).toBe('misbehavior');
     });
 
-    it.fails('a parent below the reach floor refuses with no penalty', () => {
+    it('a parent below the reach floor refuses with no penalty', () => {
       const chain = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       // Control: admit the parent so it reaches the tree.
       const { callbacks: cb0 } = recorder();
@@ -154,7 +154,7 @@ describe('header-pipeline', () => {
       expect(v.kind).toBe('refused');
     });
 
-    it.fails('a header refused with reason clock is not stored, no penalty, no memo', () => {
+    it('a header refused with reason clock is not stored, no penalty, no memo', () => {
       const chain = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       // Control: admit the parent so the clock case has a tree parent.
       const { callbacks: cb0 } = recorder();
@@ -168,7 +168,7 @@ describe('header-pipeline', () => {
       expect(knowsTip('peerA', chain[1]!.hash)).toBe(false);
     });
 
-    it.fails('a header refused with reason version is penalised transient', () => {
+    it('a header refused with reason version is penalised transient', () => {
       const [h1] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
       h1!.header.protocolVersion = 99;
       // Re-mine with the altered protocolVersion so PoW still passes.
@@ -180,7 +180,7 @@ describe('header-pipeline', () => {
       expect(cap.penalties[0]!.kind).toBe('transient');
     });
 
-    it.fails('a header refused with reason target is penalised misbehavior', () => {
+    it('a header refused with reason target is penalised misbehavior', () => {
       const chain = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
       // At height 1, powTargetBits must equal params.anchorBits — mine another
       // header with the wrong bits to force a `target` refusal.
@@ -195,7 +195,7 @@ describe('header-pipeline', () => {
       expect(cap.penalties[0]!.kind).toBe('misbehavior');
     });
 
-    it.fails('a header refused with reason link is penalised misbehavior', () => {
+    it('a header refused with reason link is penalised misbehavior', () => {
       const chain = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       expect(admitHeader(chain[0]!.header, 'headers-page', 'peerA', ctx(), cb0).kind).toBe('stored');
@@ -223,7 +223,7 @@ describe('header-pipeline', () => {
   });
 
   describe('admitHeader — the store rule', () => {
-    it.fails('a header extending the best tip is stored and becomes best', () => {
+    it('a header extending the best tip is stored and becomes best', () => {
       const chain = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       admitHeader(chain[0]!.header, 'headers-page', 'peerA', ctx(), cb0);
@@ -236,7 +236,7 @@ describe('header-pipeline', () => {
       expect(cap.chainMoves).toBe(1);
     });
 
-    it.fails('a lighter side branch is not stored', () => {
+    it('a lighter side branch is not stored', () => {
       const main = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb } = recorder();
       for (const h of main) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb);
@@ -253,25 +253,25 @@ describe('header-pipeline', () => {
     });
 
     it.fails('a header outweighing the best from a stored parent is stored and switches best', () => {
-      // Main: two headers. Alt: three headers from height 1 — strictly heavier.
+      // Main: two headers. Alt: three headers forked from root — strictly heavier.
       const main = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb } = recorder();
       for (const h of main) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb);
-      // Alt forks at height 0 (virtual root), length 3.
       const alt = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE, startAt: main[0]!.header.createdAt + 1 });
+      // Pass 1 scores alt into a running branch, pass 2 stores and switches.
       const { callbacks: cb2 } = recorder();
-      admitHeader(alt[0]!.header, 'headers-page', 'peerB', ctx(), cb2);
-      admitHeader(alt[1]!.header, 'headers-page', 'peerB', ctx(), cb2);
+      const scored = admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx(), cb2);
+      expect(scored.outcome).toBe('won');
       const { cap, callbacks } = recorder();
-      const v = admitHeader(alt[2]!.header, 'headers-page', 'peerB', ctx(), callbacks);
-      expect(['stored', 'stored-switched']).toContain(v.kind);
+      const stored = admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx(), callbacks);
+      expect(stored.outcome).toBe('stored-from-pass-2');
       // The last assertion names the rule: the switch moves the best tip to
       // the heavier branch's tip, firing `chainMoved`.
       expect(getBestTip()!.hash).toBe(alt[2]!.hash);
       expect(cap.chainMoves).toBeGreaterThan(0);
     });
 
-    it.fails('a tie keeps the incumbent', () => {
+    it('a tie keeps the incumbent', () => {
       const a = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb } = recorder();
       for (const h of a) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb);
@@ -292,24 +292,23 @@ describe('header-pipeline', () => {
       const main = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb } = recorder();
       for (const h of main) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb);
-      // Alt: 3 headers from root (fork at 0), each heavier.
+      // Alt: 3 headers from root (fork at 0), heavier total work.
       const alt = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE, startAt: main[0]!.header.createdAt + 1 });
-      // Admit alt's first two headers while applied tip = 0 (fork reachable).
+      // Pass 1 scores alt into a running branch for peerB.
       const { callbacks: cb2 } = recorder();
-      admitHeader(alt[0]!.header, 'headers-page', 'peerB', ctx(), cb2);
-      admitHeader(alt[1]!.header, 'headers-page', 'peerB', ctx(), cb2);
-      // Now raise applied tip beyond the horizon — the fork at root is now
-      // past `appliedTip - maxReorgDepth`. The admission of alt[2] would have
-      // alt win on work, but the branch is unreachable.
+      const scored = admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx(), cb2);
+      expect(scored.outcome).toBe('won');
+      // Raise applied tip beyond the horizon. Pass 2 must refuse the switch
+      // because alt's fork point (0) is below the reach floor.
       const highTip = config.maxReorgDepth + 2;
       const { cap, callbacks } = recorder();
-      const v = admitHeader(alt[2]!.header, 'headers-page', 'peerB', ctx({ appliedTipHeight: () => highTip }), callbacks);
+      const v = admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx({ appliedTipHeight: () => highTip }), callbacks);
       // The last assertion names the rule: the store rule's `outweighs` arm
       // checks reachability against the applied chain, and refuses to switch
       // to an unreachable branch.
       expect(getBestTip()!.hash).toBe(main[1]!.hash);
       expect(cap.chainMoves).toBe(0);
-      expect(v.kind).not.toBe('stored-switched');
+      expect(v.outcome).not.toBe('stored-from-pass-2');
     });
   });
 
@@ -360,12 +359,12 @@ describe('header-pipeline', () => {
   });
 
   describe('locatorFor', () => {
-    it.fails('answers the virtual root alone on an empty tree', () => {
+    it('answers the virtual root alone on an empty tree', () => {
       // The last assertion names the rule: no tip → GENESIS_PREV_BLOCK_HASH alone.
       expect(locatorFor('peerA')).toEqual([GENESIS_PREV_BLOCK_HASH]);
     });
 
-    it.fails('the locator over best chain follows h₀=tip, hᵢ₊₁ = hᵢ − 2ⁱ', () => {
+    it('the locator over best chain follows h₀=tip, hᵢ₊₁ = hᵢ − 2ⁱ', () => {
       // Build 10 headers; admit them in order so the best chain's heights are 1..10.
       const chain = makeChain({ parent: null, n: 10, params: PARAMS, schedule: SCHEDULE });
       const { callbacks } = recorder();
