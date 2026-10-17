@@ -1,6 +1,6 @@
 import type { NetConfig } from './types.js';
 import { MSG_HANDSHAKE, MSG_SYNC_INFO } from './types.js';
-import type { BlockHeader } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import {
   isHeight,
@@ -17,9 +17,7 @@ import { holdsPageShape } from './sync.js';
 // SyncStore — the node's storage seams the scheduler reads (NET_INTERFACE →
 // Sync Handler Registration). `chainHeight` backs the handshake and the
 // `SyncInfo` this node sends; `getOrderingBlockId` the claim's hash;
-// `heightByBlockId` the serve arms. `appendBlocks` is the pipeline's seam
-// for a `Blocks` answer (NODE_INTERFACE → Fork choice decides on verified
-// headers → "A served block is bound to its header before it is kept").
+// `heightByBlockId` the serve arms.
 // ---------------------------------------------------------------------------
 
 export interface SyncStore {
@@ -38,7 +36,8 @@ type ControlEvent =
   | { type: 'peer-disconnect'; peerId: string }
   | { type: 'sync-info'; peerId: string; info: SyncInfo }
   | { type: 'need-headers'; peerId: string }
-  | { type: 'chain-moved' };
+  | { type: 'chain-moved' }
+  | { type: 'bootstrap-settled' };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -79,11 +78,12 @@ interface Claim {
  * this node's open requests and its stall marks — nothing about the chain."
  *
  * The node registers a pipeline intake (`setPipeline`), a chain view
- * (`setChainView`), a request shim (`setRequestHeaders`), a connected-peers
- * reader (`setConnectedPeers`) and a penalty call (`setPenalize`), and
- * drives the scheduler through its public events — `onPeerActive`,
- * `handleMessage(MSG_SYNC_INFO)`, `onPeerDisconnect`, `needHeaders` and
- * `chainMoved`.
+ * (`setChainView`), a request shim (`setRequestHeaders` / `setRequestBlocks`),
+ * a connected-peers reader (`setConnectedPeers`), a penalty call
+ * (`setPenalize`) and a bootstrap-settled reader
+ * (`setBootstrapAllSettled`), and drives the scheduler through its public
+ * events — `onPeerActive`, `handleMessage(MSG_SYNC_INFO)`,
+ * `onPeerDisconnect`, `needHeaders`, `chainMoved` and `bootstrapSettled`.
  */
 export class SyncMachine {
   // ---- State the scheduler holds (NET_INTERFACE → Sync State Machine) ----
@@ -110,6 +110,23 @@ export class SyncMachine {
    * is in flight; a second trigger for one of them opens no second run. */
   private openHeaderRuns = new Set<string>();
 
+  /** NET_INTERFACE → Sync State Machine → "Blocks are asked by id, from a
+   * peer that has them." — one block request open per peer; a second
+   * trigger adds no second run. */
+  private openBlockRuns = new Set<string>();
+
+  /** The peer each in-flight block id is currently asked of. An id already
+   * asked of one peer stays with it until the request ends (answer,
+   * omission, deadline or mark). */
+  private inFlightBlockId = new Map<string, string>();
+
+  /** NET_INTERFACE → Sync State Machine → "An id a peer's answer omits is
+   * not asked of that peer again until its claim changes." Cleared when
+   * the peer's claimed hash moves; purged each round to ids
+   * `wantedBlocks()` still names, so the set stays bounded by the
+   * pipeline's wanted window. */
+  private omittedByPeer = new Map<string, Set<string>>();
+
   /** Phase 'idle' holds until the first claim settles (NET_INTERFACE →
    * Sync State Machine → "The phases"). */
   private anyClaimEverSettled = false;
@@ -135,8 +152,15 @@ export class SyncMachine {
   private pipeline: PipelineIntake | null = null;
   private chainView: ChainView | null = null;
   private requestHeadersFn: ((locator: string[], peerId: string) => Promise<BlockHeader[]>) | null = null;
+  private requestBlocksFn: ((ids: string[], peerId: string) => Promise<OrderingBlock[]>) | null = null;
   private connectedPeersFn: (() => Set<string>) | null = null;
   private penalizeFn: ((peerId: string, kind: 'misbehavior' | 'transient', reason: string) => void) | null = null;
+  /** NET_INTERFACE → Sync State Machine → "The gate bounds how far blocks
+   * apply." The scheduler reads bootstrap-settled through this function;
+   * `null` while the node has not supplied one, which is treated as
+   * settled (a test harness with no bootstrap concept, equivalent to no
+   * configured bootstrap addresses). */
+  private bootstrapAllSettledFn: (() => boolean) | null = null;
 
   // ---- Event loop ----
   private controlQueue: ControlEvent[] = [];
@@ -161,12 +185,19 @@ export class SyncMachine {
 
   setChainView(view: ChainView): void {
     this.chainView = view;
-    // A view that answers may have settled claims already — recompute at once.
+    // A view that answers may have settled claims or wanted blocks
+    // already — recompute at once.
     this.recomputePhase();
+    this.evaluateGate();
+    this.kickBlockPump();
   }
 
   setRequestHeaders(fn: (locator: string[], peerId: string) => Promise<BlockHeader[]>): void {
     this.requestHeadersFn = fn;
+  }
+
+  setRequestBlocks(fn: (ids: string[], peerId: string) => Promise<OrderingBlock[]>): void {
+    this.requestBlocksFn = fn;
   }
 
   setConnectedPeers(fn: () => Set<string>): void {
@@ -175,6 +206,12 @@ export class SyncMachine {
 
   setPenalize(fn: (peerId: string, kind: 'misbehavior' | 'transient', reason: string) => void): void {
     this.penalizeFn = fn;
+  }
+
+  setBootstrapAllSettled(fn: () => boolean): void {
+    this.bootstrapAllSettledFn = fn;
+    // A newly supplied function may answer true right away — evaluate once.
+    this.evaluateGate();
   }
 
   // -------- Lifecycle --------
@@ -299,6 +336,12 @@ export class SyncMachine {
     return this.openHeaderRuns;
   }
 
+  /** Test introspection — the peers whose block run has been added
+   * but not yet removed. */
+  getOpenBlockRunsForTest(): Set<string> {
+    return this.openBlockRuns;
+  }
+
   /** Test hook — mark a peer; the run loop reads the mark at its next
    * iteration. */
   markPeerForTest(peerId: string): void {
@@ -342,6 +385,13 @@ export class SyncMachine {
     this.pushControl({ type: 'chain-moved' });
   }
 
+  /** NET_INTERFACE → Sync State Machine → "The gate bounds how far blocks
+   * apply." The node reports a bootstrap dial settling; the scheduler
+   * re-evaluates the gate on the next loop pass. */
+  bootstrapSettled(): void {
+    this.pushControl({ type: 'bootstrap-settled' });
+  }
+
   private rejectMessage(peerId: string, code: number, reason: string): void {
     console.warn(`[sync-machine] dropping code=${code} from ${peerId}: ${reason}`);
     try {
@@ -365,8 +415,12 @@ export class SyncMachine {
     }
 
     // Expire stall marks older than STALL_MARK_EXPIRY_MS.
+    let markExpired = false;
     for (const [peerId, setAt] of this.stallMarks) {
-      if (now - setAt > STALL_MARK_EXPIRY_MS) this.stallMarks.delete(peerId);
+      if (now - setAt > STALL_MARK_EXPIRY_MS) {
+        this.stallMarks.delete(peerId);
+        markExpired = true;
+      }
     }
 
     // NET_INTERFACE → Sync State Machine → "A claim is the peer's applied
@@ -381,6 +435,10 @@ export class SyncMachine {
     }
 
     this.recomputePhase();
+    // NET_INTERFACE → Sync State Machine → "The gate bounds how far blocks
+    // apply." The tick carries the vacuous case and the mark-expiry case.
+    this.evaluateGate();
+    if (markExpired) this.kickBlockPump();
   }
 
   // -------- Control event dispatch --------
@@ -401,6 +459,9 @@ export class SyncMachine {
         break;
       case 'chain-moved':
         this.handleChainMoved();
+        break;
+      case 'bootstrap-settled':
+        this.evaluateGate();
         break;
     }
   }
@@ -425,12 +486,19 @@ export class SyncMachine {
     this.lastPolledMs.set(peerId, Date.now());
 
     this.recomputePhase();
+    this.evaluateGate();
   }
 
   private handlePeerDisconnect(peerId: string): void {
     this.claims.delete(peerId);
     this.directions.delete(peerId);
     this.openHeaderRuns.delete(peerId);
+    this.openBlockRuns.delete(peerId);
+    this.omittedByPeer.delete(peerId);
+    // Free the peer's in-flight block ids for reassignment.
+    for (const [id, pid] of this.inFlightBlockId) {
+      if (pid === peerId) this.inFlightBlockId.delete(id);
+    }
     this.lastSentTip.delete(peerId);
     this.lastReportedTip.delete(peerId);
     this.lastSentMs.delete(peerId);
@@ -438,6 +506,8 @@ export class SyncMachine {
     this.pendingSyncInfo.delete(peerId);
     this.lastPolledMs.delete(peerId);
     this.recomputePhase();
+    this.evaluateGate();
+    this.kickBlockPump();
   }
 
   // -------- SyncInfo intake --------
@@ -460,6 +530,14 @@ export class SyncMachine {
   private actOnSyncInfo(peerId: string, info: SyncInfo, nowMs: number): void {
     this.lastActedOnSyncInfoMs.set(peerId, nowMs);
 
+    // NET_INTERFACE → Sync State Machine → "An id a peer's answer omits
+    // is not asked of that peer again until its claim changes." A moved
+    // hash clears what the peer owed us from under its old chain.
+    const prev = this.claims.get(peerId);
+    if (!prev || prev.tipHash !== info.tipHash) {
+      this.omittedByPeer.delete(peerId);
+    }
+
     const claim: Claim = {
       tipHeight: info.tipHeight,
       tipHash: info.tipHash,
@@ -480,6 +558,8 @@ export class SyncMachine {
     }
 
     this.recomputePhase();
+    // A new claim may permit new block requests.
+    this.kickBlockPump();
   }
 
   // -------- Pipeline events --------
@@ -500,6 +580,7 @@ export class SyncMachine {
         void this.startHeaderRun(peerId);
       }
     }
+    this.kickBlockPump();
     this.recomputePhase();
   }
 
@@ -525,6 +606,9 @@ export class SyncMachine {
     } finally {
       this.openHeaderRuns.delete(peerId);
       this.recomputePhase();
+      this.evaluateGate();
+      // A header run ending may have added wanted blocks the pump can serve.
+      this.kickBlockPump();
     }
   }
 
@@ -617,6 +701,120 @@ export class SyncMachine {
     }
   }
 
+  // -------- Block runs (NET_INTERFACE → Sync State Machine →
+  // "Blocks are asked by id, from a peer that has them.") --------
+
+  /**
+   * Ask every eligible peer for the ids its claim covers and the omission
+   * memory and in-flight set have not already placed. One block request
+   * per peer; nothing is asked when `wantedBlocks()` is empty.
+   */
+  private kickBlockPump(): void {
+    if (!this.chainView) return;
+    if (!this.requestBlocksFn) return;
+    const wanted = this.chainView.wantedBlocks();
+    if (wanted.length === 0) {
+      // Purge omission memory — ids no longer wanted drop out so the
+      // per-peer set stays bounded by the pipeline's wanted window.
+      this.omittedByPeer.clear();
+      this.inFlightBlockId.clear();
+      return;
+    }
+    const wantedIds = new Set<string>();
+    for (const w of wanted) wantedIds.add(w.id);
+    for (const [peerId, set] of this.omittedByPeer) {
+      for (const id of set) if (!wantedIds.has(id)) set.delete(id);
+      if (set.size === 0) this.omittedByPeer.delete(peerId);
+    }
+    for (const id of [...this.inFlightBlockId.keys()]) {
+      if (!wantedIds.has(id)) this.inFlightBlockId.delete(id);
+    }
+
+    const sorted = [...wanted].sort((a, b) => a.height - b.height);
+    const connected = this.connectedPeersFn?.() ?? new Set<string>();
+    for (const peerId of connected) {
+      if (this.stallMarks.has(peerId)) continue;
+      if (this.openBlockRuns.has(peerId)) continue;
+      const claim = this.claims.get(peerId);
+      if (!claim) continue;
+      const omitted = this.omittedByPeer.get(peerId) ?? new Set<string>();
+      const batch: string[] = [];
+      for (const w of sorted) {
+        if (batch.length >= MAX_CHAIN_RESPONSE_ITEMS) break;
+        if (w.height > claim.tipHeight) continue;
+        if (omitted.has(w.id)) continue;
+        if (this.inFlightBlockId.has(w.id)) continue;
+        batch.push(w.id);
+      }
+      if (batch.length === 0) continue;
+      void this.startBlockRun(peerId, batch);
+    }
+  }
+
+  private async startBlockRun(peerId: string, ids: string[]): Promise<void> {
+    if (!this.requestBlocksFn || !this.pipeline) return;
+    // The launch opens no run for a peer whose first check would return —
+    // the parallel to `startHeaderRun`'s discipline, so a block run that
+    // would not ask never flickers the phase and `synced`-entry never
+    // clears a stall mark it shouldn't.
+    if (!this.isConnected(peerId)) return;
+    if (this.stallMarks.has(peerId)) return;
+    if (this.openBlockRuns.has(peerId)) return;
+    if (ids.length === 0) return;
+    this.openBlockRuns.add(peerId);
+    for (const id of ids) this.inFlightBlockId.set(id, peerId);
+    // The open run makes the phase `syncing`
+    // (NET_INTERFACE → Sync State Machine → "The phases.").
+    this.recomputePhase();
+    try {
+      let blocks: OrderingBlock[];
+      try {
+        blocks = await this.requestBlocksFn(ids, peerId);
+      } catch {
+        // NET_INTERFACE → Sync State Machine → "An id a peer's answer
+        // omits is not asked of that peer again until its claim changes;
+        // it, a deadline (…), or a mark moves the id to another such
+        // peer." The deadline is this throw.
+        this.markPeer(peerId);
+        return;
+      }
+      if (!this.isConnected(peerId)) return;
+      try {
+        await this.pipeline.deliverBlocks(peerId, blocks);
+      } catch (err) {
+        console.warn(`[sync-machine] deliverBlocks(${peerId}) threw: ${String(err)}`);
+        return;
+      }
+      // NET_INTERFACE → Sync Integrity → "Net owns the shape; the
+      // pipeline owns the content." An id still in `wantedBlocks()` the
+      // peer owed us but we did not take is one the peer does not get
+      // asked again until its claim changes — the pipeline's refusal of
+      // a bound mismatch also lands here (NET_INTERFACE → Sync Integrity
+      // → "A request ends by its answer or its deadline").
+      const stillWanted = new Set<string>();
+      if (this.chainView) {
+        for (const w of this.chainView.wantedBlocks()) stillWanted.add(w.id);
+      }
+      let omitted = this.omittedByPeer.get(peerId);
+      for (const id of ids) {
+        if (stillWanted.has(id)) {
+          if (!omitted) {
+            omitted = new Set<string>();
+            this.omittedByPeer.set(peerId, omitted);
+          }
+          omitted.add(id);
+        }
+      }
+    } finally {
+      for (const id of ids) {
+        if (this.inFlightBlockId.get(id) === peerId) this.inFlightBlockId.delete(id);
+      }
+      this.openBlockRuns.delete(peerId);
+      this.recomputePhase();
+      this.kickBlockPump();
+    }
+  }
+
   // -------- Stall marks (NET_INTERFACE → Stall Detection) --------
 
   private markPeer(peerId: string): void {
@@ -627,6 +825,34 @@ export class SyncMachine {
       const oldest = this.stallMarks.keys().next().value;
       if (oldest === undefined) break;
       this.stallMarks.delete(oldest);
+    }
+    // A marked outbound peer's open header run no longer holds the gate.
+    this.evaluateGate();
+    // Its in-flight block ids free up for another covering peer.
+    for (const [id, pid] of this.inFlightBlockId) {
+      if (pid === peerId) this.inFlightBlockId.delete(id);
+    }
+    this.kickBlockPump();
+  }
+
+  // -------- The gate (NET_INTERFACE → Sync State Machine →
+  // "The gate bounds how far blocks apply.") --------
+
+  private evaluateGate(): void {
+    if (!this.chainView) return;
+    // The gate counts unmarked outbound peers with an open header run.
+    for (const peerId of this.openHeaderRuns) {
+      if (this.stallMarks.has(peerId)) continue;
+      if (this.directions.get(peerId) !== 'outbound') continue;
+      return;
+    }
+    // Every configured bootstrap address's dial has settled; the node's
+    // reader is the single source of that answer.
+    if (this.bootstrapAllSettledFn && !this.bootstrapAllSettledFn()) return;
+    try {
+      this.chainView.gateHeld();
+    } catch (err) {
+      console.warn(`[sync-machine] gateHeld threw: ${String(err)}`);
     }
   }
 
@@ -650,6 +876,7 @@ export class SyncMachine {
 
   private computePhase(): 'idle' | 'syncing' | 'synced' {
     if (this.openHeaderRuns.size > 0) return 'syncing';
+    if (this.openBlockRuns.size > 0) return 'syncing';
     if (this.chainView && !this.chainView.fullyApplied()) return 'syncing';
     if (!this.anyClaimEverSettled) return 'idle';
 
