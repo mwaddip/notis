@@ -240,13 +240,14 @@ describe('an event for a peer not in the connected set plants nothing', () => {
     expect(sch.sent.filter(m => m.peerId === 'stranger').length).toBe(0);
   });
 
-  it('a peer-active for a peer not in connectedPeers() leaves no per-peer entry', () => {
+  it('a peer-active for a peer not in connectedPeers() records no direction and sends nothing', () => {
     const sch = makeScheduler();
     sch.machine.onPeerActive('ghost', 10, 'outbound');
     sch.machine.flush();
-    // Today retention keeps a height whatever the connected set says; the
-    // scheduler's `peerHeight` returns null for a ghost.
-    expect(sch.machine.peerHeight('ghost')).toBeNull();
+    // Removing the connected-set check in `handlePeerActive` would set
+    // the ghost's direction and open a `SyncInfo` dial to it.
+    expect(sch.machine.getDirectionForTest('ghost')).toBeNull();
+    expect(sch.sent.filter(m => m.peerId === 'ghost').length).toBe(0);
   });
 });
 
