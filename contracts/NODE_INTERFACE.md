@@ -5048,7 +5048,7 @@ floor-priced headers fill a joiner's tree, so a branch is scored first and store
   that are not best. A mismatch refuses the branch, penalises the peer `transient` — an honest peer can reorg between
   the passes — and stores nothing further.
 - **One branch per peer** at a time. A page whose first header's parent is the branch's last scored header — or, in
-  pass 2, its last stored one — continues it, toward the claim that page was asked toward; any other page from that
+  pass 2, its last stored one — continues it, toward the claim it is delivered with; any other page from that
   peer starts its own branch in the running one's place.
 
 **Re-scoring is memoised.** A branch scored lighter is remembered against its peer's claim: the memo keeps `{ peer → the claimed hash its
