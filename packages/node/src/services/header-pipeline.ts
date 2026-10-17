@@ -24,6 +24,7 @@ import {
   type HeaderRow,
 } from '../store/index.js';
 import { MAX_CHAIN_RESPONSE_ITEMS } from '@dagsocial/net';
+import { InconsistentHeaderTreeError } from './corrupt-state.js';
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "The intake owns
@@ -173,21 +174,32 @@ function interlinksCommitFromParent(parent: HeaderRow, anchorBits: number): stri
 /**
  * The branch's path from `baseHash` (exclusive) to `topHash` (inclusive),
  * read back through `prev_hash` point reads. Returns the hashes in height
- * order; the base is excluded. NODE_INTERFACE → Fork choice decides on
- * verified headers → "A side branch is stored only once it is heavier." →
- * "The walk needs no cap": a branch's memory bound is 32 bytes per 400
- * headers plus the anchor, so pass 2 reads the path from the store rather
- * than holding every stored hash in memory.
+ * order; the base is excluded. A missing row on the walk is corruption,
+ * never a peer's input — the pipeline is the tables' one writer, and
+ * `topHash` is a row this call's own crossing page has stored — and rises
+ * as `InconsistentHeaderTreeError` for the fail-stop boundary
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "A side
+ * branch is stored only once it is heavier." → "The walk needs no cap":
+ * a branch's memory bound is 32 bytes per 400 headers plus the anchor,
+ * so pass 2 reads the path from the store rather than holding every
+ * stored hash in memory).
  */
 function readBranchFromBase(baseHash: string, topHash: string): string[] {
   const result: string[] = [];
   let h = topHash;
   while (h !== baseHash) {
-    result.unshift(h);
     const row = getHeaderRow(h);
-    if (row === null) break;
+    if (row === null) {
+      throw new InconsistentHeaderTreeError(
+        'readBranchFromBase',
+        0,
+        `no block_headers row for branch hash ${h} between base ${baseHash} and top ${topHash}`,
+      );
+    }
+    result.push(h);
     h = row.prevHash;
   }
+  result.reverse();
   return result;
 }
 
@@ -482,49 +494,13 @@ export function admitPage(
     return handlePass2(running!, verdict, freshHeaders, ctx, callbacks, peerId, startIdx);
   }
 
-  // The base's parent is the best chain's tip (or the root while there is no
-  // best) → extension. Store every header in the page as it is admitted.
-  // A pass-1 continuation stays in its pass regardless: a base that has
-  // become the best tip while scoring wins on the next page and is stored by
+  // Pass 1 — score the branch. A page whose base is the best chain's tip
+  // (or the root while there is no best) wins on its first page — its work
+  // is positive, and `storeFirstWinningPage` stores it from the page in
+  // hand. A pass-1 continuation stays in its pass: a base that has become
+  // the best tip while scoring wins on the next page and is stored by
   // pass 2 (NODE_INTERFACE → Fork choice decides on verified headers →
-  // "An admitted header is stored when it extends the best chain." →
   // "A side branch is stored only once it is heavier.").
-  const bestTip = getBestTip();
-  const extendsBest = !continuesPass1
-    && (bestTip === null ? base.isVirtualRoot : base.hash === bestTip.hash);
-  if (extendsBest) {
-    runningBranches.delete(peerId);
-    let currentParent: HeaderRow | null = base.isVirtualRoot ? null : base.row;
-    const freshHashes: string[] = [];
-    let cumulativeWork = base.chainWork;
-    for (let i = 0; i < freshHeaders.length; i++) {
-      const h = freshHeaders[i]!;
-      const hash = verdict.hashes[i]!;
-      cumulativeWork += workOrZero(h.powTargetBits);
-      const storedInterlinks = currentParent === null
-        ? []
-        : interlinksCommitFromParent(currentParent, ctx.params.anchorBits);
-      const pathTa = h.height === 1 ? h.createdAt : (currentParent !== null ? currentParent.pathTa : h.createdAt);
-      const row: HeaderRow = {
-        hash,
-        height: h.height,
-        prevHash: h.prevBlockHash,
-        header: h,
-        interlinks: storedInterlinks,
-        chainWork: cumulativeWork,
-        pathTa,
-      };
-      insertHeader(row);
-      freshHashes.push(hash);
-      currentParent = row;
-    }
-    rewriteBestChain(base.height, freshHashes);
-    scoredLighter.clear();
-    callbacks.chainMoved();
-    return { outcome: 'taken' };
-  }
-
-  // Pass 1 — score a side branch.
   // Initialise the running branch if this is its first page.
   let r: RunningBranch;
   if (!continuesPass1 || running === undefined) {
@@ -612,6 +588,13 @@ export function admitPage(
  * Store the first winning pass-1 page as pass 2 would, and switch if the
  * branch is reachable. The branch is dropped after the page is stored (it
  * was won inside the page it started in).
+ *
+ * A page whose base is the best chain's tip (or the root with no best)
+ * reaches this call: pass 1 scores the first page, `r.runningWork` exceeds
+ * the best tip's work, and the first-page win stores every header in the
+ * page from the base and rewrites `best_chain` from it
+ * (NODE_INTERFACE → Fork choice decides on verified headers →
+ * "An admitted header is stored when it extends the best chain.").
  */
 function storeFirstWinningPage(
   peerId: string,
@@ -827,12 +810,13 @@ export function rechooseBestChain(ctx: PipelineContext, callbacks: PipelineCallb
       if (h.height === 0) { forkHeight = 0; break; }
       const bestAtHeight = getBestHashAt(h.height);
       if (bestAtHeight === h.hash) { forkHeight = h.height; break; }
-      branchHashes.unshift(h.hash);
+      branchHashes.push(h.hash);
       if (h.height - 1 < floor) { unreachable = true; break; }
       if (h.height === 1) { forkHeight = 0; break; }
       h = getHeaderRow(h.prevHash);
     }
     if (unreachable || h === null) continue;
+    branchHashes.reverse();
     rewriteBestChain(forkHeight, branchHashes);
     scoredLighter.clear();
     callbacks.chainMoved();
