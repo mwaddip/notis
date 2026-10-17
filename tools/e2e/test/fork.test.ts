@@ -44,14 +44,14 @@ describe('fork', () => {
     expect(tipB.height).toBe(5);
     expect(tipA.hash).not.toBe(tipB.hash);
 
-    // ---- C bridges A and B ----
-    // A listed first — the pick targets B (retained-highest) regardless of connect order
+    // ---- C bridges A and B — the heavier chain wins
+    // (NODE_INTERFACE → Fork choice decides on verified headers →
+    // "The best chain is the heaviest reachable branch").
     const nodeC = await mesh.addNode([p2pAddr(nodeA), p2pAddr(nodeB)]);
 
-    // C connects to both; the pick targets B (retained-highest, height not
-    // work). Mining 1 on B after the connection pushes a gossip block that
+    // Mining 1 on B after the connection pushes a gossip block that
     // triggers the sync round, and a second mine on C (once it has caught up)
-    // gossips to A, forcing A's reorg.
+    // gossips to A, forcing A's switch.
     await mine(nodeB, mesh.miningSecret, 1);
     await waitHeight([nodeC], 6, 60_000);
 
@@ -71,15 +71,14 @@ describe('fork', () => {
     const nodeA = mesh.nodes[0]!;
     const nodeC = mesh.nodes[2]!;
 
-    // ---- inside the horizon: fork at depth 30, converges ----
+    // ---- inside the horizon: fork converges on the heavier chain ----
     const convergeTarget = HORIZON - 10;
     const meshHeight = (await getBlockCurrent(nodeA)).height;
     await mine(nodeC, mesh.miningSecret, convergeTarget - meshHeight);
     await waitHeight([nodeA], convergeTarget, 30_000);
 
-    // D: isolated, mines its own chain from genesis — at devnet difficulty
-    // (floor 2304, ceiling 4096) the schedule stays near the floor for bursts
-    // faster than the 60 s ideal, so more blocks is more work
+    // D: isolated, mines its own chain from genesis past the mesh's tip —
+    // on a burst mined at a similar pace to the mesh, taller = more work.
     const nodeD = await mesh.addNode([]);
     const dHeight = convergeTarget + 5;
     await mine(nodeD, mesh.miningSecret, dHeight);
@@ -91,9 +90,10 @@ describe('fork', () => {
     expect(tipD.height).toBe(dHeight);
     expect(tipD.height).toBeGreaterThan(tipABefore.height);
 
-    // E bridges D and A — fork depth is convergeTarget (inside HORIZON), so
-    // the walk reaches genesis and the heavier chain wins
-    const logBaselineA = nodeA.linesSeen;
+    // E bridges D and A — fork depth is convergeTarget (inside HORIZON),
+    // so the fork point is reachable and the heavier chain wins
+    // (NODE_INTERFACE → Fork choice decides on verified headers →
+    // "The reach floor is the horizon, one rule for every fork point").
     const nodeE = await mesh.addNode([p2pAddr(nodeD), p2pAddr(nodeA)]);
     await waitHeight([nodeE], dHeight, 60_000);
 
@@ -107,12 +107,6 @@ describe('fork', () => {
       expect(tip.height).toBe(dHeight + 1);
       expect(tip.hash).toBe(convergeTips[0]!.hash);
     }
-
-    // NODE_INTERFACE → Fork choice decides on verified headers
-    const reorgLogs = nodeA.linesSince(logBaselineA);
-    expect(
-      reorgLogs.some((l) => l.includes('Reorg complete: new tip at height=')),
-    ).toBe(true);
 
     // ---- past the horizon strands ----
     const strandTarget = HORIZON + 5;
@@ -130,25 +124,19 @@ describe('fork', () => {
     await waitHeight([nodeF], fHeight);
 
     // G bridges F and A
-    const logBaselineA2 = nodeA.linesSeen;
     const nodeG = await mesh.addNode([p2pAddr(nodeF), p2pAddr(nodeA)]);
     await waitHeight([nodeG], fHeight, 30_000);
 
     await mine(nodeG, mesh.miningSecret, 1);
     await waitHeight([nodeF], fHeight + 1, 30_000);
 
-    // A stays — fork depth (45) exceeds the horizon (40)
+    // A's applied tip is more than `maxReorgDepth` above the fork point;
+    // its admission refuses F's chain under the age rule, with no penalty
+    // and no log — assert A stays put by tips alone (NODE_INTERFACE → Fork
+    // choice decides on verified headers → "The reach floor is the horizon,
+    // one rule for every fork point").
     const tipAFinal = await getBlockCurrent(nodeA);
     expect(tipAFinal.height).toBe(tipABeforeStrand.height);
-
-    // NODE_INTERFACE → Fork choice decides on verified headers
-    const strandLogs = nodeA.linesSince(logBaselineA2);
-    expect(
-      strandLogs.some((l) =>
-        l.includes(
-          `Fork resolution failed: no common ancestor within ${HORIZON} blocks`,
-        ),
-      ),
-    ).toBe(true);
+    expect(tipAFinal.hash).toBe(tipABeforeStrand.hash);
   });
 });
