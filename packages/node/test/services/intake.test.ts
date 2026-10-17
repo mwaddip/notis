@@ -150,7 +150,7 @@ function ctx(opts?: Partial<PipelineContext>): PipelineContext {
  */
 type ApplyBehaviour = (block: OrderingBlock) => { applied: boolean; verdict: ApplyVerdict };
 let applyBehaviour: ApplyBehaviour;
-let reorgBehaviour: (forkHeight: number, blocks: OrderingBlock[]) => void;
+let reorgBehaviour: (forkHeight: number, hashes: readonly string[]) => void;
 
 /**
  * The scheduler's two-pass flow for a won branch: pass 1 scores and
@@ -183,18 +183,21 @@ describe('intake', () => {
       });
       return { applied: true, verdict: { applied: true, indexed: [] } };
     };
-    reorgBehaviour = (forkHeight, blocks) => {
+    reorgBehaviour = (forkHeight, hashes) => {
       const currentHeight = getCurrentHeight();
       for (let h = currentHeight; h > forkHeight; h--) deleteOrderingBlock(h);
-      for (const b of blocks) {
+      for (const hash of hashes) {
+        const staged = getStagedBlock(hash);
+        if (staged === null) continue;
+        const b = staged.block;
         const res = applyBehaviour(b);
         if (res.applied) continue;
         const v = res.verdict;
         if (v.applied) continue;
         if (v.class === 'consensus') {
-          throw new ReorgBlockRejectedError(b.header.height, blockHash(b.header)!);
+          throw new ReorgBlockRejectedError(b.header.height, hash);
         }
-        throw new ReorgAbortedError(b.header.height, blockHash(b.header) ?? 'unhashable', v.class, v.detail);
+        throw new ReorgAbortedError(b.header.height, hash, v.class, v.detail);
       }
     };
     setIntakeSeamsForTests({
@@ -474,8 +477,8 @@ describe('intake', () => {
       await admitChain('peerH2', [h2b, h3b]);
 
       // Reorg aborts at the second block of the prefix.
-      reorgBehaviour = (_f, blocks) => {
-        throw new ReorgAbortedError(blocks[1]!.header.height, blockHash(blocks[1]!.header)!, 'acceptance', 'test');
+      reorgBehaviour = (_f, hashes) => {
+        throw new ReorgAbortedError(3, hashes[1]!, 'acceptance', 'test');
       };
       await deliverBlocks('peerB2', [signBlock(h2b, v.priv), signBlock(h3b, v.priv)]);
 

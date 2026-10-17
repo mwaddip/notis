@@ -69,7 +69,7 @@ async function importBlockApply() {
 
 async function importForkResolution() {
   return (await import('../../src/services/fork-resolution.js')) as {
-    reorg: (forkHeight: number, newBlocks: OrderingBlock[]) => void;
+    reorg: (forkHeight: number, hashes: readonly string[]) => void;
     revertBlock: (height: number) => unknown;
   };
 }

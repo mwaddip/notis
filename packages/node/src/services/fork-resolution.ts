@@ -10,6 +10,7 @@ import {
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   decodeTx,
+  encodeOrderingBlock,
   GENESIS_PREV_BLOCK_HASH,
   MEMPOOL_EXPIRY_BLOCKS,
   updateInterlinks,
@@ -39,6 +40,9 @@ import {
   getInterlinks,
   getKarmaOwners,
   getLowestJournalHeight,
+  getStagedBlock,
+  stageBlock,
+  unstageBlock,
 } from '../store/index.js';
 import { ceilingOf } from '@dagsocial/consensus';
 import { getDb } from '../store/db.js';
@@ -60,6 +64,7 @@ import {
   CorruptChainStateError,
   MissingStoredBlockError,
   MissingJournalError,
+  MissingStagedBlockError,
   MissingStateVersionError,
   UnhashableStoredHeaderError,
   ReorgBlockRejectedError,
@@ -250,10 +255,18 @@ function reinsert(insert: () => void, label: string): void {
 }
 
 /**
- * Reorg: revert our chain from currentHeight down to forkHeight+1,
- * then apply the competing chain forward.
+ * Reorg: revert our chain from currentHeight down to forkHeight+1, then
+ * apply the competing chain forward.
+ *
+ * The branch's blocks are named by their hashes, in height order; each
+ * body is read out of `staged_blocks` one at a time inside the transaction,
+ * so one block body is in memory at a time (NODE_INTERFACE → Fork choice
+ * decides on verified headers → "A bound block is staged, and applied from
+ * staging."). A null read is `MissingStagedBlockError`, fail-stop under the
+ * transaction's catch — the switch checks the prefix staged in the same
+ * synchronous item.
  */
-export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
+export function reorg(forkHeight: number, newHashes: readonly string[]): void {
   // A failed reorg rolls the whole transaction back — DB and AVL storage rows
   // live in the same SQLite file — but SQLite rollback cannot reach the
   // prover's in-memory state. The pre-reorg root and tree height are captured
@@ -341,7 +354,7 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
   // of the rollback and not a mempool key (NODE_INTERFACE → Block Journal).
   // Ascending order re-pools a predecessor before its dependent, so the fill
   // preserves the ordering rule at apply (NODE_INTERFACE → Block finalization).
-  const newTipHeight = forkHeight + newBlocks.length;
+  const newTipHeight = forkHeight + newHashes.length;
   const mempoolExpiry = newTipHeight + MEMPOOL_EXPIRY_BLOCKS;
   for (const journal of [...revertedJournals].reverse()) {
     // Re-insert UTXO txs
@@ -359,19 +372,26 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
 
   // Phase 3: apply new chain — through the classified entry
   // (NODE_INTERFACE → Fork choice decides on verified headers, step 10). Each
-  // applied block's verdict carries the posts it first stored, held with the
-  // block for the post-commit `announceAppliedBlock` and `registerPlaceholder`
-  // loop below (NODE_INTERFACE → "What follows the commit is the commit's";
-  // NODE_INTERFACE → Store Interface → Posts DAG → "Backfill after sync").
-  for (const block of newBlocks) {
+  // staged body is read out of `staged_blocks` one at a time and unstaged on
+  // apply; one block body is in memory at a time
+  // (NODE_INTERFACE → Fork choice decides on verified headers → "A bound
+  // block is staged, and applied from staging.").
+  for (let i = 0; i < newHashes.length; i++) {
+    const hash = newHashes[i]!;
+    const expectedHeight = forkHeight + 1 + i;
+    const staged = getStagedBlock(hash);
+    if (staged === null) {
+      throw new MissingStagedBlockError('reorg', expectedHeight, hash);
+    }
+    const block = staged.block;
     const verdict = applyOrderingBlockVerdict(block);
     if (!verdict.applied) {
-      const hash = blockHash(block.header) ?? 'unhashable';
       if (verdict.class === 'consensus') {
         throw new ReorgBlockRejectedError(block.header.height, hash);
       }
       throw new ReorgAbortedError(block.header.height, hash, verdict.class, verdict.detail);
     }
+    unstageBlock(hash);
     appliedWithIndexed.push({ block, indexed: verdict.indexed });
   }
     })();
@@ -407,10 +427,10 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
   }
 
   // NODE_INTERFACE → Admin Listener: the tip the reorg left.
-  noteTip(forkHeight + newBlocks.length);
+  noteTip(forkHeight + newHashes.length);
   // net learns of the reorg's tip at the same seam, so a version boundary can
   // sweep peers below the new era (NET_INTERFACE → API).
-  getNet()?.tipApplied(forkHeight + newBlocks.length);
+  getNet()?.tipApplied(forkHeight + newHashes.length);
 
   // A reorg is one tip move, however many blocks it applies. The per-block
   // rebuild inside `applyOrderingBlock` stands down while nested in the
@@ -797,7 +817,8 @@ export async function resolveFork(
 
     // 8. Their blocks — paged
     // (NODE_INTERFACE → Fork choice decides on verified headers, step 8).
-    const allBlocks: OrderingBlock[] = [];
+    // Each delivered block is staged with the peer that served it; `reorg`
+    // reads each body out of `staged_blocks` one at a time.
     let blockStart = forkHeight + 1;
     const blockEnd = forkHeight + n;
     while (blockStart <= blockEnd) {
@@ -867,7 +888,11 @@ export async function resolveFork(
         }
       }
 
-      allBlocks.push(...page);
+      for (const block of page) {
+        const hash = blockHash(block.header);
+        if (hash === null) continue; // structure above rules this out
+        stageBlock(hash, block.header.height, encodeOrderingBlock(block), peerId);
+      }
       blockStart += page.length;
     }
 
@@ -894,7 +919,7 @@ export async function resolveFork(
     // "A served block is bound to its header before it is kept": the
     // page loop above held each block to its header, so what the funnel
     // refuses here is bytes the header's hash commits.
-    reorg(forkHeight, allBlocks);
+    reorg(forkHeight, allVerifiedHashes);
     console.log(`Reorg complete: new tip at height=${forkHeight + n}`);
     return 'switched';
   } catch (err) {

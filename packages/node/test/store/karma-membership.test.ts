@@ -274,7 +274,12 @@ describe("net's karma membership moves after a commit", () => {
     expect(node.blockApply.applyOrderingBlockVerdict(block)).toEqual({ applied: true, indexed });
     node.net.calls.length = 0;
 
-    node.forks.reorg(0, [rival]);
+    const { stageBlock } = await import('../../src/store/header-tree.js');
+    const { blockHash } = await import('@dagsocial/validation');
+    const { encodeOrderingBlock } = await import('@dagsocial/types');
+    const rivalHash = blockHash(rival.header)!;
+    stageBlock(rivalHash, rival.header.height, encodeOrderingBlock(rival), 'test');
+    node.forks.reorg(0, [rivalHash]);
 
     expect(sorted(node.net.members)).toEqual(
       sorted([hexOf(inviter), hexOf(invitee), hexOf(lastBoxPoster), hexOf(spareBoxPoster)]),
@@ -332,7 +337,12 @@ describe("net's karma membership moves after a commit", () => {
     const after = sorted(node.net.members);
     node.net.calls.length = 0;
 
-    expect(() => node.forks.reorg(0, [liar])).toThrow(node.corrupt.ReorgBlockRejectedError);
+    const { stageBlock } = await import('../../src/store/header-tree.js');
+    const { blockHash } = await import('@dagsocial/validation');
+    const { encodeOrderingBlock } = await import('@dagsocial/types');
+    const liarHash = blockHash(liar.header)!;
+    stageBlock(liarHash, liar.header.height, encodeOrderingBlock(liar), 'test');
+    expect(() => node.forks.reorg(0, [liarHash])).toThrow(node.corrupt.ReorgBlockRejectedError);
     expect(sorted(node.net.members)).toEqual(after);
     expect(node.net.calls).toEqual([]);
   });

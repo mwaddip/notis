@@ -40,12 +40,12 @@ import { config } from '../config.js';
  * override the behaviour without re-wiring the module graph.
  */
 let applyFn: (block: OrderingBlock) => ApplyVerdict = realApplyOrderingBlockVerdict;
-let reorgFn: (forkHeight: number, blocks: OrderingBlock[]) => void = realReorg;
+let reorgFn: (forkHeight: number, hashes: readonly string[]) => void = realReorg;
 
 /** Tests only. */
 export function setIntakeSeamsForTests(seams: {
   apply?: (block: OrderingBlock) => ApplyVerdict;
-  reorg?: (forkHeight: number, blocks: OrderingBlock[]) => void;
+  reorg?: (forkHeight: number, hashes: readonly string[]) => void;
 }): void {
   if (seams.apply !== undefined) applyFn = seams.apply;
   if (seams.reorg !== undefined) reorgFn = seams.reorg;
@@ -284,16 +284,15 @@ function trySwitch(): void {
     if (row === null) return;
     if (row.chainWork > targetWork) break;
   }
-  // Every hash of the prefix must be staged before we fire reorg.
-  const prefixBlocks: OrderingBlock[] = [];
+  // Every hash of the prefix must be staged before we fire reorg; `reorg`
+  // itself reads each body out of `staged_blocks` one at a time inside its
+  // transaction, so one body is in memory at a time.
   for (const h of prefixHashes) {
-    const staged = getStagedBlock(h);
-    if (staged === null) return;
-    prefixBlocks.push(staged.block);
+    if (getStagedBlock(h) === null) return;
   }
 
   try {
-    reorgFn(f, prefixBlocks);
+    reorgFn(f, prefixHashes);
   } catch (err) {
     if (err instanceof ReorgBlockRejectedError) {
       // The failing block's staged row names the deliverer — read it before
@@ -309,8 +308,6 @@ function trySwitch(): void {
     }
     throw err;
   }
-  // Every staged row of the applied prefix leaves.
-  for (const h of prefixHashes) unstageBlock(h);
   // Switch succeeded; extension continues.
   drainExtension();
 }

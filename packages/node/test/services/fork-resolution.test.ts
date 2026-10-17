@@ -48,6 +48,7 @@ import {
   importBlockCreator,
   importOrdering,
   importForkResolution,
+  stagePrefix,
   stubNet,
 } from './fork-resolution-fixtures.js';
 
@@ -683,7 +684,9 @@ describe('a stored header that cannot be hashed', () => {
     // typed error reaches the boundary with its identity intact and the
     // fork-resolution catch in `index.ts` lets it past rather than warning
     // over it.
-    const caught = thrownBy(() => forkResolution.reorg(1, [buildBlock(2, 1)]));
+    const block2 = buildBlock(2, 1);
+    const hashes2 = await stagePrefix([block2]);
+    const caught = thrownBy(() => forkResolution.reorg(1, hashes2));
     expect(caught).toBeInstanceOf(corruptState.UnreadableStoredBlockError);
     expect((caught as Error).message).not.toContain('reorg failed');
   });
@@ -1426,7 +1429,7 @@ describe('reorg', () => {
     // Now apply competing chain: blocks 2A, 3A (using same blocks for test simplicity)
     // In a real reorg, these would be different blocks from a peer
     // For the test, we apply the same blocks to verify the mechanism works
-    forkResolution.reorg(1, [block2!, block3!]);
+    forkResolution.reorg(1, await stagePrefix([block2!, block3!]));
 
     expect(ordering.getCurrentHeight()).toBe(3);
     expect(ordering.getOrderingBlock(2)).not.toBeNull();
@@ -1579,7 +1582,7 @@ describe('reorg', () => {
 
     // And the fork point is re-appliable: apply from 0 takes the genesis branch
     // of the chain-link check (`prevBlockHash` all zeros, height 1).
-    forkResolution.reorg(0, chain);
+    forkResolution.reorg(0, await stagePrefix(chain));
     expect(ordering.getCurrentHeight()).toBe(3);
     for (const h of [1, 2, 3]) expect(ordering.getOrderingBlock(h)).not.toBeNull();
   });
@@ -1649,7 +1652,8 @@ describe('reorg abort', () => {
     const badB3 = await makeApplicableBlock({ height: 3 });
 
     const forkResolution = await importForkResolution();
-    expect(() => forkResolution.reorg(1, [goodB2, badB3])).toThrow(
+    const prefixHashes = await stagePrefix([goodB2, badB3]);
+    expect(() => forkResolution.reorg(1, prefixHashes)).toThrow(
       'reorg rejected block at height 3',
     );
 
@@ -1685,7 +1689,8 @@ describe('reorg abort', () => {
 
     const badB3 = await makeApplicableBlock({ height: 3 });
     const forkResolution = await importForkResolution();
-    expect(() => forkResolution.reorg(1, [goodB2, badB3])).toThrow(
+    const prefixHashes = await stagePrefix([goodB2, badB3]);
+    expect(() => forkResolution.reorg(1, prefixHashes)).toThrow(
       'reorg rejected block at height 3',
     );
 
@@ -1752,7 +1757,7 @@ describe('reorg — the ring and the by-reference restore', () => {
     const proverSpy = vi.spyOn(avl.prover, 'rollback');
 
     const forkResolution = await importForkResolution();
-    forkResolution.reorg(1, theirBlocks);
+    forkResolution.reorg(1, await stagePrefix(theirBlocks));
 
     expect(storageSpy).not.toHaveBeenCalled();
     expect(proverSpy).not.toHaveBeenCalled();
@@ -1784,7 +1789,7 @@ describe('reorg — the ring and the by-reference restore', () => {
 
     const storageSpy = vi.spyOn(avl.storage, 'rollback');
     const forkResolution = await importForkResolution();
-    forkResolution.reorg(1, theirBlocks);
+    forkResolution.reorg(1, await stagePrefix(theirBlocks));
 
     // One store resolve: `PersistentBatchAVLProver.rollback` calls
     // `storage.rollback` and then `inner.restoreRoot`.
@@ -1813,7 +1818,7 @@ describe('reorg — the ring and the by-reference restore', () => {
 
     const forkResolution = await importForkResolution();
     // The first run: fork point in the ring (the by-reference path).
-    forkResolution.reorg(1, theirBlocks);
+    forkResolution.reorg(1, await stagePrefix(theirBlocks));
     const tipA = bytesToHex(avl.prover.digest()!);
     for (const b of theirBlocks) {
       const row = db.getDb().prepare('SELECT proof FROM block_proofs WHERE height = ?').get(b.header.height) as { proof: Buffer } | undefined;
@@ -1831,7 +1836,7 @@ describe('reorg — the ring and the by-reference restore', () => {
     const heights = ringHeights(avl.recentRoots);
     for (const h of heights) if (h !== Math.max(...heights)) avl.recentRoots.drop(h);
 
-    forkResolution.reorg(1, theirBlocks);
+    forkResolution.reorg(1, await stagePrefix(theirBlocks));
     const tipB = bytesToHex(avl.prover.digest()!);
     for (const b of theirBlocks) {
       const row = db.getDb().prepare('SELECT proof FROM block_proofs WHERE height = ?').get(b.header.height) as { proof: Buffer } | undefined;
@@ -1874,7 +1879,8 @@ describe('reorg — the ring and the by-reference restore', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const forkResolution = await importForkResolution();
-    expect(() => forkResolution.reorg(1, [theirBlocks[0]!, broken])).toThrow(
+    const prefixHashesForBroken = await stagePrefix([theirBlocks[0]!, broken]);
+    expect(() => forkResolution.reorg(1, prefixHashesForBroken)).toThrow(
       /reorg rejected block/,
     );
 
@@ -1919,7 +1925,7 @@ describe('reorg — the ring and the by-reference restore', () => {
 
     const storageSpy = vi.spyOn(avl.storage, 'rollback');
     const forkResolution = await importForkResolution();
-    forkResolution.reorg(1, theirBlocks);
+    forkResolution.reorg(1, await stagePrefix(theirBlocks));
 
     // One store resolve happened — the bogus kept root did not match the
     // store's version, so the resolve went to the store and the ring was
@@ -3206,7 +3212,7 @@ describe('reorg — ceiling screen', () => {
 
       const chain = Array.from({ length: 7 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
       const forkResolution = await importForkResolution();
-      forkResolution.reorg(0, chain);
+      forkResolution.reorg(0, await stagePrefix(chain));
 
       // The screen fired: ceiling 6 < newTipHeight 7
       expect(
@@ -3247,7 +3253,7 @@ describe('reorg — ceiling screen', () => {
 
       const chain = Array.from({ length: 6 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
       const forkResolution = await importForkResolution();
-      forkResolution.reorg(0, chain);
+      forkResolution.reorg(0, await stagePrefix(chain));
 
       // ceiling 6 < 6 is false — not screened
       expect(
@@ -3283,7 +3289,7 @@ describe('reorg — ceiling screen', () => {
       const ordering = await importOrdering();
       const chain = Array.from({ length: 7 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
       const forkResolution = await importForkResolution();
-      forkResolution.reorg(0, chain);
+      forkResolution.reorg(0, await stagePrefix(chain));
 
       // No tx has a ceiling — the screen message never fires
       expect(

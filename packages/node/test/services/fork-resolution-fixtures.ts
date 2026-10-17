@@ -62,13 +62,32 @@ export async function importOrdering() {
   };
 }
 
+/**
+ * Stage each block the test will hand to `reorg`, returning the hashes in
+ * input order — `reorg(forkHeight, hashes)` reads each body out of
+ * `staged_blocks` one at a time.
+ */
+export async function stagePrefix(blocks: readonly OrderingBlock[]): Promise<string[]> {
+  const { stageBlock } = await import('../../src/store/header-tree.js');
+  const { blockHash } = await import('@dagsocial/validation');
+  const { encodeOrderingBlock } = await import('@dagsocial/types');
+  const out: string[] = [];
+  for (const b of blocks) {
+    const hash = blockHash(b.header);
+    if (hash === null) throw new Error('stagePrefix: block header is unhashable');
+    stageBlock(hash, b.header.height, encodeOrderingBlock(b), 'test');
+    out.push(hash);
+  }
+  return out;
+}
+
 export async function importForkResolution() {
   return (await import(
     '../../src/services/fork-resolution.js'
   )) as unknown as {
     extendsOurTip: (block: OrderingBlock) => boolean;
     revertBlock: (height: number) => void;
-    reorg: (forkHeight: number, newBlocks: OrderingBlock[]) => void;
+    reorg: (forkHeight: number, hashes: readonly string[]) => void;
     resolveFork: (
       block: OrderingBlock,
       net: ForkResolutionNet,

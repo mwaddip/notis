@@ -633,7 +633,12 @@ describe('the ring tracks the chain the node holds', () => {
     // times (the ring answers at the fork height).
     const storageSpy = vi.spyOn(handle.storage, 'rollback');
     const { reorg } = await import('../../src/services/fork-resolution.js');
-    reorg(2, [theirB3]);
+    const { stageBlock } = await import('../../src/store/header-tree.js');
+    const { blockHash } = await import('@dagsocial/validation');
+    const { encodeOrderingBlock } = await import('@dagsocial/types');
+    const theirB3Hash = blockHash(theirB3.header)!;
+    stageBlock(theirB3Hash, theirB3.header.height, encodeOrderingBlock(theirB3), 'test');
+    reorg(2, [theirB3Hash]);
     expect(storageSpy).toHaveBeenCalledTimes(0);
 
     // Heights 0..3; roots 1 and 2 are the SAME OBJECTS, with the counts they
@@ -715,7 +720,12 @@ describe('the ring tracks the chain the node holds', () => {
         // fork-resolution calls `storage.rollback` and `recentRoots.clear`.
         const storageSpy = vi.spyOn(handle.storage, 'rollback');
         const { reorg } = await import('../../src/services/fork-resolution.js');
-        reorg(1, [theirB2]);
+        const { stageBlock } = await import('../../src/store/header-tree.js');
+        const { blockHash } = await import('@dagsocial/validation');
+        const { encodeOrderingBlock } = await import('@dagsocial/types');
+        const theirB2Hash = blockHash(theirB2.header)!;
+        stageBlock(theirB2Hash, theirB2.header.height, encodeOrderingBlock(theirB2), 'test');
+        reorg(1, [theirB2Hash]);
         expect(storageSpy).toHaveBeenCalledTimes(1);
 
         // After reorg: the ring records theirB2's height, and the live
