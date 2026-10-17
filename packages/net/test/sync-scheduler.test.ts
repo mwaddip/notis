@@ -806,6 +806,42 @@ describe('entering synced clears every stall mark', () => {
     expect(sch.machine.getMarksForTest().has('bad')).toBe(false);
     expect(sch.machine.getMarksForTest().size).toBe(0);
   });
+
+  it("a marked peer's SyncInfo while synced leaves the phase, the mark and the request count alone", async () => {
+    vi.setSystemTime(0);
+    const claimOk = hexId(10);
+    const claimBadKnown = hexId(20);
+    const known = new Set<string>([claimOk, claimBadKnown]);
+    const view = makeChainView({ known, applied: true });
+    const sch = makeScheduler({ view, nextPage: [] });
+    let syncedCount = 0;
+    sch.machine.onSynced(() => { syncedCount++; });
+    peerActive(sch, 'ok', 1);
+    peerActive(sch, 'bad', 1);
+    syncInfo(sch, 'ok', 10, claimOk);
+    syncInfo(sch, 'bad', 20, claimBadKnown);
+    await settle();
+    expect(sch.machine.getState().phase).toBe('synced');
+    expect(syncedCount).toBe(1);
+    // Mark 'bad' from outside — synced-entry had cleared any mark.
+    (sch.machine as unknown as { markPeerForTest(id: string): void }).markPeerForTest('bad');
+    expect(sch.machine.getMarksForTest().has('bad')).toBe(true);
+
+    // 'bad' sends a new, unknown claim. Without the launch mark check,
+    // `actOnSyncInfo` calls `startHeaderRun`, which adds the peer to
+    // `openHeaderRuns`, yields, and the caller's `recomputePhase` sees
+    // an open run — the phase flickers synced → syncing → synced,
+    // fires `onSynced` a second time, and the second synced-entry
+    // clears every stall mark.
+    vi.advanceTimersByTime(200);
+    const before = sch.requests.filter(r => r.peerId === 'bad').length;
+    syncInfo(sch, 'bad', 200, hexId(200));
+    await settle();
+    expect(sch.machine.getState().phase).toBe('synced');
+    expect(syncedCount).toBe(1);
+    expect(sch.machine.getMarksForTest().has('bad')).toBe(true);
+    expect(sch.requests.filter(r => r.peerId === 'bad').length).toBe(before);
+  });
 });
 
 // ---------------------------------------------------------------------------

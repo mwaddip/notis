@@ -504,6 +504,12 @@ export class SyncMachine {
 
   private async startHeaderRun(peerId: string): Promise<void> {
     if (!this.requestHeadersFn || !this.pipeline || !this.chainView) return;
+    // The launch opens no run for a peer whose run would return on the
+    // loop's first check — otherwise the add/delete pair flickers the
+    // phase (synced → syncing → synced), firing `onSynced` again and
+    // clearing every stall mark.
+    if (!this.isConnected(peerId)) return;
+    if (this.stallMarks.has(peerId)) return;
     if (this.openHeaderRuns.has(peerId)) return;
     this.openHeaderRuns.add(peerId);
     try {
