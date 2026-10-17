@@ -637,8 +637,8 @@ export class SyncMachine {
       try {
         page = await requestHeaders(locator, peerId);
       } catch {
-        // NET_INTERFACE → Sync State Machine → "A request passes its
-        // deadline" — mark, no penalty.
+        // NET_INTERFACE → Sync State Machine → "A request ends without
+        // a well-formed answer" — mark, no penalty.
         this.markPeer(peerId);
         return;
       }
@@ -657,14 +657,19 @@ export class SyncMachine {
       // latest hash a settlement reads against.
       const claim = this.claims.get(peerId);
       const claimHash = claim?.tipHash ?? '';
-      let accepted: boolean;
+      let verdict: 'taken' | 'again' | 'refused';
       try {
-        accepted = await pipeline.deliverHeaders(peerId, claimHash, page);
+        verdict = await pipeline.deliverHeaders(peerId, claimHash, page);
       } catch (err) {
         console.warn(`[sync-machine] deliverHeaders(${peerId}) threw: ${String(err)}`);
         return;
       }
-      if (!accepted) return;
+      // NET_INTERFACE → Sync State Machine → "One header request per
+      // peer, every peer at once." A refusal ends the run unmarked, an
+      // `'again'` sends the next request at once and refutes nothing,
+      // and a `'taken'` leaves the run to the refute test below.
+      if (verdict === 'refused') return;
+      if (verdict === 'again') continue;
 
       if (!this.isConnected(peerId)) return;
 

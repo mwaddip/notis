@@ -22,12 +22,17 @@ export interface SyncState {
 /**
  * NET_INTERFACE → Sync Handler Registration — the `setPipeline` row: the
  * node's pipeline intake. `deliverHeaders` takes a page held to its shape
- * with the claim the page was asked toward and resolves `true` when the
- * pipeline took the page whole, `false` otherwise. `deliverBlocks` hands
- * a `Blocks` answer's blocks on.
+ * with the claim the page was asked under — the refute test reads the
+ * claim the page was asked toward (NET_INTERFACE → Sync State Machine →
+ * "How a header sync ends") — and resolves `'taken'` when the pipeline
+ * took the page whole, `'again'` when it took the page and is re-fetching
+ * a branch it scored heavier (NET_INTERFACE → Sync State Machine → "One
+ * header request per peer, every peer at once."), and `'refused'` when
+ * it took none of it. `deliverBlocks` hands a `Blocks` answer's blocks
+ * on.
  */
 export interface PipelineIntake {
-  deliverHeaders(peerId: string, claimHash: string, headers: BlockHeader[]): Promise<boolean>;
+  deliverHeaders(peerId: string, claimHash: string, headers: BlockHeader[]): Promise<'taken' | 'again' | 'refused'>;
   deliverBlocks(peerId: string, blocks: OrderingBlock[]): Promise<void>;
 }
 

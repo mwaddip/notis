@@ -86,14 +86,16 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
 // recorded.
 // ---------------------------------------------------------------------------
 
+type Verdict = 'taken' | 'again' | 'refused';
+
 interface FakePipeline {
-  deliverHeaders: (peerId: string, claimHash: string, page: BlockHeader[]) => Promise<boolean>;
+  deliverHeaders: (peerId: string, claimHash: string, page: BlockHeader[]) => Promise<Verdict>;
   deliverBlocks: (peerId: string, blocks: unknown[]) => Promise<void>;
   calls: { peerId: string; claimHash: string; page: BlockHeader[] }[];
-  nextAnswer: boolean;
+  nextAnswer: Verdict;
 }
 
-function makePipeline(nextAnswer: boolean = true): FakePipeline {
+function makePipeline(nextAnswer: Verdict = 'taken'): FakePipeline {
   const p: FakePipeline = {
     calls: [],
     nextAnswer,
@@ -208,7 +210,7 @@ async function settle(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// H-7 — a peer whose answer refutes its claim is marked and asked no more
+// A peer whose answer refutes its claim is marked and asked no more
 // (NET_INTERFACE → Stall Detection, → Sync State Machine → "How a header
 // sync ends")
 // ---------------------------------------------------------------------------
@@ -345,11 +347,11 @@ describe('claims drive one run at most per peer', () => {
     let release1!: (page: BlockHeader[]) => void;
     const page1 = new Promise<BlockHeader[]>((r) => { release1 = r; });
     const delivered: { peerId: string; claimHash: string }[] = [];
-    const pipeline: FakePipeline = makePipeline(true);
+    const pipeline: FakePipeline = makePipeline('taken');
     pipeline.deliverHeaders = async (peerId, hash, page) => {
       delivered.push({ peerId, claimHash: hash });
       pipeline.calls.push({ peerId, claimHash: hash, page });
-      return true;
+      return 'taken';
     };
     const sch = makeScheduler({ pipeline });
     const asAny = sch.machine as unknown as {
@@ -472,7 +474,7 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
     const claimHash = hexId(50);
     const known = new Set<string>();
     const view = makeChainView({ known, applied: true });
-    const pipeline = makePipeline(true);
+    const pipeline = makePipeline('taken');
     const originalDeliver = pipeline.deliverHeaders;
     pipeline.deliverHeaders = async (peerId, hash, p) => {
       // The pipeline admits the headers; the view now holds the claim.
@@ -534,8 +536,8 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
     expect(sch.penalties.find(x => x.peerId === 'p' && x.kind === 'misbehavior')).toBeTruthy();
   });
 
-  it('a pipeline refusal — false — reaches the pipeline and the peer stays unmarked', async () => {
-    const pipeline = makePipeline(false);
+  it("a pipeline refusal reaches the pipeline and the peer stays unmarked", async () => {
+    const pipeline = makePipeline('refused');
     const sch = makeScheduler({ pipeline, nextPage: [] });
     peerActive(sch, 'p', 1);
     syncInfo(sch, 'p', 100, hexId(100));
@@ -543,18 +545,82 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
     expect(pipeline.calls.length).toBeGreaterThan(0);
   });
 
-  it('a pipeline refusal on a short page earns no mark, no penalty and no further request', async () => {
-    const pipeline = makePipeline(false);
+  it("a `'refused'` on a short page ends the run with no mark, no penalty and no further request", async () => {
+    const pipeline = makePipeline('refused');
     const sch = makeScheduler({ pipeline, nextPage: [] });
     peerActive(sch, 'p', 1);
     syncInfo(sch, 'p', 100, hexId(100));
     await settle();
-    // Removing `if (!accepted) return;` in `runHeaders` lets the loop
-    // fall into the refute branch on a short page: a mark and a
-    // transient penalty the scheduler must not record.
+    // Removing `if (verdict === 'refused') return;` in `runHeaders`
+    // lets the loop fall into the refute branch on a short page: a
+    // mark and a transient penalty the scheduler must not record.
     expect(sch.machine.getMarksForTest().has('p')).toBe(false);
     expect(sch.penalties.filter(x => x.peerId === 'p').length).toBe(0);
     expect(sch.requests.filter(r => r.peerId === 'p').length).toBe(1);
+  });
+
+  it("a `'again'` on a page shorter than MAX_CHAIN_RESPONSE_ITEMS under an unsettled claim sends the next request at once, with no mark and no penalty", async () => {
+    // The first delivery answers `'again'` — the pipeline is re-fetching
+    // a branch it scored heavier — and the second answers `'taken'`
+    // with the view admitting the claim so the run settles. Removing
+    // `if (verdict === 'again') continue;` lets the first delivery
+    // fall into the refute branch on a short page, marking the peer
+    // and penalising transient.
+    const claimHash = hexId(100);
+    const known = new Set<string>();
+    const view = makeChainView({ known, applied: true });
+    const pipeline = makePipeline('taken');
+    let call = 0;
+    pipeline.deliverHeaders = async (peerId, hash, page) => {
+      pipeline.calls.push({ peerId, claimHash: hash, page });
+      call++;
+      if (call === 1) return 'again';
+      known.add(hash);
+      return 'taken';
+    };
+    const sch = makeScheduler({ view, pipeline, nextPage: [] });
+    peerActive(sch, 'p', 1);
+    syncInfo(sch, 'p', 100, claimHash);
+    await settle();
+    expect(sch.requests.filter(r => r.peerId === 'p').length).toBe(2);
+    expect(sch.penalties.filter(x => x.peerId === 'p').length).toBe(0);
+    expect(sch.machine.getMarksForTest().has('p')).toBe(false);
+  });
+
+  it("a `'again'` on a full page sends the next request at once", async () => {
+    // Build a MAX_CHAIN_RESPONSE_ITEMS-long page reaching the claim's
+    // height. Under `'again'` the next request goes out at once; with
+    // `if (verdict === 'again') continue;` removed, the full page
+    // reaches the claim and the refute branch marks the peer.
+    const CLAIM_HEIGHT = 400;
+    const claimHash = hexId(CLAIM_HEIGHT);
+    const fullPage: BlockHeader[] = [];
+    for (let i = 1; i <= CLAIM_HEIGHT; i++) {
+      fullPage.push({
+        protocolVersion: 1, height: i,
+        prevBlockHash: i === 1 ? '00'.repeat(32) : hexId(i - 1),
+        utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(33),
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 2304,
+        createdAt: 0, interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32),
+      });
+    }
+    const known = new Set<string>();
+    const view = makeChainView({ known, applied: true });
+    const pipeline = makePipeline('taken');
+    let call = 0;
+    pipeline.deliverHeaders = async (peerId, hash, page) => {
+      pipeline.calls.push({ peerId, claimHash: hash, page });
+      call++;
+      if (call === 1) return 'again';
+      known.add(hash);
+      return 'taken';
+    };
+    const sch = makeScheduler({ view, pipeline, nextPage: fullPage });
+    peerActive(sch, 'p', 1);
+    syncInfo(sch, 'p', CLAIM_HEIGHT, claimHash);
+    await settle();
+    expect(sch.requests.filter(r => r.peerId === 'p').length).toBe(2);
+    expect(sch.machine.getMarksForTest().has('p')).toBe(false);
   });
 });
 
@@ -764,11 +830,11 @@ describe('phases: idle, syncing, synced', () => {
     const view = makeChainView({ known, applied: true });
     // The pipeline refuses `bad`'s delivery; `ok` is admitted so its
     // claim is settled on arrival.
-    const pipeline = makePipeline(true);
+    const pipeline = makePipeline('taken');
     pipeline.deliverHeaders = async (peerId, hash, page) => {
       pipeline.calls.push({ peerId, claimHash: hash, page });
-      if (peerId === 'bad') return false;
-      return true;
+      if (peerId === 'bad') return 'refused';
+      return 'taken';
     };
     const sch = makeScheduler({ view, pipeline, nextPage: [] });
     peerActive(sch, 'ok', 1);
@@ -887,7 +953,7 @@ describe('end to end: a claim opens a GetHeaders, the page reaches the pipeline'
     await nodeA.start();
     await nodeB.start();
 
-    const pipelineB = makePipeline(true);
+    const pipelineB = makePipeline('taken');
     const viewB = makeChainView({ applied: false });
     (nodeB as unknown as { setPipeline?: (p: FakePipeline) => void }).setPipeline?.(pipelineB);
     (nodeB as unknown as { setChainView?: (v: FakeChainView) => void }).setChainView?.(viewB);

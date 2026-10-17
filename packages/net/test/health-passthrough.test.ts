@@ -371,7 +371,7 @@ describe('onSyncComplete fires on every entry into synced', () => {
       fullyApplied: () => true,
       gateHeld: () => {},
     });
-    machine.setPipeline({ deliverHeaders: async () => true, deliverBlocks: async () => {} });
+    machine.setPipeline({ deliverHeaders: async () => 'taken' as const, deliverBlocks: async () => {} });
     machine.setRequestHeaders(async () => []);
     machine.start();
 

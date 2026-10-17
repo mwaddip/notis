@@ -169,7 +169,7 @@ function makeHarness(opts: {
   };
 
   const pipeline = {
-    deliverHeaders: async () => true,
+    deliverHeaders: async () => 'taken' as const,
     deliverBlocks: async (peerId: string, blocks: OrderingBlock[]) => {
       blocksDelivered.push({ peerId, blocks });
       // A real pipeline consumes blocks it took — the ids leave wantedBlocks.
@@ -719,7 +719,7 @@ describe('two nodes: a claim opens headers, headers name wanted blocks, blocks a
             wanted.push({ id, height: h.height });
           }
         }
-        return true;
+        return 'taken' as const;
       },
       deliverBlocks: async (_p: string, blocks: OrderingBlock[]) => {
         for (const b of blocks) blocksSeen.push(b);
