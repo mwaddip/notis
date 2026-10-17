@@ -3,13 +3,12 @@ import {
   decodeBlocks,
   decodeHeaders,
   encodeSyncInfo, decodeSyncInfo,
-  encodeInv, decodeInv,
   encodeModifierRequest, decodeModifierRequest,
   encodeModifierResponse, decodeModifierResponse,
-  syncInfoCodec, invCodec, modifierRequestCodec, modifierResponseCodec,
+  syncInfoCodec, modifierRequestCodec, modifierResponseCodec,
 } from '@dagsocial/net';
 import { MAGIC_TESTNET, decodeFrame, MAX_ADVERTISED_HEIGHT, MAX_INV_IDS } from '@dagsocial/net';
-import { MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE } from '@dagsocial/net';
+import { MSG_SYNC_INFO, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE } from '@dagsocial/net';
 import {
   ByteWriter,
   computeUtxoTxRoot,
@@ -28,7 +27,6 @@ import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 
 const H32 = '0'.repeat(64);
 const H32_A = 'a'.repeat(64);
-const H32_B = 'b'.repeat(64);
 
 describe('sync codec', () => {
   it('round-trips SyncInfo', () => {
@@ -44,14 +42,6 @@ describe('sync codec', () => {
     const frame = encodeSyncInfo(MAGIC_TESTNET, info);
     const decoded = decodeSyncInfo(decodeFrame(MAGIC_TESTNET, frame).body);
     expect(decoded).toEqual(info);
-  });
-
-  it('round-trips Inv', () => {
-    const inv = { typeId: 101, ids: [H32, H32_A, H32_B] };
-    const frame = encodeInv(MAGIC_TESTNET, inv);
-    const { code, body: b } = decodeFrame(MAGIC_TESTNET, frame);
-    expect(code).toBe(MSG_INV);
-    expect(decodeInv(b)).toEqual(inv);
   });
 
   it('round-trips ModifierRequest at MAX_INV_IDS', () => {
@@ -84,7 +74,6 @@ describe('sync codec', () => {
 describe('sync codec decode boundary', () => {
   const decoders = {
     decodeSyncInfo,
-    decodeInv,
     decodeModifierRequest,
     decodeModifierResponse,
   };
@@ -141,24 +130,23 @@ describe('sync codec decode boundary', () => {
     });
   });
 
-  describe('Inv / ModifierRequest', () => {
+  describe('ModifierRequest', () => {
     it('rejects empty id list (nonEmpty)', () => {
-      expect(decodeInv(encodeStruct(invCodec, { typeId: 101, ids: [] }))).toBeNull();
-      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 101, ids: [] }))).toBeNull();
+      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 103, ids: [] }))).toBeNull();
     });
 
     it('rejects over-cap id list', () => {
       const ids = Array.from({length: MAX_INV_IDS + 1}, () => H32);
-      expect(decodeInv(encodeStruct(invCodec, { typeId: 101, ids }))).toBeNull();
+      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 103, ids }))).toBeNull();
     });
 
     it('accepts typeId 0 and 255 (u8 domain)', () => {
-      expect(decodeInv(encodeStruct(invCodec, { typeId: 0, ids: [H32] }))).toEqual({ typeId: 0, ids: [H32] });
-      expect(decodeInv(encodeStruct(invCodec, { typeId: 255, ids: [H32] }))).toEqual({ typeId: 255, ids: [H32] });
+      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 0, ids: [H32] }))).toEqual({ typeId: 0, ids: [H32] });
+      expect(decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 255, ids: [H32] }))).toEqual({ typeId: 255, ids: [H32] });
     });
 
     it('accepts an unknown but bounded typeId', () => {
-      const decoded = decodeInv(encodeStruct(invCodec, { typeId: 200, ids: [H32] }));
+      const decoded = decodeModifierRequest(encodeStruct(modifierRequestCodec, { typeId: 200, ids: [H32] }));
       expect(decoded).toEqual({ typeId: 200, ids: [H32] });
     });
   });
@@ -255,13 +243,11 @@ function validBodyFor(decoderName: string): Uint8Array {
   switch (decoderName) {
     case 'decodeSyncInfo':
       return encodeStruct(syncInfoCodec, { tipHeight: 10, tipHash: H32 });
-    case 'decodeInv':
-      return encodeStruct(invCodec, { typeId: 101, ids: [H32] });
     case 'decodeModifierRequest':
-      return encodeStruct(modifierRequestCodec, { typeId: 101, ids: [H32] });
+      return encodeStruct(modifierRequestCodec, { typeId: 103, ids: [H32] });
     case 'decodeModifierResponse':
       return encodeStruct(modifierResponseCodec, {
-        typeId: 101, modifiers: [{ id: H32, data: new Uint8Array([1]) }],
+        typeId: 103, modifiers: [{ id: H32, data: new Uint8Array([1]) }],
       });
     default: throw new Error(`unknown decoder: ${decoderName}`);
   }

@@ -6,7 +6,7 @@ import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra } from '@
 
 export const MSG_HANDSHAKE = 1;
 export const MSG_SYNC_INFO = 2;
-export const MSG_INV = 3;
+// code 3 retired (was Inv) — never reuse
 export const MSG_MODIFIER_REQUEST = 4;
 export const MSG_MODIFIER_RESPONSE = 5;
 export const MSG_GET_PEERS = 8;
@@ -20,7 +20,7 @@ export const MSG_BLOCKS = 17;
 // Modifier type IDs
 // ---------------------------------------------------------------------------
 
-export const MODIFIER_ORDERING_BLOCK = 101;
+// 101 retired (was ordering block), never reuse
 // 102 retired (was sub-block), never reuse
 export const MODIFIER_POST_BODY = 103;
 

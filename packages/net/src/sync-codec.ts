@@ -1,7 +1,7 @@
 import { encodeFrame } from './frame.js';
-import type { SyncInfo, Inv, ModifierRequest, ModifierResponse } from './sync-types.js';
+import type { SyncInfo, ModifierRequest, ModifierResponse } from './sync-types.js';
 import {
-  MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE,
+  MSG_SYNC_INFO, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE,
   MSG_GET_PEERS, MSG_PEERS,
   MSG_GET_HEADERS, MSG_HEADERS, MSG_GET_BLOCKS, MSG_BLOCKS,
 } from './types.js';
@@ -108,52 +108,39 @@ export function decodeSyncInfo(body: Uint8Array): SyncInfo | null {
 }
 
 // ---------------------------------------------------------------------------
-// Inv (3) / ModifierRequest (4) — NET_INTERFACE → Inv / ModifierRequest
+// ModifierRequest (4) — NET_INTERFACE → ModifierRequest
 //
 // u8(typeId) ‖ arr( hexN(id, 32) )
 //
 // typeId is u8 — the byte is the domain; unknown values decode and are dropped
-// by the handler (the sync machine's typeId filter; node.ts filters
-// ModifierRequest by typeId before dispatch). 1–MAX_INV_IDS ids; empty is
-// malformed (nonEmpty — no honest sender announces or requests nothing).
+// by the handler (node.ts filters ModifierRequest by typeId before dispatch).
+// 1–MAX_INV_IDS ids; empty is malformed (nonEmpty — no honest sender requests
+// nothing).
 // ---------------------------------------------------------------------------
 
-function idListCodec(name: string): StructCodec<{ typeId: number; ids: string[] }> {
-  return {
-    name,
-    write(w, msg) {
-      writeU8OrThrow(w, msg.typeId);
-      writeArr(w, msg.ids, (iw, id) => writeHexNOrThrow(iw, id, 32));
-    },
-    read(r) {
-      const typeId = readU8(r);
-      const count = readVlqU(r);
-      if (count < 1) {
-        throw new ReaderError(`${name}: empty id list`, 'out-of-domain');
-      }
-      if (count > MAX_INV_IDS) {
-        throw new ReaderError(
-          `${name}: ${count} ids exceeds ${MAX_INV_IDS}`,
-          'array-too-large',
-        );
-      }
-      const ids: string[] = [];
-      for (let i = 0; i < count; i++) ids.push(readHexN(r, 32));
-      return { typeId, ids };
-    },
-  };
-}
-
-export const invCodec = idListCodec('inv');
-export const modifierRequestCodec = idListCodec('modifierRequest');
-
-export function encodeInv(magic: number, inv: Inv): Uint8Array {
-  return encodeFrame(magic, MSG_INV, encodeStruct(invCodec, inv));
-}
-
-export function decodeInv(body: Uint8Array): Inv | null {
-  return tryDecodeStruct(invCodec, body);
-}
+export const modifierRequestCodec: StructCodec<{ typeId: number; ids: string[] }> = {
+  name: 'modifierRequest',
+  write(w, msg) {
+    writeU8OrThrow(w, msg.typeId);
+    writeArr(w, msg.ids, (iw, id) => writeHexNOrThrow(iw, id, 32));
+  },
+  read(r) {
+    const typeId = readU8(r);
+    const count = readVlqU(r);
+    if (count < 1) {
+      throw new ReaderError('modifierRequest: empty id list', 'out-of-domain');
+    }
+    if (count > MAX_INV_IDS) {
+      throw new ReaderError(
+        `modifierRequest: ${count} ids exceeds ${MAX_INV_IDS}`,
+        'array-too-large',
+      );
+    }
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) ids.push(readHexN(r, 32));
+    return { typeId, ids };
+  },
+};
 
 export function encodeModifierRequest(magic: number, req: ModifierRequest): Uint8Array {
   return encodeFrame(magic, MSG_MODIFIER_REQUEST, encodeStruct(modifierRequestCodec, req));

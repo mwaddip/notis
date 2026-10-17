@@ -26,7 +26,6 @@ export {
 export {
   MSG_HANDSHAKE,
   MSG_SYNC_INFO,
-  MSG_INV,
   MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
   MSG_GET_PEERS,
@@ -35,7 +34,6 @@ export {
   MSG_HEADERS,
   MSG_GET_BLOCKS,
   MSG_BLOCKS,
-  MODIFIER_ORDERING_BLOCK,
   MODIFIER_POST_BODY,
 } from './types.js';
 export {
@@ -92,13 +90,12 @@ export type {
   GetBlocksMsg,
 } from './types.js';
 export type {
-  SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState,
+  SyncInfo, ModifierRequest, ModifierResponse, SyncState,
   PipelineIntake, ChainView,
 } from './sync-types.js';
 export {
   syncInfoCodec, encodeSyncInfo, decodeSyncInfo,
-  invCodec, modifierRequestCodec,
-  encodeInv, decodeInv,
+  modifierRequestCodec,
   encodeModifierRequest, decodeModifierRequest,
   modifierResponseCodec, encodeModifierResponse, decodeModifierResponse,
   encodeGetPeers, decodeGetPeers,
