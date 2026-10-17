@@ -773,10 +773,11 @@ describe('gossip dispatch listener', () => {
   });
 
   it('hands the handler the peer that relayed the block, not its publisher', () => {
-    // `propagationSource` is what fork resolution asks for the competing chain,
-    // because that peer provably holds one. `msg.from` — the original publisher
-    // — need not be connected to us at all, and this asserts which of the two
-    // arrives.
+    // `propagationSource` is the peer the pipeline asks for the headers the
+    // tree lacks below the block (NET_INTERFACE → Pull Requests → "A gossiped
+    // block's relayer is asked for the headers the tree lacks"). `msg.from`
+    // — the original publisher — need not be connected to us at all, and
+    // this asserts which of the two arrives.
     const seen: string[] = [];
     const { deliver } = makeDispatchHarness({ onOrderingBlock: (_b, from) => seen.push(from) });
 

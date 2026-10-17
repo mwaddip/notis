@@ -55,12 +55,10 @@ describe('sync protocol', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Both chain queries THROW on an unexpected frame code or a malformed body.
-// `requestBlocks`' result goes straight to `reorg(forkHeight, newBlocks)`,
-// which reverts above the fork point and applies what it is given, so an empty
-// array truncates our own chain instead of failing to extend it (NET_INTERFACE
-// → Pull Requests). That difference is only visible in a test that sends the
-// wrong code.
+// Both chain queries THROW on an unexpected frame code or a malformed body
+// (NET_INTERFACE → Pull Requests). The throw lands at the scheduler and
+// marks the peer (NET_INTERFACE → Sync State Machine → "A request ends
+// without a well-formed answer").
 // ---------------------------------------------------------------------------
 
 describe('chain queries reject a frame bearing another code', () => {

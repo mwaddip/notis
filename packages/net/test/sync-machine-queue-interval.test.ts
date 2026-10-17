@@ -7,14 +7,10 @@ import { MSG_SYNC_INFO } from '../src/types.js';
 import type { NetConfig } from '../src/types.js';
 
 // ---------------------------------------------------------------------------
-// The three machine-level rules that NET_INTERFACE states and the tree does
-// not: a peer's `SyncInfo` acted on at most once per 100 ms (the register's
-// `SYNC_INFO_MIN_INTERVAL_MS`), a peer served one block answer at a time
-// (`MAX_PENDING_BLOCK_REQUESTS`), and a data queue bounded per peer
-// (`MAX_DATA_EVENTS_PER_PEER`) so one peer's flood never pushes out another.
-// Written as `.fails` on `SyncMachine` driven through its message entries, so
-// the assertion a rule flips reaches the real code without a stub reaching
-// around it.
+// NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at most once
+// per `SYNC_INFO_MIN_INTERVAL_MS`". Driven through `SyncMachine`'s message
+// entries, so the assertion the rule flips reaches the real code without a
+// stub reaching around it.
 // ---------------------------------------------------------------------------
 
 const MAGIC = 0x54444147;
@@ -107,6 +103,7 @@ describe("a peer's SyncInfo is acted on at most once per 100 ms", () => {
   });
 });
 
-// (The flood-vs-answer case retires with the per-peer data queue; the
-// scheduler keeps at most one header request and one block request open
-// per peer and awaits each answer by its round trip.)
+// The scheduler keeps at most one header request and one block request open
+// per peer and awaits each answer by its round trip (NET_INTERFACE → Sync
+// State Machine → "One header request per peer, every peer at once.";
+// → "Blocks are asked by id, from a peer that has them.").

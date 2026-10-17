@@ -96,7 +96,7 @@ describe('sync codec decode boundary', () => {
 
     it(`${name} returns null on non-minimal VLQ (re-encode compare)`, () => {
       const valid = validBodyFor(name);
-      // SyncInfo starts with vlqU; Inv/ModReq/ModResp start with u8 + vlqU(count).
+      // SyncInfo starts with vlqU; ModReq/ModResp start with u8 + vlqU(count).
       // Expand the first VLQ field to a non-minimal 2-byte encoding (LEB128: add 0x80 continuation).
       const firstVlqOffset = name === 'decodeSyncInfo' ? 0 : 1; // skip u8(typeId)
       const nonMinimal = new Uint8Array(valid.length + 1);
