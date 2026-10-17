@@ -4973,12 +4973,12 @@ row**: hash `GENESIS_PREV_BLOCK_HASH`, work 0, interlinks `[]`, `createdAt` and 
 A page runs the checks header by header, in order; a refusal at one header keeps the headers before it and refuses
 the rest of the page.
 
-**An admitted header is stored when it extends the best chain or outweighs it.** Its `chain_work` is its parent's
-plus `blockWork(powTargetBits)`. It is stored — a `block_headers` row — when its parent is a stored row and either
-that parent is the best chain's tip or its own `chain_work` exceeds the best tip's; any other admitted header
-belongs to a side branch, and a side branch is scored without being stored (→ "A side branch is stored only once it
-is heavier") — a header whose parent is the peer's running branch reaches the tree through that branch's second
-pass, whatever its work.
+**An admitted header is stored when it extends the best chain.** Its `chain_work` is its parent's plus
+`blockWork(powTargetBits)`. It is stored — a `block_headers` row — when its parent is the best chain's tip; any other
+admitted header belongs to a side branch, and **a side branch reaches the tree through its second pass alone** (→ "A
+side branch is stored only once it is heavier"), whatever its work. A gossiped header on a side branch is scored, not
+stored, and its relayer is asked for the headers above the branch's base (→ "One intake, one at a time"), so a branch
+that outweighs the best is won and stored by the pass its peer's run drives.
 
 **The best chain is the heaviest reachable branch.** It ends at the stored header with the most `chain_work` whose
 branch is reachable (→ "The reach floor is the horizon, one rule for every fork point"); a tie keeps the incumbent.
