@@ -514,8 +514,8 @@ export class SyncMachine {
    * A header run reads the peer's current claim at every iteration — hash
    * and height together — so a claim replaced mid-run drives the next
    * page's `deliverHeaders` and refute test. A run opened with no claim
-   * hands `''` to `deliverHeaders` (NET_INTERFACE → `setPipeline`) and
-   * ends on the first short page.
+   * hands `''` to `deliverHeaders` (NET_INTERFACE → Sync Handler
+   * Registration) and ends on the first short page.
    */
   private async runHeaders(peerId: string): Promise<void> {
     const view = this.chainView!;
