@@ -420,16 +420,24 @@ export class ReorgBlockRejectedError extends Error {
  * penalty and no memo.
  */
 export class ReorgAbortedError extends Error {
+  readonly height: number;
+  readonly hash: string;
+  readonly class: 'unbound' | 'acceptance' | 'local';
+  readonly detail?: string;
   constructor(
-    readonly height: number,
-    readonly hash: string,
-    readonly class_: 'unbound' | 'acceptance' | 'local',
-    readonly detail?: string,
+    height: number,
+    hash: string,
+    cls: 'unbound' | 'acceptance' | 'local',
+    detail?: string,
   ) {
     super(
-      `reorg aborted at height ${height} (${hash}): class=${class_}` +
+      `reorg aborted at height ${height} (${hash}): class=${cls}` +
       (detail ? `: ${detail}` : ''),
     );
+    this.height = height;
+    this.hash = hash;
+    this.class = cls;
+    this.detail = detail;
     this.name = 'ReorgAbortedError';
   }
 }

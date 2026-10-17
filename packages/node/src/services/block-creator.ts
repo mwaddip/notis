@@ -368,8 +368,16 @@ export function submitMinedBlock(powNonce: number, submittedHeight: number): str
   // NODE_INTERFACE → Block finalization → "A mined block is applied through
   // the pipeline's intake": one entry drives admission, binding, staging and
   // extension through the funnel's classified entry. The intake answers the
-  // verdict `submitMinedBlock` reports back.
-  const verdict = deliverMinedBlock(block);
+  // verdict `submitMinedBlock` reports back; a corrupt-state error out of
+  // the item reaches `failStopIfCorruptChain`, as every outer frame of a
+  // mined-block item must.
+  let verdict: ReturnType<typeof deliverMinedBlock>;
+  try {
+    verdict = deliverMinedBlock(block);
+  } catch (err) {
+    if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
+    throw err;
+  }
 
   // Clean up any mempool entries the intake did not remove. Double-removal is
   // harmless. Runs on both arms: whatever made a rejected body invalid came
