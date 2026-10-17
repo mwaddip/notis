@@ -40,7 +40,6 @@ const stubStore: SyncStore = {
   getOrderingBlockId: () => null,
   heightByBlockId: () => null,
   chainHeight: () => 0,
-  appendBlocks: () => {},
 };
 
 interface Internals {
@@ -76,7 +75,7 @@ describe('a ban hangs up the peer and tells the sync machine', () => {
     return { net, pm, hangUp, sm, conns };
   }
 
-  it('a permanent ban hangs up the connection and drops the retained height', () => {
+  it('a permanent ban hangs up the connection and drops the retained claim', () => {
     const { pm, hangUp, sm, conns } = makeHarness();
     pm.recordPenalty('permanent', 'peer1', 0, 'test');
 
@@ -84,7 +83,7 @@ describe('a ban hangs up the peer and tells the sync machine', () => {
     expect(hangUp).toHaveBeenCalledWith(conns[0]!.remotePeer);
     expect(pm.getPeerMetadata('peer1')).toBeNull();
     sm?.flush();
-    expect(sm?.peerHeight('peer1')).toBeNull();
+    expect(sm?.getClaimsForTest().has('peer1')).toBe(false);
   });
 
   it('a temporal ban at the threshold hangs up the connection', () => {
@@ -95,7 +94,7 @@ describe('a ban hangs up the peer and tells the sync machine', () => {
     expect(hangUp).toHaveBeenCalledTimes(1);
     expect(pm.isBanned('peer1')).toBe(true);
     sm?.flush();
-    expect(sm?.peerHeight('peer1')).toBeNull();
+    expect(sm?.getClaimsForTest().has('peer1')).toBe(false);
   });
 
   it('a ban of a peer with no connection calls hangUp zero times', () => {

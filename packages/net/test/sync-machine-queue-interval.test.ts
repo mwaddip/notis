@@ -37,9 +37,12 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
     getOrderingBlockId: () => null,
     heightByBlockId: () => null,
     chainHeight: () => 0,
-    appendBlocks: () => {},
     ...overrides,
   };
+}
+
+function heightOf(machine: SyncMachine, peerId: string): number | null {
+  return machine.getClaimsForTest().get(peerId)?.tipHeight ?? null;
 }
 
 interface Sent { peerId: string; data: Uint8Array }
@@ -75,19 +78,19 @@ describe("a peer's SyncInfo is acted on at most once per 100 ms", () => {
     // The first SyncInfo stands at once — nothing is held before an interval.
     machine.handleMessage('B', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipHash: '00'.repeat(32) }));
     machine.flush();
-    expect(machine.peerHeight('B')).toBe(100);
+    expect(heightOf(machine, 'B')).toBe(100);
 
     // Advance 10 ms — well inside the 100 ms interval — and send the second.
     vi.advanceTimersByTime(10);
     machine.handleMessage('B', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 200, tipHash: '00'.repeat(32) }));
     machine.flush();
-    const rightAfterSecond = machine.peerHeight('B');
+    const rightAfterSecond = heightOf(machine, 'B');
 
     // Advance past the interval and tick — the held report is acted on now.
     vi.advanceTimersByTime(120);
     machine.onTimerTick();
     machine.flush();
-    const afterTick = machine.peerHeight('B');
+    const afterTick = heightOf(machine, 'B');
 
     // The tick is what reads the held report; both verdicts hold once the
     // interval does, and the last line is the one the interval flips —
@@ -100,7 +103,7 @@ describe("a peer's SyncInfo is acted on at most once per 100 ms", () => {
     const { machine } = makeMachine({ chainHeight: () => 0 });
     machine.handleMessage('B', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 42, tipHash: '00'.repeat(32) }));
     machine.flush();
-    expect(machine.peerHeight('B')).toBe(42);
+    expect(heightOf(machine, 'B')).toBe(42);
   });
 });
 

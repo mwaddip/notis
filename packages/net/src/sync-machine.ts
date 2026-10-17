@@ -24,7 +24,6 @@ export interface SyncStore {
   getOrderingBlockId(height: number): string | null;
   heightByBlockId(id: string): number | null;
   chainHeight(): number;
-  appendBlocks(blocks: unknown[], peerId: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,12 +301,6 @@ export class SyncMachine {
 
   onSynced(cb: () => void): void {
     this.onSyncedCallbacks.push(cb);
-  }
-
-  /** NET_INTERFACE → Pull Requests — the claim's height; `null` for a peer
-   * the scheduler has no claim for. */
-  peerHeight(peerId: string): number | null {
-    return this.claims.get(peerId)?.tipHeight ?? null;
   }
 
   /** Test introspection — the stall marks map. */

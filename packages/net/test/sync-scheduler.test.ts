@@ -75,7 +75,6 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
     getOrderingBlockId: () => null,
     heightByBlockId: () => null,
     chainHeight: () => 0,
-    appendBlocks: () => {},
     ...overrides,
   };
 }
@@ -292,7 +291,7 @@ describe('a header run that throws leaves the scheduler serving the next event',
     peerActive(sch, 'q', 1);
     syncInfo(sch, 'q', 10, hexId(10));
     await settle();
-    expect(sch.machine.peerHeight('q')).toBe(10);
+    expect(sch.machine.getClaimsForTest().get('q')?.tipHeight).toBe(10);
     warnSpy.mockRestore();
   });
 });

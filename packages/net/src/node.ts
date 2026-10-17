@@ -9,7 +9,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from 'libp2p';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION, protocolVersionAt, decodeOrderingBlock, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
+import { PROTOCOL_VERSION, protocolVersionAt, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
 import { ReaderError } from '@dagsocial/wire';
 import type {
   NetConfig, NetValidators, Peer, PeerEntryMsg,
@@ -76,7 +76,6 @@ import type { ModifierRequest, ModifierResponse } from './sync-types.js';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
 type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
-type BlocksHandlerFn = (block: OrderingBlock, fromPeerId: string) => boolean;
 
 /**
  * Return the libp2p node cast to the Libp2pGossip interface expected by the
@@ -137,7 +136,7 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
 
 /**
  * Lazy adapter implementing SyncStore by delegating to functions that are set
- * after construction (via setBlocksHandler / setHeadersHandler).
+ * after construction.
  *
  * Exported for the same reason `servePeersBody` and `decodeHandshakePayload`
  * are: so tests drive **this** code rather than a copy of it. It is not part of
@@ -147,16 +146,11 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
  * `dist/index.d.ts` is asserted free of it by `sync-store.test.ts`.
  */
 export class LazySyncStore implements SyncStore {
-  private _blocksHandler: BlocksHandlerFn | null = null;
   private _chainHeightProvider: (() => number) | null = null;
   private _blockIdProvider: ((height: number) => string | null) | null = null;
   private _heightByBlockIdProvider: ((id: string) => number | null) | null = null;
 
   constructor(_validators: NetValidators) {}
-
-  setBlocksHandler(fn: BlocksHandlerFn): void {
-    this._blocksHandler = fn;
-  }
 
   setChainHeightProvider(fn: () => number): void {
     this._chainHeightProvider = fn;
@@ -186,23 +180,6 @@ export class LazySyncStore implements SyncStore {
   chainHeight(): number {
     return this._chainHeightProvider?.() ?? 0;
   }
-
-  appendBlocks(_blocks: unknown[], peerId: string): void {
-    if (!this._blocksHandler) return;
-    for (const raw of _blocks) {
-      if (!(raw instanceof Uint8Array)) continue;
-      let block: OrderingBlock;
-      try {
-        block = decodeOrderingBlock(raw);
-      } catch (err) {
-        console.warn(`[net] appendBlocks: failed to decode block: ${String(err)}`);
-        continue;
-      }
-      const ok = this._blocksHandler(block, peerId);
-      if (!ok) break;
-    }
-  }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1667,11 +1644,6 @@ export class NetNode {
     return this.syncMachine?.getState().phase ?? 'idle';
   }
 
-  /** NET_INTERFACE → Pull Requests. */
-  peerTipHeight(peerId: string): number | null {
-    return this.syncMachine?.peerHeight(peerId) ?? null;
-  }
-
   /** NET_INTERFACE → Sync Handler Registration. */
   onPeerActive(cb: (peerId: string, direction: 'inbound' | 'outbound') => void): void {
     this.peerActiveHandlers.push(cb);
@@ -1784,17 +1756,6 @@ export class NetNode {
     } else {
       this.peerMgr.recordPenaltyKind(PenaltyKind.Transient, peerId, reason);
     }
-  }
-
-  /**
-   * Register a handler for blocks received via the sync machine's pull path
-   * (ModifierResponse during sync). The handler's return is the
-   * batch's continue signal: `true` for a block the handler applied or already
-   * held, `false` for one it rejected. `appendBlocks` stops the batch at the
-   * first `false` (NET_INTERFACE → Sync Handler Registration).
-   */
-  setBlocksHandler(handler: BlocksHandlerFn): void {
-    this.syncStore.setBlocksHandler(handler);
   }
 
   /**

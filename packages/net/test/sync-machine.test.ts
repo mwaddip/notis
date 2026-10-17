@@ -10,10 +10,10 @@ import { decodeSyncInfo } from '../src/sync-codec.js';
 
 // ---------------------------------------------------------------------------
 // SyncMachine — machine-level cases: initial state, codec and magic, the
-// movement-gated reply, the idle event loop, peerHeight reading the claim,
-// and the retained-claims shape at disconnect. The scheduler's rules — a
-// claim the view lacks opens a run, the three ends, the phases, stall
-// marks, needHeaders, chainMoved — are covered in sync-scheduler.test.ts.
+// movement-gated reply, the idle event loop and the retained-claims
+// shape at disconnect. The scheduler's rules — a claim the view lacks
+// opens a run, the three ends, the phases, stall marks, needHeaders,
+// chainMoved — are covered in sync-scheduler.test.ts.
 // ---------------------------------------------------------------------------
 
 function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
@@ -21,7 +21,6 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
     getOrderingBlockId: () => null,
     heightByBlockId: () => null,
     chainHeight: () => 0,
-    appendBlocks: () => {},
     ...overrides,
   };
 }
@@ -249,38 +248,6 @@ describe('movement gate', () => {
     vi.advanceTimersByTime(1_000); // past the 100 ms interval
     sendSyncInfoMsg(machine, 'P', { tipHeight: 6, tipHash: hexId(6) });
     expect(sent.filter(m => m.peerId === 'P').length).toBeGreaterThan(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// peerHeight (NET_INTERFACE → Pull Requests — the claim's height)
-// ---------------------------------------------------------------------------
-
-describe('peerHeight', () => {
-  it('returns null before any claim', () => {
-    const { machine, connected } = makeMachine();
-    peerActive(machine, connected, 'p', 100);
-    expect(machine.peerHeight('p')).toBeNull();
-  });
-
-  it('returns the claimed height after an inbound SyncInfo', () => {
-    const { machine, connected } = makeMachine();
-    peerActive(machine, connected, 'p', 0);
-    sendSyncInfoMsg(machine, 'p', { tipHeight: 200 });
-    expect(machine.peerHeight('p')).toBe(200);
-  });
-
-  it('returns null after the peer disconnects', () => {
-    const { machine, connected } = makeMachine();
-    peerActive(machine, connected, 'p', 0);
-    sendSyncInfoMsg(machine, 'p', { tipHeight: 200 });
-    peerDisconnect(machine, connected, 'p');
-    expect(machine.peerHeight('p')).toBeNull();
-  });
-
-  it('returns null for a stranger', () => {
-    const { machine } = makeMachine();
-    expect(machine.peerHeight('unknown')).toBeNull();
   });
 });
 

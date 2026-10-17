@@ -215,6 +215,9 @@ describe("a peer's sync streams are served one at a time", () => {
     // The rule: the push's read ran under a deadline that started at its
     // turn, not when libp2p accepted it; the ~5 s wait is longer than A's
     // 1 s read deadline, and the push was still read.
-    expect(nodeA.peerTipHeight(nodeB.peerId())).toBe(pushedHeight);
+    const schA = (nodeA as unknown as {
+      syncMachine: { getClaimsForTest(): Map<string, { tipHeight: number; tipHash: string }> };
+    }).syncMachine;
+    expect(schA.getClaimsForTest().get(nodeB.peerId())?.tipHeight).toBe(pushedHeight);
   }, TIMEOUT);
 });
