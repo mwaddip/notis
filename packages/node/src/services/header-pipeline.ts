@@ -148,7 +148,6 @@ interface RunningBranch {
   storedAnchor: { prevBlockHash: string; height: number; interlinks: string[]; createdAt: number | null };
   storedTa: number | null;
   storedWork: bigint;
-  storedHashes: string[];
   switched: boolean;
 }
 
@@ -169,6 +168,27 @@ function workOrZero(bits: number): bigint {
  */
 function interlinksCommitFromParent(parent: HeaderRow, anchorBits: number): string[] {
   return updateInterlinks(parent.interlinks, parent.hash, level(parent.header, anchorBits));
+}
+
+/**
+ * The branch's path from `baseHash` (exclusive) to `topHash` (inclusive),
+ * read back through `prev_hash` point reads. Returns the hashes in height
+ * order; the base is excluded. NODE_INTERFACE → Fork choice decides on
+ * verified headers → "A side branch is stored only once it is heavier." →
+ * "The walk needs no cap": a branch's memory bound is 32 bytes per 400
+ * headers plus the anchor, so pass 2 reads the path from the store rather
+ * than holding every stored hash in memory.
+ */
+function readBranchFromBase(baseHash: string, topHash: string): string[] {
+  const result: string[] = [];
+  let h = topHash;
+  while (h !== baseHash) {
+    result.unshift(h);
+    const row = getHeaderRow(h);
+    if (row === null) break;
+    h = row.prevHash;
+  }
+  return result;
 }
 
 /**
@@ -464,8 +484,14 @@ export function admitPage(
 
   // The base's parent is the best chain's tip (or the root while there is no
   // best) → extension. Store every header in the page as it is admitted.
+  // A pass-1 continuation stays in its pass regardless: a base that has
+  // become the best tip while scoring wins on the next page and is stored by
+  // pass 2 (NODE_INTERFACE → Fork choice decides on verified headers →
+  // "An admitted header is stored when it extends the best chain." →
+  // "A side branch is stored only once it is heavier.").
   const bestTip = getBestTip();
-  const extendsBest = bestTip === null ? base.isVirtualRoot : base.hash === bestTip.hash;
+  const extendsBest = !continuesPass1
+    && (bestTip === null ? base.isVirtualRoot : base.hash === bestTip.hash);
   if (extendsBest) {
     runningBranches.delete(peerId);
     let currentParent: HeaderRow | null = base.isVirtualRoot ? null : base.row;
@@ -523,7 +549,6 @@ export function admitPage(
       storedAnchor: { prevBlockHash: anchor.prevBlockHash, height: anchor.height, interlinks: [...anchor.interlinks], createdAt: anchor.createdAt },
       storedTa: anchorTa,
       storedWork: base.chainWork,
-      storedHashes: [],
       switched: false,
     };
     runningBranches.set(peerId, r);
@@ -663,6 +688,7 @@ function handlePass2(
   const bestWork = best ? best.chainWork : 0n;
   let cumulativeWork = r.storedWork;
   const freshHashes: string[] = [];
+  const prevStoredUpTo = r.storedUpTo;
   let crossedThisPage = false;
   for (let i = 0; i < freshHeaders.length; i++) {
     const h = freshHeaders[i]!;
@@ -682,7 +708,6 @@ function handlePass2(
     currentParent = row;
   }
 
-  const branchHashesAfterPage = r.storedHashes.concat(freshHashes);
   if (crossedThisPage || r.switched) {
     if (crossedThisPage && !r.switched) {
       // Reachability: the branch's fork with the applied chain is the base's
@@ -695,8 +720,17 @@ function handlePass2(
         return { outcome: 'refused', refusedAt: { index: 0, kind: 'none', reason: 'unreachable' } };
       }
       r.switched = true;
+      // The crossing page rewrites best_chain from the base once, with the
+      // branch's path read back through `prev_hash` from this page's last
+      // header. Later pages extend from the last header stored on the
+      // branch, so the pass's `best_chain` writes are linear in the branch's
+      // length.
+      const lastHash = verdict.hashes[verdict.hashes.length - 1]!;
+      const branchFromBase = readBranchFromBase(r.baseHash, lastHash);
+      rewriteBestChain(r.baseHeight, branchFromBase);
+    } else {
+      rewriteBestChain(prevStoredUpTo, freshHashes);
     }
-    rewriteBestChain(r.baseHeight, branchHashesAfterPage);
     scoredLighter.clear();
     callbacks.chainMoved();
   }
@@ -711,7 +745,6 @@ function handlePass2(
   };
   r.storedTa = verdict.next.t_a;
   r.storedWork = cumulativeWork;
-  r.storedHashes = branchHashesAfterPage;
 
   const lastRecordedHeight = r.recordedHeights[r.recordedHeights.length - 1] ?? r.baseHeight;
   if (r.storedUpTo >= lastRecordedHeight) {
