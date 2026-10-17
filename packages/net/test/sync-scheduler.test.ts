@@ -386,6 +386,57 @@ describe('claims drive one run at most per peer', () => {
     await settle();
     expect(sch.machine.getState().phase).toBe('idle');
   });
+
+  it('a claim replaced while a page is in flight does not refute the peer', async () => {
+    vi.setSystemTime(0);
+    const h1 = hexId(50);
+    const h2 = hexId(60);
+    const pageOf50 = (): BlockHeader[] => {
+      const out: BlockHeader[] = [];
+      for (let i = 1; i <= 50; i++) {
+        out.push({
+          protocolVersion: 1, height: i,
+          prevBlockHash: i === 1 ? '00'.repeat(32) : hexId(i - 1),
+          utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(33),
+          validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 2304,
+          createdAt: 0, interlinkRoot: '00'.repeat(32), adProofsRoot: '00'.repeat(32),
+        });
+      }
+      return out;
+    };
+    let release1!: (page: BlockHeader[]) => void;
+    const page1 = new Promise<BlockHeader[]>((r) => { release1 = r; });
+    const sch = makeScheduler();
+    const asAny = sch.machine as unknown as {
+      setRequestHeaders?: (fn: (locator: string[], peerId: string) => Promise<BlockHeader[]>) => void;
+    };
+    let callNo = 0;
+    asAny.setRequestHeaders?.(async (locator, peerId) => {
+      callNo++;
+      sch.requests.push({ peerId, locator });
+      if (callNo === 1) return page1;
+      // The next request should run against the new claim; the fake
+      // never resolves it, so the run is still open when the test
+      // reads marks and penalties.
+      return new Promise<BlockHeader[]>(() => { /* held */ });
+    });
+    peerActive(sch, 'p', 1);
+    syncInfo(sch, 'p', 50, h1);
+    await settle();
+    // Claim rises during the delivery — the peer's chain reaches 60.
+    vi.advanceTimersByTime(200);
+    syncInfo(sch, 'p', 60, h2);
+    await settle();
+    // The first page the peer served under the first claim ends at 50 —
+    // short, but the targeted claim was 50; a refute against the new
+    // claim (60) is the defect this case guards.
+    release1(pageOf50());
+    await settle();
+    await settle();
+    // No mark, no transient — the peer is honest.
+    expect(sch.penalties.filter(x => x.peerId === 'p' && x.kind === 'transient').length).toBe(0);
+    expect(sch.machine.getMarksForTest().has('p')).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

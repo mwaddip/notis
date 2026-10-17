@@ -527,6 +527,12 @@ export class SyncMachine {
       if (this.stallMarks.has(peerId)) return;
 
       const locator = view.locatorFor(peerId);
+      // Capture the claim as the request goes out. The refute test
+      // reads this one: an honest peer whose tip rose during the
+      // delivery is refuted only if the page fails against the claim
+      // the page was asked toward.
+      const claimAtRequest = this.claims.get(peerId);
+      const claimHashAtRequest = claimAtRequest?.tipHash ?? '';
       let page: BlockHeader[];
       try {
         page = await requestHeaders(locator, peerId);
@@ -547,11 +553,10 @@ export class SyncMachine {
         return;
       }
 
-      // Read the peer's current claim — hash and height together.
+      // Deliver toward the current claim — the pipeline wants the
+      // latest hash a settlement reads against.
       const claim = this.claims.get(peerId);
       const claimHash = claim?.tipHash ?? '';
-
-      // Hand the page to the pipeline. A refusal ends the run unmarked.
       let accepted: boolean;
       try {
         accepted = await pipeline.deliverHeaders(peerId, claimHash, page);
@@ -563,8 +568,6 @@ export class SyncMachine {
 
       if (!this.isConnected(peerId)) return;
 
-      // Re-read the claim after the delivery — the pipeline may have
-      // moved the view, and a replaced claim's hash is the new target.
       const claimAfter = this.claims.get(peerId);
       const claimHashAfter = claimAfter?.tipHash ?? '';
 
@@ -573,10 +576,17 @@ export class SyncMachine {
         return;
       }
 
-      const reachedClaimedHeight = claimAfter !== undefined && page.length > 0
-        && page[page.length - 1]!.height >= claimAfter.tipHeight;
+      // The claim the request was asked under is what the refute test
+      // reads. A claim replaced between request and delivery leaves the
+      // next page to continue against the new one.
+      if (claimHashAfter !== claimHashAtRequest) {
+        continue;
+      }
+
+      const reachedClaimedHeight = claimAtRequest !== undefined && page.length > 0
+        && page[page.length - 1]!.height >= claimAtRequest.tipHeight;
       if (page.length < MAX_CHAIN_RESPONSE_ITEMS || reachedClaimedHeight) {
-        if (claimHashAfter) {
+        if (claimHashAtRequest) {
           this.penalizeFn?.(peerId, 'transient', 'headers page refutes the claim');
           this.markPeer(peerId);
         } else {
