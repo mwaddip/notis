@@ -108,11 +108,6 @@ describe('initial state', () => {
     const { machine } = makeMachine();
     expect(machine.getMarksForTest().size).toBe(0);
   });
-
-  it('exposes an empty stalledPeers set', () => {
-    const { machine } = makeMachine();
-    expect(machine.getState().stalledPeers.size).toBe(0);
-  });
 });
 
 // ---------------------------------------------------------------------------

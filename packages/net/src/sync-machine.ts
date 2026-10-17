@@ -89,8 +89,6 @@ export class SyncMachine {
   // ---- State the scheduler holds (NET_INTERFACE → Sync State Machine) ----
   private state: SyncState = {
     phase: 'idle',
-    syncPeerId: null,
-    stalledPeers: new Set(),
   };
 
   /** Claims by peer id — the retained claim from the latest `SyncInfo` the
@@ -262,8 +260,6 @@ export class SyncMachine {
   // -------- Public introspection --------
 
   getState(): Readonly<SyncState> {
-    // NET_INTERFACE → Stall Detection — stalledPeers reflects the marks set.
-    this.state.stalledPeers = new Set(this.stallMarks.keys());
     return this.state;
   }
 
