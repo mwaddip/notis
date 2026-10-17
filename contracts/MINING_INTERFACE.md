@@ -370,9 +370,9 @@ as nothing, and the speculation of the body carrying it answers for it as the ap
 state stops the node (`NODE_INTERFACE → "What the funnel's totality catch is FOR"`).
 
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
-not yet met its peers withholds the template it holds. See *The peer-readiness gate* below. **A 404
-from a miner node is one of two things** — that gate, or a terminal decline, which is on the node's
-log. Any other 404 is a defect.
+not yet met its peers withholds the template it holds. See *The peer-readiness gate* and *The window gate*
+below. **A 404 from a miner node is one of three things** — either gate, or a terminal decline, which is on
+the node's log. Any other 404 is a defect.
 
 ⚠ **The template is stable for a height, and that is a load-bearing property, not an implementation
 detail.** `POST /mining/submit` reconstructs the header from *the node's current template* plus the
@@ -439,6 +439,17 @@ retry, which is routine. 500 says a template exists and is malformed, which is n
 retried a 404 forever against a broken creator would never learn anything — and silently omitting
 `powPreimage` would be worse still, because the miner would mine against `undefined` and submit
 nonces that can never verify.
+
+#### The window gate
+
+> ⚠ **AHEAD OF CODE (2026-10-17).** This section leads the template route's gate in node's
+> `routes/mining.ts` beside the peer-readiness gate.
+
+**A miner node withholds the template while its pipeline's window holds extension** — `appliedTip ≥ S +
+maxReorgDepth`, `S` the best chain's height at the last hold of net's gate (`NODE_INTERFACE → Fork choice decides
+on verified headers → "The window"`). A block the node could not apply is a block it does not ask a miner for.
+The answer is the same `404 { error: 'No block template available' }`, so `scripts/miner.mjs` polls until the
+next hold opens the window, and the gate sits behind the `?miner=` validation as the peer-readiness gate does.
 
 ### POST /mining/submit
 
