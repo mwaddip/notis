@@ -292,6 +292,43 @@ describe('claims drive one run at most per peer', () => {
     expect(sch.requests.length).toBe(1);
   });
 
+  it('a claim replaced mid-run drives the next page toward the new hash', async () => {
+    vi.setSystemTime(0);
+    const h1 = hexId(50);
+    const h2 = hexId(60);
+    let release1!: (page: BlockHeader[]) => void;
+    const page1 = new Promise<BlockHeader[]>((r) => { release1 = r; });
+    const delivered: { peerId: string; claimHash: string }[] = [];
+    const pipeline: FakePipeline = makePipeline(true);
+    pipeline.deliverHeaders = async (peerId, hash, page) => {
+      delivered.push({ peerId, claimHash: hash });
+      pipeline.calls.push({ peerId, claimHash: hash, page });
+      return true;
+    };
+    const sch = makeScheduler({ pipeline });
+    const asAny = sch.machine as unknown as {
+      setRequestHeaders?: (fn: (locator: string[], peerId: string) => Promise<BlockHeader[]>) => void;
+    };
+    asAny.setRequestHeaders?.(async (locator, peerId) => {
+      sch.requests.push({ peerId, locator });
+      return page1;
+    });
+    peerActive(sch, 'p', 1);
+    syncInfo(sch, 'p', 50, h1);
+    await settle();
+    // Advance past the SYNC_INFO_MIN_INTERVAL_MS so the second report
+    // acts on arrival rather than being held pending.
+    vi.advanceTimersByTime(200);
+    syncInfo(sch, 'p', 60, h2);
+    await settle();
+    // Resolve the request started under the first claim.
+    release1([]);
+    await settle();
+    await settle();
+    // The run read the current claim at the delivery, which is h2.
+    expect(delivered.some(d => d.claimHash === h2)).toBe(true);
+  });
+
   it('a second claim from the same peer while a run is open opens no second request', async () => {
     let release!: () => void;
     const held = new Promise<BlockHeader[]>((r) => { release = () => r([]); });

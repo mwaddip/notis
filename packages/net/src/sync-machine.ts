@@ -463,7 +463,7 @@ export class SyncMachine {
     if (this.chainView?.knowsTip(peerId, info.tipHash)) {
       this.anyClaimEverSettled = true;
     } else if (!this.stallMarks.has(peerId) && !this.openHeaderRuns.has(peerId)) {
-      void this.startHeaderRun(peerId, info.tipHash);
+      void this.startHeaderRun(peerId);
     }
 
     this.recomputePhase();
@@ -476,11 +476,10 @@ export class SyncMachine {
     if (this.stallMarks.has(peerId)) return;
     if (this.openHeaderRuns.has(peerId)) return;
     // NET_INTERFACE → Pull Requests → "A gossiped block's relayer is asked
-    // for the headers the tree lacks": the retained claim is the hash the
-    // page is asked toward; with none, the run ends settled on a short
-    // page.
-    const claim = this.claims.get(peerId);
-    void this.startHeaderRun(peerId, claim?.tipHash ?? null);
+    // for the headers the tree lacks": with no claim, the run reads the
+    // claim as it arrives at each iteration; a run that stays no-claim
+    // ends on the first short page.
+    void this.startHeaderRun(peerId);
   }
 
   private handleChainMoved(): void {
@@ -490,7 +489,7 @@ export class SyncMachine {
       if (this.stallMarks.has(peerId)) continue;
       if (this.openHeaderRuns.has(peerId)) continue;
       if (!this.chainView.knowsTip(peerId, claim.tipHash)) {
-        void this.startHeaderRun(peerId, claim.tipHash);
+        void this.startHeaderRun(peerId);
       }
     }
     this.recomputePhase();
@@ -499,19 +498,26 @@ export class SyncMachine {
   // -------- Header runs (NET_INTERFACE → Sync State Machine → "One header
   // request per peer, every peer at once") --------
 
-  private async startHeaderRun(peerId: string, claimHash: string | null): Promise<void> {
+  private async startHeaderRun(peerId: string): Promise<void> {
     if (!this.requestHeadersFn || !this.pipeline || !this.chainView) return;
     if (this.openHeaderRuns.has(peerId)) return;
     this.openHeaderRuns.add(peerId);
     try {
-      await this.runHeaders(peerId, claimHash);
+      await this.runHeaders(peerId);
     } finally {
       this.openHeaderRuns.delete(peerId);
       this.recomputePhase();
     }
   }
 
-  private async runHeaders(peerId: string, claimHash: string | null): Promise<void> {
+  /**
+   * A header run reads the peer's current claim at every iteration — hash
+   * and height together — so a claim replaced mid-run drives the next
+   * page's `deliverHeaders` and refute test. A run opened with no claim
+   * hands `''` to `deliverHeaders` (NET_INTERFACE → `setPipeline`) and
+   * ends on the first short page.
+   */
+  private async runHeaders(peerId: string): Promise<void> {
     const view = this.chainView!;
     const pipeline = this.pipeline!;
     const requestHeaders = this.requestHeadersFn!;
@@ -541,15 +547,15 @@ export class SyncMachine {
         return;
       }
 
-      // Hand the page to the pipeline. A refusal ends the run unmarked;
-      // the pipeline recorded whatever penalty was due (NET_INTERFACE →
-      // Peer Penalty System).
+      // Read the peer's current claim — hash and height together.
+      const claim = this.claims.get(peerId);
+      const claimHash = claim?.tipHash ?? '';
+
+      // Hand the page to the pipeline. A refusal ends the run unmarked.
       let accepted: boolean;
       try {
-        accepted = await pipeline.deliverHeaders(peerId, claimHash ?? '', page);
+        accepted = await pipeline.deliverHeaders(peerId, claimHash, page);
       } catch (err) {
-        // NET_INTERFACE → Sync State Machine — a throwing deliverer
-        // degrades this one run.
         console.warn(`[sync-machine] deliverHeaders(${peerId}) threw: ${String(err)}`);
         return;
       }
@@ -557,22 +563,20 @@ export class SyncMachine {
 
       if (!this.isConnected(peerId)) return;
 
-      // NET_INTERFACE → Sync State Machine → "How a header sync ends":
-      // reached — `knowsTip(peerId, hash)` answers `true`.
-      if (claimHash && view.knowsTip(peerId, claimHash)) {
+      // Re-read the claim after the delivery — the pipeline may have
+      // moved the view, and a replaced claim's hash is the new target.
+      const claimAfter = this.claims.get(peerId);
+      const claimHashAfter = claimAfter?.tipHash ?? '';
+
+      if (claimHashAfter && view.knowsTip(peerId, claimHashAfter)) {
         this.anyClaimEverSettled = true;
         return;
       }
 
-      // Refute check — a page shorter than `MAX_CHAIN_RESPONSE_ITEMS` or
-      // one that reached the claimed height without the pipeline knowing
-      // the hash refutes the claim. A run with no carried claim ends
-      // settled on a short page — there is no claim to refute.
-      const claim = this.claims.get(peerId);
-      const reachedClaimedHeight = claim !== undefined && page.length > 0
-        && page[page.length - 1]!.height >= claim.tipHeight;
+      const reachedClaimedHeight = claimAfter !== undefined && page.length > 0
+        && page[page.length - 1]!.height >= claimAfter.tipHeight;
       if (page.length < MAX_CHAIN_RESPONSE_ITEMS || reachedClaimedHeight) {
-        if (claimHash) {
+        if (claimHashAfter) {
           this.penalizeFn?.(peerId, 'transient', 'headers page refutes the claim');
           this.markPeer(peerId);
         } else {
