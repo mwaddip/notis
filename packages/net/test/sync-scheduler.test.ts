@@ -531,6 +531,20 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
     await settle();
     expect(pipeline.calls.length).toBeGreaterThan(0);
   });
+
+  it('a pipeline refusal on a short page earns no mark, no penalty and no further request', async () => {
+    const pipeline = makePipeline(false);
+    const sch = makeScheduler({ pipeline, nextPage: [] });
+    peerActive(sch, 'p', 1);
+    syncInfo(sch, 'p', 100, hexId(100));
+    await settle();
+    // Removing `if (!accepted) return;` in `runHeaders` lets the loop
+    // fall into the refute branch on a short page: a mark and a
+    // transient penalty the scheduler must not record.
+    expect(sch.machine.getMarksForTest().has('p')).toBe(false);
+    expect(sch.penalties.filter(x => x.peerId === 'p').length).toBe(0);
+    expect(sch.requests.filter(r => r.peerId === 'p').length).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
