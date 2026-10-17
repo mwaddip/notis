@@ -258,17 +258,18 @@ describe('header-pipeline', () => {
       const { callbacks: cb } = recorder();
       for (const h of main) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb);
       const alt = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE, startAt: main[0]!.header.createdAt + 1 });
-      // Pass 1 scores alt into a running branch, pass 2 stores and switches.
-      const { callbacks: cb2 } = recorder();
-      const scored = admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx(), cb2);
-      expect(scored.outcome).toBe('won');
-      const { cap, callbacks } = recorder();
-      const stored = admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx(), callbacks);
-      expect(stored.outcome).toBe('stored-from-pass-2');
+      // The whole branch is won on its first page: pass 1 stores from the
+      // page in hand, the switch fires in the same call.
+      const { cap, callbacks: cb2 } = recorder();
+      const v = admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx(), cb2);
       // The last assertion names the rule: the switch moves the best tip to
       // the heavier branch's tip, firing `chainMoved`.
+      expect(v.outcome).toBe('taken');
       expect(getBestTip()!.hash).toBe(alt[2]!.hash);
       expect(cap.chainMoves).toBeGreaterThan(0);
+      // Any further delivery of the same headers is a no-op — all held.
+      const { callbacks: cb3 } = recorder();
+      expect(admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx(), cb3).outcome).toBe('taken');
     });
 
     it('a tie keeps the incumbent', () => {
@@ -292,23 +293,19 @@ describe('header-pipeline', () => {
       const main = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb } = recorder();
       for (const h of main) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb);
-      // Alt: 3 headers from root (fork at 0), heavier total work.
+      // Alt: 3 headers from root (fork at 0), heavier total work. The applied
+      // tip rose beyond the horizon before the page arrives, so the branch's
+      // fork point (0) is below the reach floor — unreachable.
       const alt = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE, startAt: main[0]!.header.createdAt + 1 });
-      // Pass 1 scores alt into a running branch for peerB.
-      const { callbacks: cb2 } = recorder();
-      const scored = admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx(), cb2);
-      expect(scored.outcome).toBe('won');
-      // Raise applied tip beyond the horizon. Pass 2 must refuse the switch
-      // because alt's fork point (0) is below the reach floor.
       const highTip = config.maxReorgDepth + 2;
       const { cap, callbacks } = recorder();
       const v = admitPage('peerB', alt[2]!.hash, pageHeaders(alt), ctx({ appliedTipHeight: () => highTip }), callbacks);
-      // The last assertion names the rule: the store rule's `outweighs` arm
-      // checks reachability against the applied chain, and refuses to switch
-      // to an unreachable branch.
+      // The last assertion names the rule: an admitted side branch that would
+      // win is refused when its fork with the applied chain is below the
+      // reach floor; the best tip stands unmoved.
+      expect(v.outcome).toBe('refused');
       expect(getBestTip()!.hash).toBe(main[1]!.hash);
       expect(cap.chainMoves).toBe(0);
-      expect(v.outcome).not.toBe('stored-from-pass-2');
     });
   });
 
@@ -442,51 +439,59 @@ describe('header-pipeline', () => {
   });
 
   describe('presync — pass 1 and pass 2', () => {
-    it('a page of a running branch scores and does not store', () => {
-      // Peer claims a chain of 5 headers; our tree is empty. The page is
-      // scored off a running branch.
+    it('a page from the root extends an empty tree and stores every header', () => {
+      // Peer claims a chain of 5 headers; our tree is empty. The page's
+      // base is the virtual root — extension stores every header.
       const chain = makeChain({ parent: null, n: 5, params: PARAMS, schedule: SCHEDULE });
       const { cap, callbacks } = recorder();
       const v = admitPage('peerA', chain[4]!.hash, pageHeaders(chain), ctx(), callbacks);
-      // No stored row, no `chainMoved`.
-      expect(getBestTip()).toBeNull();
-      expect(cap.chainMoves).toBe(0);
-      // The last assertion names the rule: a page of a lone running branch
-      // scores (outcome is `won` because they outweigh our empty chain).
-      expect(v.outcome).toBe('won');
+      // The last assertion names the rule: a page whose base is the best
+      // chain's tip (or the root while none stands) is stored as it is
+      // admitted and the best chain extends.
+      expect(v.outcome).toBe('taken');
+      expect(getBestTip()!.hash).toBe(chain[4]!.hash);
+      expect(cap.chainMoves).toBeGreaterThan(0);
     });
 
-    it('a page past our tip and heavier scores won, then pass 2 stores', () => {
-      // Our chain: 2 headers. Peer's: 4 heavier headers from root. First page
-      // of 4 scores won, pass 2 fetches the same hashes and stores them.
+    it('a first page past our tip and heavier is stored from the page in hand', () => {
+      // Our chain: 2 headers. Peer's: 4 heavier headers from root. The first
+      // page carries the whole branch, won on its first page — stored from
+      // the page in hand, the best chain switches.
       const ours = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
       const theirs = makeChain({ parent: null, n: 4, params: PARAMS, schedule: SCHEDULE, startAt: ours[0]!.header.createdAt + 1 });
       const { cap, callbacks } = recorder();
-      const scored = admitPage('peerB', theirs[3]!.hash, pageHeaders(theirs), ctx(), callbacks);
-      expect(scored.outcome).toBe('won');
-      // Pass 2: feed again, pipeline recognises the running branch and stores.
-      const stored = admitPage('peerB', theirs[3]!.hash, pageHeaders(theirs), ctx(), callbacks);
-      expect(stored.outcome).toBe('stored-from-pass-2');
-      // The last assertion names the rule: pass 2 lands the whole won branch
-      // on the tree and the best chain moves.
+      const v = admitPage('peerB', theirs[3]!.hash, pageHeaders(theirs), ctx(), callbacks);
+      // The last assertion names the rule: a branch won inside the page it
+      // starts in is stored from the page in hand, the best chain switches.
+      expect(v.outcome).toBe('taken');
       expect(getBestTip()!.hash).toBe(theirs[3]!.hash);
       expect(cap.chainMoves).toBeGreaterThan(0);
     });
 
     it('a pass-2 header off a recorded hash refuses with transient, stores nothing further', () => {
-      const ours = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE });
+      // Our chain: 10 anchor-bit headers. Theirs: 12 anchor-bit headers from
+      // root — heavier only after the 11th. Page 1 of 6 scores; page 2's 6
+      // wins the branch, which the pipeline re-fetches by `'again'`. The
+      // peer's pass-2 then rewrites the recorded header at height 12.
+      const ours = makeChain({ parent: null, n: 10, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb0 } = recorder();
       for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
-      const theirs = makeChain({ parent: null, n: 4, params: PARAMS, schedule: SCHEDULE, startAt: ours[0]!.header.createdAt + 1 });
+      const theirs = makeChain({ parent: null, n: 12, params: PARAMS, schedule: SCHEDULE, startAt: ours[0]!.header.createdAt + 1 });
+      const page1 = pageHeaders(theirs.slice(0, 6));
+      const page2 = pageHeaders(theirs.slice(6, 12));
+      const { callbacks: cbS } = recorder();
+      expect(admitPage('peerB', theirs[11]!.hash, page1, ctx(), cbS).outcome).toBe('taken');
+      expect(admitPage('peerB', theirs[11]!.hash, page2, ctx(), cbS).outcome).toBe('again');
+      // Pass 2 page 1 — six honest headers.
       const { cap, callbacks } = recorder();
-      const scored = admitPage('peerB', theirs[3]!.hash, pageHeaders(theirs), ctx(), callbacks);
-      expect(scored.outcome).toBe('won');
-      // Pass 2: feed a REWRITTEN final header that does not match the recorded hash.
-      const forged = makeHeader({ height: 4, parent: theirs[2]!, params: PARAMS, schedule: SCHEDULE, createdAt: theirs[2]!.header.createdAt + PARAMS.idealMs + 7 });
-      const altered = [...pageHeaders(theirs).slice(0, 3), forged.header];
-      const v = admitPage('peerB', theirs[3]!.hash, altered, ctx(), callbacks);
+      expect(admitPage('peerB', theirs[11]!.hash, page1, ctx(), callbacks).outcome).toBe('again');
+      // Pass 2 page 2 — the last header at the recorded height (12) is
+      // rewritten off its recorded hash.
+      const forged = makeHeader({ height: 12, parent: theirs[10]!, params: PARAMS, schedule: SCHEDULE, createdAt: theirs[10]!.header.createdAt + PARAMS.idealMs + 7 });
+      const altered = [...pageHeaders(theirs.slice(6, 11)), forged.header];
+      const v = admitPage('peerB', theirs[11]!.hash, altered, ctx(), callbacks);
       // The last assertion names the rule: pass-2 recorded-hash mismatch is
       // `transient` and lands no stored row for the forged branch.
       expect(cap.penalties.map(p => p.kind)).toContain('transient');
@@ -502,14 +507,14 @@ describe('header-pipeline', () => {
       const page1 = pageHeaders(theirs.slice(0, 6));
       const page2 = pageHeaders(theirs.slice(6, 12));
       const { callbacks: cbS } = recorder();
-      // Pass 1 across two pages — page 1 scores partially, page 2 wins.
-      expect(admitPage('peerB', theirs[11]!.hash, page1, ctx(), cbS).outcome).toBe('scored-partial');
-      expect(admitPage('peerB', theirs[11]!.hash, page2, ctx(), cbS).outcome).toBe('won');
+      // Pass 1 across two pages — page 1 continues scoring, page 2 wins.
+      expect(admitPage('peerB', theirs[11]!.hash, page1, ctx(), cbS).outcome).toBe('taken');
+      expect(admitPage('peerB', theirs[11]!.hash, page2, ctx(), cbS).outcome).toBe('again');
 
       // Pass 2 page 1 — stores six rows, cumulative work 6W < 10W, no switch.
       const { cap: cap1, callbacks: cb1 } = recorder();
       const v1 = admitPage('peerB', theirs[11]!.hash, page1, ctx(), cb1);
-      expect(v1.outcome).toBe('scored-partial');
+      expect(v1.outcome).toBe('again');
       expect(cap1.chainMoves).toBe(0);
       expect(getBestTip()!.hash).toBe(ours[9]!.hash);
 
@@ -520,7 +525,7 @@ describe('header-pipeline', () => {
       // The last assertion names the rule: the switch moves the best tip to
       // the crossing header's branch tip, firing `chainMoved` at pass 2's
       // crossing page.
-      expect(v2.outcome).toBe('stored-from-pass-2');
+      expect(v2.outcome).toBe('taken');
       expect(cap2.chainMoves).toBeGreaterThan(0);
       expect(getBestTip()!.hash).toBe(theirs[11]!.hash);
     });
@@ -533,15 +538,15 @@ describe('header-pipeline', () => {
       const page1 = pageHeaders(theirs.slice(0, 6));
       const page2 = pageHeaders(theirs.slice(6, 12));
       const { callbacks: cbS } = recorder();
-      expect(admitPage('peerB', theirs[11]!.hash, page1, ctx(), cbS).outcome).toBe('scored-partial');
-      expect(admitPage('peerB', theirs[11]!.hash, page2, ctx(), cbS).outcome).toBe('won');
+      expect(admitPage('peerB', theirs[11]!.hash, page1, ctx(), cbS).outcome).toBe('taken');
+      expect(admitPage('peerB', theirs[11]!.hash, page2, ctx(), cbS).outcome).toBe('again');
 
       // Only pass 2's first page arrives — the stored rows sit off best_chain.
       const { cap, callbacks } = recorder();
       const v = admitPage('peerB', theirs[11]!.hash, page1, ctx(), callbacks);
       // The last assertion names the rule: pass 2's first page does not
       // switch best when its cumulative work is below the current best tip's.
-      expect(v.outcome).toBe('scored-partial');
+      expect(v.outcome).toBe('again');
       expect(cap.chainMoves).toBe(0);
       expect(getBestTip()!.hash).toBe(ours[9]!.hash);
       expect(getHeaderRow(theirs[5]!.hash)).not.toBeNull();
@@ -556,8 +561,8 @@ describe('header-pipeline', () => {
       const page1 = pageHeaders(theirs.slice(0, 6));
       const page2 = pageHeaders(theirs.slice(6, 12));
       const { callbacks: cbS } = recorder();
-      expect(admitPage('peerB', theirs[11]!.hash, page1, ctx(), cbS).outcome).toBe('scored-partial');
-      expect(admitPage('peerB', theirs[11]!.hash, page2, ctx(), cbS).outcome).toBe('won');
+      expect(admitPage('peerB', theirs[11]!.hash, page1, ctx(), cbS).outcome).toBe('taken');
+      expect(admitPage('peerB', theirs[11]!.hash, page2, ctx(), cbS).outcome).toBe('again');
 
       // Pass 2 page 1 — but the last header at recorded height 6 is rewritten.
       const forged6 = makeHeader({ height: 6, parent: theirs[4]!, params: PARAMS, schedule: SCHEDULE, createdAt: theirs[4]!.header.createdAt + PARAMS.idealMs + 11 });
@@ -581,7 +586,10 @@ describe('header-pipeline', () => {
       // The last assertion names the rule: the second claim's running branch
       // replaces the first — pass 2 for the SECOND succeeds.
       const stored = admitPage('peerA', chain2[3]!.hash, pageHeaders(chain2), ctx(), callbacks);
-      expect(stored.outcome).toBe('stored-from-pass-2');
+      // The last assertion names the rule: the running branch for the new
+      // claim is admitted in place of the first; the branch is won inside
+      // its own first page.
+      expect(stored.outcome).toBe('taken');
     });
 
     it('onPeerDisconnected clears the peer branch and memo', () => {
@@ -606,10 +614,12 @@ describe('header-pipeline', () => {
       const theirs = makeChain({ parent: null, n: 2, params: PARAMS, schedule: SCHEDULE, startAt: ours[0]!.header.createdAt + 1 });
       const { callbacks } = recorder();
       const v = admitPage('peerB', '', pageHeaders(theirs), ctx(), callbacks);
-      // The last assertion names the rule: no-claim run with a page shorter
-      // than MAX_CHAIN_RESPONSE_ITEMS ends lighter when the branch does not
-      // outweigh the best.
-      expect(v.outcome).toBe('lighter');
+      // The last assertion names the rule: a no-claim run with a page
+      // shorter than MAX_CHAIN_RESPONSE_ITEMS drops the branch when it does
+      // not outweigh the best — the page is `'taken'` and nothing is
+      // stored for it.
+      expect(v.outcome).toBe('taken');
+      expect(getBestTip()!.hash).toBe(ours[2]!.hash);
     });
 
     it('a clock refusal in pass 1 writes no memo', () => {
@@ -685,8 +695,10 @@ describe('header-pipeline', () => {
         const page = pageHeaders(honest);
         const { callbacks: cb2 } = recorder();
         const v = admitPage('peerB', honest[honest.length - 1]!.hash, page, ctx(), cb2);
-        expect(v.outcome).toBe('lighter');
-        // Attacker's tip stays best.
+        // The honest branch does not outweigh the attacker's — the page is
+        // taken as scoring (lighter at the claim); the attacker's tip stays
+        // best.
+        expect(v.outcome).toBe('taken');
         expect(getBestTip()!.hash).toBe(atk[atk.length - 1]!.hash);
       }
       // Order B: honest first, then attacker arrives longer.
@@ -697,11 +709,10 @@ describe('header-pipeline', () => {
       // Attacker scores and stores.
       const page = pageHeaders(atk);
       const { callbacks: cb2 } = recorder();
-      admitPage('peerB', atk[atk.length - 1]!.hash, page, ctx(), cb2);
       const stored = admitPage('peerB', atk[atk.length - 1]!.hash, page, ctx(), cb2);
-      expect(stored.outcome).toBe('stored-from-pass-2');
-      // The last assertion names the rule: the heavier attacker's chain wins
-      // via pass 2 storage, best tip at its tip.
+      // The last assertion names the rule: the heavier attacker's chain is
+      // won inside its own first page and stored from that page.
+      expect(stored.outcome).toBe('taken');
       expect(getBestTip()!.hash).toBe(atk[atk.length - 1]!.hash);
     });
   });

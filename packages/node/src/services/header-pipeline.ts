@@ -787,7 +787,8 @@ export function locatorFor(peerId: string): string[] {
  */
 export function rechooseBestChain(ctx: PipelineContext, callbacks: PipelineCallbacks): void {
   const floor = reachFloor(ctx);
-  for (const row of heaviestHeaders()) {
+  const candidates = heaviestHeaders();
+  for (const row of candidates) {
     // Walk down the row's prev_hash to the fork point with what remains of
     // the best chain (an on-chain row the index still holds) or to the root.
     const branchHashes: string[] = [];

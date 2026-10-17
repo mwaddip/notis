@@ -167,16 +167,16 @@ export function rewriteBestChain(forkHeight: number, hashes: readonly string[]):
 
 /**
  * NODE_INTERFACE → Header tree. `heaviestHeaders`: rows in descending
- * `chain_work` over `idx_block_headers_work`, read one at a time; a reader
- * stops as soon as its first reachable branch is found (Fork choice decides on
- * verified headers → "The best chain is the heaviest reachable branch.").
+ * `chain_work` over `idx_block_headers_work`; the reader stops as soon as
+ * its first reachable branch is found (Fork choice decides on verified
+ * headers → "The best chain is the heaviest reachable branch.").
  */
-export function* heaviestHeaders(): Iterable<HeaderRow> {
+export function heaviestHeaders(): HeaderRow[] {
   const db = getDb();
-  const stmt = db.prepare('SELECT * FROM block_headers ORDER BY chain_work DESC');
-  for (const row of stmt.iterate() as Iterable<Row>) {
-    yield rowToHeaderRow(row);
-  }
+  const rows = db
+    .prepare('SELECT * FROM block_headers ORDER BY chain_work DESC')
+    .all() as Row[];
+  return rows.map(rowToHeaderRow);
 }
 
 /**
