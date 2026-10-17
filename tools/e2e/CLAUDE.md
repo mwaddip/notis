@@ -12,7 +12,7 @@ standing context — read it and the linked docs before touching code.
    `Invariants`, `Invite System`, `Likes`, `Deploy gate`.
 5. `../../contracts/NODE_INTERFACE.md` — **the contract this package CONSUMES**: `HTTP API` (every
    route table), the transition rules (karma, bond, vouch, credit), `Post transactions`,
-   `Per-block like settlement`, `Withdrawal transactions`, `Fork resolution`.
+   `Per-block like settlement`, `Withdrawal transactions`, `Fork choice decides on verified headers`.
 6. `../../contracts/MINING_INTERFACE.md` — `Template and submit`, `The peer-readiness gate`,
    `POST /mining/submit`, `Miner Script` (the solve loop this suite mirrors by importing the predicate).
 7. `../../contracts/NET_INTERFACE.md` — `Gossip Topics`, `Sync Flow`, `Bootstrap Flow (New Node)`,

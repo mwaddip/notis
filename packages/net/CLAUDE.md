@@ -23,7 +23,9 @@ transactions. TypeScript, pnpm workspaces, Node ≥ 22.
 
 ## This package (`@dagsocial/net`)
 The **libp2p networking layer**: gossip (ordering blocks, UTXO txs), the framed
-stream sync protocol (SyncInfo/Inv/Modifier), peer management + PeerDb, and handshake. Two-stage validation:
+stream sync protocol and its scheduler (`SyncInfo` claims, `GetHeaders` by locator, `GetBlocks` by id, post bodies by
+`ModifierRequest`; the node's pipeline decides the chain — `NET_INTERFACE → Sync State Machine`), peer management +
+PeerDb, and handshake. Two-stage validation:
 Stage 1 (stateless, via `@dagsocial/validation`) runs **before relay**; Stage 2 (stateful) runs in the node. An
 ordering block is forwarded once Stage 1 passes, a transaction only once the node admits it, and a penalty rests
 on what the sender could know — Stage 1's checks over the message alone (`NET_INTERFACE → Forwarding Rule`,

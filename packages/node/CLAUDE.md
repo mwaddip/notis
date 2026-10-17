@@ -70,9 +70,9 @@ The node serves no client (NODE_INTERFACE → The node serves no client).
   `contracts/`, or another session's work. Cross-package needs go back to main.
 - **Forced verification before "done":** `pnpm --filter @dagsocial/node typecheck` (zero errors) **and**
   `pnpm --filter @dagsocial/node test` (all pass). State the results; never claim done on an unverified write.
-- **The slow tree is not in that run.** `slow/` holds the four deepest fork-walk cases, one file each, run by
-  `pnpm --filter @dagsocial/node test:slow` (`vitest.slow.config.ts`); a change to fork resolution or to anything it
-  reads runs it too, and every pull request's CI does. `bench/` and `shadow/` are run by their own configs.
+- **The slow tree is not in that run.** `slow/` holds the three deepest header-pipeline cases, one file each, run by
+  `pnpm --filter @dagsocial/node test:slow` (`vitest.slow.config.ts`); a change to the pipeline, `reorg`, or anything they
+  read runs it too, and every pull request's CI does. `bench/` and `shadow/` are run by their own configs.
 - **A case sets up the config it needs, and its `describe` clears it.** The suite runs under the devnet profile
   (`maxReorgDepth` 40); a case that needs another registers its own `vi.doMock` of `src/config.js`. ⚠ `vi.doMock`
   outlives `vi.restoreAllMocks()` and `vi.resetModules()` — only `vi.doUnmock` in the `afterEach` ends it, and a case
@@ -102,7 +102,7 @@ The node serves no client (NODE_INTERFACE → The node serves no client).
 ```bash
 pnpm --filter @dagsocial/node typecheck   # tsc --noEmit, zero errors
 pnpm --filter @dagsocial/node test        # vitest run, all pass
-pnpm --filter @dagsocial/node test:slow   # the four deepest fork-walk cases, outside the default run
+pnpm --filter @dagsocial/node test:slow   # the three deepest header-pipeline cases, outside the default run
 pnpm --filter @dagsocial/node build       # tsup
 node packages/node/dist/index.js          # run the node (from repo root)
 ```

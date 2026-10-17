@@ -514,7 +514,7 @@ The gate before a commit is `pnpm -r build && pnpm -r typecheck && pnpm -r test`
   roots. No panics on untrusted input.
 - **`@dagsocial/nipopow`** — NiPoPoW proofs over the header chain: the proof codecs, the verifier,
   the comparator, the prover a node serves.
-- **`@dagsocial/net`** — libp2p + Gossipsub relay, whole-block sync, peer discovery and penalties.
+- **`@dagsocial/net`** — libp2p + Gossipsub relay, headers-first sync, peer discovery and penalties.
 - **`@dagsocial/node`** — Express server, UTXO engine, SQLite store, AVL+ state root, block creator,
   the per-block settlement transaction, decay.
 - **`@dagsocial/web`** — the browser client, built with vite.
@@ -554,8 +554,8 @@ price; likes as one-way karma spends with per-block accrual; invites with bonds 
 membership earned by vouches and likes; usernames; verifiable withdrawal; karma decay against a
 fixed supply pool; credit emission with the coinbase split, fees and storage rent; an AVL+ state
 root with box proofs, NiPoPoW proofs and a light client; the ASERT difficulty schedule; the reorg
-horizon; the protocol version schedule; libp2p networking with whole-block sync and header-scored
-fork choice; split mining; a browser client with its write surface; release packaging.
+horizon; the protocol version schedule; libp2p networking with headers-first sync and fork choice by
+verified work; split mining; a browser client with its write surface; release packaging.
 
 Deferred to future protocol versions: credit sinks (ads, boosts, tips); reply earning;
 karma-proportional PoW; storage pruning for lean nodes; view keys; parameter governance and treasury
