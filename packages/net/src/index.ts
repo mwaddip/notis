@@ -91,7 +91,10 @@ export type {
   GetHeadersMsg,
   GetBlocksMsg,
 } from './types.js';
-export type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
+export type {
+  SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState,
+  PipelineIntake, ChainView,
+} from './sync-types.js';
 export {
   syncInfoCodec, encodeSyncInfo, decodeSyncInfo,
   invCodec, modifierRequestCodec,
