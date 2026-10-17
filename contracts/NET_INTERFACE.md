@@ -1330,7 +1330,8 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
 
   **The `Blocks` arm answers the ids asked that its applied chain holds**, in the order asked, each id
   resolved by point lookup (`setHeightByBlockIdProvider`) and its block read once; an id it does not hold
-  is omitted — "not held", never a refusal.
+  is omitted — "not held", never a refusal. **An id asked twice is answered twice**, in its places: the arm
+  keeps no state across ids, and the byte bound caps the answer whatever the ids repeat.
 
   **Each block is encoded once.** The bytes the bound weighs are the bytes the response carries, so
   blocks reach the framing already encoded rather than being encoded to measure and again to send.
