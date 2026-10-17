@@ -15,10 +15,11 @@ import {
 import { getBestTip, getBestHashAt, getHeaderRow, insertRefusedHeader, removeHeaderSubtree } from '../../src/store/index.js';
 import { getDb } from '../../src/store/db.js';
 import { config } from '../../src/config.js';
-import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
+import { encodeHeader, encodeInterlinks, GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import { cumulativeWork } from '@dagsocial/validation';
 import { defaultParams, makeChain, makeHeader, type ParentHeaderInfo } from '../helpers/make-header.js';
 import { MAX_LOCATOR_HASHES } from '@dagsocial/net';
+import { InconsistentHeaderTreeError } from '../../src/services/corrupt-state.js';
 
 // A looser anchor target keeps the mining cost of a 400+-header chain
 // tolerable without changing admission's shape.
@@ -873,6 +874,202 @@ describe('header-pipeline', () => {
       // won inside its own first page and stored from that page.
       expect(stored.outcome).toBe('taken');
       expect(getBestTip()!.hash).toBe(atk[atk.length - 1]!.hash);
+    });
+  });
+
+  describe('pass 2 reachability from the base', () => {
+    it('a continued branch whose fork with the applied chain is below the floor is refused unreachable, best unmoved', () => {
+      const D = config.maxReorgDepth;
+      // Our chain: 60 anchor headers; best tip = ours[59] (chain_work 60W).
+      const ours = makeChain({ parent: null, n: 60, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb0 } = recorder();
+      for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
+      // Side branch forking from ours[1] (height 2), 60 anchor headers
+      // (heights 3..62) with a `startAt` offset so the branch's hashes
+      // differ from ours'. The branch's work is 2W + 60W = 62W > 60W.
+      const theirs = makeChain({
+        parent: ours[1]!, n: 60, params: PARAMS, schedule: SCHEDULE,
+        startAt: ours[1]!.header.createdAt + PARAMS.idealMs + 11,
+      });
+      const p1 = pageHeaders(theirs.slice(0, 50));
+      const p2 = pageHeaders(theirs.slice(50, 60));
+      // Pass 1: page 1 scores (2W + 50W = 52W < 60W), page 2 wins (62W > 60W).
+      const { callbacks: cbS } = recorder();
+      expect(admitPage('peerB', theirs[59]!.hash, p1, ctx(), cbS).outcome).toBe('taken');
+      expect(admitPage('peerB', theirs[59]!.hash, p2, ctx(), cbS).outcome).toBe('again');
+      // Pass 2 page 1 stores heights 3..52; cumulative 52W < 60W, no crossing.
+      const { callbacks: cbP2a } = recorder();
+      expect(admitPage('peerB', theirs[59]!.hash, p1, ctx(), cbP2a).outcome).toBe('again');
+      // Context now puts the floor above the branch's fork point (height 2):
+      // applied tip = D + 5 = 45, lowestJournal = 1 → floor = max(5, 0) = 5.
+      const highCtx = ctx({ appliedTipHeight: () => D + 5, lowestJournalHeight: () => 1 });
+      const { cap, callbacks } = recorder();
+      const v = admitPage('peerB', theirs[59]!.hash, p2, highCtx, callbacks);
+      // The last assertion names the rule: a pass-2 crossing whose base's
+      // fork with the applied chain is below the reach floor is refused
+      // with no penalty, and the best tip stands unmoved.
+      expect(cap.penalties).toEqual([]);
+      expect(getBestTip()!.hash).toBe(ours[59]!.hash);
+      expect(v.outcome).toBe('refused');
+    });
+  });
+
+  describe('age rule on a stored base', () => {
+    it('a page whose first header\'s parent is a stored row below the floor is refused with no penalty, nothing stored, no running branch', () => {
+      const D = config.maxReorgDepth;
+      // Our chain: 10 anchor headers; best tip = ours[9] at height 10.
+      const ours = makeChain({ parent: null, n: 10, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb0 } = recorder();
+      for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
+      // A side header at height 2 forking from ours[0] (height 1), which
+      // the strict context puts below the floor.
+      const side = makeHeader({
+        height: 2, parent: ours[0]!, params: PARAMS, schedule: SCHEDULE,
+        createdAt: ours[0]!.header.createdAt + PARAMS.idealMs + 5,
+      });
+      // Applied tip = D + 5 = 45, lowestJournal = 1 → floor = max(5, 0) = 5.
+      const strictCtx = ctx({ appliedTipHeight: () => D + 5, lowestJournalHeight: () => 1 });
+      const { cap, callbacks } = recorder();
+      const v = admitPage('peerB', side.hash, [side.header], strictCtx, callbacks);
+      // The last assertion names the rule: a page whose stored base is
+      // below the reach floor is refused with no penalty, no row stored
+      // for the side header, and no running branch left behind — the
+      // locator leads with the best chain's tip.
+      expect(cap.penalties).toEqual([]);
+      expect(getHeaderRow(side.hash)).toBeNull();
+      expect(locatorFor('peerB')[0]).toBe(ours[9]!.hash);
+      expect(v.outcome).toBe('refused');
+    });
+  });
+
+  describe('genesisId on a page', () => {
+    it('a page whose height-1 header hashes otherwise is refused with misbehavior', () => {
+      const chain = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE });
+      const pinned = 'ff'.repeat(32);
+      const { cap, callbacks } = recorder();
+      const v = admitPage('peerA', chain[2]!.hash, pageHeaders(chain), ctx({ genesisId: pinned }), callbacks);
+      expect(v.outcome).toBe('refused');
+      // The last assertion names the rule: a pinned genesisId makes a
+      // mismatching height-1 header misbehavior on a page.
+      expect(cap.penalties.map(p => p.kind)).toContain('misbehavior');
+    });
+  });
+
+  describe('leading held headers are no-ops', () => {
+    it('a page starting with held best-chain rows below the floor skips them and admits the fork above it', () => {
+      const D = config.maxReorgDepth;
+      // Our chain: 10 anchor headers (heights 1..10); best tip = ours[9].
+      const ours = makeChain({ parent: null, n: 10, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb0 } = recorder();
+      for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
+      // Side branch forking from ours[4] (height 5), two anchor headers at
+      // heights 6..7.
+      const side = makeChain({
+        parent: ours[4]!, n: 2, params: PARAMS, schedule: SCHEDULE,
+        startAt: ours[4]!.header.createdAt + PARAMS.idealMs + 11,
+      });
+      // Page = [ours[1], ours[2], ours[3], ours[4], side[0], side[1]] — the
+      // leading four are held best-chain rows (ours[1] is at height 2 and
+      // its parent ours[0] is below the floor); the branch forks at
+      // ours[4] above the floor.
+      const page = [ours[1]!, ours[2]!, ours[3]!, ours[4]!, side[0]!, side[1]!].map(p => p.header);
+      // Applied tip = D + 2 = 42, lowestJournal = 1 → floor = max(2, 0) = 2.
+      const strictCtx = ctx({ appliedTipHeight: () => D + 2, lowestJournalHeight: () => 1 });
+      const { cap, callbacks } = recorder();
+      const v = admitPage('peerB', side[1]!.hash, page, strictCtx, callbacks);
+      // The last assertion names the rule: leading held headers are
+      // no-ops — the first-fresh header's parent (ours[4] at height 5,
+      // above the floor) is the branch's base, so the age rule does not
+      // refuse on the overlap's first parent, and the branch is admitted.
+      expect(cap.penalties).toEqual([]);
+      expect(v.outcome).toBe('taken');
+    });
+  });
+
+  describe('pass-2 recorded-mismatch drops the branch', () => {
+    it('after the transient refusal, locatorFor leads with the best chain\'s tip', () => {
+      const ours = makeChain({ parent: null, n: 10, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb0 } = recorder();
+      for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
+      const theirs = makeChain({ parent: null, n: 12, params: PARAMS, schedule: SCHEDULE, startAt: ours[0]!.header.createdAt + 1 });
+      const page1 = pageHeaders(theirs.slice(0, 6));
+      const page2 = pageHeaders(theirs.slice(6, 12));
+      const { callbacks: cbS } = recorder();
+      expect(admitPage('peerB', theirs[11]!.hash, page1, ctx(), cbS).outcome).toBe('taken');
+      expect(admitPage('peerB', theirs[11]!.hash, page2, ctx(), cbS).outcome).toBe('again');
+      // Pass 2 page 1 — but the last header at recorded height 6 is forged.
+      const forged6 = makeHeader({
+        height: 6, parent: theirs[4]!, params: PARAMS, schedule: SCHEDULE,
+        createdAt: theirs[4]!.header.createdAt + PARAMS.idealMs + 13,
+      });
+      const forgedPage1 = [...pageHeaders(theirs.slice(0, 5)), forged6.header];
+      const { callbacks } = recorder();
+      const v = admitPage('peerB', theirs[11]!.hash, forgedPage1, ctx(), callbacks);
+      expect(v.outcome).toBe('refused');
+      // The last assertion names the rule: the mismatch drops the running
+      // branch, so the locator leads with the best chain's tip rather than
+      // the branch's state.
+      expect(locatorFor('peerB')[0]).toBe(ours[9]!.hash);
+    });
+  });
+
+  describe('rechooseBestChain ties keep the incumbent', () => {
+    it('a side row whose chain_work equals the incumbent\'s is not a candidate — the best chain stays', () => {
+      // Our chain: 3 anchor headers; best tip = ours[2] (chain_work 3W).
+      const ours = makeChain({ parent: null, n: 3, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb0 } = recorder();
+      for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
+      const incumbentWork = getBestTip()!.chainWork;
+      // Insert a side row at height 3 whose chain_work equals the incumbent's.
+      const side = makeHeader({
+        height: 3, parent: ours[1]!, params: PARAMS, schedule: SCHEDULE,
+        createdAt: ours[1]!.header.createdAt + PARAMS.idealMs + 7,
+      });
+      const db = getDb();
+      const workBuf = Buffer.alloc(40);
+      let w = incumbentWork;
+      for (let i = 39; i >= 0; i--) {
+        workBuf[i] = Number(w & 0xffn);
+        w >>= 8n;
+      }
+      db.prepare('INSERT INTO block_headers (hash, height, prev_hash, header_bytes, interlinks, chain_work, path_t_a) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(side.hash, 3, side.header.prevBlockHash, Buffer.from(encodeHeader(side.header)), Buffer.from(encodeInterlinks(side.interlinks)), workBuf, side.pathTa);
+      // Rechoose: `headersHeavierThan` reads strictly heavier rows, so a
+      // tie is not a candidate.
+      const { callbacks } = recorder();
+      rechooseBestChain(ctx(), callbacks);
+      // The last assertion names the rule: a tie keeps the incumbent —
+      // the best tip stands.
+      expect(getBestTip()!.hash).toBe(ours[2]!.hash);
+    });
+  });
+
+  describe('readBranchFromBase on a missing row', () => {
+    it('a branch row removed by SQL between pass 2 pages makes the switch throw InconsistentHeaderTreeError and writes nothing', () => {
+      const ours = makeChain({ parent: null, n: 6, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb0 } = recorder();
+      for (const h of ours) admitHeader(h.header, 'headers-page', 'peerA', ctx(), cb0);
+      const theirs = makeChain({ parent: null, n: 12, params: PARAMS, schedule: SCHEDULE, startAt: ours[0]!.header.createdAt + 1 });
+      const p1 = pageHeaders(theirs.slice(0, 6));
+      const p2 = pageHeaders(theirs.slice(6, 12));
+      // Pass 1: page 1 scores (6W, no strict win), page 2 wins (12W > 6W).
+      const { callbacks: cbS } = recorder();
+      expect(admitPage('peerB', theirs[11]!.hash, p1, ctx(), cbS).outcome).toBe('taken');
+      expect(admitPage('peerB', theirs[11]!.hash, p2, ctx(), cbS).outcome).toBe('again');
+      // Pass 2 page 1 stores heights 1..6, cumulative 6W, no crossing.
+      const { callbacks: cbP2a } = recorder();
+      expect(admitPage('peerB', theirs[11]!.hash, p1, ctx(), cbP2a).outcome).toBe('again');
+      // SQL deletes a stored row between the base and the top.
+      const db = getDb();
+      db.prepare('DELETE FROM block_headers WHERE hash = ?').run(theirs[2]!.hash);
+      // Pass 2 page 2 brings headers 7..12; the crossing lies in this page.
+      const bestChainBefore = db.prepare('SELECT COUNT(*) AS c FROM best_chain').pluck().get() as number;
+      const { callbacks } = recorder();
+      expect(() => admitPage('peerB', theirs[11]!.hash, p2, ctx(), callbacks)).toThrow(InconsistentHeaderTreeError);
+      // The last assertion names the rule: nothing is written to
+      // best_chain when the walk from the top hits a missing row.
+      const bestChainAfter = db.prepare('SELECT COUNT(*) AS c FROM best_chain').pluck().get() as number;
+      expect(bestChainAfter).toBe(bestChainBefore);
     });
   });
 });
