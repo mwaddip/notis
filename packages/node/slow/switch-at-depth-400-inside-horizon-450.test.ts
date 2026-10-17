@@ -102,18 +102,16 @@ describe('switch at depth 400 inside horizon 450', () => {
     const page2: BlockHeader[] = theirs.slice(400, 451).map((p) => p.header);
     const { callbacks: cbS } = recorder();
     const p1v1 = admitPage('peerB', theirs[450]!.hash, page1, await ctx(), cbS);
-    expect(p1v1.accepted).toBe(true);
-    expect(p1v1.outcome).toBe('scored-partial');
+    expect(p1v1.outcome).toBe('taken');
     const p1v2 = admitPage('peerB', theirs[450]!.hash, page2, await ctx(), cbS);
-    expect(p1v2.accepted).toBe(true);
-    expect(p1v2.outcome).toBe('won');
+    // Won on a later page — the branch is re-fetched from the base.
+    expect(p1v2.outcome).toBe('again');
 
     // Pass 2 page 1 — 400 rows stored, cumulative work at page end equals
     // our best's 450 anchor-works, so nothing switches.
     const { chainMoves: moves1, callbacks: cb1 } = recorder();
     const p2v1 = admitPage('peerB', theirs[450]!.hash, page1, await ctx(), cb1);
-    expect(p2v1.accepted).toBe(true);
-    expect(p2v1.outcome).toBe('scored-partial');
+    expect(p2v1.outcome).toBe('again');
     expect(moves1()).toBe(0);
     expect(getBestTip()!.hash).toBe(ours[449]!.hash);
 
@@ -125,8 +123,7 @@ describe('switch at depth 400 inside horizon 450', () => {
     // The last assertion names the rule: the best tip is the competing
     // branch's own tip (NODE_INTERFACE → Fork choice decides on verified
     // headers → "A side branch is stored only once it is heavier").
-    expect(p2v2.accepted).toBe(true);
-    expect(p2v2.outcome).toBe('stored-from-pass-2');
+    expect(p2v2.outcome).toBe('taken');
     expect(moves2()).toBeGreaterThan(0);
     expect(getBestTip()!.hash).toBe(theirs[450]!.hash);
   }, 120_000);

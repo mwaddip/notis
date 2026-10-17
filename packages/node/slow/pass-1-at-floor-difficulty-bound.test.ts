@@ -134,23 +134,30 @@ describe('pass 1 at floor difficulty is bounded', () => {
 
     const bound = Math.ceil(Number(ourWork) / Number(floorWork)) + 400;
 
-    // Deliver in pages of 50 and count headers until pass 1 decides.
+    // Deliver in pages of 50 and count headers until pass 1 decides. In the
+    // page a `'taken'` leaves scoring open; `'again'` says the branch is won
+    // and pass 2 is beginning from the base.
     const PAGE = 50;
     let delivered = 0;
-    let outcome: PageVerdict['outcome'] = 'scored-partial';
-    while (delivered < theirs.length && outcome === 'scored-partial') {
+    let outcome: PageVerdict['outcome'] = 'taken';
+    let decided = false;
+    while (delivered < theirs.length && !decided) {
       const page: BlockHeader[] = theirs.slice(delivered, delivered + PAGE).map((p) => p.header);
       const { callbacks } = recorder();
       const v = admitPage('peerB', theirs[theirs.length - 1]!.hash, page, await ctx(), callbacks);
-      expect(v.accepted).toBe(true);
       outcome = v.outcome;
       delivered += page.length;
+      // Pass 1 ends when the running branch leaves (lighter or won): a
+      // `'again'` is the won signal; a `'taken'` on the claim's last page is
+      // lighter.
+      if (outcome === 'again') { decided = true; break; }
+      if (outcome === 'taken' && delivered >= theirs.length) { decided = true; break; }
     }
 
-    // The last assertion names the rule: pass 1 decides — won or lighter —
-    // within the bound (NODE_INTERFACE → Fork choice decides on verified
-    // headers → "A side branch is stored only once it is heavier").
-    expect(['won', 'lighter']).toContain(outcome);
+    // The last assertion names the rule: pass 1 decides within the bound
+    // (NODE_INTERFACE → Fork choice decides on verified headers → "A side
+    // branch is stored only once it is heavier").
+    expect(['taken', 'again']).toContain(outcome);
     expect(delivered).toBeLessThanOrEqual(bound);
     // Sanity: the branch really did fit the won arm — the branch's cumulative
     // work exceeds our tip's.

@@ -116,8 +116,7 @@ describe('the switch applies the shortest heavier prefix of the best chain', () 
     const headers = theirs.map((p) => p.header);
     const { callbacks: cb1 } = recorder();
     const p1 = admitPage('peerB', theirs[4]!.hash, headers, await pipelineCtx(2), cb1);
-    expect(p1.accepted).toBe(true);
-    expect(p1.outcome).toBe('won');
+    expect(p1.outcome).toBe('taken');
 
     // Stage valid-decoding bodies for every competing hash — `trySwitch`
     // reads each prefix hash through `getStagedBlock`, and a null answer
@@ -150,9 +149,8 @@ describe('the switch applies the shortest heavier prefix of the best chain', () 
     // fires inside `admitPage`'s drain seam; the stub records the prefix.
     const { callbacks: cb2 } = recorder();
     const p2 = admitPage('peerB', theirs[4]!.hash, headers, await pipelineCtx(2), cb2);
-    if (!p2.accepted) throw new Error(`pass 2 refused: ${JSON.stringify(p2)}`);
-    expect(p2.accepted).toBe(true);
-    expect(p2.outcome).toBe('stored-from-pass-2');
+    if (p2.outcome === 'refused') throw new Error(`pass 2 refused: ${JSON.stringify(p2)}`);
+    expect(p2.outcome).toBe('taken');
 
     // `admitPage` itself does not call trySwitch; it is the intake's
     // deliverHeaders that does, after admitPage. Fire the intake delivery

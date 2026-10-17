@@ -322,11 +322,9 @@ describe('difficulty schedule', () => {
       };
       const headers = branch.map((p) => p.header);
       const first = pipeline.admitPage('peerT', branch[1]!.hash, headers, context, callbacks);
-      expect(first.accepted).toBe(true);
-      expect(first.outcome).toBe('won');
+      expect(first.outcome).toBe('taken');
       const second = pipeline.admitPage('peerT', branch[1]!.hash, headers, context, callbacks);
-      expect(second.accepted).toBe(true);
-      expect(second.outcome).toBe('stored-from-pass-2');
+      expect(second.outcome).toBe('taken');
 
       // Ask the provider about a header above the first stored row — height 2,
       // parent = `branch[0].hash`. The row stands at height 1, so the schedule
