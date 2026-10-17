@@ -15,7 +15,6 @@ import {
   getStagedBlock,
   insertRefusedHeader,
   pruneHeadersBelow,
-  purgeOldJournals,
   removeHeaderSubtree,
   stageBlock,
   unstageBlock,
@@ -31,7 +30,7 @@ import {
 } from './header-pipeline.js';
 import { applyOrderingBlockVerdict as realApplyOrderingBlockVerdict, type ApplyVerdict } from './block-apply.js';
 import { reorg as realReorg } from './fork-resolution.js';
-import { ReorgAbortedError, ReorgBlockRejectedError } from './corrupt-state.js';
+import { ReorgAbortedError, ReorgBlockRejectedError, UnreachableForkPointError } from './corrupt-state.js';
 import { config } from '../config.js';
 
 /**
@@ -226,10 +225,10 @@ function drainExtension(): void {
     const verdict = applyFn(staged.block);
     if (verdict.applied) {
       unstageBlock(nextHash);
-      // Pruning runs beside the journal purge — one writer per table
-      // (NODE_INTERFACE → Fork choice decides on verified headers → "Pruning.").
+      // Pruning runs at each apply (NODE_INTERFACE → Fork choice decides on
+      // verified headers → "Pruning."). The journals are purged by
+      // `applyBlockBody`'s own call to `purgeOldJournals`.
       pruneHeaderTree(reachFloor());
-      purgeOldJournals(getCurrentHeight() - c.maxReorgDepth);
       continue;
     }
     if (verdict.class === 'consensus') {
@@ -261,13 +260,28 @@ function trySwitch(): void {
   // No switch while the best chain contains the applied tip.
   if (bestAtApplied === appliedHash) return;
 
-  // Fork height: the highest height on both chains with matching hashes.
+  // Fork height: the highest height on both chains with matching hashes,
+  // bounded below by the reach floor. Admission's age rule holds every
+  // stored header's parent at or above the floor (NODE_INTERFACE → Fork
+  // choice decides on verified headers → "The reach floor is the horizon,
+  // one rule for every fork point."), so a walk that reaches the floor
+  // without a match is local corruption and fail-stops.
+  const floor = reachFloor();
   let f = applied - 1;
-  while (f > 0) {
+  while (f > floor) {
     const ourHash = getOrderingBlockHash(f);
     const theirHash = getBestHashAt(f);
     if (ourHash !== null && ourHash === theirHash) break;
     f -= 1;
+  }
+  if (f <= floor) {
+    const ourHash = f === 0 ? null : getOrderingBlockHash(f);
+    const theirHash = f === 0 ? null : getBestHashAt(f);
+    const matchAtFloor = f > 0 && ourHash !== null && ourHash === theirHash;
+    const floorIsVirtualRoot = floor === 0 && f === 0;
+    if (!matchAtFloor && !floorIsVirtualRoot) {
+      throw new UnreachableForkPointError('trySwitch', applied, floor);
+    }
   }
   // Shortest heavier prefix: walk the best chain above f collecting hashes
   // until the cumulative chainWork at that height exceeds the applied tip's.
@@ -332,8 +346,12 @@ export function wantedBlocks(): { id: string; height: number }[] {
     return wantedForExtension(applied, bestTip.height);
   }
   // Switch: the whole shortest heavier prefix above the fork height.
+  // Bounded at the reach floor — admission holds every stored header's
+  // parent at or above it; the walk reaching the floor without a match is
+  // local corruption, named by `trySwitch` on its own call.
+  const floor = reachFloor();
   let f = applied - 1;
-  while (f > 0) {
+  while (f > floor) {
     const ourHash = getOrderingBlockHash(f);
     const theirHash = getBestHashAt(f);
     if (ourHash !== null && ourHash === theirHash) break;

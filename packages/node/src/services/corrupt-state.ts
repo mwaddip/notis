@@ -167,6 +167,28 @@ export class MissingStagedBlockError extends CorruptChainStateError {
 }
 
 /**
+ * The switch's fork-point walk reached the reach floor without finding a
+ * matching hash. Admission's age rule holds every stored header's parent at
+ * or above the floor (NODE_INTERFACE → Fork choice decides on verified
+ * headers → "The reach floor is the horizon, one rule for every fork point."),
+ * so the best chain's fork with the applied chain is reachable; a walk that
+ * reaches the floor without a match says a header below it was stored, or
+ * the stored rows the walk reads disagree with the applied chain —
+ * corruption, never a peer's input.
+ */
+export class UnreachableForkPointError extends CorruptChainStateError {
+  constructor(site: string, appliedTip: number, floor: number) {
+    super(
+      site,
+      appliedTip,
+      `no fork point between the applied chain and the best chain at or ` +
+      `above the reach floor (floor=${floor}, applied tip=${appliedTip}) — ` +
+      `admission holds every stored header's parent at or above the floor`,
+    );
+  }
+}
+
+/**
  * The AVL+ tree refuses one of its writes (NODE_INTERFACE → AVL+ State Root →
  * "The rules read the tree, and nothing else").
  *
