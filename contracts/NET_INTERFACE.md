@@ -1106,18 +1106,20 @@ tracked as a follow-up.
 
 ## Biased Event Loop
 
-> ⚠ **AHEAD OF CODE (2026-10-17).** Clauses 1–2 lead the scheduler (`sync-machine.ts`): the pipeline's events
-> join the control queue, and the data queue holds answers to this node's requests.
+> ⚠ **AHEAD OF CODE (2026-10-17).** Clauses 1, 2 and 4 lead the scheduler (`sync-machine.ts`): the pipeline's
+> events join the control queue, and the data queue leaves with the announcement-driven pull whose messages it held.
 
 The sync/gossip event loop MUST prioritize:
 1. Control events (peer active, peer disconnect, a `SyncInfo` acted on, the pipeline's `needHeaders` and
    `chainMoved`) — unbounded channel, never dropped
-2. Data events (an answer to one of this node's header or block requests) — bounded **per peer**,
-   lossy: a peer holds at most `MAX_DATA_EVENTS_PER_PEER` queued, and one more drops that peer's
-   oldest, never another peer's — one peer's answers cannot push out another's
+2. **Answers are awaited by the request that asked them, and queued nowhere.** Every header and block this node
+   receives on the sync protocol is the answer to one of its own round trips (→ Sync Integrity), and the
+   scheduler keeps at most one header request and one block request open per peer (→ Sync State Machine) — so
+   what one peer's answers hold of this node is bounded by the requests this node made, and no peer's answer can
+   push out another's
 3. Timer ticks — fallback
-4. **It MUST wait when all three are idle.** With both queues empty and no tick
-   due, the loop blocks until an enqueue or the next tick. It does not re-poll.
+4. **It MUST wait when the queue is empty and no tick is due.** The loop blocks until an enqueue or the next
+   tick. It does not re-poll.
 
 **Yielding is not waiting.** `await new Promise(r => setImmediate(r))` returns to
 the event loop and comes straight back, so a loop that "yields" every iteration

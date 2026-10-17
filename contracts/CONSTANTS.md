@@ -306,9 +306,9 @@ holds byte-identical across the whole domain.
 ### net
 
 > ⚠ **AHEAD OF CODE (2026-10-17).** The rows `MAX_LOCATOR_HASHES`, `STALL_MARK_EXPIRY_MS` and `MAX_STALL_MARKS`
-> lead net's exports (`msg-guards.ts`), and `MAX_PENDING_BLOCK_REQUESTS` leaves with the asynchronous block
-> answers it bounded; the `MAX_INV_IDS`, `MAX_CHAIN_RESPONSE_ITEMS`, `SYNC_INFO_MIN_INTERVAL_MS`,
-> `MAX_DATA_EVENTS_PER_PEER` and `MAX_INBOUND_SYNC_STREAMS` rows read the scheduler's counts
+> lead net's exports (`msg-guards.ts`), and `MAX_PENDING_BLOCK_REQUESTS` and `MAX_DATA_EVENTS_PER_PEER` leave with
+> the asynchronous block answers and the data queue they bounded; the `MAX_INV_IDS`, `MAX_CHAIN_RESPONSE_ITEMS`,
+> `SYNC_INFO_MIN_INTERVAL_MS` and `MAX_INBOUND_SYNC_STREAMS` rows read the scheduler's counts
 > (`NET_INTERFACE → Sync State Machine`); `MSG_INV` and `MODIFIER_ORDERING_BLOCK` leave → Excluded with
 > their exports, and `minimumChainWork`'s row under → Per-network values leads the profile field. The drift test
 > reads these rows against net's barrel and the profiles.
@@ -332,7 +332,6 @@ under → Size caps.
 | `MAX_ADVERTISED_HEIGHT` | `100_000_000` | ~190 years at one block a minute | format | a horizon no honest chain reaches | DERIVED | `NET_INTERFACE → Validation` |
 | `GET_PEERS_RESPONSE_LIMIT` | `8` | peers served per `GetPeers` | policy | none stated | CHOSEN | `NET_INTERFACE → Peers` |
 | `SYNC_INFO_MIN_INTERVAL_MS` | `100` | 100 ms between the `SyncInfo`s acted on from one peer | policy | user ruling, 2026-10-15 — Ergo's `PerPeerSyncLockTime`; an honest peer sends one at peer-active, one per poll and a reply to each of ours it acts on | RULED | `NET_INTERFACE → Serve Side` |
-| `MAX_DATA_EVENTS_PER_PEER` | `8` | sync data events one peer holds in the queue | policy | four times the two answers a peer can owe this node at once — one header page and one block answer (`NET_INTERFACE → Sync State Machine`) | DERIVED | `NET_INTERFACE → Biased Event Loop` |
 | `MAX_INBOUND_SYNC_STREAMS` | `16` | sync streams of one connection open at once | policy | decided 2026-10-15 — over three times the five an honest peer holds open toward this node — a `SyncInfo` and four queries (headers, blocks, post bodies, peers), each kind one at a time; a waiting stream is unread and costs at most the muxer's 256 KiB initial window, so 16 cost 4 MiB a connection | DECIDED | `NET_INTERFACE → Stream Protocols` |
 | `STALL_MARK_EXPIRY_MS` | `1_800_000` | 30 minutes a stall mark stands | policy | decided 2026-10-17: with each of `maxPeers` (50) outbound peers returning as its mark expires, each return holds the gate at most one header deadline (`SYNC_REQUEST_TIMEOUT_MS`, 10 s) — 50 × 10 s = 500 s, under 1 800 s, so the gate still holds; a stream of fresh peer ids is bounded by the outbound manager's dial cadence | DECIDED | `NET_INTERFACE → Stall Detection` |
 | `MAX_STALL_MARKS` | `1_024` | stall marks kept by peer id | policy | decided 2026-10-17: about 100 B an entry, so about 100 KB; dropping the oldest lets a peer back early only behind 1 024 newer stallers | DECIDED | `NET_INTERFACE → Stall Detection` |
