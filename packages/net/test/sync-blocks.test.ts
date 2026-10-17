@@ -550,7 +550,7 @@ describe('two nodes: a claim opens headers, headers name wanted blocks, blocks a
     nodeB = null;
   });
 
-  it.fails("the joiner's pipeline receives A's blocks over GetBlocks", async () => {
+  it("the joiner's pipeline receives A's blocks over GetBlocks", async () => {
     nodeA = new NetNode(makeConfig(), validators);
     nodeB = new NetNode(makeConfig(), validators);
 

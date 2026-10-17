@@ -541,6 +541,14 @@ export class NetNode {
   private syncMachine: SyncMachine | null = null;
   private outboundMgr: OutboundManager | null = null;
   private syncStore: LazySyncStore;
+  /**
+   * The set of configured bootstrap addresses whose first dial has
+   * ended — Active, failed, or retired as this node's own
+   * (NET_INTERFACE → Sync State Machine → "The gate bounds how far
+   * blocks apply."). Settled stays settled; redials never reopen the
+   * pending state.
+   */
+  private bootstrapSettledAddrs = new Set<string>();
   private syncTimer: ReturnType<typeof setInterval> | null = null;
   /**
    * The whole-block provider for `GetBlocks` (16) and the blocks a
@@ -716,6 +724,8 @@ export class NetNode {
       this.syncMachine.setConnectedPeers(() => new Set(this.getConnectedPeers()));
       this.syncMachine.setPenalize((peerId, kind, reason) => this.penalizePeer(peerId, kind, reason));
       this.syncMachine.setRequestHeaders((locator, peerId) => this.requestHeaders(locator, peerId));
+      this.syncMachine.setRequestBlocks((ids, peerId) => this.requestBlocks(ids, peerId));
+      this.syncMachine.setBootstrapAllSettled(() => this.allBootstrapSettled());
       if (this.pipeline) this.syncMachine.setPipeline(this.pipeline);
       if (this.chainViewRegistered) this.syncMachine.setChainView(this.chainViewRegistered);
       this.syncMachine.start();
@@ -872,6 +882,7 @@ export class NetNode {
       this.outboundMgr = null;
       this.peerDb = null;
       this.topics = null;
+      this.bootstrapSettledAddrs.clear();
       try { await libp2p.stop(); } catch { /* already down */ }
       this.libp2p = null;
       throw err;
@@ -923,6 +934,7 @@ export class NetNode {
     }
     this.pendingDials.clear();
     this.lastGetPeersSentMs.clear();
+    this.bootstrapSettledAddrs.clear();
     await this.libp2p.stop();
     this.libp2p = null;
     this.topics = null;
@@ -963,7 +975,10 @@ export class NetNode {
       if (conn.remotePeer.toString() === libp2p.peerId.toString()) {
         console.log(`[net] dial to ${addr} resolved to our own peer id — closing`);
         await conn.close().catch(() => { /* already gone */ });
-        if (source === 'seed') this.outboundMgr?.recordSeedSelf(addr);
+        if (source === 'seed') {
+          this.outboundMgr?.recordSeedSelf(addr);
+          this.markBootstrapSettled(addr);
+        }
         else this.peerDb?.forgetSelf(addr);
         return false;
       }
@@ -978,6 +993,7 @@ export class NetNode {
         console.log(`[net] dial to ${addr} resolved to banned peer ${remote} — closing`);
         await conn.close().catch(() => { /* already gone */ });
         this.peerMgr.extendBan(remote, addr);
+        if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       }
 
@@ -1013,19 +1029,49 @@ export class NetNode {
               console.warn(`[net] peerActive handler error: ${String(err)}`);
             }
           }
+          if (source === 'seed') this.markBootstrapSettled(addr);
           return true;
         }
+        if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       } catch (handshakeErr: any) {
         console.warn(`[net] handshake with ${addr} failed: ${handshakeErr?.message ?? handshakeErr}`);
+        if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       }
     } catch (err: any) {
       this.pendingDials.delete(addr);
       console.warn(`[net] dial FAILED: ${addr} — ${err?.message ?? err}`);
       this.outboundMgr?.recordDialResult(addr, false);
+      if (source === 'seed') this.markBootstrapSettled(addr);
       return false;
     }
+  }
+
+  /**
+   * NET_INTERFACE → Sync State Machine → "The gate bounds how far
+   * blocks apply." A configured bootstrap address is settled once its
+   * first dial has ended; settled stays settled, and the scheduler is
+   * told so it can re-evaluate the gate on the next loop pass.
+   */
+  private markBootstrapSettled(addr: string): void {
+    if (!this.config.bootstrapPeers.includes(addr)) return;
+    if (this.bootstrapSettledAddrs.has(addr)) return;
+    this.bootstrapSettledAddrs.add(addr);
+    this.syncMachine?.bootstrapSettled();
+  }
+
+  /**
+   * True once every configured bootstrap address has settled, deduped
+   * across any that appear twice in `bootstrapPeers` (NET_INTERFACE →
+   * Sync State Machine → "The gate bounds how far blocks apply.").
+   * With no bootstrap addresses the gate holds vacuously.
+   */
+  private allBootstrapSettled(): boolean {
+    for (const addr of this.config.bootstrapPeers) {
+      if (!this.bootstrapSettledAddrs.has(addr)) return false;
+    }
+    return true;
   }
 
   // -----------------------------------------------------------------------
