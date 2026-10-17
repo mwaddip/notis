@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
-import { closeDb, initDb } from '../../src/store/db.js';
+import { closeDb, getDb, initDb } from '../../src/store/db.js';
 import {
   resetPipelineForTests,
 } from '../../src/services/header-pipeline.js';
@@ -23,7 +23,7 @@ import {
 } from '../../src/services/intake.js';
 import type { PipelineContext } from '../../src/services/header-pipeline.js';
 import type { ApplyVerdict } from '../../src/services/block-apply.js';
-import { ReorgAbortedError, ReorgBlockRejectedError } from '../../src/services/corrupt-state.js';
+import { InconsistentHeaderTreeError, ReorgAbortedError, ReorgBlockRejectedError } from '../../src/services/corrupt-state.js';
 import {
   getBestHashAt,
   getStagedBlock,
@@ -580,6 +580,27 @@ describe('intake', () => {
       // The last assertion names the rule: a disconnect drops the pending block.
       expect(getPendingBlockForTests('peerR')).toBeUndefined();
     });
+
+    it('an unhashable gossiped header is dropped without a penalty', async () => {
+      const v = makeValidator();
+      const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
+      const { cap, callbacks } = recorder();
+      initIntake(callbacks, ctx());
+      // A header whose `powTargetBits` sits past 65536 falls outside
+      // `encodeHeader`'s domain, so `blockHash` answers null
+      // (VALIDATION_INTERFACE → verifyHeaderFieldDomains).
+      const bad: OrderingBlock = {
+        header: { ...h1.header, powTargetBits: 65537 },
+        utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [new Uint8Array(0)] },
+        validatorSignature: new Uint8Array(cryptoSign(null, Buffer.from(h1.hash, 'hex'), v.priv)),
+      };
+      await deliverGossipedBlock('peerU', bad);
+      // The last assertion names the rule: an unhashable gossiped header is
+      // dropped with no penalty — the one intake path that reaches a block
+      // whose header has no identity to keep it by (NODE_INTERFACE → Fork
+      // choice decides on verified headers → "One intake, one at a time").
+      expect(cap.penalties).toEqual([]);
+    });
   });
 
   describe('wantedBlocks', () => {
@@ -674,6 +695,85 @@ describe('intake', () => {
       // The last assertion names the rule: a mined block whose body applies
       // answers `applied: true`.
       expect(verdict.applied).toBe(true);
+    });
+
+    it('a mined block that applies leaves `S` alone', () => {
+      const v = makeValidator();
+      const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
+      const { callbacks } = recorder();
+      initIntake(callbacks, ctx());
+      const sBefore = getSForTests();
+      const verdict = deliverMinedBlock(signBlock(h1, v.priv));
+      expect(verdict.applied).toBe(true);
+      // The last assertion names the rule: the node's own block raises
+      // neither a penalty nor the window's `S`; `S` moves only by net's gate
+      // call (NODE_INTERFACE → Block finalization → "A mined block is
+      // applied through the pipeline's intake").
+      expect(getSForTests()).toBe(sBefore);
+    });
+  });
+
+  describe('the switch reads an inconsistent header tree', () => {
+    /**
+     * Apply [h1, h2] on the main chain and admit a side chain [Y1, Y2]
+     * forking at h1. The switch condition fires after admit: `best@2 = Y1`,
+     * `applied = h2`. The walk's fork point is h1 at height 1, above the
+     * reach floor (`lowestJournalHeight` null → floor = applied-tip height).
+     */
+    async function setUpSwitchCondition(v: { pub: Uint8Array; priv: import('crypto').KeyObject }): Promise<{ h2: ParentHeaderInfo; sideTip: ParentHeaderInfo }> {
+      const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
+      const h2 = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub });
+      const { callbacks } = recorder();
+      initIntake(callbacks, ctx());
+      await admitChain('peerH', [h1, h2]);
+      await deliverBlocks('peerB', [signBlock(h1, v.priv), signBlock(h2, v.priv)]);
+      expect(getCurrentHeight()).toBe(2);
+      const Y1 = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h2.header.createdAt + 1 });
+      const Y2 = mineWithEmptyRoot({ height: 3, parent: Y1, pub: v.pub });
+      await admitChain('peerSide', [Y1, Y2]);
+      expect(getBestHashAt(2)).toBe(Y1.hash);
+      expect(getBestHashAt(3)).toBe(Y2.hash);
+      return { h2, sideTip: Y2 };
+    }
+
+    it('an applied header with no `block_headers` row throws `InconsistentHeaderTreeError`', async () => {
+      const v = makeValidator();
+      const { h2 } = await setUpSwitchCondition(v);
+      // Make the applied header's `block_headers` row disappear while
+      // `best_chain` still points at a different hash at the applied height
+      // (NODE_INTERFACE → Store Interface → Header tree).
+      getDb().prepare('DELETE FROM block_headers WHERE hash = ?').run(h2.hash);
+
+      // The last assertion names the rule: the switch's three contradictions
+      // raise `InconsistentHeaderTreeError`, routed to `failStopIfCorruptChain`
+      // through every outer frame of a reorg-reaching item.
+      await expect(deliverBlocks('peerTrigger', [])).rejects.toBeInstanceOf(InconsistentHeaderTreeError);
+    });
+
+    it('a `best_chain` gap below its tip throws `InconsistentHeaderTreeError`', async () => {
+      const v = makeValidator();
+      await setUpSwitchCondition(v);
+      // Punch a gap in `best_chain` at height 2 while the tip row at height 3
+      // still stands — the walk reads a null hash between the applied
+      // position and the best tip.
+      getDb().prepare('DELETE FROM best_chain WHERE height = ?').run(2);
+
+      // The last assertion names the rule: a `best_chain` gap below the tip
+      // raises `InconsistentHeaderTreeError`.
+      await expect(deliverBlocks('peerTrigger', [])).rejects.toBeInstanceOf(InconsistentHeaderTreeError);
+    });
+
+    it('a `best_chain` hash with no `block_headers` row throws `InconsistentHeaderTreeError`', async () => {
+      const v = makeValidator();
+      await setUpSwitchCondition(v);
+      // Overwrite `best_chain` at height 2 with a hash the header tree has no
+      // row for; the tip row at height 3 still stands so `bestTip` resolves.
+      const orphanHash = 'cd'.repeat(32);
+      getDb().prepare('UPDATE best_chain SET hash = ? WHERE height = ?').run(orphanHash, 2);
+
+      // The last assertion names the rule: a `best_chain` hash with no
+      // `block_headers` row raises `InconsistentHeaderTreeError`.
+      await expect(deliverBlocks('peerTrigger', [])).rejects.toBeInstanceOf(InconsistentHeaderTreeError);
     });
   });
 
@@ -775,6 +875,71 @@ describe('intake — real funnel refusals', () => {
     expect(storeMod.headerStanding(badHash, 1)).toBe('refused');
     // The last assertion names the rule: the header leaves the tree.
     expect(storeMod.getHeaderRow(badHash)).toBeNull();
+  });
+
+  it('a mark through the real funnel chooses the best chain again — a stored side branch wins over what remains', async () => {
+    const { makeApplicableBlock, applyBlockThroughIntake, makeTestIdentityFromSeed } = await import('../helpers.js');
+    const { blockHash: bh } = await import('@dagsocial/validation');
+    const intakeMod = await import('../../src/services/intake.js');
+    const storeMod = await import('../../src/store/index.js');
+    const { insertHeader, getBestTip, getHeaderRow } = await import('../../src/store/header-tree.js');
+    const { GENESIS_PREV_BLOCK_HASH } = await import('@dagsocial/types');
+    const { retargetParams } = await import('../../src/services/difficulty.js');
+    const { config: cfg } = await import('../../src/config.js');
+    const { makeHeader } = await import('../helpers/make-header.js');
+
+    const miner = makeTestIdentityFromSeed('intake-real-funnel-chain-again');
+
+    // 1. Apply a good block at height 1 — applied tip = 1, best = [good1].
+    const good1 = await makeApplicableBlock({ height: 1, miner });
+    expect(await applyBlockThroughIntake(good1)).toBe(true);
+    const good1Hash = bh(good1.header)!;
+    expect(storeMod.getBestHashAt(1)).toBe(good1Hash);
+
+    // 2. Admit a bad block at height 2 (wrong `stateRoot`) — the pipeline's
+    //    extension arm stores it, so `best_chain = [good1, bad]`.
+    const bad = await makeApplicableBlock({ height: 2, miner, stateRoot: 'ab'.repeat(33) });
+    const badHash = bh(bad.header)!;
+    await intakeMod.deliverHeaders('peerBad', badHash, [bad.header]);
+    expect(storeMod.getBestHashAt(2)).toBe(badHash);
+
+    // 3. Install a stored side branch at height 1 — chainWork between good1
+    //    (what remains after the mark) and the best tip (good1 + bad). The
+    //    row goes in through `insertHeader` so the pipeline's "stored only
+    //    once heavier" rule does not refuse a header lighter than the current
+    //    best tip (NODE_INTERFACE → Store Interface → Header tree).
+    const sideY = makeHeader({
+      height: 1,
+      parent: null,
+      params: retargetParams(),
+      schedule: cfg.protocolVersionSchedule,
+      createdAt: good1.header.createdAt + 1,
+      validatorId: miner.userId,
+    });
+    const good1Row = getHeaderRow(good1Hash)!;
+    const badRow = getHeaderRow(badHash)!;
+    const sideWork = good1Row.chainWork + 1n;
+    expect(sideWork).toBeGreaterThan(good1Row.chainWork);
+    expect(sideWork).toBeLessThan(badRow.chainWork);
+    insertHeader({
+      hash: sideY.hash,
+      height: 1,
+      prevHash: GENESIS_PREV_BLOCK_HASH,
+      header: sideY.header,
+      interlinks: [],
+      chainWork: sideWork,
+      pathTa: sideY.header.createdAt,
+    });
+
+    // 4. Deliver the bad body — the funnel refuses `'consensus'` at
+    //    extension, `markRefused` writes the mark, removes the subtree, and
+    //    chooses the best chain again (NODE_INTERFACE → Fork choice decides
+    //    on verified headers → "A body-stage refusal marks the header.").
+    await intakeMod.deliverBlocks('peerBadBody', [bad]);
+
+    // The last assertion names the rule: the best tip is the side branch's,
+    // chosen heaviest reachable over what remains of the index.
+    expect(getBestTip()?.hash).toBe(sideY.hash);
   });
 
 });
