@@ -653,6 +653,34 @@ describe("marks' bounds — MAX_STALL_MARKS + 1 drops the oldest", () => {
     const marks = introspect.getMarksForTest?.() ?? new Map<string, number>();
     expect(marks.size).toBe(1024);
   });
+
+  it('a mark expires after STALL_MARK_EXPIRY_MS and the next SyncInfo opens a run', async () => {
+    vi.setSystemTime(0);
+    const sch = makeScheduler({ nextPage: [] });
+    peerActive(sch, 'p', 1);
+    syncInfo(sch, 'p', 100, hexId(100));
+    await settle();
+    expect(sch.machine.getMarksForTest().has('p')).toBe(true);
+    const before = sch.requests.filter(r => r.peerId === 'p').length;
+
+    // A fresh request-answer that would otherwise refute again.
+    const asAny = sch.machine as unknown as {
+      setRequestHeaders?: (fn: (locator: string[], peerId: string) => Promise<BlockHeader[]>) => void;
+    };
+    asAny.setRequestHeaders?.(async (locator, peerId) => {
+      sch.requests.push({ peerId, locator });
+      return new Promise<BlockHeader[]>(() => { /* held */ });
+    });
+
+    // Removing the expiry check in `onTimerTick` leaves the mark in
+    // place; the next SyncInfo's run returns at the mark check without
+    // asking for a page.
+    vi.advanceTimersByTime(1_800_001);
+    sch.machine.onTimerTick();
+    syncInfo(sch, 'p', 100, hexId(100));
+    await settle();
+    expect(sch.requests.filter(r => r.peerId === 'p').length).toBeGreaterThan(before);
+  });
 });
 
 // ---------------------------------------------------------------------------
