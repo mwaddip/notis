@@ -453,20 +453,35 @@ describe('intake', () => {
     });
   });
 
-  describe('mark — a consensus refusal', () => {
-    it('a consensus refusal at extension writes the mark after rollback, removes the subtree, penalises misbehavior', async () => {
+  describe('mark — a consensus refusal inside the switch', () => {
+    it('a `ReorgBlockRejectedError` out of `reorg` writes the mark after rollback, removes the subtree, penalises misbehavior', async () => {
+      // The real funnel is covered end to end by the real-funnel describe
+      // below for the mark at extension; here the switch path's reorg
+      // throws `ReorgBlockRejectedError` through the seam, so the mark
+      // writes `refused_headers`, removes the subtree, and penalises the
+      // deliverer named by the staged row.
       const v = makeValidator();
       const h1 = mineWithEmptyRoot({ height: 1, pub: v.pub });
-      applyBehaviour = () => ({ applied: false, verdict: { applied: false, class: 'consensus', detail: 'test' } });
+      const h2a = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub });
       const { cap, callbacks } = recorder();
       initIntake(callbacks, ctx());
-      await admitChain('peerH', [h1]);
-      await deliverBlocks('peerB', [signBlock(h1, v.priv)]);
+      await admitChain('peerH', [h1, h2a]);
+      await deliverBlocks('peerB', [signBlock(h1, v.priv), signBlock(h2a, v.priv)]);
+      expect(getCurrentHeight()).toBe(2);
 
-      expect(cap.penalties.some(p => p.peerId === 'peerB' && p.kind === 'misbehavior')).toBe(true);
-      expect(headerStanding(h1.hash, 1)).toBe('refused');
-      // The last assertion names the rule: the header leaves the tree.
-      expect(getHeaderRow(h1.hash)).toBeNull();
+      const h2b = mineWithEmptyRoot({ height: 2, parent: h1, pub: v.pub, createdAt: h1.header.createdAt + 1 });
+      const h3b = mineWithEmptyRoot({ height: 3, parent: h2b, pub: v.pub, createdAt: h2b.header.createdAt + 1 });
+      await admitChain('peerH2', [h2b, h3b]);
+
+      reorgBehaviour = (_f, hashes) => {
+        throw new ReorgBlockRejectedError(3, hashes[hashes.length - 1]!);
+      };
+      await deliverBlocks('peerB2', [signBlock(h2b, v.priv), signBlock(h3b, v.priv)]);
+
+      expect(cap.penalties.some(p => p.peerId === 'peerB2' && p.kind === 'misbehavior')).toBe(true);
+      expect(headerStanding(h3b.hash, 3)).toBe('refused');
+      // The last assertion names the rule: the refused header leaves the tree.
+      expect(getHeaderRow(h3b.hash)).toBeNull();
     });
   });
 
@@ -681,4 +696,85 @@ describe('intake', () => {
       expect(getBestHashAt(3)).toBe(chain[2]!.hash);
     });
   });
+});
+
+// ---------------------------------------------------------------------------
+// Mark cases through the real funnel: a block the funnel refuses
+// `'consensus'` (a wrong `stateRoot`) names the mark path end to end — no
+// seam, no synthesised verdict. The abort cases above keep
+// `setIntakeSeamsForTests` because a local fault, an acceptance refusal and
+// a `ReorgAbortedError` are not reachable through a block a peer can build.
+// ---------------------------------------------------------------------------
+
+describe('intake — real funnel refusals', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    const dbMod = await import('../../src/store/db.js');
+    dbMod.initDb(':memory:');
+    dbMod.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(() => 1_700_000_000_000 + 300_000_000_000);
+    const { testConfig } = await import('./fork-resolution-fixtures.js');
+    const { activateProverOverStore } = await import('../helpers.js');
+    await activateProverOverStore();
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(testConfig);
+    const intakeMod = await import('../../src/services/intake.js');
+    const pipelineMod = await import('../../src/services/header-pipeline.js');
+    intakeMod.resetIntakeForTests();
+    pipelineMod.resetPipelineForTests();
+    intakeMod.clearIntakeSeamsForTests();
+  });
+
+  afterEach(async () => {
+    try {
+      const bc = await import('../../src/services/block-creator.js');
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    const dbMod = await import('../../src/store/db.js');
+    dbMod.closeDb();
+    vi.resetModules();
+  });
+
+  it('a block the funnel refuses `consensus` at extension marks the header, removes the subtree, penalises misbehavior', async () => {
+    const { makeApplicableBlock } = await import('../helpers.js');
+    const { retargetParams } = await import('../../src/services/difficulty.js');
+    const intakeMod = await import('../../src/services/intake.js');
+    const storeMod = await import('../../src/store/index.js');
+    const { blockHash: bh } = await import('@dagsocial/validation');
+    // A block with a wrong `stateRoot` — admission does not read it,
+    // binding does not reach it, the funnel's root check refuses it
+    // `'consensus'`.
+    const bad = await makeApplicableBlock({ height: 1, stateRoot: 'ab'.repeat(33) });
+    const badHash = bh(bad.header)!;
+    const cb = { penalties: [] as Array<{ peerId: string; kind: string; reason: string }>, chainMoves: 0, needHeadersFor: [] as string[] };
+    intakeMod.initIntake(
+      {
+        penalize: (peerId, kind, reason) => { cb.penalties.push({ peerId, kind, reason }); },
+        chainMoved: () => { cb.chainMoves += 1; },
+        needHeaders: (peerId) => { cb.needHeadersFor.push(peerId); },
+      },
+      {
+        params: retargetParams(),
+        schedule: SCHEDULE,
+        nowMs: () => 1_700_000_000_000 + 300_000_000_000,
+        maxReorgDepth: config.maxReorgDepth,
+        genesisId: '',
+        lowestJournalHeight: () => null,
+        appliedTipHeight: () => 0,
+      },
+    );
+
+    await intakeMod.deliverHeaders('peerH', badHash, [bad.header]);
+    await intakeMod.deliverHeaders('peerH', badHash, [bad.header]);
+    expect(storeMod.getHeaderRow(badHash)).not.toBeNull();
+
+    await intakeMod.deliverBlocks('peerB', [bad]);
+
+    expect(cb.penalties.some(p => p.peerId === 'peerB' && p.kind === 'misbehavior')).toBe(true);
+    expect(storeMod.headerStanding(badHash, 1)).toBe('refused');
+    // The last assertion names the rule: the header leaves the tree.
+    expect(storeMod.getHeaderRow(badHash)).toBeNull();
+  });
+
 });
