@@ -696,6 +696,31 @@ describe('phases: idle, syncing, synced', () => {
     expect(sch.machine.getState().phase).toBe('idle');
   });
 
+  it('a run ended unmarked by a pipeline refusal keeps the phase syncing', async () => {
+    const claimOk = hexId(10);
+    const claimBad = hexId(20);
+    const known = new Set<string>([claimOk]);
+    const view = makeChainView({ known, applied: true });
+    // The pipeline refuses `bad`'s delivery; `ok` is admitted so its
+    // claim is settled on arrival.
+    const pipeline = makePipeline(true);
+    pipeline.deliverHeaders = async (peerId, hash, page) => {
+      pipeline.calls.push({ peerId, claimHash: hash, page });
+      if (peerId === 'bad') return false;
+      return true;
+    };
+    const sch = makeScheduler({ view, pipeline, nextPage: [] });
+    peerActive(sch, 'ok', 1);
+    peerActive(sch, 'bad', 1);
+    syncInfo(sch, 'ok', 10, claimOk);
+    syncInfo(sch, 'bad', 20, claimBad);
+    await settle();
+    // Removing `computePhase`'s unsettled-claim check would read the
+    // marks and the open-runs set only — `bad` is unmarked and its
+    // run has ended, so the phase would wrongly reach synced.
+    expect(sch.machine.getState().phase).toBe('syncing');
+  });
+
   it('synced requires fullyApplied and every unmarked Active claim settled', async () => {
     const claim1 = hexId(10);
     const claim2 = hexId(20);
