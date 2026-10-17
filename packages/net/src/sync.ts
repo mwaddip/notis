@@ -1,4 +1,5 @@
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
+import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import type { Libp2p } from 'libp2p';
 import type { PeerId } from '@libp2p/interface';
 import type { NetConfig } from './types.js';
@@ -86,13 +87,15 @@ export async function oneRoundTrip(
 }
 
 /**
- * Request headers from a peer, starting at startHeight and going down.
- * Returns newest-first.
+ * Request headers from a peer, by locator.
+ *
+ * NET_INTERFACE → Pull Requests: the scheduler's header query (codes 14/15).
+ * The reply is the headers above the highest locator hash the peer's applied
+ * chain holds, ascending.
  */
 export async function requestHeaders(
   libp2p: Libp2p,
-  startHeight: number,
-  maxCount: number,
+  locator: string[],
   peerId: string,
   config: NetConfig,
 ): Promise<BlockHeader[]> {
@@ -103,7 +106,7 @@ export async function requestHeaders(
     libp2p,
     peer,
     SYNC_PROTOCOL,
-    encodeGetHeaders(magic, { startHeight, maxCount }),
+    encodeGetHeaders(magic, { locator }),
     config,
   );
   if (response === null) {
@@ -120,11 +123,33 @@ export async function requestHeaders(
     throw new Error(`Headers response from peer ${peerId} bears code ${frame.code}`);
   }
 
-  const headers = decodeHeaders(frame.body, maxCount);
+  const headers = decodeHeaders(frame.body);
   if (headers === null) {
     throw new Error(`Headers response from peer ${peerId} is not a well-formed headers response`);
   }
   return headers;
+}
+
+/**
+ * Hold a `Headers` page to its shape — NET_INTERFACE → `GetHeaders` /
+ * `GetBlocks` responses → "A `Headers` page has one shape, and a requester
+ * holds a page to it": heights consecutive and ascending; the first
+ * header's parent a locator hash or, at height 1, `GENESIS_PREV_BLOCK_HASH`.
+ * The empty page satisfies the shape by having no first header.
+ */
+export function holdsPageShape(page: BlockHeader[], locator: string[]): boolean {
+  if (page.length === 0) return true;
+  for (let i = 1; i < page.length; i++) {
+    if (page[i]!.height !== page[i - 1]!.height + 1) return false;
+  }
+  const first = page[0]!;
+  if (first.height === 1) {
+    return first.prevBlockHash === GENESIS_PREV_BLOCK_HASH;
+  }
+  for (const hash of locator) {
+    if (first.prevBlockHash === hash) return true;
+  }
+  return false;
 }
 
 /**

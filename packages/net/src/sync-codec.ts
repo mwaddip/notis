@@ -34,6 +34,7 @@ import {
   isHeight,
   MAX_CAPABILITY_CODE,
   MAX_CHAIN_RESPONSE_ITEMS,
+  MAX_LOCATOR_HASHES,
   MAX_PEERS_ENTRIES,
   MAX_INV_IDS,
   MAX_NAME_BYTES,
@@ -290,55 +291,73 @@ export function decodePeers(body: Uint8Array): PeersMsg | null {
 // ---------------------------------------------------------------------------
 // GetHeaders (14) / GetBlocks (16) requests — positional
 //
-// Two `vlqU` fields each, in declared order, with no discriminator inside the
-// body: the frame's code is what says which query this is (NET_INTERFACE →
-// `GetHeaders` / `GetBlocks` responses). Both fields of both requests drive a
-// serve loop that reads the store once per height, so both are bounded here
-// exactly like an advertised chain height.
+// `arr( hexN(hash, 32) )` for both, with the frame's code the discriminator:
+// 14 carries the locator (1–`MAX_LOCATOR_HASHES`), 16 the ids (1–
+// `MAX_CHAIN_RESPONSE_ITEMS`); the count is read and refused before the first
+// element, and an empty list is malformed (NET_INTERFACE →
+// `GetHeaders` / `GetBlocks` responses).
 //
 // `decodeStruct` supplies the rest of the boundary check — exhaustion and the
 // re-encode compare, which is what refuses a non-minimal VLQ (TYPES_INTERFACE →
 // The boundary check).
 // ---------------------------------------------------------------------------
 
-/** A two-field positional request whose fields are both heights. */
-function heightPairCodec<T>(
+/** A nonEmpty hash list, bounded by `maxCount` and refused before the first element. */
+function hashListRequestCodec<T>(
   name: string,
-  fields: [keyof T & string, keyof T & string],
+  field: keyof T & string,
+  maxCount: number,
 ): StructCodec<T> {
-  const [first, second] = fields;
   return {
     name,
     write(w, value) {
-      writeVlqU(w, value[first] as number);
-      writeVlqU(w, value[second] as number);
+      const list = value[field] as unknown as string[];
+      writeVlqU(w, list.length);
+      for (const h of list) writeHexNOrThrow(w, h, 32);
     },
     read(r) {
-      const a = readVlqU(r);
-      const b = readVlqU(r);
-      if (!isHeight(a) || !isHeight(b)) {
-        // Well-formed VLQ heights outside the advertisable range —
-        // WIRE_INTERFACE → ReaderError codes, `out-of-domain`; the bound
-        // and its ban policy: NET_INTERFACE → Validation (and untrusted-input safety).
+      const count = readVlqU(r);
+      if (count < 1) {
+        throw new ReaderError(`${name}: empty hash list`, 'out-of-domain');
+      }
+      if (count > maxCount) {
         throw new ReaderError(
-          `${name}: ${a}/${b} is outside the advertisable height range`,
-          'out-of-domain',
+          `${name}: ${count} entries exceeds ${maxCount}`,
+          'array-too-large',
         );
       }
-      return { [first]: a, [second]: b } as T;
+      const list: string[] = [];
+      for (let i = 0; i < count; i++) list.push(readHexN(r, 32));
+      return { [field]: list } as T;
     },
   };
 }
 
-export const getHeadersCodec = heightPairCodec<GetHeadersMsg>('getHeaders', [
-  'startHeight',
-  'maxCount',
-]);
+export const getHeadersCodec = hashListRequestCodec<GetHeadersMsg>(
+  'getHeaders',
+  'locator',
+  MAX_LOCATOR_HASHES,
+);
 
-export const getBlocksCodec = heightPairCodec<GetBlocksMsg>('getBlocks', [
-  'startHeight',
-  'endHeight',
-]);
+/** The two-field `GetBlocks` codec. */
+export const getBlocksCodec: StructCodec<GetBlocksMsg> = {
+  name: 'getBlocks',
+  write(w, value) {
+    writeVlqU(w, value.startHeight);
+    writeVlqU(w, value.endHeight);
+  },
+  read(r) {
+    const startHeight = readVlqU(r);
+    const endHeight = readVlqU(r);
+    if (!isHeight(startHeight) || !isHeight(endHeight)) {
+      throw new ReaderError(
+        `getBlocks: ${startHeight}/${endHeight} is outside the advertisable height range`,
+        'out-of-domain',
+      );
+    }
+    return { startHeight, endHeight };
+  },
+};
 
 export function encodeGetHeaders(magic: number, msg: GetHeadersMsg): Uint8Array {
   return encodeFrame(magic, MSG_GET_HEADERS, encodeStruct(getHeadersCodec, msg));
@@ -535,12 +554,11 @@ export function encodeHeaders(magic: number, headers: BlockHeader[]): Uint8Array
   );
 }
 
-/** Parse a `Headers` response body. See `decodeBlocks`. */
-export function decodeHeaders(
-  body: Uint8Array,
-  maxHeaders: number,
-): BlockHeader[] | null {
-  return tryDecodeStruct(headersResponseCodec(responseCap(maxHeaders)), body);
+/** Parse a `Headers` response body. Cap: `MAX_CHAIN_RESPONSE_ITEMS` (400),
+ *  the one shape and bound a `Headers` page has (NET_INTERFACE →
+ *  `GetHeaders` / `GetBlocks` responses). */
+export function decodeHeaders(body: Uint8Array): BlockHeader[] | null {
+  return tryDecodeStruct(headersResponseCodec(MAX_CHAIN_RESPONSE_ITEMS), body);
 }
 
 /**

@@ -139,7 +139,7 @@ describe("a peer's sync streams are served one at a time", () => {
     await new Promise((r) => setTimeout(r, 300));
 
     const t0 = Date.now();
-    const result = await nodeB.requestHeaders(1, 1, nodeA.peerId())
+    const result = await nodeB.requestHeaders(['ff'.repeat(32)], nodeA.peerId())
       .catch((err: unknown) => err);
     const elapsed = Date.now() - t0;
 

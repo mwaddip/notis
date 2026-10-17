@@ -186,7 +186,7 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
 
     // No chain on either side — a GetHeaders without a provider answers zero
     // bytes, and requestHeaders returns []. That is an answer, not a throw.
-    const result = await nodeA.requestHeaders(0, 1, nodeB.peerId())
+    const result = await nodeA.requestHeaders(['ff'.repeat(32)], nodeB.peerId())
       .catch((err: unknown) => err);
     expect(result instanceof Error).toBe(false);
   }, TIMEOUT);
@@ -208,7 +208,7 @@ describe('every inbound sync stream ends — 40 SyncInfos leave none open', () =
     // Give B's registrar time to settle.
     await new Promise((r) => setTimeout(r, 500));
 
-    const result = await nodeA.requestHeaders(0, 1, nodeB.peerId())
+    const result = await nodeA.requestHeaders(['ff'.repeat(32)], nodeB.peerId())
       .catch((err: unknown) => err);
     expect(result instanceof Error).toBe(false);
   }, TIMEOUT);

@@ -247,7 +247,7 @@ describe('chain response codecs weigh each item before decoding', () => {
     writeVlqU(w, 1);
     writeLp(w, bogus);
 
-    expect(decodeHeaders(w.toBytes(), 1)).toBeNull();
+    expect(decodeHeaders(w.toBytes())).toBeNull();
   });
 });
 

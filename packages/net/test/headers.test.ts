@@ -3,6 +3,7 @@ import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   PROTOCOL_VERSION,
   ByteWriter,
+  writeHexNOrThrow,
   writeVlqU,
   computeUtxoTxRoot,
   encodeOrderingBlock,
@@ -226,7 +227,13 @@ function tipOf(store: Map<number, OrderingBlock>): number {
 function serveHeaders(request: GetHeadersMsg, store: Map<number, OrderingBlock>): Uint8Array {
   const decoded = decodeGetHeaders(bodyOf(encodeGetHeaders(MAGIC, request), MSG_GET_HEADERS));
   if (!decoded) throw new Error('fixture request was rejected at the decode boundary');
-  return serveHeadersResponse(MAGIC, decoded, tipOf(store), (h) => store.get(h)?.header ?? null);
+  const byHash = new Map<string, number>();
+  for (const [h, block] of store) byHash.set(mockBlockHash(block.header), h);
+  return serveHeadersResponse(
+    MAGIC, decoded, tipOf(store),
+    (id) => byHash.get(id) ?? null,
+    (h) => store.get(h)?.header ?? null,
+  );
 }
 
 function serveBlocks(request: GetBlocksMsg, store: Map<number, OrderingBlock>): Uint8Array {
@@ -235,9 +242,9 @@ function serveBlocks(request: GetBlocksMsg, store: Map<number, OrderingBlock>): 
   return serveBlocksResponse(MAGIC, decoded, tipOf(store), (h) => store.get(h) ?? null);
 }
 
-/** What `requestHeaders` does with a served frame: cap = what it asked for. */
-function receiveHeaders(frame: Uint8Array, maxCount: number): BlockHeader[] | null {
-  return decodeHeaders(bodyOf(frame, MSG_HEADERS), maxCount);
+/** What `requestHeaders` does with a served frame — cap at MAX_CHAIN_RESPONSE_ITEMS. */
+function receiveHeaders(frame: Uint8Array): BlockHeader[] | null {
+  return decodeHeaders(bodyOf(frame, MSG_HEADERS));
 }
 
 /** What `requestBlocks` does with a served frame: cap = the range it asked for. */
@@ -255,9 +262,10 @@ function receiveBlocks(
 
 describe('chain query request encode/decode', () => {
   it('round-trips a GetHeaders request under its own code', () => {
-    const frame = encodeGetHeaders(MAGIC, { startHeight: 10, maxCount: 5 });
+    const locator = ['aa'.repeat(32), 'bb'.repeat(32), 'cc'.repeat(32)];
+    const frame = encodeGetHeaders(MAGIC, { locator });
     expect(decodeGetHeaders(bodyOf(frame, MSG_GET_HEADERS)))
-      .toEqual({ startHeight: 10, maxCount: 5 });
+      .toEqual({ locator });
   });
 
   it('round-trips a GetBlocks request under its own code', () => {
@@ -266,39 +274,41 @@ describe('chain query request encode/decode', () => {
       .toEqual({ startHeight: 1, endHeight: 3 });
   });
 
-  it('carries no discriminator, so the two bodies are interchangeable bytes', () => {
-    // Nothing inside the body says which query this is — the same two vlqU
-    // fields decode under either codec. What tells the serve arms apart is the
-    // frame code, which is why an arm never trusts the body to say which query
-    // it is.
-    const body = bodyOf(encodeGetHeaders(MAGIC, { startHeight: 7, maxCount: 2 }), MSG_GET_HEADERS);
-    expect(decodeGetBlocks(body)).toEqual({ startHeight: 7, endHeight: 2 });
-  });
+  it('rejects an empty locator and one past MAX_LOCATOR_HASHES', () => {
+    const w0 = new ByteWriter();
+    writeVlqU(w0, 0);
+    expect(decodeGetHeaders(w0.toBytes())).toBeNull();
 
-  it('rejects heights outside the advertisable range', () => {
-    const w = new ByteWriter();
-    writeVlqU(w, 1);
-    writeVlqU(w, 200_000_000); // > MAX_ADVERTISED_HEIGHT
-    expect(decodeGetHeaders(w.toBytes())).toBeNull();
-    expect(decodeGetBlocks(w.toBytes())).toBeNull();
+    const w29 = new ByteWriter();
+    writeVlqU(w29, 29);
+    for (let i = 0; i < 29; i++) {
+      writeHexNOrThrow(w29, '00'.repeat(32), 32);
+    }
+    expect(decodeGetHeaders(w29.toBytes())).toBeNull();
 
-    // The refusal is `out-of-domain`, not a `CodecError` — the heights are
-    // well formed; the domain rule is net's, not the boundary check's.
-    const bytes = w.toBytes();
+    const bytes = w0.toBytes();
     let caught: unknown;
     try { decodeStruct(getHeadersCodec, bytes); } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(ReaderError);
     expect(caught).not.toBeInstanceOf(CodecError);
     expect((caught as ReaderError).code).toBe('out-of-domain');
+  });
 
-    caught = undefined;
+  it('GetBlocks rejects heights outside the advertisable range', () => {
+    const w = new ByteWriter();
+    writeVlqU(w, 1);
+    writeVlqU(w, 200_000_000); // > MAX_ADVERTISED_HEIGHT
+    expect(decodeGetBlocks(w.toBytes())).toBeNull();
+
+    const bytes = w.toBytes();
+    let caught: unknown;
     try { decodeStruct(getBlocksCodec, bytes); } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(ReaderError);
     expect(caught).not.toBeInstanceOf(CodecError);
     expect((caught as ReaderError).code).toBe('out-of-domain');
   });
 
-  it('rejects a truncated, over-long or non-minimal body', () => {
+  it('rejects a truncated, over-long or non-minimal GetBlocks body', () => {
     const body = bodyOf(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 3 }), MSG_GET_BLOCKS);
 
     expect(decodeGetBlocks(body.subarray(0, body.length - 1))).toBeNull();
@@ -365,14 +375,14 @@ describe('chain response framing', () => {
       makeMockHeader(3, 'cc'.repeat(32)),
     ];
 
-    const decoded = decodeHeaders(headersBody(headers), 3);
+    const decoded = decodeHeaders(headersBody(headers));
     expect(decoded).not.toBeNull();
     expect(decoded!.map((h) => h.height)).toEqual([5, 4, 3]);
     expect(decoded![0]!.prevBlockHash).toBe('aa'.repeat(32));
     expect(decoded![0]!.validatorId).toBeInstanceOf(Uint8Array);
 
     expect(headersBody([])).toEqual(new Uint8Array([0]));
-    expect(decodeHeaders(new Uint8Array([0]), 20)).toEqual([]);
+    expect(decodeHeaders(new Uint8Array([0]))).toEqual([]);
   });
 
   it('rejects trailing bytes after a well-formed response', () => {
@@ -393,7 +403,7 @@ describe('chain response framing', () => {
       new Uint8Array([0x81, 0x00]),
       canonical.subarray(1),
     ]);
-    expect(decodeHeaders(padded, 5)).toBeNull();
+    expect(decodeHeaders(padded)).toBeNull();
   });
 
   it('rejects a truncated response', () => {
@@ -403,7 +413,7 @@ describe('chain response framing', () => {
 
   it('rejects arbitrary non-positional bytes', () => {
     expect(decodeBlocks(new Uint8Array([0xa1, 0x66, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x73]), 5)).toBeNull();
-    expect(decodeHeaders(new Uint8Array([0x9f, 0xa5, 0x68, 0x65]), 5)).toBeNull();
+    expect(decodeHeaders(new Uint8Array([0x9f, 0xa5, 0x68, 0x65]))).toBeNull();
   });
 });
 
@@ -470,7 +480,7 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
     (header as unknown as Record<string, unknown>)['createdAt'] = Number.NaN;
 
     expect(blockHash(header)).toBeNull();
-    expect(decodeHeaders(headersBody([header]), 5)).toBeNull();
+    expect(decodeHeaders(headersBody([header]))).toBeNull();
   });
 });
 
@@ -479,17 +489,14 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
 // ---------------------------------------------------------------------------
 
 describe('response item caps', () => {
-  it('refuses more headers than the caller asked for', () => {
-    const store = makeChain(10);
-    const headers: BlockHeader[] = [];
-    for (let h = 10; h >= 1; h--) headers.push(store.get(h)!.header);
-
-    const frame = encodeHeaders(MAGIC, headers);
-
-    // A peer answering a 3-header request with 10 headers is not answering the
-    // question. The caller is the only party that knows what it asked.
-    expect(receiveHeaders(frame, 3)).toBeNull();
-    expect(receiveHeaders(frame, 10)).toHaveLength(10);
+  it('a Headers answer at the cap decodes; one past it is refused', () => {
+    const over = Array.from({ length: MAX_CHAIN_RESPONSE_ITEMS + 1 }, (_, i) =>
+      makeMockHeader(i + 1, '00'.repeat(32)),
+    );
+    expect(decodeHeaders(headersBody(over))).toBeNull();
+    expect(
+      decodeHeaders(headersBody(over.slice(0, MAX_CHAIN_RESPONSE_ITEMS))),
+    ).toHaveLength(MAX_CHAIN_RESPONSE_ITEMS);
   });
 
   it('refuses more blocks than the requested range', () => {
@@ -499,24 +506,6 @@ describe('response item caps', () => {
 
     expect(receiveBlocks(frame, 1, 3)).toBeNull();
     expect(receiveBlocks(frame, 1, 5)).toHaveLength(5);
-  });
-
-  it('caps at MAX_CHAIN_RESPONSE_ITEMS however large the request', () => {
-    // The requested size is derived from peer-supplied heights, so it is not a
-    // bound by itself: `requestBlocks` spans `forkHeight + 1` to a tip height
-    // that came off the wire. A real over-cap body, one header past the line.
-    const headers = Array.from({ length: MAX_CHAIN_RESPONSE_ITEMS + 1 }, (_, i) =>
-      makeMockHeader(i + 1, '00'.repeat(32)),
-    );
-
-    expect(decodeHeaders(headersBody(headers), Number.MAX_SAFE_INTEGER)).toBeNull();
-    // One fewer is fine — the cap is where it says it is.
-    expect(
-      decodeHeaders(
-        headersBody(headers.slice(0, MAX_CHAIN_RESPONSE_ITEMS)),
-        Number.MAX_SAFE_INTEGER,
-      ),
-    ).toHaveLength(MAX_CHAIN_RESPONSE_ITEMS);
   });
 
   it('accepts nothing but an empty response for a nonsensical request size', () => {
@@ -577,62 +566,62 @@ describe('mergeUint8Arrays', () => {
 // ---------------------------------------------------------------------------
 
 describe('serve: GetHeaders', () => {
-  it('returns headers newest-first from startHeight', () => {
-    const frame = serveHeaders({ startHeight: 5, maxCount: 3 }, makeChain(5));
-    const headers = receiveHeaders(frame, 3);
+  it('answers ascending above the first locator entry its chain holds', () => {
+    const store = makeChain(5);
+    const hashAt2 = mockBlockHash(store.get(2)!.header);
+    const frame = serveHeaders({ locator: [hashAt2] }, store);
+    const headers = receiveHeaders(frame);
 
     expect(headers).not.toBeNull();
-    expect(headers!.map((h) => h.height)).toEqual([5, 4, 3]);
+    expect(headers!.map((h) => h.height)).toEqual([3, 4, 5]);
   });
 
-  it('respects maxCount', () => {
-    const headers = receiveHeaders(serveHeaders({ startHeight: 10, maxCount: 2 }, makeChain(10)), 2);
-    expect(headers!.map((h) => h.height)).toEqual([10, 9]);
+  it('answers from height 1 when the locator holds no entry on this chain', () => {
+    const store = makeChain(3);
+    const foreign = 'ff'.repeat(32);
+    const headers = receiveHeaders(serveHeaders({ locator: [foreign] }, store));
+    expect(headers!.map((h) => h.height)).toEqual([1, 2, 3]);
+
+    // An empty store has nothing above height 0, so the page is empty.
+    expect(receiveHeaders(serveHeaders({ locator: [foreign] }, new Map()))).toEqual([]);
   });
 
-  it('returns empty when no blocks at start height', () => {
-    // Clamped to our own tip (2), so the walk starts there and returns 2, 1.
-    const headers = receiveHeaders(serveHeaders({ startHeight: 99, maxCount: 20 }, makeChain(2)), 20);
-    expect(headers!.map((h) => h.height)).toEqual([2, 1]);
-
-    // An empty store has nothing to clamp to and answers with nothing.
-    expect(
-      receiveHeaders(serveHeaders({ startHeight: 99, maxCount: 20 }, new Map()), 20),
-    ).toEqual([]);
+  it('answers an empty list when the locator holds the tip', () => {
+    const store = makeChain(5);
+    const tipHash = mockBlockHash(store.get(5)!.header);
+    const frame = serveHeaders({ locator: [tipHash] }, store);
+    expect(bodyOf(frame, MSG_HEADERS)).toEqual(new Uint8Array([0]));
+    expect(receiveHeaders(frame)).toEqual([]);
   });
 
-  it('breaks at a hole below the tip', () => {
+  it('takes the highest held entry when a lower one precedes an unheld one', () => {
+    const store = makeChain(5);
+    const foreign = 'ff'.repeat(32);
+    const hashAt3 = mockBlockHash(store.get(3)!.header);
+    // Running tip → root, a locator may hold at 3 while an entry above it does
+    // not match our chain; the arm takes the first entry it holds.
+    const headers = receiveHeaders(serveHeaders({ locator: [foreign, hashAt3] }, store));
+    expect(headers!.map((h) => h.height)).toEqual([4, 5]);
+  });
+
+  it('ends at a gap above the locator match', () => {
     const store = makeChain(2);
-    // Heights 4 and 5 exist above a gap at 3. Tip is MAX(height)=5;
-    // `serveHeadersResponse` walks down from 5 and breaks at the gap.
+    // Heights 4 and 5 exist above a gap at 3; the arm walks up from the
+    // locator's match at height 2 and ends at the gap.
     store.set(4, makeMockOrderingBlock(4, 'ff'.repeat(32)));
     store.set(5, makeMockOrderingBlock(5, 'ff'.repeat(32)));
 
-    const headers = receiveHeaders(serveHeaders({ startHeight: 5, maxCount: 5 }, store), 5);
-    expect(headers!.map((h) => h.height)).toEqual([5, 4]);
+    const hashAt2 = mockBlockHash(store.get(2)!.header);
+    const headers = receiveHeaders(serveHeaders({ locator: [hashAt2] }, store));
+    expect(headers!.map((h) => h.height)).toEqual([]);
   });
 
-  it('serves nothing for a maxCount of zero', () => {
-    // A positional request carries `maxCount` always — there is no absent field
-    // for a serve-side default to fill in, so zero is a requested count like any
-    // other and the arm serves nothing.
-    const frame = serveHeaders({ startHeight: 25, maxCount: 0 }, makeChain(25));
-    expect(bodyOf(frame, MSG_HEADERS)).toEqual(new Uint8Array([0]));
-    expect(receiveHeaders(frame, 0)).toEqual([]);
-  });
-
-  it('serves no more than MAX_CHAIN_RESPONSE_ITEMS however many are asked for', () => {
+  it('serves no more than MAX_CHAIN_RESPONSE_ITEMS headers', () => {
     const store = makeChain(MAX_CHAIN_RESPONSE_ITEMS + 5);
-    const frame = serveHeaders(
-      { startHeight: MAX_CHAIN_RESPONSE_ITEMS + 5, maxCount: 100_000_000 },
-      store,
-    );
+    const foreign = 'ff'.repeat(32);
+    const frame = serveHeaders({ locator: [foreign] }, store);
 
-    // Without the serve-side cap this is a peer-controlled knob over our whole
-    // chain: one request, one array holding every block we hold.
-    expect(receiveHeaders(frame, MAX_CHAIN_RESPONSE_ITEMS)).toHaveLength(
-      MAX_CHAIN_RESPONSE_ITEMS,
-    );
+    expect(receiveHeaders(frame)).toHaveLength(MAX_CHAIN_RESPONSE_ITEMS);
   });
 });
 
@@ -762,14 +751,15 @@ describe('serve: GetBlocks byte bound', () => {
 // ---------------------------------------------------------------------------
 
 describe('chain query round-trip', () => {
-  it('headers: request, serve, receive, chain links hold', () => {
-    const headers = receiveHeaders(serveHeaders({ startHeight: 3, maxCount: 3 }, makeChain(3)), 3);
+  it('headers: locator from root, serve ascending, chain links hold', () => {
+    const foreign = 'ff'.repeat(32);
+    const headers = receiveHeaders(serveHeaders({ locator: [foreign] }, makeChain(3)));
 
     expect(headers).toHaveLength(3);
-    expect(headers!.map((h) => h.height)).toEqual([3, 2, 1]);
-    expect(headers![2]!.prevBlockHash).toBe('00'.repeat(32));
-    expect(headers![1]!.prevBlockHash).toBe(mockBlockHash(headers![2]!));
-    expect(headers![0]!.prevBlockHash).toBe(mockBlockHash(headers![1]!));
+    expect(headers!.map((h) => h.height)).toEqual([1, 2, 3]);
+    expect(headers![0]!.prevBlockHash).toBe('00'.repeat(32));
+    expect(headers![1]!.prevBlockHash).toBe(mockBlockHash(headers![0]!));
+    expect(headers![2]!.prevBlockHash).toBe(mockBlockHash(headers![1]!));
   });
 
   it('blocks: request, serve, receive, full bodies', () => {
@@ -786,9 +776,10 @@ describe('chain query round-trip', () => {
   });
 
   it('headers: no matching blocks yields an empty list, not a rejection', () => {
-    const frame = serveHeaders({ startHeight: 100, maxCount: 5 }, new Map());
+    const foreign = 'ff'.repeat(32);
+    const frame = serveHeaders({ locator: [foreign] }, new Map());
     expect(bodyOf(frame, MSG_HEADERS)).toEqual(new Uint8Array([0]));
-    expect(receiveHeaders(frame, 5)).toEqual([]);
+    expect(receiveHeaders(frame)).toEqual([]);
   });
 });
 

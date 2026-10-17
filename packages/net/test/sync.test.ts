@@ -45,7 +45,7 @@ describe('sync protocol', () => {
 
   it('dials the sync stream for both chain queries', async () => {
     const headers = makeDialStub(encodeFrame(MAGIC, MSG_HEADERS, new Uint8Array([0])));
-    await requestHeaders(headers.libp2p, 3, 2, PEER, makeConfig());
+    await requestHeaders(headers.libp2p, ['aa'.repeat(32)], PEER, makeConfig());
     expect(headers.dialled).toEqual([SYNC_PROTOCOL]);
 
     const blocks = makeDialStub(encodeFrame(MAGIC, MSG_BLOCKS, new Uint8Array([0])));
@@ -70,7 +70,7 @@ describe('chain queries reject a frame bearing another code', () => {
     // answer.
     const wrongCode = () => makeDialStub(encodePeers(MAGIC, { peers: [] })).libp2p;
 
-    await expect(requestHeaders(wrongCode(), 3, 2, PEER, makeConfig()))
+    await expect(requestHeaders(wrongCode(), ['aa'.repeat(32)], PEER, makeConfig()))
       .rejects.toThrow(/bears code/);
     await expect(requestBlocks(wrongCode(), 1, 2, PEER, makeConfig()))
       .rejects.toThrow(/bears code/);
@@ -80,7 +80,7 @@ describe('chain queries reject a frame bearing another code', () => {
     const junk = new Uint8Array([0xff, 0xff, 0xff, 0xff]);
 
     await expect(
-      requestHeaders(makeDialStub(encodeFrame(MAGIC, MSG_HEADERS, junk)).libp2p, 3, 2, PEER, makeConfig()),
+      requestHeaders(makeDialStub(encodeFrame(MAGIC, MSG_HEADERS, junk)).libp2p, ['aa'.repeat(32)], PEER, makeConfig()),
     ).rejects.toThrow(/well-formed/);
     await expect(
       requestBlocks(makeDialStub(encodeFrame(MAGIC, MSG_BLOCKS, junk)).libp2p, 1, 2, PEER, makeConfig()),
@@ -90,7 +90,7 @@ describe('chain queries reject a frame bearing another code', () => {
   it('throws on bytes that are no frame at all', async () => {
     const notAFrame = () => makeDialStub(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])).libp2p;
 
-    await expect(requestHeaders(notAFrame(), 3, 2, PEER, makeConfig())).rejects.toThrow();
+    await expect(requestHeaders(notAFrame(), ['aa'.repeat(32)], PEER, makeConfig())).rejects.toThrow();
     await expect(requestBlocks(notAFrame(), 1, 2, PEER, makeConfig())).rejects.toThrow();
   });
 
@@ -98,7 +98,7 @@ describe('chain queries reject a frame bearing another code', () => {
     // The serve arm's "I cannot answer". Distinct from `vlqU(0)`, and the only
     // shape of no-answer these two accept, because it is the one the arm sends
     // deliberately rather than the one a broken peer produces.
-    await expect(requestHeaders(makeDialStub(new Uint8Array(0)).libp2p, 3, 2, PEER, makeConfig()))
+    await expect(requestHeaders(makeDialStub(new Uint8Array(0)).libp2p, ['aa'.repeat(32)], PEER, makeConfig()))
       .resolves.toEqual([]);
     await expect(requestBlocks(makeDialStub(new Uint8Array(0)).libp2p, 1, 2, PEER, makeConfig()))
       .resolves.toEqual([]);

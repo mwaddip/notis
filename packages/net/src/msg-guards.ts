@@ -67,6 +67,17 @@ export const MAX_NAME_BYTES = 255;
 export const MAX_ADDRESS_BYTES = 255;
 
 /**
+ * Largest number of hashes a `GetHeaders` (14) locator carries
+ * (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses).
+ *
+ * The locator is `h₀ = tip, hᵢ₊₁ = hᵢ − 2ⁱ` for as long as `hᵢ₊₁ ≥ 1`,
+ * plus height 1 when the sequence did not land on it, so at most
+ * `⌊log₂ tip⌋ + 2` entries. A tip below `MAX_ADVERTISED_HEIGHT` (10⁸ < 2²⁷)
+ * reaches `26 + 2 = 28`.
+ */
+export const MAX_LOCATOR_HASHES = 28;
+
+/**
  * Largest number of items in a `Headers` (15) or `Blocks` (17) response —
  * enforced on BOTH sides.
  *

@@ -293,22 +293,39 @@ export class LazySyncStore implements SyncStore {
 // ---------------------------------------------------------------------------
 
 /**
- * Frame a `Headers` (15) response: our chain walking down from
- * `startHeight`. Reads headers directly through the header provider — one
- * height is one provider call (NET_INTERFACE → Sync Handler Registration).
+ * Frame a `Headers` (15) response.
+ *
+ * NET_INTERFACE → `GetHeaders` / `GetBlocks` responses →
+ * "A `Headers` page has one shape, and a requester holds a page to it":
+ * the serve arm takes the first locator entry its applied chain holds —
+ * the highest, the locator running from the tip down — and answers the
+ * headers above it, ascending, for `MAX_CHAIN_RESPONSE_ITEMS` headers or
+ * up to its tip; a locator it holds no entry of is answered from
+ * height 1, and one whose highest held entry is its tip with an empty
+ * list.
  */
 export function serveHeadersResponse(
   magic: number,
   request: GetHeadersMsg,
   ourHeight: number,
+  heightByBlockId: (id: string) => number | null,
   getHeader: (height: number) => BlockHeader | null,
 ): Uint8Array {
+  let aboveHeight = 0;
+  for (const hash of request.locator) {
+    const matched = heightByBlockId(hash);
+    if (matched !== null) {
+      aboveHeight = matched;
+      break;
+    }
+  }
   const headers: BlockHeader[] = [];
-  const maxCount = Math.min(request.maxCount, MAX_CHAIN_RESPONSE_ITEMS);
-  for (let h = Math.min(request.startHeight, ourHeight); h > 0 && headers.length < maxCount; h--) {
+  const first = aboveHeight + 1;
+  const last = Math.min(ourHeight, aboveHeight + MAX_CHAIN_RESPONSE_ITEMS);
+  for (let h = first; h <= last; h++) {
     const header = getHeader(h);
-    if (header) headers.push(header);
-    else break; // gap — the chain below this height is not ours to serve
+    if (!header) break; // gap — the chain above the locator match is not ours to serve
+    headers.push(header);
   }
   return encodeHeaders(magic, headers);
 }
@@ -1346,7 +1363,10 @@ export class NetNode {
 
       if (code === MSG_GET_HEADERS) {
         await serveChainQuery(code, decodeGetHeaders(body), this.headerProvider,
-          (request, ourHeight, getHeader) => serveHeadersResponse(magic, request, ourHeight, getHeader), 1);
+          (request, ourHeight, getHeader) => serveHeadersResponse(
+            magic, request, ourHeight,
+            (id) => this.syncStore.heightByBlockId(id), getHeader,
+          ), 1);
         return;
       }
 
@@ -1653,9 +1673,9 @@ export class NetNode {
   // Sync — outbound requests
   // -----------------------------------------------------------------------
 
-  async requestHeaders(startHeight: number, maxCount: number, peerId: string): Promise<BlockHeader[]> {
+  async requestHeaders(locator: string[], peerId: string): Promise<BlockHeader[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
-    return requestHeaders(this.libp2p, startHeight, maxCount, peerId, this.config);
+    return requestHeaders(this.libp2p, locator, peerId, this.config);
   }
 
   async requestBlocks(startHeight: number, endHeight: number, peerId: string): Promise<OrderingBlock[]> {

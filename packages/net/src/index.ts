@@ -7,7 +7,7 @@ export {
 export type { HandshakePayload } from './node.js';
 export { PeerManager } from './peer-mgr.js';
 export type { PeerBanHooks } from './peer-mgr.js';
-export { SYNC_PROTOCOL } from './sync.js';
+export { SYNC_PROTOCOL, holdsPageShape } from './sync.js';
 export {
   gossipTopics,
   gossipMessageId,
@@ -57,6 +57,7 @@ export {
   MAX_CAPABILITY_CODE,
   MAX_INV_IDS,
   MAX_CHAIN_RESPONSE_ITEMS,
+  MAX_LOCATOR_HASHES,
   MAX_PEERS_ENTRIES,
   MAX_STREAM_BYTES,
   MAX_SERVE_BODY_BYTES,

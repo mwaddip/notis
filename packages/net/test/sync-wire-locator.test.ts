@@ -6,12 +6,14 @@ import {
   writeHexNOrThrow,
   writeVlqU,
 } from '@dagsocial/types';
+import type { BlockHeader } from '@dagsocial/types';
 import {
   decodeFrame,
   encodeFrame,
   decodeGetBlocks,
   decodeGetHeaders,
   decodeSyncInfo,
+  holdsPageShape,
   syncInfoCodec,
   SyncMachine,
 } from '@dagsocial/net';
@@ -189,14 +191,14 @@ describe('SyncInfo carries the tip hash as well as the height', () => {
 // ---------------------------------------------------------------------------
 
 describe('GetHeaders carries a locator', () => {
-  it.fails('a 1-entry locator decodes to a locator array', () => {
+  it('a 1-entry locator decodes to a locator array', () => {
     const body = hashListBody([H32_A]);
     const decoded = decodeGetHeaders(body);
     expect(decoded).not.toBeNull();
     expect((decoded as unknown as { locator: string[] }).locator).toEqual([H32_A]);
   });
 
-  it.fails('a 3-entry locator decodes in order', () => {
+  it('a 3-entry locator decodes in order', () => {
     const body = hashListBody([H32_A, H32_B, H32_C]);
     const decoded = decodeGetHeaders(body);
     expect(decoded).not.toBeNull();
@@ -223,7 +225,7 @@ describe('GetHeaders carries a locator', () => {
     expect(decodeGetHeaders(body)).toBeNull();
   });
 
-  it.fails('a 28-entry locator decodes', () => {
+  it('a 28-entry locator decodes', () => {
     const hashes: string[] = [];
     for (let i = 0; i < 28; i++) hashes.push(H32_ZERO);
     const body = hashListBody(hashes);
@@ -293,7 +295,7 @@ describe('request bodies share one layout, the frame code discriminates', () => 
       .toEqual((asBlocks as unknown as { ids: string[] }).ids);
   });
 
-  it.fails('a GetHeaders frame carries code 14 over a locator body', () => {
+  it('a GetHeaders frame carries code 14 over a locator body', () => {
     const frame = encodeFrame(MAGIC, MSG_GET_HEADERS, hashListBody([H32_A]));
     const decoded = decodeFrame(MAGIC, frame);
     expect(decoded.code).toBe(MSG_GET_HEADERS);
@@ -309,5 +311,82 @@ describe('request bodies share one layout, the frame code discriminates', () => 
     const req = decodeGetBlocks(decoded.body);
     expect(req).not.toBeNull();
     expect((req as unknown as { ids: string[] }).ids).toEqual([H32_A]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `holdsPageShape` — NET_INTERFACE → `GetHeaders` / `GetBlocks` responses →
+// "A `Headers` page has one shape, and a requester holds a page to it":
+// heights consecutive and ascending; the first header's parent a locator
+// hash or — at height 1 — `GENESIS_PREV_BLOCK_HASH`.
+// ---------------------------------------------------------------------------
+
+function fakeHeader(height: number, prev: string): BlockHeader {
+  return {
+    protocolVersion: 1,
+    height,
+    prevBlockHash: prev,
+    utxoTxRoot: '00'.repeat(32),
+    stateRoot: '00'.repeat(33),
+    validatorId: new Uint8Array(32),
+    powNonce: height,
+    powTargetBits: 2304,
+    createdAt: 1_000_000 + height,
+    interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
+  };
+}
+
+describe('holdsPageShape — the page a requester holds to its locator', () => {
+  it('empty page passes', () => {
+    expect(holdsPageShape([], [H32_A])).toBe(true);
+  });
+
+  it('consecutive ascending heights with the first parent in the locator pass', () => {
+    const page = [
+      fakeHeader(5, H32_A),
+      fakeHeader(6, '11'.repeat(32)),
+      fakeHeader(7, '22'.repeat(32)),
+    ];
+    expect(holdsPageShape(page, [H32_A, H32_B])).toBe(true);
+  });
+
+  it('height 1 with GENESIS_PREV_BLOCK_HASH as its parent passes under any locator', () => {
+    const page = [fakeHeader(1, GENESIS_PREV_BLOCK_HASH)];
+    expect(holdsPageShape(page, [H32_A])).toBe(true);
+  });
+
+  it('a hole in the heights does not', () => {
+    const page = [
+      fakeHeader(5, H32_A),
+      fakeHeader(7, '22'.repeat(32)),
+    ];
+    expect(holdsPageShape(page, [H32_A])).toBe(false);
+  });
+
+  it('a descent does not', () => {
+    const page = [
+      fakeHeader(5, H32_A),
+      fakeHeader(4, '22'.repeat(32)),
+    ];
+    expect(holdsPageShape(page, [H32_A])).toBe(false);
+  });
+
+  it('a repeat does not', () => {
+    const page = [
+      fakeHeader(5, H32_A),
+      fakeHeader(5, '22'.repeat(32)),
+    ];
+    expect(holdsPageShape(page, [H32_A])).toBe(false);
+  });
+
+  it('a first parent not in the locator does not', () => {
+    const page = [fakeHeader(5, '22'.repeat(32))];
+    expect(holdsPageShape(page, [H32_A, H32_B])).toBe(false);
+  });
+
+  it('a first header at height 1 whose parent is not GENESIS_PREV_BLOCK_HASH does not', () => {
+    const page = [fakeHeader(1, H32_A)];
+    expect(holdsPageShape(page, [H32_A])).toBe(false);
   });
 });

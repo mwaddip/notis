@@ -287,12 +287,13 @@ describe('sync stream handler — the chain query arms', () => {
   it('serves GetHeaders as a framed Headers response', async () => {
     const { send } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
-    const written = await send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+    // A locator the chain holds no entry of — the arm answers from height 1.
+    const written = await send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
 
     expect(written).toHaveLength(1);
     const reply = decodeFrame(MAGIC, written[0]!);
     expect(reply.code).toBe(MSG_HEADERS);
-    expect(decodeHeaders(reply.body, 2)!.map((h) => h.height)).toEqual([3, 2]);
+    expect(decodeHeaders(reply.body)!.map((h) => h.height)).toEqual([1, 2, 3]);
   });
 
   it('serves GetBlocks as a framed Blocks response', async () => {
@@ -312,7 +313,7 @@ describe('sync stream handler — the chain query arms', () => {
     // consult, so it cannot honestly send the second. Silence would be a third
     // thing, and the only one the caller cannot tell from a hung peer.
     const headers = await makeHandlerHarness()
-      .send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+      .send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
     const blocks = await makeHandlerHarness()
       .send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
 
@@ -344,7 +345,7 @@ describe('sync stream handler — the chain query arms', () => {
     // malformed body's doing, not the code's.
     const { send, peerMgr, peerId } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
-    await send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+    await send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
 
     expect(peerMgr.isPeerActive(peerId)).toBe(true);
   });
@@ -360,7 +361,7 @@ describe('sync stream handler — the chain query arms', () => {
     };
 
     const headers = await makeHandlerHarness({ headersHandler: counting, active: false })
-      .send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+      .send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] }));
     const blocks = await makeHandlerHarness({ headersHandler: counting, active: false })
       .send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
 
@@ -381,7 +382,7 @@ describe('sync stream handler — the chain query arms', () => {
       syncMachine: { handleMessage: (_p, code) => { dispatched.push(code); } },
     });
 
-    expect((await harness.send(encodeGetHeaders(MAGIC, { startHeight: 1, maxCount: 1 })))).toHaveLength(1);
+    expect((await harness.send(encodeGetHeaders(MAGIC, { locator: ['ff'.repeat(32)] })))).toHaveLength(1);
     expect((await harness.send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 1 })))).toHaveLength(1);
     expect(dispatched).toEqual([]);
   });

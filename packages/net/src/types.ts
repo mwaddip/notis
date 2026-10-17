@@ -204,16 +204,13 @@ export interface PeersMsg {
 // ---------------------------------------------------------------------------
 // GetHeaders / GetBlocks request types
 //
-// Positional bodies, not CBOR maps: `vlqU(startHeight) vlqU(maxCount)` for code
-// 14 and `vlqU(startHeight) vlqU(endHeight)` for code 16 (NET_INTERFACE →
-// `GetHeaders` / `GetBlocks` responses). Neither field is optional — the code
-// pair is what discriminates the two queries, so there is no shared shape for a
-// missing field to select within.
+// Positional `arr(hexN(32))` for `GetHeaders` (NET_INTERFACE → `GetHeaders` /
+// `GetBlocks` responses); two `vlqU` fields for `GetBlocks`. The frame's code
+// pair is what tells the two queries apart.
 // ---------------------------------------------------------------------------
 
 export interface GetHeadersMsg {
-  startHeight: number;
-  maxCount: number;
+  locator: string[];
 }
 
 export interface GetBlocksMsg {
