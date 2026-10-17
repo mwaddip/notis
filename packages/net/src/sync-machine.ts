@@ -441,8 +441,6 @@ export class SyncMachine {
   }
 
   private actOnSyncInfo(peerId: string, info: SyncInfo, nowMs: number): void {
-    if (!this.isConnected(peerId)) return;
-
     this.lastActedOnSyncInfoMs.set(peerId, nowMs);
 
     const claim: Claim = {
@@ -456,9 +454,11 @@ export class SyncMachine {
 
     // NET_INTERFACE → Sync State Machine → "A claim the tree lacks is a
     // header request." A claim the view knows is settled on arrival.
+    // A marked peer's run returns at `runHeaders`' mark check; the
+    // one-run-per-peer rule is held by `startHeaderRun`.
     if (this.chainView?.knowsTip(peerId, info.tipHash)) {
       this.anyClaimEverSettled = true;
-    } else if (!this.stallMarks.has(peerId) && !this.openHeaderRuns.has(peerId)) {
+    } else {
       void this.startHeaderRun(peerId);
     }
 
@@ -469,12 +469,11 @@ export class SyncMachine {
 
   private handleNeedHeaders(peerId: string): void {
     if (!this.isConnected(peerId)) return;
-    if (this.stallMarks.has(peerId)) return;
-    if (this.openHeaderRuns.has(peerId)) return;
     // NET_INTERFACE → Pull Requests → "A gossiped block's relayer is asked
     // for the headers the tree lacks": with no claim, the run reads the
     // claim as it arrives at each iteration; a run that stays no-claim
-    // ends on the first short page.
+    // ends on the first short page. A marked peer's run returns at
+    // `runHeaders`' mark check; `startHeaderRun` holds one-run-per-peer.
     void this.startHeaderRun(peerId);
   }
 
@@ -482,8 +481,6 @@ export class SyncMachine {
     if (!this.chainView) return;
     for (const [peerId, claim] of this.claims) {
       if (!this.isConnected(peerId)) continue;
-      if (this.stallMarks.has(peerId)) continue;
-      if (this.openHeaderRuns.has(peerId)) continue;
       if (!this.chainView.knowsTip(peerId, claim.tipHash)) {
         void this.startHeaderRun(peerId);
       }
