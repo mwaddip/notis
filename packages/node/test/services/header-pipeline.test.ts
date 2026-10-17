@@ -313,44 +313,49 @@ describe('header-pipeline', () => {
   });
 
   describe('admitHeader — reach floor', () => {
-    it.fails('at appliedTip = maxReorgDepth a fork at the root is reachable', () => {
+    it('at appliedTip = maxReorgDepth a fork at the root is reachable', () => {
+      // A joiner at the horizon keeps every journal down to height 1, so
+      // `lowestJournal − 1 = 0` and the depth term is 0 — fork at root reachable.
       const [h1] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
       const { cap, callbacks } = recorder();
-      const v = admitHeader(h1!.header, 'headers-page', 'peerA', ctx({ appliedTipHeight: () => config.maxReorgDepth }), callbacks);
+      const v = admitHeader(h1!.header, 'headers-page', 'peerA', ctx({ appliedTipHeight: () => config.maxReorgDepth, lowestJournalHeight: () => 1 }), callbacks);
       // The last assertion names the rule: at exactly the horizon, fork at
       // the root is reachable.
       expect(v.kind).toBe('stored');
       expect(cap.penalties).toEqual([]);
     });
 
-    it.fails('at appliedTip = maxReorgDepth + 1 a fork at the root is unreachable', () => {
+    it('at appliedTip = maxReorgDepth + 1 a fork at the root is unreachable', () => {
       const [h1] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
-      // Control: at tip = maxReorgDepth the same header is admitted.
+      // Control: at tip = maxReorgDepth with journals to height 1, the same
+      // header is admitted.
       const { callbacks: cb0 } = recorder();
-      expect(admitHeader(h1!.header, 'headers-page', 'peerA', ctx({ appliedTipHeight: () => config.maxReorgDepth }), cb0).kind).toBe('stored');
+      expect(admitHeader(h1!.header, 'headers-page', 'peerA', ctx({ appliedTipHeight: () => config.maxReorgDepth, lowestJournalHeight: () => 1 }), cb0).kind).toBe('stored');
       // Reset for the beyond-horizon arm.
       closeDb(); initDb(':memory:'); resetPipelineForTests();
       const [h1b] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
       const { cap, callbacks } = recorder();
-      const v = admitHeader(h1b!.header, 'headers-page', 'peerA', ctx({ appliedTipHeight: () => config.maxReorgDepth + 1 }), callbacks);
+      // One past the horizon, journals still to height 1, so the depth term
+      // is 1 — fork at root (height 0) is below the floor.
+      const v = admitHeader(h1b!.header, 'headers-page', 'peerA', ctx({ appliedTipHeight: () => config.maxReorgDepth + 1, lowestJournalHeight: () => 1 }), callbacks);
       // The last assertion names the rule: just past the horizon, fork at
       // the root is refused with no penalty.
       expect(v.kind).toBe('refused');
       expect(cap.penalties).toEqual([]);
     });
 
-    it.fails('lowestJournal − 1 binds after the journals fall short', () => {
+    it('lowestJournal − 1 binds after the journals fall short', () => {
       const [h1] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
-      // Control: with no journal and tip = 1, fork at root is reachable.
+      // Control: with the depth term at 0 and journals to height 1, fork at
+      // root is reachable.
       const { callbacks: cb0 } = recorder();
-      expect(admitHeader(h1!.header, 'headers-page', 'peerA', ctx({ appliedTipHeight: () => 1 }), cb0).kind).toBe('stored');
+      expect(admitHeader(h1!.header, 'headers-page', 'peerA', ctx({ appliedTipHeight: () => 1, lowestJournalHeight: () => 1 }), cb0).kind).toBe('stored');
       // Reset for the journal-binds arm.
       closeDb(); initDb(':memory:'); resetPipelineForTests();
       const [h1b] = makeChain({ parent: null, n: 1, params: PARAMS, schedule: SCHEDULE });
       const { cap, callbacks } = recorder();
-      // Applied tip at 1 (so the depth bound alone would admit fork at root),
-      // but the lowest journal is at 5, so lowestJournal − 1 = 4 bounds the
-      // floor and the fork at the root (height 0) is unreachable.
+      // Applied tip at 1 (depth term = 1 − 40 = −39), lowestJournal = 5, so
+      // the floor is `5 − 1 = 4` — fork at root (height 0) unreachable.
       const v = admitHeader(h1b!.header, 'headers-page', 'peerA', ctx({ appliedTipHeight: () => 1, lowestJournalHeight: () => 5 }), callbacks);
       // The last assertion names the rule: `lowestJournal − 1` binds.
       expect(v.kind).toBe('refused');
@@ -414,13 +419,17 @@ describe('header-pipeline', () => {
   });
 
   describe('pruneHeaderTree', () => {
-    it.fails('keeps best-chain rows and drops the rest', () => {
+    it('keeps best-chain rows and drops the rest', async () => {
       const chain = makeChain({ parent: null, n: 4, params: PARAMS, schedule: SCHEDULE });
       const { callbacks } = recorder();
       for (const h of chain) admitHeader(h.header, 'headers-page', 'peerA', ctx(), callbacks);
-      // A side header at height 2 forks from chain[0].
+      // Insert a side-branch row at height 2 forking from chain[0] directly —
+      // admission routes side headers through pass 2, not through admitHeader.
       const side = makeHeader({ height: 2, parent: chain[0]!, params: PARAMS, schedule: SCHEDULE, createdAt: chain[0]!.header.createdAt + PARAMS.idealMs + 3 });
-      admitHeader(side.header, 'headers-page', 'peerA', ctx(), callbacks);
+      const { encodeHeader, encodeInterlinks } = await import('@dagsocial/types');
+      const db = getDb();
+      db.prepare('INSERT INTO block_headers (hash, height, prev_hash, header_bytes, interlinks, chain_work, path_t_a) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(side.hash, 2, side.header.prevBlockHash, Buffer.from(encodeHeader(side.header)), Buffer.from(encodeInterlinks(side.interlinks)), Buffer.alloc(40), side.pathTa);
       expect(getHeaderRow(side.hash)).not.toBeNull();
 
       pruneHeaderTree(3);

@@ -367,14 +367,6 @@ export function admitPage(
     }
   }
 
-  // Reach floor: the running branch's base must still be at or above the
-  // floor; a sunken base is a dropped branch (NODE_INTERFACE → "Pruning" and
-  // "The reach floor is the horizon, one rule for every fork point").
-  if (running.baseHeight < reachFloor(ctx)) {
-    runningBranches.delete(peerId);
-    return { accepted: false, outcome: 'refused', refusedAt: { index: 0, kind: 'none', reason: 'base-sunk' } };
-  }
-
   // Verify the page: pass 1 continues from `nextAnchor`, pass 2 re-fetches
   // from `baseAnchor`.
   const anchorForVerify = running.mode === 'storing' ? running.baseAnchor : running.nextAnchor;
