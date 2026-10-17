@@ -176,6 +176,9 @@ export {
   rewriteBestChain,
   removeHeaderSubtree,
   pruneHeadersBelow,
+  stageBlock,
+  getStagedBlock,
+  unstageBlock,
 } from './header-tree.js';
 export type { HeaderRow } from './header-tree.js';
 

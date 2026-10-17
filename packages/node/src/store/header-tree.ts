@@ -1,6 +1,12 @@
 import { getDb } from './db.js';
-import { encodeHeader, decodeHeader, encodeInterlinks, decodeInterlinks } from '@dagsocial/types';
-import type { BlockHeader } from '@dagsocial/types';
+import {
+  decodeHeader,
+  decodeInterlinks,
+  decodeOrderingBlock,
+  encodeHeader,
+  encodeInterlinks,
+} from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 
 /**
  * One row of `block_headers`, decoded for a reader.
@@ -175,4 +181,54 @@ export function pruneHeadersBelow(height: number): void {
        WHERE height < ? AND hash NOT IN (SELECT hash FROM best_chain)`,
     ).run(height);
   })();
+}
+
+/**
+ * NODE_INTERFACE → Header tree → "A staged block is bytes this node bound":
+ * `stageBlock` writes the delivered block alongside the peer that delivered
+ * it. One row per hash; the second insert on the same hash is a no-op (the
+ * block is already the one the first delivery bound).
+ */
+export function stageBlock(
+  hash: string,
+  height: number,
+  bytes: Uint8Array,
+  fromPeer: string,
+): void {
+  const db = getDb();
+  db.prepare(
+    `INSERT OR IGNORE INTO staged_blocks (hash, height, block_bytes, from_peer)
+     VALUES (?, ?, ?, ?)`,
+  ).run(hash, height, Buffer.from(bytes), fromPeer);
+}
+
+/**
+ * NODE_INTERFACE → Header tree. `getStagedBlock`: point read on `hash`; the
+ * stored bytes decode to the `OrderingBlock` the binding wrote. A row that
+ * will not decode is local corruption, like a stored block's — the caller's
+ * `failStopIfCorruptChain` boundary handles it.
+ */
+export function getStagedBlock(
+  hash: string,
+): { block: OrderingBlock; fromPeer: string } | null {
+  const db = getDb();
+  const row = db
+    .prepare('SELECT block_bytes, from_peer FROM staged_blocks WHERE hash = ?')
+    .get(hash) as { block_bytes: Buffer; from_peer: string } | undefined;
+  if (!row) return null;
+  return {
+    block: decodeOrderingBlock(new Uint8Array(row.block_bytes)),
+    fromPeer: row.from_peer,
+  };
+}
+
+/**
+ * NODE_INTERFACE → Header tree. `unstageBlock`: the row leaves when its
+ * block applies, when its header leaves the best chain, or when pruned
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "A bound block
+ * is staged, and applied from staging.").
+ */
+export function unstageBlock(hash: string): void {
+  const db = getDb();
+  db.prepare('DELETE FROM staged_blocks WHERE hash = ?').run(hash);
 }
