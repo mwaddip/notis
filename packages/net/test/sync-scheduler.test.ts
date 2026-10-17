@@ -673,7 +673,11 @@ describe("marks' bounds — MAX_STALL_MARKS + 1 drops the oldest", () => {
       return new Promise<BlockHeader[]>(() => { /* held */ });
     });
     peerActive(sch, 'p', 1);
-    syncInfo(sch, 'p', 100, hexId(100));
+    // Claim height above the full page's last — reachedClaimedHeight
+    // stays false after the first delivery, so the first iteration
+    // does not refute; the loop would ask again were the mark check
+    // not there.
+    syncInfo(sch, 'p', 1_000, hexId(1_000));
     await settle();
     expect(sch.requests.filter(r => r.peerId === 'p').length).toBe(1);
 
