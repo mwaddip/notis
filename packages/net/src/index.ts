@@ -66,8 +66,8 @@ export {
   MAX_ADDRESS_BYTES,
   MAX_INBOUND_SYNC_STREAMS,
   SYNC_INFO_MIN_INTERVAL_MS,
-  MAX_PENDING_BLOCK_REQUESTS,
-  MAX_DATA_EVENTS_PER_PEER,
+  STALL_MARK_EXPIRY_MS,
+  MAX_STALL_MARKS,
 } from './msg-guards.js';
 export { isBogusAddress } from './bogus-addr.js';
 export { PeerDb } from './peerdb.js';

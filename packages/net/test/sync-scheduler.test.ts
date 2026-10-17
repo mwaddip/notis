@@ -72,8 +72,6 @@ function hexId(n: number): string {
 
 function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
   return {
-    getOrderingBlock: () => null,
-    serializeOrderingBlock: () => null,
     getOrderingBlockId: () => null,
     heightByBlockId: () => null,
     chainHeight: () => 0,
@@ -220,7 +218,7 @@ describe('a peer whose answer refutes its claim is marked and asked no more', ()
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.fails('a short page below the claimed tip earns a transient penalty', async () => {
+  it('a short page below the claimed tip earns a transient penalty', async () => {
     const sch = makeScheduler({ nextPage: [] });
     peerActive(sch, 'bad', 1);
     syncInfo(sch, 'bad', 100_000_000);
@@ -235,14 +233,14 @@ describe('a peer whose answer refutes its claim is marked and asked no more', ()
 // ---------------------------------------------------------------------------
 
 describe('an event for a peer not in the connected set plants nothing', () => {
-  it.fails('a SyncInfo whose sender is not in connectedPeers() sends nothing back', () => {
+  it('a SyncInfo whose sender is not in connectedPeers() sends nothing back', () => {
     const sch = makeScheduler();
     // `stranger` is NOT in sch.connected
     syncInfo(sch, 'stranger', 42);
     expect(sch.sent.filter(m => m.peerId === 'stranger').length).toBe(0);
   });
 
-  it.fails('a peer-active for a peer not in connectedPeers() leaves no per-peer entry', () => {
+  it('a peer-active for a peer not in connectedPeers() leaves no per-peer entry', () => {
     const sch = makeScheduler();
     sch.machine.onPeerActive('ghost', 10, 'outbound');
     sch.machine.flush();
@@ -260,7 +258,7 @@ describe('claims drive one run at most per peer', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.fails('a known claim settles the peer and the phase runs to synced', async () => {
+  it('a known claim settles the peer and the phase runs to synced', async () => {
     const known = new Set<string>([hexId(50)]);
     const view = makeChainView({ known, applied: true });
     const sch = makeScheduler({ view });
@@ -270,7 +268,7 @@ describe('claims drive one run at most per peer', () => {
     expect(sch.machine.getState().phase).toBe('synced');
   });
 
-  it.fails('a claim the view lacks opens one header request', async () => {
+  it('a claim the view lacks opens one header request', async () => {
     const sch = makeScheduler({ nextPage: new Error('held') });
     peerActive(sch, 'p', 1);
     syncInfo(sch, 'p', 50, hexId(50));
@@ -278,7 +276,7 @@ describe('claims drive one run at most per peer', () => {
     expect(sch.requests.length).toBe(1);
   });
 
-  it.fails('a second claim from the same peer while a run is open opens no second request', async () => {
+  it('a second claim from the same peer while a run is open opens no second request', async () => {
     let release!: () => void;
     const held = new Promise<BlockHeader[]>((r) => { release = () => r([]); });
     const sch = makeScheduler();
@@ -299,7 +297,7 @@ describe('claims drive one run at most per peer', () => {
     expect(sch.requests.length).toBe(1);
   });
 
-  it.fails('the handshake height alone keeps the phase idle', async () => {
+  it('the handshake height alone keeps the phase idle', async () => {
     const sch = makeScheduler();
     peerActive(sch, 'p', 1000);
     await settle();
@@ -316,7 +314,7 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.fails('the claim is reached — a delivery lands and the peer stays unmarked', async () => {
+  it('the claim is reached — a delivery lands and the peer stays unmarked', async () => {
     const claimHash = hexId(50);
     const known = new Set<string>();
     const view = makeChainView({ known });
@@ -333,7 +331,7 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
     expect(pipeline.calls.length).toBeGreaterThan(0);
   });
 
-  it.fails('a short page below the claimed height marks the peer', async () => {
+  it('a short page below the claimed height marks the peer', async () => {
     const sch = makeScheduler({ nextPage: [] });
     peerActive(sch, 'p', 1);
     syncInfo(sch, 'p', 100, hexId(100));
@@ -343,7 +341,7 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
     expect(marks.has('p')).toBe(true);
   });
 
-  it.fails('a deadline — the requester rejects — marks the peer with no penalty', async () => {
+  it('a deadline — the requester rejects — marks the peer with no penalty', async () => {
     const sch = makeScheduler({ nextPage: new Error('deadline') });
     peerActive(sch, 'p', 1);
     syncInfo(sch, 'p', 100, hexId(100));
@@ -353,11 +351,11 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
     expect(marks.has('p')).toBe(true);
   });
 
-  it.fails('a page failing its shape earns a misbehavior penalty', async () => {
+  it('a page failing its shape earns a misbehavior penalty', async () => {
     const bogus: BlockHeader[] = [{
       protocolVersion: 1,
       height: 7,
-      prevBlockHash: '00'.repeat(32), // not in the one-entry locator
+      prevBlockHash: 'aa'.repeat(32), // not in the one-entry locator
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: new Uint8Array(32),
@@ -374,7 +372,7 @@ describe('a header sync ends in one of three ways, with two unmarked side exits'
     expect(sch.penalties.find(x => x.peerId === 'p' && x.kind === 'misbehavior')).toBeTruthy();
   });
 
-  it.fails('a pipeline refusal — false — reaches the pipeline and the peer stays unmarked', async () => {
+  it('a pipeline refusal — false — reaches the pipeline and the peer stays unmarked', async () => {
     const pipeline = makePipeline(false);
     const sch = makeScheduler({ pipeline, nextPage: [] });
     peerActive(sch, 'p', 1);
@@ -394,13 +392,13 @@ describe('this node sends its SyncInfo at peer-active and on the poll', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.fails('sends one SyncInfo to the new peer at peer-active, regardless of height', () => {
+  it('sends one SyncInfo to the new peer at peer-active, regardless of height', () => {
     const sch = makeScheduler({ store: { chainHeight: () => 0 } });
     peerActive(sch, 'p', 0);
     expect(sch.sent.filter(m => m.peerId === 'p').length).toBe(1);
   });
 
-  it.fails('on the poll, every Active peer gets a SyncInfo even without any claim-driven event', () => {
+  it('on the poll, every Active peer gets a SyncInfo even without any claim-driven event', () => {
     const sch = makeScheduler({ store: { chainHeight: () => 0 } });
     peerActive(sch, 'p1', 0);
     peerActive(sch, 'p2', 0);
@@ -420,7 +418,7 @@ describe('needHeaders asks the named relayer when it is Active and unmarked', ()
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.fails('needHeaders asks the unmarked relayer and not the marked one', async () => {
+  it('needHeaders asks the unmarked relayer and not the marked one', async () => {
     const sch = makeScheduler({ nextPage: [] });
     peerActive(sch, 'bad', 1);
     peerActive(sch, 'ok', 1);
@@ -446,7 +444,7 @@ describe('chainMoved re-asks knowsTip for every retained claim', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.fails('a settled claim the view no longer knows reopens a run', async () => {
+  it('a settled claim the view no longer knows reopens a run', async () => {
     const claimHash = hexId(50);
     const known = new Set<string>([claimHash]);
     const view = makeChainView({ known });
@@ -470,7 +468,7 @@ describe("marks' bounds — MAX_STALL_MARKS + 1 drops the oldest", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.fails('an oldest mark drops once MAX_STALL_MARKS is exceeded', async () => {
+  it('an oldest mark drops once MAX_STALL_MARKS is exceeded', async () => {
     const sch = makeScheduler({ nextPage: [] });
     for (let i = 0; i <= 1024; i++) {
       const name = `peer-${i}`;
@@ -497,7 +495,7 @@ describe('phases: idle, syncing, synced', () => {
     expect(sch.machine.getState().phase).toBe('idle');
   });
 
-  it.fails('synced requires fullyApplied and every unmarked Active claim settled', async () => {
+  it('synced requires fullyApplied and every unmarked Active claim settled', async () => {
     const claim1 = hexId(10);
     const claim2 = hexId(20);
     const known = new Set<string>([claim1]);
@@ -524,7 +522,7 @@ describe('entering synced clears every stall mark', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.fails('the phase moves to synced and the marks leave', async () => {
+  it('the phase moves to synced and the marks leave', async () => {
     const claimOk = hexId(10);
     const known = new Set<string>([claimOk]);
     const view = makeChainView({ known, applied: true });
@@ -555,7 +553,7 @@ describe('end to end: a claim opens a GetHeaders, the page reaches the pipeline'
     nodeB = null;
   });
 
-  it.fails("a joiner's pipeline sees a page from the taller peer's chain", async () => {
+  it("a joiner's pipeline sees a page from the taller peer's chain", async () => {
     nodeA = new NetNode(makeConfig(), validators);
     nodeB = new NetNode(makeConfig(), validators);
     await nodeA.start();

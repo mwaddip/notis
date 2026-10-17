@@ -44,8 +44,6 @@ const H32_C = 'cc'.repeat(32);
 
 function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
   return {
-    getOrderingBlock: () => null,
-    serializeOrderingBlock: () => null,
     getOrderingBlockId: () => null,
     heightByBlockId: () => null,
     chainHeight: () => 0,

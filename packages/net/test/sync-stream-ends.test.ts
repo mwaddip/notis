@@ -108,10 +108,13 @@ async function waitConnected(nodeA: NetNode, nodeB: NetNode, timeoutMs = 10_000)
 function inboundSyncStreams(libp2p: NonNullable<NetNode['libp2pNode']>, fromPeerId: string): number {
   const conn = libp2p.getConnections().find((c) => c.remotePeer.toString() === fromPeerId);
   if (!conn) return 0;
-  return conn.streams.filter((s) =>
-    (s as unknown as { protocol?: string }).protocol === SYNC_PROTOCOL
-    && (s as unknown as { direction?: string }).direction === 'inbound',
-  ).length;
+  return conn.streams.filter((s) => {
+    const anyS = s as unknown as { protocol?: string; direction?: string; status?: string };
+    if (anyS.protocol !== SYNC_PROTOCOL) return false;
+    if (anyS.direction !== 'inbound') return false;
+    if (anyS.status === 'closed' || anyS.status === 'aborted') return false;
+    return true;
+  }).length;
 }
 
 /**

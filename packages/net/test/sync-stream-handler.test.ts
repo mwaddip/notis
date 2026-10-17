@@ -494,15 +494,19 @@ describe('sync stream handler — post body serve (code 103)', () => {
     expect(isEmptyReply(written)).toBe(true);
   });
 
-  it('passes type 101 through to the sync machine', async () => {
+  it('drops a type-101 ModifierRequest unpenalised, with an empty answer', async () => {
+    // NET_INTERFACE → ModifierRequest (code 4) — type id 101 is retired;
+    // the handler decodes the frame and drops it as an unknown type id,
+    // answering an empty frame and recording no penalty.
     const dispatched: number[] = [];
     const { send } = makeHandlerHarness({
       syncMachine: { handleMessage: (_p, code) => { dispatched.push(code); } },
     });
 
     const req = encodeModifierRequest(MAGIC, { typeId: 101, ids: [POST_ID] });
-    await send(req);
+    const written = await send(req);
 
-    expect(dispatched).toEqual([4]);
+    expect(dispatched).toEqual([]);
+    expect(isEmptyReply(written)).toBe(true);
   });
 });

@@ -37,8 +37,6 @@ const validators: NetValidators = {
 };
 
 const stubStore: SyncStore = {
-  getOrderingBlock: () => null,
-  serializeOrderingBlock: () => null,
   getOrderingBlockId: () => null,
   heightByBlockId: () => null,
   chainHeight: () => 0,

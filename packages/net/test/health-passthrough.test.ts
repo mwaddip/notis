@@ -43,8 +43,6 @@ const validators: NetValidators = {
 
 function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
   return {
-    getOrderingBlock: () => null,
-    serializeOrderingBlock: () => null,
     getOrderingBlockId: () => null,
     heightByBlockId: () => null,
     chainHeight: () => 0,
@@ -142,6 +140,8 @@ describe('syncPhase', () => {
   });
 
   it('follows the sync machine through idle → syncing', () => {
+    // NET_INTERFACE → Sync State Machine → "The phases": syncing while
+    // `fullyApplied()` answers `false` or a header run is open.
     const machine = new SyncMachine(makeConfig(), stubStore(), () => {});
     machine.start();
 
@@ -150,8 +150,15 @@ describe('syncPhase', () => {
 
     expect(net.syncPhase()).toBe('idle');
 
-    machine.onPeerActive('peer1', 100);
-    machine.flush();
+    const connected = new Set<string>();
+    machine.setConnectedPeers(() => connected);
+    machine.setChainView({
+      locatorFor: () => [],
+      knowsTip: () => false,
+      wantedBlocks: () => [],
+      fullyApplied: () => false,
+      gateHeld: () => {},
+    });
     expect(net.syncPhase()).toBe('syncing');
 
     machine.stop();
@@ -346,39 +353,58 @@ describe('onPeerPenalised', () => {
 // ---------------------------------------------------------------------------
 
 describe('onSyncComplete fires on every entry into synced', () => {
-  it('fires twice when synced is entered twice', () => {
-    let height = 0;
+  it('fires twice when synced is entered twice', async () => {
+    // Two claims settle one after another; between them a new unknown
+    // claim demotes the phase to syncing, then its hash becomes known and
+    // the phase returns to synced — onSynced fires once per entry.
     const machine = new SyncMachine(
       makeConfig(),
-      stubStore({ chainHeight: () => height }),
+      stubStore({ chainHeight: () => 0 }),
       () => {},
     );
+    const connected = new Set<string>();
+    const known = new Set<string>();
+    machine.setConnectedPeers(() => connected);
+    machine.setChainView({
+      locatorFor: () => [],
+      knowsTip: (_p, h) => known.has(h),
+      wantedBlocks: () => [],
+      fullyApplied: () => true,
+      gateHeld: () => {},
+    });
+    machine.setPipeline({ deliverHeaders: async () => true, deliverBlocks: async () => {} });
+    machine.setRequestHeaders(async () => []);
     machine.start();
 
     let count = 0;
     machine.onSynced(() => { count++; });
 
+    const h1 = '11'.repeat(32);
+    known.add(h1);
+    connected.add('peer1');
     machine.onPeerActive('peer1', 100);
     machine.flush();
-    expect(machine.getState().phase).toBe('syncing');
-
-    height = 100;
     machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec,
-      { tipHeight: 100, tipHash: '00'.repeat(32) },
+      { tipHeight: 100, tipHash: h1 },
     ));
     machine.flush();
+    for (let i = 0; i < 8; i++) await Promise.resolve();
     expect(machine.getState().phase).toBe('synced');
     expect(count).toBe(1);
 
+    // A new peer with a known claim settles directly — count rises on the
+    // second entry.
+    const h2 = '22'.repeat(32);
+    known.add(h2);
+    connected.add('peer2');
     machine.onPeerActive('peer2', 200);
     machine.flush();
-    expect(machine.getState().phase).toBe('syncing');
-
-    height = 200;
+    expect(machine.getState().phase).toBe('syncing'); // peer2 has no claim yet
     machine.handleMessage('peer2', MSG_SYNC_INFO, encodeStruct(syncInfoCodec,
-      { tipHeight: 200, tipHash: '00'.repeat(32) },
+      { tipHeight: 200, tipHash: h2 },
     ));
     machine.flush();
+    for (let i = 0; i < 8; i++) await Promise.resolve();
     expect(machine.getState().phase).toBe('synced');
     expect(count).toBe(2);
 

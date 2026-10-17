@@ -179,20 +179,6 @@ describe('NetNode provider forwarding', () => {
 });
 
 describe('setChainHeightProvider wiring', () => {
-  it('chainHeight reads the height provider, not the headers provider', () => {
-    const store = new LazySyncStore(validators);
-    let headersProviderCalls = 0;
-    let heightProviderCalls = 0;
-    store.setOrderingBlockFn(() => { headersProviderCalls++; return null; });
-    store.setChainHeightProvider(() => { heightProviderCalls++; return 42; });
-
-    const result = store.chainHeight();
-
-    expect(result).toBe(42);
-    expect(heightProviderCalls).toBe(1);
-    expect(headersProviderCalls).toBe(0);
-  });
-
   it('returns 0 when no height provider is set', () => {
     const store = new LazySyncStore(validators);
     expect(store.chainHeight()).toBe(0);

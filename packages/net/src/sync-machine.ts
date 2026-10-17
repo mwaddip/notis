@@ -1,292 +1,210 @@
 import type { NetConfig } from './types.js';
-import {
-  MSG_HANDSHAKE,
-  MSG_SYNC_INFO,
-  MSG_INV,
-  MSG_MODIFIER_REQUEST,
-  MSG_MODIFIER_RESPONSE,
-  MODIFIER_ORDERING_BLOCK,
-} from './types.js';
+import { MSG_HANDSHAKE, MSG_SYNC_INFO } from './types.js';
+import type { BlockHeader } from '@dagsocial/types';
 import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import {
   isHeight,
-  MAX_INV_IDS,
-  MAX_SERVE_BODY_BYTES,
+  MAX_CHAIN_RESPONSE_ITEMS,
+  MAX_STALL_MARKS,
+  STALL_MARK_EXPIRY_MS,
   SYNC_INFO_MIN_INTERVAL_MS,
-  MAX_PENDING_BLOCK_REQUESTS,
-  MAX_DATA_EVENTS_PER_PEER,
 } from './msg-guards.js';
-import type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
-import {
-  encodeSyncInfo,
-  decodeSyncInfo,
-  encodeInv,
-  decodeInv,
-  encodeModifierRequest,
-  decodeModifierRequest,
-  encodeModifierResponse,
-  decodeModifierResponse,
-} from './sync-codec.js';
+import type { SyncInfo, SyncState, PipelineIntake, ChainView } from './sync-types.js';
+import { encodeSyncInfo, decodeSyncInfo } from './sync-codec.js';
+import { holdsPageShape } from './sync.js';
 
 // ---------------------------------------------------------------------------
-// SyncStore — bridge to the node's storage layer
+// SyncStore — the node's storage seams the scheduler reads (NET_INTERFACE →
+// Sync Handler Registration). `chainHeight` backs the handshake and the
+// `SyncInfo` this node sends; `getOrderingBlockId` the claim's hash;
+// `heightByBlockId` the serve arms. `appendBlocks` is the pipeline's seam
+// for a `Blocks` answer (NODE_INTERFACE → Fork choice decides on verified
+// headers → "A served block is bound to its header before it is kept").
 // ---------------------------------------------------------------------------
 
 export interface SyncStore {
-  /** Full ordering block by height, or null if not available. */
-  getOrderingBlock(height: number): unknown | null;
-  /** Encoded ordering block bytes for a given height, or null. */
-  serializeOrderingBlock(height: number): Uint8Array | null;
-  /** Block ID (hash) for a given height, or null if not available. */
   getOrderingBlockId(height: number): string | null;
-  /** Height holding a block id, or null for an unknown id (NET_INTERFACE → Sync Handler Registration). */
   heightByBlockId(id: string): number | null;
-  /** Current best-chain tip height — one provider call, O(1) (ARCHITECTURE → Correct and cheap are separate obligations). */
   chainHeight(): number;
-  /** Persist received full blocks. */
   appendBlocks(blocks: unknown[], peerId: string): void;
 }
 
 // ---------------------------------------------------------------------------
-// Event types for biased event loop
+// Control events — NET_INTERFACE → Biased Event Loop clause 1
 // ---------------------------------------------------------------------------
 
-/** Control events — unbounded channel, never dropped. */
 type ControlEvent =
   | { type: 'peer-active'; peerId: string; peerHeight: number; direction: 'inbound' | 'outbound' }
   | { type: 'peer-disconnect'; peerId: string }
-  | { type: 'sync-info'; peerId: string; info: SyncInfo };
-
-/** Data events — bounded channel, lossy. */
-type DataEvent =
-  | { type: 'inv'; peerId: string; inv: Inv }
-  | { type: 'modifier-request'; peerId: string; req: ModifierRequest }
-  | { type: 'modifier-response'; peerId: string; resp: ModifierResponse };
+  | { type: 'sync-info'; peerId: string; info: SyncInfo }
+  | { type: 'need-headers'; peerId: string }
+  | { type: 'chain-moved' };
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/** 60 seconds without real progress triggers a peer rotation. */
-const STALL_TIMEOUT_MS = 60_000;
-/**
- * Cap on the total number of outstanding requested modifier ids (audit M-10).
- *
- * New requests are trimmed rather than growing the set past this. One Inv
- * announces at most MAX_INV_IDS ids and responses are byte-capped, so several
- * requested batches can legitimately be in flight at once; four batches keep
- * the worst case around 100 KB of id strings. There is no per-request timer —
- * stall rotation clears the set, so a wedged budget self-heals within one
- * stall window.
- */
-const MAX_OUTSTANDING_IDS = 4 * MAX_INV_IDS;
-/** Send SyncInfo to sync peer every 30 seconds while active. */
+/** NET_INTERFACE → Sync State Machine → "A claim is the peer's applied tip,
+ * height and hash" — the poll cadence of this node's own `SyncInfo`. */
 const SYNCED_POLL_INTERVAL_MS = 30_000;
-/**
- * NET_INTERFACE → Serve Side →
- * "The reply is movement-gated, so replying to replies terminates":
- * floor for no-movement replies.
- */
+
+/** NET_INTERFACE → Serve Side → "The reply is movement-gated, so replying
+ * to replies terminates" — floor for no-movement replies. */
 const MIN_SYNCINFO_INTERVAL_MS = 15_000;
-/**
- * How often the loop runs its own timer tick.
- *
- * The tick services two deadlines — stall rotation at STALL_TIMEOUT_MS and the
- * periodic SyncInfo at SYNCED_POLL_INTERVAL_MS — so the period only has to be
- * fine enough to add no meaningful skew to the shorter of them. One second
- * bounds that skew at a second and costs one wakeup per second on an idle node.
- * This is the machine's own cadence: the node layer drives nothing.
- */
+
+/** How often the loop runs its own timer tick. One second bounds the skew
+ * on the 30-second poll and the stall-mark expiry both to within a tick,
+ * at one wakeup per second on an idle node. */
 const TIMER_TICK_INTERVAL_MS = 1_000;
+
+// ---------------------------------------------------------------------------
+// Scheduler state
+// ---------------------------------------------------------------------------
+
+/** NET_INTERFACE → Sync State Machine → "A claim is the peer's applied tip,
+ * height and hash." Retained per Active peer from the latest `SyncInfo`
+ * acted on; dropped at disconnect or ban. The handshake's `chainHeight`
+ * alone is no claim. */
+interface Claim {
+  tipHeight: number;
+  tipHash: string;
+  direction: 'inbound' | 'outbound';
+}
 
 // ---------------------------------------------------------------------------
 // SyncMachine
 // ---------------------------------------------------------------------------
 
 /**
- * Core sync state machine with biased event loop.
+ * NET_INTERFACE → Sync State Machine — "The scheduler holds peers' claims,
+ * this node's open requests and its stall marks — nothing about the chain."
  *
- * Event-driven — the node calls `onPeerActive`, `handleMessage`, and
- * `onPeerDisconnect`. The machine owns sync phase, peer selection, stall
- * detection, rotation, and its own timer cadence.
- *
- * **Biased event loop** (call `start()` to begin):
- * 1. Control events (peer connect/disconnect, sync-info) — unbounded, never dropped
- * 2. Data events (inv, modifier req/resp) — bounded per peer at `MAX_DATA_EVENTS_PER_PEER`,
- *    one more dropping that peer's oldest, never another's (NET_INTERFACE → Biased Event Loop)
- * 3. Timer tick — fallback, lowest priority, every TIMER_TICK_INTERVAL_MS
- * 4. Idle — parks until an enqueue or the tick deadline; it does not re-poll
- *
- * Call `flush()` to synchronously drain all queued events (useful in tests).
+ * The node registers a pipeline intake (`setPipeline`), a chain view
+ * (`setChainView`), a request shim (`setRequestHeaders`), a connected-peers
+ * reader (`setConnectedPeers`) and a penalty call (`setPenalize`), and
+ * drives the scheduler through its public events — `onPeerActive`,
+ * `handleMessage(MSG_SYNC_INFO)`, `onPeerDisconnect`, `needHeaders` and
+ * `chainMoved`.
  */
 export class SyncMachine {
+  // ---- State the scheduler holds (NET_INTERFACE → Sync State Machine) ----
   private state: SyncState = {
     phase: 'idle',
     syncPeerId: null,
     stalledPeers: new Set(),
   };
 
-  private lastProgressMs: number = 0;
-  private lastSyncInfoMs: number = 0;
+  /** Claims by peer id — the retained claim from the latest `SyncInfo` the
+   * scheduler acted on. Dropped at disconnect. */
+  private claims = new Map<string, Claim>();
 
-  // NET_INTERFACE → Sync State Machine, Pick: retained peer heights and direction
-  private peerHeights = new Map<string, number>();
-  private peerDirections = new Map<string, 'inbound' | 'outbound'>();
+  /** NET_INTERFACE → Stall Detection — "A mark clears only when this node
+   * enters `synced`, or `STALL_MARK_EXPIRY_MS` after it was set." Keyed by
+   * peer id, insertion-ordered; oldest dropped past `MAX_STALL_MARKS`. */
+  private stallMarks = new Map<string, number>();
 
-  // NET_INTERFACE → Serve Side →
-  // "The reply is movement-gated, so replying to replies terminates"
+  /** NET_INTERFACE → Sync State Machine → "One header request per peer,
+   * every peer at once." The set names the peers whose header-sync worker
+   * is in flight; a second trigger for one of them opens no second run. */
+  private openHeaderRuns = new Set<string>();
+
+  /** Phase 'idle' holds until the first claim settles (NET_INTERFACE →
+   * Sync State Machine → "The phases"). */
+  private anyClaimEverSettled = false;
+
+  // ---- Movement gate (NET_INTERFACE → Serve Side) ----
   private lastSentTip = new Map<string, number>();
   private lastReportedTip = new Map<string, number>();
   private lastSentMs = new Map<string, number>();
 
-  // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at most
-  // once per `SYNC_INFO_MIN_INTERVAL_MS`": the stamp of the last SyncInfo
-  // acted on from this peer, and that peer's pending one — a later report
-  // replaces it, and the first timer tick past the interval acts on it.
+  // ---- Interval gate (NET_INTERFACE → Serve Side → "A peer's SyncInfo is
+  // acted on at most once per SYNC_INFO_MIN_INTERVAL_MS") ----
   private lastActedOnSyncInfoMs = new Map<string, number>();
   private pendingSyncInfo = new Map<string, SyncInfo>();
 
-  /**
-   * Outstanding requested modifier ids, keyed by the peer the request was sent
-   * to (audit M-10). A response modifier is accepted only if its id is present
-   * under its sender's key — "this sender was sent a request containing this
-   * id" — so no peer can push blocks into the store via the sync path
-   * unsolicited. Bounded by MAX_OUTSTANDING_IDS across all keys; cleared on
-   * peer rotation and on sync-peer disconnect.
-   */
-  private outstanding = new Map<string, Set<string>>();
+  /** NET_INTERFACE → Sync State Machine → "A claim is the peer's applied
+   * tip, height and hash" — poll stamp per peer for the 30 s send. */
+  private lastPolledMs = new Map<string, number>();
 
   private readonly magic: number;
-
   private onSyncedCallbacks: Array<() => void> = [];
 
-  // -----------------------------------------------------------------------
-  // Biased event queues
-  // -----------------------------------------------------------------------
+  // ---- Injected deps (NET_INTERFACE → Sync Handler Registration) ----
+  private pipeline: PipelineIntake | null = null;
+  private chainView: ChainView | null = null;
+  private requestHeadersFn: ((locator: string[], peerId: string) => Promise<BlockHeader[]>) | null = null;
+  private connectedPeersFn: (() => Set<string>) | null = null;
+  private penalizeFn: ((peerId: string, kind: 'misbehavior' | 'transient', reason: string) => void) | null = null;
 
-  /** Control events: unbounded, never dropped. */
+  // ---- Event loop ----
   private controlQueue: ControlEvent[] = [];
-
-  /**
-   * Data events: bounded per peer, lossy (NET_INTERFACE → Biased Event Loop
-   * clause 2). Each push appends; a peer holds at most
-   * `MAX_DATA_EVENTS_PER_PEER`, and one more drops that peer's oldest —
-   * never another peer's.
-   */
-  private dataQueue: DataEvent[] = [];
-
-  /**
-   * Block answers being written out, per peer, and the pending block
-   * requests waiting their turn (NET_INTERFACE → Serve Side → "A peer is
-   * served one block answer at a time"). The machine learns a write has
-   * ended when the `sendToPeer` promise it awaited settles.
-   */
-  private blockAnswerInFlight = new Set<string>();
-  private pendingBlockRequests = new Map<string, ModifierRequest[]>();
-
-  /** Whether the background event loop is running. */
   private running = false;
-
-  /**
-   * Resolver for a parked event loop, or null while the loop is not parked.
-   * Set under `parkUntilWork`, called by `wake`.
-   */
   private idleWakeup: (() => void) | null = null;
-
-  /** Epoch ms at which the loop's next timer tick falls due. */
   private nextTickMs = 0;
 
-  /**
-   * @param onProtocolViolation Called when a message fails the decode boundary,
-   *   so the node layer can penalize the sending peer. Defaults to a no-op for
-   *   callers that only want the state machine.
-   */
   constructor(
     config: NetConfig,
     private store: SyncStore,
-    /**
-     * `sendToPeer` writes one frame to a peer on a stream the node opens.
-     * The return is `unknown` so the net layer can hand back a Promise
-     * that settles when the write ends — taken, failed or aborted
-     * (NET_INTERFACE → Validation → "A stream write is bounded in time
-     * as well") — and the machine awaits it to learn when the write has
-     * ended. A caller that returns nothing is equivalent to a write that
-     * ends at once.
-     */
     private sendToPeer: (peerId: string, data: Uint8Array) => unknown,
     private onProtocolViolation: (peerId: string, reason: string) => void = () => {},
   ) {
     this.magic = config.magic;
   }
 
-  // -----------------------------------------------------------------------
-  // Lifecycle
-  // -----------------------------------------------------------------------
+  // -------- Setters: NET_INTERFACE → Sync Handler Registration --------
 
-  /** Start the background event loop. Idempotent. */
+  setPipeline(intake: PipelineIntake): void {
+    this.pipeline = intake;
+  }
+
+  setChainView(view: ChainView): void {
+    this.chainView = view;
+    // A view that answers may have settled claims already — recompute at once.
+    this.recomputePhase();
+  }
+
+  setRequestHeaders(fn: (locator: string[], peerId: string) => Promise<BlockHeader[]>): void {
+    this.requestHeadersFn = fn;
+  }
+
+  setConnectedPeers(fn: () => Set<string>): void {
+    this.connectedPeersFn = fn;
+  }
+
+  setPenalize(fn: (peerId: string, kind: 'misbehavior' | 'transient', reason: string) => void): void {
+    this.penalizeFn = fn;
+  }
+
+  // -------- Lifecycle --------
+
   start(): void {
     if (this.running) return;
     this.running = true;
     this.eventLoop().catch((err) => {
-      // Unreachable while every dispatch is isolated, but if the loop ever does
-      // die, clear the flag so `start()` can bring it back instead of being a
-      // permanent no-op.
       this.running = false;
       console.error('[sync-machine] event loop crashed:', err);
     });
   }
 
-  /** Stop the background event loop. Idempotent. */
   stop(): void {
     this.running = false;
-    // A parked loop is holding a tick timer; waking it lets the `running` check
-    // retire both on this turn rather than at the next deadline.
     this.wake();
   }
 
-  // -----------------------------------------------------------------------
-  // Background event loop
-  // -----------------------------------------------------------------------
+  // -------- Event loop (NET_INTERFACE → Biased Event Loop) --------
 
-  /**
-   * Biased event loop.
-   *
-   * Priority order:
-   * 1. Drain ALL control events (unbounded, never dropped)
-   * 2. Process ONE data event (per-peer bounded at `MAX_DATA_EVENTS_PER_PEER`)
-   * 3. Timer tick, once TIMER_TICK_INTERVAL_MS is due (fallback, lowest priority)
-   *
-   * With work pending the loop yields between iterations, so one data event per
-   * turn stays the fairness bound and I/O keeps its share of the thread. With
-   * both queues empty it parks in `parkUntilWork` until an enqueue, `stop()`, or
-   * the tick deadline — NET_INTERFACE → Biased Event Loop, clause 4.
-   *
-   * Every dispatch is isolated (see `dispatchControlEvent`) — a throwing
-   * handler must degrade one message, never abandon the loop.
-   */
   private async eventLoop(): Promise<void> {
     this.nextTickMs = Date.now();
-
     while (this.running) {
-      // 1. Drain control events first (never dropped)
       while (this.controlQueue.length > 0) {
         const event = this.controlQueue.shift()!;
         this.dispatchControlEvent(event);
       }
-
-      // 2. Process one data event
-      const dataEvent = this.dataQueue.shift();
-      if (dataEvent) {
-        this.dispatchDataEvent(dataEvent);
-      }
-
-      // 3. Fallback: timer tick, on its own deadline
       if (Date.now() >= this.nextTickMs) {
         this.dispatchTimerTick();
         this.nextTickMs = Date.now() + TIMER_TICK_INTERVAL_MS;
       }
-
-      if (this.controlQueue.length > 0 || this.dataQueue.length > 0) {
+      if (this.controlQueue.length > 0) {
         await new Promise((resolve) => setImmediate(resolve));
       } else {
         await this.parkUntilWork();
@@ -294,21 +212,12 @@ export class SyncMachine {
     }
   }
 
-  /**
-   * Block until an enqueue, `stop()`, or the next tick deadline — whichever
-   * lands first.
-   *
-   * The emptiness check above and the assignment below both run on this same
-   * turn, so no enqueue can slip between them and leave the loop parked on work
-   * it already has.
-   */
   private parkUntilWork(): Promise<void> {
     return new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
         this.idleWakeup = null;
         resolve();
       }, Math.max(0, this.nextTickMs - Date.now()));
-
       this.idleWakeup = () => {
         clearTimeout(timer);
         this.idleWakeup = null;
@@ -317,68 +226,24 @@ export class SyncMachine {
     });
   }
 
-  /**
-   * Resume a parked loop. Every path that makes work available calls this —
-   * `pushControl`, `pushData`, `stop()` — so a newly queued event is dispatched
-   * on the next turn instead of waiting out the tick deadline.
-   */
   private wake(): void {
     this.idleWakeup?.();
   }
 
-  // -----------------------------------------------------------------------
-  // Synchronous flush — drains all queued events (test support)
-  // -----------------------------------------------------------------------
-
-  /**
-   * Synchronously drain all queued events.
-   *
-   * Processes control events first (all of them), then data events (one at a
-   * time, interleaving with control drain between each). Does NOT run the
-   * timer tick — use `onTimerTick()` directly if needed.
-   */
+  /** Synchronous drain for tests. */
   flush(): void {
-    while (this.controlQueue.length > 0 || this.dataQueue.length > 0) {
-      // Drain all control events
-      while (this.controlQueue.length > 0) {
-        const event = this.controlQueue.shift()!;
-        this.dispatchControlEvent(event);
-      }
-
-      // Process one data event
-      const dataEvent = this.dataQueue.shift();
-      if (dataEvent) {
-        this.dispatchDataEvent(dataEvent);
-      }
+    while (this.controlQueue.length > 0) {
+      const event = this.controlQueue.shift()!;
+      this.dispatchControlEvent(event);
     }
   }
-
-  // -----------------------------------------------------------------------
-  // Internal — isolated dispatch
-  //
-  // A handler that throws must degrade one message, not the subsystem. In the
-  // background loop an escaping error rejects the `eventLoop` promise and
-  // abandons `while (this.running)` — sync then stays dead until the process
-  // restarts. `flush()` shares these helpers so both paths behave the same.
-  // -----------------------------------------------------------------------
 
   private dispatchControlEvent(event: ControlEvent): void {
     try {
       this.handleControlEvent(event);
     } catch (err) {
-      console.error(
-        `[sync-machine] control event '${event.type}' from ${event.peerId} failed: ${String(err)}`,
-      );
-    }
-  }
-
-  private dispatchDataEvent(event: DataEvent): void {
-    try {
-      this.handleDataEvent(event);
-    } catch (err) {
-      console.error(
-        `[sync-machine] data event '${event.type}' from ${event.peerId} failed: ${String(err)}`,
-      );
+      const peer = 'peerId' in event ? (event as { peerId: string }).peerId : '-';
+      console.error(`[sync-machine] control event '${event.type}' from ${peer} failed: ${String(err)}`);
     }
   }
 
@@ -390,32 +255,36 @@ export class SyncMachine {
     }
   }
 
-  /** Read-only snapshot of current sync state. */
+  // -------- Public introspection --------
+
   getState(): Readonly<SyncState> {
+    // NET_INTERFACE → Stall Detection — stalledPeers reflects the marks set.
+    this.state.stalledPeers = new Set(this.stallMarks.keys());
     return this.state;
   }
 
-  /**
-   * Register a callback that fires when the sync machine transitions to the
-   * 'synced' phase (peer tip height matches our tip height).
-   */
   onSynced(cb: () => void): void {
     this.onSyncedCallbacks.push(cb);
   }
 
-  // -----------------------------------------------------------------------
-  // Public events (called by the node layer)
-  // -----------------------------------------------------------------------
+  /** NET_INTERFACE → Pull Requests — the claim's height; `null` for a peer
+   * the scheduler has no claim for. */
+  peerHeight(peerId: string): number | null {
+    return this.claims.get(peerId)?.tipHeight ?? null;
+  }
 
-  /**
-   * Called after handshake reveals a peer's tip height.
-   *
-   * The height is peer-supplied and feeds `servePeer`, which walks the chain
-   * one height at a time — so it is bounds-checked here, at the boundary,
-   * before it can reach a loop.
-   *
-   * Enqueues a control event — the event loop processes it with top priority.
-   */
+  /** Test introspection — the stall marks map. */
+  getMarksForTest(): Map<string, number> {
+    return this.stallMarks;
+  }
+
+  /** Test introspection — the retained claims map. */
+  getClaimsForTest(): Map<string, Claim> {
+    return this.claims;
+  }
+
+  // -------- Public events --------
+
   onPeerActive(peerId: string, peerHeight: number, direction: 'inbound' | 'outbound' = 'outbound'): void {
     if (!isHeight(peerHeight)) {
       this.rejectMessage(peerId, MSG_HANDSHAKE, `advertised height out of range: ${String(peerHeight)}`);
@@ -424,65 +293,33 @@ export class SyncMachine {
     this.pushControl({ type: 'peer-active', peerId, peerHeight, direction });
   }
 
-  /**
-   * Dispatch an incoming framed message from a peer.
-   *
-   * The `body` is the positional payload (already stripped of the frame
-   * envelope by the caller).
-   *
-   * Every body is decoded through its positional codec and domain-checked
-   * before it is queued: a message that fails the boundary — malformed,
-   * truncated, over-cap, nonEmpty violation — is dropped here and attributed
-   * to the sender, so no unvalidated value ever reaches a handler.
-   *
-   * Routes to control queue (SyncInfo) or data queue (everything else).
-   */
-  handleMessage(peerId: string, code: number, body: Uint8Array): void {
-    switch (code) {
-      case MSG_SYNC_INFO: {
-        const info = decodeSyncInfo(body);
-        if (!info) {
-          this.rejectMessage(peerId, code, 'malformed SyncInfo');
-          return;
-        }
-        this.pushControl({ type: 'sync-info', peerId, info });
-        break;
-      }
-      case MSG_INV: {
-        const inv = decodeInv(body);
-        if (!inv) {
-          this.rejectMessage(peerId, code, 'malformed Inv');
-          return;
-        }
-        this.pushData({ type: 'inv', peerId, inv });
-        break;
-      }
-      case MSG_MODIFIER_REQUEST: {
-        const req = decodeModifierRequest(body);
-        if (!req) {
-          this.rejectMessage(peerId, code, 'malformed ModifierRequest');
-          return;
-        }
-        this.pushData({ type: 'modifier-request', peerId, req });
-        break;
-      }
-      case MSG_MODIFIER_RESPONSE: {
-        const resp = decodeModifierResponse(body);
-        if (!resp) {
-          this.rejectMessage(peerId, code, 'malformed ModifierResponse');
-          return;
-        }
-        this.pushData({ type: 'modifier-response', peerId, resp });
-        break;
-      }
-      // Unknown message types are silently ignored.
-    }
+  onPeerDisconnect(peerId: string): void {
+    this.pushControl({ type: 'peer-disconnect', peerId });
   }
 
-  /**
-   * Drop a message that failed the decode boundary and attribute the failure to
-   * the peer that sent it.
-   */
+  handleMessage(peerId: string, code: number, body: Uint8Array): void {
+    // NET_INTERFACE → Sync Handler Registration → "A code no arm serves is
+    // closed unanswered, so it reads as 'I cannot answer'". The scheduler
+    // decodes only `SyncInfo`; every other code is dropped silently.
+    if (code !== MSG_SYNC_INFO) return;
+    const info = decodeSyncInfo(body);
+    if (!info) {
+      this.rejectMessage(peerId, code, 'malformed SyncInfo');
+      return;
+    }
+    this.pushControl({ type: 'sync-info', peerId, info });
+  }
+
+  /** NET_INTERFACE → Pipeline events — "needHeaders(peerId)". */
+  needHeaders(peerId: string): void {
+    this.pushControl({ type: 'need-headers', peerId });
+  }
+
+  /** NET_INTERFACE → Pipeline events — "chainMoved()". */
+  chainMoved(): void {
+    this.pushControl({ type: 'chain-moved' });
+  }
+
   private rejectMessage(peerId: string, code: number, reason: string): void {
     console.warn(`[sync-machine] dropping code=${code} from ${peerId}: ${reason}`);
     try {
@@ -492,21 +329,12 @@ export class SyncMachine {
     }
   }
 
-  /**
-   * Periodic timer tick.
-   *
-   * Driven by the event loop every TIMER_TICK_INTERVAL_MS as its lowest-priority
-   * fallback. Public so a caller without a running loop can step it directly.
-   *
-   * - Checks for stall (no progress in STALL_TIMEOUT_MS).
-   * - Sends periodic SyncInfo while syncing/synced.
-   */
+  // -------- Timer tick --------
+
   onTimerTick(): void {
     const now = Date.now();
 
-    // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
-    // most once per `SYNC_INFO_MIN_INTERVAL_MS`": the tick drains each
-    // pending report whose interval has passed.
+    // Drain pending `SyncInfo` reports past their interval.
     for (const [peerId, info] of this.pendingSyncInfo) {
       const last = this.lastActedOnSyncInfoMs.get(peerId) ?? 0;
       if (now - last < SYNC_INFO_MIN_INTERVAL_MS) continue;
@@ -514,37 +342,26 @@ export class SyncMachine {
       this.actOnSyncInfo(peerId, info, now);
     }
 
-    if (this.state.phase === 'syncing') {
-      if (
-        now - this.lastProgressMs > STALL_TIMEOUT_MS &&
-        this.state.syncPeerId
-      ) {
-        this.rotatePeer();
-        return;
-      }
+    // Expire stall marks older than STALL_MARK_EXPIRY_MS.
+    for (const [peerId, setAt] of this.stallMarks) {
+      if (now - setAt > STALL_MARK_EXPIRY_MS) this.stallMarks.delete(peerId);
     }
 
-    if (
-      this.state.phase !== 'idle' &&
-      this.state.syncPeerId &&
-      now - this.lastSyncInfoMs > SYNCED_POLL_INTERVAL_MS
-    ) {
-      this.sendSyncInfo(this.state.syncPeerId);
+    // NET_INTERFACE → Sync State Machine → "A claim is the peer's applied
+    // tip, height and hash" — send `SyncInfo` to every Active peer every
+    // `SYNCED_POLL_INTERVAL_MS`.
+    const connected = this.connectedPeersFn?.() ?? new Set<string>();
+    for (const peerId of connected) {
+      const last = this.lastPolledMs.get(peerId) ?? 0;
+      if (now - last < SYNCED_POLL_INTERVAL_MS) continue;
+      this.lastPolledMs.set(peerId, now);
+      this.sendSyncInfo(peerId);
     }
+
+    this.recomputePhase();
   }
 
-  /**
-   * Called when a peer disconnects.
-   *
-   * Enqueues a control event — processed with top priority.
-   */
-  onPeerDisconnect(peerId: string): void {
-    this.pushControl({ type: 'peer-disconnect', peerId });
-  }
-
-  // -----------------------------------------------------------------------
-  // Internal — control event handler
-  // -----------------------------------------------------------------------
+  // -------- Control event dispatch --------
 
   private handleControlEvent(event: ControlEvent): void {
     switch (event.type) {
@@ -557,418 +374,264 @@ export class SyncMachine {
       case 'sync-info':
         this.handleSyncInfoMsg(event.peerId, event.info);
         break;
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // Internal — data event handler
-  // -----------------------------------------------------------------------
-
-  private handleDataEvent(event: DataEvent): void {
-    switch (event.type) {
-      case 'inv':
-        this.handleInvMsg(event.peerId, event.inv);
+      case 'need-headers':
+        this.handleNeedHeaders(event.peerId);
         break;
-      case 'modifier-request':
-        this.handleModifierRequestMsg(event.peerId, event.req);
-        break;
-      case 'modifier-response':
-        this.handleModifierResponseMsg(event.peerId, event.resp);
+      case 'chain-moved':
+        this.handleChainMoved();
         break;
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Internal — queue enqueue
-  //
-  // The two queues are reachable only through these, and both wake the loop, so
-  // clause 4's "the loop parks until an enqueue" cannot be broken by a future
-  // caller that pushes and forgets.
-  // -----------------------------------------------------------------------
-
-  /** Enqueue a control event. Unbounded — control events are never dropped. */
   private pushControl(event: ControlEvent): void {
     this.controlQueue.push(event);
     this.wake();
   }
 
-  /**
-   * Enqueue a data event. Bound is per peer — NET_INTERFACE → Biased Event
-   * Loop clause 2: a peer holds at most `MAX_DATA_EVENTS_PER_PEER`, and one
-   * more drops that peer's oldest, never another's.
-   */
-  private pushData(event: DataEvent): void {
-    let count = 0;
-    for (const e of this.dataQueue) if (e.peerId === event.peerId) count++;
-    if (count >= MAX_DATA_EVENTS_PER_PEER) {
-      for (let i = 0; i < this.dataQueue.length; i++) {
-        if (this.dataQueue[i]!.peerId === event.peerId) {
-          this.dataQueue.splice(i, 1);
-          break;
-        }
-      }
-    }
-    this.dataQueue.push(event);
-    this.wake();
+  // -------- Peer lifecycle --------
+
+  private handlePeerActive(peerId: string, _peerHeight: number, direction: 'inbound' | 'outbound'): void {
+    // NET_INTERFACE → Sync State Machine → "An event for a peer no longer
+    // connected is ignored." The connected set is the funnel.
+    if (!this.isConnected(peerId)) return;
+
+    // NET_INTERFACE → Sync State Machine → "A claim is the peer's applied
+    // tip, height and hash" — the handshake height alone is no claim.
+    // Record the direction for the claim this peer will send; the first
+    // `SyncInfo` writes it.
+    const existing = this.claims.get(peerId);
+    if (existing) existing.direction = direction;
+
+    // Send our own `SyncInfo` to this new Active peer.
+    this.sendSyncInfo(peerId);
+    this.lastPolledMs.set(peerId, Date.now());
+
+    this.recomputePhase();
   }
 
-  // -----------------------------------------------------------------------
-  // Control event handlers
-  // -----------------------------------------------------------------------
-
-  /**
-   * Handle a peer becoming active (post-handshake).
-   *
-   * - If the peer is ahead and we're idle → enter syncing phase.
-   * - If the peer is behind → serve them an Inv so they can catch up.
-   */
-  private handlePeerActive(peerId: string, peerHeight: number, direction: 'inbound' | 'outbound'): void {
-    this.peerHeights.set(peerId, peerHeight);
-    this.peerDirections.set(peerId, direction);
-    this.state.stalledPeers.delete(peerId);
-    const ourHeight = this.store.chainHeight();
-    if (peerHeight < ourHeight) {
-      this.servePeer(peerId, peerHeight);
-    }
-    this.pickSyncPeer();
-  }
-
-  /**
-   * Handle a peer disconnecting.
-   *
-   * If the disconnected peer was our sync peer, add it to the stalled set and
-   * reset phase so the node can pick a new peer.
-   */
   private handlePeerDisconnect(peerId: string): void {
-    this.peerHeights.delete(peerId);
-    this.peerDirections.delete(peerId);
+    this.claims.delete(peerId);
+    this.openHeaderRuns.delete(peerId);
     this.lastSentTip.delete(peerId);
     this.lastReportedTip.delete(peerId);
     this.lastSentMs.delete(peerId);
-    // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
-    // most once per `SYNC_INFO_MIN_INTERVAL_MS`": a disconnect drops the
-    // pending report with the peer.
-    this.pendingSyncInfo.delete(peerId);
     this.lastActedOnSyncInfoMs.delete(peerId);
-    // NET_INTERFACE → Serve Side → "A peer is served one block answer at
-    // a time": the pending answers die with the peer.
-    this.blockAnswerInFlight.delete(peerId);
-    this.pendingBlockRequests.delete(peerId);
-
-    if (this.state.syncPeerId === peerId) {
-      this.state.stalledPeers.add(peerId);
-      this.state.syncPeerId = null;
-      // NET_INTERFACE → Sync Integrity →
-      // "Response binding — sender and label, never content"
-      this.outstanding.clear();
-      if (this.state.phase === 'syncing' || this.state.phase === 'synced') {
-        this.state.phase = 'idle';
-      }
-      this.pickSyncPeer();
-    }
+    this.pendingSyncInfo.delete(peerId);
+    this.lastPolledMs.delete(peerId);
+    this.recomputePhase();
   }
 
-  // -----------------------------------------------------------------------
-  // Internal — message handlers (dispatched from control/data event handlers)
-  // -----------------------------------------------------------------------
+  // -------- SyncInfo intake --------
 
-  /**
-   * Process a SyncInfo message from a peer.
-   *
-   * - Peer ahead + we're idle → start syncing.
-   * - Peer behind → serve them an Inv.
-   * - Equal height + we were syncing → transition to synced.
-   */
   private handleSyncInfoMsg(peerId: string, info: SyncInfo): void {
-    // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
-    // most once per `SYNC_INFO_MIN_INTERVAL_MS`": a report arriving sooner
-    // is held as that peer's pending one — a later report replaces it —
-    // and the next tick past the interval acts on it. Nothing is
-    // penalised, and no report is lost but one a later report replaced.
+    if (!this.isConnected(peerId)) return;
+
     const now = Date.now();
     const lastActedOnMs = this.lastActedOnSyncInfoMs.get(peerId);
     if (lastActedOnMs !== undefined && now - lastActedOnMs < SYNC_INFO_MIN_INTERVAL_MS) {
+      // NET_INTERFACE → Serve Side → "A peer's `SyncInfo` is acted on at
+      // most once per `SYNC_INFO_MIN_INTERVAL_MS`" — held, later report
+      // replaces it, tick acts on it.
       this.pendingSyncInfo.set(peerId, info);
       return;
     }
     this.actOnSyncInfo(peerId, info, now);
   }
 
-  /**
-   * Act on a `SyncInfo` from a peer: retain its height, reply, serve if the
-   * peer is behind, and consider a sync-peer transition. The one place the
-   * acted-on stamp is written.
-   */
   private actOnSyncInfo(peerId: string, info: SyncInfo, nowMs: number): void {
-    const ourHeight = this.store.chainHeight();
+    if (!this.isConnected(peerId)) return;
 
     this.lastActedOnSyncInfoMs.set(peerId, nowMs);
-    this.peerHeights.set(peerId, info.tipHeight);
 
-    // NET_INTERFACE → Serve Side, rule 1: reply to the sender
+    // Record / replace the claim. Direction follows whatever is known at
+    // handshake; a `SyncInfo` without a prior `peer-active` falls back to
+    // outbound.
+    const prev = this.claims.get(peerId);
+    const claim: Claim = {
+      tipHeight: info.tipHeight,
+      tipHash: info.tipHash,
+      direction: prev?.direction ?? 'outbound',
+    };
+    this.claims.set(peerId, claim);
+
+    // NET_INTERFACE → Serve Side — reply to the sender, movement-gated.
     this.replySyncInfo(peerId, info.tipHeight);
 
-    // NET_INTERFACE → Serve Side, rule 2: behind sender earns Inv after the reply
-    if (info.tipHeight < ourHeight) {
-      this.servePeer(peerId, info.tipHeight);
+    // NET_INTERFACE → Sync State Machine → "A claim the tree lacks is a
+    // header request." A claim the view knows is settled on arrival.
+    if (this.chainView?.knowsTip(peerId, info.tipHash)) {
+      this.anyClaimEverSettled = true;
+    } else if (!this.stallMarks.has(peerId) && !this.openHeaderRuns.has(peerId)) {
+      void this.startHeaderRun(peerId, info.tipHash);
     }
 
-    // NET_INTERFACE → Sync State Machine: an equal-height SyncInfo from
-    // the sync peer is the caught-up signal — the machine enters `synced`.
-    if (info.tipHeight === ourHeight && this.state.phase === 'syncing' &&
-        this.state.syncPeerId === peerId) {
-      this.enterSynced();
-      return;
-    }
-
-    if (info.tipHeight > ourHeight) {
-      this.state.stalledPeers.delete(peerId);
-    }
-    this.pickSyncPeer();
+    this.recomputePhase();
   }
 
-  /**
-   * Process an Inv (inventory) message.
-   *
-   * Only the current sync peer's Invs are honoured (request provenance, audit
-   * M-10): a third party's Inv must neither cause requests nor grow the
-   * outstanding set. Dropped without penalty — Invs from other peers are
-   * legitimate gossip-adjacent noise.
-   *
-   * IDs we already have, and IDs already outstanding, are filtered before
-   * requesting. Every id actually requested is recorded as outstanding for the
-   * sync peer; the set never grows past MAX_OUTSTANDING_IDS — the request is
-   * trimmed instead.
-   *
-   * NET_INTERFACE → Sync Handler Registration: one id is one provider call,
-   * never a chain walk — k ids cost k point lookups.
-   */
-  private handleInvMsg(peerId: string, inv: Inv): void {
-    const syncPeerId = this.state.syncPeerId;
-    if (this.state.phase !== 'syncing' || !syncPeerId) return;
-    if (peerId !== syncPeerId) return;
-    // Unknown modifier types are dropped before any store work is done.
-    if (inv.typeId !== MODIFIER_ORDERING_BLOCK) return;
+  // -------- Pipeline events --------
 
-    const requested = this.outstanding.get(syncPeerId);
-    // A Set both deduplicates ids repeated within one Inv and preserves
-    // announcement order for the trim below.
-    const fresh = new Set<string>();
-    for (const id of inv.ids) {
-      if (this.store.heightByBlockId(id) !== null || requested?.has(id)) continue;
-      fresh.add(id);
-    }
-    if (fresh.size === 0) return;
-
-    const budget = MAX_OUTSTANDING_IDS - this.outstandingTotal();
-    if (budget <= 0) return;
-    const ids = [...fresh].slice(0, budget);
-
-    let target = requested;
-    if (!target) {
-      target = new Set();
-      this.outstanding.set(syncPeerId, target);
-    }
-    for (const id of ids) target.add(id);
-
-    const req: ModifierRequest = { typeId: inv.typeId, ids };
-    this.sendToPeer(syncPeerId, encodeModifierRequest(this.magic, req));
+  private handleNeedHeaders(peerId: string): void {
+    if (!this.isConnected(peerId)) return;
+    if (this.stallMarks.has(peerId)) return;
+    if (this.openHeaderRuns.has(peerId)) return;
+    // NET_INTERFACE → Pull Requests → "A gossiped block's relayer is asked
+    // for the headers the tree lacks": the retained claim is the hash the
+    // page is asked toward; with none, the run ends settled on a short
+    // page.
+    const claim = this.claims.get(peerId);
+    void this.startHeaderRun(peerId, claim?.tipHash ?? null);
   }
 
-  /** Total outstanding requested ids across all request targets. */
-  private outstandingTotal(): number {
-    let total = 0;
-    for (const set of this.outstanding.values()) total += set.size;
-    return total;
-  }
-
-  /**
-   * Process a ModifierRequest from a peer — serve the requested data from
-   * our local store.
-   *
-   * The ID list was capped on receipt. Each id is resolved through a single
-   * heightByBlockId point lookup (NET_INTERFACE → Sync Handler Registration).
-   * The assembled body is byte-bounded: a response is truncated at
-   * MAX_SERVE_BODY_BYTES so it always fits inside the requester's stream cap.
-   * The first matching block is always included, so a request is never answered
-   * with nothing while the server holds what was asked (NET_INTERFACE →
-   * Validation →
-   * "Every arm that assembles more than one stored object into a response is bounded by BYTES, not by item count alone.").
-   */
-  private handleModifierRequestMsg(peerId: string, req: ModifierRequest): void {
-    if (req.typeId === MODIFIER_ORDERING_BLOCK) {
-      this.serveOrderingBlocks(peerId, req);
-    }
-  }
-
-  // NET_INTERFACE → Serve Side → "A peer is served one block answer at a
-  // time". A request that arrives while this node is still writing that
-  // peer's previous answer waits (at most MAX_PENDING_BLOCK_REQUESTS), one
-  // more dropping the oldest.
-  private serveOrderingBlocks(peerId: string, req: ModifierRequest): void {
-    if (this.blockAnswerInFlight.has(peerId)) {
-      let q = this.pendingBlockRequests.get(peerId);
-      if (!q) { q = []; this.pendingBlockRequests.set(peerId, q); }
-      if (q.length >= MAX_PENDING_BLOCK_REQUESTS) q.shift();
-      q.push(req);
-      return;
-    }
-    this.writeBlockAnswer(peerId, req);
-  }
-
-  /**
-   * Build and send one block answer, tracking the write in-flight so the
-   * peer's next request waits for this one to end — "A peer is served one
-   * block answer at a time". Awaits what `sendToPeer` returns to learn when
-   * the write ended (taken, failed or aborted).
-   */
-  private writeBlockAnswer(peerId: string, req: ModifierRequest): void {
-    const modifiers: { id: string; data: Uint8Array }[] = [];
-    let bodyBytes = 0;
-
-    for (const id of req.ids) {
-      const height = this.store.heightByBlockId(id);
-      if (height === null) continue;
-      const data = this.store.serializeOrderingBlock(height);
-      if (!data) continue;
-      if (modifiers.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
-      bodyBytes += data.length;
-      modifiers.push({ id, data });
-    }
-
-    if (modifiers.length === 0) {
-      // Nothing to serve — move on to the peer's next waiter if any.
-      this.advancePendingBlockAnswer(peerId);
-      return;
-    }
-    const resp: ModifierResponse = { typeId: req.typeId, modifiers };
-    this.blockAnswerInFlight.add(peerId);
-    const sent = this.sendToPeer(peerId, encodeModifierResponse(this.magic, resp));
-    void Promise.resolve(sent as PromiseLike<void> | unknown)
-      .then(() => undefined, () => undefined)
-      .then(() => {
-        this.blockAnswerInFlight.delete(peerId);
-        this.advancePendingBlockAnswer(peerId);
-      });
-  }
-
-  private advancePendingBlockAnswer(peerId: string): void {
-    const q = this.pendingBlockRequests.get(peerId);
-    if (!q || q.length === 0) return;
-    const next = q.shift()!;
-    if (q.length === 0) this.pendingBlockRequests.delete(peerId);
-    this.writeBlockAnswer(peerId, next);
-  }
-
-  /**
-   * Process a ModifierResponse — apply received blocks to the store.
-   *
-   * Response binding (audit M-10): a modifier is accepted only if its id is
-   * still outstanding for THIS sender, i.e. it answers a ModifierRequest we
-   * previously sent to that same peer. Anything else — a response from a peer
-   * we never asked, or ids we never requested — is dropped without penalty: a
-   * response can legitimately cross a peer rotation in flight. Partial
-   * responses are normal (the serve side truncates at MAX_SERVE_BODY_BYTES);
-   * unanswered ids stay outstanding for a later response.
-   */
-  private handleModifierResponseMsg(peerId: string, resp: ModifierResponse): void {
-    if (resp.typeId === MODIFIER_ORDERING_BLOCK) {
-      this.receiveOrderingBlocks(peerId, resp);
-    }
-  }
-
-  private receiveOrderingBlocks(peerId: string, resp: ModifierResponse): void {
-    const requested = this.outstanding.get(peerId);
-    if (!requested || requested.size === 0) return;
-
-    const blocks: unknown[] = [];
-    for (const mod of resp.modifiers) {
-      // Unsolicited and already-consumed ids are dropped; a duplicate id
-      // within one response processes once (the first occurrence consumes it).
-      if (!requested.has(mod.id)) continue;
-      // An empty payload answers nothing — the id stays outstanding so a
-      // later response can still deliver it; a peer abusing this makes no
-      // progress and stalls out.
-      if (mod.data.length === 0) continue;
-      requested.delete(mod.id);
-      blocks.push(mod.data);
-    }
-    if (requested.size === 0) this.outstanding.delete(peerId);
-    if (blocks.length === 0) return;
-
-    const heightBefore = this.store.chainHeight();
-    this.store.appendBlocks(blocks, peerId);
-    const newHeight = this.store.chainHeight();
-
-    // Stall progress = chain height (audit M-10): the stall clock advances
-    // only when applying a response strictly increased the chain — junk and
-    // already-known blocks leave it untouched, so a peer feeding non-advancing
-    // responses is rotated away within one stall window.
-    if (newHeight > heightBefore) {
-      this.lastProgressMs = Date.now();
-      // NET_INTERFACE → Sync State Machine, Sync: advancing batch sends next SyncInfo
-      if (this.state.syncPeerId) {
-        this.sendSyncInfo(this.state.syncPeerId);
+  private handleChainMoved(): void {
+    if (!this.chainView) return;
+    for (const [peerId, claim] of this.claims) {
+      if (!this.isConnected(peerId)) continue;
+      if (this.stallMarks.has(peerId)) continue;
+      if (this.openHeaderRuns.has(peerId)) continue;
+      if (!this.chainView.knowsTip(peerId, claim.tipHash)) {
+        void this.startHeaderRun(peerId, claim.tipHash);
       }
     }
-
+    this.recomputePhase();
   }
 
-  // -----------------------------------------------------------------------
-  // Internal — serving
-  // -----------------------------------------------------------------------
+  // -------- Header runs (NET_INTERFACE → Sync State Machine → "One header
+  // request per peer, every peer at once") --------
 
-  /**
-   * Serve a peer that is behind us by sending an Inv with continuation
-   * from their height.
-   *
-   * Capped at MAX_INV_IDS to avoid oversized messages.
-   *
-   * Precondition: `peerHeight` has passed `isHeight`. Both callers take it from
-   * a bounds-checked boundary (`onPeerActive`, `decodeSyncInfo`) — the loop
-   * below reads the store once per height, so a negative value here would scan
-   * ~10⁹ heights on the main thread.
-   */
-  private servePeer(peerId: string, peerHeight: number): void {
-    const startHeight = peerHeight + 1;
-    const ourHeight = this.store.chainHeight();
+  private async startHeaderRun(peerId: string, claimHash: string | null): Promise<void> {
+    if (!this.requestHeadersFn || !this.pipeline || !this.chainView) return;
+    if (this.openHeaderRuns.has(peerId)) return;
+    this.openHeaderRuns.add(peerId);
+    try {
+      await this.runHeaders(peerId, claimHash);
+    } finally {
+      this.openHeaderRuns.delete(peerId);
+      this.recomputePhase();
+    }
+  }
 
-    if (startHeight > ourHeight) return;
+  private async runHeaders(peerId: string, claimHash: string | null): Promise<void> {
+    const view = this.chainView!;
+    const pipeline = this.pipeline!;
+    const requestHeaders = this.requestHeadersFn!;
 
-    const ids: string[] = [];
-    for (let h = startHeight; h <= ourHeight && ids.length < MAX_INV_IDS; h++) {
-      const id = this.store.getOrderingBlockId(h);
-      if (id) {
-        ids.push(id);
+    for (;;) {
+      if (!this.isConnected(peerId)) return;
+      if (this.stallMarks.has(peerId)) return;
+
+      const locator = view.locatorFor(peerId);
+      let page: BlockHeader[];
+      try {
+        page = await requestHeaders(locator, peerId);
+      } catch {
+        // NET_INTERFACE → Sync State Machine → "A request passes its
+        // deadline" — mark, no penalty.
+        this.markPeer(peerId);
+        return;
+      }
+
+      if (!this.isConnected(peerId)) return;
+
+      // NET_INTERFACE → `GetHeaders` / `GetBlocks` responses → "A `Headers`
+      // page has one shape, and a requester holds a page to it". Fail →
+      // misbehavior, no mark.
+      if (!holdsPageShape(page, locator)) {
+        this.penalizeFn?.(peerId, 'misbehavior', 'headers page violates its shape');
+        return;
+      }
+
+      // Hand the page to the pipeline. A refusal ends the run unmarked;
+      // the pipeline recorded whatever penalty was due (NET_INTERFACE →
+      // Peer Penalty System).
+      let accepted: boolean;
+      try {
+        accepted = await pipeline.deliverHeaders(peerId, claimHash ?? '', page);
+      } catch (err) {
+        // NET_INTERFACE → Sync State Machine — a throwing deliverer
+        // degrades this one run.
+        console.warn(`[sync-machine] deliverHeaders(${peerId}) threw: ${String(err)}`);
+        return;
+      }
+      if (!accepted) return;
+
+      if (!this.isConnected(peerId)) return;
+
+      // NET_INTERFACE → Sync State Machine → "How a header sync ends":
+      // reached — `knowsTip(peerId, hash)` answers `true`.
+      if (claimHash && view.knowsTip(peerId, claimHash)) {
+        this.anyClaimEverSettled = true;
+        return;
+      }
+
+      // Refute check — a page shorter than `MAX_CHAIN_RESPONSE_ITEMS` or
+      // one that reached the claimed height without the pipeline knowing
+      // the hash refutes the claim. A run with no carried claim ends
+      // settled on a short page — there is no claim to refute.
+      const claim = this.claims.get(peerId);
+      const reachedClaimedHeight = claim !== undefined && page.length > 0
+        && page[page.length - 1]!.height >= claim.tipHeight;
+      if (page.length < MAX_CHAIN_RESPONSE_ITEMS || reachedClaimedHeight) {
+        if (claimHash) {
+          this.penalizeFn?.(peerId, 'transient', 'headers page refutes the claim');
+          this.markPeer(peerId);
+        } else {
+          // No claim to refute — a short page settles the run.
+          this.anyClaimEverSettled = true;
+        }
+        return;
+      }
+      // Full page under the claimed height — ask again, loop.
+    }
+  }
+
+  // -------- Stall marks (NET_INTERFACE → Stall Detection) --------
+
+  private markPeer(peerId: string): void {
+    const now = Date.now();
+    if (this.stallMarks.has(peerId)) this.stallMarks.delete(peerId);
+    this.stallMarks.set(peerId, now);
+    while (this.stallMarks.size > MAX_STALL_MARKS) {
+      const oldest = this.stallMarks.keys().next().value;
+      if (oldest === undefined) break;
+      this.stallMarks.delete(oldest);
+    }
+  }
+
+  // -------- Phases --------
+
+  private recomputePhase(): void {
+    const next = this.computePhase();
+    const was = this.state.phase;
+    this.state.phase = next;
+    if (next === 'synced' && was !== 'synced') {
+      // NET_INTERFACE → Sync State Machine → "The phases" — entering
+      // `synced` clears every stall mark.
+      this.stallMarks.clear();
+      for (const cb of this.onSyncedCallbacks) {
+        try { cb(); } catch (err) {
+          console.warn(`[sync-machine] onSynced callback error: ${String(err)}`);
+        }
       }
     }
-
-    if (ids.length > 0) {
-      const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids };
-      this.sendToPeer(peerId, encodeInv(this.magic, inv));
-    }
   }
 
-  private enterSynced(): void {
-    this.state.phase = 'synced';
-    this.state.stalledPeers.clear();
-    for (const cb of this.onSyncedCallbacks) {
-      try { cb(); } catch (err) {
-        console.warn(`[sync-machine] onSynced callback error: ${String(err)}`);
-      }
+  private computePhase(): 'idle' | 'syncing' | 'synced' {
+    if (this.openHeaderRuns.size > 0) return 'syncing';
+    if (this.chainView && !this.chainView.fullyApplied()) return 'syncing';
+    if (!this.anyClaimEverSettled) return 'idle';
+
+    const connected = this.connectedPeersFn?.() ?? new Set<string>();
+    for (const peerId of connected) {
+      if (this.stallMarks.has(peerId)) continue;
+      const claim = this.claims.get(peerId);
+      if (!claim) return 'syncing';
+      if (!this.chainView?.knowsTip(peerId, claim.tipHash)) return 'syncing';
     }
-    // NET_INTERFACE → Sync State Machine, Pick: runs at every entry into synced
-    this.pickSyncPeer();
+    return 'synced';
   }
 
-  // -----------------------------------------------------------------------
-  // Internal — reply and pick
-  // -----------------------------------------------------------------------
+  // -------- Sending `SyncInfo` --------
 
-  /**
-   * NET_INTERFACE → Serve Side →
-   * "The reply is movement-gated, so replying to replies terminates".
-   */
   private replySyncInfo(peerId: string, theirTip: number): void {
     const ourTip = this.store.chainHeight();
     const prevReported = this.lastReportedTip.get(peerId);
@@ -990,98 +653,24 @@ export class SyncMachine {
     }
   }
 
-  /**
-   * NET_INTERFACE → Sync State Machine, Pick / Switch.
-   *
-   * Two-pass outbound preference: outbound candidates first, the full set
-   * only when no outbound candidate exists.
-   */
-  private pickSyncPeer(): void {
-    const ourHeight = this.store.chainHeight();
-
-    if (this.state.phase === 'syncing' && this.state.syncPeerId) {
-      const currentRetained = this.peerHeights.get(this.state.syncPeerId);
-      if (currentRetained === undefined) return;
-
-      const best = this.bestCandidate(ourHeight);
-
-      // NET_INTERFACE → Sync State Machine, Switch
-      if (best && best.peer !== this.state.syncPeerId &&
-          best.height > ourHeight && best.height > currentRetained + 1) {
-        this.outstanding.clear();
-        this.lastProgressMs = Date.now();
-        this.state.syncPeerId = best.peer;
-        this.sendSyncInfo(best.peer);
-      }
-      return;
-    }
-
-    const best = this.bestCandidate(ourHeight);
-
-    if (best) {
-      this.state.phase = 'syncing';
-      this.state.syncPeerId = best.peer;
-      this.lastProgressMs = Date.now();
-      this.sendSyncInfo(best.peer);
-    }
-  }
-
-  /** Outbound-preferred best candidate above `minHeight`, stalled excluded. */
-  private bestCandidate(minHeight: number): { peer: string; height: number } | null {
-    let outBest: { peer: string; height: number } | null = null;
-    let anyBest: { peer: string; height: number } | null = null;
-    for (const [peer, height] of this.peerHeights) {
-      if (this.state.stalledPeers.has(peer)) continue;
-      if (height <= minHeight) continue;
-      const dir = this.peerDirections.get(peer);
-      if (dir === 'outbound' && (!outBest || height > outBest.height)) {
-        outBest = { peer, height };
-      }
-      if (!anyBest || height > anyBest.height) {
-        anyBest = { peer, height };
-      }
-    }
-    return outBest ?? anyBest;
-  }
-
-  /** NET_INTERFACE → Pull Requests, `peerTipHeight`. */
-  peerHeight(peerId: string): number | null {
-    return this.peerHeights.get(peerId) ?? null;
-  }
-
-  // -----------------------------------------------------------------------
-  // Internal — helpers
-  // -----------------------------------------------------------------------
-
-  /** NET_INTERFACE → SyncInfo (code 2). */
   private sendSyncInfo(peerId: string): void {
     const tipHeight = this.store.chainHeight();
-    // NET_INTERFACE → SyncInfo (code 2) — "A node with no blocks sends `0`
-    // and `GENESIS_PREV_BLOCK_HASH`" — and the same posture when a node
-    // reports a tip whose id its store cannot answer.
     const tipHash = this.store.getOrderingBlockId(tipHeight) ?? GENESIS_PREV_BLOCK_HASH;
     this.sendToPeer(peerId, encodeSyncInfo(this.magic, { tipHeight, tipHash }));
     const now = Date.now();
-    this.lastSyncInfoMs = now;
     this.lastSentTip.set(peerId, tipHeight);
     this.lastSentMs.set(peerId, now);
   }
 
-  /**
-   * Rotate away from the current sync peer (stall detected).
-   *
-   * Adds the peer to the stalled set so the node won't immediately
-   * reconnect to it for sync, then resets to idle so the node layer
-   * picks a new peer on the next `onPeerActive` call.
-   */
-  private rotatePeer(): void {
-    if (this.state.syncPeerId) {
-      this.state.stalledPeers.add(this.state.syncPeerId);
-    }
-    this.state.syncPeerId = null;
-    this.outstanding.clear();
+  // -------- Helpers --------
 
-    this.state.phase = 'idle';
-    this.pickSyncPeer();
+  private isConnected(peerId: string): boolean {
+    // Without a `connectedPeersFn` the scheduler accepts every event — the
+    // node sets the function at `start()` time; a scheduler constructed
+    // without it runs in test harness mode (NET_INTERFACE → Sync Handler
+    // Registration — setters are order-independent).
+    const fn = this.connectedPeersFn;
+    if (!fn) return true;
+    return fn().has(peerId);
   }
 }
