@@ -5022,11 +5022,11 @@ chain or by an apply after which the best chain is chosen again. So whenever the
 applied tip, a prefix of it above the fork point is heavier than the applied tip (→ "The switch"), and after every
 item the best chain is reachable.
 
-**`best_chain` is rewritten from where the new branch meets it.** A branch's base can be any stored header — a row a
-switch left behind, a row a pass stored before its crossing, a row of the applied chain off the best — so a switch of
-the best chain to a branch rewrites the index from the first header on the branch's path, the base or below it,
-that is a `best_chain` entry (the root when none is), with every header of the path above it: the index is always
-one chain, each entry the child of the one below it.
+**The best chain's index is rewritten from where the new branch meets it.** A branch's base can be any stored
+header — a row a switch left behind, a row a pass stored before its crossing, a row of the applied chain off the best
+— so a switch of the best chain to a branch rewrites `best_chain` from the first header on the branch's path, the
+base or below it, that is a `best_chain` entry (the root when none is), with every header of the path above it: the
+index is always one chain, each entry the child of the one below it.
 
 **The reach floor is the horizon, one rule for every fork point.** A branch is reachable when its fork point `f`
 with the applied chain satisfies
