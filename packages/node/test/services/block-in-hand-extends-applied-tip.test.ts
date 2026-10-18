@@ -731,7 +731,7 @@ describe('a block in hand extends the applied tip', () => {
     expect(getBestHashAt(3)).toBe(sideC.hash);
   });
 
-  it.fails('a reachable stored branch heavier than the applied tip becomes the best chain when the incumbent falls out of reach', async () => {
+  it('a reachable stored branch heavier than the applied tip becomes the best chain when the incumbent falls out of reach', async () => {
     // `maxReorgDepth` 6. A and X share A2 as fork; X stays heaviest by one
     // anchor until A outruns the horizon. Y6..Y10 is served on A5 — base is
     // an applied row off the best chain — and stays stored as a side branch

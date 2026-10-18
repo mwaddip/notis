@@ -867,25 +867,28 @@ export function rechooseAfterApply(ctx: PipelineContext, callbacks: PipelineCall
   // Clause 3: the heaviest stored header heavier than the applied tip whose
   // branch is reachable from the applied chain. Reachability reads
   // `getOrderingBlockHash`, not `best_chain` — the incumbent fell out of
-  // reach, and a walk stopping on it would call its own rows reachable.
+  // reach, and a walk stopping on it would call its own rows reachable. The
+  // rewrite goes through `branchToBestChain(row.hash)` so the index stays
+  // one chain (NODE_INTERFACE → Fork choice decides on verified headers →
+  // "The best chain's index is rewritten from where the new branch meets
+  // it"): a candidate's fork with the applied chain and its fork with the
+  // best chain are different heights, and the walk the applied-chain
+  // reachability check does names only the former.
   const candidates = headersHeavierThan(appliedWork);
   for (const row of candidates) {
-    const branchHashes: string[] = [];
     let h: HeaderRow | null = row;
-    let forkHeight = 0;
-    let unreachable = false;
+    let reachable = false;
     while (h !== null) {
-      if (h.height === 0) { forkHeight = 0; break; }
+      if (h.height === 0) { reachable = true; break; }
       const appAt = getOrderingBlockHash(h.height);
-      if (appAt === h.hash) { forkHeight = h.height; break; }
-      branchHashes.push(h.hash);
-      if (h.height - 1 < floor) { unreachable = true; break; }
-      if (h.height === 1) { forkHeight = 0; break; }
+      if (appAt === h.hash) { reachable = true; break; }
+      if (h.height - 1 < floor) break;
+      if (h.height === 1) { reachable = true; break; }
       h = getHeaderRow(h.prevHash);
     }
-    if (unreachable || h === null) continue;
-    branchHashes.reverse();
-    rewriteBestChain(forkHeight, branchHashes);
+    if (!reachable) continue;
+    const { forkHeight, path } = branchToBestChain(row.hash);
+    rewriteBestChain(forkHeight, path);
     scoredLighter.clear();
     callbacks.chainMoved();
     return;
