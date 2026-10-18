@@ -25,7 +25,10 @@ import type { PipelineContext } from '../../src/services/header-pipeline.js';
 import type { ApplyVerdict } from '../../src/services/block-apply.js';
 import { InconsistentHeaderTreeError, ReorgAbortedError, ReorgBlockRejectedError } from '../../src/services/corrupt-state.js';
 import {
+  anyRefusedHeader,
   getBestHashAt,
+  getBestTip,
+  getOrderingBlockHash,
   getStagedBlock,
   getHeaderRow,
   getCurrentHeight,
@@ -36,6 +39,7 @@ import { insertBlockJournal } from '../../src/store/journal.js';
 import { config } from '../../src/config.js';
 import {
   computeUtxoTxRoot,
+  GENESIS_PREV_BLOCK_HASH,
   type OrderingBlock,
 } from '@dagsocial/types';
 import { blockHash, meetsPowTarget, orderingPowTarget, powHit } from '@dagsocial/validation';
@@ -774,6 +778,96 @@ describe('intake', () => {
       // The last assertion names the rule: a `best_chain` hash with no
       // `block_headers` row raises `InconsistentHeaderTreeError`.
       await expect(deliverBlocks('peerTrigger', [])).rejects.toBeInstanceOf(InconsistentHeaderTreeError);
+    });
+  });
+
+  describe('the subsequent switch is held by the broken index', () => {
+    it.fails('a new branch continuing a stored row off the best chain applies to its tip, no honest header marked', async () => {
+      // The chain-link rule the funnel enforces, as the apply simulator:
+      // a block's `prevHash` must equal the applied block's hash at the
+      // height below (NODE_INTERFACE → "The chain link"). Blocks that
+      // bind fine but do not extend the applied tip the pipeline hands
+      // them answer `consensus`.
+      applyBehaviour = (block) => {
+        const prevH = block.header.height - 1;
+        const expectedPrev = prevH === 0
+          ? GENESIS_PREV_BLOCK_HASH
+          : (getOrderingBlockHash(prevH) ?? '');
+        if (expectedPrev !== block.header.prevBlockHash) {
+          return { applied: false, verdict: { applied: false, class: 'consensus', detail: 'chain-link' } };
+        }
+        createOrderingBlock(block, []);
+        insertBlockJournal({
+          blockHeight: block.header.height,
+          mutations: [], confirmedPostIds: [], withdrawnPosts: [],
+          likeRecordInsertions: [], appliedUtxoTxs: [],
+        });
+        return { applied: true, verdict: { applied: true, indexed: [] } };
+      };
+
+      const v = makeValidator();
+      // A1..A10, anchor-priced.
+      const a: ParentHeaderInfo[] = [];
+      for (let h = 1; h <= 10; h++) {
+        const parent = h === 1 ? null : a[h - 2]!;
+        a.push(mineWithEmptyRoot({ height: h, parent, pub: v.pub }));
+      }
+      // B2..B7 fork at A1 — anchor-priced, running work 7W > A5's 5W.
+      const b: ParentHeaderInfo[] = [];
+      for (let h = 2; h <= 7; h++) {
+        const parent = h === 2 ? a[0]! : b[h - 3]!;
+        const createdAt = h === 2
+          ? a[0]!.header.createdAt + PARAMS.idealMs + 1
+          : parent.header.createdAt + PARAMS.idealMs;
+        b.push(mineWithEmptyRoot({ height: h, parent, pub: v.pub, createdAt }));
+      }
+
+      const { cap, callbacks } = recorder();
+      // Apply reads live from the store; `lowestJournalHeight()` returns 1
+      // so the reach floor stays at 0 under a tip past `maxReorgDepth`.
+      initIntake(callbacks, ctx({
+        appliedTipHeight: () => getCurrentHeight(),
+        lowestJournalHeight: () => 1,
+      }));
+
+      // A1..A5 admitted and applied.
+      await admitChain('peerA', a.slice(0, 5));
+      await deliverBlocks('peerA', a.slice(0, 5).map(x => signBlock(x, v.priv)));
+      expect(getCurrentHeight()).toBe(5);
+      expect(getBestTip()!.hash).toBe(a[4]!.hash);
+
+      // B2..B7 admitted — pass 1 wins on the first page from the base A1
+      // (on the best chain). The reorg switches the applied chain to B.
+      await admitChain('peerB', b);
+      await deliverBlocks('peerB', b.map(x => signBlock(x, v.priv)));
+      expect(getCurrentHeight()).toBe(7);
+      expect(getBestTip()!.hash).toBe(b[b.length - 1]!.hash);
+      // A2..A5 stay as rows off the best chain.
+      expect(getBestHashAt(5)).toBe(b[3]!.hash);
+      expect(getHeaderRow(a[1]!.hash)).not.toBeNull();
+
+      // A6..A10 admitted — base is A5, off the best chain. Running work
+      // from A5 (5W) + 5W = 10W > 7W, so pass 1 wins on the first page.
+      await admitChain('peerAx', a.slice(5, 10));
+
+      // Deliver every A block above A1. A2..A5 bind only while their
+      // headers are on the best chain, and A6..A10 bind as the branch's
+      // own.
+      await deliverBlocks('peerAx', a.slice(1, 10).map(x => signBlock(x, v.priv)));
+
+      // Preamble (`expect.soft`): the broken index rewrites against the
+      // base's height, the subsequent switch hands `reorg` A6 above B5 and
+      // the chain-link enforcer refuses it `consensus`. The soft form lets
+      // the last assertion run so the rule it names is what the failure
+      // reports.
+      expect.soft(cap.penalties.filter(p => p.peerId === 'peerAx')).toEqual([]);
+      expect.soft(getCurrentHeight()).toBe(10);
+      // The last assertion names the rule: no A header above A1 was
+      // marked in `refused_headers` — the subsequent switch applied the
+      // branch along the fork point its path meets `best_chain` at
+      // (NODE_INTERFACE → Fork choice decides on verified headers →
+      // "The best chain's index is rewritten from where the new branch meets it").
+      expect(anyRefusedHeader(a.slice(1).map(x => x.hash))).toBe(false);
     });
   });
 
