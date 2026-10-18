@@ -644,6 +644,65 @@ describe('a block in hand extends the applied tip', () => {
     expect(headerStanding(gossiped6.hash, 6)).toBe('refused');
   });
 
+  it('a gossiped block whose parent is a side-branch tree row at the applied-tip height is scored, not stored', async () => {
+    // The predicate's parent-is-applied-tip guard: a header whose parent
+    // is a stored row at the applied-tip height but off the applied chain
+    // (parent hash differs from the applied tip's) is not a block-in-hand
+    // candidate, even inside the window and the height bound. Without this
+    // guard the delivery path would apply such a block onto the applied
+    // tip's state at the applied-tip's child height, with the body built
+    // over a different parent's state.
+    const v = makeValidator();
+    const applied: ParentHeaderInfo[] = [];
+    let prev: ParentHeaderInfo | null = null;
+    for (let h = 1; h <= 5; h++) {
+      prev = mineHeader({ height: h, parent: prev, pub: v.pub });
+      applied.push(prev);
+    }
+    const { cap, callbacks } = recorder();
+    initIntake(callbacks, pipelineCtx());
+    await admitChain('peerH', applied);
+    for (const h of applied) await deliverBlocks('peerB', [signAs(h, v.priv)]);
+    gateHeld();
+
+    // A heavier side chain forking at applied-4: side5 (height 5) and
+    // side6 (height 6). Running work from applied-4's chain_work plus two
+    // anchor headers (6 anchors) exceeds the five-anchor best → pass 1
+    // wins, both rows stored, best rewritten to the side chain. The
+    // applied tip stays at applied-5 (ordering_blocks still names it);
+    // best_chain's row at height 5 is side5, which is off the applied
+    // chain.
+    const side5 = mineHeader({
+      height: 5, parent: applied[3]!, pub: v.pub,
+      createdAt: applied[3]!.header.createdAt + PARAMS.idealMs + 100,
+    });
+    const side6 = mineHeader({
+      height: 6, parent: side5, pub: v.pub,
+      createdAt: side5.header.createdAt + PARAMS.idealMs,
+    });
+    await admitChain('peerS', [side5, side6]);
+    expect.soft(getBestTip()!.hash).toBe(side6.hash);
+    expect.soft(getCurrentHeight()).toBe(5);
+
+    // Gossip a block at height 6 whose parent is side5 (parent height = 5,
+    // the applied-tip height; parent hash = side5 ≠ applied-5 =
+    // appliedHash). The parent-is-applied guard shuts; without it, the
+    // window and the height bound both hold.
+    const gossiped6 = mineHeader({
+      height: 6, parent: side5, pub: v.pub,
+      createdAt: side5.header.createdAt + 2 * PARAMS.idealMs,
+    });
+    await deliverGossipedBlock('peerG', signAs(gossiped6, v.priv));
+
+    expect.soft(cap.needHeadersFor).toContain('peerG');
+    expect.soft(getHeaderRow(gossiped6.hash)).toBeNull();
+
+    // The last assertion names the rule: a block whose parent is at the
+    // applied-tip height but off the applied chain is scored, not stored —
+    // the applied tip stays at applied-5.
+    expect(getCurrentHeight()).toBe(5);
+  });
+
   it('a reachable stored header heavier than the applied tip stands when the best chain falls out of reach', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
