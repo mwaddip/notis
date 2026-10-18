@@ -4934,6 +4934,16 @@ for that peer dropped. A peer's disconnect removes its pending block, its presyn
 header will not hash has no identity to be kept by: it is logged and dropped, with no penalty — net's Stage 1 refuses
 such a header before it is delivered.
 
+> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph below leads the intake's pending blocks, which are tried only after
+> a `Headers` page, and bound only when a page stored their header on the best chain.
+
+**A pending block is tried again at the end of every item.** One whose parent the tree now holds leaves the pending
+blocks and runs as its relayer's gossiped block runs — its header admitted, the block bound, and applied as a block in
+hand when its parent is the applied tip (→ "A block in hand extends the applied tip") — its relayer the peer a refusal
+penalises. A block that runs can be the parent of another, so the pass repeats until no pending block's parent is
+held; each pending block runs at most once, so a pass is bounded by the peers connected. A block waits for its
+parent, never for a particular message.
+
 **The intake owns what it runs.** A corrupt-state error out of an item goes to `failStopIfCorruptChain`, and the
 intake holds nothing after it. Any other error ends that item, logged with its stack, and the next item runs: no
 item's promise reaches the process-level handler ("An unhandled rejection is logged, and the node keeps running").
