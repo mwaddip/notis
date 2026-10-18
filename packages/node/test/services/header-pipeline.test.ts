@@ -18,7 +18,7 @@ import { config } from '../../src/config.js';
 import { encodeHeader, encodeInterlinks, GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import { cumulativeWork } from '@dagsocial/validation';
 import { defaultParams, makeChain, makeHeader, type ParentHeaderInfo } from '../helpers/make-header.js';
-import { MAX_LOCATOR_HASHES } from '@dagsocial/net';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_LOCATOR_HASHES } from '@dagsocial/net';
 import { InconsistentHeaderTreeError } from '../../src/services/corrupt-state.js';
 
 // A looser anchor target keeps the mining cost of a 400+-header chain
@@ -1071,12 +1071,30 @@ describe('header-pipeline', () => {
       expect(getBestHashAt(5)).toBe(b[2]!.hash);
       expect(getHeaderRow(a[2]!.hash)).not.toBeNull();
 
-      // A third peer answers the locator with A2..A9: the first fresh
-      // header is A6 on base A5, off the best chain. Pass 1's running work
-      // from base A5 (5W) + 4W = 9W > 7W wins on the first page, and the
-      // first-page store writes A6..A9 to the index.
+      // A third peer holding A1..A9 answers the locator through the serve
+      // rule (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses): the
+      // first locator entry its chain holds names the start, the headers
+      // above it are served, up to its tip (bounded by
+      // `MAX_CHAIN_RESPONSE_ITEMS`). The locator over B's best chain
+      // reaches down to A1, the one hash the A chain shares, so the page
+      // runs from height 2 — A2..A9.
+      const aHashes = new Set(a.map(x => x.hash));
+      const locator = locatorFor('peerC');
+      let startIdx = 0;
+      for (const h of locator) {
+        if (aHashes.has(h)) {
+          startIdx = a.findIndex(p => p.hash === h) + 1;
+          break;
+        }
+        if (h === GENESIS_PREV_BLOCK_HASH) break;
+      }
+      const servedPage = a.slice(startIdx, startIdx + MAX_CHAIN_RESPONSE_ITEMS);
+      // Control: the serve rule hands peerC A2..A9. The first fresh header
+      // is A6 on base A5, off the best chain; pass 1's running work from
+      // base A5 (5W) + 4W = 9W > 7W wins on the first page.
+      expect(servedPage.map(x => x.hash)).toEqual(a.slice(1, 9).map(x => x.hash));
       const { callbacks: cb3 } = recorder();
-      expect(admitPage('peerC', a[8]!.hash, pageHeaders(a.slice(1, 9)), ctx(), cb3).outcome).toBe('taken');
+      expect(admitPage('peerC', a[8]!.hash, servedPage.map(x => x.header), ctx(), cb3).outcome).toBe('taken');
       expect(getBestTip()!.hash).toBe(a[8]!.hash);
 
       // The last assertion names the rule: every best_chain entry above

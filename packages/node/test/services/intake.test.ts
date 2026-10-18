@@ -781,7 +781,7 @@ describe('intake', () => {
     });
   });
 
-  describe('the subsequent switch is held by the broken index', () => {
+  describe('a switch to a branch continuing a row off the best chain', () => {
     it('a new branch continuing a stored row off the best chain applies to its tip, no honest header marked', async () => {
       // The apply simulator checks the chain link: a block's `prevHash`
       // must equal the applied block's hash at the height below, else the
