@@ -816,6 +816,95 @@ export function locatorFor(peerId: string): string[] {
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "The best chain
+ * is the heaviest reachable branch.": after an apply moves the applied tip
+ * off the best chain, the chain is chosen again — the applied chain while
+ * its tip's `chain_work` is at least the best tip's; else the best chain as
+ * it stands while its fork point with the applied chain is at or above the
+ * reach floor; else the heaviest stored header heavier than the applied tip
+ * whose branch is reachable from the applied chain; else the applied chain.
+ * Reachability in the third clause reads the applied chain
+ * (`getOrderingBlockHash`), not `best_chain` — the incumbent best chain is
+ * the one that just fell out of reach, and a walk stopping at a `best_chain`
+ * entry would call its own rows reachable.
+ */
+export function rechooseAfterApply(ctx: PipelineContext, callbacks: PipelineCallbacks): void {
+  const applied = ctx.appliedTipHeight();
+  if (applied === 0) return;
+  const appliedHash = getOrderingBlockHash(applied);
+  if (appliedHash === null) return;
+  const bestTip = getBestTip();
+  if (bestTip === null) return;
+  const bestAtApplied = getBestHashAt(applied);
+  if (bestAtApplied === appliedHash) return;
+  const appliedRow = getHeaderRow(appliedHash);
+  if (appliedRow === null) {
+    throw new InconsistentHeaderTreeError('rechooseAfterApply', applied, 'applied header has no block_headers row');
+  }
+  const appliedWork = appliedRow.chainWork;
+  const floor = reachFloor(ctx);
+
+  // Clause 1: applied's work is at least the best tip's → best = applied.
+  if (appliedWork >= bestTip.chainWork) {
+    const { forkHeight, path } = branchToBestChain(appliedHash);
+    rewriteBestChain(forkHeight, path);
+    scoredLighter.clear();
+    callbacks.chainMoved();
+    return;
+  }
+
+  // Clause 2: the best chain's fork with the applied chain is above the
+  // floor → keep the best chain. Walk down `best_chain` from the applied
+  // height comparing with the applied chain.
+  let bestForkWithApplied = -1;
+  for (let h = applied; h >= Math.max(1, floor); h--) {
+    const bestH = getBestHashAt(h);
+    const appH = getOrderingBlockHash(h);
+    if (bestH !== null && appH !== null && bestH === appH) {
+      bestForkWithApplied = h;
+      break;
+    }
+  }
+  // The virtual root is a common ancestor at depth = our height; it is
+  // reachable when the floor is 0.
+  if (bestForkWithApplied === -1 && floor <= 0) bestForkWithApplied = 0;
+  if (bestForkWithApplied >= floor) return;
+
+  // Clause 3: the heaviest stored header heavier than the applied tip whose
+  // branch is reachable from the applied chain. Reachability reads
+  // `getOrderingBlockHash`, not `best_chain` — the incumbent fell out of
+  // reach, and a walk stopping on it would call its own rows reachable.
+  const candidates = headersHeavierThan(appliedWork);
+  for (const row of candidates) {
+    const branchHashes: string[] = [];
+    let h: HeaderRow | null = row;
+    let forkHeight = 0;
+    let unreachable = false;
+    while (h !== null) {
+      if (h.height === 0) { forkHeight = 0; break; }
+      const appAt = getOrderingBlockHash(h.height);
+      if (appAt === h.hash) { forkHeight = h.height; break; }
+      branchHashes.push(h.hash);
+      if (h.height - 1 < floor) { unreachable = true; break; }
+      if (h.height === 1) { forkHeight = 0; break; }
+      h = getHeaderRow(h.prevHash);
+    }
+    if (unreachable || h === null) continue;
+    branchHashes.reverse();
+    rewriteBestChain(forkHeight, branchHashes);
+    scoredLighter.clear();
+    callbacks.chainMoved();
+    return;
+  }
+
+  // Clause 4: fall back to the applied chain.
+  const { forkHeight, path } = branchToBestChain(appliedHash);
+  rewriteBestChain(forkHeight, path);
+  scoredLighter.clear();
+  callbacks.chainMoved();
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "The best chain
  * is the heaviest reachable branch.": after a mark removes a header from
  * under the best chain, read `headersHeavierThan(incumbentWork)` in order;
  * the first row whose branch is reachable is the new tip, and `best_chain`

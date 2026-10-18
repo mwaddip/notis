@@ -26,6 +26,7 @@ import {
   admitPage,
   onPeerDisconnected as pipelineOnPeerDisconnected,
   pruneHeaderTree,
+  rechooseAfterApply,
   rechooseBestChain,
   type AdmitVerdict,
   type PageOutcome,
@@ -239,6 +240,20 @@ function markRefused(hash: string, height: number, fromPeer: string, reason: str
     chainMoved: () => cb().chainMoved(),
   };
   rechooseBestChain(c, pipelineCb);
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "A block in
+ * hand extends the applied tip": the choice `rechooseAfterApply` makes, wired
+ * through the intake's callbacks.
+ */
+function rechooseAfterApplyFromIntake(): void {
+  const c = ctxOrThrow();
+  const pipelineCb = {
+    penalize: (p: string, k: 'misbehavior' | 'transient', r: string) => penalize(p, k, r),
+    chainMoved: () => cb().chainMoved(),
+  };
+  rechooseAfterApply(c, pipelineCb);
 }
 
 /**
@@ -533,9 +548,11 @@ export async function deliverBlocks(peerId: string, blocks: OrderingBlock[]): Pr
     // applies in the item that delivers it (NODE_INTERFACE → Fork choice
     // decides on verified headers → "A block in hand extends the applied
     // tip."); extension picks up a staged on-best child in `drainExtension`
-    // below.
+    // below. After the apply the best chain is chosen again.
     if (getBestHashAt(row.height) !== row.hash) {
-      applyStagedBlockAtHeight(row.hash, row.height);
+      if (applyStagedBlockAtHeight(row.hash, row.height) === 'applied') {
+        rechooseAfterApplyFromIntake();
+      }
     }
   }
   drainExtension();
@@ -582,11 +599,13 @@ export async function deliverGossipedBlock(peerId: string, block: OrderingBlock)
     return;
   }
   stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), peerId);
-  // Block in hand off-best → apply in this item (NODE_INTERFACE → Fork
-  // choice decides on verified headers → "A block in hand extends the
-  // applied tip.").
+  // Block in hand off-best → apply in this item, then choose the best
+  // chain again (NODE_INTERFACE → Fork choice decides on verified headers →
+  // "A block in hand extends the applied tip.").
   if (getBestHashAt(bindRow.height) !== bindRow.hash) {
-    applyStagedBlockAtHeight(bindRow.hash, bindRow.height);
+    if (applyStagedBlockAtHeight(bindRow.hash, bindRow.height) === 'applied') {
+      rechooseAfterApplyFromIntake();
+    }
   }
   drainExtension();
   trySwitch();
@@ -622,10 +641,13 @@ export function deliverMinedBlock(block: OrderingBlock): ApplyVerdict {
   // (NODE_INTERFACE → Block finalization → "A mined block is applied through
   // the pipeline's intake"); `S` moves only through net's gate hold. A mined
   // block in hand off the best chain whose parent is the applied tip
-  // applies here (NODE_INTERFACE → Fork choice decides on verified headers
-  // → "A block in hand extends the applied tip.").
+  // applies here, and the best chain is chosen again (NODE_INTERFACE → Fork
+  // choice decides on verified headers → "A block in hand extends the
+  // applied tip.").
   if (getBestHashAt(bindRow.height) !== bindRow.hash) {
-    applyStagedBlockAtHeight(bindRow.hash, bindRow.height);
+    if (applyStagedBlockAtHeight(bindRow.hash, bindRow.height) === 'applied') {
+      rechooseAfterApplyFromIntake();
+    }
   }
   drainExtension();
   // Answer the verdict the apply left: the staged row leaves on apply.

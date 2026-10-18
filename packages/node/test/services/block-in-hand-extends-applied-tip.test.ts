@@ -259,7 +259,7 @@ describe('a block in hand extends the applied tip', () => {
     void cap;
   });
 
-  it.fails('a tie between the applied chain and the best chain moves the best chain to the applied one', async () => {
+  it('a tie between the applied chain and the best chain moves the best chain to the applied one', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
@@ -368,7 +368,7 @@ describe('a block in hand extends the applied tip', () => {
     expect(wantedBlocks().map(w => w.id)).toEqual([withheld6.hash, withheld7.hash]);
   });
 
-  it.fails('a tie at the heavier chain tip moves the best chain to the applied one', async () => {
+  it('a tie at the heavier chain tip moves the best chain to the applied one', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
@@ -553,7 +553,7 @@ describe('a block in hand extends the applied tip', () => {
     expect(getCurrentHeight()).toBe(depth);
   }, 120_000);
 
-  it.fails('the applied chain more than maxReorgDepth above the fork point moves the best chain to the applied one', async () => {
+  it('the applied chain more than maxReorgDepth above the fork point moves the best chain to the applied one', async () => {
     const smallDepth = 4;
     const { callbacks } = recorder();
     initIntake(callbacks, pipelineCtx({ maxReorgDepth: smallDepth }));
