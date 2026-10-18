@@ -33,6 +33,7 @@ import {
   deliverHeaders,
   deliverMinedBlock,
   gateHeld,
+  getPendingBlockForTests,
   initIntake,
   resetIntakeForTests,
   setIntakeSeamsForTests,
@@ -879,4 +880,222 @@ describe('a block in hand extends the applied tip', () => {
     // out of reach, the best chain becomes the applied one.
     expect(getBestTip()!.hash).toBe(a9.hash);
   }, 120_000);
+});
+
+// NODE_INTERFACE → Fork choice decides on verified headers → "A pending block
+// is tried again at the end of every item": one whose parent the tree now
+// holds leaves the pending blocks and runs as its relayer's gossiped block
+// runs. The pass repeats until no pending block's parent is held; each pending
+// block runs at most once per item.
+
+describe('a pending block is tried again at the end of every item', () => {
+  let applyBehaviour: (block: OrderingBlock) => ApplyVerdict;
+
+  beforeEach(() => {
+    initDb(':memory:');
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    resetPipelineForTests();
+    resetIntakeForTests();
+    applyBehaviour = defaultApplyBehaviour;
+    setIntakeSeamsForTests({
+      apply: (b) => applyBehaviour(b),
+      reorg: (f, hashes) => defaultReorgBehaviour(f, hashes, applyBehaviour),
+    });
+    const { callbacks } = recorder();
+    initIntake(callbacks, pipelineCtx());
+  });
+
+  afterEach(() => {
+    clearIntakeSeamsForTests();
+    closeDb();
+    vi.restoreAllMocks();
+  });
+
+  it.fails('an out-of-order gossiped block applies once its parent does', async () => {
+    const v = makeValidator();
+    const applied: ParentHeaderInfo[] = [];
+    let prev: ParentHeaderInfo | null = null;
+    for (let h = 1; h <= 5; h++) {
+      prev = mineHeader({ height: h, parent: prev, pub: v.pub });
+      applied.push(prev);
+    }
+    const { callbacks } = recorder();
+    initIntake(callbacks, pipelineCtx());
+    await admitChain('peerH', applied);
+    for (const h of applied) await deliverBlocks('peerB', [signAs(h, v.priv)]);
+    expect(getCurrentHeight()).toBe(5);
+    gateHeld();
+
+    // Two headers no body has yet answered — 6a and 7a — admitted on the best
+    // chain so the best tip stands at height 7 while the applied tip is 5.
+    const withheld6 = mineHeader({
+      height: 6, parent: applied[4]!, pub: v.pub,
+      createdAt: applied[4]!.header.createdAt + PARAMS.idealMs + 100,
+    });
+    const withheld7 = mineHeader({
+      height: 7, parent: withheld6, pub: v.pub,
+      createdAt: withheld6.header.createdAt + PARAMS.idealMs + 100,
+    });
+    await admitChain('peerW', [withheld6, withheld7]);
+    expect(getBestTip()!.hash).toBe(withheld7.hash);
+
+    // An honest relayer gossips the height-7 block first — a different one
+    // from `withheld7`, whose parent (6b) is not in the tree, so it waits.
+    const gossiped6 = mineHeader({
+      height: 6, parent: applied[4]!, pub: v.pub,
+      createdAt: applied[4]!.header.createdAt + PARAMS.idealMs + 300,
+    });
+    const gossiped7 = mineHeader({
+      height: 7, parent: gossiped6, pub: v.pub,
+      createdAt: gossiped6.header.createdAt + PARAMS.idealMs + 100,
+    });
+    await deliverGossipedBlock('peerG1', signAs(gossiped7, v.priv));
+    expect(getPendingBlockForTests('peerG1')?.header.height).toBe(7);
+
+    // Another relayer gossips the height-6 block whose parent is the applied
+    // tip. It applies as a block in hand, and the pending height-7 block runs
+    // at the end of the item.
+    await deliverGossipedBlock('peerG2', signAs(gossiped6, v.priv));
+
+    // The last assertion names the rule: once the parent applies, the pending
+    // block runs and the applied tip moves to height 7.
+    expect(getCurrentHeight()).toBe(7);
+  }, 240_000);
+
+  it.fails('a chain of gossiped blocks waiting for their parents runs in one item once the base arrives', async () => {
+    const v = makeValidator();
+    const applied: ParentHeaderInfo[] = [];
+    let prev: ParentHeaderInfo | null = null;
+    for (let h = 1; h <= 5; h++) {
+      prev = mineHeader({ height: h, parent: prev, pub: v.pub });
+      applied.push(prev);
+    }
+    const { callbacks } = recorder();
+    initIntake(callbacks, pipelineCtx());
+    await admitChain('peerH', applied);
+    for (const h of applied) await deliverBlocks('peerB', [signAs(h, v.priv)]);
+    expect(getCurrentHeight()).toBe(5);
+    gateHeld();
+
+    const h6 = mineHeader({
+      height: 6, parent: applied[4]!, pub: v.pub,
+      createdAt: applied[4]!.header.createdAt + PARAMS.idealMs + 100,
+    });
+    const h7 = mineHeader({
+      height: 7, parent: h6, pub: v.pub,
+      createdAt: h6.header.createdAt + PARAMS.idealMs + 100,
+    });
+    const h8 = mineHeader({
+      height: 8, parent: h7, pub: v.pub,
+      createdAt: h7.header.createdAt + PARAMS.idealMs + 100,
+    });
+
+    // Blocks 8 and 7 arrive first from two relayers — each waits.
+    await deliverGossipedBlock('peerG8', signAs(h8, v.priv));
+    expect(getPendingBlockForTests('peerG8')?.header.height).toBe(8);
+    await deliverGossipedBlock('peerG7', signAs(h7, v.priv));
+    expect(getPendingBlockForTests('peerG7')?.header.height).toBe(7);
+
+    // Then block 6 arrives. The item ends with 8 and 7 both run through the
+    // pass — 7 after 6, then 8 after 7.
+    await deliverGossipedBlock('peerG6', signAs(h6, v.priv));
+
+    // The last assertion names the rule: a chain of pending blocks runs in
+    // one item, so the applied tip moves to height 8.
+    expect(getCurrentHeight()).toBe(8);
+  }, 240_000);
+
+  it.fails('a pending block whose parent arrives on a stored row that is not the best tip leaves the pending blocks', async () => {
+    const v = makeValidator();
+    const applied: ParentHeaderInfo[] = [];
+    let prev: ParentHeaderInfo | null = null;
+    for (let h = 1; h <= 5; h++) {
+      prev = mineHeader({ height: h, parent: prev, pub: v.pub });
+      applied.push(prev);
+    }
+    const { cap, callbacks } = recorder();
+    initIntake(callbacks, pipelineCtx());
+    await admitChain('peerH', applied);
+    for (const h of applied) await deliverBlocks('peerB', [signAs(h, v.priv)]);
+    expect(getCurrentHeight()).toBe(5);
+    gateHeld();
+
+    // A heavier side chain of two above `applied[4]` — base at the applied
+    // tip, won on the first page, both rows stored on the best chain.
+    const w6 = mineHeader({
+      height: 6, parent: applied[4]!, pub: v.pub,
+      createdAt: applied[4]!.header.createdAt + PARAMS.idealMs + 100,
+    });
+    const w7 = mineHeader({
+      height: 7, parent: w6, pub: v.pub,
+      createdAt: w6.header.createdAt + PARAMS.idealMs + 100,
+    });
+
+    // A gossiped block at height 7 whose parent is `w6` — but `w6` is not
+    // yet in the tree, so the block waits.
+    const gossiped7 = mineHeader({
+      height: 7, parent: w6, pub: v.pub,
+      createdAt: w6.header.createdAt + PARAMS.idealMs + 300,
+    });
+    await deliverGossipedBlock('peerG', signAs(gossiped7, v.priv));
+    expect(getPendingBlockForTests('peerG')?.header.height).toBe(7);
+
+    // The page admits both `w6` and `w7` — `w7` becomes the best tip, and
+    // `w6` is a stored row at height 6 that is not the best tip.
+    await admitChain('peerW', [w6, w7]);
+    expect(getBestTip()!.hash).toBe(w7.hash);
+
+    // The last assertion names the rule: once the pass runs the pending
+    // block through the gossiped body, its header scores (parent is held but
+    // is not the best tip, and the parent height is not the applied tip's)
+    // and the pending block leaves the map.
+    expect(getPendingBlockForTests('peerG')).toBeUndefined();
+    // Hoisting the control reads here keeps the suite's lint on the recorder.
+    void cap;
+  }, 240_000);
+
+  it('a pending block whose parent a page stores on the best chain binds and applies', async () => {
+    const v = makeValidator();
+    const applied: ParentHeaderInfo[] = [];
+    let prev: ParentHeaderInfo | null = null;
+    for (let h = 1; h <= 5; h++) {
+      prev = mineHeader({ height: h, parent: prev, pub: v.pub });
+      applied.push(prev);
+    }
+    const { callbacks } = recorder();
+    initIntake(callbacks, pipelineCtx());
+    await admitChain('peerH', applied);
+    for (const h of applied) await deliverBlocks('peerB', [signAs(h, v.priv)]);
+    expect(getCurrentHeight()).toBe(5);
+    gateHeld();
+
+    // Two headers forming a chain above the applied tip. The page admits
+    // both; the pending block's own header lands on the best chain, and the
+    // body for its parent delivered next drives extension through to the
+    // pending block.
+    const h6 = mineHeader({
+      height: 6, parent: applied[4]!, pub: v.pub,
+      createdAt: applied[4]!.header.createdAt + PARAMS.idealMs + 100,
+    });
+    const h7 = mineHeader({
+      height: 7, parent: h6, pub: v.pub,
+      createdAt: h6.header.createdAt + PARAMS.idealMs + 100,
+    });
+
+    // peerG gossips block 7 whose parent `h6` the tree does not hold yet.
+    await deliverGossipedBlock('peerG', signAs(h7, v.priv));
+    expect(getPendingBlockForTests('peerG')?.header.height).toBe(7);
+
+    // peerW's page admits [h6, h7] — both stored on the best chain. The
+    // intake binds the pending block in the pass and stages it.
+    await admitChain('peerW', [h6, h7]);
+    expect(getBestTip()!.hash).toBe(h7.hash);
+
+    // The body for h6 drives extension through to h7's staged row.
+    await deliverBlocks('peerW', [signAs(h6, v.priv)]);
+
+    // The last assertion names the rule: the pending block binds and applies
+    // through extension once its parent's body applies.
+    expect(getCurrentHeight()).toBe(7);
+  }, 240_000);
 });
