@@ -26,6 +26,7 @@ import { createOrderingBlock, deleteOrderingBlock } from '../../src/store/orderi
 import { insertBlockJournal } from '../../src/store/journal.js';
 import { resetPipelineForTests } from '../../src/services/header-pipeline.js';
 import {
+  canExtendAppliedTipAsBlockInHand,
   clearIntakeSeamsForTests,
   deliverBlocks,
   deliverGossipedBlock,
@@ -146,6 +147,7 @@ function pipelineCtx(opts?: Partial<PipelineContext>): PipelineContext {
     genesisId: '',
     lowestJournalHeight: () => getLowestJournalHeight(),
     appliedTipHeight: () => getCurrentHeight(),
+    canExtendAppliedTipAsBlockInHand,
     ...opts,
   };
 }
@@ -220,7 +222,7 @@ describe('a block in hand extends the applied tip', () => {
     vi.restoreAllMocks();
   });
 
-  it.fails('a mined block at a height whose best-chain block is withheld moves the applied tip', async () => {
+  it('a mined block at a height whose best-chain block is withheld moves the applied tip', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
@@ -292,7 +294,7 @@ describe('a block in hand extends the applied tip', () => {
     expect(wantedBlocks()).toEqual([]);
   });
 
-  it.fails('a gossiped block at a height whose best-chain block is withheld moves the applied tip', async () => {
+  it('a gossiped block at a height whose best-chain block is withheld moves the applied tip', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
@@ -326,7 +328,7 @@ describe('a block in hand extends the applied tip', () => {
     expect(getCurrentHeight()).toBe(6);
   });
 
-  it.fails('a heavier chain whose further block is withheld stays best and wanted while the applied chain moves', async () => {
+  it('a heavier chain whose further block is withheld stays best and wanted while the applied chain moves', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
@@ -412,7 +414,7 @@ describe('a block in hand extends the applied tip', () => {
     expect(wantedBlocks()).toEqual([]);
   });
 
-  it.fails('a heavier chain whose blocks arrive wins through a switch', async () => {
+  it('a heavier chain whose blocks arrive wins through a switch', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
@@ -599,7 +601,7 @@ describe('a block in hand extends the applied tip', () => {
     expect(getBestTip()!.hash).toBe(appliedPrev!.hash);
   }, 240_000);
 
-  it.fails('a block in hand refused by the rules marks', async () => {
+  it('a block in hand refused by the rules marks', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;

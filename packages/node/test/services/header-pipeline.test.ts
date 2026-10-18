@@ -54,6 +54,7 @@ function ctx(opts?: Partial<PipelineContext>): PipelineContext {
     genesisId: '',
     lowestJournalHeight: () => null,
     appliedTipHeight: () => 0,
+    canExtendAppliedTipAsBlockInHand: () => false,
     ...opts,
   };
 }

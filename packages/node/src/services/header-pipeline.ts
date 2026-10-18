@@ -66,6 +66,14 @@ export interface PipelineContext {
   genesisId: string;
   lowestJournalHeight(): number | null;
   appliedTipHeight(): number;
+  /**
+   * NODE_INTERFACE → Fork choice decides on verified headers → "A block in
+   * hand extends the applied tip": true when a header whose parent is the
+   * applied tip is a block-in-hand candidate — the window is open and the
+   * best tip stands at most `maxReorgDepth` heights above the applied tip.
+   * One predicate the store rule and the binding both read.
+   */
+  canExtendAppliedTipAsBlockInHand(parentHash: string, parentHeight: number): boolean;
 }
 
 /**
@@ -293,20 +301,25 @@ export function admitHeader(
     return { kind: 'refused', reason: verdict.reason };
   }
 
-  // Store or score. A header extends the best chain when its parent is the
-  // best tip (or the root while there is no best); any other admitted header
-  // belongs to a side branch, and a side branch reaches the tree through its
-  // passes alone.
+  // A header extends the best chain when its parent is the best tip (or the
+  // root while there is no best). A header whose parent is the applied tip
+  // is the block-in-hand store rule (NODE_INTERFACE → Fork choice decides on
+  // verified headers → "An admitted header is stored when it extends the
+  // best chain." and → "A block in hand extends the applied tip."). Any
+  // other admitted header belongs to a side branch, and a side branch reaches
+  // the tree through its passes alone.
   const parentChainWork = parentIsVirtualRoot ? 0n : parentRow!.chainWork;
   const chainWork = parentChainWork + verdict.work;
   const best = getBestTip();
   const extendsBest = best === null ? parentIsVirtualRoot : (parentRow !== null && parentRow.hash === best.hash);
+  const parentHashForPredicate = parentIsVirtualRoot ? GENESIS_PREV_BLOCK_HASH : parentRow!.hash;
+  const asBlockInHand = !extendsBest && ctx.canExtendAppliedTipAsBlockInHand(parentHashForPredicate, parentHeight);
   const pathTa = header.height === 1 ? header.createdAt : (parentIsVirtualRoot ? 0 : parentRow!.pathTa);
   const storedInterlinks = parentIsVirtualRoot
     ? []
     : interlinksCommitFromParent(parentRow!, ctx.params.anchorBits);
 
-  if (extendsBest) {
+  if (extendsBest || asBlockInHand) {
     const row: HeaderRow = {
       hash,
       height: header.height,
@@ -317,10 +330,12 @@ export function admitHeader(
       pathTa,
     };
     insertHeader(row);
-    rewriteBestChain(parentHeight, [hash]);
-    scoredLighter.clear();
-    callbacks.chainMoved();
-    return { kind: 'stored', wasBest: true };
+    if (extendsBest) {
+      rewriteBestChain(parentHeight, [hash]);
+      scoredLighter.clear();
+      callbacks.chainMoved();
+    }
+    return { kind: 'stored', wasBest: extendsBest };
   }
 
   // A single header on a side branch is scored, not stored (the branch's

@@ -6,6 +6,7 @@ import {
 } from '../../src/services/header-pipeline.js';
 import {
   BLOCK_FETCH_WINDOW,
+  canExtendAppliedTipAsBlockInHand,
   clearIntakeSeamsForTests,
   deliverBlocks,
   deliverGossipedBlock,
@@ -147,6 +148,7 @@ function ctx(opts?: Partial<PipelineContext>): PipelineContext {
     genesisId: '',
     lowestJournalHeight: () => null,
     appliedTipHeight: () => 0,
+    canExtendAppliedTipAsBlockInHand: canExtendAppliedTipAsBlockInHand,
     ...opts,
   };
 }
@@ -954,6 +956,7 @@ describe('intake — real funnel refusals', () => {
         genesisId: '',
         lowestJournalHeight: () => null,
         appliedTipHeight: () => 0,
+        canExtendAppliedTipAsBlockInHand: intakeMod.canExtendAppliedTipAsBlockInHand,
       },
     );
 

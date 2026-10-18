@@ -59,6 +59,7 @@ async function ctx(): Promise<PipelineContext> {
     genesisId: '',
     lowestJournalHeight: () => null,
     appliedTipHeight: () => 0,
+    canExtendAppliedTipAsBlockInHand: () => false,
   };
 }
 

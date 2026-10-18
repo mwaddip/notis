@@ -1,5 +1,5 @@
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
-import { encodeOrderingBlock } from '@dagsocial/types';
+import { encodeOrderingBlock, GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import {
   blockHash,
   verifyOrderingBlockStructure,
@@ -149,6 +149,26 @@ function reachFloor(): number {
 }
 
 /**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "A block in
+ * hand extends the applied tip": the one predicate the store rule and the
+ * binding both read. True when the parent is the applied tip, the window
+ * allows extension and the best tip stands at most `maxReorgDepth` heights
+ * above the applied tip.
+ */
+export function canExtendAppliedTipAsBlockInHand(parentHash: string, parentHeight: number): boolean {
+  if (context === null) return false;
+  const applied = getCurrentHeight();
+  if (parentHeight !== applied) return false;
+  const appliedHash = applied === 0 ? GENESIS_PREV_BLOCK_HASH : getOrderingBlockHash(applied);
+  if (parentHash !== appliedHash) return false;
+  if (!windowOpen()) return false;
+  const bestTip = getBestTip();
+  if (bestTip === null) return false;
+  if (bestTip.height - applied > context.maxReorgDepth) return false;
+  return true;
+}
+
+/**
  * NODE_INTERFACE → Fork choice decides on verified headers → "A served block
  * is bound to its header before it is kept.": the three checks run in order
  * against the tree row. On the first failure, nothing is staged and the
@@ -174,8 +194,14 @@ function bindBlock(
   }
   const bestHash = getBestHashAt(row.height);
   if (bestHash !== hash) {
-    // Off-best, dropped silently.
-    return null;
+    // Off-best: a block whose header is a stored row whose parent is the
+    // applied tip, inside the window and the height bound, binds as a
+    // block in hand; any other off-best delivery is dropped silently
+    // (NODE_INTERFACE → Fork choice decides on verified headers →
+    // "A served block is bound to its header before it is kept.").
+    if (!canExtendAppliedTipAsBlockInHand(row.header.prevBlockHash, row.height - 1)) {
+      return null;
+    }
   }
   const structure = verifyOrderingBlockStructure(block);
   if (!structure.valid) {
@@ -216,6 +242,47 @@ function markRefused(hash: string, height: number, fromPeer: string, reason: str
 }
 
 /**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "A block in
+ * hand extends the applied tip": the per-block apply the extension loop and
+ * the block-in-hand delivery path both call. The funnel's classified entry
+ * runs the block; on apply the staged row leaves, `chainMoved` fires, the
+ * placeholders go to the body puller, `onBlockApplied` runs and the header
+ * tree is pruned; on a consensus refusal the header is marked and the best
+ * chain is chosen again; on an abort the staged row leaves.
+ */
+function applyStagedBlockAtHeight(hash: string, height: number): 'applied' | 'marked' | 'aborted' {
+  const staged = getStagedBlock(hash);
+  if (staged === null) return 'aborted';
+  const verdict = applyFn(staged.block);
+  if (verdict.applied) {
+    unstageBlock(hash);
+    cb().chainMoved();
+    // NODE_INTERFACE → Posts → "Backfill after sync": placeholders this
+    // block's commit left are handed to the body puller, naming the peer
+    // the block came through.
+    for (const p of getPlaceholdersAt(height)) {
+      registerPlaceholder(p.id, p.contentHash, height, staged.fromPeer);
+    }
+    onBlockApplied(height).catch((err) =>
+      console.warn(`Backfill error at height ${height}: ${String(err)}`),
+    );
+    // Pruning runs at each apply (NODE_INTERFACE → Fork choice decides on
+    // verified headers → "Pruning."). The journals are purged by
+    // `applyBlockBody`'s own call to `purgeOldJournals`.
+    pruneHeaderTree(reachFloor());
+    return 'applied';
+  }
+  if (verdict.class === 'consensus') {
+    markRefused(hash, height, staged.fromPeer, `consensus refusal at height ${height}`);
+    return 'marked';
+  }
+  // Abort: an acceptance, local or unbound refusal drops the staged row so
+  // its id is wanted and asked again.
+  unstageBlock(hash);
+  return 'aborted';
+}
+
+/**
  * NODE_INTERFACE → Fork choice decides on verified headers → "Extension." +
  * "The window.": while the best chain contains the applied tip, apply the
  * block at `appliedTip + 1` from staging; the loop stops at an empty
@@ -228,16 +295,14 @@ function drainExtension(): void {
     const bestTip = getBestTip();
     if (bestTip === null) return;
     const applied = getCurrentHeight();
-    // The best-chain-contains-applied-tip gate: extension only runs while the
-    // best chain's row at `applied` is this node's applied block's hash
-    // (NODE_INTERFACE → Fork choice decides on verified headers → "The switch.").
+    // Extension runs along the best chain while the best chain's row at
+    // `applied` is this node's applied block's hash. Off that gate it is a
+    // switch condition (NODE_INTERFACE → Fork choice decides on verified
+    // headers → "The switch.").
     if (applied > 0) {
       const appliedHash = getOrderingBlockHash(applied);
       const bestAtApplied = getBestHashAt(applied);
-      if (appliedHash === null || bestAtApplied !== appliedHash) {
-        // A switch condition — not extension.
-        return;
-      }
+      if (appliedHash === null || bestAtApplied !== appliedHash) return;
     }
     if (applied >= bestTip.height) return;
     // The window's edge.
@@ -246,35 +311,8 @@ function drainExtension(): void {
     const nextHash = getBestHashAt(nextH);
     if (nextHash === null) return;
     if (!hasStagedBlock(nextHash)) return;
-    const staged = getStagedBlock(nextHash);
-    if (staged === null) return;
-    const verdict = applyFn(staged.block);
-    if (verdict.applied) {
-      unstageBlock(nextHash);
-      // The applied tip moved; the chain view answers that.
-      cb().chainMoved();
-      // NODE_INTERFACE → Posts → "Backfill after sync": placeholders this
-      // block's commit left are handed to the body puller, naming the peer
-      // the block came through.
-      for (const p of getPlaceholdersAt(nextH)) {
-        registerPlaceholder(p.id, p.contentHash, nextH, staged.fromPeer);
-      }
-      onBlockApplied(nextH).catch((err) =>
-        console.warn(`Backfill error at height ${nextH}: ${String(err)}`),
-      );
-      // Pruning runs at each apply (NODE_INTERFACE → Fork choice decides on
-      // verified headers → "Pruning."). The journals are purged by
-      // `applyBlockBody`'s own call to `purgeOldJournals`.
-      pruneHeaderTree(reachFloor());
-      continue;
-    }
-    if (verdict.class === 'consensus') {
-      markRefused(nextHash, nextH, staged.fromPeer, `consensus refusal at height ${nextH}`);
-      return;
-    }
-    // Abort: an acceptance, local or unbound refusal drops the staged row so
-    // its id is wanted and asked again.
-    unstageBlock(nextHash);
+    const outcome = applyStagedBlockAtHeight(nextHash, nextH);
+    if (outcome === 'applied') continue;
     return;
   }
 }
@@ -491,6 +529,14 @@ export async function deliverBlocks(peerId: string, blocks: OrderingBlock[]): Pr
     const row = bindBlock(peerId, block, hash);
     if (row === null) continue;
     stageBlock(row.hash, row.height, encodeOrderingBlock(block), peerId);
+    // A block in hand off the best chain whose parent is the applied tip
+    // applies in the item that delivers it (NODE_INTERFACE → Fork choice
+    // decides on verified headers → "A block in hand extends the applied
+    // tip."); extension picks up a staged on-best child in `drainExtension`
+    // below.
+    if (getBestHashAt(row.height) !== row.hash) {
+      applyStagedBlockAtHeight(row.hash, row.height);
+    }
   }
   drainExtension();
   trySwitch();
@@ -536,6 +582,12 @@ export async function deliverGossipedBlock(peerId: string, block: OrderingBlock)
     return;
   }
   stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), peerId);
+  // Block in hand off-best → apply in this item (NODE_INTERFACE → Fork
+  // choice decides on verified headers → "A block in hand extends the
+  // applied tip.").
+  if (getBestHashAt(bindRow.height) !== bindRow.hash) {
+    applyStagedBlockAtHeight(bindRow.hash, bindRow.height);
+  }
   drainExtension();
   trySwitch();
 }
@@ -568,7 +620,13 @@ export function deliverMinedBlock(block: OrderingBlock): ApplyVerdict {
   stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), '');
   // The node's own block raises neither a penalty nor the window's `S`
   // (NODE_INTERFACE → Block finalization → "A mined block is applied through
-  // the pipeline's intake"); `S` moves only by net's gate report.
+  // the pipeline's intake"); `S` moves only through net's gate hold. A mined
+  // block in hand off the best chain whose parent is the applied tip
+  // applies here (NODE_INTERFACE → Fork choice decides on verified headers
+  // → "A block in hand extends the applied tip.").
+  if (getBestHashAt(bindRow.height) !== bindRow.hash) {
+    applyStagedBlockAtHeight(bindRow.hash, bindRow.height);
+  }
   drainExtension();
   // Answer the verdict the apply left: the staged row leaves on apply.
   if (!hasStagedBlock(hash) && getOrderingBlockHash(bindRow.height) === hash) {
