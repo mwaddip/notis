@@ -703,7 +703,7 @@ describe('a block in hand extends the applied tip', () => {
     expect(getCurrentHeight()).toBe(5);
   });
 
-  it('a reachable stored header heavier than the applied tip stands when the best chain falls out of reach', async () => {
+  it('a heavier branch from the root, reachable from the applied chain, is the best chain', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
