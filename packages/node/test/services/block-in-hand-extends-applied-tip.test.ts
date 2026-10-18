@@ -553,7 +553,7 @@ describe('a block in hand extends the applied tip', () => {
     expect(getCurrentHeight()).toBe(depth);
   }, 120_000);
 
-  it('the applied chain more than maxReorgDepth above the fork point moves the best chain to the applied one', async () => {
+  it('a tie each round leaves the best chain on the applied one; a withheld header past the horizon is refused unreachable', async () => {
     const smallDepth = 4;
     const { callbacks } = recorder();
     initIntake(callbacks, pipelineCtx({ maxReorgDepth: smallDepth }));
@@ -730,4 +730,153 @@ describe('a block in hand extends the applied tip', () => {
     // its tip is the stored header the index names.
     expect(getBestHashAt(3)).toBe(sideC.hash);
   });
+
+  it.fails('a reachable stored branch heavier than the applied tip becomes the best chain when the incumbent falls out of reach', async () => {
+    // `maxReorgDepth` 6. A and X share A2 as fork; X stays heaviest by one
+    // anchor until A outruns the horizon. Y6..Y10 is served on A5 — base is
+    // an applied row off the best chain — and stays stored as a side branch
+    // once X7..X11 overtakes it. At A9 the floor is 3, X's fork (height 2)
+    // falls below it, and Y10 is the heaviest reachable stored header: the
+    // choice function's third clause picks it, and the rewrite must go
+    // through the meeting-point helper so the index stays one chain even
+    // when the fork with the applied chain and the fork with the best
+    // chain differ.
+    const smallDepth = 6;
+    const { callbacks } = recorder();
+    initIntake(callbacks, pipelineCtx({ maxReorgDepth: smallDepth }));
+    const v = makeValidator();
+
+    const a1 = mineHeader({ height: 1, parent: null, pub: v.pub });
+    gateHeld(); expect(deliverMinedBlock(signAs(a1, v.priv)).applied).toBe(true);
+    const a2 = mineHeader({ height: 2, parent: a1, pub: v.pub });
+    gateHeld(); expect(deliverMinedBlock(signAs(a2, v.priv)).applied).toBe(true);
+
+    const x3 = mineHeader({ height: 3, parent: a2, pub: v.pub, createdAt: a2.header.createdAt + PARAMS.idealMs + 100 });
+    const x4 = mineHeader({ height: 4, parent: x3, pub: v.pub, createdAt: x3.header.createdAt + PARAMS.idealMs });
+    await admitChain('peerX', [x3, x4]);
+    expect.soft(getBestTip()!.hash).toBe(x4.hash);
+
+    const a3 = mineHeader({ height: 3, parent: a2, pub: v.pub, createdAt: a2.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a3, v.priv)).applied).toBe(true);
+    const x5 = mineHeader({ height: 5, parent: x4, pub: v.pub, createdAt: x4.header.createdAt + PARAMS.idealMs });
+    await admitChain('peerX', [x5]);
+
+    const a4 = mineHeader({ height: 4, parent: a3, pub: v.pub, createdAt: a3.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a4, v.priv)).applied).toBe(true);
+    const x6 = mineHeader({ height: 6, parent: x5, pub: v.pub, createdAt: x5.header.createdAt + PARAMS.idealMs });
+    await admitChain('peerX', [x6]);
+
+    const a5 = mineHeader({ height: 5, parent: a4, pub: v.pub, createdAt: a4.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a5, v.priv)).applied).toBe(true);
+
+    // Y6..Y10 on A5 — base an applied row off the best chain. 10W > X6's
+    // 6W wins on the first page; the best chain moves to the Y tip, and
+    // the meeting-point rewrite rolls A3..A5 into the index beside Y6..Y10.
+    let yPrev: ParentHeaderInfo = a5;
+    const ys: ParentHeaderInfo[] = [];
+    for (let h = 6; h <= 10; h++) {
+      const y = mineHeader({ height: h, parent: yPrev, pub: v.pub, createdAt: yPrev.header.createdAt + PARAMS.idealMs + 300 });
+      ys.push(y);
+      yPrev = y;
+    }
+    await admitChain('peerY', ys);
+    expect.soft(getBestTip()!.hash).toBe(ys[ys.length - 1]!.hash);
+
+    const a6 = mineHeader({ height: 6, parent: a5, pub: v.pub, createdAt: a5.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a6, v.priv)).applied).toBe(true);
+
+    // X7..X11 on X6 — 11W > Y10's 10W → best X11, with path rewritten from
+    // the X branch's meeting point (height 2) up.
+    let xPrev: ParentHeaderInfo = x6;
+    const xTail: ParentHeaderInfo[] = [];
+    for (let h = 7; h <= 11; h++) {
+      const x = mineHeader({ height: h, parent: xPrev, pub: v.pub, createdAt: xPrev.header.createdAt + PARAMS.idealMs });
+      xTail.push(x);
+      xPrev = x;
+    }
+    await admitChain('peerX', xTail);
+    expect.soft(getBestTip()!.hash).toBe(xTail[xTail.length - 1]!.hash);
+
+    const a7 = mineHeader({ height: 7, parent: a6, pub: v.pub, createdAt: a6.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a7, v.priv)).applied).toBe(true);
+    const a8 = mineHeader({ height: 8, parent: a7, pub: v.pub, createdAt: a7.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a8, v.priv)).applied).toBe(true);
+    expect.soft(getBestTip()!.hash).toBe(xTail[xTail.length - 1]!.hash);
+
+    const a9 = mineHeader({ height: 9, parent: a8, pub: v.pub, createdAt: a8.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a9, v.priv)).applied).toBe(true);
+
+    expect.soft(getBestTip()!.hash).toBe(ys[ys.length - 1]!.hash);
+
+    // The last assertion names the rule: every best_chain entry above
+    // height 1 is the child of the one below — the rewrite goes through
+    // the meeting-point helper so the index stays one chain.
+    for (let h = 2; h <= 10; h++) {
+      const hash = getBestHashAt(h);
+      expect(hash).not.toBeNull();
+      const row = getHeaderRow(hash!);
+      expect(row).not.toBeNull();
+      expect(row!.prevHash).toBe(getBestHashAt(h - 1));
+    }
+  }, 120_000);
+
+  it('the best chain becomes the applied one when no heavier branch stays reachable past the horizon', async () => {
+    // `maxReorgDepth` 6. The same construction as the clause-three case
+    // without the Y branch: X7..X11 overtakes the applied chain at eleven
+    // units, A6..A9 extend applied as blocks in hand, and at A9 the floor
+    // rises to 3 while X's fork point stands at height 2. X is unreachable,
+    // no other heavier branch stands, and the choice function's final
+    // clause falls back to the applied chain.
+    const smallDepth = 6;
+    const { callbacks } = recorder();
+    initIntake(callbacks, pipelineCtx({ maxReorgDepth: smallDepth }));
+    const v = makeValidator();
+
+    const a1 = mineHeader({ height: 1, parent: null, pub: v.pub });
+    gateHeld(); expect(deliverMinedBlock(signAs(a1, v.priv)).applied).toBe(true);
+    const a2 = mineHeader({ height: 2, parent: a1, pub: v.pub });
+    gateHeld(); expect(deliverMinedBlock(signAs(a2, v.priv)).applied).toBe(true);
+
+    const x3 = mineHeader({ height: 3, parent: a2, pub: v.pub, createdAt: a2.header.createdAt + PARAMS.idealMs + 100 });
+    const x4 = mineHeader({ height: 4, parent: x3, pub: v.pub, createdAt: x3.header.createdAt + PARAMS.idealMs });
+    await admitChain('peerX', [x3, x4]);
+
+    const a3 = mineHeader({ height: 3, parent: a2, pub: v.pub, createdAt: a2.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a3, v.priv)).applied).toBe(true);
+    const x5 = mineHeader({ height: 5, parent: x4, pub: v.pub, createdAt: x4.header.createdAt + PARAMS.idealMs });
+    await admitChain('peerX', [x5]);
+
+    const a4 = mineHeader({ height: 4, parent: a3, pub: v.pub, createdAt: a3.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a4, v.priv)).applied).toBe(true);
+    const x6 = mineHeader({ height: 6, parent: x5, pub: v.pub, createdAt: x5.header.createdAt + PARAMS.idealMs });
+    await admitChain('peerX', [x6]);
+
+    const a5 = mineHeader({ height: 5, parent: a4, pub: v.pub, createdAt: a4.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a5, v.priv)).applied).toBe(true);
+
+    const a6 = mineHeader({ height: 6, parent: a5, pub: v.pub, createdAt: a5.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a6, v.priv)).applied).toBe(true);
+
+    let xPrev: ParentHeaderInfo = x6;
+    const xTail: ParentHeaderInfo[] = [];
+    for (let h = 7; h <= 11; h++) {
+      const x = mineHeader({ height: h, parent: xPrev, pub: v.pub, createdAt: xPrev.header.createdAt + PARAMS.idealMs });
+      xTail.push(x);
+      xPrev = x;
+    }
+    await admitChain('peerX', xTail);
+
+    const a7 = mineHeader({ height: 7, parent: a6, pub: v.pub, createdAt: a6.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a7, v.priv)).applied).toBe(true);
+    const a8 = mineHeader({ height: 8, parent: a7, pub: v.pub, createdAt: a7.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a8, v.priv)).applied).toBe(true);
+    expect.soft(getBestTip()!.hash).toBe(xTail[xTail.length - 1]!.hash);
+
+    const a9 = mineHeader({ height: 9, parent: a8, pub: v.pub, createdAt: a8.header.createdAt + PARAMS.idealMs + 200 });
+    gateHeld(); expect(deliverMinedBlock(signAs(a9, v.priv)).applied).toBe(true);
+
+    // The last assertion names the rule: with every heavier stored branch
+    // out of reach, the best chain becomes the applied one.
+    expect(getBestTip()!.hash).toBe(a9.hash);
+  }, 120_000);
 });
