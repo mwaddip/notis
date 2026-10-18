@@ -3099,9 +3099,6 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 
 ### Block finalization
 
-> ⚠ **AHEAD OF CODE (2026-10-18).** The sentence below leads `deliverMinedBlock`: a mined block whose parent is the
-> applied tip applies whether or not its header extends the best chain.
-
 **A mined block is applied through the pipeline's intake**, as every block is: its header is admitted, the block
 bound and applied as a block in hand that extends the applied tip (→ Fork choice decides on verified headers → "A
 block in hand extends the applied tip") — one synchronous item, the node's own block raising neither a penalty nor the
@@ -4040,9 +4037,6 @@ database wipe removes it with everything else.
 The pipeline's three tables. **The pipeline is their one writer**, and each is additive — a new table moves
 no existing byte and no existing verdict (ARCHITECTURE → Deploy gate).
 
-> ⚠ **AHEAD OF CODE (2026-10-18).** The `staged_blocks.hash` comment below leads the staging of a block in hand whose
-> parent is the applied tip (Fork choice decides on verified headers → "A block in hand extends the applied tip").
-
 ```sql
 CREATE TABLE block_headers (
     hash         TEXT PRIMARY KEY,   -- blockHash(header)
@@ -4913,10 +4907,6 @@ and runs once per process, and an index there would tax every `insertBox` on the
 
 ### Fork choice decides on verified headers
 
-> ⚠ **AHEAD OF CODE (2026-10-18).** The two paragraphs below lead the intake's binding and extension and
-> `admitHeader`'s store rule (`services/intake.ts`, `services/header-pipeline.ts`): a block in hand whose parent is
-> the applied tip moves the applied chain whether or not its header extends the best chain.
-
 **Every header and every block a peer delivers enters one pipeline, and the pipeline is the one place that
 chooses a chain.** It admits headers into a tree of verified headers, keeps the best chain by verified work, binds
 each delivered block to its header, and moves the applied chain — by extension along the best chain, by a block in
@@ -4984,9 +4974,6 @@ height 1 to `genesisId`, as a single header is — and is **taken whole or refus
 refuses the page, and a later request asks for its headers again. A header the tree holds already is a no-op; the
 page's branch starts at the first header it does not hold, whose parent is the branch's base.
 
-> ⚠ **AHEAD OF CODE (2026-10-18).** The paragraph below leads `admitHeader`'s store rule: the header of a block in
-> hand whose parent is the applied tip is stored.
-
 **An admitted header is stored when it extends the best chain.** Its `chain_work` is its parent's plus
 `blockWork(powTargetBits)`. It is stored — a `block_headers` row — when its parent is the best chain's tip, or when
 it is the header of a block in hand whose parent is the applied tip (→ "A block in hand extends the applied tip");
@@ -4996,10 +4983,6 @@ best tip — every page a joiner is answered from the root, every continuation o
 admitted. A gossiped header on a side branch is scored, not stored, and its relayer is asked for the headers above
 the branch's base (→ "One intake, one at a time"), so a branch that outweighs the best is won and stored by the pass
 its peer's run drives.
-
-> ⚠ **AHEAD OF CODE (2026-10-18).** The paragraph and the two leads below lead the tie to the applied chain, the
-> choice made again after an apply leaves the best chain, and the rewrite from where a branch meets `best_chain` —
-> `storeFirstWinningPage` and pass 2's crossing rewrite from the branch's base height.
 
 **The best chain is the heaviest reachable branch.** It ends at the stored header with the most `chain_work` whose
 branch is reachable (→ "The reach floor is the horizon, one rule for every fork point"); **a tie keeps the applied
@@ -5081,9 +5064,6 @@ abort — and **cleared whenever the best chain moves**, every verdict's baselin
 peer, so the memo holds at most one entry per connected peer. The chain view answers it to net (`knowsTip(peerId,
 hash)`, NET_INTERFACE → Sync Handler Registration), so a lighter peer is not asked again until its claim changes.
 
-> ⚠ **AHEAD OF CODE (2026-10-18).** The last sentence below states what pruning keeps once an apply can leave the
-> applied tip off the best chain (→ "A block in hand extends the applied tip").
-
 **Pruning.** A header off the best chain whose height is below the reach floor can never be reached again: it is
 deleted at each apply, beside `purgeOldJournals`, with any `staged_blocks` row under it, and a running branch whose
 base falls below the floor is dropped. Best-chain headers are kept, and an applied header off the best chain stands
@@ -5096,9 +5076,6 @@ in height order —
 when extending, those at most `BLOCK_FETCH_WINDOW` above the applied tip and at most the window's edge, `S +
 maxReorgDepth` (→ "The window"); for a switch, the branch's whole shortest heavier prefix, which neither bound cuts. None while the best tip's
 `chain_work` is below `minimumChainWork`.
-
-> ⚠ **AHEAD OF CODE (2026-10-18).** The two paragraphs below lead `bindBlock` and the staging rule: a block whose
-> header's parent is the applied tip is kept off the best chain, and leaves staging in the item that staged it.
 
 **A served block is bound to its header before it is kept.** A delivered block — pulled or gossiped — is kept only
 when its header is a stored row on the best chain, or a stored row whose parent is the applied tip (→ "A block in
@@ -5121,10 +5098,6 @@ one synchronous transaction and reads the branch's staged blocks one at a time i
 **Extension.** When the block at `appliedTip + 1` on the best chain is staged — and the window allows it (→ "The
 window") — it goes through the funnel's classified entry (`applyOrderingBlockVerdict`, → "The funnel answers with a
 class") and leaves staging; then the next, up the chain.
-
-> ⚠ **AHEAD OF CODE (2026-10-18).** The two paragraphs below lead `deliverGossipedBlock`, `deliverMinedBlock` and
-> `deliverBlocks`: a block in hand whose parent is the applied tip is applied off the best chain under the window and
-> the height bound, and the best chain is chosen again after it.
 
 **A block in hand extends the applied tip.** A block delivered whole whose parent is the applied tip — gossiped,
 this node's mined block, or a pulled block whose header the tree holds — is applied in the item that delivers it,
@@ -5154,8 +5127,6 @@ above the applied tip shuts the height bound, so the node's applied chain stops 
 lead that takes more work than the honest chain does over the horizon, or a miner working while the network is
 stalled.
 
-> ⚠ **AHEAD OF CODE (2026-10-18).** The first sentence below leads the window's hold over a block in hand.
-
 **The window.** Blocks apply by extension — along the best chain, or as a block in hand — only while
 `appliedTip < S + maxReorgDepth`, `S` the best chain's height at the last hold of net's gate (`gateHeld()`,
 NET_INTERFACE → Sync State Machine → "The gate bounds how far blocks apply"), and `S = 0` at process start. When
@@ -5164,9 +5135,6 @@ honest peer among them, the honest chain or a heavier one; until then at most `m
 above `S`, so a fork at or above `S` stays reachable. **A switch is not held by the window**: it moves to a branch
 already heavier than the best, so the branch was compared; the tip it leaves may stand above `S + maxReorgDepth`,
 and extension then waits for the next hold.
-
-> ⚠ **AHEAD OF CODE (2026-10-18).** The first sentence below states the prefix the switch waits for as the best
-> chain's weight over the applied chain guarantees it, once an apply can leave the applied tip off the best chain.
 
 **The switch.** When the best chain forks from the applied chain at `f` below the applied tip, it is heavier than
 the applied chain (→ "The best chain is never lighter than the applied chain, and leaves it only while heavier"), and
@@ -5500,9 +5468,6 @@ to peers. Broadcast calls are fire-and-forget — failures are logged but do
 not fail the API request.
 
 ### Relay handlers (mempool-based)
-
-> ⚠ **AHEAD OF CODE (2026-10-18).** The `onOrderingBlock` item below leads `deliverGossipedBlock`: a gossiped block
-> whose parent is the applied tip is bound and staged off the best chain.
 
 - **`onTx(tx, content, fromPeerId)`**: validates (read-only, `validateTx`) → inserts into
   mempool via `admitTx`; for a post transaction the packet's body — already verified against

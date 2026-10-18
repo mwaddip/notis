@@ -2762,8 +2762,6 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   blocks along it, and a block in hand on its applied tip while the best tip stands within the horizon above
   it — the reorg horizon binds applied blocks only, so a joiner compares chains on headers before it applies
   past it (NET_INTERFACE → Historical Sync; NODE_INTERFACE → Fork choice decides on verified headers)
-  > ⚠ **AHEAD OF CODE (2026-10-18).** The block-in-hand clause above leads the node's pipeline (NODE_INTERFACE →
-  > Fork choice decides on verified headers → "A block in hand extends the applied tip").
 
 - Peer discovery via GetPeers/Peers gossip + PeerDb
 

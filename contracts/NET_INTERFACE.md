@@ -516,9 +516,6 @@ peer implements the era this node is applying. A tip move inside an era drops no
 
 ## Historical Sync
 
-> ⚠ **AHEAD OF CODE (2026-10-18).** The first sentence below states the node's pipeline as NODE_INTERFACE → Fork
-> choice decides on verified headers leads it: a block in hand also extends the applied tip. Net's code is unchanged.
-
 Sync is **headers first**. Net's **scheduler** asks peers for headers by locator and for blocks by id, and hands
 every header and every block an answer carries to the node's **pipeline**, which admits headers into its header
 tree, keeps the best chain by verified work, and applies blocks along it and every block in hand that extends its
