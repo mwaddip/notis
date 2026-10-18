@@ -4934,9 +4934,6 @@ for that peer dropped. A peer's disconnect removes its pending block, its presyn
 header will not hash has no identity to be kept by: it is logged and dropped, with no penalty — net's Stage 1 refuses
 such a header before it is delivered.
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph below leads the intake's pending blocks, which are tried only after
-> a `Headers` page, and bound only when a page stored their header on the best chain.
-
 **A pending block is tried again at the end of every item.** One whose parent the tree now holds leaves the pending
 blocks and runs as its relayer's gossiped block runs — its header admitted, the block bound, and applied as a block in
 hand when its parent is the applied tip (→ "A block in hand extends the applied tip") — its relayer the peer a refusal
