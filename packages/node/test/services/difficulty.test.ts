@@ -319,6 +319,7 @@ describe('difficulty schedule', () => {
         genesisId: '',
         lowestJournalHeight: () => null,
         appliedTipHeight: () => 0,
+        canExtendAppliedTipAsBlockInHand: () => false,
       };
       const headers = branch.map((p) => p.header);
       const first = pipeline.admitPage('peerT', branch[1]!.hash, headers, context, callbacks);

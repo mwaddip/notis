@@ -69,6 +69,7 @@ async function deliverRelay(
         genesisId: config.profile.genesisId,
         lowestJournalHeight: () => getLowestJournalHeight(),
         appliedTipHeight: () => getCurrentHeight(),
+        canExtendAppliedTipAsBlockInHand: intake.canExtendAppliedTipAsBlockInHand,
       },
     );
   }

@@ -6,6 +6,7 @@ import {
 } from '../../src/services/header-pipeline.js';
 import {
   BLOCK_FETCH_WINDOW,
+  canExtendAppliedTipAsBlockInHand,
   clearIntakeSeamsForTests,
   deliverBlocks,
   deliverGossipedBlock,
@@ -25,7 +26,10 @@ import type { PipelineContext } from '../../src/services/header-pipeline.js';
 import type { ApplyVerdict } from '../../src/services/block-apply.js';
 import { InconsistentHeaderTreeError, ReorgAbortedError, ReorgBlockRejectedError } from '../../src/services/corrupt-state.js';
 import {
+  anyRefusedHeader,
   getBestHashAt,
+  getBestTip,
+  getOrderingBlockHash,
   getStagedBlock,
   getHeaderRow,
   getCurrentHeight,
@@ -36,6 +40,7 @@ import { insertBlockJournal } from '../../src/store/journal.js';
 import { config } from '../../src/config.js';
 import {
   computeUtxoTxRoot,
+  GENESIS_PREV_BLOCK_HASH,
   type OrderingBlock,
 } from '@dagsocial/types';
 import { blockHash, meetsPowTarget, orderingPowTarget, powHit } from '@dagsocial/validation';
@@ -143,6 +148,7 @@ function ctx(opts?: Partial<PipelineContext>): PipelineContext {
     genesisId: '',
     lowestJournalHeight: () => null,
     appliedTipHeight: () => 0,
+    canExtendAppliedTipAsBlockInHand: canExtendAppliedTipAsBlockInHand,
     ...opts,
   };
 }
@@ -777,6 +783,94 @@ describe('intake', () => {
     });
   });
 
+  describe('a switch to a branch continuing a row off the best chain', () => {
+    it('a new branch continuing a stored row off the best chain applies to its tip, no honest header marked', async () => {
+      // The apply simulator checks the chain link: a block's `prevHash`
+      // must equal the applied block's hash at the height below, else the
+      // verdict is `consensus` and the pipeline marks the header
+      // (NODE_INTERFACE → Fork choice decides on verified headers →
+      // "A body-stage refusal marks the header.").
+      applyBehaviour = (block) => {
+        const prevH = block.header.height - 1;
+        const expectedPrev = prevH === 0
+          ? GENESIS_PREV_BLOCK_HASH
+          : (getOrderingBlockHash(prevH) ?? '');
+        if (expectedPrev !== block.header.prevBlockHash) {
+          return { applied: false, verdict: { applied: false, class: 'consensus', detail: 'chain-link' } };
+        }
+        createOrderingBlock(block, []);
+        insertBlockJournal({
+          blockHeight: block.header.height,
+          mutations: [], confirmedPostIds: [], withdrawnPosts: [],
+          likeRecordInsertions: [], appliedUtxoTxs: [],
+        });
+        return { applied: true, verdict: { applied: true, indexed: [] } };
+      };
+
+      const v = makeValidator();
+      // A1..A10, anchor-priced.
+      const a: ParentHeaderInfo[] = [];
+      for (let h = 1; h <= 10; h++) {
+        const parent = h === 1 ? null : a[h - 2]!;
+        a.push(mineWithEmptyRoot({ height: h, parent, pub: v.pub }));
+      }
+      // B2..B7 fork at A1 — anchor-priced, running work 7W > A5's 5W.
+      const b: ParentHeaderInfo[] = [];
+      for (let h = 2; h <= 7; h++) {
+        const parent = h === 2 ? a[0]! : b[h - 3]!;
+        const createdAt = h === 2
+          ? a[0]!.header.createdAt + PARAMS.idealMs + 1
+          : parent.header.createdAt + PARAMS.idealMs;
+        b.push(mineWithEmptyRoot({ height: h, parent, pub: v.pub, createdAt }));
+      }
+
+      const { cap, callbacks } = recorder();
+      // Apply reads live from the store; `lowestJournalHeight()` returns 1
+      // so the reach floor stays at 0 under a tip past `maxReorgDepth`.
+      initIntake(callbacks, ctx({
+        appliedTipHeight: () => getCurrentHeight(),
+        lowestJournalHeight: () => 1,
+      }));
+
+      // A1..A5 admitted and applied.
+      await admitChain('peerA', a.slice(0, 5));
+      await deliverBlocks('peerA', a.slice(0, 5).map(x => signBlock(x, v.priv)));
+      expect(getCurrentHeight()).toBe(5);
+      expect(getBestTip()!.hash).toBe(a[4]!.hash);
+
+      // B2..B7 admitted — pass 1 wins on the first page from the base A1
+      // (on the best chain). The reorg switches the applied chain to B.
+      await admitChain('peerB', b);
+      await deliverBlocks('peerB', b.map(x => signBlock(x, v.priv)));
+      expect(getCurrentHeight()).toBe(7);
+      expect(getBestTip()!.hash).toBe(b[b.length - 1]!.hash);
+      // A2..A5 stay as rows off the best chain.
+      expect(getBestHashAt(5)).toBe(b[3]!.hash);
+      expect(getHeaderRow(a[1]!.hash)).not.toBeNull();
+
+      // A6..A10 admitted — base is A5, off the best chain. Running work
+      // from A5 (5W) + 5W = 10W > 7W, so pass 1 wins on the first page.
+      await admitChain('peerAx', a.slice(5, 10));
+
+      // Deliver every A block above A1. A2..A5 bind only while their
+      // headers are on the best chain, and A6..A10 bind as the branch's
+      // own.
+      await deliverBlocks('peerAx', a.slice(1, 10).map(x => signBlock(x, v.priv)));
+
+      // Controls (`expect.soft`): no honest peer penalised, and the
+      // applied tip is on A10. The soft form keeps the last assertion the
+      // one its name states.
+      expect.soft(cap.penalties.filter(p => p.peerId === 'peerAx')).toEqual([]);
+      expect.soft(getCurrentHeight()).toBe(10);
+      // The last assertion names the rule: no A header above A1 was
+      // marked in `refused_headers` — the subsequent switch applied the
+      // branch along the fork point its path meets `best_chain` at
+      // (NODE_INTERFACE → Fork choice decides on verified headers →
+      // "The best chain's index is rewritten from where the new branch meets it").
+      expect(anyRefusedHeader(a.slice(1).map(x => x.hash))).toBe(false);
+    });
+  });
+
   describe('the trap end to end', () => {
     it('a light peer chain fills to the window edge; the honest headers win; the switch applies its prefix', async () => {
       const v = makeValidator();
@@ -862,6 +956,7 @@ describe('intake — real funnel refusals', () => {
         genesisId: '',
         lowestJournalHeight: () => null,
         appliedTipHeight: () => 0,
+        canExtendAppliedTipAsBlockInHand: intakeMod.canExtendAppliedTipAsBlockInHand,
       },
     );
 
@@ -943,3 +1038,136 @@ describe('intake — real funnel refusals', () => {
   });
 
 });
+
+// ---------------------------------------------------------------------------
+// NODE_INTERFACE → Fork choice decides on verified headers →
+// "The best chain's index is rewritten from where the new branch meets it":
+// a branch whose base is a stored row off the best chain still writes its
+// `best_chain` from where its path meets the index, so the index stays one
+// chain. The scenario here is the apply-simulator case `a new branch
+// continuing a stored row off the best chain applies to its tip, no honest
+// header marked`, carried through the real funnel — the fixtures build each
+// block over the live prover, and three initDb cycles feed one chain's build
+// into the next so A's state at height 5 is the one B is built against after
+// a rollback and A6..A10 are built over that same state.
+// ---------------------------------------------------------------------------
+
+describe('a branch continuing a stored row off the best chain, through the real funnel', () => {
+  async function freshContext(): Promise<void> {
+    vi.resetModules();
+    const dbMod = await import('../../src/store/db.js');
+    dbMod.initDb(':memory:');
+    dbMod.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(() => 1_700_000_000_000 + 300_000_000_000);
+    const { testConfig } = await import('./fork-resolution-fixtures.js');
+    const { activateProverOverStore } = await import('../helpers.js');
+    await activateProverOverStore();
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(testConfig);
+    const intakeMod = await import('../../src/services/intake.js');
+    const pipelineMod = await import('../../src/services/header-pipeline.js');
+    intakeMod.resetIntakeForTests();
+    pipelineMod.resetPipelineForTests();
+    intakeMod.clearIntakeSeamsForTests();
+  }
+
+  async function tearDownContext(): Promise<void> {
+    try {
+      const bc = await import('../../src/services/block-creator.js');
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    const dbMod = await import('../../src/store/db.js');
+    dbMod.closeDb();
+  }
+
+  afterEach(async () => {
+    await tearDownContext();
+    vi.resetModules();
+  });
+
+  it('a new branch continuing a stored row off the best chain applies to its tip through the real funnel, no honest header marked', async () => {
+    const MINER_SEED = 'real-funnel-off-best-rewrite';
+
+    // Build the three groups of blocks over the live prover across two
+    // separate initDb cycles so each group binds against the state its real
+    // apply would run on: A1..A10 against the fresh bootstrap, then
+    // revertChainTo(1) and B2..B7 built against post-A1 with explicit
+    // tighter createdAt so each B header has a hash different from A's at
+    // the same height.
+    await freshContext();
+    const h1 = await import('../helpers.js');
+    const miner = h1.makeTestIdentityFromSeed(MINER_SEED);
+    const aBlocks: OrderingBlock[] = [];
+    for (let height = 1; height <= 10; height++) {
+      const block = await h1.makeApplicableBlock({ height, miner });
+      expect(await h1.applyBlockThroughIntake(block)).toBe(true);
+      aBlocks.push(block);
+    }
+    await h1.revertChainTo(1);
+    const bBlocks: OrderingBlock[] = [];
+    const b2CreatedAt = aBlocks[0]!.header.createdAt + 1_000;
+    let bCreatedAt = b2CreatedAt;
+    for (let height = 2; height <= 7; height++) {
+      const block = await h1.makeApplicableBlock({ height, miner, createdAt: bCreatedAt });
+      expect(await h1.applyBlockThroughIntake(block)).toBe(true);
+      bBlocks.push(block);
+      bCreatedAt += 1_000;
+    }
+    await tearDownContext();
+
+    // Fresh initDb for the real pipeline run.
+    await freshContext();
+    const h2 = await import('../helpers.js');
+    const intakeMod = await import('../../src/services/intake.js');
+    const storeMod = await import('../../src/store/index.js');
+    const { blockHash: bh } = await import('@dagsocial/validation');
+
+    // A1..A5 applied through the real funnel.
+    for (let i = 0; i < 5; i++) {
+      expect(await h2.applyBlockThroughIntake(aBlocks[i]!)).toBe(true);
+    }
+    expect(storeMod.getCurrentHeight()).toBe(5);
+    const a5Hash = bh(aBlocks[4]!.header)!;
+    expect(storeMod.getBestHashAt(5)).toBe(a5Hash);
+
+    // The heavier side chain B2..B7 arrives from a peer. Pass 1 wins on the
+    // first page — base is A1 (on best), running work is six header works
+    // above A1's chainWork and the best tip's chainWork is A5's — so
+    // storeFirstWinningPage inserts B2..B7 and rewrites best_chain to the B
+    // chain.
+    const bClaimHash = bh(bBlocks[bBlocks.length - 1]!.header)!;
+    await intakeMod.deliverHeaders('peerB', bClaimHash, bBlocks.map(b => b.header));
+    expect(storeMod.getBestHashAt(7)).toBe(bClaimHash);
+
+    // B's bodies arrive — trySwitch fires over the real reorg and the
+    // applied tip moves to B7.
+    await intakeMod.deliverBlocks('peerB', bBlocks);
+    expect(storeMod.getCurrentHeight()).toBe(7);
+    expect(storeMod.getOrderingBlockHash(7)).toBe(bClaimHash);
+
+    // A6..A10 arrive from a peer. The branch's base is A5 — a stored row
+    // off the best chain — and running work is A5.chainWork + 5W, strictly
+    // heavier than B7's. storeFirstWinningPage walks from A10 down through
+    // the base to A1 (best_chain's row at height 1) and rewrites best_chain
+    // to [A2..A10].
+    const aTail = aBlocks.slice(5);
+    const aTailLastHash = bh(aTail[aTail.length - 1]!.header)!;
+    await intakeMod.deliverHeaders('peerAx', aTailLastHash, aTail.map(b => b.header));
+    expect(storeMod.getBestHashAt(10)).toBe(aTailLastHash);
+    expect(storeMod.getBestHashAt(2)).toBe(bh(aBlocks[1]!.header)!);
+
+    // A's bodies arrive — A2..A5's rows and A6..A10's rows all bind and
+    // stage, trySwitch fires with the shortest heavier prefix [A2..A8],
+    // reorg brings the applied chain back onto the A branch, and extension
+    // picks up A9 and A10.
+    await intakeMod.deliverBlocks('peerAx', aBlocks.slice(1));
+    expect(storeMod.getCurrentHeight()).toBe(10);
+
+    // The last assertion names the rule: the applied tip is the A chain's
+    // tip and no A header is in `refused_headers`.
+    const aAboveA1Hashes = aBlocks.slice(1).map(b => bh(b.header)!);
+    expect(storeMod.anyRefusedHeader(aAboveA1Hashes)).toBe(false);
+  }, 600_000);
+});
+

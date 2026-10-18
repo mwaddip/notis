@@ -3100,8 +3100,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 ### Block finalization
 
 **A mined block is applied through the pipeline's intake**, as every block is: its header is admitted, the block
-bound and applied by extension — one synchronous item, the node's own block raising neither a penalty nor the window's
-`S` — and `submitMinedBlock` answers the verdict the item returns, handing a corrupt-state error out of it to
+bound and applied as a block in hand that extends the applied tip (→ Fork choice decides on verified headers → "A
+block in hand extends the applied tip") — one synchronous item, the node's own block raising neither a penalty nor the
+window's `S` — and `submitMinedBlock` answers the verdict the item returns, handing a corrupt-state error out of it to
 `failStopIfCorruptChain`.
 
 1. Store block in `block_ordering` table
@@ -4056,7 +4057,7 @@ CREATE TABLE best_chain (
 );
 
 CREATE TABLE staged_blocks (
-    hash        TEXT PRIMARY KEY,      -- the block's header hash, a best_chain entry
+    hash        TEXT PRIMARY KEY,      -- the header hash: a best_chain entry, or the applied tip's child in hand
     height      INTEGER NOT NULL,
     block_bytes BLOB NOT NULL,         -- encodeOrderingBlock
     from_peer   TEXT NOT NULL          -- the peer that delivered it, the one a body-stage refusal penalises
@@ -4908,9 +4909,18 @@ and runs once per process, and an index there would tax every `insertBox` on the
 
 **Every header and every block a peer delivers enters one pipeline, and the pipeline is the one place that
 chooses a chain.** It admits headers into a tree of verified headers, keeps the best chain by verified work, binds
-each delivered block to its header, and applies blocks along the best chain — by extension, or by a switch through
-`reorg`. Net's scheduler decides only whom to ask for what (NET_INTERFACE → Sync State Machine); `reorg` carries
-out a decision the pipeline has made.
+each delivered block to its header, and moves the applied chain — by extension along the best chain, by a block in
+hand that extends the applied tip, or by a switch through `reorg`. Net's scheduler decides only whom to ask for what
+(NET_INTERFACE → Sync State Machine); `reorg` carries out a decision the pipeline has made.
+
+**The best chain decides what is fetched; the applied chain, what is extended and mined on.** The best chain is
+the heaviest verified header chain (→ "The best chain is the heaviest reachable branch"), and every block the
+pipeline names is one of its own (→ "The pipeline names the blocks it wants"). The applied chain is the chain of
+blocks this node holds and applied: what it serves, what it claims to its peers (NET_INTERFACE → Sync State Machine
+→ "A claim is the peer's applied tip, height and hash") and what its template builds on. The two are one chain
+except while a branch heavier than the applied chain waits for its blocks, and then the applied chain goes on by
+the blocks that do arrive (→ "A block in hand extends the applied tip"): a header whose block is withheld costs a
+fetch that stays pending, never the node's extension, its gossip or its miner.
 
 **One intake, one at a time.** Everything that can move the chain enters the intake as one item: a `Headers` page
 or a `Blocks` answer the scheduler hands over (NET_INTERFACE → Sync Handler Registration), a gossiped block past
@@ -4923,6 +4933,13 @@ later block from the same peer replacing the earlier in the earlier's place in t
 for that peer dropped. A peer's disconnect removes its pending block, its presync and its memo entry. A block whose
 header will not hash has no identity to be kept by: it is logged and dropped, with no penalty — net's Stage 1 refuses
 such a header before it is delivered.
+
+**A pending block is tried again at the end of every item.** One whose parent the tree now holds leaves the pending
+blocks and runs as its relayer's gossiped block runs — its header admitted, the block bound, and applied as a block in
+hand when its parent is the applied tip (→ "A block in hand extends the applied tip") — its relayer the peer a refusal
+penalises. A block that runs can be the parent of another, so the pass repeats until no pending block's parent is
+held; each pending block runs at most once, so a pass is bounded by the peers connected. A block waits for its
+parent, never for a particular message.
 
 **The intake owns what it runs.** A corrupt-state error out of an item goes to `failStopIfCorruptChain`, and the
 intake holds nothing after it. Any other error ends that item, logged with its stack, and the next item runs: no
@@ -4965,23 +4982,41 @@ refuses the page, and a later request asks for its headers again. A header the t
 page's branch starts at the first header it does not hold, whose parent is the branch's base.
 
 **An admitted header is stored when it extends the best chain.** Its `chain_work` is its parent's plus
-`blockWork(powTargetBits)`. It is stored — a `block_headers` row — when its parent is the best chain's tip; any other
-admitted header belongs to a side branch, and **a side branch reaches the tree through its passes alone** (→ "A
-side branch is stored only once it is heavier"), whatever its work. A page whose first header's parent is the best
-tip — every page a joiner is answered from the root, every continuation of the best chain — is stored as it is
-admitted. A gossiped header on a side branch is scored, not
-stored, and its relayer is asked for the headers above the branch's base (→ "One intake, one at a time"), so a branch
-that outweighs the best is won and stored by the pass its peer's run drives.
+`blockWork(powTargetBits)`. It is stored — a `block_headers` row — when its parent is the best chain's tip, or when
+it is the header of a block in hand whose parent is the applied tip (→ "A block in hand extends the applied tip");
+any other admitted header belongs to a side branch, and **a side branch reaches the tree through its passes alone**
+(→ "A side branch is stored only once it is heavier"), whatever its work. A page whose first header's parent is the
+best tip — every page a joiner is answered from the root, every continuation of the best chain — is stored as it is
+admitted. A gossiped header on a side branch is scored, not stored, and its relayer is asked for the headers above
+the branch's base (→ "One intake, one at a time"), so a branch that outweighs the best is won and stored by the pass
+its peer's run drives.
 
 **The best chain is the heaviest reachable branch.** It ends at the stored header with the most `chain_work` whose
-branch is reachable (→ "The reach floor is the horizon, one rule for every fork point"); a tie keeps the incumbent.
-Its index is `best_chain`, rewritten from the fork point up whenever it switches — and chosen again whenever a mark
-removes a header from under it (→ "A body-stage refusal marks the header."): the heaviest stored header whose branch
-is reachable, among the rows heavier than what remains of the best chain — a read the `chain_work` index answers in
-order; none reachable keeps what remains — and every move of it, and of the applied tip, is
-reported to net (`net.chainMoved()`, NET_INTERFACE → Pipeline events). **No block is fetched along a
-best chain whose tip's `chain_work` is below the profile's `minimumChainWork`** (TYPES_INTERFACE → Network
-profiles): below it the pipeline names no block, and goes on admitting headers.
+branch is reachable (→ "The reach floor is the horizon, one rule for every fork point"); **a tie keeps the applied
+chain**, and otherwise the incumbent. Its index is `best_chain`, rewritten from the fork point up whenever it
+switches. It is chosen again whenever a mark removes a header from under it (→ "A body-stage refusal marks the
+header."): the heaviest stored header whose branch is reachable, among the rows heavier than what remains of the best
+chain — a read the `chain_work` index answers in order; none reachable keeps what remains. It is chosen again
+whenever an apply moves the applied tip off it (→ "A block in hand extends the applied tip"): the applied chain when
+its tip's `chain_work` is at least the best tip's; else the best chain as it stands, while its fork point with the
+applied chain is at or above the reach floor — a walk down `best_chain` from the applied tip's height, bounded by the
+floor; else the heaviest stored header heavier than the applied tip whose branch is reachable, read in order as
+after a mark; else the applied chain. Every move of it, and of the applied tip, is reported to net
+(`net.chainMoved()`, NET_INTERFACE → Pipeline events). **No block is fetched along a best chain whose tip's
+`chain_work` is below the profile's `minimumChainWork`** (TYPES_INTERFACE → Network profiles): below it the pipeline
+names no block, and goes on admitting headers.
+
+**The best chain is never lighter than the applied chain, and leaves it only while heavier.** The applied tip is a
+stored header on a reachable branch, a tie keeps the applied chain, and the applied tip moves only along the best
+chain or by an apply after which the best chain is chosen again. So whenever the best chain does not contain the
+applied tip, a prefix of it above the fork point is heavier than the applied tip (→ "The switch"), and after every
+item the best chain is reachable.
+
+**The best chain's index is rewritten from where the new branch meets it.** A branch's base can be any stored
+header — a row a switch left behind, a row a pass stored before its crossing, a row of the applied chain off the best
+— so a switch of the best chain to a branch rewrites `best_chain` from the first header on the branch's path, the
+base or below it, that is a `best_chain` entry (the root when none is), with every header of the path above it: the
+index is always one chain, each entry the child of the one below it.
 
 **The reach floor is the horizon, one rule for every fork point.** A branch is reachable when its fork point `f`
 with the applied chain satisfies
@@ -5038,7 +5073,9 @@ hash)`, NET_INTERFACE → Sync Handler Registration), so a lighter peer is not a
 
 **Pruning.** A header off the best chain whose height is below the reach floor can never be reached again: it is
 deleted at each apply, beside `purgeOldJournals`, with any `staged_blocks` row under it, and a running branch whose
-base falls below the floor is dropped. Best-chain headers are kept — they are the applied chain or ahead of it.
+base falls below the floor is dropped. Best-chain headers are kept, and an applied header off the best chain stands
+above the best chain's fork point with the applied chain — at or above the floor (→ "The best chain is never lighter
+than the applied chain, and leaves it only while heavier") — so the applied chain's headers stay rows.
 
 **The pipeline names the blocks it wants.** The chain view's `wantedBlocks()` (NET_INTERFACE → Sync Handler
 Registration): the best chain's ids above the applied tip that are neither applied nor staged, each with its height,
@@ -5048,47 +5085,78 @@ maxReorgDepth` (→ "The window"); for a switch, the branch's whole shortest hea
 `chain_work` is below `minimumChainWork`.
 
 **A served block is bound to its header before it is kept.** A delivered block — pulled or gossiped — is kept only
-when its header is a stored row on the best chain, and then only once it passes, in this order,
+when its header is a stored row on the best chain, or a stored row whose parent is the applied tip (→ "A block in
+hand extends the applied tip"), and then only once it passes, in this order,
 `verifyOrderingBlockStructure`, `verifyUtxoTxRoot` and `verifyValidatorSignature` (`VALIDATION_INTERFACE →
 verifyUtxoTxRoot`). The first that fails refuses the block, penalises the peer that delivered it `misbehavior`,
 and **marks nothing**: every block a node applied passed all three in the funnel, so a block that fails one is held
 by no node that applied this chain, and **nothing here judges the header** — a body that is not the header's and a
-signature that does not verify say nothing of it. A bound block whose header is stored off the best chain is
-dropped with no penalty — if its chain becomes best, its id is wanted and asked again. A pulled block whose header
-the tree does not hold answers no id the pipeline named: refused, `misbehavior`. A gossiped block's header is
-admitted first (above).
+signature that does not verify say nothing of it. A block whose header is stored off the best chain, its parent not
+the applied tip, is dropped with no penalty — if its chain becomes best, its id is wanted and asked again. A pulled
+block whose header the tree does not hold answers no id the pipeline named: refused, `misbehavior`. A gossiped
+block's header is admitted first (above).
 
 **A bound block is staged, and applied from staging.** It is written to `staged_blocks` with the peer that
 delivered it (Store Interface → Header tree); a row leaves when its block applies, when its header leaves the best
-chain, or when pruned. **A switch holds one block in memory at a time**: `reorg` is one synchronous transaction and
-reads the branch's staged blocks one at a time inside it.
+chain, or when pruned, and a block staged off the best chain as the applied tip's child leaves in the item that
+staged it — applied, or dropped by an abort or a mark. **A switch holds one block in memory at a time**: `reorg` is
+one synchronous transaction and reads the branch's staged blocks one at a time inside it.
 
 **Extension.** When the block at `appliedTip + 1` on the best chain is staged — and the window allows it (→ "The
 window") — it goes through the funnel's classified entry (`applyOrderingBlockVerdict`, → "The funnel answers with a
 class") and leaves staging; then the next, up the chain.
 
-**The window.** Blocks along the best chain apply by extension only while `appliedTip < S + maxReorgDepth`, `S` the
-best chain's height at the last hold of net's gate (`gateHeld()`, NET_INTERFACE → Sync State Machine → "The gate
-bounds how far blocks apply"), and `S = 0` at process start. When the gate holds, the best chain is at least as
-heavy as every chain the peers net counts have offered — with one honest peer among them, the honest chain or a
-heavier one; until then at most `maxReorgDepth` blocks are applied above `S`, so a fork at or above `S` stays
-reachable. **A switch is not held by the window**: it moves to a branch already heavier than the best, so the
-branch was compared; the tip it leaves may stand above `S + maxReorgDepth`, and extension then waits for the next
-hold.
+**A block in hand extends the applied tip.** A block delivered whole whose parent is the applied tip — gossiped,
+this node's mined block, or a pulled block whose header the tree holds — is applied in the item that delivers it,
+whether or not its header extends the best chain, while the window allows extension (→ "The window") and **the best
+tip stands at most `maxReorgDepth` heights above the applied tip**. Its header is admitted (checks 1–4) and stored,
+the block bound and staged, and the funnel's classified entry applies it; then the best chain is chosen again (→
+"The best chain is the heaviest reachable branch"). So a block arriving at a height whose best-chain block is
+withheld moves the applied tip, and a tie leaves the best chain the applied one. **The height bound keeps such a
+block priced near the chain it competes with**: a header within `maxReorgDepth` heights of the best tip, stamped no
+later than the future bound allows, is at most `2^(maxReorgDepth / RETARGET_HALFLIFE_BLOCKS)` easier per header
+than the chain it competes with — the easing a side branch inside the horizon gets (→ "A side branch is stored only
+once it is heavier"). A tip further behind has no such bound: a block stamped now on a tip far below the present
+stands far behind the schedule, so its children's target falls to the floor (`MINING_INTERFACE → Difficulty
+Schedule`), and enough of them, applied, would leave the heavier chain below the reach floor — so a node more than
+`maxReorgDepth` heights behind its best tip, a joiner or a node back from offline, extends along the best chain
+alone. With the window or the height bound shut, a block in hand off the best chain is not kept: a gossiped one's
+header is a side branch's — scored, its relayer asked for headers — and a mined one does not bind. A page's header
+is never stored this way: a page carries no block.
 
-**The switch.** When the best chain forks from the applied chain at `f` below the applied tip, the switch waits
-until the branch's **shortest heavier prefix** is staged — the fewest blocks above `f` whose `chain_work` exceeds
-the applied tip's, exact because every header's work is a tree row. Then `reorg(f, blocks)`, atomic: every block of
-ours above `f` reverted, one journal each, the AVL prover rolled to `versionAtOrBeforeHeight(f)`, and each staged
-block through the funnel's classified entry. A **consensus** refusal throws `ReorgBlockRejectedError { height, hash
-}` after the transaction has rolled back and the prover is restored; an **acceptance** refusal (the future bound,
-re-run against this node's clock at apply), a **local** one (the funnel's catch of an unexpected throw) or an
-**unbound** one (a block that is not its header's, which the binding leaves none of) throws `ReorgAbortedError {
-height, hash, class }` after the same rollback — the switch is abandoned and our chain kept. After a switch the rest
-of the branch applies as extension. **What a switch stages is bounded by work**: at most `⌈ourWorkAbove_f /
-floorWork⌉ + 1` blocks, every staged block's header having passed `'target'`, and our applied work above `f`
-spanning at most `maxReorgDepth` blocks — on disk, kilobytes a block in practice, `MAX_ORDERING_BLOCK_BYTES` at the
-cap.
+**A withheld block costs a pending fetch.** Its id stays wanted and is asked as net's omission rule allows
+(NET_INTERFACE → Sync Integrity), and the applied chain moves by every block in hand. Two cases wait for work
+instead. A node no block reaches in hand — no relayer, no miner — behind a branch strictly heavier than its applied
+chain whose blocks are withheld waits until the honest chain out-works it: a page is compared with the best tip,
+never with the applied tip, because a branch heavier than an applied tip far below the best — a joiner's — is cheap
+(→ "A side branch is stored only once it is heavier"). And a withheld branch held more than `maxReorgDepth` heights
+above the applied tip shuts the height bound, so the node's applied chain stops until the branch's blocks arrive — a
+lead that takes more work than the honest chain does over the horizon, or a miner working while the network is
+stalled.
+
+**The window.** Blocks apply by extension — along the best chain, or as a block in hand — only while
+`appliedTip < S + maxReorgDepth`, `S` the best chain's height at the last hold of net's gate (`gateHeld()`,
+NET_INTERFACE → Sync State Machine → "The gate bounds how far blocks apply"), and `S = 0` at process start. When
+the gate holds, the best chain is at least as heavy as every chain the peers net counts have offered — with one
+honest peer among them, the honest chain or a heavier one; until then at most `maxReorgDepth` blocks are applied
+above `S`, so a fork at or above `S` stays reachable. **A switch is not held by the window**: it moves to a branch
+already heavier than the best, so the branch was compared; the tip it leaves may stand above `S + maxReorgDepth`,
+and extension then waits for the next hold.
+
+**The switch.** When the best chain forks from the applied chain at `f` below the applied tip, it is heavier than
+the applied chain (→ "The best chain is never lighter than the applied chain, and leaves it only while heavier"), and
+the switch waits until the branch's **shortest heavier prefix** is staged — the fewest blocks above `f` whose
+`chain_work` exceeds the applied tip's, exact because every header's work is a tree row. Then `reorg(f, blocks)`,
+atomic: every block of ours above `f` reverted, one journal each, the AVL prover rolled to
+`versionAtOrBeforeHeight(f)`, and each staged block through the funnel's classified entry. A **consensus** refusal
+throws `ReorgBlockRejectedError { height, hash }` after the transaction has rolled back and the prover is restored;
+an **acceptance** refusal (the future bound, re-run against this node's clock at apply), a **local** one (the
+funnel's catch of an unexpected throw) or an **unbound** one (a block that is not its header's, which the binding
+leaves none of) throws `ReorgAbortedError { height, hash, class }` after the same rollback — the switch is abandoned
+and our chain kept. After a switch the rest of the branch applies as extension. **What a switch stages is bounded by
+work**: at most `⌈ourWorkAbove_f / floorWork⌉ + 1` blocks, every staged block's header having passed `'target'`,
+and our applied work above `f` spanning at most `maxReorgDepth` blocks — on disk, kilobytes a block in practice,
+`MAX_ORDERING_BLOCK_BYTES` at the cap.
 
 **A body-stage refusal marks the header.** The funnel's `'consensus'` refusal of a block applied by extension, or a
 `ReorgBlockRejectedError` out of a switch, is a verdict on bytes the header's hash commits: the binding let through
@@ -5425,7 +5493,8 @@ not fail the API request.
   relayer (Fork choice decides on verified headers → "One intake, one at a time"): the block's header is
   admitted — already held → no-op; **marked refused (→ Refused headers) → refused, nothing applied**; a
   parent the tree lacks → the block waits and the relayer is asked for headers — and the block is bound
-  and staged when its header is on the best chain; extension then applies it through
+  and staged when its header is on the best chain, or its parent is the applied tip (Fork choice decides
+  on verified headers → "A block in hand extends the applied tip"); extension then applies it through
   `applyOrderingBlockVerdict` → confirms posts → removes confirmed entries from mempool; **a
   `'consensus'` refusal marks the header** in `refused_headers`, after the rollback and in its own
   write, and an `'unbound'`, `'acceptance'` or `'local'` refusal marks nothing (→ "The funnel answers

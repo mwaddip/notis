@@ -3,6 +3,7 @@ import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import type { PipelineContext } from './header-pipeline.js';
 import { config } from '../config.js';
 import {
+  canExtendAppliedTipAsBlockInHand,
   deliverBlocks,
   deliverGossipedBlock,
   deliverHeaders,
@@ -54,6 +55,7 @@ export function createPipelineContext(): PipelineContext {
     genesisId: config.profile.genesisId,
     lowestJournalHeight: () => getLowestJournalHeight(),
     appliedTipHeight: () => getCurrentHeight(),
+    canExtendAppliedTipAsBlockInHand,
   };
 }
 

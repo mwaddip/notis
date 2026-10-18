@@ -2759,9 +2759,9 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   document says `[checksum:4]`, and `WIRE_INTERFACE.md` agrees; "32-byte" here was wrong)
 - Headers-first sync: net's scheduler asks peers for headers by locator and blocks by id; the node's
   pipeline keeps a tree of verified headers from every peer, the best chain by verified work, and applies
-  blocks along it — the reorg horizon binds applied blocks only, so a joiner compares chains on headers
-  before it applies past it (NET_INTERFACE → Historical Sync; NODE_INTERFACE → Fork choice decides on
-  verified headers)
+  blocks along it, and a block in hand on its applied tip while the best tip stands within the horizon above
+  it — the reorg horizon binds applied blocks only, so a joiner compares chains on headers before it applies
+  past it (NET_INTERFACE → Historical Sync; NODE_INTERFACE → Fork choice decides on verified headers)
 
 - Peer discovery via GetPeers/Peers gossip + PeerDb
 

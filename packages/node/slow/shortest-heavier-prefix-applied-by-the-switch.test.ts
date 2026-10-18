@@ -64,6 +64,7 @@ async function pipelineCtx(appliedTip: number): Promise<PipelineContext> {
     // decides on verified headers → "The reach floor is the horizon").
     lowestJournalHeight: () => 1,
     appliedTipHeight: () => appliedTip,
+    canExtendAppliedTipAsBlockInHand: () => false,
   };
 }
 

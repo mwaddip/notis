@@ -66,6 +66,14 @@ export interface PipelineContext {
   genesisId: string;
   lowestJournalHeight(): number | null;
   appliedTipHeight(): number;
+  /**
+   * NODE_INTERFACE → Fork choice decides on verified headers → "A block in
+   * hand extends the applied tip": true when a header whose parent is the
+   * applied tip is a block-in-hand candidate — the window is open and the
+   * best tip stands at most `maxReorgDepth` heights above the applied tip.
+   * One predicate the store rule and the binding both read.
+   */
+  canExtendAppliedTipAsBlockInHand(parentHash: string, parentHeight: number): boolean;
 }
 
 /**
@@ -79,22 +87,17 @@ function reachFloor(ctx: PipelineContext): number {
 }
 
 /**
- * The fork point of a branch, read from the branch's base.
- *
- * The invariant the result rests on (NODE_INTERFACE → Fork choice decides on
- * verified headers → "The reach floor is the horizon, one rule for every
- * fork point."): the best chain is chosen reachable, the applied tip moves
- * only along the best chain, and the floor moves only with the applied tip,
- * so a base on the best chain shares a fork point with the applied chain
- * at or above the floor — and returning the base's own height on first match
- * is correct. The applied-chain match is the direct one; the best-chain
- * match rides the invariant.
- *
- * Walks `prev_hash` down from the base to the first row on the applied
- * chain (`getOrderingBlockHash(h) === hash`), or on the best chain
- * (`getBestHashAt(h) === hash`); stops below the reach floor and answers
- * `-Infinity` (unreachable by construction). Height 0 is the virtual root,
- * a common ancestor at depth = our height, and resolves as `0`.
+ * The fork point of a branch's base, walking `prev_hash` down to the first
+ * row on the applied chain (`getOrderingBlockHash(h) === hash`) or on the
+ * best chain (`getBestHashAt(h) === hash`); stops below the reach floor and
+ * answers `-Infinity` (unreachable by construction). Height 0 is the
+ * virtual root, a common ancestor at depth = our height, and resolves as
+ * `0`. Either match answers the base's own fork height: the applied-chain
+ * match is the direct one, and the best-chain match is correct because the
+ * best chain is chosen reachable and its own fork with the applied chain
+ * stays above the floor (NODE_INTERFACE → Fork choice decides on verified
+ * headers → "The best chain is never lighter than the applied chain, and
+ * leaves it only while heavier.").
  */
 function forkPointHeight(baseHash: string, baseHeight: number, floor: number): number {
   if (baseHeight === 0) return 0;
@@ -172,35 +175,47 @@ function interlinksCommitFromParent(parent: HeaderRow, anchorBits: number): stri
 }
 
 /**
- * The branch's path from `baseHash` (exclusive) to `topHash` (inclusive),
- * read back through `prev_hash` point reads. Returns the hashes in height
- * order; the base is excluded. A missing row on the walk is corruption,
- * never a peer's input — the pipeline is the tables' one writer, and
- * `topHash` is a row this call's own crossing page has stored — and rises
- * as `InconsistentHeaderTreeError` for the fail-stop boundary
- * (NODE_INTERFACE → Fork choice decides on verified headers → "A side
- * branch is stored only once it is heavier." → "The walk needs no cap":
- * a branch's memory bound is 32 bytes per 400 headers plus the anchor,
- * so pass 2 reads the path from the store rather than holding every
- * stored hash in memory).
+ * The branch's path up to `topHash` from where it meets `best_chain`, read
+ * back through `prev_hash` point reads. Returns the fork height — the first
+ * `best_chain` entry on the path, or 0 for the virtual root — and the
+ * hashes above it in height order.
+ *
+ * NODE_INTERFACE → Fork choice decides on verified headers → "The best
+ * chain's index is rewritten from where the new branch meets it".
+ *
+ * A branch's base can be any stored header, so the walk continues through
+ * the base into the rows below it until a `best_chain` entry is met. A
+ * missing row on the walk is corruption, never a peer's input — the
+ * pipeline is the tables' one writer, and the fresh headers above the base
+ * were stored in this same item — and rises as `InconsistentHeaderTreeError`
+ * for the fail-stop boundary. The walk is bounded by the branch's
+ * reachability (a base whose path meets `best_chain` only below the reach
+ * floor is refused as unreachable before any rewrite); each hop costs one
+ * point read.
  */
-function readBranchFromBase(baseHash: string, topHash: string): string[] {
-  const result: string[] = [];
+function branchToBestChain(topHash: string): { forkHeight: number; path: string[] } {
+  const path: string[] = [];
   let h = topHash;
-  while (h !== baseHash) {
+  while (true) {
     const row = getHeaderRow(h);
     if (row === null) {
       throw new InconsistentHeaderTreeError(
-        'readBranchFromBase',
+        'branchToBestChain',
         0,
-        `no block_headers row for branch hash ${h} between base ${baseHash} and top ${topHash}`,
+        `no block_headers row for branch hash ${h}`,
       );
     }
-    result.push(h);
+    if (getBestHashAt(row.height) === h) {
+      path.reverse();
+      return { forkHeight: row.height, path };
+    }
+    path.push(h);
+    if (row.height === 1) {
+      path.reverse();
+      return { forkHeight: 0, path };
+    }
     h = row.prevHash;
   }
-  result.reverse();
-  return result;
 }
 
 /**
@@ -281,20 +296,25 @@ export function admitHeader(
     return { kind: 'refused', reason: verdict.reason };
   }
 
-  // Store or score. A header extends the best chain when its parent is the
-  // best tip (or the root while there is no best); any other admitted header
-  // belongs to a side branch, and a side branch reaches the tree through its
-  // passes alone.
+  // A header extends the best chain when its parent is the best tip (or the
+  // root while there is no best). A header whose parent is the applied tip
+  // is the block-in-hand store rule (NODE_INTERFACE → Fork choice decides on
+  // verified headers → "An admitted header is stored when it extends the
+  // best chain." and → "A block in hand extends the applied tip."). Any
+  // other admitted header belongs to a side branch, and a side branch reaches
+  // the tree through its passes alone.
   const parentChainWork = parentIsVirtualRoot ? 0n : parentRow!.chainWork;
   const chainWork = parentChainWork + verdict.work;
   const best = getBestTip();
   const extendsBest = best === null ? parentIsVirtualRoot : (parentRow !== null && parentRow.hash === best.hash);
+  const parentHashForPredicate = parentIsVirtualRoot ? GENESIS_PREV_BLOCK_HASH : parentRow!.hash;
+  const asBlockInHand = !extendsBest && ctx.canExtendAppliedTipAsBlockInHand(parentHashForPredicate, parentHeight);
   const pathTa = header.height === 1 ? header.createdAt : (parentIsVirtualRoot ? 0 : parentRow!.pathTa);
   const storedInterlinks = parentIsVirtualRoot
     ? []
     : interlinksCommitFromParent(parentRow!, ctx.params.anchorBits);
 
-  if (extendsBest) {
+  if (extendsBest || asBlockInHand) {
     const row: HeaderRow = {
       hash,
       height: header.height,
@@ -305,10 +325,12 @@ export function admitHeader(
       pathTa,
     };
     insertHeader(row);
-    rewriteBestChain(parentHeight, [hash]);
-    scoredLighter.clear();
-    callbacks.chainMoved();
-    return { kind: 'stored', wasBest: true };
+    if (extendsBest) {
+      rewriteBestChain(parentHeight, [hash]);
+      scoredLighter.clear();
+      callbacks.chainMoved();
+    }
+    return { kind: 'stored', wasBest: extendsBest };
   }
 
   // A single header on a side branch is scored, not stored (the branch's
@@ -589,12 +611,11 @@ export function admitPage(
  * branch is reachable. The branch is dropped after the page is stored (it
  * was won inside the page it started in).
  *
- * A page whose base is the best chain's tip (or the root with no best)
- * reaches this call: pass 1 scores the first page, `r.runningWork` exceeds
- * the best tip's work, and the first-page win stores every header in the
- * page from the base and rewrites `best_chain` from it
+ * Pass 1 scores the first page, `r.runningWork` exceeds the best tip's
+ * work, and the first-page win stores every header in the page from the
+ * base and rewrites `best_chain` from where the branch's path meets it
  * (NODE_INTERFACE → Fork choice decides on verified headers →
- * "An admitted header is stored when it extends the best chain.").
+ * "The best chain's index is rewritten from where the new branch meets it").
  */
 function storeFirstWinningPage(
   peerId: string,
@@ -611,9 +632,9 @@ function storeFirstWinningPage(
     return { outcome: 'refused', refusedAt: { index: 0, kind: 'none', reason: 'unreachable' } };
   }
   const parentRow: HeaderRow | null = r.baseIsVirtualRoot ? null : getHeaderRow(r.baseHash);
-  const freshHashes: string[] = [];
   let cumulativeWork = r.baseChainWork;
   let currentParent: HeaderRow | null = parentRow;
+  let topHash = r.baseHash;
   for (let i = 0; i < freshHeaders.length; i++) {
     const h = freshHeaders[i]!;
     const hash = verdict.hashes[i]!;
@@ -627,10 +648,11 @@ function storeFirstWinningPage(
       interlinks: storedInterlinks, chainWork: cumulativeWork, pathTa,
     };
     insertHeader(row);
-    freshHashes.push(hash);
     currentParent = row;
+    topHash = hash;
   }
-  rewriteBestChain(r.baseHeight, freshHashes);
+  const { forkHeight, path } = branchToBestChain(topHash);
+  rewriteBestChain(forkHeight, path);
   scoredLighter.clear();
   callbacks.chainMoved();
   runningBranches.delete(peerId);
@@ -703,14 +725,15 @@ function handlePass2(
         return { outcome: 'refused', refusedAt: { index: 0, kind: 'none', reason: 'unreachable' } };
       }
       r.switched = true;
-      // The crossing page rewrites best_chain from the base once, with the
-      // branch's path read back through `prev_hash` from this page's last
-      // header. Later pages extend from the last header stored on the
-      // branch, so the pass's `best_chain` writes are linear in the branch's
-      // length.
+      // The crossing page rewrites best_chain once, from where the branch's
+      // path meets the index, with the branch's path above it read back
+      // through `prev_hash`. Later pages extend from the last header stored
+      // on the branch, so the pass's `best_chain` writes are linear in the
+      // branch's length (NODE_INTERFACE → Fork choice decides on verified
+      // headers → "The best chain's index is rewritten from where the new branch meets it").
       const lastHash = verdict.hashes[verdict.hashes.length - 1]!;
-      const branchFromBase = readBranchFromBase(r.baseHash, lastHash);
-      rewriteBestChain(r.baseHeight, branchFromBase);
+      const { forkHeight, path } = branchToBestChain(lastHash);
+      rewriteBestChain(forkHeight, path);
     } else {
       rewriteBestChain(prevStoredUpTo, freshHashes);
     }
@@ -784,6 +807,98 @@ export function locatorFor(peerId: string): string[] {
   }
   if (out.length > MAX_LOCATOR_HASHES) out.length = MAX_LOCATOR_HASHES;
   return out;
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "The best chain
+ * is the heaviest reachable branch.": after an apply moves the applied tip
+ * off the best chain, the chain is chosen again — the applied chain while
+ * its tip's `chain_work` is at least the best tip's; else the best chain as
+ * it stands while its fork point with the applied chain is at or above the
+ * reach floor; else the heaviest stored header heavier than the applied tip
+ * whose branch is reachable from the applied chain; else the applied chain.
+ * Reachability in the third clause reads the applied chain
+ * (`getOrderingBlockHash`), not `best_chain` — the incumbent best chain is
+ * the one that just fell out of reach, and a walk stopping at a `best_chain`
+ * entry would call its own rows reachable.
+ */
+export function rechooseAfterApply(ctx: PipelineContext, callbacks: PipelineCallbacks): void {
+  const applied = ctx.appliedTipHeight();
+  if (applied === 0) return;
+  const appliedHash = getOrderingBlockHash(applied);
+  if (appliedHash === null) return;
+  const bestTip = getBestTip();
+  if (bestTip === null) return;
+  const bestAtApplied = getBestHashAt(applied);
+  if (bestAtApplied === appliedHash) return;
+  const appliedRow = getHeaderRow(appliedHash);
+  if (appliedRow === null) {
+    throw new InconsistentHeaderTreeError('rechooseAfterApply', applied, 'applied header has no block_headers row');
+  }
+  const appliedWork = appliedRow.chainWork;
+  const floor = reachFloor(ctx);
+
+  // Clause 1: applied's work is at least the best tip's → best = applied.
+  if (appliedWork >= bestTip.chainWork) {
+    const { forkHeight, path } = branchToBestChain(appliedHash);
+    rewriteBestChain(forkHeight, path);
+    scoredLighter.clear();
+    callbacks.chainMoved();
+    return;
+  }
+
+  // Clause 2: the best chain's fork with the applied chain is above the
+  // floor → keep the best chain. Walk down `best_chain` from the applied
+  // height comparing with the applied chain.
+  let bestForkWithApplied = -1;
+  for (let h = applied; h >= Math.max(1, floor); h--) {
+    const bestH = getBestHashAt(h);
+    const appH = getOrderingBlockHash(h);
+    if (bestH !== null && appH !== null && bestH === appH) {
+      bestForkWithApplied = h;
+      break;
+    }
+  }
+  // The virtual root is a common ancestor at depth = our height; it is
+  // reachable when the floor is 0.
+  if (bestForkWithApplied === -1 && floor <= 0) bestForkWithApplied = 0;
+  if (bestForkWithApplied >= floor) return;
+
+  // Clause 3: the heaviest stored header heavier than the applied tip whose
+  // branch is reachable from the applied chain. Reachability reads
+  // `getOrderingBlockHash`, not `best_chain` — the incumbent fell out of
+  // reach, and a walk stopping on it would call its own rows reachable. The
+  // rewrite goes through `branchToBestChain(row.hash)` so the index stays
+  // one chain (NODE_INTERFACE → Fork choice decides on verified headers →
+  // "The best chain's index is rewritten from where the new branch meets
+  // it"): a candidate's fork with the applied chain and its fork with the
+  // best chain are different heights, and the walk the applied-chain
+  // reachability check does names only the former.
+  const candidates = headersHeavierThan(appliedWork);
+  for (const row of candidates) {
+    let h: HeaderRow | null = row;
+    let reachable = false;
+    while (h !== null) {
+      if (h.height === 0) { reachable = true; break; }
+      const appAt = getOrderingBlockHash(h.height);
+      if (appAt === h.hash) { reachable = true; break; }
+      if (h.height - 1 < floor) break;
+      if (h.height === 1) { reachable = true; break; }
+      h = getHeaderRow(h.prevHash);
+    }
+    if (!reachable) continue;
+    const { forkHeight, path } = branchToBestChain(row.hash);
+    rewriteBestChain(forkHeight, path);
+    scoredLighter.clear();
+    callbacks.chainMoved();
+    return;
+  }
+
+  // Clause 4: fall back to the applied chain.
+  const { forkHeight, path } = branchToBestChain(appliedHash);
+  rewriteBestChain(forkHeight, path);
+  scoredLighter.clear();
+  callbacks.chainMoved();
 }
 
 /**

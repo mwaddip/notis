@@ -18,7 +18,7 @@ import { config } from '../../src/config.js';
 import { encodeHeader, encodeInterlinks, GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import { cumulativeWork } from '@dagsocial/validation';
 import { defaultParams, makeChain, makeHeader, type ParentHeaderInfo } from '../helpers/make-header.js';
-import { MAX_LOCATOR_HASHES } from '@dagsocial/net';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_LOCATOR_HASHES } from '@dagsocial/net';
 import { InconsistentHeaderTreeError } from '../../src/services/corrupt-state.js';
 
 // A looser anchor target keeps the mining cost of a 400+-header chain
@@ -54,6 +54,7 @@ function ctx(opts?: Partial<PipelineContext>): PipelineContext {
     genesisId: '',
     lowestJournalHeight: () => null,
     appliedTipHeight: () => 0,
+    canExtendAppliedTipAsBlockInHand: () => false,
     ...opts,
   };
 }
@@ -1041,6 +1042,138 @@ describe('header-pipeline', () => {
       // The last assertion names the rule: a tie keeps the incumbent —
       // the best tip stands.
       expect(getBestTip()!.hash).toBe(ours[2]!.hash);
+    });
+  });
+
+  describe('the best chain is one chain, every entry the child of the one below', () => {
+    it('a first-page win on a stored row off the best chain names its parent as the entry below it', () => {
+      // A1..A9 anchor-priced. The first serving admits A1..A5; A1..A5 are
+      // stored, best moves to A5.
+      const a = makeChain({ parent: null, n: 9, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb1 } = recorder();
+      expect(admitPage('peerA', a[4]!.hash, pageHeaders(a.slice(0, 5)), ctx(), cb1).outcome).toBe('taken');
+      expect(getBestTip()!.hash).toBe(a[4]!.hash);
+
+      // B3..B7 fork at A2 — 5 anchor-priced headers, running work from base
+      // A2 (2W) + 5W = 7W > A5's 5W. Pass 1 wins on the first page; best
+      // moves to B7, A3..A5 kept as rows off the best chain.
+      const b: ParentHeaderInfo[] = [];
+      for (let h = 3; h <= 7; h++) {
+        const parent = h === 3 ? a[1]! : b[b.length - 1]!;
+        const createdAt = h === 3
+          ? a[1]!.header.createdAt + PARAMS.idealMs + 1
+          : parent.header.createdAt + PARAMS.idealMs;
+        b.push(makeHeader({ height: h, parent, createdAt, params: PARAMS, schedule: SCHEDULE }));
+      }
+      const { callbacks: cb2 } = recorder();
+      expect(admitPage('peerB', b[b.length - 1]!.hash, pageHeaders(b), ctx(), cb2).outcome).toBe('taken');
+      expect(getBestTip()!.hash).toBe(b[b.length - 1]!.hash);
+      expect(getBestHashAt(2)).toBe(a[1]!.hash);
+      expect(getBestHashAt(5)).toBe(b[2]!.hash);
+      expect(getHeaderRow(a[2]!.hash)).not.toBeNull();
+
+      // A third peer holding A1..A9 answers the locator through the serve
+      // rule (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses): the
+      // first locator entry its chain holds names the start, the headers
+      // above it are served, up to its tip (bounded by
+      // `MAX_CHAIN_RESPONSE_ITEMS`). The locator over B's best chain
+      // reaches down to A1, the one hash the A chain shares, so the page
+      // runs from height 2 — A2..A9.
+      const aHashes = new Set(a.map(x => x.hash));
+      const locator = locatorFor('peerC');
+      let startIdx = 0;
+      for (const h of locator) {
+        if (aHashes.has(h)) {
+          startIdx = a.findIndex(p => p.hash === h) + 1;
+          break;
+        }
+        if (h === GENESIS_PREV_BLOCK_HASH) break;
+      }
+      const servedPage = a.slice(startIdx, startIdx + MAX_CHAIN_RESPONSE_ITEMS);
+      // Control: the serve rule hands peerC A2..A9. The first fresh header
+      // is A6 on base A5, off the best chain; pass 1's running work from
+      // base A5 (5W) + 4W = 9W > 7W wins on the first page.
+      expect(servedPage.map(x => x.hash)).toEqual(a.slice(1, 9).map(x => x.hash));
+      const { callbacks: cb3 } = recorder();
+      expect(admitPage('peerC', a[8]!.hash, servedPage.map(x => x.header), ctx(), cb3).outcome).toBe('taken');
+      expect(getBestTip()!.hash).toBe(a[8]!.hash);
+
+      // The last assertion names the rule: every best_chain entry above
+      // height 1 names the entry below it as its parent — the index is one
+      // chain (NODE_INTERFACE → Fork choice decides on verified headers →
+      // "The best chain's index is rewritten from where the new branch meets it").
+      const tip = getBestTip()!;
+      const parentsSeen: Array<string | null> = [];
+      const parentsExpected: Array<string | null> = [];
+      for (let h = 2; h <= tip.height; h++) {
+        const hash = getBestHashAt(h);
+        const row = hash === null ? null : getHeaderRow(hash);
+        parentsSeen.push(row === null ? null : row.prevHash);
+        parentsExpected.push(getBestHashAt(h - 1));
+      }
+      expect(parentsSeen).toEqual(parentsExpected);
+    });
+
+    it('a later-page crossing on a stored row off the best chain names its parent as the entry below it', () => {
+      // A1..A5 anchor-priced; the first page wins and stores A1..A5.
+      const a = makeChain({ parent: null, n: 5, params: PARAMS, schedule: SCHEDULE });
+      const { callbacks: cb1 } = recorder();
+      expect(admitPage('peerA', a[4]!.hash, pageHeaders(a), ctx(), cb1).outcome).toBe('taken');
+      expect(getBestTip()!.hash).toBe(a[4]!.hash);
+
+      // B2..B7 fork at A1 — 6 anchor-priced headers, 7W > 5W. Pass 1 wins
+      // on the first page; best moves to B7, A2..A5 kept as rows off the
+      // best chain.
+      const b: ParentHeaderInfo[] = [];
+      for (let h = 2; h <= 7; h++) {
+        const parent = h === 2 ? a[0]! : b[b.length - 1]!;
+        const createdAt = h === 2
+          ? a[0]!.header.createdAt + PARAMS.idealMs + 1
+          : parent.header.createdAt + PARAMS.idealMs;
+        b.push(makeHeader({ height: h, parent, createdAt, params: PARAMS, schedule: SCHEDULE }));
+      }
+      const { callbacks: cb2 } = recorder();
+      expect(admitPage('peerB', b[b.length - 1]!.hash, pageHeaders(b), ctx(), cb2).outcome).toBe('taken');
+      expect(getBestTip()!.hash).toBe(b[b.length - 1]!.hash);
+      expect(getBestHashAt(3)).toBe(b[1]!.hash);
+      expect(getHeaderRow(a[2]!.hash)).not.toBeNull();
+
+      // C4..C11 fork at A3 — 8 anchor-priced headers; the base A3 is off
+      // the best chain. Served in pages of four: pass 1 page 1 (C4..C7)
+      // ties the best work 7W, no win; pass 1 page 2 (C8..C11) brings the
+      // running work to 11W > 7W, 'again'. Pass 2 page 1 (C4..C7) stores
+      // up to cum 7W, no crossing. Pass 2 page 2 (C8..C11) crosses on C8
+      // (8W > 7W) and the pass's crossing rewrites the index.
+      const c: ParentHeaderInfo[] = [];
+      for (let h = 4; h <= 11; h++) {
+        const parent = h === 4 ? a[2]! : c[c.length - 1]!;
+        const createdAt = h === 4
+          ? a[2]!.header.createdAt + PARAMS.idealMs + 1
+          : parent.header.createdAt + PARAMS.idealMs;
+        c.push(makeHeader({ height: h, parent, createdAt, params: PARAMS, schedule: SCHEDULE }));
+      }
+      const claim = c[c.length - 1]!.hash;
+      const { callbacks: cb3 } = recorder();
+      expect(admitPage('peerC', claim, pageHeaders(c.slice(0, 4)), ctx(), cb3).outcome).toBe('taken');
+      expect(admitPage('peerC', claim, pageHeaders(c.slice(4, 8)), ctx(), cb3).outcome).toBe('again');
+      expect(admitPage('peerC', claim, pageHeaders(c.slice(0, 4)), ctx(), cb3).outcome).toBe('again');
+      expect(admitPage('peerC', claim, pageHeaders(c.slice(4, 8)), ctx(), cb3).outcome).toBe('taken');
+      expect(getBestTip()!.hash).toBe(c[c.length - 1]!.hash);
+
+      // The last assertion names the rule: every best_chain entry above
+      // height 1 names the entry below it as its parent — the index is one
+      // chain (NODE_INTERFACE → Fork choice decides on verified headers →
+      // "The best chain's index is rewritten from where the new branch meets it").
+      const tip = getBestTip()!;
+      const parentsSeen: Array<string | null> = [];
+      const parentsExpected: Array<string | null> = [];
+      for (let h = 2; h <= tip.height; h++) {
+        const hash = getBestHashAt(h);
+        const row = hash === null ? null : getHeaderRow(hash);
+        parentsSeen.push(row === null ? null : row.prevHash);
+        parentsExpected.push(getBestHashAt(h - 1));
+      }
+      expect(parentsSeen).toEqual(parentsExpected);
     });
   });
 

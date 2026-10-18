@@ -518,11 +518,11 @@ peer implements the era this node is applying. A tip move inside an era drops no
 
 Sync is **headers first**. Net's **scheduler** asks peers for headers by locator and for blocks by id, and hands
 every header and every block an answer carries to the node's **pipeline**, which admits headers into its header
-tree, keeps the best chain by verified work, and applies blocks along it (NODE_INTERFACE → Fork choice decides
-on verified headers). **The scheduler decides whom to ask for what and when, and nothing else**: it keeps no
-view of the chain beyond what the node's chain view answers (→ Sync Handler Registration), and it never
-chooses a chain. A peer's claim — the tip of the chain it applied — is a reason to ask that peer, never a
-measure of a chain.
+tree, keeps the best chain by verified work, and applies blocks along it and every block in hand that extends its
+applied tip (NODE_INTERFACE → Fork choice decides on verified headers). **The scheduler decides whom to ask for
+what and when, and nothing else**: it keeps no view of the chain beyond what the node's chain view answers (→ Sync
+Handler Registration), and it never chooses a chain. A peer's claim — the tip of the chain it applied — is a reason
+to ask that peer, never a measure of a chain.
 
 Four messages carry it over `/dagsocial/sync/1`: a peer's claim (`SyncInfo`), a header query and its answer
 (`GetHeaders` / `Headers`, codes 14/15), and a block query and its answer (`GetBlocks` / `Blocks`, codes
