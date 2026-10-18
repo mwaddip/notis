@@ -521,57 +521,13 @@ export function fullyApplied(): boolean {
 }
 
 /**
- * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
- * at a time". The body of a `Headers` page delivery.
+ * NODE_INTERFACE → Fork choice decides on verified headers → "A pending block
+ * is tried again at the end of every item". The admit-bind-stage-apply body
+ * both `deliverGossipedBlock` and `processPendingPass` call for a gossiped
+ * block, without `drainExtension` or `trySwitch` — those run at the end of
+ * the item that drives the pass, so the pass never recurses.
  */
-export async function deliverHeaders(
-  peerId: string,
-  claimHash: string,
-  headers: BlockHeader[],
-): Promise<PageOutcome> {
-  const c = ctxOrThrow();
-  const pipelineCb = {
-    penalize: (p: string, k: 'misbehavior' | 'transient', r: string) => penalize(p, k, r),
-    chainMoved: () => cb().chainMoved(),
-  };
-  const verdict: PageVerdict = admitPage(peerId, claimHash, headers, c, pipelineCb);
-  // A pending gossiped block whose parent now stands may be bindable.
-  processPendingAfterAdmit();
-  drainExtension();
-  trySwitch();
-  return verdict.outcome;
-}
-
-/**
- * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
- * at a time". The body of a `Blocks` answer delivery.
- */
-export async function deliverBlocks(peerId: string, blocks: OrderingBlock[]): Promise<void> {
-  for (const block of blocks) {
-    const hash = blockHash(block.header);
-    const row = bindBlock(peerId, block, hash);
-    if (row === null) continue;
-    stageBlock(row.hash, row.height, encodeOrderingBlock(block), peerId);
-    // A block in hand off the best chain whose parent is the applied tip
-    // applies in the item that delivers it (NODE_INTERFACE → Fork choice
-    // decides on verified headers → "A block in hand extends the applied
-    // tip."); extension picks up a staged on-best child in `drainExtension`
-    // below. After the apply the best chain is chosen again.
-    if (getBestHashAt(row.height) !== row.hash) {
-      if (applyStagedBlockAtHeight(row.hash, row.height) === 'applied') {
-        rechooseAfterApplyFromIntake();
-      }
-    }
-  }
-  drainExtension();
-  trySwitch();
-}
-
-/**
- * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
- * at a time". A gossiped block past Stage 1.
- */
-export async function deliverGossipedBlock(peerId: string, block: OrderingBlock): Promise<void> {
+function gossipedBody(peerId: string, block: OrderingBlock): void {
   const c = ctxOrThrow();
   const hash = blockHash(block.header);
   if (hash === null) {
@@ -601,11 +557,7 @@ export async function deliverGossipedBlock(peerId: string, block: OrderingBlock)
   if (verdict.kind === 'refused') return;
   // `held` or `stored`: proceed to bind.
   const bindRow = bindBlock(peerId, block, hash);
-  if (bindRow === null) {
-    drainExtension();
-    trySwitch();
-    return;
-  }
+  if (bindRow === null) return;
   stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), peerId);
   // Block in hand off-best → apply in this item, then choose the best
   // chain again (NODE_INTERFACE → Fork choice decides on verified headers →
@@ -615,13 +567,105 @@ export async function deliverGossipedBlock(peerId: string, block: OrderingBlock)
       rechooseAfterApplyFromIntake();
     }
   }
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "A pending block
+ * is tried again at the end of every item". A pending entry leaves the map
+ * before its block runs through the shared gossiped body; a block that runs
+ * can be the parent of another, so the loop iterates until no remaining
+ * pending block's parent is held. Each peer is attempted at most once per
+ * pass, bounding the loop by the pending map's size at pass start.
+ */
+function processPendingPass(): void {
+  if (pendingBlocks.size === 0) return;
+  const attempted = new Set<string>();
+  for (;;) {
+    let candidate: { peerId: string; block: OrderingBlock } | null = null;
+    for (const [peerId, block] of pendingBlocks) {
+      if (attempted.has(peerId)) continue;
+      if (getHeaderRow(block.header.prevBlockHash) === null) continue;
+      candidate = { peerId, block };
+      break;
+    }
+    if (candidate === null) return;
+    attempted.add(candidate.peerId);
+    pendingBlocks.delete(candidate.peerId);
+    gossipedBody(candidate.peerId, candidate.block);
+  }
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
+ * at a time". The body of a `Headers` page delivery, closing with the pass
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "A pending
+ * block is tried again at the end of every item").
+ */
+export async function deliverHeaders(
+  peerId: string,
+  claimHash: string,
+  headers: BlockHeader[],
+): Promise<PageOutcome> {
+  const c = ctxOrThrow();
+  const pipelineCb = {
+    penalize: (p: string, k: 'misbehavior' | 'transient', r: string) => penalize(p, k, r),
+    chainMoved: () => cb().chainMoved(),
+  };
+  const verdict: PageVerdict = admitPage(peerId, claimHash, headers, c, pipelineCb);
+  processPendingPass();
+  drainExtension();
+  trySwitch();
+  return verdict.outcome;
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
+ * at a time". The body of a `Blocks` answer delivery, closing with the pass
+ * (NODE_INTERFACE → Fork choice decides on verified headers → "A pending
+ * block is tried again at the end of every item").
+ */
+export async function deliverBlocks(peerId: string, blocks: OrderingBlock[]): Promise<void> {
+  for (const block of blocks) {
+    const hash = blockHash(block.header);
+    const row = bindBlock(peerId, block, hash);
+    if (row === null) continue;
+    stageBlock(row.hash, row.height, encodeOrderingBlock(block), peerId);
+    // A block in hand off the best chain whose parent is the applied tip
+    // applies in the item that delivers it (NODE_INTERFACE → Fork choice
+    // decides on verified headers → "A block in hand extends the applied
+    // tip."); extension picks up a staged on-best child in `drainExtension`
+    // below. After the apply the best chain is chosen again.
+    if (getBestHashAt(row.height) !== row.hash) {
+      if (applyStagedBlockAtHeight(row.hash, row.height) === 'applied') {
+        rechooseAfterApplyFromIntake();
+      }
+    }
+  }
+  processPendingPass();
   drainExtension();
   trySwitch();
 }
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
- * at a time". This node's own mined block.
+ * at a time". A gossiped block past Stage 1 runs through the shared body,
+ * then the pass closes the item (NODE_INTERFACE → Fork choice decides on
+ * verified headers → "A pending block is tried again at the end of every
+ * item").
+ */
+export async function deliverGossipedBlock(peerId: string, block: OrderingBlock): Promise<void> {
+  gossipedBody(peerId, block);
+  processPendingPass();
+  drainExtension();
+  trySwitch();
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one
+ * at a time". This node's own mined block. The mined block's verdict is
+ * answered before the pass runs (NODE_INTERFACE → Fork choice decides on
+ * verified headers → "A pending block is tried again at the end of every
+ * item").
  */
 export function deliverMinedBlock(block: OrderingBlock): ApplyVerdict {
   const c = ctxOrThrow();
@@ -658,40 +702,14 @@ export function deliverMinedBlock(block: OrderingBlock): ApplyVerdict {
     }
   }
   drainExtension();
-  // Answer the verdict the apply left: the staged row leaves on apply.
-  if (!hasStagedBlock(hash) && getOrderingBlockHash(bindRow.height) === hash) {
-    return { applied: true, indexed: [] };
-  }
-  return { applied: false, class: 'local', detail: 'mined block did not apply through extension' };
-}
-
-/**
- * A pending block whose relayer's header walk admitted the parent is bindable
- * now. On every admit we check each pending — the admit landed a row the
- * pending's header's `prevBlockHash` matches.
- */
-function processPendingAfterAdmit(): void {
-  if (pendingBlocks.size === 0) return;
-  for (const [peerId, block] of pendingBlocks) {
-    const parentRow = getHeaderRow(block.header.prevBlockHash);
-    if (parentRow === null) continue;
-    const hash = blockHash(block.header);
-    if (hash === null) {
-      pendingBlocks.delete(peerId);
-      continue;
-    }
-    const held = getHeaderRow(hash);
-    if (held === null) continue;
-    const bestAt = getBestHashAt(held.height);
-    if (bestAt !== hash) {
-      pendingBlocks.delete(peerId);
-      continue;
-    }
-    const bindRow = bindBlock(peerId, block, hash);
-    pendingBlocks.delete(peerId);
-    if (bindRow === null) continue;
-    stageBlock(bindRow.hash, bindRow.height, encodeOrderingBlock(block), peerId);
-  }
+  // The verdict reads the mined block's own apply before the pass runs.
+  const minedVerdict: ApplyVerdict =
+    !hasStagedBlock(hash) && getOrderingBlockHash(bindRow.height) === hash
+      ? { applied: true, indexed: [] }
+      : { applied: false, class: 'local', detail: 'mined block did not apply through extension' };
+  processPendingPass();
+  drainExtension();
+  return minedVerdict;
 }
 
 /** NODE_INTERFACE → Fork choice decides on verified headers → "One intake, one at a time". */

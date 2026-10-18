@@ -911,7 +911,7 @@ describe('a pending block is tried again at the end of every item', () => {
     vi.restoreAllMocks();
   });
 
-  it.fails('an out-of-order gossiped block applies once its parent does', async () => {
+  it('an out-of-order gossiped block applies once its parent does', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
@@ -962,7 +962,7 @@ describe('a pending block is tried again at the end of every item', () => {
     expect(getCurrentHeight()).toBe(7);
   }, 240_000);
 
-  it.fails('a chain of gossiped blocks waiting for their parents runs in one item once the base arrives', async () => {
+  it('a chain of gossiped blocks waiting for their parents runs in one item once the base arrives', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
@@ -1005,7 +1005,7 @@ describe('a pending block is tried again at the end of every item', () => {
     expect(getCurrentHeight()).toBe(8);
   }, 240_000);
 
-  it.fails('a pending block whose parent arrives on a stored row that is not the best tip leaves the pending blocks', async () => {
+  it('a pending block whose parent arrives on a stored row that is not the best tip leaves the pending blocks', async () => {
     const v = makeValidator();
     const applied: ParentHeaderInfo[] = [];
     let prev: ParentHeaderInfo | null = null;
