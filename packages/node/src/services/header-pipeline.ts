@@ -87,22 +87,17 @@ function reachFloor(ctx: PipelineContext): number {
 }
 
 /**
- * The fork point of a branch, read from the branch's base.
- *
- * The invariant the result rests on (NODE_INTERFACE → Fork choice decides on
- * verified headers → "The reach floor is the horizon, one rule for every
- * fork point."): the best chain is chosen reachable, the applied tip moves
- * only along the best chain, and the floor moves only with the applied tip,
- * so a base on the best chain shares a fork point with the applied chain
- * at or above the floor — and returning the base's own height on first match
- * is correct. The applied-chain match is the direct one; the best-chain
- * match rides the invariant.
- *
- * Walks `prev_hash` down from the base to the first row on the applied
- * chain (`getOrderingBlockHash(h) === hash`), or on the best chain
- * (`getBestHashAt(h) === hash`); stops below the reach floor and answers
- * `-Infinity` (unreachable by construction). Height 0 is the virtual root,
- * a common ancestor at depth = our height, and resolves as `0`.
+ * The fork point of a branch's base, walking `prev_hash` down to the first
+ * row on the applied chain (`getOrderingBlockHash(h) === hash`) or on the
+ * best chain (`getBestHashAt(h) === hash`); stops below the reach floor and
+ * answers `-Infinity` (unreachable by construction). Height 0 is the
+ * virtual root, a common ancestor at depth = our height, and resolves as
+ * `0`. Either match answers the base's own fork height: the applied-chain
+ * match is the direct one, and the best-chain match is correct because the
+ * best chain is chosen reachable and its own fork with the applied chain
+ * stays above the floor (NODE_INTERFACE → Fork choice decides on verified
+ * headers → "The best chain is never lighter than the applied chain, and
+ * leaves it only while heavier.").
  */
 function forkPointHeight(baseHash: string, baseHeight: number, floor: number): number {
   if (baseHeight === 0) return 0;

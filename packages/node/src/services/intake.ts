@@ -171,11 +171,14 @@ export function canExtendAppliedTipAsBlockInHand(parentHash: string, parentHeigh
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "A served block
- * is bound to its header before it is kept.": the three checks run in order
- * against the tree row. On the first failure, nothing is staged and the
- * deliverer is penalised `misbehavior`; a block whose header is stored off
- * best is dropped with no penalty; a block whose header is not in the tree
- * is refused `misbehavior`.
+ * is bound to its header before it is kept.": the three checks — structure,
+ * `utxoTxRoot`, validator signature — run in order against the tree row.
+ * The first failure penalises the deliverer `misbehavior` and leaves no
+ * stage row. A header that is not in the tree is refused `misbehavior`. A
+ * stored header off the best chain is dropped silently unless the
+ * `canExtendAppliedTipAsBlockInHand` predicate holds for it — then the
+ * three checks run and the block is bound as a block in hand (→ "A block
+ * in hand extends the applied tip.").
  *
  * Returns the row to stage onto, or `null` if the block is refused or dropped.
  */
@@ -299,9 +302,14 @@ function applyStagedBlockAtHeight(hash: string, height: number): 'applied' | 'ma
 
 /**
  * NODE_INTERFACE → Fork choice decides on verified headers → "Extension." +
- * "The window.": while the best chain contains the applied tip, apply the
- * block at `appliedTip + 1` from staging; the loop stops at an empty
- * staging row, at the window's edge, or at a switch condition.
+ * "The window.": when `best_chain`'s entry at the applied height is this
+ * node's applied hash, apply the block at `appliedTip + 1` from staging —
+ * the per-block apply above fires the funnel. The loop stops at an empty
+ * staging row, at the window's edge, or when the best chain no longer
+ * holds the applied tip (a switch condition the next item answers through
+ * `trySwitch`). A block in hand off the best chain is applied by the
+ * delivery path, not this loop (→ "A block in hand extends the applied
+ * tip.").
  */
 function drainExtension(): void {
   const c = ctxOrThrow();
