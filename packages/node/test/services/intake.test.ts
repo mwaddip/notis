@@ -782,12 +782,12 @@ describe('intake', () => {
   });
 
   describe('the subsequent switch is held by the broken index', () => {
-    it.fails('a new branch continuing a stored row off the best chain applies to its tip, no honest header marked', async () => {
-      // The chain-link rule the funnel enforces, as the apply simulator:
-      // a block's `prevHash` must equal the applied block's hash at the
-      // height below (NODE_INTERFACE → "The chain link"). Blocks that
-      // bind fine but do not extend the applied tip the pipeline hands
-      // them answer `consensus`.
+    it('a new branch continuing a stored row off the best chain applies to its tip, no honest header marked', async () => {
+      // The apply simulator checks the chain link: a block's `prevHash`
+      // must equal the applied block's hash at the height below, else the
+      // verdict is `consensus` and the pipeline marks the header
+      // (NODE_INTERFACE → Fork choice decides on verified headers →
+      // "A body-stage refusal marks the header.").
       applyBehaviour = (block) => {
         const prevH = block.header.height - 1;
         const expectedPrev = prevH === 0
@@ -855,11 +855,9 @@ describe('intake', () => {
       // own.
       await deliverBlocks('peerAx', a.slice(1, 10).map(x => signBlock(x, v.priv)));
 
-      // Preamble (`expect.soft`): the broken index rewrites against the
-      // base's height, the subsequent switch hands `reorg` A6 above B5 and
-      // the chain-link enforcer refuses it `consensus`. The soft form lets
-      // the last assertion run so the rule it names is what the failure
-      // reports.
+      // Controls (`expect.soft`): no honest peer penalised, and the
+      // applied tip is on A10. The soft form keeps the last assertion the
+      // one its name states.
       expect.soft(cap.penalties.filter(p => p.peerId === 'peerAx')).toEqual([]);
       expect.soft(getCurrentHeight()).toBe(10);
       // The last assertion names the rule: no A header above A1 was

@@ -1045,7 +1045,7 @@ describe('header-pipeline', () => {
   });
 
   describe('the best chain is one chain, every entry the child of the one below', () => {
-    it.fails('a first-page win on a stored row off the best chain names its parent as the entry below it', () => {
+    it('a first-page win on a stored row off the best chain names its parent as the entry below it', () => {
       // A1..A9 anchor-priced. The first serving admits A1..A5; A1..A5 are
       // stored, best moves to A5.
       const a = makeChain({ parent: null, n: 9, params: PARAMS, schedule: SCHEDULE });
@@ -1095,7 +1095,7 @@ describe('header-pipeline', () => {
       expect(parentsSeen).toEqual(parentsExpected);
     });
 
-    it.fails('a later-page crossing on a stored row off the best chain names its parent as the entry below it', () => {
+    it('a later-page crossing on a stored row off the best chain names its parent as the entry below it', () => {
       // A1..A5 anchor-priced; the first page wins and stores A1..A5.
       const a = makeChain({ parent: null, n: 5, params: PARAMS, schedule: SCHEDULE });
       const { callbacks: cb1 } = recorder();
