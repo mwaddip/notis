@@ -611,7 +611,7 @@ async function startBAndStranger(): Promise<{
   return { nodeB, nodeX };
 }
 
-describe('A node of another network is no peer of ours', () => {
+describe('A frame-tier refusal ends the connection to a node of another network', () => {
   const open: NetNode[] = [];
   afterEach(async () => {
     while (open.length > 0) {
@@ -729,6 +729,124 @@ async function startBAndSoftRefused(): Promise<{
   await new Promise((r) => setTimeout(r, SETTLE_MS));
   return { nodeB, nodeY };
 }
+
+// ---------------------------------------------------------------------------
+// A node of another network is no peer of ours
+// NET_INTERFACE → Gossip Topics → "A topic is named for its network" — a node
+// of another magic subscribes to its own topic pair, so B's router lists it
+// under no topic of its own and a message it publishes runs no validator of
+// B's. The connection is opened around the funnel so no handshake stream
+// runs on it; the connection stands up to B's handshake deadline
+// (HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs = 30 s under the
+// defaults), inside which gossipsub meshes.
+// ---------------------------------------------------------------------------
+
+async function startBAndStrangerLingering(): Promise<{
+  nodeB: NetNode;
+  nodeX: NetNode;
+}> {
+  // B keeps the default `syncRequestTimeoutMs` (10 s), so B's handshake
+  // deadline is 30 s. The suite completes inside that window.
+  const nodeB = new NetNode(makeConfig(), validators);
+  await nodeB.start();
+  const bAddr = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
+  if (!bAddr) throw new Error('B has no listen address');
+
+  // X runs on another magic and dials B around its own funnel — no handshake
+  // stream ever opens on the connection, so neither side's handshake runs
+  // and the connection stands up to B's deadline. gossipsub exchanges
+  // subscription records on its own protocol over this connection.
+  const nodeX = new NetNode(makeConfig({ magic: MAGIC_DEVNET }), validators);
+  await nodeX.start();
+  await nodeX.libp2pNode!.dial(multiaddr(bAddr));
+
+  await vi.waitFor(
+    () => {
+      expect(nodeB.libp2pNode?.getConnections().length ?? 0).toBeGreaterThan(0);
+      expect(nodeX.libp2pNode?.getConnections().length ?? 0).toBeGreaterThan(0);
+    },
+    { timeout: 10_000, interval: 250 },
+  );
+  // The pair shares no topic (NET_INTERFACE → Gossip Topics →
+  // "A topic is named for its network"), so there is nothing to poll on. The
+  // fixed quiet waits out two gossipsub heartbeats — any subscription record
+  // or mesh graft that would arrive, does.
+  await new Promise((r) => setTimeout(r, SETTLE_MS));
+  return { nodeB, nodeX };
+}
+
+describe('A node of another network is no peer of ours', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop();
+    }
+  });
+  const track = (nodes: NetNode[]): void => {
+    for (const n of nodes) open.push(n);
+  };
+
+  it(
+    'a node of another magic holds a connection to B and neither is Active to the other',
+    async () => {
+      const { nodeB, nodeX } = await startBAndStrangerLingering();
+      track([nodeB, nodeX]);
+      const bConns = nodeB.libp2pNode?.getConnections() ?? [];
+      const xConns = nodeX.libp2pNode?.getConnections() ?? [];
+      expect(bConns.length).toBeGreaterThan(0);
+      expect(xConns.length).toBeGreaterThan(0);
+      expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
+      expect(nodeX.getConnectedPeers()).not.toContain(nodeB.peerId());
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'B\'s router lists no peer of another magic among the subscribers of either of B\'s own topics',
+    async () => {
+      const { nodeB, nodeX } = await startBAndStrangerLingering();
+      track([nodeB, nodeX]);
+      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
+      expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
+
+      const topicsB = topicsOf(nodeB);
+      const ps = pubsubOf(nodeB);
+      const subsOrderingBlock = ps
+        .getSubscribers(topicsB.orderingBlock)
+        .map((p) => p.toString());
+      const subsTx = ps.getSubscribers(topicsB.tx).map((p) => p.toString());
+
+      expect({
+        orderingBlock: subsOrderingBlock.includes(nodeX.peerId()),
+        tx: subsTx.includes(nodeX.peerId()),
+      }).toEqual({ orderingBlock: false, tx: false });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'a block X publishes runs no validator at B',
+    async () => {
+      const { nodeB, nodeX } = await startBAndStrangerLingering();
+      track([nodeB, nodeX]);
+      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
+      expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
+
+      const bValidator = newCounter();
+      const topicsB = topicsOf(nodeB);
+      wrapValidator(nodeB, topicsB.orderingBlock, bValidator);
+
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
+      // NET_INTERFACE → Gossip → "A broadcast that sends nothing still resolves"
+      await expect(nodeX.broadcastOrderingBlock(block)).resolves.toBeUndefined();
+
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      expect(bValidator.count).toBe(0);
+    },
+    TIMEOUT,
+  );
+});
 
 describe('A body-tier soft refusal ends the connection', () => {
   const open: NetNode[] = [];
