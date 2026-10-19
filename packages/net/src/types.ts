@@ -72,15 +72,22 @@ export interface PeerMetadata {
   penaltyCount: number;
   lastSeenMs: number;
   /**
-   * The address this node dialled, or the address the peer declared —
-   * recorded when the peer reaches Active, the handshake being the only
-   * place both identities are known. Null until then. This is the join key
-   * between the two ban surfaces: PeerManager bans by peerId, PeerDb bans by
-   * address. A ban's address set opens with this field, when there is one,
-   * and grows through `extendBan` as further addresses are tied to the same
-   * peer id (NET_INTERFACE → Ban surfaces are unified).
+   * The address this node dialled — recorded when the peer's handshake makes
+   * it Active; a peer that dialled this node has none (NET_INTERFACE →
+   * "Ban surfaces are unified"). This is the join key between the two ban
+   * surfaces: PeerManager bans by peerId, PeerDb bans by address. A ban's
+   * address set opens with this field, when there is one, and grows through
+   * `extendBan` as further addresses are tied to the same peer id.
    */
   address: string | null;
+  /**
+   * The address the peer declared on its handshake, kept apart from
+   * `address` (NET_INTERFACE → Handshake →
+   * "A declared address is hearsay until a dial names it"). Serves one
+   * purpose: leaving the requester's own address out of a `Peers` answer
+   * (NET_INTERFACE → GetPeers). It never reaches a ban.
+   */
+  declaredAddress: string | null;
   /**
    * The peer's declared `protocolVersion` (the handshake's), or null until the
    * handshake reveals it. This is the version the boundary sweep reads

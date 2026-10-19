@@ -48,7 +48,7 @@ import {
   decodeModifierResponse,
 } from './sync-codec.js';
 import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
-import { readStreamBounded, sinkWithDeadline } from './util.js';
+import { readStreamBounded, sinkWithDeadline, addressWithoutPeerId } from './util.js';
 import {
   HANDSHAKE_DEADLINE_FACTOR,
   MAX_CHAIN_RESPONSE_ITEMS,
@@ -387,10 +387,17 @@ export const GET_PEERS_RESPONSE_LIMIT = 8;
 
 /**
  * Serve one GetPeers request body: reply with up to GET_PEERS_RESPONSE_LIMIT
- * recently-seen PeerDb entries, excluding the requester's own address. Returns
- * the framed Peers response — `{ peers: [] }` when PeerDb has nothing, so the
- * requester is answered rather than left to time out — or `null` for a
- * malformed request, which is a protocol violation (permanent ban).
+ * recently-seen PeerDb entries, leaving out every address the requester's
+ * metadata carries — the address this node dialled, when there is one
+ * (NET_INTERFACE → "Ban surfaces are unified"). Returns the framed Peers
+ * response — `{ peers: [] }` when PeerDb has nothing, so the requester is
+ * answered rather than left to time out — or `null` for a malformed request,
+ * which is a protocol violation (permanent ban).
+ *
+ * Each address goes into the exclude set normalised through
+ * `addressWithoutPeerId`, so a candidate `recent()` compares bare matches a
+ * seed, a dialled or a declared spelling of the same host alike
+ * (NET_INTERFACE → PeerDb).
  *
  * Discovery is served whatever our own sync phase is: nothing here consults
  * the sync machine.
@@ -401,7 +408,6 @@ export function servePeersBody(
     peerDb: PeerDb | null;
     peerMgr: PeerManager;
     peerId: string;
-    requesterAddr: string | null;
     magic: number;
   },
 ): Uint8Array | null {
@@ -412,7 +418,8 @@ export function servePeersBody(
     return null;
   }
   const exclude = new Set<string>();
-  if (deps.requesterAddr !== null) exclude.add(deps.requesterAddr);
+  const meta = deps.peerMgr.getPeerMetadata(deps.peerId);
+  if (meta?.address) exclude.add(addressWithoutPeerId(meta.address));
   const records = deps.peerDb?.recent(GET_PEERS_RESPONSE_LIMIT, exclude) ?? [];
   const peers: PeerEntryMsg[] = records.map((r) => ({
     address: r.address,
@@ -1402,7 +1409,7 @@ export class NetNode {
       // a fault nobody foresaw surfaces as an unhandled rejection and the
       // node's backstop logs it.
       const prev = this.peerStreamQueues.get(peerId) ?? Promise.resolve();
-      const next = prev.then(() => this.serveOneSyncStream(magic, peerId, stream, connection));
+      const next = prev.then(() => this.serveOneSyncStream(magic, peerId, stream));
       this.peerStreamQueues.set(peerId, next.catch(() => { /* a per-stream fault leaves the lane open */ }));
       await next;
     }, { maxInboundStreams: MAX_INBOUND_SYNC_STREAMS });
@@ -1422,7 +1429,6 @@ export class NetNode {
     magic: number,
     peerId: string,
     stream: import('@libp2p/interface').Stream,
-    connection: { remoteAddr?: { toString(): string } },
   ): Promise<void> {
     // Default write deadline — the deadline the reader on the other side
     // holds. A `Blocks` answer is ×5 (NET_INTERFACE → Validation →
@@ -1518,16 +1524,14 @@ export class NetNode {
       }
 
       if (code === MSG_GET_PEERS) {
-        // Prefer the requester's declared address: an inbound connection's
-        // remoteAddr carries an ephemeral source port, which would make the
-        // requester-exclusion in servePeersBody a no-op.
+        // `servePeersBody` reads the requester's metadata itself, so the
+        // dialled and the declared addresses it holds are both excluded
+        // (NET_INTERFACE → Handshake →
+        // "A declared address is hearsay until a dial names it").
         const response = servePeersBody(body, {
           peerDb: this.peerDb,
           peerMgr: this.peerMgr,
           peerId,
-          requesterAddr: this.peerMgr.getPeerMetadata(peerId)?.address
-            ?? connection.remoteAddr?.toString()
-            ?? null,
           magic,
         });
         if (response) await sinkDeadline(response);

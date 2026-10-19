@@ -96,20 +96,33 @@ export class PeerManager {
         penaltyCount: 0,
         lastSeenMs: Date.now(),
         address: null,
+        declaredAddress: null,
         protocolVersion: null,
       });
     }
   }
 
   /**
-   * Record the peer's declared address once the handshake reveals it. No-op
+   * Record the address this node dialled once the handshake completes. No-op
    * for an untracked peer, like setPeerState. A peer banned before this is
    * called simply has no address to propagate — that is correct, not an
-   * error.
+   * error (NET_INTERFACE → "Ban surfaces are unified").
    */
   setPeerAddress(peerId: string, address: string): void {
     const meta = this.metadata.get(peerId);
     if (meta) meta.address = address;
+  }
+
+  /**
+   * Record the address the peer declared on its handshake, kept apart from
+   * the address this node dialled. No-op for an untracked peer, like
+   * setPeerState. Serves the exclusion in a `Peers` answer, and never a ban
+   * (NET_INTERFACE → Handshake →
+   * "A declared address is hearsay until a dial names it").
+   */
+  setPeerDeclaredAddress(peerId: string, address: string): void {
+    const meta = this.metadata.get(peerId);
+    if (meta) meta.declaredAddress = address;
   }
 
   /**

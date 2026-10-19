@@ -804,3 +804,83 @@ describe('inbound handshake handler — every return path closes the connection'
     expect(connectionCloses().get('conn-ok') ?? 0).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A declared address is hearsay until a dial
+// names it" — the listener records the dialler's declared address only when
+// it is no bogus address and its /p2p/ component names the peer id the
+// connection proved, at lastSeenMs 0; a handshake that declares no address
+// records none.
+// ---------------------------------------------------------------------------
+
+const LISTENER_PEER = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
+
+describe('inbound handshake handler — a declared address is hearsay', () => {
+  it.fails('a routable declared address naming the peer id lands at lastSeenMs 0', async () => {
+    const declared = `/ip4/9.9.9.9/tcp/9000/p2p/${LISTENER_PEER}`;
+    const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(peerHandshakeFrame(1, declared));
+
+    // control: the reply is a handshake frame
+    expect(written).toHaveLength(1);
+    expect(written[0]!.length).toBeGreaterThan(0);
+    expect(peerDb.get(declared)?.lastSeenMs).toBe(0);
+  });
+
+  it.fails('a declared address naming another peer id leaves PeerDb empty', async () => {
+    const otherId = '12D3KooWFCoqrsf1g1oMg3SNFXfSAfxA3iT5KGwi9cXeDi5BtvNz';
+    const declared = `/ip4/9.9.9.9/tcp/9000/p2p/${otherId}`;
+    const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(peerHandshakeFrame(1, declared));
+
+    // control: the handshake is accepted
+    expect(written).toHaveLength(1);
+    expect(peerDb.get(declared)).toBeNull();
+  });
+
+  it.fails('a bogus (loopback) declared address leaves PeerDb empty, under testnet magic', async () => {
+    const declared = `/ip4/127.0.0.1/tcp/9000/p2p/${LISTENER_PEER}`;
+    const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(peerHandshakeFrame(1, declared));
+
+    // control: the handshake is accepted
+    expect(written).toHaveLength(1);
+    expect(peerDb.get(declared)).toBeNull();
+  });
+
+  it.fails('a handshake declaring no address leaves PeerDb empty', async () => {
+    const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(validHandshakeFrame());
+
+    // control: the handshake is accepted
+    expect(written).toHaveLength(1);
+    expect(peerDb.all()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A declared address is hearsay until a dial
+// names it" — "No address a handshake declares reaches a ban: a peer that
+// dialled this node is banned with no address".
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — the declared address never reaches a ban', () => {
+  it.fails('a banned peer that dialled this node leaves its declared address a hint in PeerDb, isBanned false', async () => {
+    const declared = `/ip4/9.9.9.9/tcp/9000/p2p/${LISTENER_PEER}`;
+    const { send, peerDb, peerMgr } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(peerHandshakeFrame(1, declared));
+    // control: the handshake is accepted
+    expect(written).toHaveLength(1);
+
+    peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, LISTENER_PEER, 'test');
+    // control: the peer id is banned
+    expect(peerMgr.isBanned(LISTENER_PEER)).toBe(true);
+
+    expect(peerDb.isBanned(declared)).toBe(false);
+  });
+});

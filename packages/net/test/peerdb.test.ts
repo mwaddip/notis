@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PeerDb } from '@dagsocial/net';
 import type { PeerRecord, PeerStorage } from '@dagsocial/net';
 
@@ -221,6 +221,92 @@ describe('PeerDb', () => {
 
       db.ban(BARE);
       expect(db.get(other)).not.toBeNull();
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // NET_INTERFACE → PeerDb → "Persistence" — every storage call PeerDb
+  // makes (`put` and `delete`, from `record`, `forget` and `ban`) is
+  // logged and swallowed, and the in-memory table stands ahead of the
+  // store. Four sub-cases, one per call site.
+  // ---------------------------------------------------------------------
+  describe('a storage failure is swallowed, one per call site', () => {
+    /** A storage double whose `put` and `delete` behaviour each toggle. */
+    function throwingStorage(): { storage: PeerStorage; throwPut: () => void; throwDelete: () => void; stored: PeerRecord[] } {
+      const stored: PeerRecord[] = [];
+      let putThrows = false;
+      let deleteThrows = false;
+      return {
+        stored,
+        throwPut: () => { putThrows = true; },
+        throwDelete: () => { deleteThrows = true; },
+        storage: {
+          loadAll: () => stored,
+          put: (r) => {
+            if (putThrows) throw new Error('storage put dead');
+            const idx = stored.findIndex((s) => s.address === r.address);
+            if (idx >= 0) stored[idx] = r;
+            else stored.push(r);
+          },
+          delete: (addr) => {
+            if (deleteThrows) throw new Error('storage delete dead');
+            const idx = stored.findIndex((r) => r.address === addr);
+            if (idx >= 0) stored.splice(idx, 1);
+          },
+        },
+      };
+    }
+
+    it.fails('a put that throws in record leaves the entry in memory', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const t = throwingStorage();
+      const db = new PeerDb(t.storage, 100, []);
+      t.throwPut();
+
+      db.record(makeRecord('/ip4/1.2.3.4/tcp/9000', 1000));
+
+      expect(db.get('/ip4/1.2.3.4/tcp/9000')?.lastSeenMs).toBe(1000);
+      warnSpy.mockRestore();
+    });
+
+    it.fails('an eviction delete that throws in record leaves the oldest out of memory', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const t = throwingStorage();
+      const db = new PeerDb(t.storage, 1, []);
+      db.record(makeRecord('a', 1000));
+      t.throwDelete();
+
+      db.record(makeRecord('b', 2000)); // forces eviction of 'a'
+
+      expect(db.get('a')).toBeNull();
+      warnSpy.mockRestore();
+    });
+
+    it.fails('a delete that throws in forget leaves the entry out of memory', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const t = throwingStorage();
+      const db = new PeerDb(t.storage, 100, []);
+      db.record(makeRecord('/ip4/1.2.3.4/tcp/9000', 1000));
+      t.throwDelete();
+
+      db.forget('/ip4/1.2.3.4/tcp/9000');
+
+      expect(db.get('/ip4/1.2.3.4/tcp/9000')).toBeNull();
+      warnSpy.mockRestore();
+    });
+
+    it.fails('a delete that throws in ban leaves the entry out of memory, address banned', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const t = throwingStorage();
+      const db = new PeerDb(t.storage, 100, []);
+      db.record(makeRecord('/ip4/1.2.3.4/tcp/9000', 1000));
+      t.throwDelete();
+
+      db.ban('/ip4/1.2.3.4/tcp/9000');
+
+      expect(db.get('/ip4/1.2.3.4/tcp/9000')).toBeNull();
+      expect(db.isBanned('/ip4/1.2.3.4/tcp/9000')).toBe(true);
+      warnSpy.mockRestore();
     });
   });
 });
