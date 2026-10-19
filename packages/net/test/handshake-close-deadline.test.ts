@@ -227,6 +227,12 @@ describe('a connection with no handshake is closed at its deadline', () => {
   // stream ever opens. A closes at its deadline, no penalty.
   it('A closes the connection B opened without a handshake', async () => {
     nodeA = new NetNode(makeConfig({ syncRequestTimeoutMs: 1_000 }), validators);
+    // The peer manager drops a peer's metadata at disconnect, so a reader
+    // of `getPeerMetadata(peerId)?.penaltyCount` after the close reads 0
+    // whatever the handler recorded; the live capture through
+    // `onPeerPenalised` fires at the record site and survives the drop.
+    const penalties: Array<{ peerId: string; kind: string }> = [];
+    nodeA.onPeerPenalised((peerId, kind) => { penalties.push({ peerId, kind }); });
     await nodeA.start();
     const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
     expect(aAddr).toBeTruthy();
@@ -250,9 +256,9 @@ describe('a connection with no handshake is closed at its deadline', () => {
       nodeA.libp2pNode!.getConnections().filter((c) => c.remotePeer.toString() === bId),
     ).toHaveLength(0);
 
-    // the deadline is unscored: no penalty on A, no ban
+    // the deadline is unscored: no penalty for B at A, no ban
+    expect(penalties.filter((p) => p.peerId === bId)).toEqual([]);
     const internalsA = nodeA as unknown as Internals;
-    expect(internalsA.peerMgr.getPeerMetadata(bId)?.penaltyCount ?? 0).toBe(0);
     expect(internalsA.peerMgr.isBanned(bId)).toBe(false);
   }, 25_000);
 });
