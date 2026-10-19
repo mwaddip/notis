@@ -16,14 +16,13 @@
 
 import {
   bytesToHex,
-  computeContentHash,
   computePostId,
   computeTxId,
   decodeTx,
   hexToBytes,
 } from '@dagsocial/types';
 import type { PostType, UtxoTransaction } from '@dagsocial/types';
-import { verifyEd25519, verifyEd25519Batch } from '@dagsocial/validation';
+import { verifyEd25519, verifyEd25519Batch, verifyPostBody } from '@dagsocial/validation';
 import type { Ed25519BatchEntry } from '@dagsocial/validation';
 import { isRecord, shown } from './http.js';
 
@@ -254,16 +253,15 @@ function checkRow(row: unknown): RowOutcome {
     return unbound('commit', `unbound: commit protocolVersion ${commit.protocolVersion} does not match row protocolVersion ${rowProtocolVersion}`);
   }
 
-  // A placeholder — `content: null` — is checked as any row, less this step.
+  // WEB_INTERFACE → The extension → "The post check" — for a row that
+  // carries text, `verifyPostBody(content, contentHash)` holds: the content
+  // rules every honest node applies at every entry, and the hash
+  // (VALIDATION_INTERFACE → verifyPostBody). A placeholder (`content: null`)
+  // is a `bound` row less the body rules.
   if (typeof rowContent === 'string') {
-    let hashHex: string;
-    try {
-      hashHex = bytesToHex(computeContentHash(rowContent));
-    } catch (e) {
-      return unbound('content', `unbound: computeContentHash refused: ${describeError(e)}`);
-    }
-    if (hashHex !== commitContentHash) {
-      return unbound('content', `unbound: computeContentHash of the row's content does not match the commit's`);
+    const bodyCheck = verifyPostBody(rowContent, commit.contentHash);
+    if (!bodyCheck.valid) {
+      return unbound('content', `unbound: ${bodyCheck.error ?? 'body refused'}`);
     }
   }
 

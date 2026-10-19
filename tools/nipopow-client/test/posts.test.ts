@@ -459,7 +459,7 @@ describe('checkPosts — WEB_INTERFACE → The extension → "The post check"', 
   // verifyPostBody): content a string, the length within [1, MAX_CONTENT_BYTES]
   // bytes, every character in the allowed table, and the hash. A row that
   // fails it is unbound content.
-  it.fails('a row whose content carries a bidi-override character is unbound content', async () => {
+  it('a row whose content carries a bidi-override character is unbound content', async () => {
     const key = makeKey(80);
     // U+202E RIGHT-TO-LEFT OVERRIDE is in the Cf category the content rules refuse
     // (VALIDATION_INTERFACE → verifyContentCharacters).
@@ -480,7 +480,7 @@ describe('checkPosts — WEB_INTERFACE → The extension → "The post check"', 
     if (res?.status === 'unbound') expect(res.reason).toBe('content');
   });
 
-  it.fails('a row whose content is MAX_CONTENT_BYTES + 1 bytes is unbound content', async () => {
+  it('a row whose content is MAX_CONTENT_BYTES + 1 bytes is unbound content', async () => {
     const key = makeKey(81);
     // A single-byte ASCII character repeated so the byte count is exactly one
     // past the content-rules length ceiling.
