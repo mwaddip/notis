@@ -18,12 +18,19 @@ import {
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
   MAX_CAPABILITY_ENTRIES,
-  MAX_UINT32,
+  MAX_CAPABILITY_CODE,
 } from '@dagsocial/net';
 import { FRAME_VERSION } from '@dagsocial/wire';
 import { PeerManager, PenaltyKind } from '@dagsocial/net';
 import type { HandshakeMsg, NetConfig } from '@dagsocial/net';
-import { encodeStruct } from '@dagsocial/types';
+import {
+  ByteWriter,
+  encodeStruct,
+  writeArr,
+  writeLpUtf8,
+  writeOpt,
+  writeVlqU,
+} from '@dagsocial/types';
 
 const testMsg: HandshakeMsg = {
   agentName: 'dagsocial/1.0.0',
@@ -31,7 +38,6 @@ const testMsg: HandshakeMsg = {
   nodeName: 'test-node',
   chainHeight: 42,
   capabilities: [1, 2, 3, 4, 5, 8, 9],
-  sessionMagic: 12345,
 };
 
 function validBody(overrides: Partial<HandshakeMsg> = {}): Uint8Array {
@@ -45,6 +51,21 @@ describe('handshake', () => {
     expect(code).toBe(1);
     const parsed = decodeHandshakeBody(body);
     expect(parsed).toEqual(testMsg);
+  });
+
+  // NET_INTERFACE → Handshake Body →
+  // "The longest frame the body admits is `MAX_HANDSHAKE_FRAME_BYTES` (984)"
+  it('the longest handshake frame is 984 bytes', () => {
+    const atBound: HandshakeMsg = {
+      agentName: 'a'.repeat(MAX_NAME_BYTES),
+      protocolVersion: MAX_CAPABILITY_CODE,
+      nodeName: 'n'.repeat(MAX_NAME_BYTES),
+      chainHeight: MAX_ADVERTISED_HEIGHT,
+      declaredAddress: 'd'.repeat(MAX_ADDRESS_BYTES),
+      capabilities: Array.from({ length: MAX_CAPABILITY_ENTRIES }, () => MAX_CAPABILITY_CODE),
+    };
+    const frame = buildHandshakeFrame(MAGIC_TESTNET, atBound);
+    expect(frame.length).toBe(984);
   });
 
   it('round-trips with declaredAddress', () => {
@@ -150,6 +171,9 @@ describe('handshake', () => {
         bootstrapPeers: [],
         listenAddrs: '/ip4/0.0.0.0/tcp/0',
         maxPeers: 10,
+        minPeers: 3,
+        peerDbCap: 100,
+        outboundRedialCooldownMs: 60_000,
         penaltyScoreThreshold: 500,
         temporalBanDurationMs: BAN_MS,
         penaltySafeIntervalMs: 120_000,
@@ -285,8 +309,19 @@ describe('handshake', () => {
       expect(decoded!.capabilities).toHaveLength(MAX_CAPABILITY_ENTRIES);
     });
 
-    it('rejects sessionMagic above MAX_UINT32', () => {
-      expect(decodeHandshakeBody(validBody({ sessionMagic: MAX_UINT32 + 1 }))).toBeNull();
+    it('rejects a body with a field after the capabilities', () => {
+      // NET_INTERFACE → Handshake Body → "The body carries no session field":
+      // a body ends at the capabilities. One more varint after it is trailing bytes.
+      const w = new ByteWriter();
+      writeLpUtf8(w, testMsg.agentName);
+      writeVlqU(w, testMsg.protocolVersion);
+      writeLpUtf8(w, testMsg.nodeName);
+      writeVlqU(w, testMsg.chainHeight);
+      writeOpt(w, testMsg.declaredAddress ?? null, writeLpUtf8);
+      writeArr(w, testMsg.capabilities, (cw, c) => writeVlqU(cw, c));
+      writeVlqU(w, 0);
+      const body = w.toBytes();
+      expect(decodeHandshakeBody(body)).toBeNull();
     });
 
     it('rejects chainHeight above MAX_ADVERTISED_HEIGHT', () => {

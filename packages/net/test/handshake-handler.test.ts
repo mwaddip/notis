@@ -64,8 +64,16 @@ function makeConfig(
 
 type StreamHandler = (arg: {
   stream: unknown;
-  connection: { remotePeer: { toString(): string }; remoteAddr?: { toString(): string } };
+  connection: {
+    id: string;
+    remotePeer: { toString(): string };
+    remoteAddr?: { toString(): string };
+  };
 }) => Promise<void>;
+
+interface HandleOptions {
+  maxInboundStreams?: number;
+}
 
 /**
  * Register the real inbound handshake handler against a stub libp2p and return
@@ -85,11 +93,14 @@ function makeHandshakeHarness(opts: {
   multiaddrs?: string[];
   /** The stream's `connection.remotePeer` — defaults to an ordinary remote id. */
   remotePeerId?: string;
+  /** The default connection id for every `send` on this harness. */
+  connectionId?: string;
 } = {}) {
   const net = new NetNode(makeConfig(opts.schedule), validators);
   const peerId = opts.remotePeerId ?? 'peer-under-test';
 
   let captured: StreamHandler | null = null;
+  let registrationOptions: HandleOptions | undefined;
   const internals = net as unknown as {
     libp2p: unknown;
     peerMgr: PeerManager;
@@ -102,13 +113,18 @@ function makeHandshakeHarness(opts: {
   const peerDb = new PeerDb(null, 1000, []);
   internals.peerDb = peerDb;
   internals.libp2p = {
-    handle: (protocol: string, cb: StreamHandler) => {
-      if (protocol === '/dagsocial/handshake/1') captured = cb;
+    handle: (protocol: string, cb: StreamHandler, options?: HandleOptions) => {
+      if (protocol === '/dagsocial/handshake/1') {
+        captured = cb;
+        registrationOptions = options;
+      }
     },
     getMultiaddrs: () => (opts.multiaddrs ?? []).map((s) => ({ toString: () => s })),
     getConnections: () => [],
     hangUp: () => Promise.resolve(),
     peerId: { toString: () => 'self-peer-id' },
+    addEventListener: () => {},
+    removeEventListener: () => {},
   };
 
   internals.peerMgr.addPeer({
@@ -131,7 +147,13 @@ function makeHandshakeHarness(opts: {
   internals.registerHandshakeHandler(internals.libp2p);
   if (!captured) throw new Error('registerHandshakeHandler registered no handler');
 
-  const drive = async (source: AsyncIterable<Uint8Array>): Promise<Uint8Array[]> => {
+  // Counts how many times the handler closed the stub connection, keyed by
+  // its id, so a case can assert on the connection whose handshake ran.
+  const connectionCloses = new Map<string, number>();
+  const drive = async (
+    source: AsyncIterable<Uint8Array>,
+    connectionId: string,
+  ): Promise<Uint8Array[]> => {
     const written: Uint8Array[] = [];
     const stream = {
       source,
@@ -143,28 +165,44 @@ function makeHandshakeHarness(opts: {
       },
       close: async () => {},
     };
-    await captured!({
-      stream,
-      connection: {
-        remotePeer: { toString: () => peerId },
-        remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/1234' },
+    const connection = {
+      id: connectionId,
+      remotePeer: { toString: () => peerId },
+      remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/1234' },
+      close: async () => {
+        connectionCloses.set(connectionId, (connectionCloses.get(connectionId) ?? 0) + 1);
       },
-    });
+    };
+    await captured!({ stream, connection });
     return written;
   };
 
-  const send = (request: Uint8Array): Promise<Uint8Array[]> =>
+  const defaultConnId = opts.connectionId ?? 'conn-default';
+
+  const send = (
+    request: Uint8Array,
+    sendOpts: { connectionId?: string } = {},
+  ): Promise<Uint8Array[]> =>
     drive((async function* () {
       yield request;
-    })());
+    })(), sendOpts.connectionId ?? defaultConnId);
 
   const sendBrokenStream = (): Promise<Uint8Array[]> =>
     drive((async function* () {
       yield new Uint8Array([0x01]);
       throw new Error('connection reset');
-    })());
+    })(), defaultConnId);
 
-  return { send, sendBrokenStream, peerMgr: internals.peerMgr, peerId, peerDb };
+  return {
+    net,
+    send,
+    sendBrokenStream,
+    peerMgr: internals.peerMgr,
+    peerId,
+    peerDb,
+    registrationOptions: () => registrationOptions,
+    connectionCloses: () => connectionCloses,
+  };
 }
 
 function validHandshakeFrame(): Uint8Array {
@@ -174,7 +212,6 @@ function validHandshakeFrame(): Uint8Array {
     nodeName: 'peer',
     chainHeight: 7,
     capabilities: [],
-    sessionMagic: 1234,
   });
 }
 
@@ -192,7 +229,7 @@ function makeOutboundHarness(opts: { closeRejects?: boolean } = {}) {
   const internals = net as unknown as {
     libp2p: unknown;
     peerMgr: PeerManager;
-    runOutboundHandshake(id: string): Promise<HandshakeResult>;
+    runOutboundHandshake(conn: unknown): Promise<HandshakeResult>;
   };
   internals.libp2p = {
     getPeers: () => [{ toString: () => peerId }],
@@ -200,7 +237,18 @@ function makeOutboundHarness(opts: { closeRejects?: boolean } = {}) {
     getConnections: () => [],
     hangUp: () => Promise.resolve(),
     peerId: { toString: () => 'self-peer-id' },
-    dialProtocol: async () => ({
+  };
+  internals.peerMgr.addPeer({
+    id: peerId,
+    multiaddrs: [],
+    protocols: [],
+    connectedAt: Date.now(),
+  });
+  const conn = {
+    id: 'outbound-conn',
+    direction: 'outbound' as const,
+    remotePeer: { toString: () => peerId },
+    newStream: async () => ({
       sink: async (chunks: Iterable<Uint8Array>) => {
         for await (const _c of chunks) { /* written */ }
       },
@@ -212,13 +260,7 @@ function makeOutboundHarness(opts: { closeRejects?: boolean } = {}) {
       },
     }),
   };
-  internals.peerMgr.addPeer({
-    id: peerId,
-    multiaddrs: [],
-    protocols: [],
-    connectedAt: Date.now(),
-  });
-  return () => internals.runOutboundHandshake(peerId);
+  return () => internals.runOutboundHandshake(conn);
 }
 
 describe('outbound handshake — the finally', () => {
@@ -407,7 +449,6 @@ describe('inbound handshake handler — frame-tier rejection', () => {
       nodeName: 'peer',
       chainHeight: 7,
       capabilities: [],
-      sessionMagic: 1234,
     });
     const written = await send(raw);
 
@@ -449,7 +490,6 @@ function peerHandshakeFrame(version: number, declaredAddress?: string): Uint8Arr
     chainHeight: 7,
     ...(declaredAddress ? { declaredAddress } : {}),
     capabilities: [],
-    sessionMagic: 1234,
   });
 }
 
@@ -495,13 +535,15 @@ describe('inbound handshake handler — the era gate flips through the tip', () 
 // ---------------------------------------------------------------------------
 
 describe('inbound handshake handler — the record keeps the declared version', () => {
-  it('records the peer\'s declared version and stamps it on the metadata', async () => {
-    const addr = '/ip4/9.9.9.9/tcp/9000';
-    const { send, peerMgr, peerId, peerDb } = makeHandshakeHarness({ chainHeight: 0 });
+  it('records the peer\'s declared version at lastSeenMs 0 and stamps it on the metadata', async () => {
+    const peerId = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
+    const addr = `/ip4/9.9.9.9/tcp/9000/p2p/${peerId}`;
+    const { send, peerMgr, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: peerId });
 
     await send(peerHandshakeFrame(2, addr));
 
     expect(peerDb.get(addr)?.protocolVersion).toBe(2);
+    expect(peerDb.get(addr)?.lastSeenMs).toBe(0);
     expect(peerMgr.getPeerMetadata(peerId)?.protocolVersion).toBe(2);
   });
 });
@@ -525,9 +567,327 @@ describe('inbound handshake handler — a stream from our own peer id', () => {
 
     expect(isEmptyReply(written)).toBe(true);
     expect(peerMgr.getPeerMetadata('self-peer-id')?.state).not.toBe(PeerState.Active);
-    // validHandshakeFrame() declares no address, so a written record would
-    // land under the stream's remoteAddr — the harness's fixed value.
+    // The handshake's self check runs before any PeerDb write, and
+    // nothing landing under the handshake's remoteAddr is itself the
+    // rule for every handshake declaring no address
+    // (NET_INTERFACE → Handshake →
+    // "A declared address is hearsay until a dial names it").
     expect(peerDb.get('/ip4/127.0.0.1/tcp/1234')).toBeNull();
     expect(peerMgr.getPeerMetadata('self-peer-id')?.penaltyCount ?? 0).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A connection carries one handshake, opened by
+// the side that dialled it" — the read bound and the stream limit per
+// connection; a second handshake stream on a connection that has carried one
+// closes unread, with no penalty.
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — one handshake stream a connection', () => {
+  it('bans a peer whose handshake stream carries bytes past the frame cap', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandshakeHarness({ chainHeight: 0 });
+
+    // Two mebibytes of zeros — far above the 984-byte frame cap, far below
+    // the stream byte cap. The read bounded by the frame cap refuses it as
+    // a protocol violation.
+    const twoMiB = new Uint8Array(2 * 1024 * 1024);
+    await send(twoMiB);
+
+    expect(peerMgr.isBanned(peerId)).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('registers the handshake handler with maxInboundStreams of 1', () => {
+    const { registrationOptions } = makeHandshakeHarness();
+    expect(registrationOptions()?.maxInboundStreams).toBe(1);
+  });
+
+  it('closes a second handshake stream on the same connection unread', async () => {
+    const { send, peerMgr, peerId, net } = makeHandshakeHarness({ chainHeight: 0 });
+    let activeCount = 0;
+    net.onPeerActive((id) => { if (id === peerId) activeCount++; });
+
+    const first = await send(validHandshakeFrame(), { connectionId: 'conn-A' });
+    // control: first handshake is answered and the peer becomes Active
+    expect(first).toHaveLength(1);
+    expect(first[0]!.length).toBeGreaterThan(0);
+    expect(peerMgr.getPeerMetadata(peerId)?.state).toBe(PeerState.Active);
+
+    const second = await send(validHandshakeFrame(), { connectionId: 'conn-A' });
+
+    expect(second).toHaveLength(0);
+    expect(activeCount).toBe(1);
+    expect(peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A peer becomes Active once" — a handshake
+// that completes for a peer already Active, on a second connection, is
+// validated and answered when this node is the listener, and records and
+// raises nothing.
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — a peer becomes Active once', () => {
+  it('a valid handshake from a peer already Active records and raises nothing', async () => {
+    const peerId = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
+    const firstAddr = `/ip4/9.9.9.9/tcp/9000/p2p/${peerId}`;
+    const secondAddr = `/ip4/8.8.8.8/tcp/8000/p2p/${peerId}`;
+    const { send, peerMgr, peerDb, net } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: peerId });
+    let activeCount = 0;
+    net.onPeerActive((id) => { if (id === peerId) activeCount++; });
+
+    const first = await send(peerHandshakeFrame(1, firstAddr), { connectionId: 'conn-A' });
+    // controls: first handshake is answered, the peer is Active, the record is written at lastSeenMs 0
+    expect(first).toHaveLength(1);
+    expect(peerMgr.getPeerMetadata(peerId)?.state).toBe(PeerState.Active);
+    expect(peerDb.get(firstAddr)?.protocolVersion).toBe(1);
+    expect(peerDb.get(firstAddr)?.lastSeenMs).toBe(0);
+
+    const second = await send(peerHandshakeFrame(1, secondAddr), { connectionId: 'conn-B' });
+
+    // control: this node is the listener on the second connection, so its reply
+    // is a handshake frame
+    expect(second).toHaveLength(1);
+    expect(decodeHandshakeBody(decodeFrame(MAGIC, second[0]!).body)).not.toBeNull();
+
+    expect(activeCount).toBe(1);
+    expect(peerDb.get(firstAddr)?.protocolVersion).toBe(1);
+    expect(peerDb.get(secondAddr)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A handshake that does not complete ends its
+// connection" — every return path that does not complete the handshake closes
+// the connection it ran on, including a fault of this node's own.
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — every return path closes the connection', () => {
+  // NET_INTERFACE → Handshake → "A handshake that does not complete ends
+  // its connection". The harness tests the handler's own close on paths a
+  // real dialler would also close from — otherwise a removal of the
+  // handler's close leaves the file green on the strength of the dialler's
+  // close alone.
+  it('a frame-tier reject closes the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+
+    const raw = encodeStruct(handshakeCodec, {
+      agentName: 'dagsocial/1.0.0',
+      protocolVersion: PROTOCOL_VERSION,
+      nodeName: 'peer',
+      chainHeight: 7,
+      capabilities: [],
+    });
+    await send(raw, { connectionId: 'conn-frame' });
+
+    expect(connectionCloses().get('conn-frame') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
+  });
+
+  it('a body-tier reject closes the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const twoEra: readonly ProtocolEra[] = [
+      { version: 1, fromHeight: 0 },
+      { version: 2, fromHeight: 5 },
+    ];
+    const { send, connectionCloses } = makeHandshakeHarness({ schedule: twoEra, chainHeight: 4 });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-version' });
+
+    expect(connectionCloses().get('conn-version') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
+  });
+
+  // NET_INTERFACE → Handshake → "A handshake that does not complete ends its
+  // connection" — a fault of this node's own, from the handler's view, is a
+  // return path the handshake can reach only through the harness. The era
+  // read reaches the store through `chainHeight()`; a throw there is local,
+  // not a peer's doing, the handshake does not complete, and the connection
+  // closes with it.
+  it('the era read throwing closes the connection', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({
+      chainHeightProvider: () => {
+        throw new Error('store exploded');
+      },
+    });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-era' });
+
+    expect(connectionCloses().get('conn-era') ?? 0).toBeGreaterThanOrEqual(1);
+    errSpy.mockRestore();
+  });
+
+  // NET_INTERFACE → Handshake → "A handshake that does not complete ends its
+  // connection" — the reply-build fault: `currentEra()` reads `chainHeight()`
+  // first and succeeds; `buildOurHandshake()` reads it again and throws, so
+  // `buildHandshakeFrame(magic, this.buildOurHandshake())` is the throw site
+  // the handler's own catch owns.
+  it('the reply build throwing closes the connection', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let calls = 0;
+    const { send, connectionCloses } = makeHandshakeHarness({
+      chainHeightProvider: () => {
+        calls++;
+        if (calls === 1) return 0;
+        throw new Error('store exploded on the second call');
+      },
+    });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-build' });
+
+    // control: both calls fired — era read, then reply build
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(connectionCloses().get('conn-build') ?? 0).toBeGreaterThanOrEqual(1);
+    errSpy.mockRestore();
+  });
+
+  it('a banned peer\'s handshake refused unread closes the connection', async () => {
+    const { send, peerMgr, peerId, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+    peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, 'earlier violation');
+    expect(peerMgr.isBanned(peerId)).toBe(true);
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-banned' });
+
+    expect(connectionCloses().get('conn-banned') ?? 0).toBeGreaterThanOrEqual(1);
+  });
+
+  it('an own-peer-id stream closes the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({
+      chainHeight: 0,
+      remotePeerId: 'self-peer-id',
+    });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-self' });
+
+    expect(connectionCloses().get('conn-self') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
+  });
+
+  it('bytes past the frame cap close the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+
+    // Two mebibytes of zeros — far above the 984-byte frame cap. The read
+    // bounded by the cap refuses it as a protocol violation.
+    const twoMiB = new Uint8Array(2 * 1024 * 1024);
+    await send(twoMiB, { connectionId: 'conn-oversize' });
+
+    expect(connectionCloses().get('conn-oversize') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
+  });
+
+  it('an empty read closes the connection', async () => {
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+
+    await send(new Uint8Array(0), { connectionId: 'conn-empty' });
+
+    expect(connectionCloses().get('conn-empty') ?? 0).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a sink that throws on the reply closes the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0, sinkThrows: true });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-sink' });
+
+    expect(connectionCloses().get('conn-sink') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
+  });
+
+  it('a completed handshake does not close the connection', async () => {
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+
+    const written = await send(validHandshakeFrame(), { connectionId: 'conn-ok' });
+
+    // control: the reply is a handshake frame
+    expect(written).toHaveLength(1);
+    expect(written[0]!.length).toBeGreaterThan(0);
+    expect(connectionCloses().get('conn-ok') ?? 0).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A declared address is hearsay until a dial
+// names it" — the listener records the dialler's declared address only when
+// it is no bogus address and its /p2p/ component names the peer id the
+// connection proved, at lastSeenMs 0; a handshake that declares no address
+// records none.
+// ---------------------------------------------------------------------------
+
+const LISTENER_PEER = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
+
+describe('inbound handshake handler — a declared address is hearsay', () => {
+  it('a routable declared address naming the peer id lands at lastSeenMs 0', async () => {
+    const declared = `/ip4/9.9.9.9/tcp/9000/p2p/${LISTENER_PEER}`;
+    const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(peerHandshakeFrame(1, declared));
+
+    // control: the reply is a handshake frame
+    expect(written).toHaveLength(1);
+    expect(written[0]!.length).toBeGreaterThan(0);
+    expect(peerDb.get(declared)?.lastSeenMs).toBe(0);
+  });
+
+  it('a declared address naming another peer id leaves PeerDb empty', async () => {
+    const otherId = '12D3KooWFCoqrsf1g1oMg3SNFXfSAfxA3iT5KGwi9cXeDi5BtvNz';
+    const declared = `/ip4/9.9.9.9/tcp/9000/p2p/${otherId}`;
+    const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(peerHandshakeFrame(1, declared));
+
+    // control: the handshake is accepted
+    expect(written).toHaveLength(1);
+    expect(peerDb.get(declared)).toBeNull();
+  });
+
+  it('a bogus (loopback) declared address leaves PeerDb empty, under testnet magic', async () => {
+    const declared = `/ip4/127.0.0.1/tcp/9000/p2p/${LISTENER_PEER}`;
+    const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(peerHandshakeFrame(1, declared));
+
+    // control: the handshake is accepted
+    expect(written).toHaveLength(1);
+    expect(peerDb.get(declared)).toBeNull();
+  });
+
+  it('a handshake declaring no address leaves PeerDb empty', async () => {
+    const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(validHandshakeFrame());
+
+    // control: the handshake is accepted
+    expect(written).toHaveLength(1);
+    expect(peerDb.all()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A declared address is hearsay until a dial
+// names it" — "No address a handshake declares reaches a ban: a peer that
+// dialled this node is banned with no address".
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — the declared address never reaches a ban', () => {
+  it('a banned peer that dialled this node leaves its declared address a hint in PeerDb, isBanned false', async () => {
+    const declared = `/ip4/9.9.9.9/tcp/9000/p2p/${LISTENER_PEER}`;
+    const { send, peerDb, peerMgr } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
+
+    const written = await send(peerHandshakeFrame(1, declared));
+    // control: the handshake is accepted
+    expect(written).toHaveLength(1);
+
+    peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, LISTENER_PEER, 'test');
+    // control: the peer id is banned
+    expect(peerMgr.isBanned(LISTENER_PEER)).toBe(true);
+
+    expect(peerDb.isBanned(declared)).toBe(false);
   });
 });

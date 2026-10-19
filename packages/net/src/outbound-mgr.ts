@@ -34,8 +34,10 @@ export class OutboundManager {
     private config: NetConfig,
     private peerDb: PeerDb,
   ) {
-    this.redialCooldownMs = config.outboundRedialCooldownMs ?? 60_000;
-    this.minPeers = config.minPeers ?? 3;
+    // Both read from the config directly — the three discovery knobs are
+    // required in NetConfig (NET_INTERFACE → Outbound Manager).
+    this.redialCooldownMs = config.outboundRedialCooldownMs;
+    this.minPeers = config.minPeers;
   }
 
   /**

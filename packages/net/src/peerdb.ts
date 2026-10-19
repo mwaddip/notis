@@ -90,6 +90,24 @@ export class PeerDb {
     }
   }
 
+  /**
+   * NET_INTERFACE → PeerDb → "Persistence" — every storage call this class
+   * makes is logged and swallowed, and the in-memory table stands ahead of
+   * the store. A throw out of `ban` would otherwise leave the ban short of
+   * its hang-up (NET_INTERFACE → Handshake → "A ban ends the connection").
+   */
+  private storagePut(record: PeerRecord): void {
+    if (!this.storage) return;
+    try { this.storage.put(record); }
+    catch (err) { console.warn(`[net] peer storage put ${record.address} failed: ${String(err)}`); }
+  }
+
+  private storageDelete(addr: string): void {
+    if (!this.storage) return;
+    try { this.storage.delete(addr); }
+    catch (err) { console.warn(`[net] peer storage delete ${addr} failed: ${String(err)}`); }
+  }
+
   record(record: PeerRecord): void {
     // NET_INTERFACE → Outbound Manager →
     // "Addresses compare without their `/p2p/` component" — the self filter uses the same comparison.
@@ -97,11 +115,12 @@ export class PeerDb {
     if (this.bannedAddrs.has(addressWithoutPeerId(record.address))) return;
 
     const existing = this.entries.get(record.address);
-    const merged: PeerRecord = existing
-      ? { ...record, lastSeenMs: Math.max(existing.lastSeenMs, record.lastSeenMs) }
-      : record;
+    // NET_INTERFACE → PeerDb → "Merge — a record never rewrites a more recent one":
+    // an older record changes nothing — no field, no `lastSeenMs`, no
+    // storage call.
+    if (existing && record.lastSeenMs < existing.lastSeenMs) return;
 
-    this.entries.set(record.address, merged);
+    this.entries.set(record.address, record);
 
     // Evict oldest if over cap
     if (this.entries.size > this.cap) {
@@ -115,19 +134,19 @@ export class PeerDb {
       }
       if (oldestAddr) {
         this.entries.delete(oldestAddr);
-        this.storage?.delete(oldestAddr);
+        this.storageDelete(oldestAddr);
       }
     }
 
     // Only persist if the entry survived eviction
     if (this.entries.has(record.address)) {
-      this.storage?.put(merged);
+      this.storagePut(record);
     }
   }
 
   forget(addr: string): void {
     this.entries.delete(addr);
-    this.storage?.delete(addr);
+    this.storageDelete(addr);
   }
 
   /**
@@ -160,7 +179,7 @@ export class PeerDb {
     for (const entryAddr of this.entries.keys()) {
       if (addressWithoutPeerId(entryAddr) === key) {
         this.entries.delete(entryAddr);
-        this.storage?.delete(entryAddr);
+        this.storageDelete(entryAddr);
       }
     }
   }
@@ -182,10 +201,10 @@ export class PeerDb {
 
   /**
    * `excludeAddrs` is compared without `/p2p/` (NET_INTERFACE → Outbound
-   * Manager → "Addresses compare without their `/p2p/` component") — the
-   * caller (`OutboundManager`) normalises what it puts in the set; here only
-   * each candidate's own address needs the same treatment. `bannedAddrs`
-   * compares the same way (NET_INTERFACE → PeerDb).
+   * Manager → "Addresses compare without their `/p2p/` component") — every
+   * caller (`OutboundManager`, `servePeersBody`) normalises what it puts in
+   * the set; here only each candidate's own address needs the same treatment.
+   * `bannedAddrs` compares the same way (NET_INTERFACE → PeerDb).
    */
   recent(limit: number, excludeAddrs: Set<string>): PeerRecord[] {
     const filtered = Array.from(this.entries.values())

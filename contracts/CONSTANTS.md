@@ -327,6 +327,12 @@ under → Size caps.
 | `MAX_INBOUND_SYNC_STREAMS` | `16` | sync streams of one connection open at once | policy | decided 2026-10-15 — over three times the five an honest peer holds open toward this node — a `SyncInfo` and four queries (headers, blocks, post bodies, peers), each kind one at a time; a waiting stream is unread and costs at most the muxer's 256 KiB initial window, so 16 cost 4 MiB a connection | DECIDED | `NET_INTERFACE → Stream Protocols` |
 | `STALL_MARK_EXPIRY_MS` | `1_800_000` | 30 minutes a stall mark stands | policy | decided 2026-10-17: with each of `maxPeers` (50) outbound peers returning as its mark expires, each return holds the gate at most one header deadline (`SYNC_REQUEST_TIMEOUT_MS`, 10 s) — 50 × 10 s = 500 s, under 1 800 s, so the gate still holds; a stream of fresh peer ids is bounded by the outbound manager's dial cadence | DECIDED | `NET_INTERFACE → Stall Detection` |
 | `MAX_STALL_MARKS` | `1_024` | stall marks kept by peer id | policy | decided 2026-10-17: about 100 B an entry, so about 100 KB; dropping the oldest lets a peer back early only behind 1 024 newer stallers | DECIDED | `NET_INTERFACE → Stall Detection` |
+| `MAX_HANDSHAKE_FRAME_BYTES` | `984` | bytes of the longest handshake frame | format | a 972-byte body at every field's bound — `agentName` and `nodeName` at 255 bytes behind two-byte lengths, `declaredAddress` the same behind its `opt` byte, 64 capabilities at 65 535 behind a one-byte count, `protocolVersion` at 65 535 and `chainHeight` at `MAX_ADVERTISED_HEIGHT` — in a frame 12 bytes longer | DERIVED | `NET_INTERFACE → Handshake Body` |
+| `MAX_INBOUND_HANDSHAKE_STREAMS` | `1` | handshake streams of one connection open at once | policy | an honest dialler opens one on each connection it dials and none on one it accepted | DERIVED | `NET_INTERFACE → Handshake` |
+| `HANDSHAKE_DEADLINE_FACTOR` | `3` | a connection's handshake deadline, in `syncRequestTimeoutMs` — 30 s at `SYNC_REQUEST_TIMEOUT_MS`' default | policy | the dialler's round trip at its longest: the stream's open, the write and the read, each under `syncRequestTimeoutMs` | DERIVED | `NET_INTERFACE → Handshake` |
+| `MAX_TRACKED_SCORES` | `1_024` | penalty scores kept by peer id | policy | decided 2026-10-19: about 100 B an entry, so about 100 KB, as `MAX_STALL_MARKS`; a fresh peer id starts at zero whatever the map keeps, so a dropped entry grants nothing a new id could not take | DECIDED | `NET_INTERFACE → Accrual and decay` |
+| `MAX_TRACKED_BANS` | `10_000` | banned peer ids kept | policy | none stated for the number; a ban keys on a peer id, which regenerates freely, so the set is a bounded hint | CHOSEN | `NET_INTERFACE → Ban surfaces are unified` |
+| `MAX_BANNED_ADDRS` | `10_000` | banned addresses kept | policy | none stated for the number; the address surface of the same bounded hint | CHOSEN | `NET_INTERFACE → Ban surfaces are unified` |
 | `GOSSIP_SEEN_WINDOW_MS` | `120_000` | two minutes a gossip message's id stays seen | policy | gossipsub's default, kept; above the five heartbeats — five seconds — a message stays in a peer's gossip cache; none stated for the number | CHOSEN | `NET_INTERFACE → Gossip Topics` |
 
 ### node
@@ -388,7 +394,6 @@ check can tell an omission from an exclusion.
 |---|---|
 | `MAGIC_MAINNET`, `MAGIC_TESTNET`, `MAGIC_DEVNET`, `magic` | network identity, not a tunable — `ARCHITECTURE → Network Identity` |
 | `VLQ_SENTINEL` | the all-ones sentinel a total writer emits out of domain — `TYPES_INTERFACE → Serialization` |
-| `MAX_UINT32` | the domain bound of a `u32` field |
 | `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
 | `MODIFIER_POST_BODY` | the modifier type id — `NET_INTERFACE → ModifierRequest` |
 | `IDENTITY_RECORD_TAG` | field 1 of the identity record's AVL value, `0x80` — a layout discriminator, not a tunable — `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's key tags are `TREE_TAG`'s (`TYPES_INTERFACE → The tree keys`) |

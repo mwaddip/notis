@@ -19,11 +19,24 @@ const PENALTY_DECAY_PER_INTERVAL = 100;
  */
 export const MAX_TRACKED_BANS = 10_000;
 
+/**
+ * The most accrued scores to keep by peer id. The map is keyed by peer id and
+ * ordered by the recency of each entry's last penalty, so a peer disconnecting
+ * leaves its score for its reconnect to resume (NET_INTERFACE → Accrual and
+ * decay → "A score is kept by peer id, and outlives its connection"). Past the
+ * cap the least recently penalised entry lapses; a fresh peer id starts at zero
+ * whatever the map keeps, so a lapsed entry grants nothing a new id could not
+ * take.
+ */
+export const MAX_TRACKED_SCORES = 1_024;
+
 interface PeerEntry {
   peer: Peer;
+}
+
+interface ScoreEntry {
   penaltyScore: number;
   lastPenaltyTime: number;
-  banExpiresAt: number | null;
 }
 
 interface BanEntry {
@@ -58,6 +71,11 @@ export interface PeerBanHooks {
 
 export class PeerManager {
   private peers: Map<string, PeerEntry> = new Map();
+  // NET_INTERFACE → Accrual and decay →
+  // "A score is kept by peer id, and outlives its connection".
+  // Insertion order is the order of each entry's last penalty — every
+  // accrual deletes and sets to re-insert — so the first key is the LRU.
+  private scores: Map<string, ScoreEntry> = new Map();
   private bans: Map<string, BanEntry> = new Map();
   private metadata: Map<string, PeerMetadata> = new Map();
   private config: NetConfig;
@@ -80,14 +98,16 @@ export class PeerManager {
     return this.peers.size;
   }
 
+  /**
+   * Track a new peer's connection. The entry carries the Peer alone — a
+   * peer's score lives in the `scores` map, keyed by peer id, so a
+   * reconnect inherits its decayed accumulated score (NET_INTERFACE →
+   * Accrual and decay → "A score is kept by peer id, and outlives its
+   * connection").
+   */
   addPeer(peer: Peer): void {
     if (this.isBanned(peer.id)) return;
-    this.peers.set(peer.id, {
-      peer,
-      penaltyScore: 0,
-      lastPenaltyTime: 0,
-      banExpiresAt: null,
-    });
+    this.peers.set(peer.id, { peer });
     // Initialize peer metadata if not already present
     if (!this.metadata.has(peer.id)) {
       this.metadata.set(peer.id, {
@@ -96,20 +116,33 @@ export class PeerManager {
         penaltyCount: 0,
         lastSeenMs: Date.now(),
         address: null,
+        declaredAddress: null,
         protocolVersion: null,
       });
     }
   }
 
   /**
-   * Record the peer's declared address once the handshake reveals it. No-op
+   * Record the address this node dialled once the handshake completes. No-op
    * for an untracked peer, like setPeerState. A peer banned before this is
    * called simply has no address to propagate — that is correct, not an
-   * error.
+   * error (NET_INTERFACE → Ban surfaces are unified).
    */
   setPeerAddress(peerId: string, address: string): void {
     const meta = this.metadata.get(peerId);
     if (meta) meta.address = address;
+  }
+
+  /**
+   * Record the address the peer declared on its handshake, kept apart from
+   * the address this node dialled. No-op for an untracked peer, like
+   * setPeerState. Serves the exclusion in a `Peers` answer, and never a ban
+   * (NET_INTERFACE → Handshake →
+   * "A declared address is hearsay until a dial names it").
+   */
+  setPeerDeclaredAddress(peerId: string, address: string): void {
+    const meta = this.metadata.get(peerId);
+    if (meta) meta.declaredAddress = address;
   }
 
   /**
@@ -184,6 +217,10 @@ export class PeerManager {
     }
     this.peers.delete(peerId);
     this.metadata.delete(peerId);
+    // The ban carries the pressure the score accrued; dropping the entry
+    // frees its slot for the next peer id that misbehaves. A ban that
+    // expires re-admits the peer id with a fresh zero score.
+    this.scores.delete(peerId);
     for (const addr of addresses) this.hooks.onBan?.(addr);
     this.hooks.onBanned?.(peerId);
   }
@@ -215,7 +252,8 @@ export class PeerManager {
    * Record a penalty using the two-tier system.
    *
    * - Transient: scored (50), decays over time, peer stays in PeerDb
-   *   (timeout, slow response)
+   *   (a compatibility mismatch, or an answer that refutes its claim —
+   *   NET_INTERFACE → Peer Penalty System)
    * - ProtocolViolation: permanent ban, peer removed from PeerDb
    */
   recordPenaltyKind(kind: PenaltyKind, peerId: string, reason: string): void {
@@ -245,22 +283,45 @@ export class PeerManager {
    * and floored at zero, computed lazily here — no timers. The config field
    * keeps its "safe interval" name because @dagsocial/node sets it from the
    * environment, but it is a decay interval, not a cooldown.
+   *
+   * NET_INTERFACE → Accrual and decay →
+   * "A score is kept by peer id, and outlives its connection":
+   * a penalty against a peer not connected still records nothing, so this
+   * returns early for a peer id the manager does not hold. The accumulated
+   * score lives in a bounded map keyed by peer id, apart from the connection
+   * entry; a disconnect leaves the score and a reconnect resumes it, decayed
+   * for the time between. Each accrual deletes and sets the entry so
+   * insertion order tracks the recency of the last penalty, and the oldest
+   * entry past `MAX_TRACKED_SCORES` lapses.
    */
   private accrueScoredPenalty(peerId: string, score: number, now: number): void {
-    const entry = this.peers.get(peerId);
-    if (!entry) return;
+    if (!this.peers.has(peerId)) return;
 
     const intervalMs = this.config.penaltySafeIntervalMs;
+    const prev = this.scores.get(peerId);
+    let penaltyScore = prev?.penaltyScore ?? 0;
+    const lastPenaltyTime = prev?.lastPenaltyTime ?? now;
+
     // Clamped: a clock running backwards must not mint negative decay,
     // which would inflate the score.
-    const elapsedMs = Math.max(0, now - entry.lastPenaltyTime);
+    const elapsedMs = Math.max(0, now - lastPenaltyTime);
     if (intervalMs > 0 && elapsedMs > 0) {
       const decay = (elapsedMs / intervalMs) * PENALTY_DECAY_PER_INTERVAL;
-      entry.penaltyScore = Math.max(0, entry.penaltyScore - decay);
+      penaltyScore = Math.max(0, penaltyScore - decay);
     }
 
-    entry.penaltyScore += score;
-    entry.lastPenaltyTime = now;
+    penaltyScore += score;
+
+    // Re-insert so this entry becomes the MRU — delete+set, since Map
+    // keeps a key at its original insertion position when overwritten.
+    this.scores.delete(peerId);
+    this.scores.set(peerId, { penaltyScore, lastPenaltyTime: now });
+
+    while (this.scores.size > MAX_TRACKED_SCORES) {
+      const oldest = this.scores.keys().next().value;
+      if (oldest === undefined) break;
+      this.scores.delete(oldest);
+    }
 
     const meta = this.metadata.get(peerId);
     if (meta) {
@@ -268,7 +329,7 @@ export class PeerManager {
       meta.lastSeenMs = now;
     }
 
-    if (entry.penaltyScore >= this.config.penaltyScoreThreshold) {
+    if (penaltyScore >= this.config.penaltyScoreThreshold) {
       const banExpiresAt = now + this.config.temporalBanDurationMs;
       this.imposeBan(peerId, now, banExpiresAt);
     }

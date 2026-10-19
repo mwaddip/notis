@@ -20,6 +20,8 @@ import { PeerState, PenaltyKind } from '../src/types.js';
 import type { NetValidators } from '../src/types.js';
 import { makeConfig } from './helpers.js';
 import type { PeerManager } from '../src/peer-mgr.js';
+import { PeerDb } from '../src/peerdb.js';
+import type { PeerStorage } from '../src/peerdb.js';
 
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
@@ -112,5 +114,49 @@ describe('a ban hangs up the peer and tells the sync machine', () => {
 
     expect(hangUp).not.toHaveBeenCalled();
     expect(pm.isBanned('ghost')).toBe(true);
+  });
+
+  // NET_INTERFACE → PeerDb → "Persistence" — a throw from PeerDb's storage
+  // does not keep the ban's hang-up from firing.
+  it('a storage.delete throw during the address propagation still hangs up the connection', () => {
+    const config = makeConfig();
+    const net = new NetNode(config, validators);
+    const internals = net as unknown as Internals & { peerDb: PeerDb };
+    const hangUp = vi.fn(() => Promise.resolve());
+    const conns = [{ remotePeer: { toString: () => 'peer1' } }];
+    internals.libp2p = {
+      getConnections: () => [...conns],
+      hangUp,
+      getPeers: () => conns.map((c) => c.remotePeer),
+    };
+
+    const ADDR = '/ip4/51.15.0.1/tcp/4001';
+    let deleteThrows = false;
+    const storage: PeerStorage = {
+      loadAll: () => [],
+      put: () => {},
+      delete: () => { if (deleteThrows) throw new Error('storage delete dead'); },
+    };
+    const peerDb = new PeerDb(storage, 100, []);
+    peerDb.record({
+      address: ADDR,
+      lastSeenMs: 1,
+      agentName: 'a',
+      nodeName: 'b',
+      protocolVersion: 1,
+      capabilities: [],
+    });
+    internals.peerDb = peerDb;
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const pm = internals.peerMgr;
+    pm.addPeer({ id: 'peer1', multiaddrs: [], protocols: [], connectedAt: 0 });
+    pm.setPeerAddress('peer1', ADDR);
+
+    deleteThrows = true;
+    pm.recordPenalty('permanent', 'peer1', 0, 'test');
+
+    expect(hangUp).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
   });
 });

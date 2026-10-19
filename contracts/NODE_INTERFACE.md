@@ -5332,8 +5332,9 @@ rather than clamping.** `checkpointProver` prunes AVL versions below `height - m
 a switch reaches back `maxReorgDepth` and can fork at height 0 (Fork choice decides on verified headers →
 "The reach floor is the horizon, one rule for every fork point"), so a smaller retention window would
 prune inside the horizon a switch still reaches. The profile's own `maxReorgDepth` must be a
-positive safe integer — refused at load, never clamped. The check is a negated `>=`, so
-`NaN` — what `parseInt` answers for a non-numeric env value — is refused rather than admitted. With
+positive safe integer — refused at load, never clamped. A `MAX_PROOF_HISTORY` that names no whole number never
+reaches the comparison: the reader refuses it first (→ "Every whole-number setting is read by one reader, and a set
+value it refuses stops the node at load"). With
 the floor held at load, `reorg` finding no version at or before a fork height the reach floor admits
 is `MissingStateVersionError` — a row the store lost, fail-stop ("What the funnel's totality catch is
 FOR"), never a quiet abort that leaves the node on the lighter chain.
@@ -5350,9 +5351,20 @@ versions below `height - maxProofHistory`: a window reaching past that names hei
 four as the schedule's `RetargetParams` — `halflifeMs = RETARGET_HALFLIFE_BLOCKS · orderingBlockIdealMs`
 derived here — for the funnel, the creator and the pipeline's admission (→ Difficulty schedule).
 
-All config via environment variables with defaults. **A proof setting that names no non-negative whole number is
-refused at load, never defaulted** — `PROOF_RETENTION_BLOCKS`, `PROOF_RETENTION_BYTES`, `PROOF_WINDOW_BLOCKS`,
-`PROOF_WINDOW_NODES`: a window the node cannot read is a policy nobody chose.
+All config via environment variables with defaults. **Every whole-number setting is read by one reader, and a set
+value it refuses stops the node at load.** `loadConfig` reads `PORT`, `ADMIN_PORT`, `BLOCK_BODY_BUDGET_BYTES`,
+`MAX_MEMPOOL_ENTRIES`, `MAX_PEERS`, `MIN_PEERS`, `PEER_DB_CAP`, `OUTBOUND_REDIAL_COOLDOWN_MS`,
+`PENALTY_SCORE_THRESHOLD`, `TEMPORAL_BAN_DURATION_MS`, `PENALTY_SAFE_INTERVAL_MS`, `SYNC_REQUEST_TIMEOUT_MS`,
+`MAX_PROOF_HISTORY`, `PROOF_RETENTION_BLOCKS`, `PROOF_RETENTION_BYTES`, `PROOF_WINDOW_BLOCKS` and `PROOF_WINDOW_NODES`
+through it: decimal digits and nothing else, a safe integer, at or above the setting's floor — 1 for
+`BLOCK_BODY_BUDGET_BYTES`, `PENALTY_SAFE_INTERVAL_MS` and `SYNC_REQUEST_TIMEOUT_MS`, whose zero names nothing a node
+runs on, and 0 for every other (`MAX_PEERS=0` is a node that takes no peers) — and a port at most 65 535. An unset
+setting takes its default; a set one the reader refuses stops the node at startup naming the setting, never with a
+default in its place: a value the node cannot read is a policy nobody chose — `parseInt` answers `NaN` for `abc`,
+under which no peer is ever banned (`PENALTY_SCORE_THRESHOLD`) or every stream read throws (`SYNC_REQUEST_TIMEOUT_MS`),
+and 2 for `2.5`. The rules above stand on what the reader returns, and `BLOCK_BODY_BUDGET_BYTES` is clamped to
+`MAX_BLOCK_BODY_BYTES` after it. **The configuration is loaded once a process** — `config.ts`'s exported `config` —
+and `index.ts` reads that one; the net settings reach `NetNode` from it (NET_INTERFACE → Config).
 
 **Every variable carries a `Class`. The class is normative, not descriptive.**
 

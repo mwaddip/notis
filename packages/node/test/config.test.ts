@@ -13,9 +13,18 @@ import {
 
 const TEST_KEYS = [
   'PORT',
+  'ADMIN_PORT',
   'DB_PATH',
   'BLOCK_BODY_BUDGET_BYTES',
   'MAX_MEMPOOL_ENTRIES',
+  'MAX_PEERS',
+  'MIN_PEERS',
+  'PEER_DB_CAP',
+  'OUTBOUND_REDIAL_COOLDOWN_MS',
+  'PENALTY_SCORE_THRESHOLD',
+  'TEMPORAL_BAN_DURATION_MS',
+  'PENALTY_SAFE_INTERVAL_MS',
+  'SYNC_REQUEST_TIMEOUT_MS',
   'NETWORK_TYPE',
   'MINING_SECRET',
   'NODE_ROLE',
@@ -533,11 +542,11 @@ describe('config', () => {
       expect(loadConfig().maxProofHistory).toBe(devnetReorgDepth);
     });
 
-    // `parseInt` answers `NaN`, and `NaN < maxReorgDepth` is false — a `<`
-    // would admit the one value that makes every pruning height `NaN`.
+    // The one reader catches a non-numeric value before the comparison, so
+    // the throw names the setting rather than the comparison.
     it('refuses a non-numeric MAX_PROOF_HISTORY', async () => {
       await expect(importWithProofHistory('later')).rejects.toThrow(
-        /below maxReorgDepth/,
+        /MAX_PROOF_HISTORY/,
       );
     });
 
@@ -928,6 +937,150 @@ describe('config', () => {
       await expect(importWithBytes('-1')).rejects.toThrow(/PROOF_RETENTION_BYTES/);
       vi.resetModules();
       await expect(importWithBytes('2.5')).rejects.toThrow(/PROOF_RETENTION_BYTES/);
+    });
+  });
+
+  // NODE_INTERFACE → Configuration → "Every whole-number setting is read by
+  // one reader, and a set value it refuses stops the node at load" — the
+  // seventeen whole-number settings go through the one reader: decimal digits
+  // and nothing else, a safe integer, at or above the setting's floor (1 for
+  // BLOCK_BODY_BUDGET_BYTES, PENALTY_SAFE_INTERVAL_MS and
+  // SYNC_REQUEST_TIMEOUT_MS, 0 for every other), and a port at most 65 535.
+  //
+  // `vitest.config.ts` pins NETWORK_TYPE=devnet; `clearTestEnv` in the outer
+  // `beforeEach` wipes it, so the profile defaults to testnet
+  // (maxReorgDepth=240) unless a case re-sets NETWORK_TYPE.
+  describe('17. the one whole-number reader', () => {
+    interface Setting {
+      readonly env: string;
+      readonly floor: 0 | 1;
+      readonly port?: boolean;
+      readonly field: string;
+      readonly dflt: number;
+    }
+    const SETTINGS: readonly Setting[] = [
+      { env: 'PORT',                        floor: 0, port: true, field: 'port',                       dflt: 3000 },
+      { env: 'ADMIN_PORT',                  floor: 0, port: true, field: 'adminPort',                  dflt: 3001 },
+      { env: 'BLOCK_BODY_BUDGET_BYTES',     floor: 1,             field: 'blockBodyBudgetBytes',       dflt: MAX_BLOCK_BODY_BYTES },
+      { env: 'MAX_MEMPOOL_ENTRIES',         floor: 0,             field: 'maxMempoolEntries',          dflt: 10_000 },
+      { env: 'MAX_PEERS',                   floor: 0,             field: 'maxPeers',                   dflt: 50 },
+      { env: 'MIN_PEERS',                   floor: 0,             field: 'minPeers',                   dflt: 3 },
+      { env: 'PEER_DB_CAP',                 floor: 0,             field: 'peerDbCap',                  dflt: 1000 },
+      { env: 'OUTBOUND_REDIAL_COOLDOWN_MS', floor: 0,             field: 'outboundRedialCooldownMs',   dflt: 60_000 },
+      { env: 'PENALTY_SCORE_THRESHOLD',     floor: 0,             field: 'penaltyScoreThreshold',      dflt: 500 },
+      { env: 'TEMPORAL_BAN_DURATION_MS',    floor: 0,             field: 'temporalBanDurationMs',      dflt: 3_600_000 },
+      { env: 'PENALTY_SAFE_INTERVAL_MS',    floor: 1,             field: 'penaltySafeIntervalMs',      dflt: 120_000 },
+      { env: 'SYNC_REQUEST_TIMEOUT_MS',     floor: 1,             field: 'syncRequestTimeoutMs',       dflt: 10_000 },
+      { env: 'MAX_PROOF_HISTORY',           floor: 0,             field: 'maxProofHistory',            dflt: 1440 },
+      { env: 'PROOF_RETENTION_BLOCKS',      floor: 0,             field: 'proofRetentionBlocks',       dflt: 10_080 },
+      { env: 'PROOF_RETENTION_BYTES',       floor: 0,             field: 'proofRetentionBytes',        dflt: 2_147_483_648 },
+      { env: 'PROOF_WINDOW_BLOCKS',         floor: 0,             field: 'proofWindowBlocks',          dflt: 64 },
+      { env: 'PROOF_WINDOW_NODES',          floor: 0,             field: 'proofWindowNodes',           dflt: 250_000 },
+    ];
+    // Six values no decimal-digit reader admits: a letter string, a dotted
+    // fraction, a signed value, a scientific notation whose `parseInt` stops
+    // at `e`, a leading-space value `parseInt` reads anyway, and empty.
+    const BAD = ['abc', '2.5', '-1', '1e3', ' 7', ''] as const;
+
+    // Each setting × each bad value becomes its own `it` — a table-driven
+    // single `it` would be green as soon as any one row throws.
+
+    // 17a — the digits-and-safe-integer domain
+    describe('17a. refuses a value outside the decimal-digit domain', () => {
+      for (const s of SETTINGS) {
+        for (const bad of BAD) {
+          it(`${s.env}=${JSON.stringify(bad)} is refused naming ${s.env}`, async () => {
+            process.env[s.env] = bad;
+            await expect(import('../src/config.js')).rejects.toThrow(new RegExp(s.env));
+          });
+        }
+      }
+    });
+
+    // 17b — the floor
+    describe('17b. each setting\'s floor', () => {
+      // Floor 1: 0 names nothing a node runs on.
+      for (const s of SETTINGS.filter((x) => x.floor === 1)) {
+        it(`${s.env}=0 is refused naming ${s.env}`, async () => {
+          process.env[s.env] = '0';
+          await expect(import('../src/config.js')).rejects.toThrow(new RegExp(s.env));
+        });
+      }
+
+      // Floor 0: 0 loads as the field value, except MAX_PROOF_HISTORY which
+      // reaches the maxReorgDepth comparison on top.
+      for (const s of SETTINGS.filter((x) => x.floor === 0)) {
+        if (s.env === 'MAX_PROOF_HISTORY') {
+          // The reader admits 0; the layered rule refuses it citing
+          // `maxReorgDepth`, so the throw message names that comparison, not
+          // the reader's own domain refusal.
+          it(`${s.env}=0 reaches the maxReorgDepth comparison`, async () => {
+            process.env['NETWORK_TYPE'] = 'devnet';
+            process.env[s.env] = '0';
+            await expect(import('../src/config.js')).rejects.toThrow(/maxReorgDepth/);
+          });
+          continue;
+        }
+        it(`${s.env}=0 loads as config.${s.field} === 0`, async () => {
+          process.env[s.env] = '0';
+          const { loadConfig } = await import('../src/config.js');
+          const cfg = loadConfig();
+          expect((cfg as unknown as Record<string, unknown>)[s.field]).toBe(0);
+        });
+      }
+    });
+
+    // 17c — the port ceiling
+    describe('17c. a port above 65 535 is refused', () => {
+      for (const s of SETTINGS.filter((x) => x.port === true)) {
+        it(`${s.env}=65536 is refused naming ${s.env}`, async () => {
+          process.env[s.env] = '65536';
+          await expect(import('../src/config.js')).rejects.toThrow(new RegExp(s.env));
+        });
+      }
+    });
+
+    // 17d — unset takes the default
+    describe('17d. unset takes the table\'s default', () => {
+      for (const s of SETTINGS) {
+        it(`${s.env} unset → config.${s.field} === ${s.dflt}`, async () => {
+          const { loadConfig } = await import('../src/config.js');
+          const cfg = loadConfig();
+          expect((cfg as unknown as Record<string, unknown>)[s.field]).toBe(s.dflt);
+        });
+      }
+    });
+
+    // 17f — the safe-integer guard, probed alone
+    describe('17f. refuses a digit string above Number.MAX_SAFE_INTEGER', () => {
+      // `Number('9007199254740992')` equals 2**53 exactly — representable in
+      // float64 but outside the safe-integer range (MAX_SAFE_INTEGER = 2**53 −
+      // 1), so the reader refuses it. The port ceiling at 65 535 would catch
+      // this on PORT and ADMIN_PORT, so one non-port setting probes the
+      // safe-integer guard alone.
+      it('MIN_PEERS=9007199254740992 is refused naming MIN_PEERS', async () => {
+        process.env['MIN_PEERS'] = '9007199254740992';
+        await expect(import('../src/config.js')).rejects.toThrow(/MIN_PEERS/);
+      });
+    });
+
+    // 17e — the seven net settings reach Config
+    describe('17e. the seven net settings reach Config', () => {
+      // 5 ≥ 1 clears the floor-1 floor and 5 ≥ 0 clears the rest, so one
+      // probe value answers for every setting in the group.
+      const NET = SETTINGS.filter((x) => [
+        'MIN_PEERS', 'PEER_DB_CAP', 'OUTBOUND_REDIAL_COOLDOWN_MS',
+        'PENALTY_SCORE_THRESHOLD', 'TEMPORAL_BAN_DURATION_MS',
+        'PENALTY_SAFE_INTERVAL_MS', 'SYNC_REQUEST_TIMEOUT_MS',
+      ].includes(x.env));
+      for (const s of NET) {
+        it(`${s.env}=5 reads as config.${s.field} === 5`, async () => {
+          process.env[s.env] = '5';
+          const { loadConfig } = await import('../src/config.js');
+          const cfg = loadConfig();
+          expect((cfg as unknown as Record<string, unknown>)[s.field]).toBe(5);
+        });
+      }
     });
   });
 });

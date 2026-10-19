@@ -48,8 +48,17 @@ import {
   decodeModifierResponse,
 } from './sync-codec.js';
 import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
-import { readStreamBounded, sinkWithDeadline } from './util.js';
-import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INBOUND_SYNC_STREAMS, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
+import { readStreamBounded, sinkWithDeadline, addressWithoutPeerId, peerIdOfAddress } from './util.js';
+import {
+  HANDSHAKE_DEADLINE_FACTOR,
+  MAX_CHAIN_RESPONSE_ITEMS,
+  MAX_HANDSHAKE_FRAME_BYTES,
+  MAX_INBOUND_HANDSHAKE_STREAMS,
+  MAX_INBOUND_SYNC_STREAMS,
+  MAX_INV_IDS,
+  MAX_SERVE_BODY_BYTES,
+  MAX_STREAM_BYTES,
+} from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -378,10 +387,17 @@ export const GET_PEERS_RESPONSE_LIMIT = 8;
 
 /**
  * Serve one GetPeers request body: reply with up to GET_PEERS_RESPONSE_LIMIT
- * recently-seen PeerDb entries, excluding the requester's own address. Returns
- * the framed Peers response — `{ peers: [] }` when PeerDb has nothing, so the
- * requester is answered rather than left to time out — or `null` for a
- * malformed request, which is a protocol violation (permanent ban).
+ * recently-seen PeerDb entries, leaving out every address the requester's
+ * metadata carries — the address this node dialled, when there is one
+ * (NET_INTERFACE → Ban surfaces are unified). Returns the framed Peers
+ * response — `{ peers: [] }` when PeerDb has nothing, so the requester is
+ * answered rather than left to time out — or `null` for a malformed request,
+ * which is a protocol violation (permanent ban).
+ *
+ * Each address goes into the exclude set normalised through
+ * `addressWithoutPeerId`, so a candidate `recent()` compares bare matches a
+ * seed, a dialled or a declared spelling of the same host alike
+ * (NET_INTERFACE → PeerDb).
  *
  * Discovery is served whatever our own sync phase is: nothing here consults
  * the sync machine.
@@ -392,7 +408,6 @@ export function servePeersBody(
     peerDb: PeerDb | null;
     peerMgr: PeerManager;
     peerId: string;
-    requesterAddr: string | null;
     magic: number;
   },
 ): Uint8Array | null {
@@ -403,7 +418,9 @@ export function servePeersBody(
     return null;
   }
   const exclude = new Set<string>();
-  if (deps.requesterAddr !== null) exclude.add(deps.requesterAddr);
+  const meta = deps.peerMgr.getPeerMetadata(deps.peerId);
+  if (meta?.address) exclude.add(addressWithoutPeerId(meta.address));
+  if (meta?.declaredAddress) exclude.add(addressWithoutPeerId(meta.declaredAddress));
   const records = deps.peerDb?.recent(GET_PEERS_RESPONSE_LIMIT, exclude) ?? [];
   const peers: PeerEntryMsg[] = records.map((r) => ({
     address: r.address,
@@ -569,6 +586,32 @@ export class NetNode {
    * peer disconnects, so a disconnected peer's queue does not accrue.
    */
   private peerStreamQueues: Map<string, Promise<void>> = new Map();
+  /**
+   * The ids of connections that have carried a handshake stream — a fact
+   * kept by connection id while the connection stands, dropped at its close
+   * (NET_INTERFACE → Handshake → "A connection carries one handshake,
+   * opened by the side that dialled it"). The listener marks on arrival;
+   * `connection:close` drops.
+   */
+  private handshakenConnections: Set<string> = new Set();
+  /**
+   * The ids of connections whose handshake has completed — the listener
+   * marks after it answers a valid handshake, the dialler after its own
+   * handshake returns ok (NET_INTERFACE → Handshake →
+   * "A connection handshakes within its deadline, or is closed"). The
+   * deadline timer reads this set and closes the connection when the
+   * handshake has not completed by its expiry.
+   */
+  private completedConnections: Set<string> = new Set();
+  /**
+   * Per-connection timers that close a connection whose handshake has not
+   * completed `HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs` after its
+   * open (NET_INTERFACE → Handshake →
+   * "A connection handshakes within its deadline, or is closed"). Each timer
+   * is `unref`ed, so a live one never holds the process open; cleared at
+   * `connection:close` and at `stop()`.
+   */
+  private handshakeDeadlines: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
     this.config = config;
@@ -656,6 +699,11 @@ export class NetNode {
           // the router holds a message that passed its topic validator in the
           // message cache until the listener reports Accept, Ignore or Reject.
           asyncValidation: true,
+          // NET_INTERFACE → libp2p Stack: gossipsub alone. The library's
+          // default is `fallbackToFloodsub: true`, which pushes
+          // `/floodsub/1.0.0` onto the host's registered protocols; the
+          // option is set here so that id is not registered at all.
+          fallbackToFloodsub: false,
         }),
         identify: identify(),
         ping: ping(),
@@ -687,7 +735,7 @@ export class NetNode {
       // Create PeerDb with self-address filtering
       const listenAddrs = this.libp2p.getMultiaddrs();
       const selfAddrs = listenAddrs.map(a => a.toString());
-      this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap ?? 1000, selfAddrs);
+      this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap, selfAddrs);
 
       // Create SyncMachine with lazy store bridge and wire the scheduler's
       // injected shape (NET_INTERFACE → Sync Handler Registration).
@@ -738,6 +786,10 @@ export class NetNode {
         const peerId = conn?.remotePeer?.toString() ?? 'unknown';
         const direction = conn?.direction ?? '?';
         console.log(`[net] connection:open peer=${peerId} dir=${direction}`);
+        // NET_INTERFACE → Handshake →
+        // "A connection handshakes within its deadline, or is closed":
+        // the deadline starts at connection:open, per connection id.
+        if (typeof conn?.id === 'string') this.startHandshakeDeadline(conn);
       });
 
       this.libp2p.addEventListener('peer:connect', (evt: any) => {
@@ -767,6 +819,22 @@ export class NetNode {
         const durationMs = (timeline?.close && timeline?.open)
           ? timeline.close - timeline.open
           : '?';
+        // NET_INTERFACE → Handshake → "A connection carries one handshake,
+        // opened by the side that dialled it": the mark lives while the
+        // connection stands.
+        if (typeof conn?.id === 'string') {
+          this.handshakenConnections.delete(conn.id);
+          // NET_INTERFACE → Handshake →
+          // "A connection handshakes within its deadline, or is closed":
+          // the deadline timer and the "completed" fact live with the
+          // connection, dropped at its close.
+          this.completedConnections.delete(conn.id);
+          const timer = this.handshakeDeadlines.get(conn.id);
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            this.handshakeDeadlines.delete(conn.id);
+          }
+        }
         console.log(`[net] connection:close peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
       });
 
@@ -831,6 +899,17 @@ export class NetNode {
 
       // Log listen addresses
       console.log(`[net] listening on: ${listenAddrs.map(a => a.toString()).join(', ')}`);
+
+      // NET_INTERFACE → Handshake →
+      // "A connection handshakes within its deadline, or is closed":
+      // `createLibp2p` has already begun listening by the time the
+      // `connection:open` listener attaches, so a connection that opens in
+      // that window has no timer yet. Sweep every connection libp2p is
+      // holding and start the deadline for it; `startHandshakeDeadline` is
+      // idempotent on a connection whose timer is already running.
+      for (const conn of this.libp2p.getConnections()) {
+        this.startHandshakeDeadline(conn);
+      }
 
       // Dial each configured bootstrap peer. Each dial reports settled
       // (Active, failed or self) through `markBootstrapSettled`, which the
@@ -915,6 +994,13 @@ export class NetNode {
     this.pendingDials.clear();
     this.lastGetPeersSentMs.clear();
     this.bootstrapSettledAddrs.clear();
+    // NET_INTERFACE → Handshake →
+    // "A connection handshakes within its deadline, or is closed":
+    // every per-connection deadline clears with the node that owns it.
+    for (const timer of this.handshakeDeadlines.values()) clearTimeout(timer);
+    this.handshakeDeadlines.clear();
+    this.handshakenConnections.clear();
+    this.completedConnections.clear();
     await this.libp2p.stop();
     this.libp2p = null;
     this.topics = null;
@@ -923,6 +1009,31 @@ export class NetNode {
     this.syncMachine = null;
     this.outboundMgr = null;
     this.started = false;
+  }
+
+  /**
+   * Start a handshake deadline for a connection. Idempotent — a connection
+   * whose timer already runs is left alone; the deadline runs from the open
+   * time, never resets on a second call.
+   *
+   * NET_INTERFACE → Handshake →
+   * "A connection handshakes within its deadline, or is closed". The timer
+   * closes the connection on expiry when its handshake has not completed;
+   * a completed connection is left alone. The timer is `unref`ed, so a live
+   * one never holds the process open.
+   */
+  private startHandshakeDeadline(conn: { id: string; close(): Promise<void> }): void {
+    if (this.handshakeDeadlines.has(conn.id)) return;
+    const deadlineMs = HANDSHAKE_DEADLINE_FACTOR * this.config.syncRequestTimeoutMs;
+    const timer = setTimeout(() => {
+      this.handshakeDeadlines.delete(conn.id);
+      if (this.completedConnections.has(conn.id)) return;
+      // The close hangs the connection up. The connection:close event the
+      // close raises clears every per-connection fact, so this fires once.
+      void conn.close().catch(() => { /* already gone */ });
+    }, deadlineMs);
+    timer.unref();
+    this.handshakeDeadlines.set(conn.id, timer);
   }
 
   /**
@@ -985,37 +1096,76 @@ export class NetNode {
       }
       console.log(`[net] dial succeeded: ${addr} -> peer=${conn.remotePeer.toString()}`);
 
+      // NET_INTERFACE → Handshake →
+      // "The dial funnel handshakes only a connection it opened": when the
+      // returned connection is one the peer opened, or one that has
+      // carried a handshake, the funnel opens no handshake stream on it;
+      // it counts connected when the peer is Active, and otherwise leaves
+      // the connection to its deadline.
+      const connId = conn.id;
+      const connDirection = conn.direction;
+      if (connDirection === 'inbound' || this.handshakenConnections.has(connId)) {
+        if (source === 'seed') this.markBootstrapSettled(addr);
+        return this.peerMgr.isPeerActive(remote);
+      }
+      // NET_INTERFACE → Handshake → "A connection carries one handshake,
+      // opened by the side that dialled it": the dialler marks when it
+      // opens one.
+      this.handshakenConnections.add(connId);
+
       try {
-        const result = await this.runOutboundHandshake(conn.remotePeer.toString());
+        const result = await this.runOutboundHandshake(conn);
         if (result.ok && result.msg) {
-          this.peerMgr.setPeerState(conn.remotePeer.toString(), PeerState.Active);
-          this.peerMgr.setPeerAddress(conn.remotePeer.toString(), addr);
-          // The record and the metadata keep the peer's declared version, not
-          // ours — it is what the boundary sweep reads (NET_INTERFACE → PeerDb;
-          // → Post-Handshake Routing).
-          this.peerMgr.setPeerVersion(conn.remotePeer.toString(), result.msg.protocolVersion);
-          this.peerDb?.record({
-            address: addr,
-            lastSeenMs: Date.now(),
-            agentName: result.msg.agentName,
-            nodeName: result.msg.nodeName,
-            protocolVersion: result.msg.protocolVersion,
-            capabilities: result.peerCapabilities,
-          });
           const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
-          this.syncMachine?.onPeerActive(conn.remotePeer.toString(), result.peerHeight, dir);
-          for (const cb of this.peerActiveHandlers) {
-            try { cb(conn.remotePeer.toString(), dir); } catch (err) {
-              console.warn(`[net] peerActive handler error: ${String(err)}`);
+          // NET_INTERFACE → Handshake →
+          // "A connection handshakes within its deadline, or is closed":
+          // the dialler's handshake has completed on this connection; the
+          // deadline leaves it alone.
+          this.completedConnections.add(connId);
+          // NET_INTERFACE → Handshake → "A peer becomes Active once": a
+          // handshake that completes for a peer already Active records and
+          // raises nothing.
+          if (!this.peerMgr.isPeerActive(remote)) {
+            this.peerMgr.setPeerState(remote, PeerState.Active);
+            this.peerMgr.setPeerAddress(remote, addr);
+            // The record and the metadata keep the peer's declared version,
+            // not ours — it is what the boundary sweep reads
+            // (NET_INTERFACE → PeerDb; → Post-Handshake Routing).
+            this.peerMgr.setPeerVersion(remote, result.msg.protocolVersion);
+            this.peerDb?.record({
+              address: addr,
+              lastSeenMs: Date.now(),
+              agentName: result.msg.agentName,
+              nodeName: result.msg.nodeName,
+              protocolVersion: result.msg.protocolVersion,
+              capabilities: result.peerCapabilities,
+            });
+            this.syncMachine?.onPeerActive(remote, result.peerHeight, dir);
+            for (const cb of this.peerActiveHandlers) {
+              try { cb(remote, dir); } catch (err) {
+                console.warn(`[net] peerActive handler error: ${String(err)}`);
+              }
             }
           }
           if (source === 'seed') this.markBootstrapSettled(addr);
           return true;
         }
+        // NET_INTERFACE → Handshake →
+        // "A handshake that does not complete ends its connection"; →
+        // Outbound Manager, fill phase: an address a dialler's handshake did
+        // not complete joins the redial cooldown as a failed dial does.
+        await conn.close().catch(() => { /* already gone */ });
+        this.outboundMgr?.recordDialResult(addr, false);
         if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       } catch (handshakeErr: any) {
         console.warn(`[net] handshake with ${addr} failed: ${handshakeErr?.message ?? handshakeErr}`);
+        // NET_INTERFACE → Handshake →
+        // "A handshake that does not complete ends its connection"; →
+        // Outbound Manager, fill phase: an address a dialler's handshake did
+        // not complete joins the redial cooldown as a failed dial does.
+        await conn.close().catch(() => { /* already gone */ });
+        this.outboundMgr?.recordDialResult(addr, false);
         if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       }
@@ -1063,6 +1213,7 @@ export class NetNode {
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
+      const connId = connection.id;
       // NET_INTERFACE → Validation → "A stream write is bounded in time as
       // well": every answer on this stream is raced against the deadline the
       // reader on the other side holds (`syncRequestTimeoutMs`).
@@ -1075,6 +1226,24 @@ export class NetNode {
       const replyEmpty = async (): Promise<void> => {
         try { await sinkFrame(new Uint8Array(0)); } catch { /* peer gone */ }
       };
+      // NET_INTERFACE → Handshake →
+      // "A handshake that does not complete ends its connection":
+      // every return path that does not complete the handshake closes the
+      // connection it ran on, after whatever the Ban policy records for it.
+      const endConnection = async (): Promise<void> => {
+        try { await connection.close(); } catch { /* peer gone */ }
+      };
+
+      // NET_INTERFACE → Handshake → "A connection carries one handshake,
+      // opened by the side that dialled it": a connection that has already
+      // carried a handshake stream closes every later one unread, with no
+      // penalty. The connection it rode on keeps the handshake it carried,
+      // so this is the one return path that closes the stream alone.
+      if (typeof connId === 'string' && this.handshakenConnections.has(connId)) {
+        await stream.close().catch(() => { /* the peer is already gone */ });
+        return;
+      }
+      if (typeof connId === 'string') this.handshakenConnections.add(connId);
 
       // NET_INTERFACE → "A banned peer's handshake is refused unread". The gater
       // refuses the same predicate one layer down, at the transport; this check
@@ -1082,6 +1251,7 @@ export class NetNode {
       // and the interval before a ban's hang-up completes.
       if (this.peerMgr.isBanned(peerId)) {
         await stream.close().catch(() => { /* the peer is already gone */ });
+        await endConnection();
         return;
       }
       // NET_INTERFACE →
@@ -1091,22 +1261,25 @@ export class NetNode {
       if (peerId === libp2p.peerId.toString()) {
         console.log(`[net] inbound handshake from ${peerId}: this is our own peer id — refusing`);
         await replyEmpty();
+        await endConnection();
         return;
       }
       try {
-        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(deadlineMs));
+        const data = await readStreamBounded(stream.source, MAX_HANDSHAKE_FRAME_BYTES, AbortSignal.timeout(deadlineMs));
         if (data === null) {
-          console.warn(`[net] handshake stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
+          console.warn(`[net] handshake stream from ${peerId} exceeded ${MAX_HANDSHAKE_FRAME_BYTES} bytes`);
           this.peerMgr.recordPenaltyKind(
             PenaltyKind.ProtocolViolation,
             peerId,
             'handshake stream exceeds byte cap',
           );
           await replyEmpty();
+          await endConnection();
           return;
         }
         if (data.length === 0) {
           await replyEmpty();
+          await endConnection();
           return;
         }
 
@@ -1115,6 +1288,7 @@ export class NetNode {
           // NET_INTERFACE → "Ban policy": frame-tier reject — stream closed, no penalty.
           console.warn(`[net] inbound handshake frame from ${peerId} rejected: ${decoded.code}`);
           await replyEmpty();
+          await endConnection();
           return;
         }
         const body = decoded.body;
@@ -1128,6 +1302,7 @@ export class NetNode {
         } catch (err) {
           console.error(`[net] cannot read our era for ${peerId}: ${String(err)}`);
           await replyEmpty();
+          await endConnection();
           return;
         }
 
@@ -1144,33 +1319,51 @@ export class NetNode {
             `handshake: ${result.error}`,
           );
           await replyEmpty();
+          await endConnection();
           return;
         }
 
         const msg = result.msg;
         console.log(`[net] inbound handshake from ${peerId}: ok=true height=${msg.chainHeight}`);
 
-        const addr = msg.declaredAddress ?? connection.remoteAddr?.toString() ?? peerId;
-        this.peerMgr.setPeerAddress(peerId, addr);
-        // The record and the metadata both keep the peer's declared version, not
-        // ours — it is what the boundary sweep reads (NET_INTERFACE → PeerDb;
-        // → Post-Handshake Routing).
-        this.peerMgr.setPeerVersion(peerId, msg.protocolVersion);
-        this.peerDb?.record({
-          address: addr,
-          lastSeenMs: Date.now(),
-          agentName: msg.agentName,
-          nodeName: msg.nodeName,
-          protocolVersion: msg.protocolVersion,
-          capabilities: msg.capabilities,
-        });
+        // NET_INTERFACE → Handshake → "A peer becomes Active once": a
+        // handshake that completes for a peer already Active is answered
+        // when this node is the listener, and records and raises nothing.
+        if (!this.peerMgr.isPeerActive(peerId)) {
+          // The metadata keeps the peer's declared version, not ours — it
+          // is what the boundary sweep reads
+          // (NET_INTERFACE → Post-Handshake Routing).
+          this.peerMgr.setPeerVersion(peerId, msg.protocolVersion);
+          // NET_INTERFACE → Handshake →
+          // "A declared address is hearsay until a dial names it": the
+          // listener records the dialler's declared address only when it
+          // is no bogus address and its `/p2p/` component names the peer
+          // id the connection proved, at lastSeenMs 0; a handshake that
+          // declares no address records none.
+          const declared = msg.declaredAddress;
+          if (
+            declared !== undefined
+            && !isBogusAddress(declared, this.config.magic)
+            && peerIdOfAddress(declared) === peerId
+          ) {
+            this.peerMgr.setPeerDeclaredAddress(peerId, declared);
+            this.peerDb?.record({
+              address: declared,
+              lastSeenMs: 0,
+              agentName: msg.agentName,
+              nodeName: msg.nodeName,
+              protocolVersion: msg.protocolVersion,
+              capabilities: msg.capabilities,
+            });
+          }
 
-        this.peerMgr.setPeerState(peerId, PeerState.Active);
-        const dir = (connection.direction ?? 'inbound') as 'inbound' | 'outbound';
-        this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
-        for (const cb of this.peerActiveHandlers) {
-          try { cb(peerId, dir); } catch (err) {
-            console.warn(`[net] peerActive handler error: ${String(err)}`);
+          this.peerMgr.setPeerState(peerId, PeerState.Active);
+          const dir = (connection.direction ?? 'inbound') as 'inbound' | 'outbound';
+          this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
+          for (const cb of this.peerActiveHandlers) {
+            try { cb(peerId, dir); } catch (err) {
+              console.warn(`[net] peerActive handler error: ${String(err)}`);
+            }
           }
         }
 
@@ -1183,9 +1376,15 @@ export class NetNode {
         } catch (err) {
           console.error(`[net] cannot build our handshake for ${peerId}: ${String(err)}`);
           await replyEmpty();
+          await endConnection();
           return;
         }
         await sinkFrame(response);
+        // NET_INTERFACE → Handshake →
+        // "A connection handshakes within its deadline, or is closed":
+        // the listener's handshake has completed on this connection; the
+        // deadline leaves it alone.
+        if (typeof connId === 'string') this.completedConnections.add(connId);
       } catch (err) {
         // The empty frame is all we can say to a peer whose handshake did not
         // complete; the log is what separates that from a peer that never
@@ -1193,8 +1392,9 @@ export class NetNode {
         // here too.
         console.warn(`[net] inbound handshake handler failed for ${peerId}: ${String(err)}`);
         await replyEmpty();
+        await endConnection();
       }
-    });
+    }, { maxInboundStreams: MAX_INBOUND_HANDSHAKE_STREAMS });
   }
 
   // -----------------------------------------------------------------------
@@ -1227,7 +1427,7 @@ export class NetNode {
       // a fault nobody foresaw surfaces as an unhandled rejection and the
       // node's backstop logs it.
       const prev = this.peerStreamQueues.get(peerId) ?? Promise.resolve();
-      const next = prev.then(() => this.serveOneSyncStream(magic, peerId, stream, connection));
+      const next = prev.then(() => this.serveOneSyncStream(magic, peerId, stream));
       this.peerStreamQueues.set(peerId, next.catch(() => { /* a per-stream fault leaves the lane open */ }));
       await next;
     }, { maxInboundStreams: MAX_INBOUND_SYNC_STREAMS });
@@ -1247,7 +1447,6 @@ export class NetNode {
     magic: number,
     peerId: string,
     stream: import('@libp2p/interface').Stream,
-    connection: { remoteAddr?: { toString(): string } },
   ): Promise<void> {
     // Default write deadline — the deadline the reader on the other side
     // holds. A `Blocks` answer is ×5 (NET_INTERFACE → Validation →
@@ -1343,16 +1542,14 @@ export class NetNode {
       }
 
       if (code === MSG_GET_PEERS) {
-        // Prefer the requester's declared address: an inbound connection's
-        // remoteAddr carries an ephemeral source port, which would make the
-        // requester-exclusion in servePeersBody a no-op.
+        // `servePeersBody` reads the requester's metadata itself, so the
+        // dialled and the declared addresses it holds are both excluded
+        // (NET_INTERFACE → Handshake →
+        // "A declared address is hearsay until a dial names it").
         const response = servePeersBody(body, {
           peerDb: this.peerDb,
           peerMgr: this.peerMgr,
           peerId,
-          requesterAddr: this.peerMgr.getPeerMetadata(peerId)?.address
-            ?? connection.remoteAddr?.toString()
-            ?? null,
           magic,
         });
         if (response) await sinkDeadline(response);
@@ -1460,26 +1657,29 @@ export class NetNode {
         .map((a) => a.toString())
         .find((a) => !isLoopbackAddress(a)),
       capabilities: [],
-      sessionMagic: Math.floor(Math.random() * 0x100000000),
     };
   }
 
-  private async runOutboundHandshake(peerId: string): Promise<HandshakeResult> {
-    if (!this.libp2p) throw new Error('Not started');
-    const peer = connectedPeer(this.libp2p, peerId);
+  private async runOutboundHandshake(
+    conn: import('@libp2p/interface').Connection,
+  ): Promise<HandshakeResult> {
+    const peerId = conn.remotePeer.toString();
     const magic = this.config.magic;
     const ourMsg = this.buildOurHandshake();
 
+    // NET_INTERFACE → Handshake → "The dial funnel handshakes only a
+    // connection it opened": the stream opens on this connection, not on
+    // whichever one libp2p's dial queue picks.
     const data = await oneRoundTrip(
-      this.libp2p,
-      peer,
-      '/dagsocial/handshake/1',
+      (signal) => conn.newStream('/dagsocial/handshake/1', { signal }),
       buildHandshakeFrame(magic, ourMsg),
       this.config,
+      1,
+      MAX_HANDSHAKE_FRAME_BYTES,
     );
 
     if (data === null) {
-      console.warn(`[net] handshake response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
+      console.warn(`[net] handshake response from ${peerId} exceeded ${MAX_HANDSHAKE_FRAME_BYTES} bytes`);
       this.peerMgr.recordPenaltyKind(
         PenaltyKind.ProtocolViolation,
         peerId,
@@ -1693,8 +1893,13 @@ export class NetNode {
     }
     const magic = this.config.magic;
     const request = encodeGetPeers(magic);
+    const libp2p = this.libp2p;
     try {
-      const data = await oneRoundTrip(this.libp2p, peer, SYNC_PROTOCOL, request, this.config);
+      const data = await oneRoundTrip(
+        (signal) => libp2p.dialProtocol(peer, SYNC_PROTOCOL, { signal }),
+        request,
+        this.config,
+      );
       if (data === null) {
         console.warn(`[net] requestPeers: response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
         return;
@@ -1847,7 +2052,8 @@ export class NetNode {
     peerId: string,
   ): Promise<{ id: string; content: string }[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
-    const peer = connectedPeer(this.libp2p, peerId);
+    const libp2p = this.libp2p;
+    const peer = connectedPeer(libp2p, peerId);
 
     const commitments = new Map<string, Uint8Array>();
     for (const entry of ids) commitments.set(entry.id, entry.contentHash);
@@ -1863,7 +2069,11 @@ export class NetNode {
         typeId: MODIFIER_POST_BODY,
         ids: chunk.map((e) => e.id),
       };
-      const raw = await oneRoundTrip(this.libp2p, peer, SYNC_PROTOCOL, encodeModifierRequest(magic, req), this.config);
+      const raw = await oneRoundTrip(
+        (signal) => libp2p.dialProtocol(peer, SYNC_PROTOCOL, { signal }),
+        encodeModifierRequest(magic, req),
+        this.config,
+      );
       if (raw === null || raw.length === 0) continue;
       const frame = decodeFrame(magic, raw);
       if (frame.code !== MSG_MODIFIER_RESPONSE) continue;

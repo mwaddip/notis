@@ -572,8 +572,9 @@ describe('Gossip on a line A — B — C', () => {
 // ---------------------------------------------------------------------------
 // A node of another network is no peer of ours
 // NET_INTERFACE → Gossip Topics → "A topic is named for its network"
-// NET_INTERFACE → Handshake → "Ban policy" — frame tier closes the stream
-// without a penalty, so the connection stands though neither becomes Active.
+// NET_INTERFACE → Handshake →
+// "A handshake that does not complete ends its connection" — a frame-tier
+// reject on either side closes the connection it ran on.
 // ---------------------------------------------------------------------------
 
 async function startBAndStranger(): Promise<{
@@ -586,14 +587,133 @@ async function startBAndStranger(): Promise<{
   if (!bAddr) throw new Error('B has no listen address');
 
   // X runs on a different frame magic; its handshake frame to B is refused at
-  // the frame tier (unknown magic), B closes the stream without a penalty, and
-  // the connection stands. X's outbound side reads B's empty frame and treats
-  // the handshake as failed. Neither side's handshake completes.
+  // the frame tier (unknown magic), and X reads B's empty frame as a failed
+  // handshake. Neither side's handshake completes, so the connection it ran
+  // on closes on both sides.
   const nodeX = new NetNode(
     makeConfig({ magic: MAGIC_DEVNET, bootstrapPeers: [bAddr] }),
     validators,
   );
   await nodeX.start();
+
+  // Wait until both sides' handshake failures have closed every connection
+  // between them. A fixed settle after that waits out two gossipsub
+  // heartbeats — any subscription record a peer would announce or mesh graft
+  // the router would reach lands within that window.
+  await vi.waitFor(
+    () => {
+      expect(nodeB.libp2pNode?.getConnections().length ?? 0).toBe(0);
+      expect(nodeX.libp2pNode?.getConnections().length ?? 0).toBe(0);
+    },
+    { timeout: 10_000, interval: 250 },
+  );
+  await new Promise((r) => setTimeout(r, SETTLE_MS));
+  return { nodeB, nodeX };
+}
+
+describe('A frame-tier refusal ends the connection to a node of another network', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop();
+    }
+  });
+  const track = (nodes: NetNode[]): void => {
+    for (const n of nodes) open.push(n);
+  };
+
+  it(
+    'the connection ends after the frame-tier refusal and neither becomes Active',
+    async () => {
+      const { nodeB, nodeX } = await startBAndStranger();
+      track([nodeB, nodeX]);
+      const bConns = nodeB.libp2pNode?.getConnections() ?? [];
+      const xConns = nodeX.libp2pNode?.getConnections() ?? [];
+      expect(bConns.length).toBe(0);
+      expect(xConns.length).toBe(0);
+      expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
+      expect(nodeX.getConnectedPeers()).not.toContain(nodeB.peerId());
+    },
+    TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A body-tier soft refusal ends the connection
+// NET_INTERFACE → Handshake →
+// "A handshake that does not complete ends its connection" — a body-tier
+// `unsupported-version` reject closes the connection it ran on, so a peer
+// whose handshake fails there carries no gossip at B.
+// ---------------------------------------------------------------------------
+
+// B's era at the next height is PROTOCOL_VERSION + 1. Y's build declares
+// PROTOCOL_VERSION (the handshake reads it directly), so B's inbound handshake
+// handler rejects Y as `unsupported-version` — Transient, 50 points, below the
+// 500-point threshold a plain `makeConfig()` carries. The soft refusal closes
+// the connection, and Y's outbound read sees an empty frame and closes its own
+// side too.
+async function startBAndSoftRefused(): Promise<{
+  nodeB: NetNode;
+  nodeY: NetNode;
+}> {
+  const nodeB = new NetNode(
+    makeConfig({
+      protocolVersionSchedule: [
+        { version: PROTOCOL_VERSION, fromHeight: 0 },
+        { version: PROTOCOL_VERSION + 1, fromHeight: 1 },
+      ],
+    }),
+    validators,
+  );
+  await nodeB.start();
+  const bAddr = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
+  if (!bAddr) throw new Error('B has no listen address');
+
+  const nodeY = new NetNode(makeConfig({ bootstrapPeers: [bAddr] }), validators);
+  await nodeY.start();
+
+  // Wait until the refusals have closed every connection between the pair.
+  await vi.waitFor(
+    () => {
+      expect(nodeB.libp2pNode?.getConnections().length ?? 0).toBe(0);
+      expect(nodeY.libp2pNode?.getConnections().length ?? 0).toBe(0);
+    },
+    { timeout: 10_000, interval: 250 },
+  );
+  await new Promise((r) => setTimeout(r, SETTLE_MS));
+  return { nodeB, nodeY };
+}
+
+// ---------------------------------------------------------------------------
+// A node of another network is no peer of ours
+// NET_INTERFACE → Gossip Topics → "A topic is named for its network" — a node
+// of another magic subscribes to its own topic pair, so B's router lists it
+// under no topic of its own and a message it publishes runs no validator of
+// B's. The connection is opened around the funnel so no handshake stream
+// runs on it; the connection stands up to B's handshake deadline
+// (HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs = 30 s under the
+// defaults), inside which gossipsub meshes.
+// ---------------------------------------------------------------------------
+
+async function startBAndStrangerLingering(): Promise<{
+  nodeB: NetNode;
+  nodeX: NetNode;
+}> {
+  // B keeps the default `syncRequestTimeoutMs` (10 s), so B's handshake
+  // deadline is 30 s. The suite completes inside that window.
+  const nodeB = new NetNode(makeConfig(), validators);
+  await nodeB.start();
+  const bAddr = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
+  if (!bAddr) throw new Error('B has no listen address');
+
+  // X runs on another magic and dials B around its own funnel — no handshake
+  // stream ever opens on the connection, so neither side's handshake runs
+  // and the connection stands up to B's deadline. gossipsub exchanges
+  // subscription records on its own protocol over this connection.
+  const nodeX = new NetNode(makeConfig({ magic: MAGIC_DEVNET }), validators);
+  await nodeX.start();
+  await nodeX.libp2pNode!.dial(multiaddr(bAddr));
 
   await vi.waitFor(
     () => {
@@ -625,7 +745,7 @@ describe('A node of another network is no peer of ours', () => {
   it(
     'a node of another magic holds a connection to B and neither is Active to the other',
     async () => {
-      const { nodeB, nodeX } = await startBAndStranger();
+      const { nodeB, nodeX } = await startBAndStrangerLingering();
       track([nodeB, nodeX]);
       const bConns = nodeB.libp2pNode?.getConnections() ?? [];
       const xConns = nodeX.libp2pNode?.getConnections() ?? [];
@@ -640,7 +760,7 @@ describe('A node of another network is no peer of ours', () => {
   it(
     'B\'s router lists no peer of another magic among the subscribers of either of B\'s own topics',
     async () => {
-      const { nodeB, nodeX } = await startBAndStranger();
+      const { nodeB, nodeX } = await startBAndStrangerLingering();
       track([nodeB, nodeX]);
       expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
       expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
@@ -663,7 +783,7 @@ describe('A node of another network is no peer of ours', () => {
   it(
     'a block X publishes runs no validator at B',
     async () => {
-      const { nodeB, nodeX } = await startBAndStranger();
+      const { nodeB, nodeX } = await startBAndStrangerLingering();
       track([nodeB, nodeX]);
       expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
       expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
@@ -683,26 +803,89 @@ describe('A node of another network is no peer of ours', () => {
   );
 });
 
+describe('A body-tier soft refusal ends the connection', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop();
+    }
+  });
+  const track = (nodes: NetNode[]): void => {
+    for (const n of nodes) open.push(n);
+  };
+
+  it(
+    'the connection ends after Y\'s soft refusal, and Y carries no block to B',
+    async () => {
+      const { nodeB, nodeY } = await startBAndSoftRefused();
+      track([nodeB, nodeY]);
+
+      // The connection the soft refusal ran on is closed, and Y never reaches
+      // Active at B.
+      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBe(0);
+      expect(nodeB.getConnectedPeers()).not.toContain(nodeY.peerId());
+
+      const bValidator = newCounter();
+      const topicsB = topicsOf(nodeB);
+      wrapValidator(nodeB, topicsB.orderingBlock, bValidator);
+
+      const block = makeBlockAt(1, PROTOCOL_VERSION + 1);
+      // NET_INTERFACE → Gossip → "A broadcast that sends nothing still resolves"
+      await expect(nodeY.broadcastOrderingBlock(block)).resolves.toBeUndefined();
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      expect(bValidator.count).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'no block of Y\'s reaches B\'s delivery hook',
+    async () => {
+      const { nodeB, nodeY } = await startBAndSoftRefused();
+      track([nodeB, nodeY]);
+
+      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBe(0);
+      expect(nodeB.getConnectedPeers()).not.toContain(nodeY.peerId());
+
+      const bDeliveries: OrderingBlock[] = [];
+      nodeB.onOrderingBlock((b) => {
+        bDeliveries.push(b);
+      });
+
+      const block = makeBlockAt(1, PROTOCOL_VERSION + 1);
+      await nodeY.broadcastOrderingBlock(block);
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      expect(bDeliveries.length).toBe(0);
+    },
+    TIMEOUT,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // A carrier that is not Active
 // NET_INTERFACE → Inbound Processing →
 //   "A gossip message that passes Stage 1 is delivered, whichever peer carried it"
-// NET_INTERFACE → Handshake → "Ban policy" — a soft refusal
-// (`unsupported-version`) closes the stream and leaves the connection standing.
-// NET_INTERFACE → Peer State Machine — a peer whose handshake does not
-// complete stays Connecting; `getConnectedPeers()` lists Active peers only.
+// NET_INTERFACE → Peer State Machine — a peer whose handshake has not
+// completed is not Active and is no entry of getConnectedPeers().
+// The carrier opens a connection to B around its own funnel, so no handshake
+// stream runs on it; the connection stands up to B's handshake deadline
+// (HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs = 30 s under the
+// defaults), inside which gossipsub meshes and the carrier publishes a
+// block that passes Stage 1.
 // ---------------------------------------------------------------------------
 
-// B's era at the next height is PROTOCOL_VERSION + 1. Y's build declares
-// PROTOCOL_VERSION (the handshake reads it directly), so B's inbound handshake
-// handler rejects Y as `unsupported-version` — Transient, 50 points, below the
-// 500-point threshold a plain `makeConfig()` carries, so no ban hangs up the
-// connection. The block Y publishes is at height 1 with its header's own
-// `protocolVersion = PROTOCOL_VERSION + 1`, which matches B's era at height 1.
-async function startBAndSoftRefused(): Promise<{
+// The block Y publishes is at height 1 with its header's own
+// `protocolVersion = PROTOCOL_VERSION + 1`, which matches B's era at height 1
+// under this schedule.
+async function startBAndCarrierLingering(): Promise<{
   nodeB: NetNode;
   nodeY: NetNode;
 }> {
+  // B's handshake deadline is 30 s under the default `syncRequestTimeoutMs`
+  // (10 s); the suite completes well inside that window.
   const nodeB = new NetNode(
     makeConfig({
       protocolVersionSchedule: [
@@ -716,8 +899,12 @@ async function startBAndSoftRefused(): Promise<{
   const bAddr = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
   if (!bAddr) throw new Error('B has no listen address');
 
-  const nodeY = new NetNode(makeConfig({ bootstrapPeers: [bAddr] }), validators);
+  // Y shares B's magic (so their topic pair matches) and dials B around its
+  // own funnel — no handshake stream opens, so Y stays Connecting at B. The
+  // mesh forms over the connection on gossipsub's own protocol.
+  const nodeY = new NetNode(makeConfig(), validators);
   await nodeY.start();
+  await nodeY.libp2pNode!.dial(multiaddr(bAddr));
 
   await vi.waitFor(
     () => {
@@ -744,7 +931,7 @@ describe('A carrier that is not Active', () => {
   it(
     'B\'s validator accepts a block Y publishes while Y is not Active at B',
     async () => {
-      const { nodeB, nodeY } = await startBAndSoftRefused();
+      const { nodeB, nodeY } = await startBAndCarrierLingering();
       track([nodeB, nodeY]);
 
       // Y holds a connection to B and is not Active at B.
@@ -771,7 +958,7 @@ describe('A carrier that is not Active', () => {
   it(
     'a block Y publishes is delivered once at B although Y is not Active there',
     async () => {
-      const { nodeB, nodeY } = await startBAndSoftRefused();
+      const { nodeB, nodeY } = await startBAndCarrierLingering();
       track([nodeB, nodeY]);
 
       expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);

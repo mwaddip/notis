@@ -16,7 +16,6 @@ import {
   isBoundedInt,
   isHeight,
   MAX_CAPABILITY_CODE,
-  MAX_UINT32,
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
 } from './msg-guards.js';
@@ -29,7 +28,6 @@ export interface HandshakeMsg {
   chainHeight: number;
   declaredAddress?: string;
   capabilities: number[];
-  sessionMagic: number;
 }
 
 /**
@@ -79,8 +77,7 @@ export function handshakePenalty(rejection: HandshakeRejection | undefined): Pen
 // Handshake codec (code 1) — NET_INTERFACE → Handshake Body
 //
 // lpUtf8(agentName) ‖ vlqU(protocolVersion) ‖ lpUtf8(nodeName) ‖
-// vlqU(chainHeight) ‖ opt(lpUtf8(declaredAddress)) ‖
-// arr(vlqU(capability)) ‖ vlqU(sessionMagic)
+// vlqU(chainHeight) ‖ opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability))
 //
 // Every domain rule fires inside `read` as a ReaderError; the decode boundary
 // collapses it to null → malformed. The version-support check runs AFTER
@@ -97,7 +94,6 @@ export const handshakeCodec: StructCodec<HandshakeMsg> = {
     writeVlqU(w, msg.chainHeight);
     writeOpt(w, msg.declaredAddress ?? null, writeLpUtf8);
     writeArr(w, msg.capabilities, (cw, c) => writeVlqU(cw, c));
-    writeVlqU(w, msg.sessionMagic);
   },
   read(r) {
     const agentName = readBoundedLpUtf8(r, MAX_NAME_BYTES, 'handshake.agentName');
@@ -117,17 +113,12 @@ export const handshakeCodec: StructCodec<HandshakeMsg> = {
       readBoundedLpUtf8(or, MAX_ADDRESS_BYTES, 'handshake.declaredAddress'),
     );
     const capabilities = readBoundedCapabilities(r, 'handshake');
-    const sessionMagic = readVlqU(r);
-    if (!isBoundedInt(sessionMagic, MAX_UINT32)) {
-      throw new ReaderError(`handshake: sessionMagic ${sessionMagic} out of domain`, 'out-of-domain');
-    }
     const msg: HandshakeMsg = {
       agentName,
       protocolVersion,
       nodeName,
       chainHeight,
       capabilities,
-      sessionMagic,
     };
     if (declaredAddressRaw !== null) msg.declaredAddress = declaredAddressRaw;
     return msg;

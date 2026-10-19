@@ -130,7 +130,6 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
       nodeName: 'peer',
       chainHeight: 7,
       capabilities: [],
-      sessionMagic: 4321,
     });
   }
 
@@ -143,11 +142,15 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
     internals.peerDb = peerDb;
     internals.outboundMgr = { recordDialResult: () => {}, recordSeedPeer: () => {} };
     internals.libp2p = {
-      dial: async () => ({ remotePeer: { toString: () => peerId }, direction: 'outbound' }),
-      dialProtocol: async () => ({
-        sink: async () => {},
-        source: (async function* () { yield replyFrame(2); })(),
-        close: async () => {},
+      dial: async () => ({
+        id: 'outbound-conn',
+        remotePeer: { toString: () => peerId },
+        direction: 'outbound',
+        newStream: async () => ({
+          sink: async () => {},
+          source: (async function* () { yield replyFrame(2); })(),
+          close: async () => {},
+        }),
       }),
       getPeers: () => [{ toString: () => peerId }],
       getMultiaddrs: () => [],
@@ -178,11 +181,15 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
       recordSeedPeer: (a: string, p: string) => { learned.push([a, p]); },
     };
     internals.libp2p = {
-      dial: async () => ({ remotePeer: { toString: () => peerId }, direction: 'outbound' }),
-      dialProtocol: async () => ({
-        sink: async () => {},
-        source: (async function* () { yield replyFrame(1); })(),
-        close: async () => {},
+      dial: async () => ({
+        id: 'outbound-conn',
+        remotePeer: { toString: () => peerId },
+        direction: 'outbound',
+        newStream: async () => ({
+          sink: async () => {},
+          source: (async function* () { yield replyFrame(1); })(),
+          close: async () => {},
+        }),
       }),
       getPeers: () => [{ toString: () => peerId }],
       getMultiaddrs: () => [],

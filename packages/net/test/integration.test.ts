@@ -723,3 +723,126 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     expect(all.some((l) => l.includes(`[net] dial succeeded: ${bareAAddr}`))).toBe(false);
   }, TIMEOUT);
 });
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "The dial funnel handshakes only a connection
+// it opened": a dial that returns a connection the peer opened opens no
+// handshake stream, and counts connected when the peer is Active.
+// ---------------------------------------------------------------------------
+
+describe('the dial funnel and the peer-opened connection', () => {
+  let nodeA: NetNode;
+  let nodeB: NetNode;
+
+  afterEach(async () => {
+    await nodeA?.stop();
+    await nodeB?.stop();
+  });
+
+  it('a dial returning the connection the peer opened runs no handshake', async () => {
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+    const bMulti = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(bMulti).toBeTruthy();
+
+    nodeA = new NetNode(makeBaseConfig({ bootstrapPeers: [bMulti!], minPeers: 0 }), validators);
+    const bPeerId = nodeB.peerId();
+    let aActiveForB = 0;
+    nodeA.onPeerActive((id) => { if (id === bPeerId) aActiveForB++; });
+    await nodeA.start();
+
+    await new Promise((r) => setTimeout(r, 3000));
+    // controls: A has B as its peer and vice versa; A's handshake with B
+    // fired A's peer-active handler once
+    expect(nodeA.getConnectedPeers()).toContain(bPeerId);
+    expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+    expect(aActiveForB).toBe(1);
+
+    const aMulti = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aMulti).toBeTruthy();
+    const internalsB = nodeB as unknown as Internals & {
+      dialAndHandshake(addr: string, source: 'seed' | 'candidate'): Promise<boolean>;
+    };
+    await internalsB.dialAndHandshake(aMulti!, 'candidate');
+    await new Promise((r) => setTimeout(r, 1000));
+
+    expect(aActiveForB).toBe(1);
+  }, TIMEOUT);
+
+  // NET_INTERFACE → Handshake → "The dial funnel handshakes only a
+  // connection it opened" — a dial that returns a connection the peer
+  // opened counts connected when the peer is Active. The funnel's skip is
+  // the one guard this case holds; A's own mark on A→B closes any stream
+  // that would ride that connection, so without the skip the dial
+  // resolves `false`.
+  it('a dial to a peer-opened connection resolves connected without a handshake', async () => {
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+    const bMulti = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(bMulti).toBeTruthy();
+
+    nodeA = new NetNode(makeBaseConfig({ bootstrapPeers: [bMulti!], minPeers: 0 }), validators);
+    await nodeA.start();
+
+    await new Promise((r) => setTimeout(r, 3000));
+    // control: A has B as its peer and vice versa
+    expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+    expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+
+    const aMulti = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aMulti).toBeTruthy();
+    const internalsB = nodeB as unknown as Internals & {
+      dialAndHandshake(addr: string, source: 'seed' | 'candidate'): Promise<boolean>;
+    };
+
+    const ok = await internalsB.dialAndHandshake(aMulti!, 'candidate');
+
+    expect(ok).toBe(true);
+  }, TIMEOUT);
+
+  // NET_INTERFACE → Handshake → "A connection carries one handshake, opened
+  // by the side that dialled it"; → "A peer becomes Active once"; → "The
+  // dial funnel handshakes only a connection it opened". A bare multiaddr
+  // (no `/p2p/`) of the peer's listen address matches neither the dialled
+  // multiaddrs (whose remote-addr carries the peer's ephemeral source
+  // port) nor a peer-id lookup, so libp2p's DialQueue opens a second
+  // connection — outbound at the dialler and unmarked. The dialler
+  // handshakes on it, the listener answers (both sides are Active), and
+  // neither side raises.
+  it('a bare dial opens a duplicate connection; the handshake on it raises nothing on either side', async () => {
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+    const bMulti = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(bMulti).toBeTruthy();
+
+    nodeA = new NetNode(makeBaseConfig({ bootstrapPeers: [bMulti!], minPeers: 0 }), validators);
+    let bActiveCount = 0;
+    nodeB.onPeerActive(() => bActiveCount++);
+    await nodeA.start();
+
+    await new Promise((r) => setTimeout(r, 3000));
+    // controls: A has B as its peer and vice versa; the initial handshake
+    // fired B's peer-active handler once for A
+    expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+    expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+    expect(bActiveCount).toBe(1);
+
+    const aListen = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aListen).toBeTruthy();
+    const aBare = aListen!.split('/p2p/')[0]!;
+    const internalsB = nodeB as unknown as Internals & {
+      dialAndHandshake(addr: string, source: 'seed' | 'candidate'): Promise<boolean>;
+    };
+
+    const ok = await internalsB.dialAndHandshake(aBare, 'candidate');
+
+    // controls: B holds two connections to A; B's dial resolves true
+    const aPeerIdStr = nodeA.peerId();
+    const bConnsToA = nodeB.libp2pNode!.getConnections()
+      .filter((c) => c.remotePeer.toString() === aPeerIdStr);
+    expect(bConnsToA).toHaveLength(2);
+    expect(ok).toBe(true);
+
+    expect(bActiveCount).toBe(1);
+  }, TIMEOUT);
+});

@@ -124,7 +124,6 @@ function validHandshakeFrame(): Uint8Array {
     nodeName: 'peer',
     chainHeight: 7,
     capabilities: [],
-    sessionMagic: 1234,
   });
 }
 
@@ -336,7 +335,6 @@ describe('onPeerPenalised', () => {
       nodeName: 'peer',
       chainHeight: 7,
       capabilities: [],
-      sessionMagic: 1234,
     });
 
     await sendHandshake(badFrame);

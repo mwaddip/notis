@@ -78,6 +78,14 @@ function unwrapPeers(response: Uint8Array): PeersMsg {
   return msg as PeersMsg;
 }
 
+/** Set up a PeerManager carrying `id` with its dialled address. */
+function requesterMgrWithDialled(id: string, dialled: string | null): PeerManager {
+  const mgr = makePeerMgr();
+  mgr.addPeer({ id, multiaddrs: [], protocols: [], connectedAt: Date.now() });
+  if (dialled !== null) mgr.setPeerAddress(id, dialled);
+  return mgr;
+}
+
 describe('servePeersBody', () => {
   it('serves at most 8 entries, never the requester or a banned address', () => {
     const peerDb = new PeerDb(null, 100, []);
@@ -89,9 +97,8 @@ describe('servePeersBody', () => {
 
     const response = servePeersBody(getPeersRequestBody(), {
       peerDb,
-      peerMgr: makePeerMgr(),
+      peerMgr: requesterMgrWithDialled('requester', requesterAddr),
       peerId: 'requester',
-      requesterAddr,
       magic: MAGIC_TESTNET,
     });
     expect(response).not.toBeNull();
@@ -110,11 +117,34 @@ describe('servePeersBody', () => {
       peerDb: new PeerDb(null, 100, []),
       peerMgr: makePeerMgr(),
       peerId: 'requester',
-      requesterAddr: null,
       magic: MAGIC_TESTNET,
     });
     expect(response).not.toBeNull();
     expect(unwrapPeers(response as Uint8Array)).toEqual({ peers: [] });
+  });
+
+  // NET_INTERFACE → Handshake → "A declared address is hearsay until a dial
+  // names it" — the Peers answer leaves out the requester's declared address.
+  it('leaves out the requester\'s declared address, which carries /p2p/', () => {
+    const requesterId = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
+    const declared = `/ip4/5.5.5.5/tcp/9000/p2p/${requesterId}`;
+    const peerDb = new PeerDb(null, 100, []);
+    peerDb.record(rec(declared, 1000));
+
+    const peerMgr = makePeerMgr();
+    peerMgr.addPeer({ id: requesterId, multiaddrs: [], protocols: [], connectedAt: Date.now() });
+    peerMgr.setPeerDeclaredAddress(requesterId, declared);
+
+    const response = servePeersBody(getPeersRequestBody(), {
+      peerDb, peerMgr, peerId: requesterId, magic: MAGIC_TESTNET,
+    });
+
+    // control: PeerDb held the declared entry
+    expect(peerDb.get(declared)).not.toBeNull();
+    expect(response).not.toBeNull();
+    const msg = unwrapPeers(response as Uint8Array);
+
+    expect(msg.peers.map((p) => p.address)).not.toContain(declared);
   });
 
   it('permanently bans the sender of a malformed GetPeers (control: valid body does not)', () => {
@@ -122,14 +152,14 @@ describe('servePeersBody', () => {
 
     const okMgr = makePeerMgr();
     const ok = servePeersBody(getPeersRequestBody(), {
-      peerDb, peerMgr: okMgr, peerId: 'good', requesterAddr: null, magic: MAGIC_TESTNET,
+      peerDb, peerMgr: okMgr, peerId: 'good', magic: MAGIC_TESTNET,
     });
     expect(ok).not.toBeNull();
     expect(okMgr.isBanned('good')).toBe(false);
 
     const banMgr = makePeerMgr();
     const bad = servePeersBody(GARBAGE, {
-      peerDb, peerMgr: banMgr, peerId: 'bad', requesterAddr: null, magic: MAGIC_TESTNET,
+      peerDb, peerMgr: banMgr, peerId: 'bad', magic: MAGIC_TESTNET,
     });
     expect(bad).toBeNull();
     expect(banMgr.isBanned('bad')).toBe(true);
@@ -231,9 +261,54 @@ describe('intakePeersBody', () => {
     expect(peerDb.count()).toBe(0);
     expect(peerMgr.isBanned('sender')).toBe(true);
   });
+
+  // NET_INTERFACE → PeerDb → "Merge — a record never rewrites a more recent one".
+  // A gossiped entry at lastSeenMs 0 does not overwrite an entry this node's
+  // own dial recorded fresh, and the storage double sees no second put.
+  it('an older gossiped record changes nothing — agent stays, storage sees one put', () => {
+    const stored: PeerRecord[] = [];
+    const puts: string[] = [];
+    const storage = {
+      loadAll: () => stored,
+      put: (r: PeerRecord) => {
+        puts.push(r.address);
+        const idx = stored.findIndex((s) => s.address === r.address);
+        if (idx >= 0) stored[idx] = r;
+        else stored.push(r);
+      },
+      delete: (addr: string) => {
+        const idx = stored.findIndex((r) => r.address === addr);
+        if (idx >= 0) stored.splice(idx, 1);
+      },
+    };
+    const peerDb = new PeerDb(storage, 100, []);
+    const fresh = '/ip4/51.15.5.5/tcp/4001';
+    peerDb.record({
+      address: fresh,
+      lastSeenMs: 1000,
+      agentName: 'A',
+      nodeName: 'from-dial',
+      protocolVersion: 1,
+      capabilities: [],
+    });
+    // control: the dialled entry carries agent A, storage saw one put
+    expect(peerDb.get(fresh)?.agentName).toBe('A');
+    expect(puts).toEqual([fresh]);
+
+    const peerMgr = makePeerMgr();
+    const usable = intakePeersBody(
+      body({ peers: [{ address: fresh, agentName: 'B', nodeName: 'from-gossip', protocolVersion: 1, capabilities: [] }] }),
+      { peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET },
+    );
+    // control: intake returned (count is 1 — one usable entry handed to PeerDb)
+    expect(usable).toBe(1);
+
+    expect(peerDb.get(fresh)?.agentName).toBe('A');
+    expect(puts).toEqual([fresh]);
+  });
 });
 
-describe('peerDbCap default (contract: soft cap 1000)', () => {
+describe("NetConfig's peerDbCap flows into PeerDb unchanged", () => {
   const validators = {
     verifyOrderingBlockPoW,
     verifyProtocolVersion,
@@ -249,20 +324,10 @@ describe('peerDbCap default (contract: soft cap 1000)', () => {
     verifyPostBody,
   };
 
-  // The fallback lives in NetNode.start(), so the test starts a real node.
   // The cap is a private PeerDb field — read via the any-escape the other
-  // suites use for internals.
-  it('constructs PeerDb with 1000 when peerDbCap is unset', async () => {
-    const node = new NetNode(makeConfig(), validators);
-    await node.start();
-    try {
-      expect((node as any).peerDb.cap).toBe(1000);
-    } finally {
-      await node.stop();
-    }
-  });
-
-  it('control: an explicit peerDbCap is honored unchanged', async () => {
+  // suites use for internals. Net holds no default (NET_INTERFACE →
+  // Outbound Manager).
+  it('an explicit peerDbCap is honored unchanged', async () => {
     const node = new NetNode({ ...makeConfig(), peerDbCap: 42 }, validators);
     await node.start();
     try {

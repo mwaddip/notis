@@ -183,3 +183,17 @@ export function addressWithoutPeerId(addr: string): string {
     return addr;
   }
 }
+
+/**
+ * The peer id named by the last `/p2p/<peerId>` component of `addr`, or
+ * `null` when the address names none or does not parse (NET_INTERFACE →
+ * Handshake → "A declared address is hearsay until a dial names it"). An
+ * unparseable or malformed id string behaves the same: no match, no throw.
+ */
+export function peerIdOfAddress(addr: string): string | null {
+  try {
+    return multiaddr(addr).getPeerId();
+  } catch {
+    return null;
+  }
+}
