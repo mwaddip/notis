@@ -248,7 +248,7 @@ describe('fetchListing — a listing past the bound fails the listing, no furthe
 // `LEDGER_READ_MAX = 10_000` (CONSTANTS → Light client reads). The cases
 // below pin that default by never passing the argument.
 describe("fetchListing's default bounds the karma listing at LEDGER_READ_MAX", () => {
-  // Honest keyset pages of PAGE_LIMIT_MAX (= 100 at node, NODE_INTERFACE →
+  // Honest keyset pages of PAGE_LIMIT_MAX (= 100 at node, CONSTANTS →
   // HTTP view bounds). Each page carries a decimal `after` cursor the next
   // request echoes; each row is a 64-hex id and a decimal value.
   const PAGE = 100;
