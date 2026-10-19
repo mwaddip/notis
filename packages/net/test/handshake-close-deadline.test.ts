@@ -225,7 +225,7 @@ describe('a connection with no handshake is closed at its deadline', () => {
   // or is closed". A keeps a short deadline (3 × syncRequestTimeoutMs = 3 s);
   // B keeps a long one (30 s). B dials A around the funnel, so no handshake
   // stream ever opens. A closes at its deadline, no penalty.
-  it.fails('A closes the connection B opened without a handshake', async () => {
+  it('A closes the connection B opened without a handshake', async () => {
     nodeA = new NetNode(makeConfig({ syncRequestTimeoutMs: 1_000 }), validators);
     await nodeA.start();
     const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();

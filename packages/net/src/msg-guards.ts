@@ -40,6 +40,15 @@ export const MAX_HANDSHAKE_FRAME_BYTES = 984;
  */
 export const MAX_INBOUND_HANDSHAKE_STREAMS = 1;
 
+/**
+ * A connection's handshake deadline, in multiples of `syncRequestTimeoutMs`
+ * (NET_INTERFACE → Handshake →
+ * "A connection handshakes within its deadline, or is closed"). The factor
+ * is the dialler's round trip at its longest: the stream's open, the write
+ * and the read, each under `syncRequestTimeoutMs`.
+ */
+export const HANDSHAKE_DEADLINE_FACTOR = 3;
+
 // ---------------------------------------------------------------------------
 // Resource limits (untrusted counts and sizes)
 //

@@ -50,6 +50,7 @@ import {
 import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
 import { readStreamBounded, sinkWithDeadline } from './util.js';
 import {
+  HANDSHAKE_DEADLINE_FACTOR,
   MAX_CHAIN_RESPONSE_ITEMS,
   MAX_HANDSHAKE_FRAME_BYTES,
   MAX_INBOUND_HANDSHAKE_STREAMS,
@@ -585,6 +586,24 @@ export class NetNode {
    * `connection:close` drops.
    */
   private handshakenConnections: Set<string> = new Set();
+  /**
+   * The ids of connections whose handshake has completed — the listener
+   * marks after it answers a valid handshake, the dialler after its own
+   * handshake returns ok (NET_INTERFACE → Handshake →
+   * "A connection handshakes within its deadline, or is closed"). The
+   * deadline timer reads this set and closes the connection when the
+   * handshake has not completed by its expiry.
+   */
+  private completedConnections: Set<string> = new Set();
+  /**
+   * Per-connection timers that close a connection whose handshake has not
+   * completed `HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs` after its
+   * open (NET_INTERFACE → Handshake →
+   * "A connection handshakes within its deadline, or is closed"). Each timer
+   * is `unref`ed, so a live one never holds the process open; cleared at
+   * `connection:close` and at `stop()`.
+   */
+  private handshakeDeadlines: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
     this.config = config;
@@ -754,6 +773,10 @@ export class NetNode {
         const peerId = conn?.remotePeer?.toString() ?? 'unknown';
         const direction = conn?.direction ?? '?';
         console.log(`[net] connection:open peer=${peerId} dir=${direction}`);
+        // NET_INTERFACE → Handshake →
+        // "A connection handshakes within its deadline, or is closed":
+        // the deadline starts at connection:open, per connection id.
+        if (typeof conn?.id === 'string') this.startHandshakeDeadline(conn);
       });
 
       this.libp2p.addEventListener('peer:connect', (evt: any) => {
@@ -786,7 +809,19 @@ export class NetNode {
         // NET_INTERFACE → Handshake → "A connection carries one handshake,
         // opened by the side that dialled it": the mark lives while the
         // connection stands.
-        if (typeof conn?.id === 'string') this.handshakenConnections.delete(conn.id);
+        if (typeof conn?.id === 'string') {
+          this.handshakenConnections.delete(conn.id);
+          // NET_INTERFACE → Handshake →
+          // "A connection handshakes within its deadline, or is closed":
+          // the deadline timer and the "completed" fact live with the
+          // connection, dropped at its close.
+          this.completedConnections.delete(conn.id);
+          const timer = this.handshakeDeadlines.get(conn.id);
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            this.handshakeDeadlines.delete(conn.id);
+          }
+        }
         console.log(`[net] connection:close peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
       });
 
@@ -851,6 +886,17 @@ export class NetNode {
 
       // Log listen addresses
       console.log(`[net] listening on: ${listenAddrs.map(a => a.toString()).join(', ')}`);
+
+      // NET_INTERFACE → Handshake →
+      // "A connection handshakes within its deadline, or is closed":
+      // `createLibp2p` has already begun listening by the time the
+      // `connection:open` listener attaches, so a connection that opens in
+      // that window has no timer yet. Sweep every connection libp2p is
+      // holding and start the deadline for it; `startHandshakeDeadline` is
+      // idempotent on a connection whose timer is already running.
+      for (const conn of this.libp2p.getConnections()) {
+        this.startHandshakeDeadline(conn);
+      }
 
       // Dial each configured bootstrap peer. Each dial reports settled
       // (Active, failed or self) through `markBootstrapSettled`, which the
@@ -935,6 +981,13 @@ export class NetNode {
     this.pendingDials.clear();
     this.lastGetPeersSentMs.clear();
     this.bootstrapSettledAddrs.clear();
+    // NET_INTERFACE → Handshake →
+    // "A connection handshakes within its deadline, or is closed":
+    // every per-connection deadline clears with the node that owns it.
+    for (const timer of this.handshakeDeadlines.values()) clearTimeout(timer);
+    this.handshakeDeadlines.clear();
+    this.handshakenConnections.clear();
+    this.completedConnections.clear();
     await this.libp2p.stop();
     this.libp2p = null;
     this.topics = null;
@@ -943,6 +996,31 @@ export class NetNode {
     this.syncMachine = null;
     this.outboundMgr = null;
     this.started = false;
+  }
+
+  /**
+   * Start a handshake deadline for a connection. Idempotent — a connection
+   * whose timer already runs is left alone; the deadline runs from the open
+   * time, never resets on a second call.
+   *
+   * NET_INTERFACE → Handshake →
+   * "A connection handshakes within its deadline, or is closed". The timer
+   * closes the connection on expiry when its handshake has not completed;
+   * a completed connection is left alone. The timer is `unref`ed, so a live
+   * one never holds the process open.
+   */
+  private startHandshakeDeadline(conn: { id: string; close(): Promise<void> }): void {
+    if (this.handshakeDeadlines.has(conn.id)) return;
+    const deadlineMs = HANDSHAKE_DEADLINE_FACTOR * this.config.syncRequestTimeoutMs;
+    const timer = setTimeout(() => {
+      this.handshakeDeadlines.delete(conn.id);
+      if (this.completedConnections.has(conn.id)) return;
+      // The close hangs the connection up. The connection:close event the
+      // close raises clears every per-connection fact, so this fires once.
+      void conn.close().catch(() => { /* already gone */ });
+    }, deadlineMs);
+    timer.unref();
+    this.handshakeDeadlines.set(conn.id, timer);
   }
 
   /**
@@ -1026,6 +1104,11 @@ export class NetNode {
         const result = await this.runOutboundHandshake(conn);
         if (result.ok && result.msg) {
           const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
+          // NET_INTERFACE → Handshake →
+          // "A connection handshakes within its deadline, or is closed":
+          // the dialler's handshake has completed on this connection; the
+          // deadline leaves it alone.
+          this.completedConnections.add(connId);
           // NET_INTERFACE → Handshake → "A peer becomes Active once": a
           // handshake that completes for a peer already Active records and
           // raises nothing.
@@ -1272,6 +1355,11 @@ export class NetNode {
           return;
         }
         await sinkFrame(response);
+        // NET_INTERFACE → Handshake →
+        // "A connection handshakes within its deadline, or is closed":
+        // the listener's handshake has completed on this connection; the
+        // deadline leaves it alone.
+        if (typeof connId === 'string') this.completedConnections.add(connId);
       } catch (err) {
         // The empty frame is all we can say to a peer whose handshake did not
         // complete; the log is what separates that from a peer that never
