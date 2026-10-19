@@ -73,8 +73,8 @@ export interface PeerMetadata {
   lastSeenMs: number;
   /**
    * The address this node dialled — recorded when the peer's handshake makes
-   * it Active; a peer that dialled this node has none (NET_INTERFACE →
-   * "Ban surfaces are unified"). This is the join key between the two ban
+   * it Active; a peer that dialled this node has none
+   * (NET_INTERFACE → Ban surfaces are unified). This is the join key between the two ban
    * surfaces: PeerManager bans by peerId, PeerDb bans by address. A ban's
    * address set opens with this field, when there is one, and grows through
    * `extendBan` as further addresses are tied to the same peer id.

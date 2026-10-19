@@ -106,7 +106,7 @@ export class PeerManager {
    * Record the address this node dialled once the handshake completes. No-op
    * for an untracked peer, like setPeerState. A peer banned before this is
    * called simply has no address to propagate — that is correct, not an
-   * error (NET_INTERFACE → "Ban surfaces are unified").
+   * error (NET_INTERFACE → Ban surfaces are unified).
    */
   setPeerAddress(peerId: string, address: string): void {
     const meta = this.metadata.get(peerId);

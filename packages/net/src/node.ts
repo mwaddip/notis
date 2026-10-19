@@ -389,7 +389,7 @@ export const GET_PEERS_RESPONSE_LIMIT = 8;
  * Serve one GetPeers request body: reply with up to GET_PEERS_RESPONSE_LIMIT
  * recently-seen PeerDb entries, leaving out every address the requester's
  * metadata carries — the address this node dialled, when there is one
- * (NET_INTERFACE → "Ban surfaces are unified"). Returns the framed Peers
+ * (NET_INTERFACE → Ban surfaces are unified). Returns the framed Peers
  * response — `{ peers: [] }` when PeerDb has nothing, so the requester is
  * answered rather than left to time out — or `null` for a malformed request,
  * which is a protocol violation (permanent ban).
