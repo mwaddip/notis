@@ -715,6 +715,30 @@ describe('inbound handshake handler — every return path closes the connection'
     errSpy.mockRestore();
   });
 
+  // NET_INTERFACE → Handshake → "A handshake that does not complete ends its
+  // connection" — the reply-build fault: `currentEra()` reads `chainHeight()`
+  // first and succeeds; `buildOurHandshake()` reads it again and throws, so
+  // `buildHandshakeFrame(magic, this.buildOurHandshake())` is the throw site
+  // the handler's own catch owns.
+  it('the reply build throwing closes the connection', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let calls = 0;
+    const { send, connectionCloses } = makeHandshakeHarness({
+      chainHeightProvider: () => {
+        calls++;
+        if (calls === 1) return 0;
+        throw new Error('store exploded on the second call');
+      },
+    });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-build' });
+
+    // control: both calls fired — era read, then reply build
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(connectionCloses().get('conn-build') ?? 0).toBeGreaterThanOrEqual(1);
+    errSpy.mockRestore();
+  });
+
   it('a banned peer\'s handshake refused unread closes the connection', async () => {
     const { send, peerMgr, peerId, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
     peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, 'earlier violation');
