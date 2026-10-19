@@ -8,7 +8,10 @@ import { hexToBytes } from '@dagsocial/types';
 import type { AnyBox, UserId } from '@dagsocial/types';
 import type { HoldingKind } from '@dagsocial/consensus';
 import { proveRange } from '../src/holdings.js';
-import { fetchListing } from '../src/boxes.js';
+import { fetchListing, proveFigures } from '../src/boxes.js';
+import { makeAnchor } from './helpers.js';
+import { profileFor } from '@dagsocial/types';
+import { LEDGER_READ_MAX } from '../src/caps.js';
 import type { HttpFetch } from '../src/http.js';
 import {
   buildHoldingsFixture,
@@ -238,4 +241,120 @@ describe('fetchListing — a listing past the bound fails the listing, no furthe
       expect(result.listing.credits!.boxes.length).toBe(BOUND);
     }
   });
+});
+
+// WEB_INTERFACE → The extension → "The verified figures" — the default itself
+// is a bound: a caller that passes no `maxBoxes` reads the ledger up to
+// `LEDGER_READ_MAX = 10_000` (CONSTANTS → Light client reads). The cases
+// below pin that default by never passing the argument.
+describe("fetchListing's default bounds the karma listing at LEDGER_READ_MAX", () => {
+  // Honest keyset pages of PAGE_LIMIT_MAX (= 100 at node, NODE_INTERFACE →
+  // HTTP view bounds). Each page carries a decimal `after` cursor the next
+  // request echoes; each row is a 64-hex id and a decimal value.
+  const PAGE = 100;
+
+  function makeKarmaFetch(totalRows: number): { fetch: HttpFetch; calls: string[] } {
+    const path = `/karma/${OWNER_HEX}`;
+    const creditsPath = `/credits/${OWNER_HEX}`;
+    const calls: string[] = [];
+    const fetch: HttpFetch = async (reqUrl: string): Promise<Response> => {
+      const u = new URL(reqUrl);
+      calls.push(`${u.pathname}${u.search}`);
+      if (u.pathname === path) {
+        const afterParam = u.searchParams.get('after');
+        const start = afterParam === null ? 0 : Number(afterParam);
+        const end = Math.min(start + PAGE, totalRows);
+        const boxes: Array<{ boxId: string; value: string }> = [];
+        for (let i = start; i < end; i++) {
+          boxes.push({ boxId: String(i).padStart(8, '0').repeat(8), value: '1' });
+        }
+        const next = end < totalRows ? String(end) : null;
+        return new Response(
+          JSON.stringify({ userId: OWNER_HEX, boxes, next, height: 1, effective: '0' }),
+          { status: 200 },
+        );
+      }
+      if (u.pathname === creditsPath) {
+        return new Response(
+          JSON.stringify({ userId: OWNER_HEX, boxes: [], next: null }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+    };
+    return { fetch, calls };
+  }
+
+  it("LEDGER_READ_MAX + 1 karma rows served in honest pages fail with LEDGER_READ_MAX named", async () => {
+    const { fetch, calls } = makeKarmaFetch(LEDGER_READ_MAX + 1);
+
+    // Default `maxBoxes` — no fourth argument.
+    const result = await fetchListing('http://a', OWNER_HEX, fetch);
+
+    // Control: the client sent at least the first karma page.
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    // Control: every call is to the karma route (the credits route is not reached).
+    expect(calls.every((c) => c.includes('/karma/'))).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain('karma');
+      expect(result.reason).toContain('10000');
+    }
+  });
+
+  it('LEDGER_READ_MAX karma rows served in honest pages read whole', async () => {
+    const { fetch, calls } = makeKarmaFetch(LEDGER_READ_MAX);
+
+    const result = await fetchListing('http://a', OWNER_HEX, fetch);
+
+    // Control: exactly one page per PAGE_LIMIT_MAX plus the credits probe.
+    expect(calls.length).toBe(Math.ceil(LEDGER_READ_MAX / PAGE) + 1);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.listing.karma.boxes.length).toBe(LEDGER_READ_MAX);
+  });
+});
+
+describe("proveRange's default bounds the range at LEDGER_READ_MAX", () => {
+  // LEDGER_READ_MAX + 1 real karma boxes under one owner: the fixture builds
+  // a BatchAVLProver with every box seeded through consensus' write path,
+  // then paging generates proofs page by page.
+  it('a real range of LEDGER_READ_MAX + 1 boxes ends unproven, no maxBoxes passed', async () => {
+    const boxes: AnyBox[] = [];
+    for (let i = 0; i < LEDGER_READ_MAX + 1; i++) {
+      boxes.push(karmaBoxFor(OWNER, 1n + BigInt(i), i + 1));
+    }
+    const { prover, stateRoot } = buildHoldingsFixture({ boxes });
+    const { fetch } = rangeFetch({ url: 'http://a', prover, stateRoot, perPage: 256 });
+
+    // Default `maxBoxes` — no sixth argument.
+    const result = await proveRange('http://a', 'karma', OWNER_HEX, { height: HEIGHT, stateRoot }, fetch);
+
+    expect(boxes.length).toBe(LEDGER_READ_MAX + 1);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe('unproven');
+      expect(result.verdict).toContain('10000');
+    }
+  }, 60_000);
+});
+
+describe("proveFigures's default threads LEDGER_READ_MAX to proveRange", () => {
+  it("a real karma range of LEDGER_READ_MAX + 1 boxes under proveFigures's default leaves karma.holdings 'unproven'", async () => {
+    const boxes: AnyBox[] = [];
+    for (let i = 0; i < LEDGER_READ_MAX + 1; i++) {
+      boxes.push(karmaBoxFor(OWNER, 1n + BigInt(i), i + 1));
+    }
+    const { prover, stateRoot } = buildHoldingsFixture({ boxes });
+    const { fetch } = rangeFetch({ url: 'http://a', prover, stateRoot, perPage: 256 });
+
+    const anchor = makeAnchor(HEIGHT, stateRoot, HEIGHT, stateRoot);
+    const listing = { karma: { boxes: [], height: HEIGHT, effective: '0' }, credits: null };
+
+    // Default `maxBoxes` — no seventh argument.
+    const result = await proveFigures('http://a', OWNER_HEX, listing, anchor, profileFor('devnet'), fetch);
+
+    expect(result.karma.holdings).toBe('unproven');
+    expect(result.karma.holdingsVerdict).toContain('10000');
+    expect(result.failed).toBe(true);
+  }, 60_000);
 });
