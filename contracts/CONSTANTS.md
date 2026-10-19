@@ -311,7 +311,8 @@ under → Size caps.
 
 > ⚠ **AHEAD OF CODE (2026-10-19).** The six rows from `MAX_HANDSHAKE_FRAME_BYTES` to `MAX_BANNED_ADDRS` lead
 > `@dagsocial/net`, whose barrel exports none of them: the first four are not in the tree, and `MAX_TRACKED_BANS`
-> and `MAX_BANNED_ADDRS` are exported by `peer-mgr.ts` and `peerdb.ts` alone.
+> and `MAX_BANNED_ADDRS` are exported by `peer-mgr.ts` and `peerdb.ts` alone. → Excluded leads it too: the barrel
+> still exports `MAX_UINT32`, the bound of the handshake's `sessionMagic` and of nothing else.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
@@ -398,7 +399,6 @@ check can tell an omission from an exclusion.
 |---|---|
 | `MAGIC_MAINNET`, `MAGIC_TESTNET`, `MAGIC_DEVNET`, `magic` | network identity, not a tunable — `ARCHITECTURE → Network Identity` |
 | `VLQ_SENTINEL` | the all-ones sentinel a total writer emits out of domain — `TYPES_INTERFACE → Serialization` |
-| `MAX_UINT32` | the domain bound of a `u32` field |
 | `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
 | `MODIFIER_POST_BODY` | the modifier type id — `NET_INTERFACE → ModifierRequest` |
 | `IDENTITY_RECORD_TAG` | field 1 of the identity record's AVL value, `0x80` — a layout discriminator, not a tunable — `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's key tags are `TREE_TAG`'s (`TYPES_INTERFACE → The tree keys`) |
