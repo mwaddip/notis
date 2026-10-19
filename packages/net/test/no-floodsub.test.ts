@@ -17,11 +17,11 @@ import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
 
-// NET_INTERFACE → libp2p Stack: "gossipsub alone — no floodsub fallback". The
-// gossipsub router registers `/floodsub/1.0.0` on the libp2p host while
-// `fallbackToFloodsub` is true, its library default; this check reads the
-// host's registered protocols and asserts the floodsub protocol id is not
-// among them.
+// NET_INTERFACE → libp2p Stack: gossipsub alone, no `/floodsub/1.0.0`
+// registered on the libp2p host. The gossipsub router pushes that protocol
+// id onto its multicodecs when `fallbackToFloodsub` is true, its library
+// default; this check reads the host's registered protocols and asserts
+// the floodsub protocol id is not among them.
 
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
