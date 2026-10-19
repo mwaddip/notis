@@ -18,11 +18,27 @@
  */
 export const MAX_ADVERTISED_HEIGHT = 100_000_000;
 
-/** Largest value for a uint32 wire field (session magic). */
-export const MAX_UINT32 = 0xffff_ffff;
-
 /** Largest protocol version / capability code accepted in a handshake. */
 export const MAX_CAPABILITY_CODE = 65_535;
+
+/**
+ * Longest handshake frame the body admits (NET_INTERFACE → Handshake Body →
+ * "The longest frame the body admits is `MAX_HANDSHAKE_FRAME_BYTES` (984)").
+ * Every field at its bound builds a 972-byte body in a frame 12 bytes longer.
+ * It bounds the handshake read (NET_INTERFACE → Handshake →
+ * "A connection carries one handshake, opened by the side that dialled it").
+ */
+export const MAX_HANDSHAKE_FRAME_BYTES = 984;
+
+/**
+ * Handshake streams of one connection a listener accepts at once
+ * (NET_INTERFACE → Handshake →
+ * "A connection carries one handshake, opened by the side that dialled it").
+ * An honest dialler opens one on each connection it dialled and none on one
+ * it accepted; the registration passes this to libp2p and a stream over the
+ * limit is aborted by libp2p before this node reads a byte.
+ */
+export const MAX_INBOUND_HANDSHAKE_STREAMS = 1;
 
 // ---------------------------------------------------------------------------
 // Resource limits (untrusted counts and sizes)

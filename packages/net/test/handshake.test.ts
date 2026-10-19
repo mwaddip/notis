@@ -38,7 +38,6 @@ const testMsg: HandshakeMsg = {
   nodeName: 'test-node',
   chainHeight: 42,
   capabilities: [1, 2, 3, 4, 5, 8, 9],
-  sessionMagic: 12345,
 };
 
 function validBody(overrides: Partial<HandshakeMsg> = {}): Uint8Array {
@@ -56,7 +55,7 @@ describe('handshake', () => {
 
   // NET_INTERFACE → Handshake Body →
   // "The longest frame the body admits is `MAX_HANDSHAKE_FRAME_BYTES` (984)"
-  it.fails('the longest handshake frame is 984 bytes', () => {
+  it('the longest handshake frame is 984 bytes', () => {
     const atBound: HandshakeMsg = {
       agentName: 'a'.repeat(MAX_NAME_BYTES),
       protocolVersion: MAX_CAPABILITY_CODE,
@@ -64,7 +63,6 @@ describe('handshake', () => {
       chainHeight: MAX_ADVERTISED_HEIGHT,
       declaredAddress: 'd'.repeat(MAX_ADDRESS_BYTES),
       capabilities: Array.from({ length: MAX_CAPABILITY_ENTRIES }, () => MAX_CAPABILITY_CODE),
-      sessionMagic: 0,
     };
     const frame = buildHandshakeFrame(MAGIC_TESTNET, atBound);
     expect(frame.length).toBe(984);
@@ -308,7 +306,7 @@ describe('handshake', () => {
       expect(decoded!.capabilities).toHaveLength(MAX_CAPABILITY_ENTRIES);
     });
 
-    it.fails('rejects a body with a field after the capabilities', () => {
+    it('rejects a body with a field after the capabilities', () => {
       // NET_INTERFACE → Handshake Body → "The body carries no session field":
       // a body ends at the capabilities. One more varint after it is trailing bytes.
       const w = new ByteWriter();

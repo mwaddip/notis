@@ -5,7 +5,7 @@ export {
   decodeHandshakePayload,
 } from './node.js';
 export type { HandshakePayload } from './node.js';
-export { PeerManager } from './peer-mgr.js';
+export { PeerManager, MAX_TRACKED_BANS } from './peer-mgr.js';
 export type { PeerBanHooks } from './peer-mgr.js';
 export { SYNC_PROTOCOL } from './sync.js';
 export {
@@ -51,7 +51,6 @@ export {
   isHeight,
   isBoundedIntArray,
   MAX_ADVERTISED_HEIGHT,
-  MAX_UINT32,
   MAX_CAPABILITY_CODE,
   MAX_INV_IDS,
   MAX_CHAIN_RESPONSE_ITEMS,
@@ -62,13 +61,15 @@ export {
   MAX_CAPABILITY_ENTRIES,
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
+  MAX_HANDSHAKE_FRAME_BYTES,
+  MAX_INBOUND_HANDSHAKE_STREAMS,
   MAX_INBOUND_SYNC_STREAMS,
   SYNC_INFO_MIN_INTERVAL_MS,
   STALL_MARK_EXPIRY_MS,
   MAX_STALL_MARKS,
 } from './msg-guards.js';
 export { isBogusAddress } from './bogus-addr.js';
-export { PeerDb } from './peerdb.js';
+export { PeerDb, MAX_BANNED_ADDRS } from './peerdb.js';
 export { OutboundManager } from './outbound-mgr.js';
 export type { ConnectionLike, OutboundTickPlan } from './outbound-mgr.js';
 export type { PeerStorage } from './peerdb.js';

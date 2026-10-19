@@ -49,7 +49,14 @@ import {
 } from './sync-codec.js';
 import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
 import { readStreamBounded, sinkWithDeadline } from './util.js';
-import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INBOUND_SYNC_STREAMS, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
+import {
+  MAX_CHAIN_RESPONSE_ITEMS,
+  MAX_HANDSHAKE_FRAME_BYTES,
+  MAX_INBOUND_SYNC_STREAMS,
+  MAX_INV_IDS,
+  MAX_SERVE_BODY_BYTES,
+  MAX_STREAM_BYTES,
+} from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -1094,9 +1101,9 @@ export class NetNode {
         return;
       }
       try {
-        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(deadlineMs));
+        const data = await readStreamBounded(stream.source, MAX_HANDSHAKE_FRAME_BYTES, AbortSignal.timeout(deadlineMs));
         if (data === null) {
-          console.warn(`[net] handshake stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
+          console.warn(`[net] handshake stream from ${peerId} exceeded ${MAX_HANDSHAKE_FRAME_BYTES} bytes`);
           this.peerMgr.recordPenaltyKind(
             PenaltyKind.ProtocolViolation,
             peerId,
@@ -1460,7 +1467,6 @@ export class NetNode {
         .map((a) => a.toString())
         .find((a) => !isLoopbackAddress(a)),
       capabilities: [],
-      sessionMagic: Math.floor(Math.random() * 0x100000000),
     };
   }
 

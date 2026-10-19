@@ -130,7 +130,6 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
       nodeName: 'peer',
       chainHeight: 7,
       capabilities: [],
-      sessionMagic: 4321,
     });
   }
 

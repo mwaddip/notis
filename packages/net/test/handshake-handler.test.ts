@@ -207,7 +207,6 @@ function validHandshakeFrame(): Uint8Array {
     nodeName: 'peer',
     chainHeight: 7,
     capabilities: [],
-    sessionMagic: 1234,
   });
 }
 
@@ -440,7 +439,6 @@ describe('inbound handshake handler — frame-tier rejection', () => {
       nodeName: 'peer',
       chainHeight: 7,
       capabilities: [],
-      sessionMagic: 1234,
     });
     const written = await send(raw);
 
@@ -482,7 +480,6 @@ function peerHandshakeFrame(version: number, declaredAddress?: string): Uint8Arr
     chainHeight: 7,
     ...(declaredAddress ? { declaredAddress } : {}),
     capabilities: [],
-    sessionMagic: 1234,
   });
 }
 
@@ -573,7 +570,7 @@ describe('inbound handshake handler — a stream from our own peer id', () => {
 // ---------------------------------------------------------------------------
 
 describe('inbound handshake handler — one handshake stream a connection', () => {
-  it.fails('bans a peer whose handshake stream carries bytes past the frame cap', async () => {
+  it('bans a peer whose handshake stream carries bytes past the frame cap', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { send, peerMgr, peerId } = makeHandshakeHarness({ chainHeight: 0 });
 
