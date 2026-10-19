@@ -257,7 +257,7 @@ describe('PeerDb', () => {
       };
     }
 
-    it.fails('a put that throws in record leaves the entry in memory', () => {
+    it('a put that throws in record leaves the entry in memory', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const t = throwingStorage();
       const db = new PeerDb(t.storage, 100, []);
@@ -269,7 +269,7 @@ describe('PeerDb', () => {
       warnSpy.mockRestore();
     });
 
-    it.fails('an eviction delete that throws in record leaves the oldest out of memory', () => {
+    it('an eviction delete that throws in record leaves the oldest out of memory', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const t = throwingStorage();
       const db = new PeerDb(t.storage, 1, []);
@@ -282,7 +282,7 @@ describe('PeerDb', () => {
       warnSpy.mockRestore();
     });
 
-    it.fails('a delete that throws in forget leaves the entry out of memory', () => {
+    it('a delete that throws in forget leaves the entry out of memory', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const t = throwingStorage();
       const db = new PeerDb(t.storage, 100, []);
@@ -295,7 +295,7 @@ describe('PeerDb', () => {
       warnSpy.mockRestore();
     });
 
-    it.fails('a delete that throws in ban leaves the entry out of memory, address banned', () => {
+    it('a delete that throws in ban leaves the entry out of memory, address banned', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const t = throwingStorage();
       const db = new PeerDb(t.storage, 100, []);

@@ -90,6 +90,24 @@ export class PeerDb {
     }
   }
 
+  /**
+   * NET_INTERFACE → PeerDb → "Persistence" — every storage call this class
+   * makes is logged and swallowed, and the in-memory table stands ahead of
+   * the store. A throw out of `ban` would otherwise leave the ban short of
+   * its hang-up (NET_INTERFACE → Handshake → "A ban ends the connection").
+   */
+  private storagePut(record: PeerRecord): void {
+    if (!this.storage) return;
+    try { this.storage.put(record); }
+    catch (err) { console.warn(`[net] peer storage put ${record.address} failed: ${String(err)}`); }
+  }
+
+  private storageDelete(addr: string): void {
+    if (!this.storage) return;
+    try { this.storage.delete(addr); }
+    catch (err) { console.warn(`[net] peer storage delete ${addr} failed: ${String(err)}`); }
+  }
+
   record(record: PeerRecord): void {
     // NET_INTERFACE → Outbound Manager →
     // "Addresses compare without their `/p2p/` component" — the self filter uses the same comparison.
@@ -116,19 +134,19 @@ export class PeerDb {
       }
       if (oldestAddr) {
         this.entries.delete(oldestAddr);
-        this.storage?.delete(oldestAddr);
+        this.storageDelete(oldestAddr);
       }
     }
 
     // Only persist if the entry survived eviction
     if (this.entries.has(record.address)) {
-      this.storage?.put(record);
+      this.storagePut(record);
     }
   }
 
   forget(addr: string): void {
     this.entries.delete(addr);
-    this.storage?.delete(addr);
+    this.storageDelete(addr);
   }
 
   /**
@@ -161,7 +179,7 @@ export class PeerDb {
     for (const entryAddr of this.entries.keys()) {
       if (addressWithoutPeerId(entryAddr) === key) {
         this.entries.delete(entryAddr);
-        this.storage?.delete(entryAddr);
+        this.storageDelete(entryAddr);
       }
     }
   }

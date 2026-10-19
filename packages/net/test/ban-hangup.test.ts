@@ -118,7 +118,7 @@ describe('a ban hangs up the peer and tells the sync machine', () => {
 
   // NET_INTERFACE → PeerDb → "Persistence" — a throw from PeerDb's storage
   // does not keep the ban's hang-up from firing.
-  it.fails('a storage.delete throw during the address propagation still hangs up the connection', () => {
+  it('a storage.delete throw during the address propagation still hangs up the connection', () => {
     const config = makeConfig();
     const net = new NetNode(config, validators);
     const internals = net as unknown as Internals & { peerDb: PeerDb };
