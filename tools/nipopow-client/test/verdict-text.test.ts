@@ -31,7 +31,10 @@ import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/t
 
 // A verdict names at most 120 characters of any one node-supplied string, and
 // the data a status is decided on is never cut: each site where node text
-// enters a verdict is handed a string of 10 000 characters.
+// enters a verdict is handed a string of 500 characters — above the 120 a
+// verdict names, so the display cap fires, and below `NAME_READ_BYTES` and
+// `HEIGHT_READ_BYTES` (1 024, the smallest route caps,
+// CONSTANTS → Light client reads), so no byte cap refuses it first.
 
 const LONG = 'Z'.repeat(500);
 const NAMED = `${'Z'.repeat(120)}…`;
