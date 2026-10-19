@@ -147,6 +147,9 @@ function makeHandshakeHarness(opts: {
   internals.registerHandshakeHandler(internals.libp2p);
   if (!captured) throw new Error('registerHandshakeHandler registered no handler');
 
+  // Counts how many times the handler closed the stub connection, keyed by
+  // its id, so a case can assert on the connection whose handshake ran.
+  const connectionCloses = new Map<string, number>();
   const drive = async (
     source: AsyncIterable<Uint8Array>,
     connectionId: string,
@@ -162,14 +165,15 @@ function makeHandshakeHarness(opts: {
       },
       close: async () => {},
     };
-    await captured!({
-      stream,
-      connection: {
-        id: connectionId,
-        remotePeer: { toString: () => peerId },
-        remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/1234' },
+    const connection = {
+      id: connectionId,
+      remotePeer: { toString: () => peerId },
+      remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/1234' },
+      close: async () => {
+        connectionCloses.set(connectionId, (connectionCloses.get(connectionId) ?? 0) + 1);
       },
-    });
+    };
+    await captured!({ stream, connection });
     return written;
   };
 
@@ -197,6 +201,7 @@ function makeHandshakeHarness(opts: {
     peerId,
     peerDb,
     registrationOptions: () => registrationOptions,
+    connectionCloses: () => connectionCloses,
   };
 }
 
@@ -644,5 +649,44 @@ describe('inbound handshake handler — a peer becomes Active once', () => {
     expect(activeCount).toBe(1);
     expect(peerDb.get(firstAddr)?.protocolVersion).toBe(1);
     expect(peerDb.get(secondAddr)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A handshake that does not complete ends its
+// connection" — every return path that does not complete the handshake closes
+// the connection it ran on, including a fault of this node's own.
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — a fault of this node\'s own closes the connection', () => {
+  // NET_INTERFACE → Handshake → "A handshake that does not complete ends its
+  // connection" — a fault of this node's own, from the handler's view, is a
+  // return path the handshake can reach only through the harness. The era
+  // read reaches the store through `chainHeight()`; a throw there is local,
+  // not a peer's doing, the handshake does not complete, and the connection
+  // closes with it.
+  it.fails('the era read throwing closes the connection', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({
+      chainHeightProvider: () => {
+        throw new Error('store exploded');
+      },
+    });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-era' });
+
+    expect(connectionCloses().get('conn-era') ?? 0).toBeGreaterThanOrEqual(1);
+    errSpy.mockRestore();
+  });
+
+  it('a completed handshake does not close the connection', async () => {
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+
+    const written = await send(validHandshakeFrame(), { connectionId: 'conn-ok' });
+
+    // control: the reply is a handshake frame
+    expect(written).toHaveLength(1);
+    expect(written[0]!.length).toBeGreaterThan(0);
+    expect(connectionCloses().get('conn-ok') ?? 0).toBe(0);
   });
 });
