@@ -74,7 +74,7 @@ describe('penalty attribution (using PeerManager)', () => {
 
     const meta = mgr.getPeerMetadata('peer1');
     expect(meta?.penaltyCount).toBe(2);
-    expect((mgr as any).peers.get('peer1').penaltyScore).toBe(100);
+    expect((mgr as any).scores.get('peer1').penaltyScore).toBe(100);
   });
 
   it('ProtocolViolation bans instantly at zero score and regardless of decay', () => {
@@ -145,7 +145,7 @@ describe('NetNode.penalizePeer', () => {
     const meta = peerMgr.getPeerMetadata('peer1');
     expect(meta).not.toBeNull();
     expect(meta!.penaltyCount).toBe(1);
-    expect((peerMgr as any).peers.get('peer1').penaltyScore).toBe(100);
+    expect((peerMgr as any).scores.get('peer1').penaltyScore).toBe(100);
   });
 
   it('transient records 50 against the peer', () => {
@@ -157,7 +157,7 @@ describe('NetNode.penalizePeer', () => {
     const meta = peerMgr.getPeerMetadata('peer1');
     expect(meta).not.toBeNull();
     expect(meta!.penaltyCount).toBe(1);
-    expect((peerMgr as any).peers.get('peer1').penaltyScore).toBe(50);
+    expect((peerMgr as any).scores.get('peer1').penaltyScore).toBe(50);
   });
 
   it('misbehavior reaches the manager with the stated reason', () => {
