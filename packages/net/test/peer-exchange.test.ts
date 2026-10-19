@@ -262,7 +262,7 @@ describe('intakePeersBody', () => {
     expect(peerMgr.isBanned('sender')).toBe(true);
   });
 
-  // NET_INTERFACE → PeerDb → "A record never rewrites a more recent one".
+  // NET_INTERFACE → PeerDb → "Merge — a record never rewrites a more recent one".
   // A gossiped entry at lastSeenMs 0 does not overwrite an entry this node's
   // own dial recorded fresh, and the storage double sees no second put.
   it('an older gossiped record changes nothing — agent stays, storage sees one put', () => {

@@ -115,7 +115,7 @@ export class PeerDb {
     if (this.bannedAddrs.has(addressWithoutPeerId(record.address))) return;
 
     const existing = this.entries.get(record.address);
-    // NET_INTERFACE → PeerDb → "A record never rewrites a more recent one":
+    // NET_INTERFACE → PeerDb → "Merge — a record never rewrites a more recent one":
     // an older record changes nothing — no field, no `lastSeenMs`, no
     // storage call.
     if (existing && record.lastSeenMs < existing.lastSeenMs) return;
