@@ -4922,9 +4922,6 @@ except while a branch heavier than the applied chain waits for its blocks, and t
 the blocks that do arrive (→ "A block in hand extends the applied tip"): a header whose block is withheld costs a
 fetch that stays pending, never the node's extension, its gossip or its miner.
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph's fifth item, a hold that raises `S`, leads the intake, whose
-> `gateHeld` sets `S` and runs nothing.
-
 **One intake, one at a time.** Everything that can move the chain enters the intake as one item: a `Headers` page or a
 `Blocks` answer the scheduler hands over (NET_INTERFACE → Sync Handler Registration), a gossiped block past Stage 1
 (→ Relay handlers), this node's own mined block (→ Block finalization), and a hold of net's gate that raises `S`
@@ -5136,9 +5133,6 @@ never with the applied tip, because a branch heavier than an applied tip far bel
 above the applied tip shuts the height bound, so the node's applied chain stops until the branch's blocks arrive — a
 lead that takes more work than the honest chain does over the horizon, or a miner working while the network is
 stalled.
-
-> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph's sentence on a hold that raises `S` leads the intake, whose
-> `gateHeld` sets `S` and runs nothing: a block staged at the window's edge waits for the next item.
 
 **The window.** Blocks apply by extension — along the best chain, or as a block in hand — only while
 `appliedTip < S + maxReorgDepth`, `S` the best chain's height at the last hold of net's gate (`gateHeld()`,
@@ -5888,9 +5882,9 @@ funnel:
   read of `block_headers` / `best_chain` / `staged_blocks` or the pipeline's in-memory state — a locator is at
   most `MAX_LOCATOR_HASHES` point reads; `wantedBlocks` at most `BLOCK_FETCH_WINDOW` heights when extending, and
   for a switch the walk to the fork point, bounded by the reach floor, and the shortest heavier prefix, bounded by
-  work (Fork choice decides on verified headers → "The switch.") — and the reads that
-  decode a stored row are handed over wrapped in `failStopIfCorruptChain`. `gateHeld()` sets the window's `S`
-  (Fork choice decides on verified headers → "The window")
+  work (Fork choice decides on verified headers → "The switch.") — and the reads that decode a stored row are handed
+  over wrapped in `failStopIfCorruptChain`. `gateHeld()` sets the window's `S`, and a hold that raises it runs as an
+  intake item (Fork choice decides on verified headers → "The window")
 - **`setHeadersHandler(getBlock)`**: the provider `net` reads stored blocks through — the blocks a
   served `GetBlocks` carries. The
   provider node hands over wraps the store read in `failStopIfCorruptChain`: a stored row that will
