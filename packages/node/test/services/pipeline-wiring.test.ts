@@ -264,4 +264,82 @@ describe('pipeline wired to net — registrations', () => {
     expect(exitSpy).toHaveBeenCalled();
     errSpy.mockRestore();
   });
+
+  // NODE_INTERFACE → Fork choice decides on verified headers →
+  // "The intake owns what it runs".
+  it('a non-corrupt throw inside the hold is logged under the item message, and the call returns', async () => {
+    const cap = freshCap();
+    const netWiring = await import('../../src/services/net-wiring.js');
+    const intake = await import('../../src/services/intake.js');
+    netWiring.wireNet(makeFakeNet(cap) as never);
+
+    const { generateKeyPairSync, sign: cryptoSign } = await import('crypto');
+    const { computeUtxoTxRoot } = await import('@dagsocial/types');
+    const validation = await import('@dagsocial/validation');
+    const { defaultParams, makeHeader } = await import('../helpers/make-header.js');
+    const { rawPublicKey } = await import('../helpers.js');
+    const { config } = await import('../../src/config.js');
+
+    // Match the pipeline context's `retargetParams()` from the devnet config
+    // so admission's verify accepts a height-1 header built with these.
+    const PARAMS = defaultParams({
+      anchorBits: config.orderingBlockPowTargetBits,
+      floorBits: config.orderingBlockPowTargetFloorBits,
+      ceilingBits: config.orderingBlockPowTargetCeilingBits,
+      idealMs: config.orderingBlockIdealMs,
+    });
+    const SETTLEMENT_ID = 'ff'.repeat(32);
+    const UTXO_TX_ROOT = computeUtxoTxRoot({
+      utxoTxIds: [SETTLEMENT_ID],
+      utxoTxs: [new Uint8Array(0)],
+    });
+
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const pub = rawPublicKey(publicKey);
+    const built = makeHeader({
+      height: 1,
+      parent: null,
+      params: PARAMS,
+      schedule: config.protocolVersionSchedule,
+      validatorId: pub,
+    });
+    built.header.utxoTxRoot = UTXO_TX_ROOT;
+    const target = validation.orderingPowTarget(built.header.powTargetBits);
+    if (target === null) throw new Error('pow target outside domain');
+    let found = false;
+    for (let n = 0; n < 2_000_000; n++) {
+      built.header.powNonce = n;
+      const hit = validation.powHit(built.header);
+      if (hit !== null && validation.meetsPowTarget(hit, target)) { found = true; break; }
+    }
+    if (!found) throw new Error('no nonce met target');
+    const hashHex = validation.blockHash(built.header);
+    if (hashHex === null) throw new Error('unhashable header');
+    const sig = cryptoSign(null, Buffer.from(hashHex, 'hex'), privateKey);
+    const block: OrderingBlock = {
+      header: built.header,
+      utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [new Uint8Array(0)] },
+      validatorSignature: new Uint8Array(sig),
+    };
+
+    await intake.deliverHeaders('peerH', hashHex, [built.header]);
+    await intake.deliverHeaders('peerH', hashHex, [built.header]);
+
+    intake.setIntakeSeamsForTests({
+      apply: () => { throw new Error('seam: plain non-corrupt'); },
+    });
+    try { await intake.deliverBlocks('peerB', [block]); } catch { /* seam threw */ }
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(() => cap.chainView.gateHeld!()).not.toThrow();
+
+    // The last assertion names the rule: the stack is logged under the shared
+    // item-ended message.
+    const logs = errSpy.mock.calls.map(c => String(c[0]));
+    expect(logs.some(m => m.startsWith('Pipeline item ended with an unexpected error:'))).toBe(true);
+
+    intake.clearIntakeSeamsForTests();
+    errSpy.mockRestore();
+  }, 30_000);
 });

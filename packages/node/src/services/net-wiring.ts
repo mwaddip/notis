@@ -60,9 +60,22 @@ export function createPipelineContext(): PipelineContext {
 }
 
 /**
- * NODE_INTERFACE → Sync handlers (pull-path) → "setChainView(view)": each
- * answer is a point read or an in-memory answer, and the reads that decode
- * a stored row hand a corrupt-state error to `failStopIfCorruptChain`.
+ * NODE_INTERFACE → Fork choice decides on verified headers → "The intake
+ * owns what it runs": a corrupt-state error reaches `failStopIfCorruptChain`;
+ * every other error ends the item logged with its stack. The one handler the
+ * async-item runner below and the synchronous runner for the hold share, so
+ * every item ends the same way.
+ */
+function endOfItem(err: unknown): void {
+  if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
+  const stack = err instanceof Error && err.stack ? err.stack : String(err);
+  console.error(`Pipeline item ended with an unexpected error: ${stack}`);
+}
+
+/**
+ * NODE_INTERFACE → Sync handlers (pull-path) → "setChainView(view)": a chain
+ * view read that decodes a stored row hands a corrupt-state error to
+ * `failStopIfCorruptChain` and rethrows every other error for its caller.
  */
 function wrapCorrupt<A extends unknown[], R>(
   fn: (...args: A) => R,
@@ -75,6 +88,22 @@ function wrapCorrupt<A extends unknown[], R>(
       throw err;
     }
   };
+}
+
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "One intake,
+ * one at a time". The synchronous item runner the chain view's `gateHeld`
+ * runs under: a corrupt-state error fail-stops as under the async-item
+ * runner below; every other error ends the item logged with its stack
+ * through the shared handler, and the call returns, so nothing escapes to
+ * net's `evaluateGate`.
+ */
+function runItemSync(fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    endOfItem(err);
+  }
 }
 
 export interface ChainViewSurface {
@@ -91,7 +120,7 @@ export function createChainView(): ChainViewSurface {
     knowsTip: wrapCorrupt(knowsTip),
     wantedBlocks: wrapCorrupt(wantedBlocks),
     fullyApplied,
-    gateHeld: wrapCorrupt(gateHeld),
+    gateHeld: () => runItemSync(gateHeld),
   };
 }
 
@@ -135,9 +164,12 @@ export function wireNet(net: NetNode): void {
 }
 
 /**
- * A single intake item runs inside this wrapper so a `CorruptChainStateError`
- * out of admission, binding, staging, the funnel or `reorg` reaches the
- * fail-stop seam; every other error ends the item logged and the node runs on
+ * NODE_INTERFACE → Fork choice decides on verified headers → "The intake
+ * owns what it runs". The async-item runner: a `CorruptChainStateError` out
+ * of admission, binding, staging, the funnel or `reorg` reaches the fail-stop
+ * seam through the shared handler; every other error ends the item logged
+ * with its stack by the same handler, then rethrows so the caller's promise
+ * reflects the end of the item, and the node runs on
  * (NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps
  * running").
  */
@@ -145,9 +177,7 @@ async function runItem<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    if (err instanceof CorruptChainStateError) failStopIfCorruptChain(err);
-    const stack = err instanceof Error && err.stack ? err.stack : String(err);
-    console.error(`Pipeline item ended with an unexpected error: ${stack}`);
+    endOfItem(err);
     throw err;
   }
 }
