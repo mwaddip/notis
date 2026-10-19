@@ -282,12 +282,12 @@ increments.
 
 ## Handshake (code 1)
 
-After libp2p identify completes, both sides open a stream on
-`/dagsocial/handshake/1` and exchange a framed `Handshake` message:
+The side that dialled a connection opens a stream on `/dagsocial/handshake/1` on it, and the two
+sides exchange a framed `Handshake` message:
 
 ```
-outbound: connect → identify → open stream → send Handshake → receive Handshake → active
-inbound:  accept → identify → receive stream → receive Handshake → send Handshake → active
+outbound: dial → open stream → send Handshake → receive Handshake → active
+inbound:  accept → receive stream → receive Handshake → send Handshake → active
 ```
 
 **A handshake is a frame or it is nothing.** A payload that does not decode as a valid
@@ -305,11 +305,69 @@ frame — with no penalty, there being nobody to penalise. A seed that resolved 
 the floor for the life of the process (→ Outbound Manager); a PeerDb address that did is forgotten
 and filtered thereafter (→ PeerDb). `peers()` and `getConnectedPeers()` never contain `peerId()`.
 
+> ⚠ **AHEAD OF CODE (2026-10-19).** The six paragraphs below lead the handshake handler and the dial funnel, which
+> read a handshake stream under `MAX_STREAM_BYTES` on any of libp2p's default 32 per connection, run every handshake
+> whatever its peer's state and open the dialler's stream on whichever connection libp2p picks, leave a connection
+> standing when its handshake fails, set it no deadline, and record a listener's view of the declared address stamped
+> with the time and tied to the peer's ban.
+
+**A connection carries one handshake, opened by the side that dialled it.** The dialler opens one handshake stream
+on the connection its dial returned — on that connection, never on another to the same peer — and the listener
+answers on it; a node opens none on a connection it accepted. The registration's `maxInboundStreams` is
+`MAX_INBOUND_HANDSHAKE_STREAMS` (1), and a connection that has already carried a handshake stream closes every later
+one unread, with no penalty. The read is bounded by `MAX_HANDSHAKE_FRAME_BYTES`, the longest frame the body admits
+(→ Handshake Body), and bytes over it are a `ProtocolViolation` — no handshake is longer. A peer that has not
+handshaken therefore holds one read of under 1 KiB of this node's memory per connection, for one read deadline.
+
+**The dial funnel handshakes only a connection it opened.** A dial can return a connection that already stands —
+libp2p answers a dial naming a connected peer id with a connection it holds. When the returned connection is one the
+peer opened, or one that has carried a handshake, the funnel opens no handshake stream on it: the peer's handshake on
+it, or the one already run, is that connection's. The funnel counts such a dial connected when its peer is `Active`,
+and otherwise leaves the connection to its deadline.
+
+**A peer becomes `Active` once.** The first handshake that completes for a peer, in either direction, makes it
+`Active` — its PeerDb record, its version and addresses on the metadata, `onPeerActive`, the `SyncInfo` that follows
+(→ Post-Handshake Routing). A handshake that completes for a peer already `Active` — on a second connection, in
+either direction — is read, decoded and validated as any handshake is, and a body-tier failure is penalised as any
+is (→ Ban policy); a valid one is answered when this node is the listener, completes its connection's handshake, and
+records and raises nothing. A refusal in its place would end, for an honest dialler that raced the peer's own dial,
+in a failed handshake and a redial cooldown on a peer it holds (→ "A handshake that does not complete ends its
+connection").
+
+**A handshake that does not complete ends its connection.** Every way a connection's handshake can end without
+completing — on either side: a frame-tier or body-tier reject, an empty or absent answer, a read or write past its
+deadline, a banned peer's stream refused unread, a fault of this node's own — closes the connection it ran on, after
+whatever the Ban policy records for it. The connection, not the peer: the peer may hold another whose handshake
+completed. A dialler whose handshake did not complete also puts the address it dialled into the redial cooldown, as a
+failed dial does (→ Outbound Manager). A connection left standing keeps its slot against `maxPeers` and its place in
+the gossip mesh, where a message it carries that passes Stage 1 is delivered (→ Inbound Processing).
+
+**A connection handshakes within its deadline, or is closed.** A connection whose handshake has not completed
+`HANDSHAKE_DEADLINE_FACTOR` (3) × `syncRequestTimeoutMs` after it opened is closed, with no penalty — a link too slow
+to handshake is not evidence of misbehaviour (→ Validation → "A stream read is bounded in time as well as in bytes").
+The factor is the dialler's round trip at its longest: the stream's open, the write and the read, each under
+`syncRequestTimeoutMs` (→ Pull Requests). The deadline is the connection's, not the peer's: an `Active` peer's second
+connection that completes no handshake is closed at its own.
+
+**A declared address is hearsay until a dial names it.** The listener records the dialler's `declaredAddress` into
+PeerDb only when it is no bogus address (→ Bogus Address Classification) and its `/p2p/` component names the peer id
+the connection proved, and records it as a gossiped address is recorded — `lastSeenMs = 0` (→ Peers Intake → "A
+gossiped address is a hint below a seen peer"); a handshake that declares no address records none. The dialler
+records the address it dialled, stamped with the time: its dial is what verified it. No address a handshake declares
+reaches a ban: a peer that dialled this node is banned with no address, and each spelling a later dial resolves to its
+peer id joins the ban (→ "A ban carries every address its peer has been tied to"). The declared address is kept on the
+peer's metadata apart from that address, for the one use it has — leaving the requester's own address out of a
+`Peers` answer (→ GetPeers).
+
 ### Handshake Body
+
+> ⚠ **AHEAD OF CODE (2026-10-19).** The layout, its table and the two paragraphs after the codec's rule lead the
+> handshake codec, which writes and reads a seventh field, `vlqU(sessionMagic)` (≤ `MAX_UINT32`), after the
+> capabilities — so its longest frame is 989 bytes.
 
 ```
 lpUtf8(agentName) ‖ vlqU(protocolVersion) ‖ lpUtf8(nodeName) ‖ vlqU(chainHeight) ‖
-opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability)) ‖ vlqU(sessionMagic)
+opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability))
 ```
 
 | Field | Rule |
@@ -320,28 +378,20 @@ opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability)) ‖ vlqU(sessionMagic)
 | `chainHeight` | ≤ `MAX_ADVERTISED_HEIGHT`; tip height of this node's chain |
 | `declaredAddress` | optional (`opt`), ≤ `MAX_ADDRESS_BYTES` (255) bytes; the multiaddr this node advertises — **its first listen address that is not loopback**, absent when every listen address is loopback. A loopback address advertised to a peer is one no peer can dial |
 | `capabilities` | count ≤ `MAX_CAPABILITY_ENTRIES` (64), each ≤ `MAX_CAPABILITY_CODE`; message codes this node can handle. Always present — an empty list is a peer that declares nothing |
-| `sessionMagic` | ≤ `MAX_UINT32`; random per-connection uint32 |
 
 Every rule is enforced inside the codec's `read`: a violation is a `ReaderError`, and the decode
 boundary collapses it to `null` → `malformed` (Ban policy below). The version-support check runs
 **after** decode, on a structurally sound message only.
 
-Session magic: each side generates a random `uint32`. The outbound side
-sends its magic; the inbound side echoes it back. Both sides verify the
-magic matches their own network's magic bytes in the frame. Anti-replay,
-validates both sides agree on network.
+**The longest frame the body admits is `MAX_HANDSHAKE_FRAME_BYTES` (984).** Every field at its bound: `agentName`
+and `nodeName` at 255 bytes behind two-byte lengths (514), `declaredAddress` the same behind its `opt` byte (258),
+64 capabilities at 65 535 behind a one-byte count (193), `protocolVersion` at 65 535 (3) and `chainHeight` at
+`MAX_ADVERTISED_HEIGHT` (4) — a 972-byte body, in a frame 12 bytes longer (→ Frame Format). It bounds the handshake
+read (→ "A connection carries one handshake, opened by the side that dialled it").
 
-> ⚠ **NOT IMPLEMENTED — the anti-replay check does not exist. Verified 2026-08-11.** Both sides
-> generate a `sessionMagic` (`net/src/node.ts`, `Math.random()`-derived) and **neither ever
-> echoes or compares it.** `net/src/handshake.ts` bounds-checks the field and copies it into the
-> parsed result; that is the whole of its handling. The field is populated and discarded, so the
-> handshake provides no replay protection whatsoever. Network agreement
-> is established by the **frame magic** (`MAGIC_MAINNET`/`MAGIC_TESTNET`), which is a
-> separate mechanism and does work — so the second half of this paragraph holds while the
-> first does not.
->
-> This is design worth building: the field is already on the wire, so implementing the
-> echo-and-compare costs no format change.
+**The body carries no session field.** Noise gives every connection keys of its own, so a handshake cannot be
+replayed into another connection; inside one, the connection carries one handshake; and which network a peer is on
+is the frame's magic (→ Magic Bytes).
 
 ### Validation (and untrusted-input safety)
 
@@ -772,9 +822,17 @@ interface PeerRecord {
 }
 ```
 
+> ⚠ **AHEAD OF CODE (2026-10-19).** The *Merge* and *Persistence* items below lead `PeerDb`, whose `record` lays
+> every record's fields over the entry's and keeps only the later `lastSeenMs`, and whose storage calls in `record`,
+> `forget` and `ban` throw out to their callers.
+
 Key behaviors:
 - **Soft cap:** 1000 entries (`peerDbCap`). Evict oldest `lastSeenMs` on
   overflow.
+- **Merge — a record never rewrites a more recent one.** `record` replaces an entry's fields — agent, name,
+  version, capabilities, `lastSeenMs` — only with a record at least as recent by `lastSeenMs`; an older record changes
+  nothing. A gossiped or declared address (recorded at 0, → Peers Intake) therefore never rewrites what this node's
+  own dial learned.
 - **Self-address filter:** entries matching our own listen addresses (compared without their
   `/p2p/` component, as the fill phase compares) are silently dropped, and an
   address whose dial resolved to this node's own peer id is forgotten and dropped thereafter — a DNS
@@ -784,8 +842,10 @@ Key behaviors:
   `record()`. The ban set holds and compares addresses without their `/p2p/` component, as the self
   filter and the fill phase compare, and `ban(address)` removes every entry that matches that way — a
   declared address carries the component, a seed or a gossiped entry for the same host may not
-- **Persistence:** write-through via `PeerStorage` trait. `put` failures
-  logged and swallowed — in-memory state demotes to ephemeral.
+- **Persistence:** write-through via `PeerStorage` trait. Every storage call `PeerDb` makes — `put` and
+  `delete`, from `record`, `forget` and `ban` — is logged and swallowed when it throws, and the in-memory table stands
+  ahead of the store. A throw out of `ban` would leave the ban short of its hang-up (→ Handshake → "A ban ends the
+  connection").
 
 #### Persistence seam
 
@@ -803,9 +863,12 @@ valid test/embedded configuration, not the production one.
 must not drift apart: a peer that `PeerManager` bans is otherwise still
 served in `Peers` responses and re-dialed by the outbound fill phase.
 
-- `PeerMetadata` carries the peer's `address` — the address this node dialled, or the address the
-  peer declared — recorded when the peer reaches `Active` (the handshake is the only place both
-  identities are known).
+> ⚠ **AHEAD OF CODE (2026-10-19).** The first item below leads the handshake handler, which records on the metadata
+> the address a peer that dialled this node declared.
+
+- `PeerMetadata` carries the peer's `address` — the address this node dialled, recorded when its handshake makes
+  the peer `Active`; a peer that dialled this node has none (→ Handshake → "A declared address is hearsay until a
+  dial names it").
 - **A ban carries every address its peer has been tied to.** The ban entry opens with the recorded
   address, when there is one, and grows by one each time an outbound dial resolves to the banned
   peer id under another spelling (→ Handshake, "A banned peer's handshake is refused unread"). Every
@@ -821,7 +884,7 @@ served in `Peers` responses and re-dialed by the outbound fill phase.
 
 **Ban tracking is a bounded hint, not a ledger.** Both surfaces cap what they hold — `MAX_TRACKED_BANS`
 peer ids in `PeerManager`, `MAX_BANNED_ADDRS` addresses in `PeerDb` — and drop the oldest past the cap.
-A permanent ban keys on a peer id or a declared address, both of which regenerate freely, so it deters a
+A permanent ban keys on a peer id or an address, both of which regenerate freely, so it deters a
 lazy repeat rather than guaranteeing exclusion; an unbounded set of such hints is instead a memory leak
 an attacker mints by misbehaving under fresh ids. Eviction lapses a hint — it is not the propagated
 unban that keeps the two surfaces in step (above), and it grants nothing a regenerated identity could
@@ -966,6 +1029,11 @@ is how a node gets eclipsed. Inbound connections are counted toward
   cost as an unreachable seed
 - PeerDb not consulted — seeds are the bootstrap source
 
+> ⚠ **AHEAD OF CODE (2026-10-19).** The fill phase's funnel and cooldown items and the paragraph after the list lead
+> the dial funnel, which runs its handshake on whatever connection the dial returned and puts an address into the
+> cooldown only when its dial fails, and `NetConfig`, whose three discovery settings are optional with net's own
+> defaults behind them.
+
 **Fill phase** (outbound connections >= `minPeers`, < `maxPeers`):
 - Every `OUTBOUND_TICK_INTERVAL_MS` (30s, fixed — see below), query
   `PeerDb.recent(N, exclude)` where `N = maxPeers - connectedOutbound`
@@ -978,19 +1046,19 @@ is how a node gets eclipsed. Inbound connections are counted toward
   seed is bare, a declared address carries it — so a raw string comparison misses a connected
   peer held under a bare key and re-dials it every tick
 - Dial one candidate per tick (most recently seen first), through the same funnel as a seed: the
-  dial, the own-peer check, the ban check, then the outbound handshake — a dial that does not
+  dial, the own-peer check, the ban check, then the outbound handshake on the connection the dial opened
+  (→ Handshake → "The dial funnel handshakes only a connection it opened") — a dial that does not
   handshake yields no Active peer. A candidate that resolved to this node is forgotten (→ PeerDb); one
   that resolved to a banned peer id is closed and its spelling joins the ban (→ Handshake, "A banned
   peer's handshake is refused unread")
-- Respect blacklist and redial cooldown (`outboundRedialCooldownMs`, 60s)
+- Respect blacklist and redial cooldown (`outboundRedialCooldownMs`, 60s). An address enters the cooldown when its
+  dial fails and when its handshake does not complete (→ Handshake → "A handshake that does not complete ends its
+  connection")
 - If PeerDb exhausted, idle until new gossip arrives
 
-The discovery-related knobs (`minPeers`, `peerDbCap`,
-`outboundRedialCooldownMs`) are optional in
-`NetConfig` and fall back to net-internal defaults. A node that leaves
-them unset inherits those defaults rather than the values in this
-document — `@dagsocial/node` MUST pass them for the documented behavior
-to hold.
+The discovery-related knobs (`minPeers`, `peerDbCap`, `outboundRedialCooldownMs`) are required in `NetConfig`, as
+`magic` is: net holds no default for them, so the values a node runs on are the ones `@dagsocial/node` read from its
+configuration (NODE_INTERFACE → Configuration).
 
 #### The tick is fixed, and two cadences are sized against it
 
@@ -1031,7 +1099,7 @@ Node start
 |---------|---------|-------|
 | `misbehavior` | Invalid message — fails Stage 1: structure, an ordering-block header below the network's floor, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, an ordering block's validator signature, or a transaction signature that does not verify (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
 | `ProtocolViolation` | Undecodable/malformed frame or message; wrong-network handshake | permanent ban |
-| `Transient` | Transient handshake failure / timeout (`handshake.ts`) | 50 |
+| `Transient` | A handshake whose `protocolVersion` is below the receiver's era (`handshakePenalty`, → Handshake → "Ban policy") | 50 |
 | `Transient` | A version mismatch — a gossiped block whose declared version is not the era at its own height (`gossip.ts`), or a header `verifyHeaderChain` refuses with reason `'version'` at the pipeline's admission (via `NetNode.penalizePeer`): compatibility, never a violation | 50 |
 | `misbehavior` | The pipeline, via `NetNode.penalizePeer` from node (NODE_INTERFACE → Fork choice decides on verified headers): a header admission refuses other than for the clock, the version or the age rule — an unhashable header, a marked hash, a `Headers` page whose first header's parent the tree does not hold, a `verifyHeaderChain` refusal; a delivered block that is not its header's (its structure, its root, its validator signature) or whose header the tree does not hold; a block the funnel refuses on bytes its header's hash commits | 100 |
 | `misbehavior` | The scheduler: a `Headers` page that is not an answer to its locator — heights not consecutive and ascending, or a first header whose parent is neither a locator hash nor, at height 1, the root (→ `GetHeaders` / `GetBlocks` responses) | 100 |
@@ -1044,6 +1112,14 @@ the block after this node's tip and a post whose author is outside this node's k
 header this node knows is Ignored") and a fault of this node's own (→ Stage 1 → "A fault of this node's
 is no peer's"); and every Stage 2 refusal of a gossiped message (→ Stage 2 → "A Stage 2 refusal records
 nothing"). `onPeerPenalised` fires for none of them.
+
+> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph below leads the handshake handler and `NetNode`, which close no
+> handshake stream unread and no connection at a deadline.
+
+**A handshake's deadline and its extra streams record nothing.** A connection closed at its handshake deadline
+(→ Handshake → "A connection handshakes within its deadline, or is closed") and a second handshake stream closed
+unread (→ Handshake → "A connection carries one handshake, opened by the side that dialled it") are no penalty: the
+first is a link too slow to tell from a dead one, and the second costs this node a stream it never reads.
 
 **`NetNode.penalizePeer(peerId, kind: 'misbehavior' | 'transient', reason)`** is node's one call
 into this system: it records the named tier against the peer with the reason string and nothing
@@ -1078,6 +1154,17 @@ rather than ten minutes.
 
 Permanent penalties (`PenaltyKind.ProtocolViolation`, `'permanent'`)
 bypass scoring entirely and ban instantly — decay never applies to them.
+
+> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph below leads `PeerManager`, which keeps a score on the peer's
+> connection entry: a disconnect deletes it and a reconnect starts the peer at zero.
+
+**A score is kept by peer id, and outlives its connection.** A peer's accumulated score and the time of its last
+penalty are kept by peer id, apart from its connection, in a map of at most `MAX_TRACKED_SCORES` entries, the least
+recently penalised dropped first. A disconnect leaves the score, and a reconnect resumes it, decayed for the time
+between; a penalty against a peer not connected still records nothing, as `NetNode.penalizePeer`'s against a peer
+the manager does not know records nothing (above). Dropping the oldest is the bounded hint the ban set is (→ "Ban tracking is a
+bounded hint, not a ledger"): a fresh peer id starts at zero whatever the map keeps, so an entry dropped grants
+nothing a new id could not take.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -1168,12 +1255,16 @@ what it holds, its pool — is one the sender may have answered otherwise, hones
 
 ## Peer State Machine
 
+> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph's last sentence leads `NetNode`, which leaves a peer `Connecting`
+> while a connection whose handshake failed or never ran stands.
+
 States: `Connecting → Active`. A peer's row opens `Connecting` when its connection upgrades
 (`peer:connect`) and becomes `Active` when its handshake completes in either direction (→ Handshake).
 There is no state after `Active`: a disconnect or a ban **removes the row** (`PeerManager.removePeer`;
 → Handshake, "A ban ends the connection"), and a ban is recorded in the ban set, never in the row it
-removes (→ "Ban surfaces are unified"). A peer whose handshake does not complete stays `Connecting`
-while its connection stands.
+removes (→ Ban surfaces are unified). A peer is `Connecting` for no longer than its connection's handshake runs: a
+connection whose handshake does not complete is closed at the failure, or at its deadline (→ Handshake → "A
+connection handshakes within its deadline, or is closed").
 
 Invariant: a peer that is not `Active` is asked nothing and answered nothing. A sync stream it opens
 is answered with an empty frame and left unread, and it is no entry of `getConnectedPeers()`, the set
@@ -1196,12 +1287,15 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 
 ## libp2p Stack
 
+> ⚠ **AHEAD OF CODE (2026-10-19).** The PubSub row's last clause leads `NetNode`, which leaves gossipsub's
+> `fallbackToFloodsub` at the library's default, `true`.
+
 | Layer | Choice |
 |-------|--------|
 | Transport | TCP (with optional QUIC, deferred) |
 | Stream multiplexing | yamux or mplex |
 | Encryption | Noise (with libp2p-noise) |
-| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule) |
+| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all |
 | Peer identity | libp2p peer ID (Ed25519 or secp256k1 keypair) |
 
 The libp2p peer identity is separate from DAGsocial account identity. A
@@ -1213,7 +1307,7 @@ node operator may choose to link them (same keypair) or keep them separate.
 
 | Protocol | Framing | Purpose |
 |----------|---------|---------|
-| `/dagsocial/handshake/1` | Frame | Post-identify peer handshake |
+| `/dagsocial/handshake/1` | Frame | The peer handshake (→ Handshake) |
 | `/dagsocial/sync/1` | Frame | Headers-first sync, post bodies, peer discovery (codes 2, 4, 5, 8, 9, 14–17) |
 
 **These two are the whole set.** Every chain-data query multiplexes over the sync stream and the
@@ -1629,6 +1723,11 @@ penalty-bearing) instead of two, and a query on the shared stream is unreachable
 
 ## Config
 
+> ⚠ **AHEAD OF CODE (2026-10-19).** The block below leads `NetConfig`, whose three peer-discovery fields are optional
+> and fall back to net's own 3, 1000 and 60000.
+
+Every field is required; net holds a default for none of them (→ Outbound Manager).
+
 ```typescript
 interface NetConfig {
   // Transport
@@ -1648,9 +1747,9 @@ interface NetConfig {
                                    // below it (→ Consensus parameters net enforces)
 
   // Peer discovery
-  minPeers: number                 // floor for fill phase (default 3)
-  peerDbCap: number                // soft cap on PeerDb entries (default 1000)
-  outboundRedialCooldownMs: number // redial cooldown (default 60000)
+  minPeers: number                 // floor for the fill phase (→ Outbound Manager)
+  peerDbCap: number                // soft cap on PeerDb entries (→ PeerDb)
+  outboundRedialCooldownMs: number // redial cooldown (→ Outbound Manager)
 
   // Syncing
   syncRequestTimeoutMs: number
