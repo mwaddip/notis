@@ -143,10 +143,19 @@ export interface Config {
    * `proofRetentionBlocks`.
    */
   proofRetentionBytes: number;
-  // Net settings
+  // Net settings — the seven whole-number knobs reach `NetNode` from the one
+  // loaded `config`; semantics `NET_INTERFACE → Config` and
+  // `NET_INTERFACE → Outbound Manager`.
   bootstrapPeers: string[];
   listenAddrs: string;
   maxPeers: number;
+  minPeers: number;
+  peerDbCap: number;
+  outboundRedialCooldownMs: number;
+  penaltyScoreThreshold: number;
+  temporalBanDurationMs: number;
+  penaltySafeIntervalMs: number;
+  syncRequestTimeoutMs: number;
 }
 
 export function loadConfig(): Readonly<Config> {
@@ -160,20 +169,28 @@ export function loadConfig(): Readonly<Config> {
   const decay = decayCfgFor(profile);
 
   const cfg: Config = {
-    port: parseInt(process.env['PORT'] ?? '3000', 10),
-    adminPort: parseInt(process.env['ADMIN_PORT'] ?? '3001', 10),
+    port: readWholeNumber('PORT', 3000, { floor: 0, port: true }),
+    adminPort: readWholeNumber('ADMIN_PORT', 3001, { floor: 0, port: true }),
     adminBindAddress: process.env['ADMIN_BIND_ADDRESS'] ?? '127.0.0.1',
     dbPath: process.env['DB_PATH'] ?? 'dagsocial.db',
     networkType: profile.networkType,
     profile,
     nodeRole: parseNodeRole(process.env['NODE_ROLE'] ?? 'server'),
     webShellPath: process.env['WEB_SHELL_PATH'] ?? '',
-    blockBodyBudgetBytes: parseBlockBodyBudget(
-      process.env['BLOCK_BODY_BUDGET_BYTES'],
+    // BLOCK_BODY_BUDGET_BYTES is local over a consensus ceiling: the reader
+    // admits any value at or above its floor of 1, and the clamp here reads
+    // a value above `MAX_BLOCK_BODY_BYTES` as "as much as the rules allow"
+    // — a node cannot raise its own consensus bound by asking. A fixture-
+    // assembled `Config` does not pass through here, so the producer clamps
+    // again where it spends the budget (`block-creator.ts`).
+    blockBodyBudgetBytes: Math.min(
+      readWholeNumber('BLOCK_BODY_BUDGET_BYTES', MAX_BLOCK_BODY_BYTES, { floor: 1 }),
+      MAX_BLOCK_BODY_BYTES,
     ),
-    maxMempoolEntries: parseInt(
-      process.env['MAX_MEMPOOL_ENTRIES'] ?? String(DEFAULT_MAX_MEMPOOL_ENTRIES),
-      10,
+    maxMempoolEntries: readWholeNumber(
+      'MAX_MEMPOOL_ENTRIES',
+      DEFAULT_MAX_MEMPOOL_ENTRIES,
+      { floor: 0 },
     ),
     minFeeRatePerByte: parseFeeFloor(process.env['MIN_FEE_RATE_PER_BYTE']),
     // Mining
@@ -204,19 +221,23 @@ export function loadConfig(): Readonly<Config> {
     maxReorgDepth: profile.maxReorgDepth,
     protocolVersionSchedule: profile.protocolVersionSchedule,
     // AVL state root (NODE_INTERFACE → AVL+ State Root).
-    maxProofHistory: parseInt(
-      process.env['MAX_PROOF_HISTORY'] ?? '1440',
-      10,
-    ),
+    maxProofHistory: readWholeNumber('MAX_PROOF_HISTORY', 1440, { floor: 0 }),
     avlKeyLength: TREE_KEY_LENGTH,
-    proofRetentionBlocks: parseProofRetention(process.env['PROOF_RETENTION_BLOCKS']),
-    proofRetentionBytes: parseProofRetentionBytes(process.env['PROOF_RETENTION_BYTES']),
-    proofWindowBlocks: parseProofWindow(process.env['PROOF_WINDOW_BLOCKS']),
-    proofWindowNodes: parseProofWindowNodes(process.env['PROOF_WINDOW_NODES']),
+    proofRetentionBlocks: readWholeNumber('PROOF_RETENTION_BLOCKS', 10_080, { floor: 0 }),
+    proofRetentionBytes: readWholeNumber('PROOF_RETENTION_BYTES', 2_147_483_648, { floor: 0 }),
+    proofWindowBlocks: readWholeNumber('PROOF_WINDOW_BLOCKS', 64, { floor: 0 }),
+    proofWindowNodes: readWholeNumber('PROOF_WINDOW_NODES', 250_000, { floor: 0 }),
     // Net settings
     bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',
-    maxPeers: parseInt(process.env['MAX_PEERS'] ?? '50', 10),
+    maxPeers: readWholeNumber('MAX_PEERS', 50, { floor: 0 }),
+    minPeers: readWholeNumber('MIN_PEERS', 3, { floor: 0 }),
+    peerDbCap: readWholeNumber('PEER_DB_CAP', 1000, { floor: 0 }),
+    outboundRedialCooldownMs: readWholeNumber('OUTBOUND_REDIAL_COOLDOWN_MS', 60_000, { floor: 0 }),
+    penaltyScoreThreshold: readWholeNumber('PENALTY_SCORE_THRESHOLD', 500, { floor: 0 }),
+    temporalBanDurationMs: readWholeNumber('TEMPORAL_BAN_DURATION_MS', 3_600_000, { floor: 0 }),
+    penaltySafeIntervalMs: readWholeNumber('PENALTY_SAFE_INTERVAL_MS', 120_000, { floor: 1 }),
+    syncRequestTimeoutMs: readWholeNumber('SYNC_REQUEST_TIMEOUT_MS', 10_000, { floor: 1 }),
   };
 
   assertMiningAuthConfigured(cfg);
@@ -261,121 +282,42 @@ function parseFeeFloor(raw: string | undefined): bigint {
 }
 
 /**
- * `BLOCK_BODY_BUDGET_BYTES`, never above `MAX_BLOCK_BODY_BYTES`.
+ * The one reader every whole-number setting answers to
+ * (NODE_INTERFACE → Configuration → "Every whole-number setting is read by
+ * one reader, and a set value it refuses stops the node at load").
  *
- * **Clamping, and it is the only value in this file that clamps.** The budget
- * is a local preference over a consensus ceiling, so a value above the ceiling
- * has one legal reading — as much as the rules allow — and a node cannot raise
- * its own bound by asking. The two asserts below refuse instead, because a
- * below-floor PoW target and a too-short proof history name no legal value they
- * were reaching for.
+ * Decimal digits and nothing else, so `parseInt` reading `2.5` as 2 and
+ * `1e3` as 1 cannot happen here; a safe integer, so a value above 2^53
+ * cannot silently round; at or above the setting's floor — 1 for durations
+ * and the body budget, 0 for every other — and a port at most 65 535. The
+ * setting's name rides every refusal: a value a node cannot read says which
+ * one is at fault, and a silent `NaN` or `undefined` never reaches a field
+ * whose consumer compares it against a number.
  *
  * ⚠ **This is the environment's entry point, not the field's.** A `Config`
- * assembled directly — every test fixture — never passes through here, so the
- * producer clamps again where it spends the budget (`block-creator.ts`). That
- * one is total over both routes.
- *
- * A string denoting no positive number is refused rather than clamped or
- * defaulted: `parseInt` yields `NaN`, every comparison against `NaN` is false,
- * and a budget nothing fits inside produces empty blocks for as long as the
- * node runs — a node that stays up and carries no user work, which is the
- * silence `assertOrderingTargetAboveFloor` exists to prevent one field over.
- * Written as a negated `>` so the check is total on the parse.
+ * assembled directly — every test fixture — never passes through here, so
+ * the comparisons downstream remain total over `NaN` and over a value no
+ * reader could have returned.
  */
-function parseBlockBodyBudget(raw: string | undefined): number {
-  if (raw === undefined) return MAX_BLOCK_BODY_BYTES;
-  const parsed = parseInt(raw, 10);
-  if (!(parsed > 0)) {
-    throw new Error(
-      `Invalid BLOCK_BODY_BUDGET_BYTES "${raw}" — must be a positive byte ` +
-        'count; a budget no transaction fits inside produces empty blocks ' +
-        'silently, for as long as the node runs',
-    );
+function readWholeNumber(
+  name: string,
+  defaultValue: number,
+  opts: { floor: 0 | 1; port?: boolean },
+): number {
+  const raw = process.env[name];
+  if (raw === undefined) return defaultValue;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Invalid ${name} "${raw}" — must be decimal digits only`);
   }
-  return Math.min(parsed, MAX_BLOCK_BODY_BYTES);
-}
-
-/**
- * `PROOF_RETENTION_BLOCKS`, defaulting to 10 080 — a week of proofs at 60 s
- * (NODE_INTERFACE → Configuration).
- *
- * Refused rather than defaulted when it names no non-negative integer: a
- * retention this node cannot read is a policy nobody chose. `parseInt` would
- * answer `NaN`, which prunes nothing for as long as the node runs, or read
- * `2.5` as 2; a negative value prunes the proof apply has just stored. Zero
- * keeps the tip's proof alone.
- */
-function parseProofRetention(raw: string | undefined): number {
-  if (raw === undefined) return 10_080;
-  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  const parsed = Number(raw);
   if (!Number.isSafeInteger(parsed)) {
-    throw new Error(
-      `Invalid PROOF_RETENTION_BLOCKS "${raw}" — must be a non-negative whole ` +
-        'number of blocks',
-    );
+    throw new Error(`Invalid ${name} "${raw}" — must be a safe integer`);
   }
-  return parsed;
-}
-
-/**
- * `PROOF_RETENTION_BYTES`, defaulting to 2 147 483 648 — 2 GiB (NODE_INTERFACE
- * → The block proof).
- *
- * Refused rather than defaulted, for the same reason `parseProofRetention` is:
- * a cap this node cannot read is a policy nobody chose. `parseInt` would
- * answer `NaN` for a non-numeric value, which prunes nothing for as long as
- * the node runs, or read `2.5` as 2; a negative value prunes proofs apply has
- * just stored. Zero holds the tip's proof alone, same as the block retention.
- */
-function parseProofRetentionBytes(raw: string | undefined): number {
-  if (raw === undefined) return 2_147_483_648;
-  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
-  if (!Number.isSafeInteger(parsed)) {
-    throw new Error(
-      `Invalid PROOF_RETENTION_BYTES "${raw}" — must be a non-negative whole ` +
-        'number of bytes',
-    );
+  if (parsed < opts.floor) {
+    throw new Error(`Invalid ${name} "${raw}" — must be at least ${opts.floor}`);
   }
-  return parsed;
-}
-
-/**
- * `PROOF_WINDOW_BLOCKS`, defaulting to 64 (NODE_INTERFACE → "A proof at an
- * older height restores a kept root"; NODE_INTERFACE → Configuration).
- *
- * Refused rather than defaulted when it names no non-negative integer: a
- * window this node cannot read is a policy nobody chose, as
- * `parseProofRetention` is. Zero keeps no root; the tip is the live tree's,
- * which both routes answer without one.
- */
-function parseProofWindow(raw: string | undefined): number {
-  if (raw === undefined) return 64;
-  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
-  if (!Number.isSafeInteger(parsed)) {
-    throw new Error(
-      `Invalid PROOF_WINDOW_BLOCKS "${raw}" — must be a non-negative whole ` +
-        'number of blocks',
-    );
-  }
-  return parsed;
-}
-
-/**
- * `PROOF_WINDOW_NODES`, defaulting to 250 000 (NODE_INTERFACE → "A proof at
- * an older height restores a kept root"; NODE_INTERFACE → Configuration).
- *
- * Refused rather than defaulted when it names no non-negative integer, as
- * `parseProofWindow` is: a cap this node cannot read is a policy nobody
- * chose. Zero caps the ring at one root — the tip's, which the sum excludes.
- */
-function parseProofWindowNodes(raw: string | undefined): number {
-  if (raw === undefined) return 250_000;
-  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
-  if (!Number.isSafeInteger(parsed)) {
-    throw new Error(
-      `Invalid PROOF_WINDOW_NODES "${raw}" — must be a non-negative whole ` +
-        'number of nodes',
-    );
+  if (opts.port === true && parsed > 65_535) {
+    throw new Error(`Invalid ${name} "${raw}" — a TCP port is at most 65 535`);
   }
   return parsed;
 }

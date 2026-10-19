@@ -542,11 +542,11 @@ describe('config', () => {
       expect(loadConfig().maxProofHistory).toBe(devnetReorgDepth);
     });
 
-    // `parseInt` answers `NaN`, and `NaN < maxReorgDepth` is false — a `<`
-    // would admit the one value that makes every pruning height `NaN`.
+    // The one reader catches a non-numeric value before the comparison, so
+    // the throw names the setting rather than the comparison.
     it('refuses a non-numeric MAX_PROOF_HISTORY', async () => {
       await expect(importWithProofHistory('later')).rejects.toThrow(
-        /below maxReorgDepth/,
+        /MAX_PROOF_HISTORY/,
       );
     });
 
@@ -982,58 +982,14 @@ describe('config', () => {
     // at `e`, a leading-space value `parseInt` reads anyway, and empty.
     const BAD = ['abc', '2.5', '-1', '1e3', ' 7', ''] as const;
 
-    // Each setting × each bad value becomes its own `it`, because an
-    // `it.fails` with multiple rows is green as soon as any one row throws.
+    // Each setting × each bad value becomes its own `it` — a table-driven
+    // single `it` would be green as soon as any one row throws.
 
     // 17a — the digits-and-safe-integer domain
     describe('17a. refuses a value outside the decimal-digit domain', () => {
-      // Four settings have a parser that already refuses every digit-outside
-      // string with the setting's name: MAX_PROOF_HISTORY reaches the
-      // maxReorgDepth comparison (whose message names it), and the four
-      // proof settings fall at `/^\d+$/`. BLOCK_BODY_BUDGET_BYTES refuses
-      // three of the six through `!(parsed > 0)` — `abc`, `-1` and `""` give
-      // `NaN` or a non-positive number — but reads `2.5`, `1e3` and ` 7` as
-      // 2, 1 and 7, so three rows are plain `it` and three are `it.fails`.
-      const PASSES_17A: ReadonlySet<string> = new Set([
-        'BLOCK_BODY_BUDGET_BYTES|abc',
-        'BLOCK_BODY_BUDGET_BYTES|-1',
-        'BLOCK_BODY_BUDGET_BYTES|',
-        'MAX_PROOF_HISTORY|abc',
-        'MAX_PROOF_HISTORY|2.5',
-        'MAX_PROOF_HISTORY|-1',
-        'MAX_PROOF_HISTORY|1e3',
-        'MAX_PROOF_HISTORY| 7',
-        'MAX_PROOF_HISTORY|',
-        'PROOF_RETENTION_BLOCKS|abc',
-        'PROOF_RETENTION_BLOCKS|2.5',
-        'PROOF_RETENTION_BLOCKS|-1',
-        'PROOF_RETENTION_BLOCKS|1e3',
-        'PROOF_RETENTION_BLOCKS| 7',
-        'PROOF_RETENTION_BLOCKS|',
-        'PROOF_RETENTION_BYTES|abc',
-        'PROOF_RETENTION_BYTES|2.5',
-        'PROOF_RETENTION_BYTES|-1',
-        'PROOF_RETENTION_BYTES|1e3',
-        'PROOF_RETENTION_BYTES| 7',
-        'PROOF_RETENTION_BYTES|',
-        'PROOF_WINDOW_BLOCKS|abc',
-        'PROOF_WINDOW_BLOCKS|2.5',
-        'PROOF_WINDOW_BLOCKS|-1',
-        'PROOF_WINDOW_BLOCKS|1e3',
-        'PROOF_WINDOW_BLOCKS| 7',
-        'PROOF_WINDOW_BLOCKS|',
-        'PROOF_WINDOW_NODES|abc',
-        'PROOF_WINDOW_NODES|2.5',
-        'PROOF_WINDOW_NODES|-1',
-        'PROOF_WINDOW_NODES|1e3',
-        'PROOF_WINDOW_NODES| 7',
-        'PROOF_WINDOW_NODES|',
-      ]);
       for (const s of SETTINGS) {
         for (const bad of BAD) {
-          const key = `${s.env}|${bad}`;
-          const run = PASSES_17A.has(key) ? it : it.fails;
-          run(`${s.env}=${JSON.stringify(bad)} is refused naming ${s.env}`, async () => {
+          it(`${s.env}=${JSON.stringify(bad)} is refused naming ${s.env}`, async () => {
             process.env[s.env] = bad;
             await expect(import('../src/config.js')).rejects.toThrow(new RegExp(s.env));
           });
@@ -1043,19 +999,16 @@ describe('config', () => {
 
     // 17b — the floor
     describe('17b. each setting\'s floor', () => {
-      // The three floor-1 settings: 0 names nothing a node runs on.
-      // BLOCK_BODY_BUDGET_BYTES already refuses 0 through `!(parsed > 0)`;
-      // the two durations are not read by `loadConfig` on this tree.
+      // Floor 1: 0 names nothing a node runs on.
       for (const s of SETTINGS.filter((x) => x.floor === 1)) {
-        const run = s.env === 'BLOCK_BODY_BUDGET_BYTES' ? it : it.fails;
-        run(`${s.env}=0 is refused naming ${s.env}`, async () => {
+        it(`${s.env}=0 is refused naming ${s.env}`, async () => {
           process.env[s.env] = '0';
           await expect(import('../src/config.js')).rejects.toThrow(new RegExp(s.env));
         });
       }
 
-      // The fourteen floor-0 settings: 0 loads as the field value, except
-      // MAX_PROOF_HISTORY which reaches the maxReorgDepth comparison on top.
+      // Floor 0: 0 loads as the field value, except MAX_PROOF_HISTORY which
+      // reaches the maxReorgDepth comparison on top.
       for (const s of SETTINGS.filter((x) => x.floor === 0)) {
         if (s.env === 'MAX_PROOF_HISTORY') {
           // The reader admits 0; the layered rule refuses it citing
@@ -1068,13 +1021,7 @@ describe('config', () => {
           });
           continue;
         }
-        const alreadyOnConfig = new Set([
-          'PORT', 'ADMIN_PORT', 'MAX_MEMPOOL_ENTRIES', 'MAX_PEERS',
-          'PROOF_RETENTION_BLOCKS', 'PROOF_RETENTION_BYTES',
-          'PROOF_WINDOW_BLOCKS', 'PROOF_WINDOW_NODES',
-        ]);
-        const run = alreadyOnConfig.has(s.env) ? it : it.fails;
-        run(`${s.env}=0 loads as config.${s.field} === 0`, async () => {
+        it(`${s.env}=0 loads as config.${s.field} === 0`, async () => {
           process.env[s.env] = '0';
           const { loadConfig } = await import('../src/config.js');
           const cfg = loadConfig();
@@ -1086,7 +1033,7 @@ describe('config', () => {
     // 17c — the port ceiling
     describe('17c. a port above 65 535 is refused', () => {
       for (const s of SETTINGS.filter((x) => x.port === true)) {
-        it.fails(`${s.env}=65536 is refused naming ${s.env}`, async () => {
+        it(`${s.env}=65536 is refused naming ${s.env}`, async () => {
           process.env[s.env] = '65536';
           await expect(import('../src/config.js')).rejects.toThrow(new RegExp(s.env));
         });
@@ -1095,14 +1042,8 @@ describe('config', () => {
 
     // 17d — unset takes the default
     describe('17d. unset takes the table\'s default', () => {
-      const alreadyOnConfig = new Set([
-        'PORT', 'ADMIN_PORT', 'BLOCK_BODY_BUDGET_BYTES', 'MAX_MEMPOOL_ENTRIES',
-        'MAX_PEERS', 'MAX_PROOF_HISTORY', 'PROOF_RETENTION_BLOCKS',
-        'PROOF_RETENTION_BYTES', 'PROOF_WINDOW_BLOCKS', 'PROOF_WINDOW_NODES',
-      ]);
       for (const s of SETTINGS) {
-        const run = alreadyOnConfig.has(s.env) ? it : it.fails;
-        run(`${s.env} unset → config.${s.field} === ${s.dflt}`, async () => {
+        it(`${s.env} unset → config.${s.field} === ${s.dflt}`, async () => {
           const { loadConfig } = await import('../src/config.js');
           const cfg = loadConfig();
           expect((cfg as unknown as Record<string, unknown>)[s.field]).toBe(s.dflt);
@@ -1120,7 +1061,7 @@ describe('config', () => {
         'PENALTY_SAFE_INTERVAL_MS', 'SYNC_REQUEST_TIMEOUT_MS',
       ].includes(x.env));
       for (const s of NET) {
-        it.fails(`${s.env}=5 reads as config.${s.field} === 5`, async () => {
+        it(`${s.env}=5 reads as config.${s.field} === 5`, async () => {
           process.env[s.env] = '5';
           const { loadConfig } = await import('../src/config.js');
           const cfg = loadConfig();
