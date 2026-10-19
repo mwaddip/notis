@@ -315,9 +315,10 @@ type RecordProofOutcome =
 //
 // AVLTREE_INTERFACE → The depth guard → "`verifyAvlLookup`, passed through,
 // is not guarded; its caller bounds it by the engine's own count":
-// `maxNumOperations: 1, maxDeletes: 0` holds the engine's node bound to
-// 2·h+1 nodes under a declared height h, 512 at the largest declared height,
-// so a proof over that is refused by the engine's decode — `null`,
+// `maxNumOperations: 1, maxDeletes: 0` holds the engine's `computeMaxNodes`
+// to `(1 + 0)(2h + 1) + 0 · hnew + 1 = 2h + 2` nodes under a declared height
+// h — 512 at h = 255, one over the `2h + 1` an honest lookup proof carries
+// — so a proof past that is refused by the engine's decode — `null`,
 // `unproven` — before any descent.
 async function proveKeyAtHeight(
   nodeUrl: string,
