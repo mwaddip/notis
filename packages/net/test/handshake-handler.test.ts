@@ -658,7 +658,43 @@ describe('inbound handshake handler — a peer becomes Active once', () => {
 // the connection it ran on, including a fault of this node's own.
 // ---------------------------------------------------------------------------
 
-describe('inbound handshake handler — a fault of this node\'s own closes the connection', () => {
+describe('inbound handshake handler — every return path closes the connection', () => {
+  // NET_INTERFACE → Handshake → "A handshake that does not complete ends
+  // its connection". The harness tests the handler's own close on paths a
+  // real dialler would also close from — otherwise a removal of the
+  // handler's close leaves the file green on the strength of the dialler's
+  // close alone.
+  it('a frame-tier reject closes the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+
+    const raw = encodeStruct(handshakeCodec, {
+      agentName: 'dagsocial/1.0.0',
+      protocolVersion: PROTOCOL_VERSION,
+      nodeName: 'peer',
+      chainHeight: 7,
+      capabilities: [],
+    });
+    await send(raw, { connectionId: 'conn-frame' });
+
+    expect(connectionCloses().get('conn-frame') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
+  });
+
+  it('a body-tier reject closes the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const twoEra: readonly ProtocolEra[] = [
+      { version: 1, fromHeight: 0 },
+      { version: 2, fromHeight: 5 },
+    ];
+    const { send, connectionCloses } = makeHandshakeHarness({ schedule: twoEra, chainHeight: 4 });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-version' });
+
+    expect(connectionCloses().get('conn-version') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
+  });
+
   // NET_INTERFACE → Handshake → "A handshake that does not complete ends its
   // connection" — a fault of this node's own, from the handler's view, is a
   // return path the handshake can reach only through the harness. The era
@@ -677,6 +713,60 @@ describe('inbound handshake handler — a fault of this node\'s own closes the c
 
     expect(connectionCloses().get('conn-era') ?? 0).toBeGreaterThanOrEqual(1);
     errSpy.mockRestore();
+  });
+
+  it('a banned peer\'s handshake refused unread closes the connection', async () => {
+    const { send, peerMgr, peerId, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+    peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, 'earlier violation');
+    expect(peerMgr.isBanned(peerId)).toBe(true);
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-banned' });
+
+    expect(connectionCloses().get('conn-banned') ?? 0).toBeGreaterThanOrEqual(1);
+  });
+
+  it('an own-peer-id stream closes the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({
+      chainHeight: 0,
+      remotePeerId: 'self-peer-id',
+    });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-self' });
+
+    expect(connectionCloses().get('conn-self') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
+  });
+
+  it('bytes past the frame cap close the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+
+    // Two mebibytes of zeros — far above the 984-byte frame cap. The read
+    // bounded by the cap refuses it as a protocol violation.
+    const twoMiB = new Uint8Array(2 * 1024 * 1024);
+    await send(twoMiB, { connectionId: 'conn-oversize' });
+
+    expect(connectionCloses().get('conn-oversize') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
+  });
+
+  it('an empty read closes the connection', async () => {
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0 });
+
+    await send(new Uint8Array(0), { connectionId: 'conn-empty' });
+
+    expect(connectionCloses().get('conn-empty') ?? 0).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a sink that throws on the reply closes the connection', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, connectionCloses } = makeHandshakeHarness({ chainHeight: 0, sinkThrows: true });
+
+    await send(validHandshakeFrame(), { connectionId: 'conn-sink' });
+
+    expect(connectionCloses().get('conn-sink') ?? 0).toBeGreaterThanOrEqual(1);
+    warnSpy.mockRestore();
   });
 
   it('a completed handshake does not close the connection', async () => {
