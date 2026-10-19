@@ -535,13 +535,15 @@ describe('inbound handshake handler — the era gate flips through the tip', () 
 // ---------------------------------------------------------------------------
 
 describe('inbound handshake handler — the record keeps the declared version', () => {
-  it('records the peer\'s declared version and stamps it on the metadata', async () => {
-    const addr = '/ip4/9.9.9.9/tcp/9000';
-    const { send, peerMgr, peerId, peerDb } = makeHandshakeHarness({ chainHeight: 0 });
+  it('records the peer\'s declared version at lastSeenMs 0 and stamps it on the metadata', async () => {
+    const peerId = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
+    const addr = `/ip4/9.9.9.9/tcp/9000/p2p/${peerId}`;
+    const { send, peerMgr, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: peerId });
 
     await send(peerHandshakeFrame(2, addr));
 
     expect(peerDb.get(addr)?.protocolVersion).toBe(2);
+    expect(peerDb.get(addr)?.lastSeenMs).toBe(0);
     expect(peerMgr.getPeerMetadata(peerId)?.protocolVersion).toBe(2);
   });
 });
@@ -565,8 +567,11 @@ describe('inbound handshake handler — a stream from our own peer id', () => {
 
     expect(isEmptyReply(written)).toBe(true);
     expect(peerMgr.getPeerMetadata('self-peer-id')?.state).not.toBe(PeerState.Active);
-    // validHandshakeFrame() declares no address, so a written record would
-    // land under the stream's remoteAddr — the harness's fixed value.
+    // The handshake's self check runs before any PeerDb write, and
+    // nothing landing under the handshake's remoteAddr is itself the
+    // rule for every handshake declaring no address
+    // (NET_INTERFACE → Handshake →
+    // "A declared address is hearsay until a dial names it").
     expect(peerDb.get('/ip4/127.0.0.1/tcp/1234')).toBeNull();
     expect(peerMgr.getPeerMetadata('self-peer-id')?.penaltyCount ?? 0).toBe(before);
   });
@@ -627,17 +632,19 @@ describe('inbound handshake handler — one handshake stream a connection', () =
 
 describe('inbound handshake handler — a peer becomes Active once', () => {
   it('a valid handshake from a peer already Active records and raises nothing', async () => {
-    const firstAddr = '/ip4/9.9.9.9/tcp/9000';
-    const secondAddr = '/ip4/8.8.8.8/tcp/8000';
-    const { send, peerMgr, peerId, peerDb, net } = makeHandshakeHarness({ chainHeight: 0 });
+    const peerId = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
+    const firstAddr = `/ip4/9.9.9.9/tcp/9000/p2p/${peerId}`;
+    const secondAddr = `/ip4/8.8.8.8/tcp/8000/p2p/${peerId}`;
+    const { send, peerMgr, peerDb, net } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: peerId });
     let activeCount = 0;
     net.onPeerActive((id) => { if (id === peerId) activeCount++; });
 
     const first = await send(peerHandshakeFrame(1, firstAddr), { connectionId: 'conn-A' });
-    // controls: first handshake is answered, the peer is Active, the record is written
+    // controls: first handshake is answered, the peer is Active, the record is written at lastSeenMs 0
     expect(first).toHaveLength(1);
     expect(peerMgr.getPeerMetadata(peerId)?.state).toBe(PeerState.Active);
     expect(peerDb.get(firstAddr)?.protocolVersion).toBe(1);
+    expect(peerDb.get(firstAddr)?.lastSeenMs).toBe(0);
 
     const second = await send(peerHandshakeFrame(1, secondAddr), { connectionId: 'conn-B' });
 
@@ -816,7 +823,7 @@ describe('inbound handshake handler — every return path closes the connection'
 const LISTENER_PEER = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
 
 describe('inbound handshake handler — a declared address is hearsay', () => {
-  it.fails('a routable declared address naming the peer id lands at lastSeenMs 0', async () => {
+  it('a routable declared address naming the peer id lands at lastSeenMs 0', async () => {
     const declared = `/ip4/9.9.9.9/tcp/9000/p2p/${LISTENER_PEER}`;
     const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
 
@@ -828,7 +835,7 @@ describe('inbound handshake handler — a declared address is hearsay', () => {
     expect(peerDb.get(declared)?.lastSeenMs).toBe(0);
   });
 
-  it.fails('a declared address naming another peer id leaves PeerDb empty', async () => {
+  it('a declared address naming another peer id leaves PeerDb empty', async () => {
     const otherId = '12D3KooWFCoqrsf1g1oMg3SNFXfSAfxA3iT5KGwi9cXeDi5BtvNz';
     const declared = `/ip4/9.9.9.9/tcp/9000/p2p/${otherId}`;
     const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
@@ -840,7 +847,7 @@ describe('inbound handshake handler — a declared address is hearsay', () => {
     expect(peerDb.get(declared)).toBeNull();
   });
 
-  it.fails('a bogus (loopback) declared address leaves PeerDb empty, under testnet magic', async () => {
+  it('a bogus (loopback) declared address leaves PeerDb empty, under testnet magic', async () => {
     const declared = `/ip4/127.0.0.1/tcp/9000/p2p/${LISTENER_PEER}`;
     const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
 
@@ -851,7 +858,7 @@ describe('inbound handshake handler — a declared address is hearsay', () => {
     expect(peerDb.get(declared)).toBeNull();
   });
 
-  it.fails('a handshake declaring no address leaves PeerDb empty', async () => {
+  it('a handshake declaring no address leaves PeerDb empty', async () => {
     const { send, peerDb } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
 
     const written = await send(validHandshakeFrame());
@@ -869,7 +876,7 @@ describe('inbound handshake handler — a declared address is hearsay', () => {
 // ---------------------------------------------------------------------------
 
 describe('inbound handshake handler — the declared address never reaches a ban', () => {
-  it.fails('a banned peer that dialled this node leaves its declared address a hint in PeerDb, isBanned false', async () => {
+  it('a banned peer that dialled this node leaves its declared address a hint in PeerDb, isBanned false', async () => {
     const declared = `/ip4/9.9.9.9/tcp/9000/p2p/${LISTENER_PEER}`;
     const { send, peerDb, peerMgr } = makeHandshakeHarness({ chainHeight: 0, remotePeerId: LISTENER_PEER });
 

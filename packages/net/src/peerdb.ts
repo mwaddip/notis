@@ -182,10 +182,10 @@ export class PeerDb {
 
   /**
    * `excludeAddrs` is compared without `/p2p/` (NET_INTERFACE → Outbound
-   * Manager → "Addresses compare without their `/p2p/` component") — the
-   * caller (`OutboundManager`) normalises what it puts in the set; here only
-   * each candidate's own address needs the same treatment. `bannedAddrs`
-   * compares the same way (NET_INTERFACE → PeerDb).
+   * Manager → "Addresses compare without their `/p2p/` component") — every
+   * caller (`OutboundManager`, `servePeersBody`) normalises what it puts in
+   * the set; here only each candidate's own address needs the same treatment.
+   * `bannedAddrs` compares the same way (NET_INTERFACE → PeerDb).
    */
   recent(limit: number, excludeAddrs: Set<string>): PeerRecord[] {
     const filtered = Array.from(this.entries.values())

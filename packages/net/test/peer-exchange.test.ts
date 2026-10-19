@@ -125,7 +125,7 @@ describe('servePeersBody', () => {
 
   // NET_INTERFACE → Handshake → "A declared address is hearsay until a dial
   // names it" — the Peers answer leaves out the requester's declared address.
-  it.fails('leaves out the requester\'s declared address, which carries /p2p/', () => {
+  it('leaves out the requester\'s declared address, which carries /p2p/', () => {
     const requesterId = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
     const declared = `/ip4/5.5.5.5/tcp/9000/p2p/${requesterId}`;
     const peerDb = new PeerDb(null, 100, []);

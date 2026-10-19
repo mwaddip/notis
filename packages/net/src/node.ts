@@ -48,7 +48,7 @@ import {
   decodeModifierResponse,
 } from './sync-codec.js';
 import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
-import { readStreamBounded, sinkWithDeadline, addressWithoutPeerId } from './util.js';
+import { readStreamBounded, sinkWithDeadline, addressWithoutPeerId, peerIdOfAddress } from './util.js';
 import {
   HANDSHAKE_DEADLINE_FACTOR,
   MAX_CHAIN_RESPONSE_ITEMS,
@@ -420,6 +420,7 @@ export function servePeersBody(
   const exclude = new Set<string>();
   const meta = deps.peerMgr.getPeerMetadata(deps.peerId);
   if (meta?.address) exclude.add(addressWithoutPeerId(meta.address));
+  if (meta?.declaredAddress) exclude.add(addressWithoutPeerId(meta.declaredAddress));
   const records = deps.peerDb?.recent(GET_PEERS_RESPONSE_LIMIT, exclude) ?? [];
   const peers: PeerEntryMsg[] = records.map((r) => ({
     address: r.address,
@@ -1324,20 +1325,32 @@ export class NetNode {
         // handshake that completes for a peer already Active is answered
         // when this node is the listener, and records and raises nothing.
         if (!this.peerMgr.isPeerActive(peerId)) {
-          const addr = msg.declaredAddress ?? connection.remoteAddr?.toString() ?? peerId;
-          this.peerMgr.setPeerAddress(peerId, addr);
-          // The record and the metadata both keep the peer's declared
-          // version, not ours — it is what the boundary sweep reads
-          // (NET_INTERFACE → PeerDb; → Post-Handshake Routing).
+          // The metadata keeps the peer's declared version, not ours — it
+          // is what the boundary sweep reads
+          // (NET_INTERFACE → Post-Handshake Routing).
           this.peerMgr.setPeerVersion(peerId, msg.protocolVersion);
-          this.peerDb?.record({
-            address: addr,
-            lastSeenMs: Date.now(),
-            agentName: msg.agentName,
-            nodeName: msg.nodeName,
-            protocolVersion: msg.protocolVersion,
-            capabilities: msg.capabilities,
-          });
+          // NET_INTERFACE → Handshake →
+          // "A declared address is hearsay until a dial names it": the
+          // listener records the dialler's declared address only when it
+          // is no bogus address and its `/p2p/` component names the peer
+          // id the connection proved, at lastSeenMs 0; a handshake that
+          // declares no address records none.
+          const declared = msg.declaredAddress;
+          if (
+            declared !== undefined
+            && !isBogusAddress(declared, this.config.magic)
+            && peerIdOfAddress(declared) === peerId
+          ) {
+            this.peerMgr.setPeerDeclaredAddress(peerId, declared);
+            this.peerDb?.record({
+              address: declared,
+              lastSeenMs: 0,
+              agentName: msg.agentName,
+              nodeName: msg.nodeName,
+              protocolVersion: msg.protocolVersion,
+              capabilities: msg.capabilities,
+            });
+          }
 
           this.peerMgr.setPeerState(peerId, PeerState.Active);
           const dir = (connection.direction ?? 'inbound') as 'inbound' | 'outbound';
