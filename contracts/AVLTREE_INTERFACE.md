@@ -72,9 +72,6 @@ is to agree with them needs this answer (`CONSENSUS_INTERFACE → The tree sessi
 
 ## The depth guard
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** This section leads the code: `CoreWithNeighbors`' constructor in
-> `packages/avltree/src/verifier.ts`, and the light client's single-key lookup in `tools/nipopow-client/src/boxes.ts`.
-
 **A proof is never deeper than the tree its digest declares.** A starting digest is the root's 32-byte label and, in
 its last byte, the tree's height. Every path in a proof's decoded tree is a path in the tree that digest commits to,
 so an honest proof is never deeper than the height it declares. Both step-by-step verifiers — `BatchAVLVerifier` and

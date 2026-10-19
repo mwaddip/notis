@@ -712,9 +712,6 @@ functions). The commitment is read from the transaction the caller already holds
 (`tx.post.contentHash`); a caller with no transaction has nothing to verify against and does
 not call this.
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The light client's post check named above leads the code: `checkRow` in
-> `tools/nipopow-client/src/posts.ts`.
-
 ⛔ **No transaction check reads content, and no body check reads a transaction beyond its
 commitment.** `MAX_CONTENT_BYTES` and the character table are body rules; `verifyTxStructure`'s
 post arm checks the commit's domains and never a body, because the transaction carries none

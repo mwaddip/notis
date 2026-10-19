@@ -332,10 +332,6 @@ configuration, never in `@dagsocial/types`. **The build's `notis-public`** — t
 prefix the background checks the bridge's sender against; an empty one builds an extension with no bridge and
 no links row.
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The next paragraph leads the code: `fetchJson` in
-> `tools/nipopow-client/src/http.ts` and every reader that calls it, and the batch read in
-> `packages/web/src/extension/post-resolver.ts`.
-
 **Every answer is read under its route's cap.** Each read the light client makes — `@dagsocial/nipopow-client`'s,
 which the command line and the extension both run, and the resolve's batch read (→ "The resolve") — takes the body
 under a byte cap: the longest answer an honest node gives on that route, argued from the bounds that already hold
@@ -396,10 +392,6 @@ reading node's proof — block 1, the header `verifyProof` holds to the profile'
 (`NIPOPOW_INTERFACE → verifyProof`) — which the tool answers as that node's `genesisHash`. It is non-null whenever the
 reading node's proof verified, under `verified` and under `thin` alike: naming a chain takes a proof that verifies,
 not a second witness. It names the post cache (→ "The post cache") and nothing else reads it.
-
-> ⚠ **AHEAD OF CODE (2026-10-19).** The next paragraph's "A ledger is read up to `LEDGER_READ_MAX` boxes" leads
-> the code: `proveRange` in `tools/nipopow-client/src/holdings.ts` and `fetchListing` in
-> `tools/nipopow-client/src/boxes.ts`.
 
 **The verified figures.** The extension proves the two figures the reading node serves for the loaded key — the
 wallet's balance and the profile's rep — against the state the verified chain committed, **the key's holdings read
@@ -603,9 +595,6 @@ in the node's own count of replies, which a leaving slot does not move.
 wherever a slot stands under its id; one that returns after a change of node or identity lands nowhere and enters no
 cache (→ Reading the feed and threads → "No answer overwrites a newer one") — the read that change starts asks again.
 It is the extension build's alone: the web build names no `posts/batch`.
-
-> ⚠ **AHEAD OF CODE (2026-10-19).** The next paragraph's `verifyPostBody` step leads the code: `checkRow` in
-> `tools/nipopow-client/src/posts.ts`.
 
 **The post check.** The extension shows a post only when the transaction that created it binds it. Every row
 that carries a post's bytes — each row of a batch answer (→ "The resolve"), the single post read's, asked with `tx=1`

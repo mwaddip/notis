@@ -387,15 +387,13 @@ module-private, so the drift test's converse does not reach them and the rows ar
 
 ## Light client reads
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** This section leads the code: the caps and the bound in `tools/nipopow-client`,
-> read by its readers and by `packages/web/src/extension/post-resolver.ts`.
-
 `tools/nipopow-client` — the byte cap each route's answer is read under, and the most boxes one ledger read takes in
 (`WEB_INTERFACE → The extension → "Every answer is read under its route's cap"`, → "The verified figures"). Pinned by
-the package's own suite, outside the drift test: a cap's case reads a body of the cap's length and refuses one a byte
-longer, and where the longest honest answer can be built — every route but the two tree proofs and the NiPoPoW
-proof — builds it with the real encoders and reads it under the cap. Each cap is the longest honest answer, argued
-below, rounded up to a binary unit; the NiPoPoW proof's is computed for the `m` and `k` asked. JSON is Express's
+the package's own suite, outside the drift test: the reader's cases read a body at its cap and refuse one a byte
+longer, each route's case refuses a body one byte over that route's cap, and where the longest honest answer can be
+built — every route but the two tree proofs and the NiPoPoW proof — a case builds it with the real encoders and
+reads it under the cap; the bound's cases run each reader at its default. Each cap is the longest honest answer,
+argued below, rounded up to a binary unit; the NiPoPoW proof's is computed for the `m` and `k` asked. JSON is Express's
 `res.json`: hex doubles a byte, base64 is `4 · ⌈n / 3⌉`, and a post's text is at most `2 · MAX_CONTENT_BYTES`, `"`,
 `\` and `\n` each serialised as two bytes.
 
