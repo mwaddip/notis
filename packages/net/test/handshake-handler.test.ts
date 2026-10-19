@@ -64,8 +64,16 @@ function makeConfig(
 
 type StreamHandler = (arg: {
   stream: unknown;
-  connection: { remotePeer: { toString(): string }; remoteAddr?: { toString(): string } };
+  connection: {
+    id: string;
+    remotePeer: { toString(): string };
+    remoteAddr?: { toString(): string };
+  };
 }) => Promise<void>;
+
+interface HandleOptions {
+  maxInboundStreams?: number;
+}
 
 /**
  * Register the real inbound handshake handler against a stub libp2p and return
@@ -85,11 +93,14 @@ function makeHandshakeHarness(opts: {
   multiaddrs?: string[];
   /** The stream's `connection.remotePeer` — defaults to an ordinary remote id. */
   remotePeerId?: string;
+  /** The default connection id for every `send` on this harness. */
+  connectionId?: string;
 } = {}) {
   const net = new NetNode(makeConfig(opts.schedule), validators);
   const peerId = opts.remotePeerId ?? 'peer-under-test';
 
   let captured: StreamHandler | null = null;
+  let registrationOptions: HandleOptions | undefined;
   const internals = net as unknown as {
     libp2p: unknown;
     peerMgr: PeerManager;
@@ -102,13 +113,18 @@ function makeHandshakeHarness(opts: {
   const peerDb = new PeerDb(null, 1000, []);
   internals.peerDb = peerDb;
   internals.libp2p = {
-    handle: (protocol: string, cb: StreamHandler) => {
-      if (protocol === '/dagsocial/handshake/1') captured = cb;
+    handle: (protocol: string, cb: StreamHandler, options?: HandleOptions) => {
+      if (protocol === '/dagsocial/handshake/1') {
+        captured = cb;
+        registrationOptions = options;
+      }
     },
     getMultiaddrs: () => (opts.multiaddrs ?? []).map((s) => ({ toString: () => s })),
     getConnections: () => [],
     hangUp: () => Promise.resolve(),
     peerId: { toString: () => 'self-peer-id' },
+    addEventListener: () => {},
+    removeEventListener: () => {},
   };
 
   internals.peerMgr.addPeer({
@@ -131,7 +147,10 @@ function makeHandshakeHarness(opts: {
   internals.registerHandshakeHandler(internals.libp2p);
   if (!captured) throw new Error('registerHandshakeHandler registered no handler');
 
-  const drive = async (source: AsyncIterable<Uint8Array>): Promise<Uint8Array[]> => {
+  const drive = async (
+    source: AsyncIterable<Uint8Array>,
+    connectionId: string,
+  ): Promise<Uint8Array[]> => {
     const written: Uint8Array[] = [];
     const stream = {
       source,
@@ -146,6 +165,7 @@ function makeHandshakeHarness(opts: {
     await captured!({
       stream,
       connection: {
+        id: connectionId,
         remotePeer: { toString: () => peerId },
         remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/1234' },
       },
@@ -153,18 +173,31 @@ function makeHandshakeHarness(opts: {
     return written;
   };
 
-  const send = (request: Uint8Array): Promise<Uint8Array[]> =>
+  const defaultConnId = opts.connectionId ?? 'conn-default';
+
+  const send = (
+    request: Uint8Array,
+    sendOpts: { connectionId?: string } = {},
+  ): Promise<Uint8Array[]> =>
     drive((async function* () {
       yield request;
-    })());
+    })(), sendOpts.connectionId ?? defaultConnId);
 
   const sendBrokenStream = (): Promise<Uint8Array[]> =>
     drive((async function* () {
       yield new Uint8Array([0x01]);
       throw new Error('connection reset');
-    })());
+    })(), defaultConnId);
 
-  return { send, sendBrokenStream, peerMgr: internals.peerMgr, peerId, peerDb };
+  return {
+    net,
+    send,
+    sendBrokenStream,
+    peerMgr: internals.peerMgr,
+    peerId,
+    peerDb,
+    registrationOptions: () => registrationOptions,
+  };
 }
 
 function validHandshakeFrame(): Uint8Array {
@@ -529,5 +562,85 @@ describe('inbound handshake handler — a stream from our own peer id', () => {
     // land under the stream's remoteAddr — the harness's fixed value.
     expect(peerDb.get('/ip4/127.0.0.1/tcp/1234')).toBeNull();
     expect(peerMgr.getPeerMetadata('self-peer-id')?.penaltyCount ?? 0).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A connection carries one handshake, opened by
+// the side that dialled it" — the read bound and the stream limit per
+// connection; a second handshake stream on a connection that has carried one
+// closes unread, with no penalty.
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — one handshake stream a connection', () => {
+  it.fails('bans a peer whose handshake stream carries bytes past the frame cap', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandshakeHarness({ chainHeight: 0 });
+
+    // Two mebibytes of zeros — far above the 984-byte frame cap, far below
+    // the stream byte cap. The read bounded by the frame cap refuses it as
+    // a protocol violation.
+    const twoMiB = new Uint8Array(2 * 1024 * 1024);
+    await send(twoMiB);
+
+    expect(peerMgr.isBanned(peerId)).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it.fails('registers the handshake handler with maxInboundStreams of 1', () => {
+    const { registrationOptions } = makeHandshakeHarness();
+    expect(registrationOptions()?.maxInboundStreams).toBe(1);
+  });
+
+  it.fails('closes a second handshake stream on the same connection unread', async () => {
+    const { send, peerMgr, peerId, net } = makeHandshakeHarness({ chainHeight: 0 });
+    let activeCount = 0;
+    net.onPeerActive((id) => { if (id === peerId) activeCount++; });
+
+    const first = await send(validHandshakeFrame(), { connectionId: 'conn-A' });
+    // control: first handshake is answered and the peer becomes Active
+    expect(first).toHaveLength(1);
+    expect(first[0]!.length).toBeGreaterThan(0);
+    expect(peerMgr.getPeerMetadata(peerId)?.state).toBe(PeerState.Active);
+
+    const second = await send(validHandshakeFrame(), { connectionId: 'conn-A' });
+
+    expect(second).toHaveLength(0);
+    expect(activeCount).toBe(1);
+    expect(peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "A peer becomes Active once" — a handshake
+// that completes for a peer already Active, on a second connection, is
+// validated and answered when this node is the listener, and records and
+// raises nothing.
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — a peer becomes Active once', () => {
+  it.fails('a valid handshake from a peer already Active records and raises nothing', async () => {
+    const firstAddr = '/ip4/9.9.9.9/tcp/9000';
+    const secondAddr = '/ip4/8.8.8.8/tcp/8000';
+    const { send, peerMgr, peerId, peerDb, net } = makeHandshakeHarness({ chainHeight: 0 });
+    let activeCount = 0;
+    net.onPeerActive((id) => { if (id === peerId) activeCount++; });
+
+    const first = await send(peerHandshakeFrame(1, firstAddr), { connectionId: 'conn-A' });
+    // controls: first handshake is answered, the peer is Active, the record is written
+    expect(first).toHaveLength(1);
+    expect(peerMgr.getPeerMetadata(peerId)?.state).toBe(PeerState.Active);
+    expect(peerDb.get(firstAddr)?.protocolVersion).toBe(1);
+
+    const second = await send(peerHandshakeFrame(1, secondAddr), { connectionId: 'conn-B' });
+
+    // control: this node is the listener on the second connection, so its reply
+    // is a handshake frame
+    expect(second).toHaveLength(1);
+    expect(decodeHandshakeBody(decodeFrame(MAGIC, second[0]!).body)).not.toBeNull();
+
+    expect(activeCount).toBe(1);
+    expect(peerDb.get(firstAddr)?.protocolVersion).toBe(1);
+    expect(peerDb.get(secondAddr)).toBeNull();
   });
 });

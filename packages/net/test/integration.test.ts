@@ -723,3 +723,49 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     expect(all.some((l) => l.includes(`[net] dial succeeded: ${bareAAddr}`))).toBe(false);
   }, TIMEOUT);
 });
+
+// ---------------------------------------------------------------------------
+// NET_INTERFACE → Handshake → "The dial funnel handshakes only a connection
+// it opened": a dial that returns a connection the peer opened opens no
+// handshake stream, and counts connected when the peer is Active.
+// ---------------------------------------------------------------------------
+
+describe('the dial funnel and the peer-opened connection', () => {
+  let nodeA: NetNode;
+  let nodeB: NetNode;
+
+  afterEach(async () => {
+    await nodeA?.stop();
+    await nodeB?.stop();
+  });
+
+  it.fails('a dial returning the connection the peer opened runs no handshake', async () => {
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+    const bMulti = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(bMulti).toBeTruthy();
+
+    nodeA = new NetNode(makeBaseConfig({ bootstrapPeers: [bMulti!], minPeers: 0 }), validators);
+    const bPeerId = nodeB.peerId();
+    let aActiveForB = 0;
+    nodeA.onPeerActive((id) => { if (id === bPeerId) aActiveForB++; });
+    await nodeA.start();
+
+    await new Promise((r) => setTimeout(r, 3000));
+    // controls: A has B as its peer and vice versa; A's handshake with B
+    // fired A's peer-active handler once
+    expect(nodeA.getConnectedPeers()).toContain(bPeerId);
+    expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+    expect(aActiveForB).toBe(1);
+
+    const aMulti = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aMulti).toBeTruthy();
+    const internalsB = nodeB as unknown as Internals & {
+      dialAndHandshake(addr: string, source: 'seed' | 'candidate'): Promise<boolean>;
+    };
+    await internalsB.dialAndHandshake(aMulti!, 'candidate');
+    await new Promise((r) => setTimeout(r, 1000));
+
+    expect(aActiveForB).toBe(1);
+  }, TIMEOUT);
+});
