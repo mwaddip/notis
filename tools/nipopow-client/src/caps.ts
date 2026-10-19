@@ -31,6 +31,10 @@ export const NAME_READ_BYTES = 1_024;
 /** CONSTANTS → Light client reads — the cap on `GET /blocks/current`. */
 export const HEIGHT_READ_BYTES = 1_024;
 
+/** CONSTANTS → Light client reads — the most boxes one ledger read takes in,
+ *  a range at one height or the command line's listing of one ledger. */
+export const LEDGER_READ_MAX = 10_000;
+
 // CONSTANTS → Light client reads — a PoPowHeader is `lp(header)` and
 // `lp(interlinks)`. `lp(header)` is `MAX_HEADER_BYTES` and its two-byte length
 // prefix.

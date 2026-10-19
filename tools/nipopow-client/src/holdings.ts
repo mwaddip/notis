@@ -5,7 +5,7 @@ import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consens
 import type { HoldingKind } from '@dagsocial/consensus';
 import type { HttpFetch } from './http.js';
 import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
-import { RANGE_PAGE_READ_BYTES } from './caps.js';
+import { LEDGER_READ_MAX, RANGE_PAGE_READ_BYTES } from './caps.js';
 export type { HoldingKind };
 
 /**
@@ -72,6 +72,7 @@ export async function proveRange(
   owner: string,
   header: { height: number; stateRoot: string },
   httpFetch: HttpFetch,
+  _maxBoxes: number = LEDGER_READ_MAX,
 ): Promise<RangeResult> {
   // An `owner` that is not 64 hex is a client-side refusal — nothing is asked
   // (as `proveName` refuses a label whose key is not 64 hex).

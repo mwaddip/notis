@@ -23,7 +23,7 @@ import type {
 import type { PoPowHeader } from '@dagsocial/nipopow';
 import type { HttpFetch } from './http.js';
 import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
-import { HEIGHT_READ_BYTES, LISTING_PAGE_READ_BYTES, LOOKUP_READ_BYTES } from './caps.js';
+import { HEIGHT_READ_BYTES, LEDGER_READ_MAX, LISTING_PAGE_READ_BYTES, LOOKUP_READ_BYTES } from './caps.js';
 import { proveRange } from './holdings.js';
 import type { RangeResult } from './holdings.js';
 
@@ -171,6 +171,7 @@ export async function fetchListing(
   nodeUrl: string,
   user: string,
   httpFetch: HttpFetch,
+  _maxBoxes: number = LEDGER_READ_MAX,
 ): Promise<ListingResult> {
   const karmaBoxes: ListedBox[] = [];
   let karmaHeight = 0;
@@ -481,6 +482,7 @@ export async function proveFigures(
   anchor: Anchor,
   profile: NetworkProfile,
   httpFetch: HttpFetch,
+  maxBoxes: number = LEDGER_READ_MAX,
 ): Promise<FiguresResult> {
   const userLowerHex = user.toLowerCase();
   const userBytes = hexToBytes(userLowerHex) as UserId;
@@ -497,17 +499,17 @@ export async function proveFigures(
   // Steps 2–5 — each ledger's two range reads, in the order:
   // karma@suffix, credit@suffix, karma@tip, credit@tip. A ledger that failed
   // at `suffixHead` is not asked at `tip`.
-  const karmaSuffix = await proveRange(nodeUrl, 'karma', userLowerHex, suffixHeader, httpFetch);
+  const karmaSuffix = await proveRange(nodeUrl, 'karma', userLowerHex, suffixHeader, httpFetch, maxBoxes);
   const creditSuffix = listing.credits !== null
-    ? await proveRange(nodeUrl, 'credit', userLowerHex, suffixHeader, httpFetch)
+    ? await proveRange(nodeUrl, 'credit', userLowerHex, suffixHeader, httpFetch, maxBoxes)
     : null;
   const karmaReads: LedgerReads = karmaSuffix.ok
-    ? { suffix: karmaSuffix, tip: await proveRange(nodeUrl, 'karma', userLowerHex, tipHeader, httpFetch) }
+    ? { suffix: karmaSuffix, tip: await proveRange(nodeUrl, 'karma', userLowerHex, tipHeader, httpFetch, maxBoxes) }
     : { suffix: karmaSuffix };
   const creditReads: LedgerReads = creditSuffix === null
     ? null
     : creditSuffix.ok
-      ? { suffix: creditSuffix, tip: await proveRange(nodeUrl, 'credit', userLowerHex, tipHeader, httpFetch) }
+      ? { suffix: creditSuffix, tip: await proveRange(nodeUrl, 'credit', userLowerHex, tipHeader, httpFetch, maxBoxes) }
       : { suffix: creditSuffix };
 
   // Step 6 — one GET /blocks/current.
