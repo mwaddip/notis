@@ -23,6 +23,7 @@ import {
   type IntakeCallbacks,
 } from '../../src/services/intake.js';
 import type { PipelineContext } from '../../src/services/header-pipeline.js';
+import { createChainView } from '../../src/services/net-wiring.js';
 import type { ApplyVerdict } from '../../src/services/block-apply.js';
 import { InconsistentHeaderTreeError, ReorgAbortedError, ReorgBlockRejectedError } from '../../src/services/corrupt-state.js';
 import {
@@ -439,6 +440,55 @@ describe('intake', () => {
       // staged b-chain's height-2 block onto our tip (that would be a switch).
       expect(getCurrentHeight()).toBe(2);
     });
+
+    // NODE_INTERFACE → Fork choice decides on verified headers → "The window".
+    it.fails('a hold that raises `S` applies the blocks staged at the window edge', async () => {
+      const v = makeValidator();
+      const depth = config.maxReorgDepth;
+      const chain: ParentHeaderInfo[] = [];
+      let prev: ParentHeaderInfo | null = null;
+      for (let i = 0; i < depth + 2; i++) {
+        prev = mineWithEmptyRoot({ height: i + 1, parent: prev, pub: v.pub });
+        chain.push(prev);
+      }
+      const { callbacks } = recorder();
+      initIntake(callbacks, ctx());
+      await admitChain('peerH', chain);
+      await deliverBlocks('peerB', chain.map(h => signBlock(h, v.priv)));
+
+      // Control: `S = 0`, so extension stops at `depth`.
+      expect(getCurrentHeight()).toBe(depth);
+      // The hold raises `S` to the best tip's height.
+      gateHeld();
+      // The last assertion names the rule: a hold that raises `S` applies
+      // the block staged at the window's edge, with no further delivery.
+      expect(getCurrentHeight()).toBe(depth + 2);
+    }, 60_000);
+
+    // NODE_INTERFACE → Fork choice decides on verified headers → "The window".
+    it.fails('a hold through the chain view wiring applies the blocks staged at the window edge', async () => {
+      const v = makeValidator();
+      const depth = config.maxReorgDepth;
+      const chain: ParentHeaderInfo[] = [];
+      let prev: ParentHeaderInfo | null = null;
+      for (let i = 0; i < depth + 2; i++) {
+        prev = mineWithEmptyRoot({ height: i + 1, parent: prev, pub: v.pub });
+        chain.push(prev);
+      }
+      const { callbacks } = recorder();
+      initIntake(callbacks, ctx());
+      await admitChain('peerH', chain);
+      await deliverBlocks('peerB', chain.map(h => signBlock(h, v.priv)));
+
+      // Control: `S = 0`, so extension stops at `depth`.
+      expect(getCurrentHeight()).toBe(depth);
+      // The chain view's `gateHeld` entry is the one net calls through
+      // `SyncMachine.evaluateGate`.
+      createChainView().gateHeld();
+      // The last assertion names the rule: the same hold run through the
+      // chain view's entry applies the blocks staged at the window edge.
+      expect(getCurrentHeight()).toBe(depth + 2);
+    }, 60_000);
   });
 
   describe('abort — the staged row leaves', () => {

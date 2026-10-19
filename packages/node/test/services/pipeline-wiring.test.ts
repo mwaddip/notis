@@ -231,4 +231,37 @@ describe('pipeline wired to net — registrations', () => {
     expect(exitSpy).toHaveBeenCalled();
     errSpy.mockRestore();
   });
+
+  // NODE_INTERFACE → Fork choice decides on verified headers →
+  // "The intake owns what it runs".
+  it.fails('a chain view hold over a poisoned block_headers row reaches the fail-stop seam', async () => {
+    const cap = freshCap();
+    const { wireNet } = await import('../../src/services/net-wiring.js');
+    wireNet(makeFakeNet(cap) as never);
+
+    const { getDb } = await import('../../src/store/db.js');
+    const db = getDb();
+    const hashHex = 'aa'.repeat(32);
+    const prevHex = '00'.repeat(32);
+    db.prepare(
+      `INSERT INTO block_headers (hash, height, prev_hash, header_bytes, interlinks, chain_work, path_t_a)
+       VALUES (?, 1, ?, ?, ?, ?, 0)`,
+    ).run(hashHex, prevHex, Buffer.from([0xff, 0xff, 0xff]), Buffer.alloc(0), Buffer.alloc(40));
+    db.prepare(`INSERT INTO best_chain (height, hash) VALUES (1, ?)`).run(hashHex);
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((_c?: number) => {
+      throw new Error('process.exit called');
+    }) as unknown as typeof process.exit);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      cap.chainView.gateHeld!();
+    } catch {
+      /* exit threw — expected */
+    }
+    // The last assertion names the rule: a corrupt-state error inside the
+    // hold's item reaches the fail-stop seam through the chain view's wrapper.
+    expect(exitSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
 });
