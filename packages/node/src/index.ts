@@ -1,4 +1,4 @@
-import { loadConfig } from './config.js';
+import { config } from './config.js';
 import { initDb, closeDb } from './store/db.js';
 import { setMempoolCap } from './store/mempool.js';
 import { seedGenesisState } from './services/genesis-state.js';
@@ -47,7 +47,6 @@ import {
 } from './store/index.js';
 import { initBackfill } from './services/backfill.js';
 
-const config = loadConfig();
 const startTime = Date.now();
 
 // NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running":
@@ -122,9 +121,9 @@ try {
 }
 
 // 2. Create NetNode
-// The three discovery knobs are passed explicitly: NET_INTERFACE documents
-// their defaults as binding only when node supplies them — unset, net's
-// internal fallbacks silently govern instead.
+// Every NetConfig field reaches `NetNode` from the one loaded `config`
+// (NODE_INTERFACE → Configuration → "The configuration is loaded once a
+// process"; NET_INTERFACE → Config).
 const net = new NetNode(
   {
     // The profile's wire magic. Required in NetConfig — net has no fallback of
@@ -138,13 +137,13 @@ const net = new NetNode(
     bootstrapPeers: config.bootstrapPeers,
     listenAddrs: config.listenAddrs,
     maxPeers: config.maxPeers,
-    minPeers: parseInt(process.env['MIN_PEERS'] ?? '3', 10),
-    peerDbCap: parseInt(process.env['PEER_DB_CAP'] ?? '1000', 10),
-    outboundRedialCooldownMs: parseInt(process.env['OUTBOUND_REDIAL_COOLDOWN_MS'] ?? '60000', 10),
-    penaltyScoreThreshold: parseInt(process.env['PENALTY_SCORE_THRESHOLD'] ?? '500', 10),
-    temporalBanDurationMs: parseInt(process.env['TEMPORAL_BAN_DURATION_MS'] ?? '3600000', 10),
-    penaltySafeIntervalMs: parseInt(process.env['PENALTY_SAFE_INTERVAL_MS'] ?? '120000', 10),
-    syncRequestTimeoutMs: parseInt(process.env['SYNC_REQUEST_TIMEOUT_MS'] ?? '10000', 10),
+    minPeers: config.minPeers,
+    peerDbCap: config.peerDbCap,
+    outboundRedialCooldownMs: config.outboundRedialCooldownMs,
+    penaltyScoreThreshold: config.penaltyScoreThreshold,
+    temporalBanDurationMs: config.temporalBanDurationMs,
+    penaltySafeIntervalMs: config.penaltySafeIntervalMs,
+    syncRequestTimeoutMs: config.syncRequestTimeoutMs,
   },
   { ...validation, verifyOrderingBlockPoW: countedVerifyOrderingBlockPoW },
   peerStorage,
