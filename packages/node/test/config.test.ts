@@ -1051,6 +1051,19 @@ describe('config', () => {
       }
     });
 
+    // 17f — the safe-integer guard, probed alone
+    describe('17f. refuses a digit string above Number.MAX_SAFE_INTEGER', () => {
+      // `Number('9007199254740992')` equals 2**53 exactly — representable in
+      // float64 but outside the safe-integer range (MAX_SAFE_INTEGER = 2**53 −
+      // 1), so the reader refuses it. The port ceiling at 65 535 would catch
+      // this on PORT and ADMIN_PORT, so one non-port setting probes the
+      // safe-integer guard alone.
+      it('MIN_PEERS=9007199254740992 is refused naming MIN_PEERS', async () => {
+        process.env['MIN_PEERS'] = '9007199254740992';
+        await expect(import('../src/config.js')).rejects.toThrow(/MIN_PEERS/);
+      });
+    });
+
     // 17e — the seven net settings reach Config
     describe('17e. the seven net settings reach Config', () => {
       // 5 ≥ 1 clears the floor-1 floor and 5 ≥ 0 clears the rest, so one
