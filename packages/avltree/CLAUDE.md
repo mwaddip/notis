@@ -20,9 +20,10 @@ single-phase PoW over validator-produced ordering blocks. TypeScript, pnpm works
 
 ## This package (`@dagsocial/avltree`)
 The authenticated AVL+ tree as Notis uses it: `@ergots/avltree` — a port of Ergo's AVL+ tree — plus the
-three things Notis needs that Ergo's tree does not have: the neighbor-reporting lookups, the strict
-verifier, and nodes loaded on first access. **It is the one package of the workspace that imports
-`@ergots/avltree`**; every other member imports the tree from here.
+four things Notis needs that Ergo's tree does not have: the neighbor-reporting lookups, the strict
+verifier, the depth guard both step-by-step verifiers run at construction, and nodes loaded on first
+access. **It is the one package of the workspace that imports `@ergots/avltree`**; every other member
+imports the tree from here.
 
 It copies no engine code. Everything it adds, it adds through `@ergots/avltree`'s extension surface.
 Where an addition needs something of the engine that the surface lacks, the surface grows in

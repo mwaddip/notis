@@ -59,8 +59,15 @@ is what tells them apart. The library runs in a browser bundle: it may import no
 no Node global (the command line's `index.ts` alone does) — held by the browser pass of `typecheck`, which compiles
 `src/lib.ts` and what it imports against the DOM library (`tsconfig.browser.json`, `ARCHITECTURE → Package boundaries`).
 
+**Every answer is read under its route's cap.** `fetchJson(fetch, url, cap)` and `readCappedJson(res, cap)`
+(`src/http.ts`) read a body as a stream up to the cap the caller names, cancel it past the cap and answer as a body
+that will not parse does; the caps are `src/caps.ts`' (`CONSTANTS → Light client reads`), the proof route's
+`nipopowProofReadBytes(m, k)` a function of the `m` and `k` asked. `readCappedJson` and `POST_BATCH_READ_BYTES` are
+exported for the extension's batch read.
+
 **The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user`
-following `next` to the end, `height` and `effective` from the first karma page — the node answers a key it has
+following `next` to the end — a ledger listed past `LEDGER_READ_MAX` boxes fails the listing — `height` and
+`effective` from the first karma page — the node answers a key it has
 never seen with an empty page at its height, so any non-ok, a 404 among them, or a page that is not an object
 with a `boxes` array and a `next` that is
 null or a non-empty string with no lone surrogate (the next request carries it through `encodeURIComponent`),
@@ -71,7 +78,8 @@ order the run's whole meaning rests on: the identity record at `suffixHead`; eac
 the same ranges at `tip`; then one `GET /blocks/current`. A range is `proveRange`'s (`src/holdings.ts`): page by
 page from `GET /api/v1/range/:kind/:owner`, each answer's `stateRoot` read for shape and held to the header's
 before its proof is read, each page replayed by `consensus`' `holdingsPage` over `verifierSession` on the node's proof,
-and the next page's `from` read from the proof — never from the answer — so a range ends where the proof says it does.
+and the next page's `from` read from the proof — never from the answer — so a range ends where the proof says it does;
+a range past `LEDGER_READ_MAX` boxes ends `unproven`, naming the bound.
 **Each ledger is read on its own** and carries its read's status — `holdings`: `read` · `unproven` · `no-proof` ·
 `stale` · `not-read` — with the failed read's verdict (`holdingsVerdict`). A listed box is **`proven`** when the key
 holds it at both heights, in the ledger it was listed under, with the listing's value and (for a credit box) lock, both
@@ -132,7 +140,8 @@ does; `--json` carries the node's data raw.
 row a post read brought to the transaction the row carries under `tx=1`, in the order the check's meaning rests on —
 the transaction decodes and carries a post commit; `computeTxId` of it is the row's `txId` and `computePostId(txId, 0)`
 its `id`; the commit's `author`, `parentRefs`, `contentHash`, `type` and `protocolVersion` are the row's;
-`computeContentHash(content)` is the commit's, for a row with text; and the signature under the author's key verifies
+`verifyPostBody(content, contentHash)` holds for a row with text — the content rules and the hash; and the signature
+under the author's key verifies
 over the transaction id — a page's signatures as one `verifyEd25519Batch`, each row once through `verifyEd25519` only
 when the batch fails. **`bound`** carries the post id, the transaction's bytes, the author and the parent;
 **`unbound`** carries one reason of a closed set; a withdrawn row is **`nothing-to-bind`**; a row whose `tx` is `null`
