@@ -27,62 +27,38 @@ describe('NodeTipResult.refuseCode', () => {
   });
 
   it("404 with body `{ error: 'chain too short' }` → 'too-short'", async () => {
-    const httpFetch = async (_url: string) => ({
-      ok: false,
-      status: 404,
-      text: async () => JSON.stringify({ error: 'chain too short' }),
-    } as unknown as Response);
+    const httpFetch = async (_url: string) => new Response(JSON.stringify({ error: 'chain too short' }), { status: 404 });
     const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
     expect(result.nodes[0]!.refuseCode).toBe('too-short');
   });
 
   it("404 with a non-JSON body → 'http', never 'too-short'", async () => {
-    const httpFetch = async (_url: string) => ({
-      ok: false,
-      status: 404,
-      text: async () => 'Cannot GET /nipopow/proof/6/6',
-    } as unknown as Response);
+    const httpFetch = async (_url: string) => new Response('Cannot GET /nipopow/proof/6/6', { status: 404 });
     const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
     expect(result.nodes[0]!.refuseCode).toBe('http');
   });
 
   it("404 with a JSON body whose error is not `chain too short` → 'http'", async () => {
-    const httpFetch = async (_url: string) => ({
-      ok: false,
-      status: 404,
-      text: async () => JSON.stringify({ error: 'not found' }),
-    } as unknown as Response);
+    const httpFetch = async (_url: string) => new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
     const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
     expect(result.nodes[0]!.refuseCode).toBe('http');
   });
 
   it("any other non-ok status → 'http'", async () => {
-    const httpFetch = async (_url: string) => ({
-      ok: false,
-      status: 500,
-      text: async () => 'internal error',
-    } as unknown as Response);
+    const httpFetch = async (_url: string) => new Response('internal error', { status: 500 });
     const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
     expect(result.nodes[0]!.refuseCode).toBe('http');
   });
 
   it("ok answer with no proof field → 'invalid'", async () => {
-    const httpFetch = async (_url: string) => ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({}),
-    } as unknown as Response);
+    const httpFetch = async (_url: string) => new Response(JSON.stringify({}), { status: 200 });
     const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
     expect(result.nodes[0]!.refuseCode).toBe('invalid');
     expect(result.nodes[0]!.refuseReason).toContain('missing proof field');
   });
 
   it("proof hex that fails to decode → 'invalid'", async () => {
-    const httpFetch = async (_url: string) => ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ proof: 'deadbeef' }),
-    } as unknown as Response);
+    const httpFetch = async (_url: string) => new Response(JSON.stringify({ proof: 'deadbeef' }), { status: 200 });
     const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
     expect(result.nodes[0]!.refuseCode).toBe('invalid');
     expect(result.nodes[0]!.refuseReason).toContain('proof decode failed');
@@ -93,22 +69,14 @@ describe('NodeTipResult.refuseCode', () => {
   // around the decode, so a malformed or uppercase proof is the same 'invalid'
   // refusal as any other decode failure, never an exception out of resolveTip.
   it("proof hex with a non-hex character → 'invalid', the decode's own throw caught", async () => {
-    const httpFetch = async (_url: string) => ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ proof: 'deadbeez' }),
-    } as unknown as Response);
+    const httpFetch = async (_url: string) => new Response(JSON.stringify({ proof: 'deadbeez' }), { status: 200 });
     const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
     expect(result.nodes[0]!.refuseCode).toBe('invalid');
     expect(result.nodes[0]!.refuseReason).toContain('proof decode failed');
   });
 
   it("proof hex in uppercase → 'invalid', never thrown out of resolveTip", async () => {
-    const httpFetch = async (_url: string) => ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ proof: 'DEADBEEF' }),
-    } as unknown as Response);
+    const httpFetch = async (_url: string) => new Response(JSON.stringify({ proof: 'DEADBEEF' }), { status: 200 });
     const result = await resolveTip(['http://a:3000'], M, K, profile, Date.now, httpFetch);
     expect(result.nodes[0]!.refuseCode).toBe('invalid');
     expect(result.nodes[0]!.refuseReason).toContain('proof decode failed');

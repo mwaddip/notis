@@ -133,11 +133,7 @@ describe('tip resolution', () => {
   });
 
   it('node returns non-200 → refused with status', async () => {
-    const httpFetch = async (_url: string) => ({
-      ok: false,
-      status: 500,
-      text: async () => 'internal error',
-    } as unknown as Response);
+    const httpFetch = async (_url: string) => new Response('internal error', { status: 500 });
 
     const profile = devnetProfile();
     const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, Date.now, httpFetch);

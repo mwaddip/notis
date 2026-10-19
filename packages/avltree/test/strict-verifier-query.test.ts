@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { BatchAVLProver } from '../src/prover.js'
 import { StrictBatchAVLVerifier } from '../src/strict-verifier.js'
 import { AvlVerifyError, type AvlTreeConfig, type Operation } from '@ergots/avltree'
-import { SPINE_CONFIG, buildSpineDigest, buildSpineProof } from './helpers/deep-spine.js'
 
 const KL = 32
 const CONFIG: AvlTreeConfig = { keyLength: KL, valueLengthOpt: null }
@@ -145,14 +144,19 @@ describe('isFullyConsumed — a throw is not an answer', () => {
   })
 
   it('after an engine throw it throws, as digest() does', () => {
-    const depth = 100_000
-    const v = new StrictBatchAVLVerifier(
-      buildSpineDigest(depth, 0xff),
-      buildSpineProof(depth, Math.ceil(depth / 8)),
-      SPINE_CONFIG,
-    )
+    // core.performOneOperation is overridden to throw RangeError, as the engine
+    // does on an invariant violation during an operation; the wrapper's
+    // `indeterminate` flag stays set and poisons every later call that passes
+    // through assertUsable. AVLTREE_INTERFACE → The depth guard rules out a
+    // deep spine as the trigger.
+    const { digest, proof } = scenario(TWO_LOOKUPS)
+    const v = new StrictBatchAVLVerifier(digest, proof, CONFIG)
     expect(v.isFullyConsumed()).toBe(false) // healthy, and nothing visited yet
-    expect(() => v.performOneOperation({ tag: 'Lookup', key: new Uint8Array([0x10]) })).toThrow(RangeError)
+    const performOneOperation = (): never => {
+      throw new RangeError('Maximum call stack size exceeded')
+    }
+    Object.assign((v as unknown as { core: object }).core, { performOneOperation })
+    expect(() => v.performOneOperation({ tag: 'Lookup', key: key(20) })).toThrow(RangeError)
     expect(() => v.isFullyConsumed()).toThrow(/StrictBatchAVLVerifier\.isFullyConsumed.*indeterminate/)
     expect(() => v.digest()).toThrow(/indeterminate/)
     // The one method that still answers: no verification failure was recorded.

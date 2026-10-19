@@ -9,7 +9,6 @@ import {
   type LeafNode,
   type Operation,
 } from '@ergots/avltree'
-import { SPINE_CONFIG, buildSpineDigest, buildSpineProof } from './helpers/deep-spine.js'
 import { KEY_LENGTHS, lowKey, randomTree, reportOf, rng, successfulBatch } from './helpers/tree-harness.js'
 import { keyOf } from './helpers/tree-surgery.js'
 
@@ -100,11 +99,22 @@ describe('a verifier neighbor lookup consumes the proof exactly as a Lookup', ()
   })
 
   it('an engine throw inside a neighbor lookup leaves the verifier unusable', () => {
-    const depth = 100_000
-    const v = new BatchAVLVerifier(buildSpineDigest(depth, 0xff), buildSpineProof(depth, Math.ceil(depth / 8)), SPINE_CONFIG)
-    expect(() => v.performLookupWithNeighbors(new Uint8Array([0x10]))).toThrow(RangeError)
-    expect(() => v.performLookupWithNeighbors(new Uint8Array([0x10]))).toThrow(/indeterminate/)
-    expect(() => v.performOneOperation({ tag: 'Lookup', key: new Uint8Array([0x10]) })).toThrow(/indeterminate/)
+    // core.perform is overridden to throw RangeError, as the engine does on an
+    // invariant violation during an operation; the wrapper's `indeterminate`
+    // flag stays set and poisons every later call. AVLTREE_INTERFACE → The
+    // depth guard rules out a deep spine as the trigger.
+    const p = fiveKeyProver()
+    const before = p.digest()
+    const oneGo = p.generateProofForOperations([{ tag: 'Lookup', key: keyOf(20) }])
+    if (!oneGo.success) throw new Error('prover lookup failed')
+    const v = new BatchAVLVerifier(before, oneGo.proof, CONFIG)
+    const perform = (): never => {
+      throw new RangeError('Maximum call stack size exceeded')
+    }
+    Object.assign((v as unknown as { core: object }).core, { perform })
+    expect(() => v.performLookupWithNeighbors(keyOf(20))).toThrow(RangeError)
+    expect(() => v.performLookupWithNeighbors(keyOf(20))).toThrow(/indeterminate/)
+    expect(() => v.performOneOperation({ tag: 'Lookup', key: keyOf(20) })).toThrow(/indeterminate/)
   })
 
   it('a successful Lookup that observed other than one leaf throws and leaves the verifier unusable', () => {

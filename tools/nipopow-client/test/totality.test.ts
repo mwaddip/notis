@@ -100,11 +100,12 @@ function listingOf(karma: unknown[], height: unknown = TIP_H): Listing {
 }
 
 function cutOff(): Response {
-  return {
-    ok: true,
-    status: 200,
-    text: async () => { throw new TypeError('terminated'); },
-  } as unknown as Response;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.error(new TypeError('terminated'));
+    },
+  });
+  return new Response(stream, { status: 200 });
 }
 
 function prove(listing: Listing, fetch: HttpFetch) {
@@ -113,7 +114,7 @@ function prove(listing: Listing, fetch: HttpFetch) {
 
 describe('fetchJson', () => {
   it('a body cut off in flight is a transport failure, never a throw', async () => {
-    const res = await fetchJson(async () => cutOff(), 'http://node');
+    const res = await fetchJson(async () => cutOff(), 'http://node', 1_024);
     expect(res).toEqual({ ok: false, status: 0, body: 'terminated' });
   });
 });

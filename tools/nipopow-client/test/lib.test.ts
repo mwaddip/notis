@@ -28,11 +28,13 @@ describe('library entry', () => {
     expect(Object.keys(lib).sort()).toEqual([
       'DEFAULT_K',
       'DEFAULT_M',
+      'POST_BATCH_READ_BYTES',
       'checkPosts',
       'fetchListing',
       'proveFigures',
       'proveName',
       'proveRange',
+      'readCappedJson',
       'resolveTip',
       'verifierProfile',
     ]);

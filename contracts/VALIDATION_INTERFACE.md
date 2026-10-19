@@ -704,7 +704,8 @@ verifyPostBody(content: unknown, contentHash: Uint8Array): { valid: boolean; err
 ```
 
 **The one check a body passes at every entry** — the packet's trailing field at the gossip
-topic validator, a pull response's element, and `POST /posts`' `content` — and the only place
+topic validator, a pull response's element, `POST /posts`' `content`, and a row's text in the light
+client's post check (`WEB_INTERFACE → The extension → "The post check"`) — and the only place
 the content rules run: `content` is a string; `verifyContentLimits`; `verifyContentCharacters`;
 `computeContentHash(content)` equals `contentHash` byte-for-byte (`TYPES_INTERFACE` → Hashing
 functions). The commitment is read from the transaction the caller already holds

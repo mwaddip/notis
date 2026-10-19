@@ -9,7 +9,7 @@ describe('fetchJson', () => {
       seen = init;
       return new Response('{}', { status: 200 });
     };
-    await fetchJson(fake, 'http://node');
+    await fetchJson(fake, 'http://node', 1_024);
     expect(seen?.signal).toBeInstanceOf(AbortSignal);
   });
 
@@ -17,7 +17,7 @@ describe('fetchJson', () => {
   // not fatal, so the reachable nodes still decide.
   it('reports a transport failure as a non-ok result, never a throw', async () => {
     const fake = async (): Promise<Response> => { throw new TypeError('fetch failed'); };
-    const res = await fetchJson(fake, 'http://node');
+    const res = await fetchJson(fake, 'http://node', 1_024);
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.status).toBe(0);
@@ -28,7 +28,7 @@ describe('fetchJson', () => {
   // A 200 whose body will not parse is one node's fault, not the run's.
   it('reports an unparseable 200 body as a non-ok result, never a throw', async () => {
     const fake = async (): Promise<Response> => new Response('not json', { status: 200 });
-    const res = await fetchJson(fake, 'http://node');
+    const res = await fetchJson(fake, 'http://node', 1_024);
     expect(res.ok).toBe(false);
   });
 });

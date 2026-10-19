@@ -23,6 +23,7 @@ import type {
 import type { PoPowHeader } from '@dagsocial/nipopow';
 import type { HttpFetch } from './http.js';
 import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
+import { HEIGHT_READ_BYTES, LEDGER_READ_MAX, LISTING_PAGE_READ_BYTES, LOOKUP_READ_BYTES } from './caps.js';
 import { proveRange } from './holdings.js';
 import type { RangeResult } from './holdings.js';
 
@@ -165,19 +166,27 @@ function isWellFormedText(s: string): boolean {
 // null. The node answers a key it has never seen with an empty page at its
 // current height (NODE_INTERFACE → HTTP API: the two rows name a 400 and no
 // 404), so a 404 — like any other non-ok — is a listing failure carrying
-// the route, as is a malformed page.
+// the route, as is a malformed page. Each ledger's listing is bounded at
+// `maxBoxes` (default `LEDGER_READ_MAX`): a listing that runs past it fails
+// with the route and the bound named, no further page asked
+// (WEB_INTERFACE → The extension → "The verified figures" —
+// "the command line reads the listing it judges itself … held to the same
+// bound: a ledger listed past it fails the listing").
 export async function fetchListing(
   nodeUrl: string,
   user: string,
   httpFetch: HttpFetch,
+  maxBoxes: number = LEDGER_READ_MAX,
 ): Promise<ListingResult> {
   const karmaBoxes: ListedBox[] = [];
   let karmaHeight = 0;
   let karmaEffective = '0';
 
+  // CONSTANTS → Light client reads — a karma listing page.
   const firstKarma = await fetchJson<KarmaPageResponse>(
     httpFetch,
     `${nodeUrl}/karma/${user}`,
+    LISTING_PAGE_READ_BYTES,
   );
   if (!firstKarma.ok) {
     return { ok: false, reason: `GET /karma/${user}: HTTP ${firstKarma.status}` };
@@ -189,10 +198,15 @@ export async function fetchListing(
   karmaHeight = firstKarma.data.height;
   karmaEffective = firstKarma.data.effective;
   let karmaNext: string | null = firstKarma.data.next;
+  const overflowKarma = ledgerOverflow(karmaBoxes.length, karmaNext, maxBoxes);
+  if (overflowKarma !== null) {
+    return { ok: false, reason: `GET /karma/${user}: ${overflowKarma}` };
+  }
   while (karmaNext !== null) {
     const r = await fetchJson<KarmaPageResponse>(
       httpFetch,
       `${nodeUrl}/karma/${user}?after=${encodeURIComponent(karmaNext)}`,
+      LISTING_PAGE_READ_BYTES,
     );
     if (!r.ok) {
       return { ok: false, reason: `GET /karma/${user}?after=${capped(karmaNext)}: HTTP ${r.status}` };
@@ -202,12 +216,18 @@ export async function fetchListing(
     }
     for (const b of r.data.boxes) karmaBoxes.push(b);
     karmaNext = r.data.next;
+    const over = ledgerOverflow(karmaBoxes.length, karmaNext, maxBoxes);
+    if (over !== null) {
+      return { ok: false, reason: `GET /karma/${user}: ${over}` };
+    }
   }
 
   const creditsBoxes: ListedBox[] = [];
+  // CONSTANTS → Light client reads — a credit listing page.
   const firstCredit = await fetchJson<CreditPageResponse>(
     httpFetch,
     `${nodeUrl}/credits/${user}`,
+    LISTING_PAGE_READ_BYTES,
   );
   if (!firstCredit.ok) {
     return { ok: false, reason: `GET /credits/${user}: HTTP ${firstCredit.status}` };
@@ -217,10 +237,15 @@ export async function fetchListing(
   }
   for (const b of firstCredit.data.boxes) creditsBoxes.push(b);
   let creditsNext: string | null = firstCredit.data.next;
+  const overflowCredit = ledgerOverflow(creditsBoxes.length, creditsNext, maxBoxes);
+  if (overflowCredit !== null) {
+    return { ok: false, reason: `GET /credits/${user}: ${overflowCredit}` };
+  }
   while (creditsNext !== null) {
     const r = await fetchJson<CreditPageResponse>(
       httpFetch,
       `${nodeUrl}/credits/${user}?after=${encodeURIComponent(creditsNext)}`,
+      LISTING_PAGE_READ_BYTES,
     );
     if (!r.ok) {
       return { ok: false, reason: `GET /credits/${user}?after=${capped(creditsNext)}: HTTP ${r.status}` };
@@ -230,6 +255,10 @@ export async function fetchListing(
     }
     for (const b of r.data.boxes) creditsBoxes.push(b);
     creditsNext = r.data.next;
+    const over = ledgerOverflow(creditsBoxes.length, creditsNext, maxBoxes);
+    if (over !== null) {
+      return { ok: false, reason: `GET /credits/${user}: ${over}` };
+    }
   }
 
   return {
@@ -239,6 +268,20 @@ export async function fetchListing(
       credits: { boxes: creditsBoxes },
     },
   };
+}
+
+// WEB_INTERFACE → The extension → "The verified figures" — "a ledger listed
+// past it fails the listing". A ledger that overflows reads either as more
+// than the bound in boxes, or as at the bound with a next still standing —
+// in which case no further page is asked.
+function ledgerOverflow(count: number, next: string | null, maxBoxes: number): string | null {
+  if (count > maxBoxes) {
+    return `listing runs past the ${maxBoxes}-box bound (${count} boxes read)`;
+  }
+  if (count >= maxBoxes && next !== null) {
+    return `listing runs past the ${maxBoxes}-box bound: a next page still stands at the bound`;
+  }
+  return null;
 }
 
 type KeyProofOutcome =
@@ -269,6 +312,14 @@ type RecordProofOutcome =
 // single-key AVL verification; a key's holdings read whole go through
 // `proveRange` (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
 // route").
+//
+// AVLTREE_INTERFACE → The depth guard → "`verifyAvlLookup`, passed through,
+// is not guarded; its caller bounds it by the engine's own count":
+// `maxNumOperations: 1, maxDeletes: 0` holds the engine's `computeMaxNodes`
+// to `(1 + 0)(2h + 1) + 0 · hnew + 1 = 2h + 2` nodes under a declared height
+// h — 512 at h = 255, one over the `2h + 1` an honest lookup proof carries
+// — so a proof past that is refused by the engine's decode — `null`,
+// `unproven` — before any descent.
 async function proveKeyAtHeight(
   nodeUrl: string,
   treeKey: Uint8Array,
@@ -278,9 +329,11 @@ async function proveKeyAtHeight(
   httpFetch: HttpFetch,
 ): Promise<KeyProofOutcome> {
   const keyHex = bytesToHex(treeKey);
+  // CONSTANTS → Light client reads — one lookup proof.
   const proofRes = await fetchJson<unknown>(
     httpFetch,
     `${nodeUrl}/api/v1/proof/${keyHex}?atHeight=${atHeight}`,
+    LOOKUP_READ_BYTES,
   );
   if (!proofRes.ok) {
     if (proofRes.status === 0) {
@@ -307,7 +360,7 @@ async function proveKeyAtHeight(
   const avlResult = verifyAvlLookup(
     hexToBytes(expectedStateRoot),
     proofBytes,
-    { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null },
+    { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null, maxNumOperations: 1, maxDeletes: 0 },
     treeKey,
   );
   if (avlResult === null) return { kind: 'unproven', verdict: 'proof rejected' };
@@ -472,6 +525,7 @@ export async function proveFigures(
   anchor: Anchor,
   profile: NetworkProfile,
   httpFetch: HttpFetch,
+  maxBoxes: number = LEDGER_READ_MAX,
 ): Promise<FiguresResult> {
   const userLowerHex = user.toLowerCase();
   const userBytes = hexToBytes(userLowerHex) as UserId;
@@ -488,17 +542,17 @@ export async function proveFigures(
   // Steps 2–5 — each ledger's two range reads, in the order:
   // karma@suffix, credit@suffix, karma@tip, credit@tip. A ledger that failed
   // at `suffixHead` is not asked at `tip`.
-  const karmaSuffix = await proveRange(nodeUrl, 'karma', userLowerHex, suffixHeader, httpFetch);
+  const karmaSuffix = await proveRange(nodeUrl, 'karma', userLowerHex, suffixHeader, httpFetch, maxBoxes);
   const creditSuffix = listing.credits !== null
-    ? await proveRange(nodeUrl, 'credit', userLowerHex, suffixHeader, httpFetch)
+    ? await proveRange(nodeUrl, 'credit', userLowerHex, suffixHeader, httpFetch, maxBoxes)
     : null;
   const karmaReads: LedgerReads = karmaSuffix.ok
-    ? { suffix: karmaSuffix, tip: await proveRange(nodeUrl, 'karma', userLowerHex, tipHeader, httpFetch) }
+    ? { suffix: karmaSuffix, tip: await proveRange(nodeUrl, 'karma', userLowerHex, tipHeader, httpFetch, maxBoxes) }
     : { suffix: karmaSuffix };
   const creditReads: LedgerReads = creditSuffix === null
     ? null
     : creditSuffix.ok
-      ? { suffix: creditSuffix, tip: await proveRange(nodeUrl, 'credit', userLowerHex, tipHeader, httpFetch) }
+      ? { suffix: creditSuffix, tip: await proveRange(nodeUrl, 'credit', userLowerHex, tipHeader, httpFetch, maxBoxes) }
       : { suffix: creditSuffix };
 
   // Step 6 — one GET /blocks/current.
@@ -782,7 +836,8 @@ export async function proveFigures(
 // answer, or one whose `height` is not a block height, leaves `heightAfter`
 // unread (WEB_INTERFACE → The extension → "A run is total").
 export async function readHeightAfter(nodeUrl: string, httpFetch: HttpFetch): Promise<number | null> {
-  const res = await fetchJson<unknown>(httpFetch, `${nodeUrl}/blocks/current`);
+  // CONSTANTS → Light client reads — `/blocks/current`.
+  const res = await fetchJson<unknown>(httpFetch, `${nodeUrl}/blocks/current`, HEIGHT_READ_BYTES);
   if (!res.ok || !isRecord(res.data)) return null;
   const height = res.data['height'];
   return isBlockHeight(height) ? height : null;

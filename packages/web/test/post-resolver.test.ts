@@ -2,6 +2,9 @@
 import { describe, it, expect } from 'vitest';
 import { createPostResolver } from '../src/extension/post-resolver';
 import type { PostCheck } from '@dagsocial/nipopow-client';
+import { POST_BATCH_READ_BYTES } from '@dagsocial/nipopow-client';
+import { MAX_CONTENT_BYTES, MAX_TX_BYTES } from '@dagsocial/types';
+import { BATCH_READ_MAX } from '../src/model/post-resolve';
 import type { PostJson, PostStatus } from '../src/api/dto';
 
 // The extension's resolver (WEB_INTERFACE → The extension → "The resolve"):
@@ -28,8 +31,11 @@ interface FetchCall {
   init?: RequestInit;
 }
 
-/** A fake `fetch` that answers from a FIFO per URL. A `null` entry rejects.
- *  Every call is recorded. */
+/** A fake `fetch` that answers from a FIFO per URL. A `null` entry rejects,
+ *  an entry whose `body` is `undefined` serves text that is not JSON, and
+ *  every other entry serves the stringified body. Every call is recorded.
+ *  Each answer is a real `Response` built from the body text, so the
+ *  resolver's capped reader reads the body as it does from the network. */
 function fakeFetch(answers: Map<string, Array<{ status: number; body: unknown } | null>>): {
   calls: FetchCall[];
   fetch: typeof fetch;
@@ -41,15 +47,8 @@ function fakeFetch(answers: Map<string, Array<{ status: number; body: unknown } 
     const q = answers.get(u) ?? [];
     const next = q.shift();
     if (next === undefined || next === null) return Promise.reject(new Error('refused'));
-    return Promise.resolve({
-      ok: next.status >= 200 && next.status < 300,
-      status: next.status,
-      statusText: 'OK',
-      json: async () => {
-        if (next.body === undefined) throw new SyntaxError('not JSON');
-        return next.body;
-      },
-    } as Response);
+    const text = next.body === undefined ? 'not json' : JSON.stringify(next.body);
+    return Promise.resolve(new Response(text, { status: next.status, statusText: 'OK' }));
   }) as unknown as typeof fetch;
   return { calls, fetch: fn };
 }
@@ -268,6 +267,172 @@ describe("post-resolver — the pointer moves at the call", () => {
     const second = net.calls.find((c) => c.url === 'http://b.test/posts/batch?tx=1');
     expect(first).toBeDefined();
     expect(second).toBeDefined();
+  });
+});
+
+// WEB_INTERFACE → The extension → "Every answer is read under its route's cap"
+// — a body longer than its cap is read no further, and the request answers as
+// one whose body does not parse: it serves nothing, and its ids go on to the
+// next node. CONSTANTS → Light client reads — `POST_BATCH_READ_BYTES`.
+
+const worstRow = (label: string): PostJson => ({
+  id: hid(label),
+  txId: hid('tx' + label),
+  content: '"'.repeat(MAX_CONTENT_BYTES),
+  contentHash: hid('h' + label),
+  author: hid('a' + label),
+  parentRefs: [hid('p' + label)],
+  protocolVersion: 1,
+  type: 'regular',
+  status: 'confirmed' as PostStatus,
+  blockHeight: 10,
+  blockIndex: 0,
+  blockCreatedAt: 0,
+  likeCount: 0,
+  descendantCount: 0,
+  authorName: 'A'.repeat(24),
+  likedByViewer: true,
+  tx: 'ab'.repeat(MAX_TX_BYTES),
+});
+
+const boundEvery = (rows: unknown[]): PostCheck[] =>
+  rows.map((r) => {
+    if (typeof r === 'object' && r !== null && typeof (r as PostJson).id === 'string') {
+      return bound(r as PostJson);
+    }
+    return nothingToBind;
+  });
+
+/** Stream `text` as UTF-8 chunks of `chunkSize` bytes, under no
+ *  Content-Length. The counter records how many bytes have been enqueued,
+ *  and the flag turns true when the reader cancels the stream. */
+function streamingResponse(text: string, chunkSize: number): {
+  res: Response;
+  counts: { pulled: number; cancelled: boolean };
+} {
+  const bytes = new TextEncoder().encode(text);
+  const counts = { pulled: 0, cancelled: false };
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (counts.pulled >= bytes.byteLength) {
+        controller.close();
+        return;
+      }
+      const n = Math.min(chunkSize, bytes.byteLength - counts.pulled);
+      controller.enqueue(bytes.subarray(counts.pulled, counts.pulled + n));
+      counts.pulled += n;
+    },
+    cancel() {
+      counts.cancelled = true;
+    },
+  });
+  return { res: new Response(stream, { status: 200 }), counts };
+}
+
+/** Stream `bodyBytes` of ASCII `a` as chunks of `chunkSize` bytes, under no
+ *  Content-Length. The counter and the flag read what the stream delivered
+ *  and whether the reader cancelled it. */
+function streamingBytesResponse(bodyBytes: number, chunkSize: number): {
+  res: Response;
+  counts: { pulled: number; cancelled: boolean };
+} {
+  const counts = { pulled: 0, cancelled: false };
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (counts.pulled >= bodyBytes) {
+        controller.close();
+        return;
+      }
+      const n = Math.min(chunkSize, bodyBytes - counts.pulled);
+      counts.pulled += n;
+      controller.enqueue(new Uint8Array(n).fill(97));
+    },
+    cancel() {
+      counts.cancelled = true;
+    },
+  });
+  return { res: new Response(stream, { status: 200 }), counts };
+}
+
+describe("post-resolver — the batch read is capped at POST_BATCH_READ_BYTES", () => {
+  it('a 2xx body one byte over the cap serves nothing and the next node is asked', async () => {
+    const r = row('r0');
+    const target = POST_BATCH_READ_BYTES + 1;
+    const skeleton = JSON.stringify({ posts: [r], pad: '' });
+    const padLen = target - skeleton.length;
+    const bodyText = JSON.stringify({ posts: [r], pad: 'a'.repeat(padLen) });
+    const bodyBytes = new TextEncoder().encode(bodyText).byteLength;
+    // control — the body is exactly one byte over the cap
+    expect(bodyBytes).toBe(POST_BATCH_READ_BYTES + 1);
+    const calls: FetchCall[] = [];
+    const fetchFn = ((url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const u = String(url);
+      calls.push({ url: u, init });
+      if (u === 'http://a.test/posts/batch?tx=1') {
+        const { res } = streamingResponse(bodyText, 128 * 1024);
+        return Promise.resolve(res);
+      }
+      if (u === 'http://b.test/posts/batch?tx=1') {
+        return Promise.resolve(new Response(JSON.stringify({ posts: [r] }), { status: 200 }));
+      }
+      return Promise.reject(new Error('unexpected url'));
+    }) as unknown as typeof fetch;
+    const resolver = createPostResolver({
+      nodes: () => ['http://a.test', 'http://b.test'], fetch: fetchFn, check: checkByFirstRow,
+      now: () => 0, until: () => new Promise(() => {}),
+    });
+    const bounds: PostJson[] = [];
+    const ends = await resolver.resolve([r.id], (ps) => bounds.push(...ps.map((p) => p.row)));
+    // control — no id ended unserved or unbound
+    expect(ends.size).toBe(0);
+    // control — the id was bound by one row
+    expect(bounds).toHaveLength(1);
+    // last — the second node was asked after the first refused
+    expect(calls.map((c) => c.url)[1]).toBe('http://b.test/posts/batch?tx=1');
+  });
+
+  it('a body many times the cap is pulled no further than the cap and one chunk', async () => {
+    const chunkSize = 1024;
+    const totalBytes = POST_BATCH_READ_BYTES * 4;
+    const { res, counts } = streamingBytesResponse(totalBytes, chunkSize);
+    const calls: FetchCall[] = [];
+    const fetchFn = ((url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      calls.push({ url: String(url), init });
+      return Promise.resolve(res);
+    }) as unknown as typeof fetch;
+    const resolver = createPostResolver({
+      nodes: () => ['http://a.test'], fetch: fetchFn, check: checkByFirstRow,
+      now: () => 0, until: () => new Promise(() => {}),
+    });
+    const r = row('r0');
+    await resolver.resolve([r.id], () => {});
+    // last — pulled no further than the cap and about one chunk; a stream's
+    // default queueing strategy may prefetch a chunk ahead of the reader's cancel.
+    expect(counts.pulled).toBeLessThanOrEqual(POST_BATCH_READ_BYTES + 2 * chunkSize);
+  });
+
+  it('BATCH_READ_MAX rows at 2 · MAX_CONTENT_BYTES content and 2 · MAX_TX_BYTES tx bind', async () => {
+    const rows: PostJson[] = [];
+    for (let i = 0; i < BATCH_READ_MAX; i++) rows.push(worstRow('r' + i));
+    const bodyText = JSON.stringify({ posts: rows });
+    const bodyBytes = new TextEncoder().encode(bodyText).byteLength;
+    // control — the longest honest body is at most the cap
+    expect(bodyBytes).toBeLessThanOrEqual(POST_BATCH_READ_BYTES);
+    const calls: FetchCall[] = [];
+    const fetchFn = ((url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      calls.push({ url: String(url), init });
+      return Promise.resolve(new Response(bodyText, { status: 200 }));
+    }) as unknown as typeof fetch;
+    const resolver = createPostResolver({
+      nodes: () => ['http://a.test'], fetch: fetchFn, check: boundEvery,
+      now: () => 0, until: () => new Promise(() => {}),
+    });
+    const bounds: PostJson[] = [];
+    const ends = await resolver.resolve(rows.map((r) => r.id), (ps) => bounds.push(...ps.map((p) => p.row)));
+    // control — no id ended unserved or unbound
+    expect(ends.size).toBe(0);
+    // last — every row bound, in one request
+    expect(bounds).toHaveLength(BATCH_READ_MAX);
   });
 });
 

@@ -1,9 +1,10 @@
 /**
  * The step-by-step verifier with the neighbor-reporting lookup, over
  * @ergots/avltree's VerifierCore extended with lookupWithNeighbors through
- * the engine's `protected perform`.
+ * the engine's `protected perform`, and the construction-time depth guard.
  *
- * See AVLTREE_INTERFACE → Neighbor lookups.
+ * See AVLTREE_INTERFACE → Neighbor lookups and AVLTREE_INTERFACE → The depth
+ * guard.
  */
 
 import {
@@ -13,6 +14,7 @@ import {
   validateConfig,
   validateOperationShape,
   validateStartingDigest,
+  type AvlNode,
   type AvlTreeConfig,
   type AvlVerifyFailReason,
   type LeafNode,
@@ -24,7 +26,9 @@ import { neighborLookupOf, type NeighborLookup, type NeighborLookupResult } from
 /**
  * VerifierCore with a neighbor-reporting lookup bolted on through the engine's
  * protected `perform`. Shares the parent's traversal state, callbacks and
- * digest; adds only the leaf observer the report is read off.
+ * digest; adds only the leaf observer the report is read off. The constructor
+ * also runs AVLTREE_INTERFACE → The depth guard, which poisons the parent
+ * when the decoded tree is deeper than the digest's declared height.
  *
  * The subclass's fields are initialized only after `super()` returns, which
  * VerifierCore's constructor guarantees by calling no overridable method.
@@ -37,6 +41,28 @@ export class CoreWithNeighbors extends VerifierCore {
     super(startingDigest, proof, config)
     this.negInfKeyBuf = negInfKey(config.keyLength)
     this.posInfKeyBuf = posInfKey(config.keyLength)
+    // AVLTREE_INTERFACE → The depth guard. Measure the decoded tree's depth
+    // iteratively — a label stub and a leaf each count as a terminal node at
+    // their own depth, an internal node extends both children by one. If the
+    // deepest terminal sits below the digest's declared height, poison as a
+    // proof that failed to decode does: root to null, height to 0, and
+    // 'proof-malformed' as the first failure's reason.
+    if (this.root !== null) {
+      let max = 0
+      const stack: Array<[AvlNode, number]> = [[this.root, 0]]
+      while (stack.length > 0) {
+        const [n, d] = stack.pop()!
+        if (d > max) max = d
+        if (n.kind === 'internal') {
+          stack.push([n.left, d + 1], [n.right, d + 1])
+        }
+      }
+      if (max > this.height) {
+        this.root = null
+        this.height = 0
+        this.lastFailReason = 'proof-malformed'
+      }
+    }
   }
 
   /**
@@ -73,8 +99,9 @@ export class CoreWithNeighbors extends VerifierCore {
  * - Construction copies `config` (its four fields) and validates the copy,
  *   validates `startingDigest`, and copies `proof` with `new Uint8Array` —
  *   the core reads direction bits from it lazily, op by op, and a Buffer's
- *   `.slice()` is a view. A proof that fails to decode or anchor does not
- *   throw: the verifier is poisoned from birth — `digest()` null,
+ *   `.slice()` is a view. A proof that fails to decode, anchor or satisfy
+ *   the depth guard (AVLTREE_INTERFACE → The depth guard) does not throw:
+ *   the verifier is poisoned from birth — `digest()` null,
  *   `getLastFailReason()` says why, every operation fails.
  * - A failed operation poisons: every later one fails; the first failure's
  *   reason is kept.

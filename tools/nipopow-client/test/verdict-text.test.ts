@@ -31,9 +31,12 @@ import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/t
 
 // A verdict names at most 120 characters of any one node-supplied string, and
 // the data a status is decided on is never cut: each site where node text
-// enters a verdict is handed a string of 10 000 characters.
+// enters a verdict is handed a string of 500 characters — above the 120 a
+// verdict names, so the display cap fires, and below `NAME_READ_BYTES` and
+// `HEIGHT_READ_BYTES` (1 024, the smallest route caps,
+// CONSTANTS → Light client reads), so no byte cap refuses it first.
 
-const LONG = 'Z'.repeat(10_000);
+const LONG = 'Z'.repeat(500);
 const NAMED = `${'Z'.repeat(120)}…`;
 
 const USER_HEX = 'ab'.repeat(32);
@@ -99,7 +102,7 @@ function nodeWithOverride(opts: {
 }
 
 function textResponse(status: number, text: string): Response {
-  return { ok: status >= 200 && status < 300, status, text: async () => text } as unknown as Response;
+  return new Response(text, { status });
 }
 
 function prove(karma: unknown[], fetch: HttpFetch) {
@@ -130,7 +133,7 @@ describe('capped — the node text a verdict names', () => {
 
 describe('fetchJson — a body that will not parse', () => {
   it('a 200 whose body will not parse names it capped', async () => {
-    const res = await fetchJson(async () => textResponse(200, LONG), 'http://node');
+    const res = await fetchJson(async () => textResponse(200, LONG), 'http://node', 1_024);
     expect(res).toEqual({ ok: false, status: 200, body: `unparseable body: ${NAMED}` });
   });
 });

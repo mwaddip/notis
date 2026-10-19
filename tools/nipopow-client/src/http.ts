@@ -23,26 +23,85 @@ export type NodeResult<T> = NodeResponse<T> | NodeError;
  * transport failure), never thrown. Asking two or more independent nodes is the
  * tool's whole defence against an eclipsing node (NIPOPOW_INTERFACE →
  * compareProofs), so a single dead or hostile peer must leave the reachable
- * nodes to decide rather than sink the run.
+ * nodes to decide rather than sink the run. **The caller names the byte cap**
+ * (WEB_INTERFACE → The extension → "Every answer is read under its route's
+ * cap"; CONSTANTS → Light client reads).
  */
 export async function fetchJson<T>(
   httpFetch: HttpFetch,
   url: string,
+  cap: number,
 ): Promise<NodeResult<T>> {
   let res: Response;
-  let text: string;
   try {
     res = await httpFetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-    text = await res.text();
   } catch (e) {
     return { ok: false, status: 0, body: e instanceof Error ? e.message : String(e) };
   }
-  if (!res.ok) return { ok: false, status: res.status, body: text };
+  return readCappedJson<T>(res, cap);
+}
+
+/**
+ * WEB_INTERFACE → The extension → "Every answer is read under its route's
+ * cap" — read a `Response` under a byte cap and parse it. A caller that
+ * already holds a `Response` (the extension's `POST /posts/batch?tx=1`)
+ * hands it here instead of going through `fetchJson`. The returned shape is
+ * what every caller maps the same way: an over-cap body is `{ ok: false, status,
+ * body: \`body over <cap> bytes\` }`, a non-2xx body is `{ ok: false, status,
+ * body: text }`, an unparseable 2xx body is `{ ok: false, status, body:
+ * 'unparseable body: …' }`, and a parsed 2xx is `{ ok: true, data }`. A
+ * mid-stream transport failure answers `{ ok: false, status: 0, body:
+ * errorMessage }`, as a connect failure does.
+ */
+export async function readCappedJson<T>(
+  res: Response,
+  cap: number,
+): Promise<NodeResult<T>> {
+  let read: { ok: true; text: string } | { ok: false; overflowed: true };
   try {
-    return { ok: true, data: JSON.parse(text) as T };
-  } catch {
-    return { ok: false, status: res.status, body: `unparseable body: ${capped(text)}` };
+    read = await readCappedText(res, cap);
+  } catch (e) {
+    return { ok: false, status: 0, body: e instanceof Error ? e.message : String(e) };
   }
+  if (!read.ok) return { ok: false, status: res.status, body: `body over ${cap} bytes` };
+  if (!res.ok) return { ok: false, status: res.status, body: read.text };
+  try {
+    return { ok: true, data: JSON.parse(read.text) as T };
+  } catch {
+    return { ok: false, status: res.status, body: `unparseable body: ${capped(read.text)}` };
+  }
+}
+
+/**
+ * Read a `Response`'s body as UTF-8 text, counting the bytes delivered by the
+ * stream. The stream is read chunk by chunk; once more than `cap` bytes have
+ * arrived, the reader is cancelled and the body is refused. A `Response` with
+ * no body reads as the empty string. UTF-8 is decoded as `res.text()` does
+ * (replacement characters, no throw) through a `TextDecoder` with
+ * `fatal: false`.
+ */
+async function readCappedText(
+  res: Response,
+  cap: number,
+): Promise<{ ok: true; text: string } | { ok: false; overflowed: true }> {
+  const body = res.body;
+  if (body === null) return { ok: true, text: '' };
+  const reader = body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  let count = 0;
+  let text = '';
+  for (;;) {
+    const r = await reader.read();
+    if (r.done) break;
+    count += r.value.byteLength;
+    text += decoder.decode(r.value, { stream: true });
+    if (count > cap) {
+      await reader.cancel();
+      return { ok: false, overflowed: true };
+    }
+  }
+  text += decoder.decode();
+  return { ok: true, text };
 }
 
 /**

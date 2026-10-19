@@ -5,6 +5,7 @@ import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consens
 import type { HoldingKind } from '@dagsocial/consensus';
 import type { HttpFetch } from './http.js';
 import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
+import { LEDGER_READ_MAX, RANGE_PAGE_READ_BYTES } from './caps.js';
 export type { HoldingKind };
 
 /**
@@ -64,6 +65,10 @@ export type RangeResult =
  * with no request made. A transport failure or a non-2xx — 404 `height not
  * available` among them — is `no-proof` for the whole range, and no box of
  * a range that did not finish is answered.
+ *
+ * The range is bounded at `maxBoxes` (default `LEDGER_READ_MAX`): a range
+ * that runs past it ends `unproven`, the verdict naming the bound, with no
+ * further page asked (WEB_INTERFACE → The extension → "The verified figures").
  */
 export async function proveRange(
   nodeUrl: string,
@@ -71,6 +76,7 @@ export async function proveRange(
   owner: string,
   header: { height: number; stateRoot: string },
   httpFetch: HttpFetch,
+  maxBoxes: number = LEDGER_READ_MAX,
 ): Promise<RangeResult> {
   // An `owner` that is not 64 hex is a client-side refusal — nothing is asked
   // (as `proveName` refuses a label whose key is not 64 hex).
@@ -99,7 +105,8 @@ export async function proveRange(
       : `?atHeight=${atHeight}&limit=${PAGE_ASK}&from=${fromHex}`;
     const url = `${nodeUrl}/api/v1/range/${kind}/${ownerLower}${query}`;
 
-    const res = await fetchJson<unknown>(httpFetch, url);
+    // CONSTANTS → Light client reads — one range page.
+    const res = await fetchJson<unknown>(httpFetch, url, RANGE_PAGE_READ_BYTES);
     if (!res.ok) {
       const verdict = res.status === 0
         ? `transport failure: ${capped(res.body)}`
@@ -163,7 +170,18 @@ export async function proveRange(
     }
 
     for (const b of page.boxes) boxes.push(b);
+    // WEB_INTERFACE → The extension → "The verified figures" — a ledger is
+    // read up to `maxBoxes`; a range that runs past it ends `unproven`, its
+    // verdict naming the bound. "Runs past" is `boxes.length > maxBoxes`, or
+    // `boxes.length == maxBoxes` with a `next` still standing — in which case
+    // no further page is asked.
+    if (boxes.length > maxBoxes) {
+      return { ok: false, status: 'unproven', verdict: `range runs past the ${maxBoxes}-box bound (${boxes.length} boxes read)` };
+    }
     if (page.next === null) return { ok: true, boxes };
+    if (boxes.length >= maxBoxes) {
+      return { ok: false, status: 'unproven', verdict: `range runs past the ${maxBoxes}-box bound: a next page still stands at the bound` };
+    }
     from = page.next;
   }
 }

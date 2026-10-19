@@ -332,6 +332,14 @@ configuration, never in `@dagsocial/types`. **The build's `notis-public`** — t
 prefix the background checks the bridge's sender against; an empty one builds an extension with no bridge and
 no links row.
 
+**Every answer is read under its route's cap.** Each read the light client makes — `@dagsocial/nipopow-client`'s,
+which the command line and the extension both run, and the resolve's batch read (→ "The resolve") — takes the body
+under a byte cap: the longest answer an honest node gives on that route, argued from the bounds that already hold
+what the route serves (`CONSTANTS → Light client reads`), the proof route's from the `m` and `k` the client asks. A
+body longer than its cap is read no further, and the read answers as a body that will not parse does — no honest
+node sends one, so it is the node's answer that failed, not the transport. **Every reader names its route's cap**;
+none reads a body whole.
+
 **The verified tip.** The extension checks the chain it reads: a NiPoPoW proof from the node it reads and from every
 other base of the seed list, each verified against the build's own profile and the best kept
 (`NIPOPOW_INTERFACE → The trust model`). The verifier is `resolveTip` of `@dagsocial/nipopow-client` — the code the
@@ -399,10 +407,15 @@ range**, and judges **the listing the rows rendered** against it, in this order:
 ledger whose listing the run is handed — `karma`, `credit` — page by page until the range ends
 (`NODE_INTERFACE → AVL+ State Root`, the range route; `CONSENSUS_INTERFACE → The holdings page`); the same ranges at
 `tip.height`; then one `GET /blocks/current`, `heightAfter`. **A range read leaves nothing out** — each entry's next
-key is authenticated — so the two reads are what the key holds of a ledger, whole, at each height. **A listed box is
-`proven`** when the key holds it at `suffixHead` and at `tip`, in the ledger it was listed under, with the value and
-the lock the listing gives — the range a box was read from fixes its owner and its type, so a node that lists another
-key's real box, or the wrong ledger's, gets nothing for it. Otherwise: `young` —
+key is authenticated — so the two reads are what the key holds of a ledger, whole, at each height. **A ledger is read
+up to `LEDGER_READ_MAX` boxes** (`CONSTANTS → Light client reads`): a range that runs past it, at either height, ends
+that ledger's read `unproven`, its verdict naming the bound — a tip a node mined over a tree of its own making holds a
+run to no more — and a key that keeps its boxes consolidated stays far inside it, the holder being the one who pays
+for many small boxes (one rent each, about 300 inputs a transaction). The command line reads the listing it judges
+itself (`fetchListing`, keyset page by page), held to the same bound: a ledger listed past it fails the listing.
+**A listed box is `proven`** when the key holds it at `suffixHead` and at `tip`, in the ledger it was listed under,
+with the value and the lock the listing gives — the range a box was read from fixes its owner and its type, so a
+node that lists another key's real box, or the wrong ledger's, gets nothing for it. Otherwise: `young` —
 held at `tip` and not at `suffixHead`: real, inside the region a reorg can still move; `unchecked` — not held at
 `tip`, and `heightAfter` above `tip.height`: a block landed since the anchor, the next run decides — so a landing's
 own re-read, proven against the anchor standing, reads its new box *not checked yet* until the next verified tip;
@@ -592,8 +605,9 @@ draws is a post an earlier check bound (→ "The post cache"). **A row is `bound
 this order: its `tx` is hex that
 `decodeTx` reads, and the transaction carries a post commit; `computeTxId` of it is the row's `txId`, and
 `computePostId(txId, 0)` the row's `id`; the commit's `author`, `parentRefs`, `contentHash`, `type` and
-`protocolVersion` are the row's; `computeContentHash(content)` is the commit's `contentHash`, for a row that carries
-text; and the signature the transaction carries under the author's key verifies over the transaction id
+`protocolVersion` are the row's; for a row that carries text, `verifyPostBody(content, contentHash)` holds — the
+content rules every honest node applies at every entry, and the hash (`VALIDATION_INTERFACE → verifyPostBody`); and
+the signature the transaction carries under the author's key verifies over the transaction id
 (`VALIDATION_INTERFACE → Acceptance criterion`) — an answer's rows as one batch, read again one by one only when the
 batch fails, so one bad row costs its answer nothing else. **A placeholder is checked as any row, less its text**; **a
 withdrawn row is `nothing-to-bind`** — it carries no `tx` and no words to put in anyone's mouth — and renders as it

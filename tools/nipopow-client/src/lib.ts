@@ -31,3 +31,8 @@ export { verifierProfile, DEFAULT_M, DEFAULT_K } from './config.js';
 export type { VerifyProfile } from './config.js';
 
 export type { HttpFetch } from './http.js';
+// WEB_INTERFACE → The extension → "Every answer is read under its route's
+// cap" — the extension's `POST /posts/batch?tx=1` holds its own `Response`
+// and reads it under this cap through `readCappedJson`.
+export { readCappedJson } from './http.js';
+export { POST_BATCH_READ_BYTES } from './caps.js';

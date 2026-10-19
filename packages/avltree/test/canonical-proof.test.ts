@@ -7,10 +7,7 @@ import {
   newLeaf,
   type AvlNode,
 } from '@ergots/avltree'
-// parseProofPackedTree is not exported from @ergots/avltree — the deep-spine
-// case uses BatchAVLVerifier's reconstructed root instead.
-import { BatchAVLVerifier } from '../src/verifier.js'
-import { SPINE_CONFIG, buildSpineDigest, buildSpineProof } from './helpers/deep-spine.js'
+import { LABEL_FILL, LEAF_KEY, LEAF_NEXT, LEAF_VALUE, SPINE_CONFIG, buildSpineProof } from './helpers/deep-spine.js'
 
 /** One-byte keys; the expected bytes below are written out by hand. */
 const leaf = (key: number, value: number[], next: number) =>
@@ -112,23 +109,31 @@ describe('matchesCanonicalProof — the packed tree', () => {
   })
 
   it('a deep visited spine does not overflow the stack', () => {
+    // Build the deep spine the same iterative way buildSpineDigest does, so
+    // the root construction and the walk below cost no native stack frame per
+    // level. AVLTREE_INTERFACE → The depth guard refuses a verifier over this
+    // spine under a declared-height-255 digest.
     const depth = 100_000
+    let root: AvlNode = newLeaf(
+      new Uint8Array([LEAF_KEY]),
+      new Uint8Array([LEAF_VALUE]),
+      new Uint8Array([LEAF_NEXT]),
+    )
+    for (let d = 0; d < depth; d += 1) {
+      root = newInternal(root, newLabel(new Uint8Array(32).fill(LABEL_FILL)), 0)
+    }
     const proof = buildSpineProof(depth)
-    // BatchAVLVerifier does the reconstruction `parseProofPackedTree` used to
-    // do (ergots doesn't export it); reach into its core for root and the
-    // post-END_OF_TREE direction-bit cursor.
-    const v = new BatchAVLVerifier(buildSpineDigest(depth, 0xff), proof, SPINE_CONFIG)
-    const core = (v as unknown as { core: { root: AvlNode | null; state: { directionsIndex: number } } }).core
-    if (core.root === null) throw new Error('spine did not decode')
     const visited = new Set<AvlNode>()
-    let node: AvlNode = core.root
+    let node: AvlNode = root
     while (node.kind === 'internal') {
       visited.add(node)
       node = node.left
     }
     visited.add(node)
-    const start = core.state.directionsIndex
-    expect(matchesCanonicalProof(proof, core.root, visited, SPINE_CONFIG.valueLengthOpt, start, start)).toBe(true)
+    // The proof has 0 direction bytes, so the directions start and end at the
+    // bit just past END_OF_TREE — proof.length * 8.
+    const start = proof.length * 8
+    expect(matchesCanonicalProof(proof, root, visited, SPINE_CONFIG.valueLengthOpt, start, start)).toBe(true)
   })
 })
 

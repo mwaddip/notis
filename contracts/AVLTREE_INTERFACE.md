@@ -3,7 +3,7 @@
 ## Scope
 
 `@dagsocial/avltree` is the authenticated tree as Notis uses it: `@ergots/avltree` — a port of Ergo's AVL+ tree — and
-the three things Notis needs that Ergo's tree does not have. **It is the one package of the workspace that imports
+the four things Notis needs that Ergo's tree does not have. **It is the one package of the workspace that imports
 `@ergots/avltree`**; every other member imports the tree from here.
 
 **It copies no engine code.** The descent, the rotations, the proof's encoding and decoding, a node's label and the
@@ -26,7 +26,7 @@ caller supplies. The browser runs it as it is written (`ARCHITECTURE → Package
 |---|---|---|
 | `neighbors` | `NeighborLookup`, `NeighborLookupResult` | → Neighbor lookups |
 | `prover` | `BatchAVLProver` — a subclass of `@ergots/avltree`'s | `performLookupWithNeighbors`, `unauthenticatedLookupWithNeighbors` |
-| `verifier` | `BatchAVLVerifier` — the step-by-step verifier with the neighbor lookup | `performLookupWithNeighbors` |
+| `verifier` | `BatchAVLVerifier` — the step-by-step verifier with the neighbor lookup | `performLookupWithNeighbors`; → The depth guard |
 | `strict-verifier` | `StrictBatchAVLVerifier` | → The strict verifier |
 | `lazy-nodes` | `lazyRoot` (`LoadNode`) | → Nodes loaded on first access |
 | the barrel | `PersistentBatchAVLProver`, `VersionedAVLStorage`, `AvlNode` and the node types, `AvlTreeConfig`, `Operation`, `label`, `newLeaf`, `newInternal`, `serializeNode`, `deserializeNode`, `verifyAvlLookup`, `AvlVerifyError` and its codes | nothing — `@ergots/avltree`'s own, passed through |
@@ -70,6 +70,27 @@ refused here.
 block's proof and compare it with the header's `adProofsRoot` (`NODE_INTERFACE → The block proof`), so a replay that
 is to agree with them needs this answer (`CONSENSUS_INTERFACE → The tree session`).
 
+## The depth guard
+
+**A proof is never deeper than the tree its digest declares.** A starting digest is the root's 32-byte label and, in
+its last byte, the tree's height. Every path in a proof's decoded tree is a path in the tree that digest commits to,
+so an honest proof is never deeper than the height it declares. Both step-by-step verifiers — `BatchAVLVerifier` and
+`StrictBatchAVLVerifier`, through the core they share — refuse at construction a proof whose decoded tree is deeper:
+the depth is measured over the decoded nodes, a label stub counting as a leaf, by a walk that does not recurse, and a
+refusal poisons the verifier as a proof that fails to decode does — `digest()` is null, `getLastFailReason()` answers
+`'proof-malformed'`, and every operation fails.
+
+**What it holds the engine to**: `@ergots/avltree`'s per-operation descent recurses once a level, and a proof built
+deep enough overflows the stack and escapes as a `RangeError` — measured in Node 22 at a depth between 2 000 and
+5 000, on a lookup under a digest declaring 255. Under the guard a descent starts at most 255 levels deep, whatever a
+node sends. Ergo's verifiers bound a proof's node count from the operations it serves (`maxNumOperations`,
+`maxDeletes`) and check no depth, so the guard is this package's (→ Scope).
+
+**`verifyAvlLookup`, passed through, is not guarded; its caller bounds it by the engine's own count**:
+`maxNumOperations: 1, maxDeletes: 0`, at most 512 nodes under the largest height a digest declares, a proof over
+that refused by the engine's decode before any descent — so a descent there is at most 255 levels deep. An honest
+lookup proof carries at most `2h + 1` nodes over a tree of height `h`.
+
 ## Nodes loaded on first access
 
 ```ts
@@ -97,6 +118,10 @@ meets a stub fails the operation quietly and writes a proof of the root alone.
 - **The neighbor lookups and the strict verifier**: the reports on present and absent keys and at both sentinels,
   the fail-stop on an inconsistent engine, and the strict answer in both directions — a prover's own proof is fully
   consumed, and each altered proof that replays to the right digest is refused.
+- **The depth guard**: at both verifiers, a proof one level deeper than its digest declares is refused and one at
+  the declared height is not; a prover's own proof passes under its own digest; a proof thousands of levels deep under
+  a digest declaring 255 is refused with no throw. A lookup through `verifyAvlLookup` with the engine's count refuses
+  the same deep proof with no throw.
 - **Lazy against loaded**: a single lookup, an absent key, a neighbor lookup, a page of lookups in key order and an
   insert with a remove — proof and digest equal to the fully loaded prover's, the loads counted and bounded.
 - **The bundle**: the package builds for a browser with no Node built-in (`ARCHITECTURE → Package boundaries`).

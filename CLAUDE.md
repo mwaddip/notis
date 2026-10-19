@@ -45,8 +45,8 @@ Nine packages, in dependency order:
 
 - `@dagsocial/types` — data structures, base58, positional codecs, hashing, protocol constants. **Pure functions only.**
 - `@dagsocial/avltree` — the authenticated AVL+ tree as Notis uses it: `@ergots/avltree`'s engine, plus the
-  neighbor-reporting lookups, the strict verifier and nodes loaded on first access. The one member that imports
-  `@ergots/avltree`; it copies none of its engine.
+  neighbor-reporting lookups, the strict verifier, the depth guard and nodes loaded on first access. The one member
+  that imports `@ergots/avltree`; it copies none of its engine.
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
 - `@dagsocial/consensus` — the state-transition rules: `applyBlock` (a block's body as one function, answering its

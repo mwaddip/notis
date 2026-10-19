@@ -17,6 +17,7 @@ import {
 } from '@dagsocial/types';
 import type { PostCommit, UtxoTransaction } from '@dagsocial/types';
 import { verifyEd25519, verifyEd25519Batch } from '@dagsocial/validation';
+import { MAX_CONTENT_BYTES } from '@dagsocial/types';
 import { checkPosts } from '../src/posts.js';
 import type { PostCheck } from '../src/posts.js';
 
@@ -451,6 +452,51 @@ describe('checkPosts — WEB_INTERFACE → The extension → "The post check"', 
       { signature: bB.tx.signatures[kB.pubHex]!, message: hexToBytes(bB.txId), publicKey: kB.pub },
     ];
     expect(verifyEd25519Batch(entries)).toBe(true);
+  });
+
+  // WEB_INTERFACE → The extension → "The post check" — for a row that carries
+  // text, verifyPostBody(content, contentHash) holds (VALIDATION_INTERFACE →
+  // verifyPostBody): content a string, the length within [1, MAX_CONTENT_BYTES]
+  // bytes, every character in the allowed table, and the hash. A row that
+  // fails it is unbound content.
+  it('a row whose content carries a bidi-override character is unbound content', async () => {
+    const key = makeKey(80);
+    // U+202E RIGHT-TO-LEFT OVERRIDE is in the Cf category the content rules refuse
+    // (VALIDATION_INTERFACE → verifyContentCharacters).
+    const bidi = 'hello‮world';
+    const built = buildPostTransaction({ signer: key, content: bidi });
+
+    // Control: the row's own hash machinery is consistent with its text, so
+    // every per-field check up to the body rules passes on the current tree.
+    expect(computeContentHash(built.content)).toEqual(built.commit.contentHash);
+    expect(built.row.content).toBe(bidi);
+    expect(built.row.contentHash).toBe(bytesToHex(built.commit.contentHash));
+    // Control: the signature holds over the transaction id.
+    const message = hexToBytes(built.txId);
+    expect(verifyEd25519(built.tx.signatures[key.pubHex]!, message, key.pub)).toBe(true);
+
+    const [res] = checkPosts([built.row]);
+    expect(res?.status).toBe('unbound');
+    if (res?.status === 'unbound') expect(res.reason).toBe('content');
+  });
+
+  it('a row whose content is MAX_CONTENT_BYTES + 1 bytes is unbound content', async () => {
+    const key = makeKey(81);
+    // A single-byte ASCII character repeated so the byte count is exactly one
+    // past the content-rules length ceiling.
+    const over = 'a'.repeat(MAX_CONTENT_BYTES + 1);
+    const built = buildPostTransaction({ signer: key, content: over });
+
+    // Control: the row's own hash machinery is consistent with its text.
+    expect(computeContentHash(built.content)).toEqual(built.commit.contentHash);
+    expect(built.content.length).toBe(MAX_CONTENT_BYTES + 1);
+    // Control: the signature holds over the transaction id.
+    const message = hexToBytes(built.txId);
+    expect(verifyEd25519(built.tx.signatures[key.pubHex]!, message, key.pub)).toBe(true);
+
+    const [res] = checkPosts([built.row]);
+    expect(res?.status).toBe('unbound');
+    if (res?.status === 'unbound') expect(res.reason).toBe('content');
   });
 
   it('results are returned in rows order, even with mixed statuses', () => {
