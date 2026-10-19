@@ -5327,12 +5327,6 @@ none is added.
 
 ## Configuration
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The first paragraph's sentence on a value that names no whole number and the
-> paragraph after the difficulty band lead `loadConfig`, which reads `PORT`, `ADMIN_PORT`, `MAX_MEMPOOL_ENTRIES`,
-> `MAX_PEERS` and `MAX_PROOF_HISTORY` through `parseInt` and the four proof settings and `BLOCK_BODY_BUDGET_BYTES`
-> through a parser each, reads none of the seven net settings below `MAX_PEERS` — `index.ts` passes them to `NetNode`
-> through `parseInt` itself — and runs twice in a process.
-
 **`MAX_PROOF_HISTORY` may not sit below the profile's `maxReorgDepth`, and `loadConfig` refuses at load
 rather than clamping.** `checkpointProver` prunes AVL versions below `height - maxProofHistory` while
 a switch reaches back `maxReorgDepth` and can fork at height 0 (Fork choice decides on verified headers →

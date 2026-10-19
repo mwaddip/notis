@@ -154,7 +154,7 @@ to the envelope structure (not the message bodies).
 
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
-| 1 | `Handshake` | both | Exchange after libp2p identify |
+| 1 | `Handshake` | both | One per connection, opened by the side that dialled it (→ Handshake) |
 | 2 | `SyncInfo` | both | The sender's claim — its applied tip's height and hash |
 | 3 | — | | **Retired** (was `Inv`) — never reuse |
 | 4 | `ModifierRequest` | → | "Send me these post bodies" — type 103, ids |
@@ -305,12 +305,6 @@ frame — with no penalty, there being nobody to penalise. A seed that resolved 
 the floor for the life of the process (→ Outbound Manager); a PeerDb address that did is forgotten
 and filtered thereafter (→ PeerDb). `peers()` and `getConnectedPeers()` never contain `peerId()`.
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The six paragraphs below lead the handshake handler and the dial funnel, which
-> read a handshake stream under `MAX_STREAM_BYTES` on any of libp2p's default 32 per connection, run every handshake
-> whatever its peer's state and open the dialler's stream on whichever connection libp2p picks, leave a connection
-> standing when its handshake fails, set it no deadline, and record a listener's view of the declared address stamped
-> with the time and tied to the peer's ban.
-
 **A connection carries one handshake, opened by the side that dialled it.** The dialler opens one handshake stream
 on the connection its dial returned — on that connection, never on another to the same peer — and the listener
 answers on it; a node opens none on a connection it accepted. The registration's `maxInboundStreams` is
@@ -326,13 +320,13 @@ it, or the one already run, is that connection's. The funnel counts such a dial 
 and otherwise leaves the connection to its deadline.
 
 **A peer becomes Active once.** The first handshake that completes for a peer, in either direction, makes it
-`Active` — its PeerDb record, its version and addresses on the metadata, `onPeerActive`, the `SyncInfo` that follows
-(→ Post-Handshake Routing). A handshake that completes for a peer already `Active` — on a second connection, in
-either direction — is read, decoded and validated as any handshake is, and a body-tier failure is penalised as any
-is (→ Ban policy); a valid one is answered when this node is the listener, completes its connection's handshake, and
-records and raises nothing. A refusal in its place would end, for an honest dialler that raced the peer's own dial,
-in a failed handshake and a redial cooldown on a peer it holds (→ "A handshake that does not complete ends its
-connection").
+`Active` — the PeerDb record its side makes, its version and addresses on the metadata, `onPeerActive`, the
+`SyncInfo` that follows (→ Post-Handshake Routing). A handshake that completes for a peer already `Active` — on a
+second connection, in either direction — is read, decoded and validated as any handshake is, and a body-tier failure
+is penalised as any is (→ Ban policy); a valid one is answered when this node is the listener, completes its
+connection's handshake, and records and raises nothing. A refusal in its place would end, for an honest dialler that
+raced the peer's own dial, in a failed handshake and a redial cooldown on a peer it holds (→ "A handshake that does
+not complete ends its connection").
 
 **A handshake that does not complete ends its connection.** Every way a connection's handshake can end without
 completing — on either side: a frame-tier or body-tier reject, an empty or absent answer, a read or write past its
@@ -360,10 +354,6 @@ peer's metadata apart from that address, for the one use it has — leaving the 
 `Peers` answer (→ GetPeers).
 
 ### Handshake Body
-
-> ⚠ **AHEAD OF CODE (2026-10-19).** The layout, its table and the two paragraphs after the codec's rule lead the
-> handshake codec, which writes and reads a seventh field, `vlqU(sessionMagic)` (≤ `MAX_UINT32`), after the
-> capabilities — so its longest frame is 989 bytes.
 
 ```
 lpUtf8(agentName) ‖ vlqU(protocolVersion) ‖ lpUtf8(nodeName) ‖ vlqU(chainHeight) ‖
@@ -822,10 +812,6 @@ interface PeerRecord {
 }
 ```
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The *Merge* and *Persistence* items below lead `PeerDb`, whose `record` lays
-> every record's fields over the entry's and keeps only the later `lastSeenMs`, and whose storage calls in `record`,
-> `forget` and `ban` throw out to their callers.
-
 Key behaviors:
 - **Soft cap:** 1000 entries (`peerDbCap`). Evict oldest `lastSeenMs` on
   overflow.
@@ -862,9 +848,6 @@ valid test/embedded configuration, not the production one.
 `PeerManager` bans by **peerId**; `PeerDb` bans by **address**. These
 must not drift apart: a peer that `PeerManager` bans is otherwise still
 served in `Peers` responses and re-dialed by the outbound fill phase.
-
-> ⚠ **AHEAD OF CODE (2026-10-19).** The first item below leads the handshake handler, which records on the metadata
-> the address a peer that dialled this node declared.
 
 - `PeerMetadata` carries the peer's `address` — the address this node dialled, recorded when its handshake makes
   the peer `Active`; a peer that dialled this node has none (→ Handshake → "A declared address is hearsay until a
@@ -1029,11 +1012,6 @@ is how a node gets eclipsed. Inbound connections are counted toward
   cost as an unreachable seed
 - PeerDb not consulted — seeds are the bootstrap source
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The fill phase's funnel and cooldown items and the paragraph after the list lead
-> the dial funnel, which runs its handshake on whatever connection the dial returned and puts an address into the
-> cooldown only when its dial fails, and `NetConfig`, whose three discovery settings are optional with net's own
-> defaults behind them.
-
 **Fill phase** (outbound connections >= `minPeers`, < `maxPeers`):
 - Every `OUTBOUND_TICK_INTERVAL_MS` (30s, fixed — see below), query
   `PeerDb.recent(N, exclude)` where `N = maxPeers - connectedOutbound`
@@ -1113,9 +1091,6 @@ header this node knows is Ignored") and a fault of this node's own (→ Stage 1 
 is no peer's"); and every Stage 2 refusal of a gossiped message (→ Stage 2 → "A Stage 2 refusal records
 nothing"). `onPeerPenalised` fires for none of them.
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph below leads the handshake handler and `NetNode`, which close no
-> handshake stream unread and no connection at a deadline.
-
 **A handshake's deadline and its extra streams record nothing.** A connection closed at its handshake deadline
 (→ Handshake → "A connection handshakes within its deadline, or is closed") and a second handshake stream closed
 unread (→ Handshake → "A connection carries one handshake, opened by the side that dialled it") are no penalty: the
@@ -1155,16 +1130,14 @@ rather than ten minutes.
 Permanent penalties (`PenaltyKind.ProtocolViolation`, `'permanent'`)
 bypass scoring entirely and ban instantly — decay never applies to them.
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph below leads `PeerManager`, which keeps a score on the peer's
-> connection entry: a disconnect deletes it and a reconnect starts the peer at zero.
-
 **A score is kept by peer id, and outlives its connection.** A peer's accumulated score and the time of its last
 penalty are kept by peer id, apart from its connection, in a map of at most `MAX_TRACKED_SCORES` entries, the least
 recently penalised dropped first. A disconnect leaves the score, and a reconnect resumes it, decayed for the time
 between; a penalty against a peer not connected still records nothing, as `NetNode.penalizePeer`'s against a peer
-the manager does not know records nothing (above). Dropping the oldest is the bounded hint the ban set is (→ "Ban tracking is a
-bounded hint, not a ledger"): a fresh peer id starts at zero whatever the map keeps, so an entry dropped grants
-nothing a new id could not take.
+the manager does not know records nothing (above). A ban drops the peer's score with its row: the ban carries the
+pressure the score accrued, and a temporal ban that ends readmits the peer id at zero. Dropping the oldest is the
+bounded hint the ban set is (→ "Ban tracking is a bounded hint, not a ledger"): a fresh peer id starts at zero
+whatever the map keeps, so an entry dropped grants nothing a new id could not take.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -1239,7 +1212,8 @@ the peer that has it (→ ModifierRequest).
 
 Every incoming message carries `sourcePeerId`. Validation failures are
 attributed to the sending peer. Three penalty tiers:
-- **Transient failure** (timeout, slow response): cooldown, not a ban
+- **Transient failure** (a compatibility mismatch, an answer that refutes its claim): a score that decays, a
+  temporal ban only past the threshold (→ Peer Penalty System)
 - **Protocol violation** (malformed message, invalid encoding): permanent
   ban, peer removed from PeerDb
 - **Bogus addresses in valid gossip**: silently dropped, sender NOT
@@ -1254,9 +1228,6 @@ what it holds, its pool — is one the sender may have answered otherwise, hones
 (→ Peer Penalty System → "Refusals that record nothing").
 
 ## Peer State Machine
-
-> ⚠ **AHEAD OF CODE (2026-10-19).** The paragraph's last sentence leads `NetNode`, which leaves a peer `Connecting`
-> while a connection whose handshake failed or never ran stands.
 
 States: `Connecting → Active`. A peer's row opens `Connecting` when its connection upgrades
 (`peer:connect`) and becomes `Active` when its handshake completes in either direction (→ Handshake).
@@ -1286,9 +1257,6 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 ---
 
 ## libp2p Stack
-
-> ⚠ **AHEAD OF CODE (2026-10-19).** The PubSub row's last clause leads `NetNode`, which leaves gossipsub's
-> `fallbackToFloodsub` at the library's default, `true`.
 
 | Layer | Choice |
 |-------|--------|
@@ -1722,9 +1690,6 @@ penalty-bearing) instead of two, and a query on the shared stream is unreachable
 ---
 
 ## Config
-
-> ⚠ **AHEAD OF CODE (2026-10-19).** The block below leads `NetConfig`, whose three peer-discovery fields are optional
-> and fall back to net's own 3, 1000 and 60000.
 
 Every field is required; net holds a default for none of them (→ Outbound Manager).
 

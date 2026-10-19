@@ -309,11 +309,6 @@ Relay and codec bounds a peer's messages must respect; a body over one is refuse
 element is read. `MAX_SERVE_BODY_BYTES` and `MAX_STREAM_BYTES` are the upper two of the size-cap order
 under → Size caps.
 
-> ⚠ **AHEAD OF CODE (2026-10-19).** The six rows from `MAX_HANDSHAKE_FRAME_BYTES` to `MAX_BANNED_ADDRS` lead
-> `@dagsocial/net`, whose barrel exports none of them: the first four are not in the tree, and `MAX_TRACKED_BANS`
-> and `MAX_BANNED_ADDRS` are exported by `peer-mgr.ts` and `peerdb.ts` alone. → Excluded leads it too: the barrel
-> still exports `MAX_UINT32`, the bound of the handshake's `sessionMagic` and of nothing else.
-
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `MAX_INV_IDS` | `400` | post-body ids per `ModifierRequest`, bodies per `ModifierResponse` | format | the send-side batch cap, enforced on receipt as well; none stated for the number | CHOSEN | `NET_INTERFACE → ModifierRequest` |
