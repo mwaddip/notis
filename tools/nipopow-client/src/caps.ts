@@ -1,8 +1,8 @@
 // CONSTANTS → Light client reads — the byte cap each route's answer is read
 // under. Every reader names its route's cap; none reads a body whole
 // (WEB_INTERFACE → The extension → "Every answer is read under its route's
-// cap"). The caps are rounded binary units above the longest honest answer
-// each route gives, argued in the register.
+// cap"). Each cap sits a power of two above the longest honest answer the
+// route serves, argued in the register.
 import { MAX_HEADER_BYTES } from '@dagsocial/types';
 import { MAX_NIPOPOW_PREFIX } from '@dagsocial/nipopow';
 

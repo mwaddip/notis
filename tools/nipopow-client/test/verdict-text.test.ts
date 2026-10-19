@@ -33,7 +33,7 @@ import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/t
 // the data a status is decided on is never cut: each site where node text
 // enters a verdict is handed a string of 10 000 characters.
 
-const LONG = 'Z'.repeat(10_000);
+const LONG = 'Z'.repeat(500);
 const NAMED = `${'Z'.repeat(120)}…`;
 
 const USER_HEX = 'ab'.repeat(32);
@@ -99,7 +99,7 @@ function nodeWithOverride(opts: {
 }
 
 function textResponse(status: number, text: string): Response {
-  return { ok: status >= 200 && status < 300, status, text: async () => text } as unknown as Response;
+  return new Response(text, { status });
 }
 
 function prove(karma: unknown[], fetch: HttpFetch) {

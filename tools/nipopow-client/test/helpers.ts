@@ -425,13 +425,7 @@ export function createFakeNode(opts: {
 }
 
 export function jsonResponse(status: number, body: unknown): Response {
-  const text = JSON.stringify(body);
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    text: async () => text,
-    json: async () => body,
-  } as unknown as Response;
+  return new Response(JSON.stringify(body), { status });
 }
 
 export function hexToBytes(hex: string): Uint8Array {

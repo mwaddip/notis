@@ -100,11 +100,12 @@ function listingOf(karma: unknown[], height: unknown = TIP_H): Listing {
 }
 
 function cutOff(): Response {
-  return {
-    ok: true,
-    status: 200,
-    text: async () => { throw new TypeError('terminated'); },
-  } as unknown as Response;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.error(new TypeError('terminated'));
+    },
+  });
+  return new Response(stream, { status: 200 });
 }
 
 function prove(listing: Listing, fetch: HttpFetch) {
