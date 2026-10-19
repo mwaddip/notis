@@ -31,8 +31,11 @@ interface FetchCall {
   init?: RequestInit;
 }
 
-/** A fake `fetch` that answers from a FIFO per URL. A `null` entry rejects.
- *  Every call is recorded. */
+/** A fake `fetch` that answers from a FIFO per URL. A `null` entry rejects,
+ *  an entry whose `body` is `undefined` serves text that is not JSON, and
+ *  every other entry serves the stringified body. Every call is recorded.
+ *  Each answer is a real `Response` built from the body text, so the
+ *  resolver's capped reader reads the body as it does from the network. */
 function fakeFetch(answers: Map<string, Array<{ status: number; body: unknown } | null>>): {
   calls: FetchCall[];
   fetch: typeof fetch;
@@ -44,15 +47,8 @@ function fakeFetch(answers: Map<string, Array<{ status: number; body: unknown } 
     const q = answers.get(u) ?? [];
     const next = q.shift();
     if (next === undefined || next === null) return Promise.reject(new Error('refused'));
-    return Promise.resolve({
-      ok: next.status >= 200 && next.status < 300,
-      status: next.status,
-      statusText: 'OK',
-      json: async () => {
-        if (next.body === undefined) throw new SyntaxError('not JSON');
-        return next.body;
-      },
-    } as Response);
+    const text = next.body === undefined ? 'not json' : JSON.stringify(next.body);
+    return Promise.resolve(new Response(text, { status: next.status, statusText: 'OK' }));
   }) as unknown as typeof fetch;
   return { calls, fetch: fn };
 }
@@ -359,7 +355,7 @@ function streamingBytesResponse(bodyBytes: number, chunkSize: number): {
 }
 
 describe("post-resolver — the batch read is capped at POST_BATCH_READ_BYTES", () => {
-  it.fails('a 2xx body one byte over the cap serves nothing and the next node is asked', async () => {
+  it('a 2xx body one byte over the cap serves nothing and the next node is asked', async () => {
     const r = row('r0');
     const target = POST_BATCH_READ_BYTES + 1;
     const skeleton = JSON.stringify({ posts: [r], pad: '' });
@@ -395,7 +391,7 @@ describe("post-resolver — the batch read is capped at POST_BATCH_READ_BYTES", 
     expect(calls.map((c) => c.url)[1]).toBe('http://b.test/posts/batch?tx=1');
   });
 
-  it.fails('a body many times the cap is pulled no further than the cap and one chunk', async () => {
+  it('a body many times the cap is pulled no further than the cap and one chunk', async () => {
     const chunkSize = 1024;
     const totalBytes = POST_BATCH_READ_BYTES * 4;
     const { res, counts } = streamingBytesResponse(totalBytes, chunkSize);

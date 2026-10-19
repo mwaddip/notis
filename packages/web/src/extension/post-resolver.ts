@@ -1,6 +1,7 @@
 import { resolvePosts, type ResolveEnd, type BoundPost } from '../model/post-resolve';
 import type { PostResolver } from '../model/state';
 import type { PostCheck } from '@dagsocial/nipopow-client';
+import { POST_BATCH_READ_BYTES, readCappedJson } from '@dagsocial/nipopow-client';
 
 // The extension's resolver (WEB_INTERFACE → The extension → "The resolve"):
 // `createPostResolver` wraps the pure `resolvePosts` with a real `fetch`,
@@ -67,18 +68,25 @@ export function createPostResolver(deps: PostResolverDeps): PostResolver {
     // and the body `{"ids":[…]}` — no `viewer`, no other parameter, no
     // credentials — and the resolve's abort signal, so a request still
     // open when the deadline fires is aborted (WEB_INTERFACE → The
-    // extension → "The resolve"). A status outside 2xx, a body that will
-    // not parse as JSON, a network failure and the aborted arm all
-    // reject.
+    // extension → "The resolve"). The answer is read under
+    // `POST_BATCH_READ_BYTES` through `readCappedJson` of
+    // `@dagsocial/nipopow-client` (WEB_INTERFACE → The extension →
+    // "Every answer is read under its route's cap"; CONSTANTS → Light
+    // client reads): a mid-body abort reaches the stream reader through
+    // the signal, as a mid-stream transport failure does, so the aborted
+    // arm rejects. A status outside 2xx, a body over the cap, a body
+    // that will not parse as JSON, a network failure and the aborted arm
+    // all reject.
     const url = base + '/posts/batch?tx=1';
     return deps.fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
       signal,
-    }).then((res) => {
-      if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
-      return res.json();
+    }).then(async (res) => {
+      const result = await readCappedJson<unknown>(res, POST_BATCH_READ_BYTES);
+      if (!result.ok) throw new Error(`${result.status} ${result.body}`);
+      return result.data;
     });
   };
 
