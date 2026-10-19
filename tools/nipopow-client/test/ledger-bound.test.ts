@@ -71,7 +71,7 @@ describe('proveRange — a range past the bound ends unproven, the verdict namin
   // production default (CONSTANTS → Light client reads).
   const BOUND = 10;
 
-  it.fails('more than the bound boxes in one page ends the range unproven', async () => {
+  it('more than the bound boxes in one page ends the range unproven', async () => {
     const boxes: AnyBox[] = [];
     for (let i = 0; i < BOUND + 1; i++) boxes.push(karmaBoxFor(OWNER, 1n + BigInt(i), i + 1));
     const { prover, stateRoot } = buildHoldingsFixture({ boxes });
@@ -91,7 +91,7 @@ describe('proveRange — a range past the bound ends unproven, the verdict namin
     }
   });
 
-  it.fails('a page at the bound whose next still stands ends the range unproven, no further page asked', async () => {
+  it('a page at the bound whose next still stands ends the range unproven, no further page asked', async () => {
     // 11 boxes, served half the bound a page: the first page brings 5 boxes,
     // the second 5 more (total at the bound), with the eleventh box pointed at
     // by the authenticated `next` — a next still standing at the bound.
@@ -160,7 +160,7 @@ describe('fetchListing — a listing past the bound fails the listing, no furthe
     return { fetch, calls };
   }
 
-  it.fails('a karma listing past the bound fails, with the credits route unread', async () => {
+  it('a karma listing past the bound fails, with the credits route unread', async () => {
     // Three karma pages of 5, 5, and 1 — totalling 11 rows, one past the
     // bound. The last page carries `next: null` so the current tree reads
     // the whole listing cleanly; the overflow refusal lands at the second
@@ -197,7 +197,7 @@ describe('fetchListing — a listing past the bound fails the listing, no furthe
     }
   });
 
-  it.fails('a credit listing past the bound fails, naming the route and the bound', async () => {
+  it('a credit listing past the bound fails, naming the route and the bound', async () => {
     const credits = [] as Array<{ boxId: string; value: string }>;
     for (let i = 0; i < BOUND + 1; i++) credits.push({ boxId: String(i).padStart(2, '0').slice(-2).repeat(32), value: '1' });
 

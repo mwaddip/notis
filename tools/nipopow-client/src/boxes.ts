@@ -166,12 +166,17 @@ function isWellFormedText(s: string): boolean {
 // null. The node answers a key it has never seen with an empty page at its
 // current height (NODE_INTERFACE → HTTP API: the two rows name a 400 and no
 // 404), so a 404 — like any other non-ok — is a listing failure carrying
-// the route, as is a malformed page.
+// the route, as is a malformed page. Each ledger's listing is bounded at
+// `maxBoxes` (default `LEDGER_READ_MAX`): a listing that runs past it fails
+// with the route and the bound named, no further page asked
+// (WEB_INTERFACE → The extension → "The verified figures" —
+// "the command line reads the listing it judges itself … held to the same
+// bound: a ledger listed past it fails the listing").
 export async function fetchListing(
   nodeUrl: string,
   user: string,
   httpFetch: HttpFetch,
-  _maxBoxes: number = LEDGER_READ_MAX,
+  maxBoxes: number = LEDGER_READ_MAX,
 ): Promise<ListingResult> {
   const karmaBoxes: ListedBox[] = [];
   let karmaHeight = 0;
@@ -193,6 +198,10 @@ export async function fetchListing(
   karmaHeight = firstKarma.data.height;
   karmaEffective = firstKarma.data.effective;
   let karmaNext: string | null = firstKarma.data.next;
+  const overflowKarma = ledgerOverflow(karmaBoxes.length, karmaNext, maxBoxes);
+  if (overflowKarma !== null) {
+    return { ok: false, reason: `GET /karma/${user}: ${overflowKarma}` };
+  }
   while (karmaNext !== null) {
     const r = await fetchJson<KarmaPageResponse>(
       httpFetch,
@@ -207,6 +216,10 @@ export async function fetchListing(
     }
     for (const b of r.data.boxes) karmaBoxes.push(b);
     karmaNext = r.data.next;
+    const over = ledgerOverflow(karmaBoxes.length, karmaNext, maxBoxes);
+    if (over !== null) {
+      return { ok: false, reason: `GET /karma/${user}: ${over}` };
+    }
   }
 
   const creditsBoxes: ListedBox[] = [];
@@ -224,6 +237,10 @@ export async function fetchListing(
   }
   for (const b of firstCredit.data.boxes) creditsBoxes.push(b);
   let creditsNext: string | null = firstCredit.data.next;
+  const overflowCredit = ledgerOverflow(creditsBoxes.length, creditsNext, maxBoxes);
+  if (overflowCredit !== null) {
+    return { ok: false, reason: `GET /credits/${user}: ${overflowCredit}` };
+  }
   while (creditsNext !== null) {
     const r = await fetchJson<CreditPageResponse>(
       httpFetch,
@@ -238,6 +255,10 @@ export async function fetchListing(
     }
     for (const b of r.data.boxes) creditsBoxes.push(b);
     creditsNext = r.data.next;
+    const over = ledgerOverflow(creditsBoxes.length, creditsNext, maxBoxes);
+    if (over !== null) {
+      return { ok: false, reason: `GET /credits/${user}: ${over}` };
+    }
   }
 
   return {
@@ -247,6 +268,20 @@ export async function fetchListing(
       credits: { boxes: creditsBoxes },
     },
   };
+}
+
+// WEB_INTERFACE → The extension → "The verified figures" — "a ledger listed
+// past it fails the listing". A ledger that overflows reads either as more
+// than the bound in boxes, or as at the bound with a next still standing —
+// in which case no further page is asked.
+function ledgerOverflow(count: number, next: string | null, maxBoxes: number): string | null {
+  if (count > maxBoxes) {
+    return `listing runs past the ${maxBoxes}-box bound (${count} boxes read)`;
+  }
+  if (count >= maxBoxes && next !== null) {
+    return `listing runs past the ${maxBoxes}-box bound: a next page still stands at the bound`;
+  }
+  return null;
 }
 
 type KeyProofOutcome =
