@@ -13,9 +13,18 @@ import {
 
 const TEST_KEYS = [
   'PORT',
+  'ADMIN_PORT',
   'DB_PATH',
   'BLOCK_BODY_BUDGET_BYTES',
   'MAX_MEMPOOL_ENTRIES',
+  'MAX_PEERS',
+  'MIN_PEERS',
+  'PEER_DB_CAP',
+  'OUTBOUND_REDIAL_COOLDOWN_MS',
+  'PENALTY_SCORE_THRESHOLD',
+  'TEMPORAL_BAN_DURATION_MS',
+  'PENALTY_SAFE_INTERVAL_MS',
+  'SYNC_REQUEST_TIMEOUT_MS',
   'NETWORK_TYPE',
   'MINING_SECRET',
   'NODE_ROLE',
@@ -928,6 +937,196 @@ describe('config', () => {
       await expect(importWithBytes('-1')).rejects.toThrow(/PROOF_RETENTION_BYTES/);
       vi.resetModules();
       await expect(importWithBytes('2.5')).rejects.toThrow(/PROOF_RETENTION_BYTES/);
+    });
+  });
+
+  // NODE_INTERFACE → Configuration → "Every whole-number setting is read by
+  // one reader, and a set value it refuses stops the node at load" — the
+  // seventeen whole-number settings go through the one reader: decimal digits
+  // and nothing else, a safe integer, at or above the setting's floor (1 for
+  // BLOCK_BODY_BUDGET_BYTES, PENALTY_SAFE_INTERVAL_MS and
+  // SYNC_REQUEST_TIMEOUT_MS, 0 for every other), and a port at most 65 535.
+  //
+  // `vitest.config.ts` pins NETWORK_TYPE=devnet; `clearTestEnv` in the outer
+  // `beforeEach` wipes it, so the profile defaults to testnet
+  // (maxReorgDepth=240) unless a case re-sets NETWORK_TYPE.
+  describe('17. the one whole-number reader', () => {
+    interface Setting {
+      readonly env: string;
+      readonly floor: 0 | 1;
+      readonly port?: boolean;
+      readonly field: string;
+      readonly dflt: number;
+    }
+    const SETTINGS: readonly Setting[] = [
+      { env: 'PORT',                        floor: 0, port: true, field: 'port',                       dflt: 3000 },
+      { env: 'ADMIN_PORT',                  floor: 0, port: true, field: 'adminPort',                  dflt: 3001 },
+      { env: 'BLOCK_BODY_BUDGET_BYTES',     floor: 1,             field: 'blockBodyBudgetBytes',       dflt: MAX_BLOCK_BODY_BYTES },
+      { env: 'MAX_MEMPOOL_ENTRIES',         floor: 0,             field: 'maxMempoolEntries',          dflt: 10_000 },
+      { env: 'MAX_PEERS',                   floor: 0,             field: 'maxPeers',                   dflt: 50 },
+      { env: 'MIN_PEERS',                   floor: 0,             field: 'minPeers',                   dflt: 3 },
+      { env: 'PEER_DB_CAP',                 floor: 0,             field: 'peerDbCap',                  dflt: 1000 },
+      { env: 'OUTBOUND_REDIAL_COOLDOWN_MS', floor: 0,             field: 'outboundRedialCooldownMs',   dflt: 60_000 },
+      { env: 'PENALTY_SCORE_THRESHOLD',     floor: 0,             field: 'penaltyScoreThreshold',      dflt: 500 },
+      { env: 'TEMPORAL_BAN_DURATION_MS',    floor: 0,             field: 'temporalBanDurationMs',      dflt: 3_600_000 },
+      { env: 'PENALTY_SAFE_INTERVAL_MS',    floor: 1,             field: 'penaltySafeIntervalMs',      dflt: 120_000 },
+      { env: 'SYNC_REQUEST_TIMEOUT_MS',     floor: 1,             field: 'syncRequestTimeoutMs',       dflt: 10_000 },
+      { env: 'MAX_PROOF_HISTORY',           floor: 0,             field: 'maxProofHistory',            dflt: 1440 },
+      { env: 'PROOF_RETENTION_BLOCKS',      floor: 0,             field: 'proofRetentionBlocks',       dflt: 10_080 },
+      { env: 'PROOF_RETENTION_BYTES',       floor: 0,             field: 'proofRetentionBytes',        dflt: 2_147_483_648 },
+      { env: 'PROOF_WINDOW_BLOCKS',         floor: 0,             field: 'proofWindowBlocks',          dflt: 64 },
+      { env: 'PROOF_WINDOW_NODES',          floor: 0,             field: 'proofWindowNodes',           dflt: 250_000 },
+    ];
+    // Six values no decimal-digit reader admits: a letter string, a dotted
+    // fraction, a signed value, a scientific notation whose `parseInt` stops
+    // at `e`, a leading-space value `parseInt` reads anyway, and empty.
+    const BAD = ['abc', '2.5', '-1', '1e3', ' 7', ''] as const;
+
+    // Each setting × each bad value becomes its own `it`, because an
+    // `it.fails` with multiple rows is green as soon as any one row throws.
+
+    // 17a — the digits-and-safe-integer domain
+    describe('17a. refuses a value outside the decimal-digit domain', () => {
+      // Four settings have a parser that already refuses every digit-outside
+      // string with the setting's name: MAX_PROOF_HISTORY reaches the
+      // maxReorgDepth comparison (whose message names it), and the four
+      // proof settings fall at `/^\d+$/`. BLOCK_BODY_BUDGET_BYTES refuses
+      // three of the six through `!(parsed > 0)` — `abc`, `-1` and `""` give
+      // `NaN` or a non-positive number — but reads `2.5`, `1e3` and ` 7` as
+      // 2, 1 and 7, so three rows are plain `it` and three are `it.fails`.
+      const PASSES_17A: ReadonlySet<string> = new Set([
+        'BLOCK_BODY_BUDGET_BYTES|abc',
+        'BLOCK_BODY_BUDGET_BYTES|-1',
+        'BLOCK_BODY_BUDGET_BYTES|',
+        'MAX_PROOF_HISTORY|abc',
+        'MAX_PROOF_HISTORY|2.5',
+        'MAX_PROOF_HISTORY|-1',
+        'MAX_PROOF_HISTORY|1e3',
+        'MAX_PROOF_HISTORY| 7',
+        'MAX_PROOF_HISTORY|',
+        'PROOF_RETENTION_BLOCKS|abc',
+        'PROOF_RETENTION_BLOCKS|2.5',
+        'PROOF_RETENTION_BLOCKS|-1',
+        'PROOF_RETENTION_BLOCKS|1e3',
+        'PROOF_RETENTION_BLOCKS| 7',
+        'PROOF_RETENTION_BLOCKS|',
+        'PROOF_RETENTION_BYTES|abc',
+        'PROOF_RETENTION_BYTES|2.5',
+        'PROOF_RETENTION_BYTES|-1',
+        'PROOF_RETENTION_BYTES|1e3',
+        'PROOF_RETENTION_BYTES| 7',
+        'PROOF_RETENTION_BYTES|',
+        'PROOF_WINDOW_BLOCKS|abc',
+        'PROOF_WINDOW_BLOCKS|2.5',
+        'PROOF_WINDOW_BLOCKS|-1',
+        'PROOF_WINDOW_BLOCKS|1e3',
+        'PROOF_WINDOW_BLOCKS| 7',
+        'PROOF_WINDOW_BLOCKS|',
+        'PROOF_WINDOW_NODES|abc',
+        'PROOF_WINDOW_NODES|2.5',
+        'PROOF_WINDOW_NODES|-1',
+        'PROOF_WINDOW_NODES|1e3',
+        'PROOF_WINDOW_NODES| 7',
+        'PROOF_WINDOW_NODES|',
+      ]);
+      for (const s of SETTINGS) {
+        for (const bad of BAD) {
+          const key = `${s.env}|${bad}`;
+          const run = PASSES_17A.has(key) ? it : it.fails;
+          run(`${s.env}=${JSON.stringify(bad)} is refused naming ${s.env}`, async () => {
+            process.env[s.env] = bad;
+            await expect(import('../src/config.js')).rejects.toThrow(new RegExp(s.env));
+          });
+        }
+      }
+    });
+
+    // 17b — the floor
+    describe('17b. each setting\'s floor', () => {
+      // The three floor-1 settings: 0 names nothing a node runs on.
+      // BLOCK_BODY_BUDGET_BYTES already refuses 0 through `!(parsed > 0)`;
+      // the two durations are not read by `loadConfig` on this tree.
+      for (const s of SETTINGS.filter((x) => x.floor === 1)) {
+        const run = s.env === 'BLOCK_BODY_BUDGET_BYTES' ? it : it.fails;
+        run(`${s.env}=0 is refused naming ${s.env}`, async () => {
+          process.env[s.env] = '0';
+          await expect(import('../src/config.js')).rejects.toThrow(new RegExp(s.env));
+        });
+      }
+
+      // The fourteen floor-0 settings: 0 loads as the field value, except
+      // MAX_PROOF_HISTORY which reaches the maxReorgDepth comparison on top.
+      for (const s of SETTINGS.filter((x) => x.floor === 0)) {
+        if (s.env === 'MAX_PROOF_HISTORY') {
+          // The reader admits 0; the layered rule refuses it citing
+          // `maxReorgDepth`, so the throw message names that comparison, not
+          // the reader's own domain refusal.
+          it(`${s.env}=0 reaches the maxReorgDepth comparison`, async () => {
+            process.env['NETWORK_TYPE'] = 'devnet';
+            process.env[s.env] = '0';
+            await expect(import('../src/config.js')).rejects.toThrow(/maxReorgDepth/);
+          });
+          continue;
+        }
+        const alreadyOnConfig = new Set([
+          'PORT', 'ADMIN_PORT', 'MAX_MEMPOOL_ENTRIES', 'MAX_PEERS',
+          'PROOF_RETENTION_BLOCKS', 'PROOF_RETENTION_BYTES',
+          'PROOF_WINDOW_BLOCKS', 'PROOF_WINDOW_NODES',
+        ]);
+        const run = alreadyOnConfig.has(s.env) ? it : it.fails;
+        run(`${s.env}=0 loads as config.${s.field} === 0`, async () => {
+          process.env[s.env] = '0';
+          const { loadConfig } = await import('../src/config.js');
+          const cfg = loadConfig();
+          expect((cfg as unknown as Record<string, unknown>)[s.field]).toBe(0);
+        });
+      }
+    });
+
+    // 17c — the port ceiling
+    describe('17c. a port above 65 535 is refused', () => {
+      for (const s of SETTINGS.filter((x) => x.port === true)) {
+        it.fails(`${s.env}=65536 is refused naming ${s.env}`, async () => {
+          process.env[s.env] = '65536';
+          await expect(import('../src/config.js')).rejects.toThrow(new RegExp(s.env));
+        });
+      }
+    });
+
+    // 17d — unset takes the default
+    describe('17d. unset takes the table\'s default', () => {
+      const alreadyOnConfig = new Set([
+        'PORT', 'ADMIN_PORT', 'BLOCK_BODY_BUDGET_BYTES', 'MAX_MEMPOOL_ENTRIES',
+        'MAX_PEERS', 'MAX_PROOF_HISTORY', 'PROOF_RETENTION_BLOCKS',
+        'PROOF_RETENTION_BYTES', 'PROOF_WINDOW_BLOCKS', 'PROOF_WINDOW_NODES',
+      ]);
+      for (const s of SETTINGS) {
+        const run = alreadyOnConfig.has(s.env) ? it : it.fails;
+        run(`${s.env} unset → config.${s.field} === ${s.dflt}`, async () => {
+          const { loadConfig } = await import('../src/config.js');
+          const cfg = loadConfig();
+          expect((cfg as unknown as Record<string, unknown>)[s.field]).toBe(s.dflt);
+        });
+      }
+    });
+
+    // 17e — the seven net settings reach Config
+    describe('17e. the seven net settings reach Config', () => {
+      // 5 ≥ 1 clears the floor-1 floor and 5 ≥ 0 clears the rest, so one
+      // probe value answers for every setting in the group.
+      const NET = SETTINGS.filter((x) => [
+        'MIN_PEERS', 'PEER_DB_CAP', 'OUTBOUND_REDIAL_COOLDOWN_MS',
+        'PENALTY_SCORE_THRESHOLD', 'TEMPORAL_BAN_DURATION_MS',
+        'PENALTY_SAFE_INTERVAL_MS', 'SYNC_REQUEST_TIMEOUT_MS',
+      ].includes(x.env));
+      for (const s of NET) {
+        it.fails(`${s.env}=5 reads as config.${s.field} === 5`, async () => {
+          process.env[s.env] = '5';
+          const { loadConfig } = await import('../src/config.js');
+          const cfg = loadConfig();
+          expect((cfg as unknown as Record<string, unknown>)[s.field]).toBe(5);
+        });
+      }
     });
   });
 });
