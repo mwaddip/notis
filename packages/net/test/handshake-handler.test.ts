@@ -665,7 +665,7 @@ describe('inbound handshake handler — a fault of this node\'s own closes the c
   // read reaches the store through `chainHeight()`; a throw there is local,
   // not a peer's doing, the handshake does not complete, and the connection
   // closes with it.
-  it.fails('the era read throwing closes the connection', async () => {
+  it('the era read throwing closes the connection', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { send, connectionCloses } = makeHandshakeHarness({
       chainHeightProvider: () => {

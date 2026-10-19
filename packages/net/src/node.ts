@@ -1054,10 +1054,22 @@ export class NetNode {
           if (source === 'seed') this.markBootstrapSettled(addr);
           return true;
         }
+        // NET_INTERFACE → Handshake →
+        // "A handshake that does not complete ends its connection"; →
+        // Outbound Manager, fill phase: an address a dialler's handshake did
+        // not complete joins the redial cooldown as a failed dial does.
+        await conn.close().catch(() => { /* already gone */ });
+        this.outboundMgr?.recordDialResult(addr, false);
         if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       } catch (handshakeErr: any) {
         console.warn(`[net] handshake with ${addr} failed: ${handshakeErr?.message ?? handshakeErr}`);
+        // NET_INTERFACE → Handshake →
+        // "A handshake that does not complete ends its connection"; →
+        // Outbound Manager, fill phase: an address a dialler's handshake did
+        // not complete joins the redial cooldown as a failed dial does.
+        await conn.close().catch(() => { /* already gone */ });
+        this.outboundMgr?.recordDialResult(addr, false);
         if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       }
@@ -1118,11 +1130,19 @@ export class NetNode {
       const replyEmpty = async (): Promise<void> => {
         try { await sinkFrame(new Uint8Array(0)); } catch { /* peer gone */ }
       };
+      // NET_INTERFACE → Handshake →
+      // "A handshake that does not complete ends its connection":
+      // every return path that does not complete the handshake closes the
+      // connection it ran on, after whatever the Ban policy records for it.
+      const endConnection = async (): Promise<void> => {
+        try { await connection.close(); } catch { /* peer gone */ }
+      };
 
       // NET_INTERFACE → Handshake → "A connection carries one handshake,
       // opened by the side that dialled it": a connection that has already
       // carried a handshake stream closes every later one unread, with no
-      // penalty.
+      // penalty. The connection it rode on keeps the handshake it carried,
+      // so this is the one return path that closes the stream alone.
       if (typeof connId === 'string' && this.handshakenConnections.has(connId)) {
         await stream.close().catch(() => { /* the peer is already gone */ });
         return;
@@ -1135,6 +1155,7 @@ export class NetNode {
       // and the interval before a ban's hang-up completes.
       if (this.peerMgr.isBanned(peerId)) {
         await stream.close().catch(() => { /* the peer is already gone */ });
+        await endConnection();
         return;
       }
       // NET_INTERFACE →
@@ -1144,6 +1165,7 @@ export class NetNode {
       if (peerId === libp2p.peerId.toString()) {
         console.log(`[net] inbound handshake from ${peerId}: this is our own peer id — refusing`);
         await replyEmpty();
+        await endConnection();
         return;
       }
       try {
@@ -1156,10 +1178,12 @@ export class NetNode {
             'handshake stream exceeds byte cap',
           );
           await replyEmpty();
+          await endConnection();
           return;
         }
         if (data.length === 0) {
           await replyEmpty();
+          await endConnection();
           return;
         }
 
@@ -1168,6 +1192,7 @@ export class NetNode {
           // NET_INTERFACE → "Ban policy": frame-tier reject — stream closed, no penalty.
           console.warn(`[net] inbound handshake frame from ${peerId} rejected: ${decoded.code}`);
           await replyEmpty();
+          await endConnection();
           return;
         }
         const body = decoded.body;
@@ -1181,6 +1206,7 @@ export class NetNode {
         } catch (err) {
           console.error(`[net] cannot read our era for ${peerId}: ${String(err)}`);
           await replyEmpty();
+          await endConnection();
           return;
         }
 
@@ -1197,6 +1223,7 @@ export class NetNode {
             `handshake: ${result.error}`,
           );
           await replyEmpty();
+          await endConnection();
           return;
         }
 
@@ -1241,6 +1268,7 @@ export class NetNode {
         } catch (err) {
           console.error(`[net] cannot build our handshake for ${peerId}: ${String(err)}`);
           await replyEmpty();
+          await endConnection();
           return;
         }
         await sinkFrame(response);
@@ -1251,6 +1279,7 @@ export class NetNode {
         // here too.
         console.warn(`[net] inbound handshake handler failed for ${peerId}: ${String(err)}`);
         await replyEmpty();
+        await endConnection();
       }
     }, { maxInboundStreams: MAX_INBOUND_HANDSHAKE_STREAMS });
   }

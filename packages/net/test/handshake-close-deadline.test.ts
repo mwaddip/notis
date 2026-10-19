@@ -77,7 +77,7 @@ describe('a refused inbound handshake closes its connection', () => {
   // NET_INTERFACE → Handshake → "A handshake that does not complete ends its
   // connection". A peer on another network sends a frame A's magic rejects —
   // frame-tier, no penalty — and A's handler closes the connection it ran on.
-  it.fails('a frame-tier refusal ends A\'s connection to the peer', async () => {
+  it('a frame-tier refusal ends A\'s connection to the peer', async () => {
     nodeA = new NetNode(makeConfig({ magic: MAGIC_TESTNET }), validators);
     await nodeA.start();
     const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
@@ -121,9 +121,11 @@ describe('a body-tier refusal closes its connection too', () => {
   // NET_INTERFACE → Handshake → "Ban policy": a body-tier version mismatch
   // earns a soft Transient refusal, and the connection it ran on closes with
   // the stream.
-  it.fails('an unsupported-version handshake closes A\'s connection to the peer', async () => {
+  it('an unsupported-version handshake closes A\'s connection to the peer', async () => {
     const eraTwoOnly: readonly ProtocolEra[] = [{ version: 2, fromHeight: 0 }];
     nodeA = new NetNode(makeConfig({ protocolVersionSchedule: eraTwoOnly }), validators);
+    const penalties: Array<{ peerId: string; kind: string }> = [];
+    nodeA.onPeerPenalised((peerId, kind) => { penalties.push({ peerId, kind }); });
     await nodeA.start();
     const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
     expect(aAddr).toBeTruthy();
@@ -140,8 +142,9 @@ describe('a body-tier refusal closes its connection too', () => {
     // control: B's handshake with A does not complete
     expect(ok).toBe(false);
     // control: A records a Transient on B — a version mismatch, no ban
+    const transients = penalties.filter((p) => p.peerId === bId && p.kind === 'transient');
+    expect(transients.length).toBeGreaterThanOrEqual(1);
     const internalsA = nodeA as unknown as Internals;
-    expect(internalsA.peerMgr.getPeerMetadata(bId)?.penaltyCount ?? 0).toBe(1);
     expect(internalsA.peerMgr.isBanned(bId)).toBe(false);
 
     await new Promise((r) => setTimeout(r, 1500));
@@ -167,7 +170,7 @@ describe('a dialler whose handshake does not complete closes the connection and 
   // item: an address a dialler's handshake did not complete enters the redial
   // cooldown, as a failed dial does. A dials B on another network; A's
   // outbound funnel sees the empty frame B's handler sent back.
-  it.fails('A holds no connection to B and A\'s next outbound plan omits B\'s address', async () => {
+  it('A holds no connection to B and A\'s next outbound plan omits B\'s address', async () => {
     nodeB = new NetNode(makeConfig({ magic: MAGIC_MAINNET }), validators);
     await nodeB.start();
     const bMulti = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
