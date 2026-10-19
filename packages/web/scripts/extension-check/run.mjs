@@ -5587,23 +5587,26 @@ const batchesIn = (slice) => slice.filter((e) => e.method === 'POST' && e.path.s
 // Count light-list GETs (GET /posts?light=1…) in a slice.
 const lightListsIn = (slice) => slice.filter((e) => e.method === 'GET' && e.path.startsWith('/posts') && /[?&]light=1(?:&|$)/.test(e.path));
 
-// Wait until `relay` holds a batch naming `id` — an entry in `relay.log`
-// that is POST /posts/batch, `mode` 'hold', `status` null (not yet
-// answered), with `id` among its `batchIds`. `startRelay`'s handler pushes
-// the hold's resolver in the same tick `batchIds` is set, so such an entry
-// means the batch is held. Throws `timeout waiting for <label>` on timeout.
-async function waitForHeldBatch(relay, id, ms, label) {
+// Wait until one of `relays` holds a batch naming `id` — an entry in the
+// relay's `log` that is POST /posts/batch, `mode` 'hold', `status` null
+// (not yet answered), with `id` among its `batchIds`. `startRelay`'s handler
+// pushes the hold's resolver in the same tick `batchIds` is set, so such an
+// entry means the batch is held. Returns as soon as any relay in `relays`
+// holds such a batch. Throws `timeout waiting for <label>` on timeout.
+async function waitForHeldBatch(relays, id, ms, label) {
   const target = String(id).toLowerCase();
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
-    for (const e of relay.log) {
-      if (e.method === 'POST'
-        && e.path.split('?')[0] === '/posts/batch'
-        && e.mode === 'hold'
-        && e.status === null
-        && Array.isArray(e.batchIds)
-        && e.batchIds.some((b) => typeof b === 'string' && b.toLowerCase() === target)) {
-        return;
+    for (const relay of relays) {
+      for (const e of relay.log) {
+        if (e.method === 'POST'
+          && e.path.split('?')[0] === '/posts/batch'
+          && e.mode === 'hold'
+          && e.status === null
+          && Array.isArray(e.batchIds)
+          && e.batchIds.some((b) => typeof b === 'string' && b.toLowerCase() === target)) {
+          return;
+        }
       }
     }
     await sleep(50);
@@ -5738,7 +5741,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     const slotColoursOk = Array.isArray(feedHeld.probedColours) && feedHeld.probedColours.length > 0
       && feedHeld.probedColours.every((c) => c !== null && c === feedHeld.inkMuteRgb);
     // Release — every slot becomes a card in the same order, no clay line.
-    await waitForHeldBatch(RA, rootId, 10000, 'L1 held feed batch at RA');
+    await waitForHeldBatch([RA], rootId, 10000, 'L1 held feed batch at RA');
     const releaseAt = Date.now();
     const releasedCount = RA.release();
     await cx.waitFor(`(() => {
@@ -6134,7 +6137,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     // Wait: slots > 0, batch request arrived, release.
     await cx.waitFor(`document.querySelectorAll('#feed .card.slot[data-post-id]').length > 0`,
       'L10 feed slots stand', 10000).catch(() => {});
-    await waitForHeldBatch(RA, rootId, 10000, 'L10 held feed batch at RA');
+    await waitForHeldBatch([RA], rootId, 10000, 'L10 held feed batch at RA');
     RA.release();
     await cx.waitFor(`!!document.querySelector('#feed .card[data-post-id="${rootId}"]:not(.slot)')`,
       'L10 feed root bound after release', 30000);
@@ -6162,9 +6165,9 @@ async function lightSteps(cx, targetId = 'unknown') {
     const threadListsLight = threadLists.filter((e) => /[?&]light=1(?:&|$)/.test(e.path));
     const threadListsHaveTx = threadLists.some((e) => /[?&]tx=/.test(e.path));
     // Release both — slot cards become cards; the reply depth-1 and the
-    // nested one depth-2. The pointer walked by one at the feed's resolve,
-    // so the thread's batch is held at RB.
-    await waitForHeldBatch(RB, reply1Id, 10000, 'L10 held thread batch at RB');
+    // nested one depth-2. The thread's batch is held at whichever relay the
+    // pointer picked.
+    await waitForHeldBatch([RA, RB], reply1Id, 10000, 'L10 held thread batch');
     const releaseAt = Date.now();
     const releasedRa = RA.release();
     const releasedRb = RB.release();
