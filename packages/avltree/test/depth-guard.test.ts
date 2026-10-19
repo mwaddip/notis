@@ -22,7 +22,7 @@ const DEEP_HEIGHT_BYTE = 0xff
 const DEEP_LOOKUP_KEY = new Uint8Array([0x10])
 
 describe('the tree the digest declares bounds every path of the proof', () => {
-  it.fails('a proof whose decoded tree is one level deeper than the digest declares is refused — BatchAVLVerifier', () => {
+  it('a proof whose decoded tree is one level deeper than the digest declares is refused — BatchAVLVerifier', () => {
     const p = sevenKeyProver()
     const trueDigest = p.digest()
     const h = trueDigest[32]!
@@ -44,7 +44,7 @@ describe('the tree the digest declares bounds every path of the proof', () => {
     expect(v.digest()).toBeNull()
   })
 
-  it.fails('a proof whose decoded tree is one level deeper than the digest declares is refused — StrictBatchAVLVerifier', () => {
+  it('a proof whose decoded tree is one level deeper than the digest declares is refused — StrictBatchAVLVerifier', () => {
     const p = sevenKeyProver()
     const trueDigest = p.digest()
     const h = trueDigest[32]!
@@ -85,7 +85,7 @@ describe('the tree the digest declares bounds every path of the proof', () => {
     })
   })
 
-  it.fails('a thousands-deep spine under a digest declaring 255 is refused with no throw — BatchAVLVerifier', () => {
+  it('a thousands-deep spine under a digest declaring 255 is refused with no throw — BatchAVLVerifier', () => {
     const digest = buildSpineDigest(DEEP_DEPTH, DEEP_HEIGHT_BYTE)
     const proof = buildSpineProof(DEEP_DEPTH, Math.ceil(DEEP_DEPTH / 8))
     let v: BatchAVLVerifier | undefined
@@ -102,7 +102,7 @@ describe('the tree the digest declares bounds every path of the proof', () => {
     expect(v!.digest()).toBeNull()
   })
 
-  it.fails('a thousands-deep spine under a digest declaring 255 is refused with no throw — StrictBatchAVLVerifier', () => {
+  it('a thousands-deep spine under a digest declaring 255 is refused with no throw — StrictBatchAVLVerifier', () => {
     const digest = buildSpineDigest(DEEP_DEPTH, DEEP_HEIGHT_BYTE)
     const proof = buildSpineProof(DEEP_DEPTH, Math.ceil(DEEP_DEPTH / 8))
     let v: StrictBatchAVLVerifier | undefined

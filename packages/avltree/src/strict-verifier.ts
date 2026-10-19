@@ -38,7 +38,7 @@ import type { NeighborLookupResult } from './neighbors.js'
  * them unset.
  */
 class RecordingVerifierCore extends CoreWithNeighbors {
-  /** The root as decoded from the proof; null when decoding or anchoring failed. */
+  /** The root as decoded from the proof; null when decoding, anchoring or the depth guard failed. */
   private readonly decodedRoot: AvlNode | null
   /** The bit after END_OF_TREE, where this proof's directions begin. */
   private readonly directionsStartBit: number

@@ -1,8 +1,8 @@
 /**
  * Public surface of `@dagsocial/avltree`: @ergots/avltree's authenticated
- * tree, plus the three things Notis needs that it does not have — the
- * neighbor-reporting lookups, the strict verifier, and nodes loaded on first
- * access.
+ * tree, plus the four things Notis needs that it does not have — the
+ * neighbor-reporting lookups, the strict verifier, the depth guard the
+ * verifiers run at construction, and nodes loaded on first access.
  *
  * See AVLTREE_INTERFACE.
  */
