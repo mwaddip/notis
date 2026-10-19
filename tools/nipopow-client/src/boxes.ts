@@ -312,6 +312,13 @@ type RecordProofOutcome =
 // single-key AVL verification; a key's holdings read whole go through
 // `proveRange` (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
 // route").
+//
+// AVLTREE_INTERFACE → The depth guard → "`verifyAvlLookup`, passed through,
+// is not guarded; its caller bounds it by the engine's own count":
+// `maxNumOperations: 1, maxDeletes: 0` holds the engine's node bound to
+// 2·h+1 nodes under a declared height h, 512 at the largest declared height,
+// so a proof over that is refused by the engine's decode — `null`,
+// `unproven` — before any descent.
 async function proveKeyAtHeight(
   nodeUrl: string,
   treeKey: Uint8Array,
@@ -352,7 +359,7 @@ async function proveKeyAtHeight(
   const avlResult = verifyAvlLookup(
     hexToBytes(expectedStateRoot),
     proofBytes,
-    { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null },
+    { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null, maxNumOperations: 1, maxDeletes: 0 },
     treeKey,
   );
   if (avlResult === null) return { kind: 'unproven', verdict: 'proof rejected' };

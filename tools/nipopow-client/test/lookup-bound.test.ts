@@ -75,7 +75,7 @@ const LABEL_NAME = 'alice';
 const BOX_ID = '11'.repeat(32);
 
 describe('proveName — a deep lookup proof at the tip reads unproven, with no throw', () => {
-  it.fails('a 600-node spine proof under a tip whose stateRoot declares height 255 is refused through the engine', async () => {
+  it('a 600-node spine proof under a tip whose stateRoot declares height 255 is refused through the engine', async () => {
     const lookupKey = boxKey(hexToBytes(BOX_ID));
 
     const spineProof = buildSpineProof(SPINE_DEPTH, lookupKey);
