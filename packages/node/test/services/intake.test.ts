@@ -442,7 +442,7 @@ describe('intake', () => {
     });
 
     // NODE_INTERFACE → Fork choice decides on verified headers → "The window".
-    it.fails('a hold that raises `S` applies the blocks staged at the window edge', async () => {
+    it('a hold that raises `S` applies the blocks staged at the window edge', async () => {
       const v = makeValidator();
       const depth = config.maxReorgDepth;
       const chain: ParentHeaderInfo[] = [];
@@ -466,7 +466,7 @@ describe('intake', () => {
     }, 60_000);
 
     // NODE_INTERFACE → Fork choice decides on verified headers → "The window".
-    it.fails('a hold through the chain view wiring applies the blocks staged at the window edge', async () => {
+    it('a hold through the chain view wiring applies the blocks staged at the window edge', async () => {
       const v = makeValidator();
       const depth = config.maxReorgDepth;
       const chain: ParentHeaderInfo[] = [];

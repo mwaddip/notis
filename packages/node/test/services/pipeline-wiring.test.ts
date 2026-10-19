@@ -234,7 +234,7 @@ describe('pipeline wired to net — registrations', () => {
 
   // NODE_INTERFACE → Fork choice decides on verified headers →
   // "The intake owns what it runs".
-  it.fails('a chain view hold over a poisoned block_headers row reaches the fail-stop seam', async () => {
+  it('a chain view hold over a poisoned block_headers row reaches the fail-stop seam', async () => {
     const cap = freshCap();
     const { wireNet } = await import('../../src/services/net-wiring.js');
     wireNet(makeFakeNet(cap) as never);

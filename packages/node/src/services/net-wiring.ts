@@ -91,7 +91,7 @@ export function createChainView(): ChainViewSurface {
     knowsTip: wrapCorrupt(knowsTip),
     wantedBlocks: wrapCorrupt(wantedBlocks),
     fullyApplied,
-    gateHeld,
+    gateHeld: wrapCorrupt(gateHeld),
   };
 }
 
