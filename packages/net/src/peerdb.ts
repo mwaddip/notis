@@ -97,11 +97,12 @@ export class PeerDb {
     if (this.bannedAddrs.has(addressWithoutPeerId(record.address))) return;
 
     const existing = this.entries.get(record.address);
-    const merged: PeerRecord = existing
-      ? { ...record, lastSeenMs: Math.max(existing.lastSeenMs, record.lastSeenMs) }
-      : record;
+    // NET_INTERFACE → PeerDb → "A record never rewrites a more recent one":
+    // an older record changes nothing — no field, no `lastSeenMs`, no
+    // storage call.
+    if (existing && record.lastSeenMs < existing.lastSeenMs) return;
 
-    this.entries.set(record.address, merged);
+    this.entries.set(record.address, record);
 
     // Evict oldest if over cap
     if (this.entries.size > this.cap) {
@@ -121,7 +122,7 @@ export class PeerDb {
 
     // Only persist if the entry survived eviction
     if (this.entries.has(record.address)) {
-      this.storage?.put(merged);
+      this.storage?.put(record);
     }
   }
 
