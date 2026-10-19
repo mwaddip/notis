@@ -910,6 +910,131 @@ describe('A body-tier soft refusal ends the connection', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A carrier that is not Active
+// NET_INTERFACE → Inbound Processing →
+//   "A gossip message that passes Stage 1 is delivered, whichever peer carried it"
+// NET_INTERFACE → Peer State Machine — a peer whose handshake has not
+// completed is not Active and is no entry of getConnectedPeers().
+// The carrier opens a connection to B around its own funnel, so no handshake
+// stream runs on it; the connection stands up to B's handshake deadline
+// (HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs = 30 s under the
+// defaults), inside which gossipsub meshes and the carrier publishes a
+// block that passes Stage 1.
+// ---------------------------------------------------------------------------
+
+// The block Y publishes is at height 1 with its header's own
+// `protocolVersion = PROTOCOL_VERSION + 1`, which matches B's era at height 1
+// under this schedule.
+async function startBAndCarrierLingering(): Promise<{
+  nodeB: NetNode;
+  nodeY: NetNode;
+}> {
+  // B's handshake deadline is 30 s under the default `syncRequestTimeoutMs`
+  // (10 s); the suite completes well inside that window.
+  const nodeB = new NetNode(
+    makeConfig({
+      protocolVersionSchedule: [
+        { version: PROTOCOL_VERSION, fromHeight: 0 },
+        { version: PROTOCOL_VERSION + 1, fromHeight: 1 },
+      ],
+    }),
+    validators,
+  );
+  await nodeB.start();
+  const bAddr = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
+  if (!bAddr) throw new Error('B has no listen address');
+
+  // Y shares B's magic (so their topic pair matches) and dials B around its
+  // own funnel — no handshake stream opens, so Y stays Connecting at B. The
+  // mesh forms over the connection on gossipsub's own protocol.
+  const nodeY = new NetNode(makeConfig(), validators);
+  await nodeY.start();
+  await nodeY.libp2pNode!.dial(multiaddr(bAddr));
+
+  await vi.waitFor(
+    () => {
+      expect(nodeB.libp2pNode?.getConnections().length ?? 0).toBeGreaterThan(0);
+    },
+    { timeout: 10_000, interval: 250 },
+  );
+  await waitForMesh(nodeB, nodeY);
+  return { nodeB, nodeY };
+}
+
+describe('A carrier that is not Active', () => {
+  const open: NetNode[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const n = open.pop();
+      await n?.stop();
+    }
+  });
+  const track = (nodes: NetNode[]): void => {
+    for (const n of nodes) open.push(n);
+  };
+
+  it(
+    'B\'s validator accepts a block Y publishes while Y is not Active at B',
+    async () => {
+      const { nodeB, nodeY } = await startBAndCarrierLingering();
+      track([nodeB, nodeY]);
+
+      // Y holds a connection to B and is not Active at B.
+      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
+      expect(nodeB.getConnectedPeers()).not.toContain(nodeY.peerId());
+
+      const bValidator = newCounter();
+      const topicsB = topicsOf(nodeB);
+      wrapValidator(nodeB, topicsB.orderingBlock, bValidator);
+
+      const block = makeBlockAt(1, PROTOCOL_VERSION + 1);
+      await expect(nodeY.broadcastOrderingBlock(block)).resolves.toBeUndefined();
+
+      await vi.waitFor(
+        () => expect(bValidator.count).toBeGreaterThanOrEqual(1),
+        { timeout: 10_000, interval: 100 },
+      );
+      expect(bValidator.count).toBe(1);
+      expect(bValidator.lastResult).toBe(TopicValidatorResult.Accept);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'a block Y publishes is delivered once at B although Y is not Active there',
+    async () => {
+      const { nodeB, nodeY } = await startBAndCarrierLingering();
+      track([nodeB, nodeY]);
+
+      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
+      expect(nodeB.getConnectedPeers()).not.toContain(nodeY.peerId());
+
+      const bValidator = newCounter();
+      const topicsB = topicsOf(nodeB);
+      wrapValidator(nodeB, topicsB.orderingBlock, bValidator);
+
+      const bDeliveries: OrderingBlock[] = [];
+      nodeB.onOrderingBlock((b) => {
+        bDeliveries.push(b);
+      });
+
+      const block = makeBlockAt(1, PROTOCOL_VERSION + 1);
+      await nodeY.broadcastOrderingBlock(block);
+
+      await vi.waitFor(
+        () => expect(bValidator.count).toBeGreaterThanOrEqual(1),
+        { timeout: 10_000, interval: 100 },
+      );
+      expect(bValidator.lastResult).toBe(TopicValidatorResult.Accept);
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+
+      expect(bDeliveries.length).toBe(1);
+    },
+    TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // A topic the node does not hear, a message's envelope, a message's name
 // NET_INTERFACE → Gossip Topics → "A topic is named for its network"
 // NET_INTERFACE → Gossip Topics → "A message is its topic and its data"
