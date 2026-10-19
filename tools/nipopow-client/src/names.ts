@@ -4,6 +4,7 @@ import type { Anchor } from './boxes.js';
 import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
 import type { HttpFetch } from './http.js';
 import { capped, fetchJson, isRecord, shown } from './http.js';
+import { NAME_READ_BYTES } from './caps.js';
 
 /**
  * WEB_INTERFACE → The extension → "The verified names" — a label is a key and
@@ -69,7 +70,8 @@ export async function proveName(
     }
     lookupUrl = `${nodeUrl}/usernames/${encodeURIComponent(claimed)}`;
   }
-  const lookup = await fetchJson<unknown>(httpFetch, lookupUrl);
+  // CONSTANTS → Light client reads — the username lookup.
+  const lookup = await fetchJson<unknown>(httpFetch, lookupUrl, NAME_READ_BYTES);
   if (!lookup.ok) {
     if (lookup.status === 404) {
       return unanswered('none', 'key' in claim

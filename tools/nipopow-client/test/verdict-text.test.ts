@@ -130,7 +130,7 @@ describe('capped — the node text a verdict names', () => {
 
 describe('fetchJson — a body that will not parse', () => {
   it('a 200 whose body will not parse names it capped', async () => {
-    const res = await fetchJson(async () => textResponse(200, LONG), 'http://node');
+    const res = await fetchJson(async () => textResponse(200, LONG), 'http://node', 1_024);
     expect(res).toEqual({ ok: false, status: 200, body: `unparseable body: ${NAMED}` });
   });
 });

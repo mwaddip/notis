@@ -16,6 +16,7 @@ import type { BlockHeader } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type { HttpFetch } from './http.js';
 import { capped, fetchJson } from './http.js';
+import { POST_READ_BYTES } from './caps.js';
 
 const EMPTY_SUMS = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n } as const;
 
@@ -129,7 +130,8 @@ export async function runCli(
  * precedes it.
  */
 async function runPost(id: string, nodeUrl: string, httpFetch: HttpFetch): Promise<PostCommandResult> {
-  const res = await fetchJson<unknown>(httpFetch, `${nodeUrl}/posts/${id}?tx=1`);
+  // CONSTANTS → Light client reads — one post read.
+  const res = await fetchJson<unknown>(httpFetch, `${nodeUrl}/posts/${id}?tx=1`, POST_READ_BYTES);
   if (!res.ok) {
     return {
       id,

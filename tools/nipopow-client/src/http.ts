@@ -23,16 +23,44 @@ export type NodeResult<T> = NodeResponse<T> | NodeError;
  * transport failure), never thrown. Asking two or more independent nodes is the
  * tool's whole defence against an eclipsing node (NIPOPOW_INTERFACE →
  * compareProofs), so a single dead or hostile peer must leave the reachable
- * nodes to decide rather than sink the run.
+ * nodes to decide rather than sink the run. **The caller names the byte cap**
+ * (WEB_INTERFACE → The extension → "Every answer is read under its route's
+ * cap"; CONSTANTS → Light client reads).
  */
 export async function fetchJson<T>(
   httpFetch: HttpFetch,
   url: string,
+  cap: number,
 ): Promise<NodeResult<T>> {
   let res: Response;
-  let text: string;
   try {
     res = await httpFetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch (e) {
+    return { ok: false, status: 0, body: e instanceof Error ? e.message : String(e) };
+  }
+  return readCappedJson<T>(res, cap);
+}
+
+/**
+ * WEB_INTERFACE → The extension → "Every answer is read under its route's
+ * cap" — read a `Response` under a byte cap and parse it. A caller that
+ * already holds a `Response` (the extension's `POST /posts/batch?tx=1`)
+ * hands it here instead of going through `fetchJson`. The returned shape is
+ * what every caller maps today: an over-cap body is `{ ok: false, status,
+ * body: \`body over <cap> bytes\` }`, a non-2xx body is `{ ok: false, status,
+ * body: text }`, an unparseable 2xx body is `{ ok: false, status, body:
+ * 'unparseable body: …' }`, and a parsed 2xx is `{ ok: true, data }`. A
+ * mid-stream transport failure answers `{ ok: false, status: 0, body:
+ * errorMessage }`, as a connect failure does.
+ */
+export async function readCappedJson<T>(
+  res: Response,
+  cap: number,
+): Promise<NodeResult<T>> {
+  // The cap's enforcement is the next step; today the body is read whole.
+  void cap;
+  let text: string;
+  try {
     text = await res.text();
   } catch (e) {
     return { ok: false, status: 0, body: e instanceof Error ? e.message : String(e) };

@@ -113,7 +113,7 @@ function prove(listing: Listing, fetch: HttpFetch) {
 
 describe('fetchJson', () => {
   it('a body cut off in flight is a transport failure, never a throw', async () => {
-    const res = await fetchJson(async () => cutOff(), 'http://node');
+    const res = await fetchJson(async () => cutOff(), 'http://node', 1_024);
     expect(res).toEqual({ ok: false, status: 0, body: 'terminated' });
   });
 });

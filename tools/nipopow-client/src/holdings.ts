@@ -5,6 +5,7 @@ import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consens
 import type { HoldingKind } from '@dagsocial/consensus';
 import type { HttpFetch } from './http.js';
 import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
+import { RANGE_PAGE_READ_BYTES } from './caps.js';
 export type { HoldingKind };
 
 /**
@@ -99,7 +100,8 @@ export async function proveRange(
       : `?atHeight=${atHeight}&limit=${PAGE_ASK}&from=${fromHex}`;
     const url = `${nodeUrl}/api/v1/range/${kind}/${ownerLower}${query}`;
 
-    const res = await fetchJson<unknown>(httpFetch, url);
+    // CONSTANTS → Light client reads — one range page.
+    const res = await fetchJson<unknown>(httpFetch, url, RANGE_PAGE_READ_BYTES);
     if (!res.ok) {
       const verdict = res.status === 0
         ? `transport failure: ${capped(res.body)}`
