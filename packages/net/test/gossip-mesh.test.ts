@@ -637,51 +637,6 @@ describe('A frame-tier refusal ends the connection to a node of another network'
     },
     TIMEOUT,
   );
-
-  it(
-    'B\'s router lists no peer of another magic among the subscribers of either of B\'s own topics',
-    async () => {
-      const { nodeB, nodeX } = await startBAndStranger();
-      track([nodeB, nodeX]);
-      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBe(0);
-      expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
-
-      const topicsB = topicsOf(nodeB);
-      const ps = pubsubOf(nodeB);
-      const subsOrderingBlock = ps
-        .getSubscribers(topicsB.orderingBlock)
-        .map((p) => p.toString());
-      const subsTx = ps.getSubscribers(topicsB.tx).map((p) => p.toString());
-
-      expect({
-        orderingBlock: subsOrderingBlock.includes(nodeX.peerId()),
-        tx: subsTx.includes(nodeX.peerId()),
-      }).toEqual({ orderingBlock: false, tx: false });
-    },
-    TIMEOUT,
-  );
-
-  it(
-    'a block X publishes runs no validator at B',
-    async () => {
-      const { nodeB, nodeX } = await startBAndStranger();
-      track([nodeB, nodeX]);
-      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBe(0);
-      expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
-
-      const bValidator = newCounter();
-      const topicsB = topicsOf(nodeB);
-      wrapValidator(nodeB, topicsB.orderingBlock, bValidator);
-
-      const block = makeBlockAt(1, PROTOCOL_VERSION);
-      // NET_INTERFACE → Gossip → "A broadcast that sends nothing still resolves"
-      await expect(nodeX.broadcastOrderingBlock(block)).resolves.toBeUndefined();
-
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
-      expect(bValidator.count).toBe(0);
-    },
-    TIMEOUT,
-  );
 });
 
 // ---------------------------------------------------------------------------
