@@ -52,6 +52,7 @@ import { readStreamBounded, sinkWithDeadline } from './util.js';
 import {
   MAX_CHAIN_RESPONSE_ITEMS,
   MAX_HANDSHAKE_FRAME_BYTES,
+  MAX_INBOUND_HANDSHAKE_STREAMS,
   MAX_INBOUND_SYNC_STREAMS,
   MAX_INV_IDS,
   MAX_SERVE_BODY_BYTES,
@@ -576,6 +577,14 @@ export class NetNode {
    * peer disconnects, so a disconnected peer's queue does not accrue.
    */
   private peerStreamQueues: Map<string, Promise<void>> = new Map();
+  /**
+   * The ids of connections that have carried a handshake stream — a fact
+   * kept by connection id while the connection stands, dropped at its close
+   * (NET_INTERFACE → Handshake → "A connection carries one handshake,
+   * opened by the side that dialled it"). The listener marks on arrival;
+   * `connection:close` drops.
+   */
+  private handshakenConnections: Set<string> = new Set();
 
   constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
     this.config = config;
@@ -774,6 +783,10 @@ export class NetNode {
         const durationMs = (timeline?.close && timeline?.open)
           ? timeline.close - timeline.open
           : '?';
+        // NET_INTERFACE → Handshake → "A connection carries one handshake,
+        // opened by the side that dialled it": the mark lives while the
+        // connection stands.
+        if (typeof conn?.id === 'string') this.handshakenConnections.delete(conn.id);
         console.log(`[net] connection:close peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
       });
 
@@ -1070,6 +1083,7 @@ export class NetNode {
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
+      const connId = connection.id;
       // NET_INTERFACE → Validation → "A stream write is bounded in time as
       // well": every answer on this stream is raced against the deadline the
       // reader on the other side holds (`syncRequestTimeoutMs`).
@@ -1082,6 +1096,16 @@ export class NetNode {
       const replyEmpty = async (): Promise<void> => {
         try { await sinkFrame(new Uint8Array(0)); } catch { /* peer gone */ }
       };
+
+      // NET_INTERFACE → Handshake → "A connection carries one handshake,
+      // opened by the side that dialled it": a connection that has already
+      // carried a handshake stream closes every later one unread, with no
+      // penalty.
+      if (typeof connId === 'string' && this.handshakenConnections.has(connId)) {
+        await stream.close().catch(() => { /* the peer is already gone */ });
+        return;
+      }
+      if (typeof connId === 'string') this.handshakenConnections.add(connId);
 
       // NET_INTERFACE → "A banned peer's handshake is refused unread". The gater
       // refuses the same predicate one layer down, at the transport; this check
@@ -1201,7 +1225,7 @@ export class NetNode {
         console.warn(`[net] inbound handshake handler failed for ${peerId}: ${String(err)}`);
         await replyEmpty();
       }
-    });
+    }, { maxInboundStreams: MAX_INBOUND_HANDSHAKE_STREAMS });
   }
 
   // -----------------------------------------------------------------------

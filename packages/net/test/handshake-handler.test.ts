@@ -584,12 +584,12 @@ describe('inbound handshake handler — one handshake stream a connection', () =
     warnSpy.mockRestore();
   });
 
-  it.fails('registers the handshake handler with maxInboundStreams of 1', () => {
+  it('registers the handshake handler with maxInboundStreams of 1', () => {
     const { registrationOptions } = makeHandshakeHarness();
     expect(registrationOptions()?.maxInboundStreams).toBe(1);
   });
 
-  it.fails('closes a second handshake stream on the same connection unread', async () => {
+  it('closes a second handshake stream on the same connection unread', async () => {
     const { send, peerMgr, peerId, net } = makeHandshakeHarness({ chainHeight: 0 });
     let activeCount = 0;
     net.onPeerActive((id) => { if (id === peerId) activeCount++; });
