@@ -699,6 +699,11 @@ export class NetNode {
           // the router holds a message that passed its topic validator in the
           // message cache until the listener reports Accept, Ignore or Reject.
           asyncValidation: true,
+          // NET_INTERFACE → libp2p Stack: gossipsub alone. The library's
+          // default is `fallbackToFloodsub: true`, which pushes
+          // `/floodsub/1.0.0` onto the host's registered protocols; the
+          // option is set here so that id is not registered at all.
+          fallbackToFloodsub: false,
         }),
         identify: identify(),
         ping: ping(),

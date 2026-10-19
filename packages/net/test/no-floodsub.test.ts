@@ -57,7 +57,7 @@ describe('the node speaks no floodsub', () => {
     node = null;
   });
 
-  it.fails('a started node registers no `/floodsub/1.0.0` protocol', async () => {
+  it('a started node registers no `/floodsub/1.0.0` protocol', async () => {
     node = new NetNode(makeConfig(), validators);
     await node.start();
 
