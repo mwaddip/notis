@@ -325,7 +325,7 @@ peer opened, or one that has carried a handshake, the funnel opens no handshake 
 it, or the one already run, is that connection's. The funnel counts such a dial connected when its peer is `Active`,
 and otherwise leaves the connection to its deadline.
 
-**A peer becomes `Active` once.** The first handshake that completes for a peer, in either direction, makes it
+**A peer becomes Active once.** The first handshake that completes for a peer, in either direction, makes it
 `Active` — its PeerDb record, its version and addresses on the metadata, `onPeerActive`, the `SyncInfo` that follows
 (→ Post-Handshake Routing). A handshake that completes for a peer already `Active` — on a second connection, in
 either direction — is read, decoded and validated as any handshake is, and a body-tier failure is penalised as any
