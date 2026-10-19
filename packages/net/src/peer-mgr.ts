@@ -252,7 +252,8 @@ export class PeerManager {
    * Record a penalty using the two-tier system.
    *
    * - Transient: scored (50), decays over time, peer stays in PeerDb
-   *   (timeout, slow response)
+   *   (a compatibility mismatch, or an answer that refutes its claim —
+   *   NET_INTERFACE → Peer Penalty System)
    * - ProtocolViolation: permanent ban, peer removed from PeerDb
    */
   recordPenaltyKind(kind: PenaltyKind, peerId: string, reason: string): void {
