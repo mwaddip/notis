@@ -739,7 +739,7 @@ describe('the dial funnel and the peer-opened connection', () => {
     await nodeB?.stop();
   });
 
-  it.fails('a dial returning the connection the peer opened runs no handshake', async () => {
+  it('a dial returning the connection the peer opened runs no handshake', async () => {
     nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
     await nodeB.start();
     const bMulti = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();

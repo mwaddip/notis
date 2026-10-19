@@ -1,7 +1,7 @@
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import type { Libp2p } from 'libp2p';
-import type { PeerId } from '@libp2p/interface';
+import type { PeerId, Stream } from '@libp2p/interface';
 import type { NetConfig } from './types.js';
 import { MSG_HEADERS, MSG_BLOCKS } from './types.js';
 import { readStreamBounded, sinkWithDeadline } from './util.js';
@@ -54,27 +54,28 @@ export function connectedPeer(libp2p: Libp2p, peerId: string): PeerId {
  * "A request is one round trip, and closing its stream never changes its
  * answer").
  *
- * The caller frames the request and decodes the answer; this function owns
- * the dial, the write, the read and the close. `readMultiplier` is 1 for
- * every arm but the `Blocks` read, which the contract bounds at ×5.
+ * The caller frames the request, opens the stream (so the stream opens on
+ * the connection the caller chose — NET_INTERFACE → Handshake →
+ * "The dial funnel handshakes only a connection it opened") and decodes the
+ * answer; this function owns the write, the read and the close.
+ * `readMultiplier` is 1 for every arm but the `Blocks` read, which the
+ * contract bounds at ×5; `readMaxBytes` is `MAX_STREAM_BYTES` for the sync
+ * arms and `MAX_HANDSHAKE_FRAME_BYTES` for the handshake.
  */
 export async function oneRoundTrip(
-  libp2p: Libp2p,
-  peer: PeerId,
-  protocol: string,
+  openStream: (signal: AbortSignal) => Promise<Stream>,
   request: Uint8Array,
   config: NetConfig,
   readMultiplier: number = 1,
+  readMaxBytes: number = MAX_STREAM_BYTES,
 ): Promise<Uint8Array | null> {
   const deadlineMs = config.syncRequestTimeoutMs * readMultiplier;
-  const stream = await libp2p.dialProtocol(peer, protocol, {
-    signal: AbortSignal.timeout(deadlineMs),
-  });
+  const stream = await openStream(AbortSignal.timeout(deadlineMs));
   try {
     await sinkWithDeadline(stream, request, deadlineMs);
     const data = await readStreamBounded(
       stream.source,
-      MAX_STREAM_BYTES,
+      readMaxBytes,
       AbortSignal.timeout(deadlineMs),
     );
     return data;
@@ -102,9 +103,7 @@ export async function requestHeaders(
   const magic = config.magic;
 
   const response = await oneRoundTrip(
-    libp2p,
-    peer,
-    SYNC_PROTOCOL,
+    (signal) => libp2p.dialProtocol(peer, SYNC_PROTOCOL, { signal }),
     encodeGetHeaders(magic, { locator }),
     config,
   );
@@ -168,9 +167,7 @@ export async function requestBlocks(
   const magic = config.magic;
 
   const raw = await oneRoundTrip(
-    libp2p,
-    peer,
-    SYNC_PROTOCOL,
+    (signal) => libp2p.dialProtocol(peer, SYNC_PROTOCOL, { signal }),
     encodeGetBlocks(magic, { ids }),
     config,
     5,

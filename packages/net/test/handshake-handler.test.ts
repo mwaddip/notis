@@ -224,7 +224,7 @@ function makeOutboundHarness(opts: { closeRejects?: boolean } = {}) {
   const internals = net as unknown as {
     libp2p: unknown;
     peerMgr: PeerManager;
-    runOutboundHandshake(id: string): Promise<HandshakeResult>;
+    runOutboundHandshake(conn: unknown): Promise<HandshakeResult>;
   };
   internals.libp2p = {
     getPeers: () => [{ toString: () => peerId }],
@@ -232,7 +232,18 @@ function makeOutboundHarness(opts: { closeRejects?: boolean } = {}) {
     getConnections: () => [],
     hangUp: () => Promise.resolve(),
     peerId: { toString: () => 'self-peer-id' },
-    dialProtocol: async () => ({
+  };
+  internals.peerMgr.addPeer({
+    id: peerId,
+    multiaddrs: [],
+    protocols: [],
+    connectedAt: Date.now(),
+  });
+  const conn = {
+    id: 'outbound-conn',
+    direction: 'outbound' as const,
+    remotePeer: { toString: () => peerId },
+    newStream: async () => ({
       sink: async (chunks: Iterable<Uint8Array>) => {
         for await (const _c of chunks) { /* written */ }
       },
@@ -244,13 +255,7 @@ function makeOutboundHarness(opts: { closeRejects?: boolean } = {}) {
       },
     }),
   };
-  internals.peerMgr.addPeer({
-    id: peerId,
-    multiaddrs: [],
-    protocols: [],
-    connectedAt: Date.now(),
-  });
-  return () => internals.runOutboundHandshake(peerId);
+  return () => internals.runOutboundHandshake(conn);
 }
 
 describe('outbound handshake — the finally', () => {
@@ -616,7 +621,7 @@ describe('inbound handshake handler — one handshake stream a connection', () =
 // ---------------------------------------------------------------------------
 
 describe('inbound handshake handler — a peer becomes Active once', () => {
-  it.fails('a valid handshake from a peer already Active records and raises nothing', async () => {
+  it('a valid handshake from a peer already Active records and raises nothing', async () => {
     const firstAddr = '/ip4/9.9.9.9/tcp/9000';
     const secondAddr = '/ip4/8.8.8.8/tcp/8000';
     const { send, peerMgr, peerId, peerDb, net } = makeHandshakeHarness({ chainHeight: 0 });
