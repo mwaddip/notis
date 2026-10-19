@@ -4922,17 +4922,17 @@ except while a branch heavier than the applied chain waits for its blocks, and t
 the blocks that do arrive (→ "A block in hand extends the applied tip"): a header whose block is withheld costs a
 fetch that stays pending, never the node's extension, its gossip or its miner.
 
-**One intake, one at a time.** Everything that can move the chain enters the intake as one item: a `Headers` page
-or a `Blocks` answer the scheduler hands over (NET_INTERFACE → Sync Handler Registration), a gossiped block past
-Stage 1 (→ Relay handlers), and this node's own mined block (→ Block finalization). An item runs to its end with
-nothing awaited — admission, binding, staging, the funnel and `reorg` are synchronous — so no two items interleave,
-and nothing else applies a block: while an item runs the tip moves by nothing else. What
-waits is bounded by the peers connected, never by what they send: the scheduler keeps one header request and its
-block requests open per peer, and a gossiped block waits as **its relayer's pending block** — one per peer id, a
-later block from the same peer replacing the earlier in the earlier's place in the order, a block already pending
-for that peer dropped. A peer's disconnect removes its pending block, its presync and its memo entry. A block whose
-header will not hash has no identity to be kept by: it is logged and dropped, with no penalty — net's Stage 1 refuses
-such a header before it is delivered.
+**One intake, one at a time.** Everything that can move the chain enters the intake as one item: a `Headers` page or a
+`Blocks` answer the scheduler hands over (NET_INTERFACE → Sync Handler Registration), a gossiped block past Stage 1
+(→ Relay handlers), this node's own mined block (→ Block finalization), and a hold of net's gate that raises `S`
+(→ "The window"). An item runs to its end with nothing awaited — admission, binding, staging, the funnel and `reorg`
+are synchronous — so no two items interleave, and nothing else applies a block: while an item runs the tip moves by
+nothing else. What waits is bounded by the peers connected, never by what they send: the scheduler keeps one header
+request and its block requests open per peer, and a gossiped block waits as **its relayer's pending block** — one per
+peer id, a later block from the same peer replacing the earlier in the earlier's place in the order, a block already
+pending for that peer dropped. A peer's disconnect removes its pending block, its presync and its memo entry. A block
+whose header will not hash has no identity to be kept by: it is logged and dropped, with no penalty — net's Stage 1
+refuses such a header before it is delivered.
 
 **A pending block is tried again at the end of every item.** One whose parent the tree now holds leaves the pending
 blocks and runs as its relayer's gossiped block runs — its header admitted, the block bound, and applied as a block in
@@ -5136,12 +5136,14 @@ stalled.
 
 **The window.** Blocks apply by extension — along the best chain, or as a block in hand — only while
 `appliedTip < S + maxReorgDepth`, `S` the best chain's height at the last hold of net's gate (`gateHeld()`,
-NET_INTERFACE → Sync State Machine → "The gate bounds how far blocks apply"), and `S = 0` at process start. When
-the gate holds, the best chain is at least as heavy as every chain the peers net counts have offered — with one
-honest peer among them, the honest chain or a heavier one; until then at most `maxReorgDepth` blocks are applied
-above `S`, so a fork at or above `S` stays reachable. **A switch is not held by the window**: it moves to a branch
-already heavier than the best, so the branch was compared; the tip it leaves may stand above `S + maxReorgDepth`,
-and extension then waits for the next hold.
+NET_INTERFACE → Sync State Machine → "The gate bounds how far blocks apply"), and `S = 0` at process start. A hold
+that raises `S` is an item (→ "One intake, one at a time"), and it ends with the pending blocks tried again, extension
+and the switch: a block staged at the window's edge applies at the hold that opens the window, not at the next
+delivery, which at the tip may never come. When the gate holds, the best chain is at least as heavy as every chain the
+peers net counts have offered — with one honest peer among them, the honest chain or a heavier one; until then at most
+`maxReorgDepth` blocks are applied above `S`, so a fork at or above `S` stays reachable.
+**A switch is not held by the window**: it moves to a branch already heavier than the best, so the branch was
+compared; the tip it leaves may stand above `S + maxReorgDepth`, and extension then waits for the next hold.
 
 **The switch.** When the best chain forks from the applied chain at `f` below the applied tip, it is heavier than
 the applied chain (→ "The best chain is never lighter than the applied chain, and leaves it only while heavier"), and
@@ -5880,9 +5882,9 @@ funnel:
   read of `block_headers` / `best_chain` / `staged_blocks` or the pipeline's in-memory state — a locator is at
   most `MAX_LOCATOR_HASHES` point reads; `wantedBlocks` at most `BLOCK_FETCH_WINDOW` heights when extending, and
   for a switch the walk to the fork point, bounded by the reach floor, and the shortest heavier prefix, bounded by
-  work (Fork choice decides on verified headers → "The switch.") — and the reads that
-  decode a stored row are handed over wrapped in `failStopIfCorruptChain`. `gateHeld()` sets the window's `S`
-  (Fork choice decides on verified headers → "The window")
+  work (Fork choice decides on verified headers → "The switch.") — and the reads that decode a stored row are handed
+  over wrapped in `failStopIfCorruptChain`. `gateHeld()` sets the window's `S`, and a hold that raises it runs as an
+  intake item (Fork choice decides on verified headers → "The window")
 - **`setHeadersHandler(getBlock)`**: the provider `net` reads stored blocks through — the blocks a
   served `GetBlocks` carries. The
   provider node hands over wraps the store read in `failStopIfCorruptChain`: a stored row that will

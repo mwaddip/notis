@@ -494,10 +494,21 @@ function wantedForExtension(applied: number, bestHeight: number): { id: string; 
   return out;
 }
 
-/** NODE_INTERFACE → Fork choice decides on verified headers → "The window.". */
+/**
+ * NODE_INTERFACE → Fork choice decides on verified headers → "The window".
+ * A hold that raises `S` is an item (→ "One intake, one at a time") and
+ * ends with the pending blocks tried again, extension and the switch, so a
+ * block staged at the window's edge applies at the hold that opens the
+ * window.
+ */
 export function gateHeld(): void {
+  const prevS = S;
   const best = getBestTip();
   S = best?.height ?? 0;
+  if (S <= prevS) return;
+  processPendingPass();
+  drainExtension();
+  trySwitch();
 }
 
 /**
