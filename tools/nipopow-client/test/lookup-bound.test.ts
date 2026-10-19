@@ -25,10 +25,9 @@ const SPINE_HEIGHT_BYTE = 0xff;
 // Build the packed proof of a left-only spine of `depth` internal nodes over a
 // single leaf whose key is `lookupKey` so the walk reaches a leaf whose key
 // matches: `LEAF, (LABEL, INTERNAL(balance=0)) × depth, END_OF_TREE,
-// directionBytes = ceil(depth/8) × 0xff`. Mirrors poc-deep-tree.mjs
-// (`__REPO__/packages/avltree/dist/index.js`'s `label`, `newLeaf`,
-// `newInternal`, `newLabel`), with the engine's own node constructors
-// building the honest-shaped digest.
+// directionBytes = ceil(depth/8) × 0xff`. The engine's own node constructors
+// (`label`, `newLeaf`, `newInternal`, `newLabel`, exported from
+// `@dagsocial/avltree`) build the honest-shaped digest the proof anchors at.
 function buildSpineProof(depth: number, lookupKey: Uint8Array): Uint8Array {
   const nextKey = new Uint8Array(TREE_KEY_LENGTH).fill(0xfe);
   const value = new Uint8Array([0x07]);

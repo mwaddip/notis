@@ -307,7 +307,7 @@ describe("fetchListing's default bounds the karma listing at LEDGER_READ_MAX", (
 
     const result = await fetchListing('http://a', OWNER_HEX, fetch);
 
-    // Control: exactly one page per PAGE_LIMIT_MAX plus the credits probe.
+    // Control: exactly one page per PAGE_LIMIT_MAX plus the credits route's first page.
     expect(calls.length).toBe(Math.ceil(LEDGER_READ_MAX / PAGE) + 1);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.listing.karma.boxes.length).toBe(LEDGER_READ_MAX);
