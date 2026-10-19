@@ -308,7 +308,7 @@ describe('intakePeersBody', () => {
   });
 });
 
-describe('peerDbCap default (contract: soft cap 1000)', () => {
+describe("NetConfig's peerDbCap flows into PeerDb unchanged", () => {
   const validators = {
     verifyOrderingBlockPoW,
     verifyProtocolVersion,
@@ -324,20 +324,10 @@ describe('peerDbCap default (contract: soft cap 1000)', () => {
     verifyPostBody,
   };
 
-  // The fallback lives in NetNode.start(), so the test starts a real node.
   // The cap is a private PeerDb field — read via the any-escape the other
-  // suites use for internals.
-  it('constructs PeerDb with 1000 when peerDbCap is unset', async () => {
-    const node = new NetNode(makeConfig(), validators);
-    await node.start();
-    try {
-      expect((node as any).peerDb.cap).toBe(1000);
-    } finally {
-      await node.stop();
-    }
-  });
-
-  it('control: an explicit peerDbCap is honored unchanged', async () => {
+  // suites use for internals. Net holds no default (NET_INTERFACE →
+  // Outbound Manager).
+  it('an explicit peerDbCap is honored unchanged', async () => {
     const node = new NetNode({ ...makeConfig(), peerDbCap: 42 }, validators);
     await node.start();
     try {

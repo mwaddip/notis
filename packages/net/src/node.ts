@@ -730,7 +730,7 @@ export class NetNode {
       // Create PeerDb with self-address filtering
       const listenAddrs = this.libp2p.getMultiaddrs();
       const selfAddrs = listenAddrs.map(a => a.toString());
-      this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap ?? 1000, selfAddrs);
+      this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap, selfAddrs);
 
       // Create SyncMachine with lazy store bridge and wire the scheduler's
       // injected shape (NET_INTERFACE → Sync Handler Registration).

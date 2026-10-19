@@ -132,9 +132,10 @@ export interface NetConfig {
   bootstrapPeers: string[];
   listenAddrs: string;
   maxPeers: number;
-  minPeers?: number;
-  peerDbCap?: number;
-  outboundRedialCooldownMs?: number;
+  // All three required — net holds no default (NET_INTERFACE → Outbound Manager).
+  minPeers: number;
+  peerDbCap: number;
+  outboundRedialCooldownMs: number;
   penaltyScoreThreshold: number;
   temporalBanDurationMs: number;
   penaltySafeIntervalMs: number;
