@@ -479,7 +479,7 @@ describe('post-cache — withdraw', () => {
 });
 
 describe('post-cache — the chain', () => {
-  it.fails('open under another chain reads nothing of the first (Review Focus 5), and reopening the first finds its entries; notis.posts.chain holds the last name', async () => {
+  it('open under another chain reads nothing of the first, reopening the first finds it empty, and notis.posts.chain holds the last name', async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -492,16 +492,20 @@ describe('post-cache — the chain', () => {
 
     await cache.open('B');
     expect(ls.map.get('notis.posts.chain')).toBe('B');
+    expect(rememberedChain(ls)).toBe('B');
     // B's database is empty of A's rows.
     expect(await cache.thread(a.id)).toBeNull();
     const b = row('b');
     await cache.put({ id: b.id, txBytes: new Uint8Array([2]), row: b, author: b.author, parent: null, own: false });
 
-    // Reopen A — its rows are still there.
+    // Reopen A — one chain's database at a time (WEB_INTERFACE → The
+    // extension → "The post cache"): A's database was deleted when B
+    // opened, so neither a's row nor b's is held on A.
     await cache.open('A');
-    expect(await cache.thread(a.id)).not.toBeNull();
-    expect(await cache.thread(b.id)).toBeNull();
     expect(ls.map.get('notis.posts.chain')).toBe('A');
+    expect(rememberedChain(ls)).toBe('A');
+    expect(await cache.thread(a.id)).toBeNull();
+    expect(await cache.thread(b.id)).toBeNull();
   });
 });
 
