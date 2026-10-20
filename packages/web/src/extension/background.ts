@@ -89,7 +89,7 @@ async function handle(api: typeof chrome, config: BackgroundConfig, message: unk
     case 'takeOpen': return await takeOpen(api, sender);
     case 'arrived': return await arrived(api, config, message.id, sender);
     case 'offered': return await offered(api, config, message.id, sender);
-    case 'sign': return await signMessage(api, message.txBytesHex, message.txIdHex, message.hint ?? {});
+    case 'sign': return await signMessage(api, message.txBytesHex, message.txIdHex, message.pubKeyHex, message.hint ?? {});
     case 'ack': return await ack(api, message.id);
     case 'approve': return await approve(api, message.id, sender);
     case 'decline': return await decline(api, message.id, sender);
@@ -108,10 +108,14 @@ async function stateSnapshot(api: typeof chrome): Promise<AppSnapshot | null> {
   ]);
   const envelope = parseEnvelope(localGet[K_ENVELOPE]);
   if (envelope === null) return null;
-  const seed = seedGet[K_SEED];
+  // WEB_INTERFACE → The extension → "The contexts, and what each may hold" —
+  // a seed is the identity's only when its public key is the envelope's
+  // `pubKeyHex`, and `state`'s `locked` answers that. A seed of another key
+  // sitting in `storage.session` reads as locked.
+  const locked = identitySeed(seedGet[K_SEED], envelope.pubKeyHex) === null;
   return {
     pubKeyHex: envelope.pubKeyHex,
-    locked: typeof seed !== 'string',
+    locked,
     backedUp: localGet[K_BACKEDUP] === '1',
     policy,
   };
@@ -339,7 +343,7 @@ async function takeOpen(api: typeof chrome, sender: chrome.runtime.MessageSender
 // sign — WEB_INTERFACE → "`sign`, in the background, in order".
 // ---------------------------------------------------------------------------
 
-async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: string, hint: SignHint): Promise<SignAnswer> {
+async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: string, pubKeyHex: string, hint: SignHint): Promise<SignAnswer> {
   // 1. Decode. A failure ⇒ undecodable.
   let tx: UtxoTransaction;
   try {
@@ -351,19 +355,27 @@ async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: stri
   if (computeTxId(tx) !== txIdHex) return { refused: 'id-mismatch' };
   // 3. The signature rides after the id — the tx we sign over must carry none.
   if (Object.keys(tx.signatures).length > 0) return { refused: 'already-signed' };
-  // 4. Classify.
+  // 4. The key — no envelope reads as locked, a key that is not the
+  //    envelope's reads as `refused: key-changed` before the ledger is read
+  //    and before any prompt record is written (WEB_INTERFACE →
+  //    "A signature is made for the key the transaction was built for",
+  //    → "`sign`, in the background, in order").
+  const env = await readEnvelope(api);
+  if (env === null) return { locked: true };
+  if (pubKeyHex !== env.pubKeyHex) return { refused: 'key-changed' };
+  // 5. Classify, from the outputs.
   const ledger = classifyLedger(tx);
   const policy = await readPolicy(api);
-  // 5. Karma with 'silent' — sign at once or refuse locked.
+  // 6. Karma under 'silent' — the seed the identity's reads as a signature at
+  //    once; otherwise, locked (WEB_INTERFACE → "`sign`, in the background,
+  //    in order", → "The contexts, and what each may hold").
   if (ledger === 'karma' && policy === 'silent') {
-    const seed = await readSeed(api);
+    const seed = await readIdentitySeed(api, env.pubKeyHex);
     if (seed === null) return { locked: true };
     return { signature: bytesToHex(ed25519.sign(hexToBytes(txIdHex), seed)) };
   }
-  // 6. Otherwise, the prompt. One at a time.
+  // 7. Otherwise, the prompt. One at a time.
   if (await hasOpenPromptRecord(api)) return { refused: 'busy' };
-  const env = await readEnvelope(api);
-  if (env === null) return { locked: true };
   const summary = summarise(tx, env.pubKeyHex);
   const record: SignRecord = {
     id: randomId(),
@@ -481,6 +493,26 @@ async function readSeed(api: typeof chrome): Promise<Uint8Array | null> {
   const v = got[K_SEED];
   if (typeof v !== 'string' || !HEX64.test(v)) return null;
   return hexToBytes(v);
+}
+
+/** A session seed held to the envelope's `pubKeyHex` — the seed is the
+ *  identity's only when its public key is the envelope's (WEB_INTERFACE →
+ *  "The contexts, and what each may hold"). A seed of any other key sitting
+ *  in `storage.session` reads as none. `state`'s `locked` and `sign`'s step
+ *  6 both go through this one reader. */
+async function readIdentitySeed(api: typeof chrome, envPubKeyHex: string): Promise<Uint8Array | null> {
+  const got = await api.storage.session.get(K_SEED);
+  return identitySeed(got[K_SEED], envPubKeyHex);
+}
+
+/** The seed as the identity's — null when the stored value is not 64 hex or
+ *  its public key is not the envelope's (WEB_INTERFACE → "The contexts, and
+ *  what each may hold"). */
+function identitySeed(raw: unknown, envPubKeyHex: string): Uint8Array | null {
+  if (typeof raw !== 'string' || !HEX64.test(raw)) return null;
+  const seed = hexToBytes(raw);
+  const pub = bytesToHex(ed25519.getPublicKey(seed));
+  return pub === envPubKeyHex ? seed : null;
 }
 
 async function readEnvelope(api: typeof chrome): Promise<Envelope | null> {

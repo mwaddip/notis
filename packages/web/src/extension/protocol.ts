@@ -8,9 +8,10 @@ import type { LinksPref } from './links';
 // no callbacks — or `{ error }` on a refusal.
 
 /** The refusal-vocabulary for `sign`, WEB_INTERFACE → "`sign`, in the
- *  background, in order". `busy` names a second prompt while a first is still
- *  open; the others are the three pre-prompt checks. */
-export type SignRefusal = 'undecodable' | 'id-mismatch' | 'already-signed' | 'busy';
+ *  background, in order". `key-changed` names a `pubKeyHex` that is not the
+ *  envelope's; `busy` names a second prompt while a first is still open; the
+ *  others are the three pre-prompt checks. */
+export type SignRefusal = 'undecodable' | 'id-mismatch' | 'already-signed' | 'key-changed' | 'busy';
 
 /** The four things a `sign` message can answer. `pending` never reaches the
  *  wallet — the proxy waits on the record's `result` and translates back to a
@@ -101,7 +102,7 @@ export type Message =
   | { kind: 'takeOpen' }
   | { kind: 'arrived'; id: string }
   | { kind: 'offered'; id: string }
-  | { kind: 'sign'; txBytesHex: string; txIdHex: string; hint?: SignHint }
+  | { kind: 'sign'; txBytesHex: string; txIdHex: string; pubKeyHex: string; hint?: SignHint }
   | { kind: 'ack'; id: string }
   | { kind: 'approve'; id: string }
   | { kind: 'decline'; id: string };

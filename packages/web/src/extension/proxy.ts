@@ -83,12 +83,13 @@ export class ExtensionProxy implements AppIdentity {
       : { pubKeyHex: this.snapshot.pubKeyHex, locked: this.snapshot.locked };
   }
 
-  async sign(txBytes: Uint8Array, txIdHex: string, _pubKeyHex: string, hint?: SignHint): Promise<SignResult> {
+  async sign(txBytes: Uint8Array, txIdHex: string, pubKeyHex: string, hint?: SignHint): Promise<SignResult> {
     const bytesHex = bytesToHex(txBytes);
     const answer = await sendMessage(this.api, {
       kind: 'sign',
       txBytesHex: bytesHex,
       txIdHex,
+      pubKeyHex,
       hint: hint ?? undefined,
     }) as SignAnswer;
     return this.translateSignAnswer(answer);

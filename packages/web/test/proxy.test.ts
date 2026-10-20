@@ -443,7 +443,7 @@ describe('proxy.setLinks — sends the links message, then holds the new value',
 // transaction was built for" and → The extension → "The messages" — `sign`
 // carries `pubKeyHex`, the key the flow built the transaction for.
 describe('proxy.sign — carries pubKeyHex to the background', () => {
-  it.fails('its sign sends pubKeyHex in the message', async () => {
+  it('its sign sends pubKeyHex in the message', async () => {
     const c = fakeChrome();
     const sent: unknown[] = [];
     c.api.runtime.sendMessage = (async (m: unknown) => {
