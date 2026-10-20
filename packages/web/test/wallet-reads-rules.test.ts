@@ -69,7 +69,7 @@ afterEach(() => {
 });
 
 describe('readBuildContext — the /karma whole-list is bounded by two boxes', () => {
-  it.fails('a /karma of three boxes refuses readBuildContext (KARMA_LISTING_MAX)', async () => {
+  it('a /karma of three boxes refuses readBuildContext (KARMA_LISTING_MAX)', async () => {
     const calls = script({
       karma: () => karmaBody([
         { boxId: kBox('11'), value: '10' },
@@ -89,7 +89,7 @@ describe('readBuildContext — the /karma whole-list is bounded by two boxes', (
 });
 
 describe('readCreditContext — the credits whole-list is bounded by LEDGER_READ_MAX', () => {
-  it.fails('a credits chain of fresh full pages past LEDGER_READ_MAX refuses after at most ⌈LEDGER_READ_MAX / PAGE_LIMIT_MAX⌉ + 1 requests', async () => {
+  it('a credits chain of fresh full pages past LEDGER_READ_MAX refuses after at most ⌈LEDGER_READ_MAX / PAGE_LIMIT_MAX⌉ + 1 requests', async () => {
     // Every page carries exactly PAGE_LIMIT_MAX unique rows beside a non-null
     // next (the honest-page shape: a page beside a next carries exactly the
     // limit asked — WEB_INTERFACE → Reading a node's answer → "Every page is
@@ -122,7 +122,7 @@ describe('readCreditContext — the credits whole-list is bounded by LEDGER_READ
 });
 
 describe('the whole-list rules refuse a repeat and a duplicate key', () => {
-  it.fails('a repeated cursor across two pages refuses the credits whole-list read', async () => {
+  it('a repeated cursor across two pages refuses the credits whole-list read', async () => {
     const uniquePrefix = (page: number, row: number): string => {
       const hex = ((page * 1000 + row) >>> 0).toString(16).padStart(8, '0');
       return `${hex}${'00'.repeat(28)}`;
@@ -151,7 +151,7 @@ describe('the whole-list rules refuse a repeat and a duplicate key', () => {
     expect(creditsCalls.length).toBeLessThanOrEqual(3);
   });
 
-  it.fails('a box id named on two pages refuses the credits whole-list read', async () => {
+  it('a box id named on two pages refuses the credits whole-list read', async () => {
     // The duplicate: page 2 names a boxId page 1 already took. Page 3 is a
     // terminal page so the current unbounded loop ends — the rule refuses on
     // page 2.

@@ -1,8 +1,10 @@
-import { NodeClient, type Api } from './api/client';
+import { NodeClient, PageError, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, PAGE_LIMIT_DEFAULT, PAGE_LIMIT_MAX, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
+import { readWholeList } from './api/whole-list';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
@@ -3380,15 +3382,20 @@ export class App {
    *  node has (WEB_INTERFACE → "Paging is keyset, never offset"). `total` is
    *  the identity's total on every page, so the first page's value stands. */
   private async readOwnCredits(key: string): Promise<CreditsResult> {
-    const first: CreditsResult = await this.client.credits(key, { limit: PAGE_LIMIT_MAX });
-    const boxes = [...first.boxes];
-    let after: string | null = first.next;
-    while (after !== null) {
-      const page: CreditsResult = await this.client.credits(key, { limit: PAGE_LIMIT_MAX, after });
-      for (const b of page.boxes) boxes.push(b);
-      after = page.next;
-    }
-    return { userId: first.userId, total: first.total, boxes, boxCount: boxes.length, next: null };
+    let first: CreditsResult | null = null;
+    const boxes = await readWholeList<CreditsResult['boxes'][number], CreditsResult>({
+      readPage: async (page) => {
+        const answer = await this.client.credits(key, page);
+        if (first === null) first = answer;
+        return answer;
+      },
+      pick: (answer) => ({ rows: answer.boxes, next: answer.next }),
+      keyOf: (b) => b.boxId,
+      bound: LEDGER_READ_MAX,
+    });
+    const captured = first as CreditsResult | null;
+    if (captured === null) throw new PageError();
+    return { userId: captured.userId, total: captured.total, boxes, boxCount: boxes.length, next: null };
   }
 
   /** Read the whole /karma for a key, following `next` to the end
@@ -3399,32 +3406,37 @@ export class App {
    *  every page (NODE_INTERFACE → UTXO queries), so the first page's values
    *  stand. */
   private async readOwnKarma(key: string): Promise<KarmaResult> {
-    const first: KarmaResult = await this.client.karma(key, { limit: PAGE_LIMIT_MAX });
-    const boxes = [...first.boxes];
-    let after: string | null = first.next;
-    while (after !== null) {
-      const page: KarmaResult = await this.client.karma(key, { limit: PAGE_LIMIT_MAX, after });
-      for (const b of page.boxes) boxes.push(b);
-      after = page.next;
-    }
+    let first: KarmaResult | null = null;
+    const boxes = await readWholeList<KarmaResult['boxes'][number], KarmaResult>({
+      readPage: async (page) => {
+        const answer = await this.client.karma(key, page);
+        if (first === null) first = answer;
+        return answer;
+      },
+      pick: (answer) => ({ rows: answer.boxes, next: answer.next }),
+      keyOf: (b) => b.boxId,
+      bound: KARMA_LISTING_MAX,
+    });
+    const captured = first as KarmaResult | null;
+    if (captured === null) throw new PageError();
     return {
-      userId: first.userId,
-      total: first.total,
-      effective: first.effective,
+      userId: captured.userId,
+      total: captured.total,
+      effective: captured.effective,
       boxes,
       boxCount: boxes.length,
       next: null,
-      lastActivityBlock: first.lastActivityBlock,
-      lastDecayBlock: first.lastDecayBlock,
-      lifetimeLikesReceived: first.lifetimeLikesReceived,
-      memberSinceBlock: first.memberSinceBlock,
-      memberBar: first.memberBar,
-      memberVouches: first.memberVouches,
-      memberLikes: first.memberLikes,
-      invitesUsed: first.invitesUsed,
-      member: first.member,
-      invitesAvailable: first.invitesAvailable,
-      height: first.height,
+      lastActivityBlock: captured.lastActivityBlock,
+      lastDecayBlock: captured.lastDecayBlock,
+      lifetimeLikesReceived: captured.lifetimeLikesReceived,
+      memberSinceBlock: captured.memberSinceBlock,
+      memberBar: captured.memberBar,
+      memberVouches: captured.memberVouches,
+      memberLikes: captured.memberLikes,
+      invitesUsed: captured.invitesUsed,
+      member: captured.member,
+      invitesAvailable: captured.invitesAvailable,
+      height: captured.height,
     };
   }
 
@@ -3453,24 +3465,26 @@ export class App {
   }
 
   private async readVouchSet(key: string): Promise<Map<string, { boxId: string; createdAtBlock: number }>> {
+    const vouches = await readWholeList<Awaited<ReturnType<Api['vouchesByVoucher']>>['vouches'][number], Awaited<ReturnType<Api['vouchesByVoucher']>>>({
+      readPage: (page) => this.client.vouchesByVoucher(key, page),
+      pick: (answer) => ({ rows: answer.vouches, next: answer.next }),
+      keyOf: (v) => v.boxId,
+      bound: LEDGER_READ_MAX,
+    });
     const set = new Map<string, { boxId: string; createdAtBlock: number }>();
-    let after: string | null = null;
-    do {
-      const page = await this.client.vouchesByVoucher(key, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
-      for (const v of page.vouches) set.set(v.targetId, { boxId: v.boxId, createdAtBlock: v.createdAtBlock });
-      after = page.next;
-    } while (after !== null);
+    for (const v of vouches) set.set(v.targetId, { boxId: v.boxId, createdAtBlock: v.createdAtBlock });
     return set;
   }
 
   private async readEscrow(key: string): Promise<number | null> {
-    let after: string | null = null;
+    const cooldowns = await readWholeList<Awaited<ReturnType<Api['vouchCooldowns']>>['cooldowns'][number], Awaited<ReturnType<Api['vouchCooldowns']>>>({
+      readPage: (page) => this.client.vouchCooldowns(key, page),
+      pick: (answer) => ({ rows: answer.cooldowns, next: answer.next }),
+      keyOf: (c) => c.boxId,
+      bound: LEDGER_READ_MAX,
+    });
     let held: number | null = null;
-    do {
-      const page = await this.client.vouchCooldowns(key, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
-      for (const c of page.cooldowns) held = held === null ? c.releaseAtBlock : Math.max(held, c.releaseAtBlock);
-      after = page.next;
-    } while (after !== null);
+    for (const c of cooldowns) held = held === null ? c.releaseAtBlock : Math.max(held, c.releaseAtBlock);
     return held;
   }
 

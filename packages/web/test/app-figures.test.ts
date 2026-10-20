@@ -206,7 +206,7 @@ function harness(opts: { withIdentity?: boolean } = {}): Harness {
   };
 }
 
-const flush = async (): Promise<void> => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+const flush = async (): Promise<void> => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
 const verifiedVerdict = (nodes: number, height: number): TipVerdict => ({ kind: 'verified', nodes, height });
 

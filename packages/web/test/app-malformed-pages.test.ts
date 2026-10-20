@@ -86,13 +86,17 @@ function post(id: string, author: string): PostJson {
 // node reads one row past `limit` and takes the last off, so a page beside a
 // `next` carries exactly the `limit` asked — WEB_INTERFACE → Reading a node's
 // answer → "Every page is held to the page the node serves"). Each padded row
-// takes a fresh 64-hex id.
+// takes a fresh 64-hex id — unique across every pad call so no row key is
+// named twice (the whole-list rule refuses on a repeat).
+let padSeq = 0;
 const padId = (n: number): string => {
-  const hex = n.toString(16).padStart(2, '0');
-  return `${hex[0]!}${hex[1]!}`.repeat(32);
+  const combined = ((n << 20) ^ (padSeq & 0xfffff)) >>> 0;
+  const hex = combined.toString(16).padStart(8, '0');
+  return `${hex}${'00'.repeat(28)}`;
 };
 function pad<T>(rows: readonly T[], next: unknown, limit: number, mk: (id: string) => T): T[] {
   if (next === null || next === undefined) return [...rows];
+  padSeq++;
   const out: T[] = [...rows];
   for (let i = out.length; i < limit; i++) out.push(mk(padId(i + 100)));
   return out;
@@ -282,15 +286,20 @@ afterEach(() => {
 
 type ListingPage = (ids: string[], next: unknown, limit?: number) => Record<string, unknown>;
 
-const SHAPES: Array<{ name: string; requests: number; answer: (req: Req, page: ListingPage) => unknown }> = [
-  { name: 'a first page with no `next`', requests: 1, answer: (_req, page) => without(page([B1], null), 'next') },
+// The /karma whole-list reader asks at most KARMA_LISTING_MAX (2) rows,
+// so an honest /karma listing fits in one page — the 'following page' SHAPE
+// refuses on the first page itself for /karma (its padded rows are over
+// the bound). Every other SHAPE refuses on the first page for either
+// listing, so request counts are 1 across the board.
+const SHAPES: Array<{ name: string; requests: Record<'karma' | 'credits', number>; answer: (req: Req, page: ListingPage) => unknown }> = [
+  { name: 'a first page with no `next`', requests: { karma: 1, credits: 1 }, answer: (_req, page) => without(page([B1], null), 'next') },
   {
-    name: 'a following page with no `next`', requests: 2,
+    name: 'a following page with no `next`', requests: { karma: 1, credits: 2 },
     answer: (req, page) => (req.after === null ? page([B1], 'k1', req.limit) : without(page([B2], null), 'next')),
   },
-  { name: 'a numeric `next`', requests: 1, answer: (_req, page) => page([B1], 7) },
-  { name: 'a `next` holding a lone surrogate', requests: 1, answer: (_req, page) => page([B1], `5:${LONE_SURROGATE}`) },
-  { name: 'a `boxes` that is not an array', requests: 1, answer: (_req, page) => ({ ...page([B1], null), boxes: 'abc' }) },
+  { name: 'a numeric `next`', requests: { karma: 1, credits: 1 }, answer: (_req, page) => page([B1], 7) },
+  { name: 'a `next` holding a lone surrogate', requests: { karma: 1, credits: 1 }, answer: (_req, page) => page([B1], `5:${LONE_SURROGATE}`) },
+  { name: 'a `boxes` that is not an array', requests: { karma: 1, credits: 1 }, answer: (_req, page) => ({ ...page([B1], null), boxes: 'abc' }) },
 ];
 
 interface Held { karma: KarmaResult | null; credits: CreditsResult | null }
@@ -343,7 +352,8 @@ const SITES: Array<{
 describe('the reader\'s own listing reads end on a malformed page, in their callers\' failure paths', () => {
   for (const site of SITES) {
     for (const shape of SHAPES) {
-      it(`${site.name} — ${shape.name}: ${shape.requests} request${shape.requests === 1 ? '' : 's'}`, async () => {
+      const n = shape.requests[site.listing];
+      it(`${site.name} — ${shape.name}: ${n} request${n === 1 ? '' : 's'}`, async () => {
         const h = harness(site.entries);
         await h.drive.refreshOwnKarma();
         await h.drive.refreshWalletCredits();
@@ -358,35 +368,33 @@ describe('the reader\'s own listing reads end on a malformed page, in their call
         const before = h.node.count(site.listing, ME);
         await site.run(h.drive);
         await flush();
-        expect(h.node.count(site.listing, ME) - before).toBe(shape.requests);
+        expect(h.node.count(site.listing, ME) - before).toBe(n);
         site.kept(h, held);
       });
     }
   }
 
   // A /karma listing holds at most two boxes (`NODE_INTERFACE → Karma
-  // transition rules → "An identity holds at most two karma boxes"`), so a
-  // listing-within-bound arrangement is two boxes across two pages. Every
-  // other list is bounded by `LEDGER_READ_MAX` (`CONSTANTS → Client reads`),
-  // and three pages of one box each is well within it for /credits.
-  it('an honest two-page /karma is still read whole', async () => {
+  // transition rules → "An identity holds at most two karma boxes"`), so
+  // the one page carries the two of them. Every other list is bounded by
+  // `LEDGER_READ_MAX` (`CONSTANTS → Client reads`), well above three
+  // honest pages for /credits.
+  it('an honest /karma of two boxes on one page is read whole', async () => {
     const h = harness();
-    h.node.on('karma', (req) => ok(
-      req.after === null ? karmaPage(ME, [B1], 'k1', req.limit) : karmaPage(ME, [B2], null),
-    ));
+    h.node.on('karma', () => ok(karmaPage(ME, [B1, B2], null)));
     await h.drive.refreshOwnKarma();
-    expect(h.node.count('karma', ME)).toBe(2);
+    expect(h.node.count('karma', ME)).toBe(1);
     const ids = h.drive.profileKarma?.boxes.map((b) => b.boxId) ?? [];
-    // The two pages' seeded ids are present in order, with the pad rows
-    // the honest limit asks between them (every page beside a `next`
-    // carries exactly the `limit` asked — WEB_INTERFACE → Reading a
-    // node's answer → "Every page is held to the page the node serves").
-    expect(ids.indexOf(B1)).toBeLessThan(ids.indexOf(B2));
+    expect(ids).toEqual([B1, B2]);
     expect(h.drive.profileKarma?.next).toBeNull();
   });
 
   it('an honest three-page /credits is still read whole', async () => {
     const h = harness();
+    // Every page beside a `next` carries exactly the `limit` asked —
+    // WEB_INTERFACE → Reading a node's answer → "Every page is held to
+    // the page the node serves". Pages 1 and 2 are padded to the whole-list
+    // limit; page 3 has a short tail.
     h.node.on('credits', (req) => ok(
       req.after === null ? creditsPage(ME, [B1], 'k1', req.limit) : req.after === 'k1' ? creditsPage(ME, [B2], 'k2', req.limit) : creditsPage(ME, [B3], null),
     ));

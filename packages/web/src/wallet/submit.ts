@@ -1,12 +1,15 @@
-import { encodeTx, hexToBytes, PAGE_LIMIT_MAX } from '@dagsocial/types';
+import { encodeTx, hexToBytes } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
+import { LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readBuildContext, readCreditContext } from './reads';
+import { readWholeList } from '../api/whole-list';
 import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend, txToJson, InsufficientKarma, InsufficientCredits, BelowFloor, InvalidKey } from './builders';
 import { formatCredits } from '../model/credits';
 import type { PendingLedger } from './ledger';
 import type { BuildContext } from './builders';
 import type { PendingEntry } from './types';
 import type { Api } from '../api/client';
+import type { VouchesVoucherResult } from './../api/dto';
 import type {
   WriteClient, Rejection, PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult, SendSubmitResult,
 } from '../api/write';
@@ -464,20 +467,22 @@ export async function submitSendFlow(
 }
 
 /** The reader's live `vouch` box naming `targetKey`, resolved at the press by
- *  following `next` to the end of `GET /vouches?voucher=<me>` — null when the pair
- *  is gone (WEB_INTERFACE → The wallet). */
+ *  reading `GET /vouches?voucher=<me>` whole — null when the pair stands no
+ *  more (WEB_INTERFACE → The wallet, → Reading a node's answer → "A whole-list
+ *  read is bounded"). The listing is bounded by LEDGER_READ_MAX. */
 async function resolveVouchBox(
   reads: Pick<Api, 'vouchesByVoucher'>,
   voucherKey: string,
   targetKey: string,
 ): Promise<{ boxId: string; value: string; createdAtBlock: number } | null> {
-  let after: string | null = null;
-  do {
-    const page = await reads.vouchesByVoucher(voucherKey, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
-    const row = page.vouches.find((v) => v.targetId === targetKey);
-    if (row) return { boxId: row.boxId, value: row.value, createdAtBlock: row.createdAtBlock };
-    after = page.next;
-  } while (after !== null);
+  const vouches = await readWholeList<VouchesVoucherResult['vouches'][number], VouchesVoucherResult>({
+    readPage: (page) => reads.vouchesByVoucher(voucherKey, page),
+    pick: (answer) => ({ rows: answer.vouches, next: answer.next }),
+    keyOf: (v) => v.boxId,
+    bound: LEDGER_READ_MAX,
+  });
+  const row = vouches.find((v) => v.targetId === targetKey);
+  if (row) return { boxId: row.boxId, value: row.value, createdAtBlock: row.createdAtBlock };
   return null;
 }
 

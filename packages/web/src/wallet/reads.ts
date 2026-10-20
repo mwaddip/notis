@@ -1,9 +1,10 @@
-import { PAGE_LIMIT_MAX } from '@dagsocial/types';
+import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import type { Api } from '../api/client';
+import { readWholeList } from '../api/whole-list';
 import type { PendingLedger } from './ledger';
 import type { BuildContext } from './builders';
 import type { SpendableBox } from './types';
-import type { CreditBoxRow } from '../api/dto';
+import type { CreditBoxRow, KarmaBoxRow } from '../api/dto';
 
 // The reads before a write, in the ONE function that assembles a BuildContext —
 // WEB_INTERFACE → The wallet. The order is a correctness rule, not a preference:
@@ -12,28 +13,32 @@ import type { CreditBoxRow } from '../api/dto';
 // none — so the client declares the /status height, and reading it AFTER the
 // boxes guarantees no selected box is newer than the height declared. Left to
 // call sites the order could be got wrong with no visible error; it lives here so
-// it cannot.
+// it cannot. The /karma listing holds at most KARMA_LISTING_MAX boxes
+// (WEB_INTERFACE → Reading a node's answer → "A whole-list read is bounded",
+// NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+// karma boxes"), and the whole-list rule refuses the listing past it.
 
 export async function readBuildContext(
   reads: Pick<Api, 'karma' | 'status'>,
   ledger: PendingLedger,
   author: string,
 ): Promise<BuildContext> {
+  const boxes = await readWholeList<KarmaBoxRow, Awaited<ReturnType<Api['karma']>>>({
+    readPage: (page) => reads.karma(author, page),
+    pick: (answer) => ({ rows: answer.boxes, next: answer.next }),
+    keyOf: (b) => b.boxId,
+    bound: KARMA_LISTING_MAX,
+  });
   const confirmed: SpendableBox[] = [];
-  let after: string | null = null;
-  do {
-    const page = await reads.karma(author, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
-    for (const b of page.boxes) {
-      // The /karma reader rebuilds a row's `income` as `true` or absent, so
-      // the mark's domain is held before a box reaches here (WEB_INTERFACE →
-      // Reading a node's answer → "Every answer is rebuilt from its own
-      // fields", TYPES_INTERFACE → KarmaBox).
-      const box: SpendableBox = { boxId: b.boxId, value: BigInt(b.value) };
-      if (b.income === true) box.income = true;
-      confirmed.push(box);
-    }
-    after = page.next;
-  } while (after !== null);
+  for (const b of boxes) {
+    // The /karma reader rebuilds a row's `income` as `true` or absent, so
+    // the mark's domain is held before a box reaches here (WEB_INTERFACE →
+    // Reading a node's answer → "Every answer is rebuilt from its own
+    // fields", TYPES_INTERFACE → KarmaBox).
+    const box: SpendableBox = { boxId: b.boxId, value: BigInt(b.value) };
+    if (b.income === true) box.income = true;
+    confirmed.push(box);
+  }
 
   const status = await reads.status();
 
@@ -79,19 +84,20 @@ export function lockedCreditSummary(
  *  other ledger by the same rule: `GET /credits/:key` following `next`, then
  *  `GET /status`"). A row whose `lockedUntilBlock` is above `status.blockHeight`
  *  is left out — the node judges a spend at tip + 1, so the client is
- *  conservative by one block. The filter runs after the height is known. */
+ *  conservative by one block. The filter runs after the height is known. The
+ *  whole-list rule bounds the listing by LEDGER_READ_MAX (WEB_INTERFACE →
+ *  Reading a node's answer → "A whole-list read is bounded"). */
 export async function readCreditContext(
   reads: Pick<Api, 'credits' | 'status'>,
   ledger: PendingLedger,
   author: string,
 ): Promise<BuildContext> {
-  const rows: CreditBoxRow[] = [];
-  let after: string | null = null;
-  do {
-    const page = await reads.credits(author, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
-    for (const b of page.boxes) rows.push(b);
-    after = page.next;
-  } while (after !== null);
+  const rows = await readWholeList<CreditBoxRow, Awaited<ReturnType<Api['credits']>>>({
+    readPage: (page) => reads.credits(author, page),
+    pick: (answer) => ({ rows: answer.boxes, next: answer.next }),
+    keyOf: (b) => b.boxId,
+    bound: LEDGER_READ_MAX,
+  });
 
   const status = await reads.status();
 
