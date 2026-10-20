@@ -41,9 +41,12 @@ pull request runs the full gate, the slow tree included** — `.github/workflows
 
 ## Architecture
 
-Nine packages, in dependency order:
+Ten packages, in dependency order:
 
 - `@dagsocial/types` — data structures, base58, positional codecs, hashing, protocol constants. **Pure functions only.**
+- `@dagsocial/node-reads` — reading the node's HTTP answers, for every client: the capped reader under one request
+  deadline, each route's byte cap, the field checks an answer is held to, the text a node's string is shown as, and
+  the whole-list bound. Depends on `types` alone; runs in the browser as written.
 - `@dagsocial/avltree` — the authenticated AVL+ tree as Notis uses it: `@ergots/avltree`'s engine, plus the
   neighbor-reporting lookups, the strict verifier, the depth guard and nodes loaded on first access. The one member
   that imports `@ergots/avltree`; it copies none of its engine.
