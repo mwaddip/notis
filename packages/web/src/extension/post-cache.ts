@@ -154,13 +154,48 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
       };
       req.onsuccess = (): void => {
         db = req.result;
+        // The module's own connection closes on `versionchange`, so another
+        // of the extension's pages asking for a delete of this database is
+        // never blocked by it (WEB_INTERFACE → The extension → "The post
+        // cache"). The module then runs as it does with no database open.
+        db.onversionchange = (): void => { closeDb(); };
         openedChain = chain;
         remember(chain);
+        // One chain's database at a time (WEB_INTERFACE → The extension →
+        // "The post cache"): every other `notis.posts.*` database the
+        // factory lists is deleted, so what a chain reset or a chain a node
+        // once named left behind goes with the next open. The open does not
+        // wait for the deletes — a delete another connection holds must not
+        // hold this cache shut.
+        void deleteOtherChainDatabases(name);
         void readOrInitTotal().then(resolve, () => resolve());
       };
       req.onerror = (): void => resolve();
       req.onblocked = (): void => resolve();
     });
+  }
+
+  /** List the factory's databases and delete every `notis.posts.*` whose
+   *  name is not the one we just opened. A factory without `databases` (an
+   *  older browser) deletes nothing — the method is widely available but
+   *  not universal, and its absence falls through silently
+   *  (WEB_INTERFACE → The extension → "The post cache"). */
+  function deleteOtherChainDatabases(keep: string): Promise<void> {
+    if (idb === null) return Promise.resolve();
+    const list = idb as IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> };
+    if (typeof list.databases !== 'function') return Promise.resolve();
+    return list.databases().then(
+      (dbs) => {
+        for (const d of dbs) {
+          const n = d.name;
+          if (typeof n !== 'string') continue;
+          if (!n.startsWith(DB_PREFIX)) continue;
+          if (n === keep) continue;
+          try { idb.deleteDatabase(n); } catch { /* the factory refused — fall silent */ }
+        }
+      },
+      () => { /* the factory refused — fall silent */ },
+    );
   }
 
   /** Read the running total from the meta store at open; where no record
