@@ -97,9 +97,11 @@ export class FaucetClient {
   }
 }
 
-// The faucet's grant readers answer one of three: a well-formed grant, a
-// targeted client-side refusal (the sentences `askKarma`/`askCredits` used to
-// return inline), or null for anything else (the route's shape is wrong).
+// The faucet's grant readers answer one of three: a well-formed grant; a
+// targeted client-side refusal, the sentence the ask answers the reader with
+// when the 2xx body lacks a field it needs (the transaction id, the expiry
+// height, for credits the box id); or null when the body is not an object (the
+// route's shape is wrong).
 
 function readKarmaGrant(data: unknown): { grant: FaucetGrant } | { refusal: string } | null {
   if (!isRecord(data)) return null;

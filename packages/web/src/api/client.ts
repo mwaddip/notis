@@ -40,8 +40,8 @@ function apiErrorMessage(status: number, runtimeMessage: string): string {
 
 // This module issues GET requests and nothing else — no POST, no body. A
 // `viewer` parameter is a query on a GET, not a write, so it is carried
-// here now that an identity can be loaded; a key, a signature or a write
-// this module does not hold. The writes live next door in write.ts
+// here; this module holds no key, no signature and no write. The writes
+// live next door in write.ts
 // (WEB_INTERFACE → "The write client is its own module beside the read
 // client").
 //
