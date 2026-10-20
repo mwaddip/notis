@@ -174,6 +174,36 @@ describe('write client — the shape the route serves', () => {
     expect(isRejection(res)).toBe(true);
     expect(res).toMatchObject({ status: 0 });
   });
+
+  it.fails('an invite 2xx whose bondBoxId is 63 hex is a client rejection', async () => {
+    mockResponse({
+      status: 200,
+      body: { txId: TX_LOWER, status: 'pending', expiresAtHeight: 5720, bondBoxId: 'ab'.repeat(31) + 'a' },
+    });
+    const res = await write().submitInvite({});
+    expect(isRejection(res)).toBe(true);
+    expect(res).toMatchObject({ status: 0 });
+  });
+
+  it.fails('a withdraw 2xx whose postId is in uppercase is a client rejection', async () => {
+    mockResponse({
+      status: 200,
+      body: { txId: TX_LOWER, status: 'pending', expiresAtHeight: 5720, postId: 'AB'.repeat(32) },
+    });
+    const res = await write().submitWithdraw('p7', {});
+    expect(isRejection(res)).toBe(true);
+    expect(res).toMatchObject({ status: 0 });
+  });
+
+  it.fails('a claim 2xx whose name holds a space is a client rejection', async () => {
+    mockResponse({
+      status: 200,
+      body: { txId: TX_LOWER, status: 'pending', expiresAtHeight: 5720, name: 'two words' },
+    });
+    const res = await write().submitClaim({});
+    expect(isRejection(res)).toBe(true);
+    expect(res).toMatchObject({ status: 0 });
+  });
 });
 
 describe('write client — the cap and the deadline', () => {
