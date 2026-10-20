@@ -64,6 +64,31 @@ describe('proxy.sign — the SignResult vocabulary', () => {
     expect(r).toEqual({ locked: true });
   });
 
+  // WEB_INTERFACE → The extension → "Every message is answered" — on the page,
+  // a `sign` that ends without a `SignAnswer` is `{ refused: <reason> }`: the
+  // `{ error }`'s words, or *the extension did not answer* for a message the
+  // browser rejects.
+  it.fails('an { error } answer from the background becomes { refused: <its words> }, not a throw', async () => {
+    const c = fakeChrome();
+    wireBackground(c, { state: null, sign: { error: 'the approval window did not open.' } });
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
+    const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32), 'aa'.repeat(32));
+    expect(r).toEqual({ refused: 'the approval window did not open.' });
+  });
+
+  it.fails('a rejected runtime.sendMessage becomes { refused: "the extension did not answer" }, not a throw', async () => {
+    const c = fakeChrome();
+    // state answers normally so bootstrap works; sign's sendMessage rejects.
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      const kind = (m as { kind: string }).kind;
+      if (kind === 'state') return null;
+      throw new Error('the browser dropped the message');
+    }) as typeof chrome.runtime.sendMessage;
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
+    const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32), 'aa'.repeat(32));
+    expect(r).toEqual({ refused: 'the extension did not answer' });
+  });
+
   it('a refused answer becomes { refused: <kind> }', async () => {
     const c = fakeChrome();
     wireBackground(c, { state: null, sign: { refused: 'busy' } as SignAnswer });

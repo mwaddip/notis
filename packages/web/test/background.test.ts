@@ -6,7 +6,7 @@ import type { UtxoTransaction } from '@dagsocial/types';
 import { buildPost, buildLike, buildSend, type BuildContext } from '../src/wallet/builders';
 import { install } from '../src/extension/background';
 import { fakeChrome, freshFixture, type FakeChrome } from './fake-chrome';
-import type { SignRecord, Message } from '../src/extension/protocol';
+import type { SignRecord, Message, SignAnswer } from '../src/extension/protocol';
 import { KNOWN_KINDS } from '../src/extension/protocol';
 
 // The background reloads state from storage on every call. Every `storage.local`
@@ -45,16 +45,21 @@ function unsignedLikeTx(pubKeyHex: string): { tx: UtxoTransaction; txIdHex: stri
 
 /** A credits send transaction — classifyLedger reads a `credit` output as the
  *  credits side, so this one takes the prompt path (WEB_INTERFACE → The
- *  extension → "`sign`, in the background, in order"). */
-function unsignedCreditSendTx(pubKeyHex: string): { tx: UtxoTransaction; txIdHex: string; txBytesHex: string } {
+ *  extension → "`sign`, in the background, in order"). The recipient and the
+ *  box id are parameters so two builds give two differently-id'd txs. */
+function unsignedCreditSendTx(
+  pubKeyHex: string,
+  recipient: string = '44'.repeat(32),
+  boxId: string = '55'.repeat(32),
+): { tx: UtxoTransaction; txIdHex: string; txBytesHex: string } {
   const built = buildSend(
     {
-      spendable: [{ boxId: '55'.repeat(32), value: 10_000_000_000n }],
+      spendable: [{ boxId, value: 10_000_000_000n }],
       height: 6000,
       era: 1,
       author: pubKeyHex,
     },
-    '44'.repeat(32),
+    recipient,
     1_000_000_000n,
   );
   return { tx: built.tx, txIdHex: built.txId, txBytesHex: bytesToHex(encodeTx(built.tx)) };
@@ -436,6 +441,227 @@ describe('background — sign prompt path (ask or credits)', () => {
       expect(record.result).toEqual({ declined: true });
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// WEB_INTERFACE → The extension → "`sign`, in the background, in order",
+// steps 7-9. The pre-prompt check reads a record's window via windows.get;
+// a result-less record whose window is closed, or that names no windowId,
+// is declined in place. A windows.create that throws leaves no record
+// behind. Two prompts delivered together are serialised by the one Web
+// Lock the background takes under `notis.prompt`.
+// ---------------------------------------------------------------------------
+
+describe('background — sign step 7: the prompt is one at a time', () => {
+  it.fails('two credits signs delivered together: one window created, one answer pending, the other busy', async () => {
+    const c = await bootstrappedChrome();
+    const pub = await pubKey(c);
+    // Two different recipients so each tx has its own id.
+    const a = unsignedCreditSendTx(pub, '11'.repeat(32), '55'.repeat(32));
+    const b = unsignedCreditSendTx(pub, '22'.repeat(32), '66'.repeat(32));
+    const [ra, rb] = await Promise.all([
+      c.send({ kind: 'sign', txBytesHex: a.txBytesHex, txIdHex: a.txIdHex, pubKeyHex: pub }),
+      c.send({ kind: 'sign', txBytesHex: b.txBytesHex, txIdHex: b.txIdHex, pubKeyHex: pub }),
+    ]) as SignAnswer[];
+    // Control: both got an answer.
+    expect(ra).toBeDefined();
+    expect(rb).toBeDefined();
+    const pending = [ra, rb].filter((r) => r && 'pending' in r);
+    const busy = [ra, rb].filter((r) => r && 'refused' in r && r.refused === 'busy');
+    expect(pending).toHaveLength(1);
+    expect(busy).toHaveLength(1);
+    expect(c.windows.created).toHaveLength(1);
+  });
+
+  it.fails('a record whose window the browser closed with no event: the next sign declines it and opens its own prompt', async () => {
+    const c = await bootstrappedChrome();
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const pub = await pubKey(c);
+    const first = unsignedThreadTx(pub);
+    const r1 = await c.send({ kind: 'sign', txBytesHex: first.txBytesHex, txIdHex: first.txIdHex, pubKeyHex: pub }) as { pending: string };
+    // Control: the first prompt was opened with a windowId written into the record.
+    expect(c.windows.created).toHaveLength(1);
+    const firstRecord = promptRecords(c).find(([, r]) => r.id === r1.pending)!;
+    expect(typeof firstRecord[1].windowId).toBe('number');
+    // The browser silently drops the window — no onRemoved event fires.
+    c.windows.closeSilently(firstRecord[1].windowId!);
+    // The next sign: pre-check reads the window via windows.get, finds it is
+    // closed, declines the record in place, and opens its own prompt.
+    const second = unsignedLikeTx(pub);
+    const r2 = await c.send({ kind: 'sign', txBytesHex: second.txBytesHex, txIdHex: second.txIdHex, pubKeyHex: pub }) as { pending: string };
+    expect(r2.pending).toMatch(/^[0-9a-f]{32}$/);
+    const stale = promptRecords(c).find(([, r]) => r.id === r1.pending)!;
+    expect(stale[1].result).toEqual({ declined: true });
+    expect(c.windows.created).toHaveLength(2);
+  });
+
+  it.fails('a record naming no window: the next sign declines it and opens its own prompt', async () => {
+    const c = await bootstrappedChrome();
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const pub = await pubKey(c);
+    // Inject a result-less record with no windowId — the shape a worker that
+    // died after writing the record and before windows.create returned leaves.
+    const stray: SignRecord = {
+      id: '00'.repeat(16),
+      txIdHex: '11'.repeat(32),
+      txBytesHex: '22',
+      pubKeyHex: pub,
+      summary: { kind: 'thread', spendRep: '5' },
+      hint: {},
+      createdAt: 0,
+    };
+    c.storage.session.set('notis.sign.' + stray.id, stray);
+    // Control: the stray record stands with no result.
+    expect(promptRecords(c).find(([, r]) => r.id === stray.id)![1].result).toBeUndefined();
+    const next = unsignedThreadTx(pub);
+    const r = await c.send({ kind: 'sign', txBytesHex: next.txBytesHex, txIdHex: next.txIdHex, pubKeyHex: pub }) as { pending: string };
+    expect(r.pending).toMatch(/^[0-9a-f]{32}$/);
+    const strayFound = promptRecords(c).find(([, rec]) => rec.id === stray.id)!;
+    expect(strayFound[1].result).toEqual({ declined: true });
+  });
+
+  it.fails('a popup the browser closed before its id reaches the record is declined once the open writes the id', async () => {
+    const c = await bootstrappedChrome();
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const pub = await pubKey(c);
+    const tx = unsignedThreadTx(pub);
+    // Wrap windows.create so the close fires inside the open frame, and the
+    // close's handler runs to completion before the open returns. Without
+    // the lock the record has no windowId yet, so windowClosed finds no
+    // match and never writes `declined`; under the lock the handler waits
+    // on the open's own lock and runs after the open has written the id.
+    const originalCreate = c.api.windows.create.bind(c.api.windows);
+    c.api.windows.create = (async (props: chrome.windows.CreateProps) => {
+      const w = await originalCreate(props);
+      c.fireWindowRemoved(w.id!);
+      await new Promise((rs) => setImmediate(rs));
+      return w;
+    }) as typeof chrome.windows.create;
+    const r = await c.send({ kind: 'sign', txBytesHex: tx.txBytesHex, txIdHex: tx.txIdHex, pubKeyHex: pub }) as { pending: string };
+    await new Promise((rs) => setImmediate(rs));
+    const [, rec] = promptRecords(c).find(([, rc]) => rc.id === r.pending)!;
+    expect(rec.result).toEqual({ declined: true });
+  });
+
+  it.fails('windows.create throwing: the page is answered { error }, no notis.sign.* is left, and the next sign opens its own prompt', async () => {
+    const c = await bootstrappedChrome();
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const pub = await pubKey(c);
+    const tx = unsignedThreadTx(pub);
+    c.windows.throwNextCreate(new Error('the approval window did not open.'));
+    const answer = await c.send({ kind: 'sign', txBytesHex: tx.txBytesHex, txIdHex: tx.txIdHex, pubKeyHex: pub });
+    expect(answer).toMatchObject({ error: expect.stringContaining('approval window') });
+    expect(promptRecords(c)).toHaveLength(0);
+    // The next sign opens its own prompt — the first did not leave the system busy.
+    const second = unsignedLikeTx(pub);
+    const r2 = await c.send({ kind: 'sign', txBytesHex: second.txBytesHex, txIdHex: second.txIdHex, pubKeyHex: pub }) as { pending: string };
+    expect(r2.pending).toMatch(/^[0-9a-f]{32}$/);
+  }, 3000);
+});
+
+// ---------------------------------------------------------------------------
+// WEB_INTERFACE → "`sign`, in the background, in order", step 8. The
+// envelope's key must be the record's; a seed that is not the identity's is
+// `{ locked: true }`. `exportFile` seals no other key's seed as the identity's.
+// ---------------------------------------------------------------------------
+
+describe('background — approve and exportFile hold the seed to the identity', () => {
+  it.fails('approve with the envelope swapped to another key after the record was written: { error }, record declined, window removed', async () => {
+    const c = await bootstrappedChrome();
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const pub1 = await pubKey(c);
+    const tx = unsignedThreadTx(pub1);
+    const pending = await c.send({ kind: 'sign', txBytesHex: tx.txBytesHex, txIdHex: tx.txIdHex, pubKeyHex: pub1 }) as { pending: string };
+    const [, recordBefore] = promptRecords(c).find(([, r]) => r.id === pending.pending)!;
+    expect(recordBefore.pubKeyHex).toBe(pub1);
+    const windowId = recordBefore.windowId!;
+    // Swap the envelope for another key's: forget, then draft + create.
+    await c.send({ kind: 'forget' });
+    await c.send({ kind: 'draft' });
+    await c.send({ kind: 'create', passphrase: 'pw2' });
+    const pub2 = await pubKey(c);
+    expect(pub2).not.toBe(pub1);
+    const answer = await c.send({ kind: 'approve', id: pending.pending }, promptSender(c));
+    expect(answer).toMatchObject({ error: expect.any(String) });
+    const [, after] = promptRecords(c).find(([, r]) => r.id === pending.pending)!;
+    expect(after.result).toEqual({ declined: true });
+    expect(c.windows.removed).toContain(windowId);
+  });
+
+  it.fails('approve with the seed absent answers { locked: true } and writes no result', async () => {
+    const c = await bootstrappedChrome();
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const pub = await pubKey(c);
+    const tx = unsignedThreadTx(pub);
+    const pending = await c.send({ kind: 'sign', txBytesHex: tx.txBytesHex, txIdHex: tx.txIdHex, pubKeyHex: pub }) as { pending: string };
+    await c.send({ kind: 'lock' });
+    const answer = await c.send({ kind: 'approve', id: pending.pending }, promptSender(c));
+    expect(answer).toEqual({ locked: true });
+    const [, rec] = promptRecords(c).find(([, r]) => r.id === pending.pending)!;
+    expect(rec.result).toBeUndefined();
+  });
+
+  it.fails('approve with a seed of another key beside the envelope answers { locked: true }', async () => {
+    const c = await bootstrappedChrome();
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const pub = await pubKey(c);
+    const tx = unsignedThreadTx(pub);
+    const pending = await c.send({ kind: 'sign', txBytesHex: tx.txBytesHex, txIdHex: tx.txIdHex, pubKeyHex: pub }) as { pending: string };
+    // Replace the session seed with another key's. The envelope's pubKeyHex
+    // is unchanged (WEB_INTERFACE → "The contexts, and what each may hold").
+    const other = generateKeyPair();
+    c.storage.session.set('notis.seed', bytesToHex(other.secretKey.subarray(16)));
+    const answer = await c.send({ kind: 'approve', id: pending.pending }, promptSender(c));
+    expect(answer).toEqual({ locked: true });
+    const [, rec] = promptRecords(c).find(([, r]) => r.id === pending.pending)!;
+    expect(rec.result).toBeUndefined();
+  });
+
+  it.fails('exportFile with a seed of another key beside the envelope: { error }, no file text', async () => {
+    const c = await bootstrappedChrome();
+    // Control: the envelope exists and the seed looks loaded.
+    expect(c.storage.local.has('notis.identity')).toBe(true);
+    expect(c.storage.session.has('notis.seed')).toBe(true);
+    const other = generateKeyPair();
+    c.storage.session.set('notis.seed', bytesToHex(other.secretKey.subarray(16)));
+    const answer = await c.send({ kind: 'exportFile', password: 'pw' });
+    expect(answer).toMatchObject({ error: expect.stringContaining('unlocked identity') });
+    expect('text' in (answer as object)).toBe(false);
+  });
+
+  it('exportFile with the envelope\'s own seed returns a file whose pubKeyHex is the envelope\'s and which open opens under the password', async () => {
+    const c = await bootstrappedChrome();
+    const pub = await pubKey(c);
+    const answer = await c.send({ kind: 'exportFile', password: 'exportpw' }) as { text: string };
+    expect(typeof answer.text).toBe('string');
+    const parsed = JSON.parse(answer.text) as { pubKeyHex: string };
+    expect(parsed.pubKeyHex).toBe(pub);
+    // The exported envelope opens with the password.
+    const { open: openEnv, parseFile: parseEnv } = await import('../src/identity/envelope');
+    const parsedFile = parseEnv(answer.text);
+    expect(parsedFile.kind).toBe('encrypted');
+    if (parsedFile.kind === 'encrypted') {
+      const seed = await openEnv(parsedFile.envelope, 'exportpw');
+      expect(seed).toBeInstanceOf(Uint8Array);
+      expect(seed.length).toBe(32);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WEB_INTERFACE → The extension → "Every message is answered". A failure
+// inside a handler answers `{ error }` with the failure's words.
+// ---------------------------------------------------------------------------
+
+describe('background — the listener answers { error } when a handler throws', () => {
+  it.fails('a handler whose storage read rejects: the sender receives { error } with the failure\'s words', async () => {
+    const c = fakeChrome();
+    install(c.api, { publicBase: '' });
+    // Make the storage read in state() reject.
+    c.api.storage.local.get = (async () => { throw new Error('I/O refused'); }) as typeof chrome.storage.local.get;
+    const answer = await c.send({ kind: 'state' });
+    expect(answer).toMatchObject({ error: expect.stringContaining('I/O refused') });
+  }, 3000);
 });
 
 // ---------------------------------------------------------------------------

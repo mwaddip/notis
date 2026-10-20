@@ -1144,3 +1144,56 @@ function readsFor(
 ): Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> {
   return reads(confirmedAuthor, boxes);
 }
+
+// ---------------------------------------------------------------------------
+// WEB_INTERFACE → The extension → "Every message is answered" and → The
+// wallet → "A flow can end before the node ever sees it: `notSigned`". A
+// submitPostFlow driven through the real `ExtensionProxy` over the fake
+// `chrome` with the background installed in it reads `{ ok: false,
+// notSigned: 'refused' }` for a prompt that never opens, its reason the
+// background's own words, and for a `runtime.sendMessage` the browser
+// rejects it reads *the extension did not answer*.
+// ---------------------------------------------------------------------------
+
+import { install as installBackground } from '../src/extension/background';
+import { bootstrapProxy } from '../src/extension/proxy';
+import { fakeChrome } from './fake-chrome';
+
+describe('submitPostFlow over the extension proxy and background', () => {
+  async function identityOverProxy(c: ReturnType<typeof fakeChrome>, karma: 'silent' | 'ask' = 'ask'): Promise<SubmitDeps['identity']> {
+    installBackground(c.api, { publicBase: '' });
+    // The proxy reads through `runtime.sendMessage`; route it to the
+    // installed listener as the real extension's runtime does.
+    const origin = c.origin + 'index.html';
+    c.api.runtime.sendMessage = ((m: unknown) => c.send(m, { id: c.api.runtime.id, url: origin })) as typeof chrome.runtime.sendMessage;
+    await c.send({ kind: 'draft' });
+    await c.send({ kind: 'create', passphrase: 'pw' });
+    await c.send({ kind: 'policy', karma });
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
+    return proxy;
+  }
+
+  it.fails('a post whose prompt window does not open: notSigned refused, its reason the background\'s words, not a throw', async () => {
+    const c = fakeChrome();
+    const identity = await identityOverProxy(c, 'ask');
+    c.windows.throwNextCreate(new Error('the approval window did not open.'));
+    const ledger = new PendingLedger((identity.current() as { pubKeyHex: string }).pubKeyHex);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toMatchObject({ ok: false, notSigned: 'refused', reason: expect.stringContaining('approval window') });
+  }, 3000);
+
+  it.fails('a runtime.sendMessage that rejects for sign: notSigned refused, reason "the extension did not answer"', async () => {
+    const c = fakeChrome();
+    const identity = await identityOverProxy(c, 'ask');
+    // Override sign's path so runtime.sendMessage rejects.
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      if ((m as { kind: string }).kind === 'sign') throw new Error('the browser dropped the message');
+      return undefined;
+    }) as typeof chrome.runtime.sendMessage;
+    const ledger = new PendingLedger((identity.current() as { pubKeyHex: string }).pubKeyHex);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the extension did not answer' });
+  }, 3000);
+});

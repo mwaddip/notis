@@ -303,6 +303,26 @@ describe('the prompt page — Esc', () => {
     expect(p.close).not.toHaveBeenCalled();
   });
 
+  // WEB_INTERFACE → The extension → "`sign`, in the background, in order",
+  // step 8: the prompt page mounts its unlock form on `{ locked }` alone and
+  // closes on any other answer — the record answered, gone or declined.
+
+  it.fails('approve answering { error } (no open prompt for that id) closes the window and shows no unlock form', async () => {
+    const p = await openPrompt([Promise.resolve({ error: 'no open prompt for that id' })]);
+    p.sign().click();
+    await flush();
+    expect(p.main.querySelector('.unlock-in-prompt')).toBeNull();
+    expect(p.close).toHaveBeenCalledTimes(1);
+  });
+
+  it.fails('approve answering { locked: true } mounts the unlock form, window stays open', async () => {
+    const p = await openPrompt([Promise.resolve({ locked: true })]);
+    p.sign().click();
+    await flush();
+    expect(p.main.querySelector('.unlock-in-prompt')).not.toBeNull();
+    expect(p.close).not.toHaveBeenCalled();
+  });
+
   it('while a signature is under way Esc declines nothing, in the unlock form as on the pair', async () => {
     let signed!: (answer: unknown) => void;
     const held = new Promise<unknown>((r) => { signed = r; });
