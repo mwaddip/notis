@@ -101,6 +101,43 @@ describe('background — state and identity lifecycle', () => {
 // policy — the binary preference is written to storage.local as `notis.signPolicy`.
 // ---------------------------------------------------------------------------
 
+// WEB_INTERFACE → The identity module → "An envelope's scrypt cost is bounded"
+// and → The extension → "The contexts, and what each may hold": the envelope the
+// background reads from `storage.local` is held to the bound where it is parsed.
+describe('background — a stored envelope outside the scrypt bound', () => {
+  it.fails('a stored envelope naming p = 2 reads as no identity and the stored value is left in place', async () => {
+    const fixture = freshFixture();
+    const outside = JSON.stringify({
+      version: 1,
+      pubKeyHex: 'ab'.repeat(32),
+      kdf: { name: 'scrypt', salt: 'aa'.repeat(16), N: 65536, r: 8, p: 2 },
+      cipher: { name: 'chacha20-poly1305', nonce: 'bb'.repeat(12) },
+      ciphertext: 'cc'.repeat(48),
+    });
+    fixture.local.set('notis.identity', outside);
+    const c = fakeChrome(fixture);
+    install(c.api, { publicBase: '' });
+    expect(await c.send({ kind: 'state' })).toBeNull();
+    expect(c.storage.local.get('notis.identity')).toBe(outside);
+  });
+
+  it.fails('an importFile of a file naming N = 2^19 answers an error naming the bound and stores nothing', async () => {
+    const c = fakeChrome();
+    install(c.api, { publicBase: '' });
+    const outside = JSON.stringify({
+      version: 1,
+      pubKeyHex: 'ab'.repeat(32),
+      kdf: { name: 'scrypt', salt: 'aa'.repeat(16), N: 2 ** 19, r: 8, p: 1 },
+      cipher: { name: 'chacha20-poly1305', nonce: 'bb'.repeat(12) },
+      ciphertext: 'cc'.repeat(48),
+    });
+    const answer = await c.send({ kind: 'importFile', text: outside, passphrase: 'pw' });
+    expect(answer).toMatchObject({ error: expect.stringMatching(/not one this client opens/) });
+    expect(c.storage.local.has('notis.identity')).toBe(false);
+    expect(c.storage.session.has('notis.seed')).toBe(false);
+  });
+});
+
 describe('background — policy', () => {
   it('policy defaults to silent; set to ask writes and reads back', async () => {
     const c = fakeChrome();

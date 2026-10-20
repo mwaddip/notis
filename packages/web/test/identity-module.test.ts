@@ -225,6 +225,23 @@ describe('identity module — persistence and storage guards', () => {
     expect(m.current()).toBeNull();
     expect(localStorage.getItem(IDENTITY_KEY)).toBe(clear); // left in place, overwritten only by the next create or import
   });
+
+  // WEB_INTERFACE → The identity module → "An envelope's scrypt cost is bounded"
+  // — a stored envelope naming an N outside the bound reads as no identity, as a
+  // clear value does, and is left in place; the next create or import overwrites it.
+  it.fails('a stored envelope naming N = 2^19 reads as no identity and is left in place', () => {
+    const outside = JSON.stringify({
+      version: 1,
+      pubKeyHex: 'ab'.repeat(32),
+      kdf: { name: 'scrypt', salt: 'aa'.repeat(16), N: 2 ** 19, r: 8, p: 1 },
+      cipher: { name: 'chacha20-poly1305', nonce: 'bb'.repeat(12) },
+      ciphertext: 'cc'.repeat(48),
+    });
+    localStorage.setItem(IDENTITY_KEY, outside);
+    const m = new IdentityModule();
+    expect(m.current()).toBeNull();
+    expect(localStorage.getItem(IDENTITY_KEY)).toBe(outside);
+  });
 });
 
 describe('identity module — signing interop with the node verifier', () => {
