@@ -32,6 +32,7 @@ export default defineConfig({
       '@dagsocial/consensus': src('consensus'),
       '@dagsocial/net': src('net'),
       '@dagsocial/node': src('node'),
+      '@dagsocial/node-reads': src('node-reads'),
     },
   },
 });
