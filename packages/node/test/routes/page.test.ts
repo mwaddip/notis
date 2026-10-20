@@ -7,9 +7,8 @@ import {
   parseLight, isLightError,
   parseBatchIds, isBatchIdsError,
   formatKey,
-  PAGE_LIMIT_DEFAULT, PAGE_LIMIT_MAX,
-  BATCH_READ_MAX,
 } from '../../src/routes/page.js';
+import { PAGE_LIMIT_DEFAULT, PAGE_LIMIT_MAX, BATCH_READ_MAX } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // parseViewer
