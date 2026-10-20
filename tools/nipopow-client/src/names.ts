@@ -3,8 +3,8 @@ import type { DecodedBoxCandidate } from '@dagsocial/types';
 import type { Anchor } from './boxes.js';
 import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
-import { fetchJson, isRecord, NAME_READ_BYTES } from '@dagsocial/node-reads';
-import { capped, shown } from './http.js';
+import { capped, fetchJson, isRecord, NAME_READ_BYTES } from '@dagsocial/node-reads';
+import { shown } from './http.js';
 
 /**
  * WEB_INTERFACE → The extension → "The verified names" — a label is a key and

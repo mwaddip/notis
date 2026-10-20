@@ -10,6 +10,10 @@ export type HttpFetch = (url: string, init?: RequestInit) => Promise<Response>;
  *  reads as a transport failure. */
 export const REQUEST_TIMEOUT_MS = 10_000;
 
+/** The most characters of any one node-supplied string a verdict names,
+ *  counted as shown. */
+const VERDICT_TEXT_MAX = 120;
+
 export interface NodeResponse<T> {
   ok: true;
   data: T;
@@ -48,10 +52,10 @@ export async function fetchJson<T>(
  * through `fetchJson`. The returned shape is what every caller maps the same
  * way: an over-cap body is `{ ok: false, status, body: \`body over <cap>
  * bytes\` }`, a non-2xx body is `{ ok: false, status, body: text }`, an
- * unparseable 2xx body is `{ ok: false, status, body: 'unparseable body: …' }`,
- * and a parsed 2xx is `{ ok: true, data }`. A mid-stream transport failure
- * answers `{ ok: false, status: 0, body: errorMessage }`, as a connect
- * failure does.
+ * unparseable 2xx body is `{ ok: false, status, body: 'unparseable body: …' }`
+ * — the text held by `capped`, controls as their escapes — and a parsed 2xx
+ * is `{ ok: true, data }`. A mid-stream transport failure answers
+ * `{ ok: false, status: 0, body: errorMessage }`, as a connect failure does.
  */
 export async function readCappedJson<T>(
   res: Response,
@@ -68,7 +72,7 @@ export async function readCappedJson<T>(
   try {
     return { ok: true, data: JSON.parse(read.text) as T };
   } catch {
-    return { ok: false, status: res.status, body: `unparseable body: ${truncate(read.text)}` };
+    return { ok: false, status: res.status, body: `unparseable body: ${capped(read.text)}` };
   }
 }
 
@@ -104,19 +108,30 @@ async function readCappedText(
   return { ok: true, text };
 }
 
-// A bounded prefix for the body field of an unparseable-2xx result — the raw
-// text up to 120 code points, else as much of it as fits and `…`, a surrogate
-// pair never split. Readers that quote the body for a person read it through
-// their own escape rule; here the aim is to bound the string's length.
-function truncate(text: string): string {
-  const LIMIT = 120;
+/**
+ * A node's text as a verdict names it, for a person to read: every C0 control,
+ * DEL and C1 control as its `\u` escape — ESC as `\u001b`, CR as `\u000d` —
+ * never raw; the text so shown whole up to 120 characters, else as much of it
+ * as fits in 120 and `…`, a surrogate pair and an escape never split. Applied
+ * where the text enters a verdict, never to the data a status is decided on —
+ * the nipopow route's 404 is classified by its body's `error` (NODE_INTERFACE →
+ * Nipopow).
+ */
+export function capped(text: string): string {
   let out = '';
   // A string iterates by code point, a surrogate pair as one step.
   for (const ch of text) {
-    if (out.length + ch.length > LIMIT) return `${out}…`;
-    out += ch;
+    const unit = isControl(ch) ? `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}` : ch;
+    if (out.length + unit.length > VERDICT_TEXT_MAX) return `${out}…`;
+    out += unit;
   }
   return out;
+}
+
+// C0 (U+0000–U+001F), DEL (U+007F) and C1 (U+0080–U+009F).
+function isControl(ch: string): boolean {
+  const c = ch.charCodeAt(0);
+  return c <= 0x1f || (c >= 0x7f && c <= 0x9f);
 }
 
 /** A parsed body read as an object: not null, not an array. Its fields are

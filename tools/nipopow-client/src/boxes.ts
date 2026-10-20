@@ -22,14 +22,16 @@ import type {
 } from '@dagsocial/types';
 import type { PoPowHeader } from '@dagsocial/nipopow';
 import type { HttpFetch } from '@dagsocial/node-reads';
-import { fetchJson, isRecord } from '@dagsocial/node-reads';
 import {
+  capped,
+  fetchJson,
+  isRecord,
   HEIGHT_READ_BYTES,
   LEDGER_READ_MAX,
   LISTING_PAGE_READ_BYTES,
   LOOKUP_READ_BYTES,
 } from '@dagsocial/node-reads';
-import { base64ToBytes, capped, shown } from './http.js';
+import { base64ToBytes, shown } from './http.js';
 import { proveRange } from './holdings.js';
 import type { RangeResult } from './holdings.js';
 

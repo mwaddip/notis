@@ -4,8 +4,8 @@ import type { AnyBox } from '@dagsocial/types';
 import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';
 import type { HoldingKind } from '@dagsocial/consensus';
 import type { HttpFetch } from '@dagsocial/node-reads';
-import { fetchJson, isRecord, LEDGER_READ_MAX, RANGE_PAGE_READ_BYTES } from '@dagsocial/node-reads';
-import { base64ToBytes, capped, shown } from './http.js';
+import { capped, fetchJson, isRecord, LEDGER_READ_MAX, RANGE_PAGE_READ_BYTES } from '@dagsocial/node-reads';
+import { base64ToBytes, shown } from './http.js';
 export type { HoldingKind };
 
 /**

@@ -15,8 +15,7 @@ import type { Run } from './text.js';
 import type { BlockHeader } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type { HttpFetch } from '@dagsocial/node-reads';
-import { fetchJson, POST_READ_BYTES } from '@dagsocial/node-reads';
-import { capped } from './http.js';
+import { capped, fetchJson, POST_READ_BYTES } from '@dagsocial/node-reads';
 
 const EMPTY_SUMS = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n } as const;
 

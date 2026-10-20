@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { readCappedJson } from '../src/http.js';
 
 describe("readCappedJson's unparseable 2xx body", () => {
-  it.fails('an ESC and a CR in the body read as their \\u escapes, never raw', async () => {
+  it('an ESC and a CR in the body read as their \\u escapes, never raw', async () => {
     const body = 'bad\u001bjson\rhere';
     const res = await readCappedJson<unknown>(new Response(body, { status: 200 }), 1_024);
     expect(res.ok).toBe(false);
@@ -18,7 +18,7 @@ describe("readCappedJson's unparseable 2xx body", () => {
     expect(res.body).toBe('unparseable body: bad\\u001bjson\\u000dhere');
   });
 
-  it.fails('a 200-ESC body reads with the 120-character bound and an ellipsis', async () => {
+  it('a 200-ESC body reads with the 120-character bound and an ellipsis', async () => {
     const body = '\u001b'.repeat(200);
     const res = await readCappedJson<unknown>(new Response(body, { status: 200 }), 1_024);
     expect(res.ok).toBe(false);

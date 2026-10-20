@@ -1,6 +1,6 @@
 // The barrel — the one surface a client of @dagsocial/node-reads sees.
 
-export { fetchJson, readCappedJson, isRecord, REQUEST_TIMEOUT_MS } from './http.js';
+export { fetchJson, readCappedJson, isRecord, capped, REQUEST_TIMEOUT_MS } from './http.js';
 export type { HttpFetch, NodeResponse, NodeError, NodeResult } from './http.js';
 
 export {
