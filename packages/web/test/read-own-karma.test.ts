@@ -11,7 +11,10 @@ import { karmaResult } from './karma-fixture';
 // (`total`, `effective`, `height`, the clocks, the membership fields) stand;
 // `boxes` is the concatenation, `boxCount` its length, `next` null. Named on
 // the reader's own key by every site (WEB_INTERFACE → The extension → "The
-// verified figures", § the karma listing is read whole).
+// verified figures", § the karma listing is read whole). A /karma listing
+// holds at most two boxes (`NODE_INTERFACE → Karma transition rules → "An
+// identity holds at most two karma boxes"`), so a listing-within-bound
+// arrangement is one own box and one income box across two pages.
 
 const KEY = 'aa'.repeat(32);
 
@@ -37,11 +40,12 @@ interface Drive {
   readOwnKarma(key: string): Promise<KarmaResult>;
 }
 
-/** A three-page /karma fake. Every page carries the identity's own fields
- *  (`total`, `effective`, `height`, the clocks, the membership) at their
- *  first-page values so the reader can prove the first page's are what land;
- *  `boxes` differ per page, `next` walks the cursor down. */
-function threePageApi(): { api: Api; calls: { key: string; after: string | null }[] } {
+/** A two-page /karma fake, within KARMA_LISTING_MAX. Every page carries the
+ *  identity's own fields (`total`, `effective`, `height`, the clocks, the
+ *  membership) at their first-page values so the reader can prove the first
+ *  page's are what land; `boxes` differ per page, `next` walks the cursor
+ *  down. */
+function twoPageApi(): { api: Api; calls: { key: string; after: string | null }[] } {
   const calls: { key: string; after: string | null }[] = [];
   const page = (boxes: KarmaResult['boxes'], next: string | null): KarmaResult =>
     karmaResult({
@@ -76,14 +80,10 @@ function threePageApi(): { api: Api; calls: { key: string; after: string | null 
         return page([{ boxId: '11'.repeat(32), value: '300' }], 'cursor-1');
       }
       if (after === 'cursor-1') {
-        // A second page. Every identity-scoped field is expected to match
-        // the first page's on the wire — the App keeps the first page's
-        // regardless.
-        return page([{ boxId: '22'.repeat(32), value: '300' }], 'cursor-2');
-      }
-      if (after === 'cursor-2') {
-        // The end — no `next`.
-        return page([{ boxId: '33'.repeat(32), value: '300' }], null);
+        // A second page — the end. Every identity-scoped field is expected
+        // to match the first page's on the wire — the App keeps the first
+        // page's regardless.
+        return page([{ boxId: '22'.repeat(32), value: '300' }], null);
       }
       throw new Error(`unexpected after=${after}`);
     },
@@ -99,27 +99,26 @@ function threePageApi(): { api: Api; calls: { key: string; after: string | null 
 }
 
 describe('readOwnKarma — the whole listing, per WEB_INTERFACE', () => {
-  it('follows `next` to the end and concatenates boxes across three pages', async () => {
-    const { api, calls } = threePageApi();
+  it('follows `next` to the end and concatenates boxes across two pages', async () => {
+    const { api, calls } = twoPageApi();
     const app = new App(api, undefined, bareIdentity());
     const result = await (app as unknown as Drive).readOwnKarma(KEY);
 
-    // Three pages fetched — the first with no cursor, then the two `next`s.
+    // Two pages fetched — the first with no cursor, then the one `next`.
     expect(calls).toEqual([
       { key: KEY, after: null },
       { key: KEY, after: 'cursor-1' },
-      { key: KEY, after: 'cursor-2' },
     ]);
-    // The three boxes are in order.
+    // The two boxes are in order.
     expect(result.boxes.map((b) => b.boxId)).toEqual([
-      '11'.repeat(32), '22'.repeat(32), '33'.repeat(32),
+      '11'.repeat(32), '22'.repeat(32),
     ]);
-    expect(result.boxCount).toBe(3);
+    expect(result.boxCount).toBe(2);
     expect(result.next).toBeNull();
   });
 
   it('keeps the first page\'s `effective`, `height`, `total`, clocks and membership fields', async () => {
-    const { api } = threePageApi();
+    const { api } = twoPageApi();
     const app = new App(api, undefined, bareIdentity());
     const result = await (app as unknown as Drive).readOwnKarma(KEY);
 

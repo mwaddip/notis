@@ -364,29 +364,39 @@ describe('the reader\'s own listing reads end on a malformed page, in their call
     }
   }
 
-  for (const listing of ['karma', 'credits'] as const) {
-    it(`an honest three-page /${listing} is still read whole`, async () => {
-      const h = harness();
-      const page: ListingPage = listing === 'karma'
-        ? (ids, next, limit) => karmaPage(ME, ids, next, limit)
-        : (ids, next, limit) => creditsPage(ME, ids, next, limit);
-      h.node.on(listing, (req) => ok(
-        req.after === null ? page([B1], 'k1', req.limit) : req.after === 'k1' ? page([B2], 'k2', req.limit) : page([B3], null),
-      ));
-      if (listing === 'karma') await h.drive.refreshOwnKarma();
-      else await h.drive.refreshWalletCredits();
-      expect(h.node.count(listing, ME)).toBe(3);
-      const read = listing === 'karma' ? h.drive.profileKarma : h.drive.walletCredits;
-      const ids = read?.boxes.map((b) => b.boxId) ?? [];
-      // The three pages' seeded ids are present in order, with the pad rows
-      // the honest limit asks between them (every page beside a `next`
-      // carries exactly the `limit` asked — WEB_INTERFACE → Reading a
-      // node's answer → "Every page is held to the page the node serves").
-      expect(ids.indexOf(B1)).toBeLessThan(ids.indexOf(B2));
-      expect(ids.indexOf(B2)).toBeLessThan(ids.indexOf(B3));
-      expect(read?.next).toBeNull();
-    });
-  }
+  // A /karma listing holds at most two boxes (`NODE_INTERFACE → Karma
+  // transition rules → "An identity holds at most two karma boxes"`), so a
+  // listing-within-bound arrangement is two boxes across two pages. Every
+  // other list is bounded by `LEDGER_READ_MAX` (`CONSTANTS → Client reads`),
+  // and three pages of one box each is well within it for /credits.
+  it('an honest two-page /karma is still read whole', async () => {
+    const h = harness();
+    h.node.on('karma', (req) => ok(
+      req.after === null ? karmaPage(ME, [B1], 'k1', req.limit) : karmaPage(ME, [B2], null),
+    ));
+    await h.drive.refreshOwnKarma();
+    expect(h.node.count('karma', ME)).toBe(2);
+    const ids = h.drive.profileKarma?.boxes.map((b) => b.boxId) ?? [];
+    // The two pages' seeded ids are present in order, with the pad rows
+    // the honest limit asks between them (every page beside a `next`
+    // carries exactly the `limit` asked — WEB_INTERFACE → Reading a
+    // node's answer → "Every page is held to the page the node serves").
+    expect(ids.indexOf(B1)).toBeLessThan(ids.indexOf(B2));
+    expect(h.drive.profileKarma?.next).toBeNull();
+  });
+
+  it('an honest three-page /credits is still read whole', async () => {
+    const h = harness();
+    h.node.on('credits', (req) => ok(
+      req.after === null ? creditsPage(ME, [B1], 'k1', req.limit) : req.after === 'k1' ? creditsPage(ME, [B2], 'k2', req.limit) : creditsPage(ME, [B3], null),
+    ));
+    await h.drive.refreshWalletCredits();
+    expect(h.node.count('credits', ME)).toBe(3);
+    const ids = h.drive.walletCredits?.boxes.map((b) => b.boxId) ?? [];
+    expect(ids.indexOf(B1)).toBeLessThan(ids.indexOf(B2));
+    expect(ids.indexOf(B2)).toBeLessThan(ids.indexOf(B3));
+    expect(h.drive.walletCredits?.next).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
