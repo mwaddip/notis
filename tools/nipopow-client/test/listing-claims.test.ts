@@ -106,22 +106,21 @@ describe('an id the listing names more than once is unproven from its second pla
   });
 
   it('an id named again in another case is the same id, unproven in its second place', async () => {
-    const upper = KARMA.id!.toUpperCase();
     const { result } = prove({
       heldAtSuffix: [KARMA],
       heldAtTip: [KARMA],
-      karma: [{ boxId: KARMA.id!, value: '100' }, { boxId: upper, value: '100' }],
+      karma: [{ boxId: KARMA.id!, value: '100' }, { boxId: KARMA.id!, value: '100' }],
       credits: [],
     });
     const r = await result;
     expect(r.boxes.map((b) => b.status)).toEqual(['proven', 'unproven']);
-    expect(r.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${upper}'`);
+    expect(r.boxes[1]!.verdict).toBe(`unproven: the listed boxId is named earlier in the listing: '${KARMA.id!}'`);
   });
 
-  // TYPES_INTERFACE → Export table — hexToBytes is strict, lowercase only.
-  // An uppercase listing entry is checked case-insensitively, so it must
-  // reach the AVL key decode in its one lowercase form.
-  it('an uppercase boxId, listed once, is proven in its one lowercase form', async () => {
+  // NODE_INTERFACE → HTTP API → "Hex is lowercase" — a 64-char boxId the node
+  // answers in uppercase is a shape the honest node does not serve; the
+  // listing refuses it as "not 64 hex" rather than reaching the key decode.
+  it('an uppercase boxId, listed once, is unproven as "not 64 hex"', async () => {
     const upper = KARMA.id!.toUpperCase();
     const { result } = prove({
       heldAtSuffix: [KARMA],
@@ -130,10 +129,9 @@ describe('an id the listing names more than once is unproven from its second pla
       credits: [],
     });
     const r = await result;
-    expect(r.boxes[0]!.status).toBe('proven');
-    expect(r.boxes[0]!.boxId).toBe(KARMA.id!);
-    expect(r.karma.proven).toBe(100n);
-    expect(r.failed).toBe(false);
+    expect(r.boxes[0]!.status).toBe('unproven');
+    expect(r.boxes[0]!.verdict).toBe(`unproven: the listed boxId is not 64 hex: '${upper}'`);
+    expect(r.failed).toBe(true);
   });
 });
 

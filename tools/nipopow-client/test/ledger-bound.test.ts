@@ -1,17 +1,18 @@
-// WEB_INTERFACE → The extension → "The verified figures" — a ledger is read up
-// to LEDGER_READ_MAX boxes; a range that runs past it, at either height, ends
-// that ledger's read unproven; the command line's listing is held to the same
-// bound (CONSTANTS → Client reads).
+// WEB_INTERFACE → The extension → "The verified figures" — a credit ledger is
+// read up to LEDGER_READ_MAX boxes; a karma ledger up to the two-box bound
+// (NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+// karma boxes"); a range that runs past LEDGER_READ_MAX, at either height,
+// ends that ledger's read unproven (CONSTANTS → Client reads).
 
 import { describe, it, expect } from 'vitest';
-import { hexToBytes } from '@dagsocial/types';
+import { hexToBytes, PAGE_LIMIT_MAX } from '@dagsocial/types';
 import type { AnyBox, UserId } from '@dagsocial/types';
 import type { HoldingKind } from '@dagsocial/consensus';
 import { proveRange } from '../src/holdings.js';
 import { fetchListing, proveFigures } from '../src/boxes.js';
 import { makeAnchor } from './helpers.js';
 import { profileFor } from '@dagsocial/types';
-import { LEDGER_READ_MAX } from '@dagsocial/node-reads';
+import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import {
   buildHoldingsFixture,
@@ -136,7 +137,7 @@ describe('proveRange — a range at exactly the bound reads whole', () => {
   });
 });
 
-describe('fetchListing — a listing past the bound fails the listing, no further page asked', () => {
+describe('fetchListing — the karma listing is held at the two-box bound, the credit listing at maxBoxes', () => {
   const BOUND = 10;
 
   function makeListingFetch(opts: {
@@ -163,46 +164,35 @@ describe('fetchListing — a listing past the bound fails the listing, no furthe
     return { fetch, calls };
   }
 
-  it('a karma listing past the bound fails, with the credits route unread', async () => {
-    // Three karma pages of 5, 5, and 1 — totalling 11 rows, one past the
-    // bound. The last page carries `next: null` so the current tree reads
-    // the whole listing cleanly; the overflow refusal lands at the second
-    // page the moment boxes hits the bound and `next` still stands.
-    const rowsFirst = [] as Array<{ boxId: string; value: string }>;
-    for (let i = 0; i < BOUND / 2; i++) rowsFirst.push({ boxId: String(i).padStart(2, '0').slice(-2).repeat(32), value: '1' });
-    const rowsSecond = [] as Array<{ boxId: string; value: string }>;
-    for (let i = 0; i < BOUND / 2; i++) rowsSecond.push({ boxId: String(50 + i).padStart(2, '0').slice(-2).repeat(32), value: '1' });
-    const rowsThird = [{ boxId: '77'.repeat(32), value: '1' }];
+  it('three karma rows end the karma listing, with the credits route unread', async () => {
+    const rows = [
+      { boxId: '01'.repeat(32), value: '1' },
+      { boxId: '02'.repeat(32), value: '1' },
+      { boxId: '03'.repeat(32), value: '1' },
+    ];
 
     const { fetch, calls } = makeListingFetch({
-      karmaPagesByCursor: new Map([
-        [null, { boxes: rowsFirst, next: 'cursor-1' }],
-        ['cursor-1', { boxes: rowsSecond, next: 'cursor-2' }],
-        ['cursor-2', { boxes: rowsThird, next: null }],
-      ]),
+      karmaPagesByCursor: new Map([[null, { boxes: rows, next: null }]]),
       creditPagesByCursor: new Map([[null, { boxes: [], next: null }]]),
     });
 
     const result = await fetchListing('http://a', OWNER_HEX, fetch, BOUND);
 
-    // Control: the three served pages add up to over the bound.
-    expect(rowsFirst.length + rowsSecond.length + rowsThird.length).toBeGreaterThan(BOUND);
-    // Control: the client asked for at least the first karma page.
+    // Control: three rows served, over the two-box bound.
+    expect(rows.length).toBeGreaterThan(KARMA_LISTING_MAX);
     expect(calls.length).toBeGreaterThanOrEqual(1);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toContain('karma');
-      expect(result.reason).toContain(String(BOUND));
-      // Only karma was asked — the credits route is not reached, so the two
-      // pages here are the karma pages the overflow brought.
-      expect(calls.length).toBe(2);
+      expect(result.reason).toContain(String(KARMA_LISTING_MAX));
+      // The credits route is not reached.
       expect(calls.every((c) => c.includes('/karma/'))).toBe(true);
     }
   });
 
   it('a credit listing past the bound fails, naming the route and the bound', async () => {
     const credits = [] as Array<{ boxId: string; value: string }>;
-    for (let i = 0; i < BOUND + 1; i++) credits.push({ boxId: String(i).padStart(2, '0').slice(-2).repeat(32), value: '1' });
+    for (let i = 0; i < BOUND + 1; i++) credits.push({ boxId: i.toString(16).padStart(64, '0'), value: '1' });
 
     const { fetch, calls } = makeListingFetch({
       karmaPagesByCursor: new Map([[null, { boxes: [], next: null }]]),
@@ -212,7 +202,7 @@ describe('fetchListing — a listing past the bound fails the listing, no furthe
     const result = await fetchListing('http://a', OWNER_HEX, fetch, BOUND);
 
     // Control: the karma listing was fetched before the credits one.
-    expect(calls[0]).toBe(`/karma/${OWNER_HEX}`);
+    expect(calls[0]!.startsWith(`/karma/${OWNER_HEX}`)).toBe(true);
     // Control: the credits listing carries more than the bound takes.
     expect(credits.length).toBe(BOUND + 1);
     expect(result.ok).toBe(false);
@@ -222,11 +212,13 @@ describe('fetchListing — a listing past the bound fails the listing, no furthe
     }
   });
 
-  it('a listing of exactly the bound reads', async () => {
-    const karma = [] as Array<{ boxId: string; value: string }>;
-    for (let i = 0; i < BOUND; i++) karma.push({ boxId: String(i).padStart(2, '0').slice(-2).repeat(32), value: '1' });
+  it('a listing of two karma rows and BOUND credit rows reads', async () => {
+    const karma = [
+      { boxId: '01'.repeat(32), value: '1' },
+      { boxId: '02'.repeat(32), value: '1' },
+    ];
     const credits = [] as Array<{ boxId: string; value: string }>;
-    for (let i = 0; i < BOUND; i++) credits.push({ boxId: String(100 + i).padStart(2, '0').slice(-2).repeat(32), value: '1' });
+    for (let i = 0; i < BOUND; i++) credits.push({ boxId: (100 + i).toString(16).padStart(64, '0'), value: '1' });
 
     const { fetch } = makeListingFetch({
       karmaPagesByCursor: new Map([[null, { boxes: karma, next: null }]]),
@@ -237,46 +229,49 @@ describe('fetchListing — a listing past the bound fails the listing, no furthe
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.listing.karma.boxes.length).toBe(BOUND);
+      expect(result.listing.karma.boxes.length).toBe(KARMA_LISTING_MAX);
       expect(result.listing.credits!.boxes.length).toBe(BOUND);
     }
   });
 });
 
-// WEB_INTERFACE → The extension → "The verified figures" — the default itself
-// is a bound: a caller that passes no `maxBoxes` reads the ledger up to
-// `LEDGER_READ_MAX = 10_000` (CONSTANTS → Client reads). The cases
-// below pin that default by never passing the argument.
-describe("fetchListing's default bounds the karma listing at LEDGER_READ_MAX", () => {
-  // Honest keyset pages of PAGE_LIMIT_MAX (= 100 at node, CONSTANTS →
-  // HTTP view bounds). Each page carries a decimal `after` cursor the next
-  // request echoes; each row is a 64-hex id and a decimal value.
-  const PAGE = 100;
+// WEB_INTERFACE → The extension → "The verified figures" — the default on the
+// credit listing is `LEDGER_READ_MAX`: a caller that passes no `maxBoxes`
+// reads credits up to that bound (CONSTANTS → Client reads). The cases below
+// pin that default by never passing the argument. The karma listing has its
+// own protocol bound of two, with no `maxBoxes` seam
+// (NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+// karma boxes").
+describe("fetchListing's default on the credit listing holds at LEDGER_READ_MAX", () => {
+  // Honest keyset pages of PAGE_LIMIT_MAX. Each page carries a decimal
+  // `after` cursor the next request echoes; each row is a 64-hex id and a
+  // decimal value.
+  const PAGE = PAGE_LIMIT_MAX;
 
-  function makeKarmaFetch(totalRows: number): { fetch: HttpFetch; calls: string[] } {
-    const path = `/karma/${OWNER_HEX}`;
+  function makeCreditFetch(totalRows: number): { fetch: HttpFetch; calls: string[] } {
+    const karmaPath = `/karma/${OWNER_HEX}`;
     const creditsPath = `/credits/${OWNER_HEX}`;
     const calls: string[] = [];
     const fetch: HttpFetch = async (reqUrl: string): Promise<Response> => {
       const u = new URL(reqUrl);
       calls.push(`${u.pathname}${u.search}`);
-      if (u.pathname === path) {
+      if (u.pathname === karmaPath) {
+        return new Response(
+          JSON.stringify({ userId: OWNER_HEX, boxes: [], next: null, height: 1, effective: '0' }),
+          { status: 200 },
+        );
+      }
+      if (u.pathname === creditsPath) {
         const afterParam = u.searchParams.get('after');
         const start = afterParam === null ? 0 : Number(afterParam);
         const end = Math.min(start + PAGE, totalRows);
         const boxes: Array<{ boxId: string; value: string }> = [];
         for (let i = start; i < end; i++) {
-          boxes.push({ boxId: String(i).padStart(8, '0').repeat(8), value: '1' });
+          boxes.push({ boxId: i.toString(16).padStart(64, '0'), value: '1' });
         }
         const next = end < totalRows ? String(end) : null;
         return new Response(
-          JSON.stringify({ userId: OWNER_HEX, boxes, next, height: 1, effective: '0' }),
-          { status: 200 },
-        );
-      }
-      if (u.pathname === creditsPath) {
-        return new Response(
-          JSON.stringify({ userId: OWNER_HEX, boxes: [], next: null }),
+          JSON.stringify({ userId: OWNER_HEX, boxes, next }),
           { status: 200 },
         );
       }
@@ -285,32 +280,31 @@ describe("fetchListing's default bounds the karma listing at LEDGER_READ_MAX", (
     return { fetch, calls };
   }
 
-  it("LEDGER_READ_MAX + 1 karma rows served in honest pages fail with LEDGER_READ_MAX named", async () => {
-    const { fetch, calls } = makeKarmaFetch(LEDGER_READ_MAX + 1);
+  it("LEDGER_READ_MAX + 1 credit rows served in honest pages fail with LEDGER_READ_MAX named", async () => {
+    const { fetch, calls } = makeCreditFetch(LEDGER_READ_MAX + 1);
 
     // Default `maxBoxes` — no fourth argument.
     const result = await fetchListing('http://a', OWNER_HEX, fetch);
 
-    // Control: the client sent at least the first karma page.
-    expect(calls.length).toBeGreaterThanOrEqual(1);
-    // Control: every call is to the karma route (the credits route is not reached).
-    expect(calls.every((c) => c.includes('/karma/'))).toBe(true);
+    // Control: the client sent the karma page first and then at least one credit page.
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls[0]!.startsWith(`/karma/${OWNER_HEX}`)).toBe(true);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toContain('karma');
+      expect(result.reason).toContain('credits');
       expect(result.reason).toContain('10000');
     }
   });
 
-  it('LEDGER_READ_MAX karma rows served in honest pages read whole', async () => {
-    const { fetch, calls } = makeKarmaFetch(LEDGER_READ_MAX);
+  it('LEDGER_READ_MAX credit rows served in honest pages read whole', async () => {
+    const { fetch, calls } = makeCreditFetch(LEDGER_READ_MAX);
 
     const result = await fetchListing('http://a', OWNER_HEX, fetch);
 
-    // Control: exactly one page per PAGE_LIMIT_MAX plus the credits route's first page.
-    expect(calls.length).toBe(Math.ceil(LEDGER_READ_MAX / PAGE) + 1);
+    // Control: one karma page plus one credit page per PAGE_LIMIT_MAX.
+    expect(calls.length).toBe(1 + Math.ceil(LEDGER_READ_MAX / PAGE));
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.listing.karma.boxes.length).toBe(LEDGER_READ_MAX);
+    if (result.ok) expect(result.listing.credits!.boxes.length).toBe(LEDGER_READ_MAX);
   });
 });
 

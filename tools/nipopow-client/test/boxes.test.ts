@@ -967,29 +967,13 @@ describe('proveFigures — the run order is the rule', () => {
 });
 
 describe('fetchListing — paged reads', () => {
-  it('three karma pages followed to the end — height and effective from the first page', async () => {
-    const fetch = makeFetch((path, q) => {
+  it('a karma page followed to the end — height and effective from the first page', async () => {
+    const fetch = makeFetch((path) => {
       if (path === `/karma/${USER_HEX}`) {
-        const after = q.get('after');
-        if (after === null) {
-          return jsonResponse(200, karmaPage(
-            [{ boxId: 'a1'.repeat(32), value: '10' }],
-            { height: 555, effective: '30', next: 'cursor-1' },
-          ));
-        }
-        if (after === 'cursor-1') {
-          return jsonResponse(200, karmaPage(
-            [{ boxId: 'a2'.repeat(32), value: '10' }],
-            { height: 999, effective: 'wrong', next: 'cursor-2' },
-          ));
-        }
-        if (after === 'cursor-2') {
-          return jsonResponse(200, karmaPage(
-            [{ boxId: 'a3'.repeat(32), value: '10' }],
-            { height: 999, effective: 'wrong', next: null },
-          ));
-        }
-        return undefined;
+        return jsonResponse(200, karmaPage(
+          [{ boxId: 'a1'.repeat(32), value: '10' }, { boxId: 'a2'.repeat(32), value: '10' }],
+          { height: 555, effective: '30', next: null },
+        ));
       }
       if (path === `/credits/${USER_HEX}`) return jsonResponse(200, creditPage([]));
       return undefined;
@@ -998,26 +982,18 @@ describe('fetchListing — paged reads', () => {
     const result = await fetchListing('http://a', USER_HEX, fetch);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.listing.karma.boxes.length).toBe(3);
+      expect(result.listing.karma.boxes.length).toBe(2);
       expect(result.listing.karma.height).toBe(555);
       expect(result.listing.karma.effective).toBe('30');
     }
   });
 
-  it('two credit pages followed to the end', async () => {
-    const fetch = makeFetch((path, q) => {
+  it('a credit page carrying lockedUntilBlock reads it through', async () => {
+    const fetch = makeFetch((path) => {
       if (path === `/karma/${USER_HEX}`) return jsonResponse(200, karmaPage([], { height: 555 }));
-      if (path !== `/credits/${USER_HEX}`) return undefined;
-      const after = q.get('after');
-      if (after === null) {
+      if (path === `/credits/${USER_HEX}`) {
         return jsonResponse(200, creditPage(
-          [{ boxId: 'c1'.repeat(32), value: '5' }],
-          { next: 'cursor-c1' },
-        ));
-      }
-      if (after === 'cursor-c1') {
-        return jsonResponse(200, creditPage(
-          [{ boxId: 'c2'.repeat(32), value: '5', lockedUntilBlock: 42 }],
+          [{ boxId: 'c1'.repeat(32), value: '5' }, { boxId: 'c2'.repeat(32), value: '5', lockedUntilBlock: 42 }],
           { next: null },
         ));
       }

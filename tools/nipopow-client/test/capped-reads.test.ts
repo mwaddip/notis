@@ -329,13 +329,15 @@ describe('every reader passes its route\'s cap', () => {
 // box id is 64 hex, and `boxCount`/`height` carry integers.
 
 function longestHonestKarmaPage(): string {
+  // NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+  // karma boxes" — an honest karma listing serves two rows at most.
   const page: Record<string, unknown> = {
     userId: 'a'.repeat(64),
     total: ((1n << 64n) - 1n).toString(),
     effective: ((1n << 64n) - 1n).toString(),
     boxes: [] as Array<Record<string, unknown>>,
-    boxCount: 100,
-    next: `${(1n << 63n) - 1n}:${'b'.repeat(64)}`,
+    boxCount: 2,
+    next: null,
     lastActivityBlock: Number.MAX_SAFE_INTEGER,
     lastDecayBlock: Number.MAX_SAFE_INTEGER,
     lifetimeLikesReceived: ((1n << 64n) - 1n).toString(),
@@ -350,9 +352,8 @@ function longestHonestKarmaPage(): string {
     height: Number.MAX_SAFE_INTEGER,
   };
   const boxes = page['boxes'] as Array<Record<string, unknown>>;
-  for (let i = 0; i < 100; i++) {
-    boxes.push({ boxId: 'c'.repeat(64), value: ((1n << 63n) - 1n).toString(), income: true });
-  }
+  boxes.push({ boxId: 'c'.repeat(64), value: ((1n << 63n) - 1n).toString() });
+  boxes.push({ boxId: 'd'.repeat(64), value: ((1n << 63n) - 1n).toString(), income: true });
   return JSON.stringify(page);
 }
 
@@ -365,9 +366,12 @@ function longestHonestCreditPage(): string {
     next: `${(1n << 63n) - 1n}:${'b'.repeat(64)}`,
   };
   const boxes = page['boxes'] as Array<Record<string, unknown>>;
+  // Distinct 64-hex boxIds — the whole-list read holds row keys unique
+  // across pages (WEB_INTERFACE → Reading a node's answer → "A whole-list
+  // read is bounded"); an honest page's rows are the chain's own.
   for (let i = 0; i < 100; i++) {
     boxes.push({
-      boxId: 'c'.repeat(64),
+      boxId: i.toString(16).padStart(64, '0'),
       value: ((1n << 63n) - 1n).toString(),
       lockedUntilBlock: Number.MAX_SAFE_INTEGER,
     });

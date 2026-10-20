@@ -3,7 +3,7 @@ import type { DecodedBoxCandidate } from '@dagsocial/types';
 import type { Anchor } from './boxes.js';
 import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
-import { capped, fetchJson, isRecord, NAME_READ_BYTES } from '@dagsocial/node-reads';
+import { capped, fetchJson, isHex64Lower, isRecord, NAME_READ_BYTES } from '@dagsocial/node-reads';
 import { shown } from './http.js';
 
 /**
@@ -84,10 +84,10 @@ export async function proveName(
   }
   const answer = isRecord(lookup.data) ? lookup.data : {};
   const answeredBoxId = answer['boxId'];
-  if (typeof answeredBoxId !== 'string' || !HEX_64.test(answeredBoxId)) {
+  if (!isHex64Lower(answeredBoxId)) {
     return unanswered('unproven', `unproven: the lookup's boxId is not 64 hex: ${shown(answeredBoxId)}`);
   }
-  const boxId = answeredBoxId.toLowerCase();
+  const boxId = answeredBoxId;
   const pointed = (status: NameStatus, verdict: string, heightAfter: number | null = null): NameResult =>
     ({ status, owner: null, name: null, boxId, heightAfter, verdict });
 

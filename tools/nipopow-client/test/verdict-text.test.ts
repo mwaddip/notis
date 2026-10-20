@@ -121,29 +121,32 @@ describe('fetchJson — a body that will not parse', () => {
 });
 
 describe('fetchListing — a failed page names its cursor capped, and the request carries it whole', () => {
+  // The karma listing holds at most two boxes (NODE_INTERFACE → Karma
+  // transition rules → "An identity holds at most two karma boxes"), so an
+  // honest full first page naming a cursor can only land on the credit route.
+  // The karma listing is empty here; the credit listing's first page is a
+  // full page of PAGE_LIMIT_MAX rows carrying the cursor; the second page
+  // ends in the named failure.
+  const firstCredit: Array<{ boxId: string; value: string }> = [];
+  for (let i = 0; i < 100; i++) firstCredit.push({ boxId: i.toString(16).padStart(64, '0'), value: '1' });
+
   it.each([
-    ['karma', 'HTTP 500'],
-    ['karma', 'malformed page'],
-    ['credits', 'HTTP 500'],
-    ['credits', 'malformed page'],
-  ])('a following %s page ending in %s', async (route, failure) => {
+    ['HTTP 500'],
+    ['malformed page'],
+  ])('a following credits page ending in %s', async (failure) => {
     const cursors: (string | null)[] = [];
     const fetch: HttpFetch = async (url: string) => {
       const u = new URL(url);
-      // The non-tested route answers an empty page so the listing reaches
-      // the tested route's cursor-walking failure (NODE_INTERFACE → UTXO
-      // queries: a hex key the node has never seen is answered with the
-      // empty page, never a 404).
-      if (u.pathname === `/karma/${USER_HEX}` && route === 'credits') {
+      if (u.pathname === `/karma/${USER_HEX}`) {
         return jsonResponse(200, { boxes: [], next: null, height: 1, effective: '0' });
       }
-      if (u.pathname !== `/${route}/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
-      if (!u.searchParams.has('after')) return jsonResponse(200, { boxes: [], next: LONG, height: 1, effective: '0' });
+      if (u.pathname !== `/credits/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
+      if (!u.searchParams.has('after')) return jsonResponse(200, { boxes: firstCredit, next: LONG });
       cursors.push(u.searchParams.get('after'));
       return failure === 'HTTP 500' ? textResponse(500, 'internal') : jsonResponse(200, null);
     };
     const result = await fetchListing('http://a', USER_HEX, fetch);
-    expect(result).toEqual({ ok: false, reason: `GET /${route}/${USER_HEX}?after=${NAMED}: ${failure}` });
+    expect(result).toEqual({ ok: false, reason: `GET /credits/${USER_HEX}?after=${NAMED}: ${failure}` });
     expect(cursors).toEqual([LONG]);
   });
 });
@@ -370,17 +373,19 @@ describe("textLines — the command line's text of a node that sends a newline, 
     const hostile = 'x\ny\u001b[2Kz\r';
     const shown = 'x\\u000ay\\u001b[2Kz\\u000d';
 
-    // Node `a` serves the chain and the listing, with a hostile boxId
-    // listed; the record route answers 500 with the hostile body. Node `b`
-    // answers every request 500. Range route for the listing's hostile
-    // boxId won't match (it's not a 64-hex id), so no range request fires
-    // for it; the honest karma/credit ranges just return empty.
+    // Node `a` serves the chain and the listing, with a listed row carrying
+    // a 64-lowercase-hex boxId and a hostile `value`; the record route
+    // answers 500 with the hostile body. Node `b` answers every request 500.
+    // Range route for the listing's row won't match the fixture's held key,
+    // so no range request fires for it; the honest karma/credit ranges just
+    // return empty.
+    const listedBoxId = 'ff'.repeat(32);
     const fetch: HttpFetch = async (url: string) => {
       const u = new URL(url);
       if (u.host !== 'a') return textResponse(500, hostile);
       if (u.pathname === `/nipopow/proof/${M}/${K}`) return jsonResponse(200, { proof: proofHex });
       if (u.pathname === `/karma/${USER_HEX}`) {
-        return jsonResponse(200, { boxes: [{ boxId: hostile, value: '5' }], next: null, height, effective: '5' });
+        return jsonResponse(200, { boxes: [{ boxId: listedBoxId, value: hostile }], next: null, height, effective: '5' });
       }
       if (u.pathname === `/credits/${USER_HEX}`) {
         return jsonResponse(200, { boxes: [], next: null });
@@ -405,7 +410,7 @@ describe("textLines — the command line's text of a node that sends a newline, 
     const lines = textLines(tip, { figures, listing: listed.listing });
     // FIXTURE holds KARMA with value 100 — but the fixture's prover answers
     // the range at this height from its state, and KARMA sits at the tip.
-    // The listing names a hostile (non-hex) id, so it is unproven; the
+    // The listed row's value is a hostile string, so it is unproven; the
     // KARMA box the tree holds is `unlisted` (heightAfter === tip).
     expect(lines).toEqual([
       `tip: height ${height}`,
@@ -413,7 +418,7 @@ describe("textLines — the command line's text of a node that sends a newline, 
       '  http://a: verified (best)',
       `  http://b: refused — HTTP 500: ${shown}`,
       '',
-      `  karma ${shown}: unproven: the listed boxId is not 64 hex: '${shown}'`,
+      `  karma ${listedBoxId}: unproven: the listed value is not a decimal integer: '${shown}'`,
       `  karma ${KARMA.id!}: unlisted — the chain holds what the node did not list at height ${height} value=100`,
       'karma total (face value at suffixHead): 0',
       'credit total (face value at suffixHead): 0',

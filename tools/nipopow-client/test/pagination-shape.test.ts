@@ -1,8 +1,6 @@
 // WEB_INTERFACE → Reading a node's answer — the entries this file enters are
 // `fetchListing`, `proveRange` and `proveName`. Each case is an answer the
-// node is free to send and the rule the client holds it to. `it.fails` is
-// green for any assertion that fires or any throw — a page without an answer
-// is not a page.
+// node is free to send and the rule the client holds it to.
 
 import { describe, it, expect } from 'vitest';
 import { hexToBytes, PAGE_LIMIT_MAX } from '@dagsocial/types';
@@ -55,8 +53,22 @@ function karmaBody(boxes: Array<{ boxId: string; value: string }>, next: string 
   return { userId: OWNER_HEX, total: '0', effective: '0', boxes, boxCount: boxes.length, next, height: 100 };
 }
 
-describe("fetchListing holds a karma listing to the page the node serves and the two-box karma bound", () => {
-  it.fails("a karma page naming a next while carrying no rows ends the listing, one request made", async () => {
+function creditBody(boxes: Array<{ boxId: string; value: string }>, next: string | null): unknown {
+  return { userId: OWNER_HEX, total: '0', boxes, boxCount: boxes.length, next };
+}
+
+/** A full credit page of PAGE_LIMIT_MAX rows with distinct 64-hex boxIds. */
+function fullCreditPage(start: number): Array<{ boxId: string; value: string }> {
+  const rows: Array<{ boxId: string; value: string }> = [];
+  for (let i = 0; i < PAGE_LIMIT_MAX; i++) {
+    const n = start + i;
+    rows.push({ boxId: n.toString(16).padStart(64, '0'), value: '1' });
+  }
+  return rows;
+}
+
+describe("fetchListing holds each listing to the page the node serves and its own bound", () => {
+  it("a karma page naming a next while carrying no rows ends the listing, one request made", async () => {
     const { fetch, calls } = listingFetch((after) => {
       if (after === null) return karmaBody([], 'k1');
       return karmaBody([], null);
@@ -72,7 +84,7 @@ describe("fetchListing holds a karma listing to the page the node serves and the
     expect(calls.filter((c) => c.startsWith(KARMA_PATH)).length).toBe(1);
   });
 
-  it.fails("a karma page naming a next while short of the limit asked ends the listing", async () => {
+  it("a karma page naming a next while short of the limit asked ends the listing", async () => {
     const { fetch, calls } = listingFetch((after) => {
       if (after === null) return karmaBody([{ boxId: BOX_A, value: '1' }], 'k1');
       return karmaBody([], null);
@@ -84,7 +96,7 @@ describe("fetchListing holds a karma listing to the page the node serves and the
     expect(result.ok).toBe(false);
   });
 
-  it.fails("a karma page of more rows than the limit asked ends the listing", async () => {
+  it("a karma page of more rows than the limit asked ends the listing", async () => {
     const over = PAGE_LIMIT_MAX + 1;
     const rows: Array<{ boxId: string; value: string }> = [];
     for (let i = 0; i < over; i++) {
@@ -100,37 +112,44 @@ describe("fetchListing holds a karma listing to the page the node serves and the
     expect(result.ok).toBe(false);
   });
 
-  it.fails("a karma listing whose later page carries a cursor named before ends the listing", async () => {
-    // The fetch answers four pages, each empty with a next cursor; the third
-    // echoes the first's cursor and the fourth carries a null next, so a
-    // reader that counts pages reads an ok listing while the whole-list read
-    // ends the listing on the echoed cursor.
-    const { fetch, calls } = listingFetch((after, nth) => {
-      if (after === null) return karmaBody([], 'k1');
-      if (after === 'k1' && nth === 1) return karmaBody([], 'k2');
-      if (after === 'k2') return karmaBody([], 'k1'); // repeated
-      return karmaBody([], null);
-    });
+  it("a credit listing whose later page carries a cursor named before ends the listing", async () => {
+    const first = fullCreditPage(0);
+    const second = fullCreditPage(100);
+    const { fetch, calls } = listingFetch(
+      () => karmaBody([], null),
+      (after) => {
+        if (after === null) return creditBody(first, 'c1');
+        return creditBody(second, 'c1'); // repeated cursor
+      },
+    );
 
     const result = await fetchListing('http://a', OWNER_HEX, fetch);
 
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    // Control: the credit route was reached in at least two pages.
+    expect(calls.filter((c) => c.startsWith(CREDITS_PATH)).length).toBeGreaterThanOrEqual(2);
     expect(result.ok).toBe(false);
   });
 
-  it.fails("a karma listing naming one boxId twice across pages ends the listing", async () => {
-    const { fetch, calls } = listingFetch((after) => {
-      if (after === null) return karmaBody([{ boxId: BOX_A, value: '1' }], 'k1');
-      return karmaBody([{ boxId: BOX_A, value: '1' }], null);
-    });
+  it("a credit listing naming one boxId twice across pages ends the listing", async () => {
+    const first = fullCreditPage(0);
+    const second = fullCreditPage(100);
+    // Replace one entry of the second page with the first page's first row.
+    second[0] = { boxId: first[0]!.boxId, value: '1' };
+    const { fetch, calls } = listingFetch(
+      () => karmaBody([], null),
+      (after) => {
+        if (after === null) return creditBody(first, 'c1');
+        return creditBody(second, null);
+      },
+    );
 
     const result = await fetchListing('http://a', OWNER_HEX, fetch);
 
-    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls.filter((c) => c.startsWith(CREDITS_PATH)).length).toBeGreaterThanOrEqual(1);
     expect(result.ok).toBe(false);
   });
 
-  it.fails("a karma listing of three rows ends the listing, naming the two-box bound", async () => {
+  it("a karma listing of three rows ends the listing, naming the two-box bound", async () => {
     const rows = [
       { boxId: BOX_A, value: '1' },
       { boxId: BOX_B, value: '1' },
@@ -163,7 +182,7 @@ describe("fetchListing holds a karma listing to the page the node serves and the
     }
   });
 
-  it.fails("a karma row whose boxId is 64 uppercase hex ends the listing", async () => {
+  it("a karma row whose boxId is 64 uppercase hex ends the listing", async () => {
     const upper = 'AB'.repeat(32);
     const { fetch, calls } = listingFetch(() => karmaBody([{ boxId: upper, value: '1' }], null));
 
@@ -173,7 +192,7 @@ describe("fetchListing holds a karma listing to the page the node serves and the
     expect(result.ok).toBe(false);
   });
 
-  it.fails("the first karma request's URL carries limit=100", async () => {
+  it("the first karma request's URL carries limit=100", async () => {
     const { fetch, calls } = listingFetch(() => karmaBody([], null));
 
     await fetchListing('http://a', OWNER_HEX, fetch);
@@ -186,7 +205,7 @@ describe("fetchListing holds a karma listing to the page the node serves and the
 });
 
 describe("proveName holds a lookup answer's boxId to 64 lowercase hex", () => {
-  it.fails("an uppercase lookup boxId ends the check unproven, naming the lowercase rule", async () => {
+  it("an uppercase lookup boxId ends the check unproven, naming the lowercase rule", async () => {
     const upper = 'AB'.repeat(32);
     const fetch: HttpFetch = async (reqUrl: string): Promise<Response> => {
       const u = new URL(reqUrl);
@@ -209,7 +228,7 @@ describe("proveName holds a lookup answer's boxId to 64 lowercase hex", () => {
 });
 
 describe("proveRange holds a page's stateRoot to 64 lowercase hex before any comparison", () => {
-  it.fails("a page whose stateRoot is well-formed except for uppercase ends the range unproven", async () => {
+  it("a page whose stateRoot is well-formed except for uppercase ends the range unproven", async () => {
     const upperRoot = 'AB'.repeat(33); // 66 chars, uppercase
     const headerRoot = 'cd'.repeat(33); // 66 chars, lowercase
     const fetch: HttpFetch = async (reqUrl: string): Promise<Response> => {

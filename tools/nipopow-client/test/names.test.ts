@@ -272,12 +272,17 @@ describe('proveName — a label: this key carries this name', () => {
     expect(calls).toEqual([ownerLookup(BOB)]);
   });
 
-  it('a boxId answered in uppercase hex is the same box — ids compare lowercased', async () => {
-    const { fetch, calls } = node({ byOwner: { [BOB]: answer('Bob', BOB, BOB_NAME_ID.toUpperCase()) } });
+  // NODE_INTERFACE → HTTP API → "Hex is lowercase" — a boxId the node answers
+  // in uppercase is a shape the honest node does not serve; the check refuses
+  // it as "not 64 hex" without asking the proof.
+  it('a boxId answered in uppercase hex is unproven as "not 64 hex", no proof asked', async () => {
+    const upper = BOB_NAME_ID.toUpperCase();
+    const { fetch, calls } = node({ byOwner: { [BOB]: answer('Bob', BOB, upper) } });
     const result = await check(LABEL, fetch);
-    expect(result.status).toBe('proven');
-    expect(result.boxId).toBe(BOB_NAME_ID);
-    expect(calls[1]).toBe(proofAt(BOB_NAME_ID, SUFFIX_H));
+    expect(result.status).toBe('unproven');
+    expect(result.verdict).toContain(`unproven: the lookup's boxId is not 64 hex: '${upper}'`);
+    // Only the lookup was asked — the proof URL never fired.
+    expect(calls).toEqual([ownerLookup(BOB)]);
   });
 
   it('a label key in uppercase hex is the same key — asked and compared lowercased', async () => {

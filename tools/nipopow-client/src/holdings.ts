@@ -1,5 +1,5 @@
 import { BatchAVLVerifier } from '@dagsocial/avltree';
-import { TREE_KEY_LENGTH, bytesToHex, hexToBytes } from '@dagsocial/types';
+import { RANGE_PAGE_MAX, TREE_KEY_LENGTH, bytesToHex, hexToBytes } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
 import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';
 import type { HoldingKind } from '@dagsocial/consensus';
@@ -8,24 +8,19 @@ import { capped, fetchJson, isRecord, LEDGER_READ_MAX, RANGE_PAGE_READ_BYTES } f
 import { base64ToBytes, shown } from './http.js';
 export type { HoldingKind };
 
-/**
- * The page size this client asks the node for. A node may answer with any
- * limit from 1 up to the limit asked — a cap of its own may be lower — and
- * the page is replayed with the limit the answer served. The 256 here is
- * neither the node's cap nor a protocol value; it is the client's own ask,
- * big enough that an honest 256-cap node serves one page per 256 entries.
- */
-const PAGE_ASK = 256;
-
 const AVL_CFG = { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null } as const;
 
-/** `OWNER_HEX_LEN` is the hex length of an owner key — 32 bytes, 64 characters. */
+/** `OWNER_HEX_LEN` is the hex length of an owner key — 32 bytes, 64
+ *  characters. The caller supplies the key; the client lowercases it where
+ *  the chain is read against (TYPES_INTERFACE → Identity). */
 const OWNER_HEX_LEN = 64;
 const OWNER_HEX = /^[0-9a-f]{64}$/i;
 
-/** A well-formed stateRoot is the 33-byte AVL+ digest in hex — the shape
- *  the header carries (TYPES_INTERFACE → Layout — Block). */
-const STATE_ROOT_HEX = /^[0-9a-f]{66}$/i;
+/** A well-formed `stateRoot` is the 33-byte AVL+ digest in 64 lowercase hex
+ *  characters plus the one balance byte — the shape the header carries
+ *  (TYPES_INTERFACE → Layout — Block; NODE_INTERFACE → HTTP API →
+ *  "Hex is lowercase"). */
+const STATE_ROOT_HEX = /^[0-9a-f]{66}$/;
 
 /**
  * The outcome of one call to `proveRange`: the full range's boxes under one
@@ -46,7 +41,7 @@ export type RangeResult =
  * kind's whole range at one height, page by page.
  *
  * For each page the client asks `GET /api/v1/range/<kind>/<owner>?atHeight=
- * <height>&limit=<PAGE_ASK>`, carrying the previous page's authenticated
+ * <height>&limit=<RANGE_PAGE_MAX>`, carrying the previous page's authenticated
  * `next` as `from` after the first. For every answer: the body is an object
  * or the run is `unproven`; **the answer's `stateRoot` must be the header's
  * before the proof is read**, so a lying node that signs a wrong root cannot
@@ -101,8 +96,8 @@ export async function proveRange(
   for (;;) {
     const fromHex = from === null ? null : bytesToHex(from);
     const query = fromHex === null
-      ? `?atHeight=${atHeight}&limit=${PAGE_ASK}`
-      : `?atHeight=${atHeight}&limit=${PAGE_ASK}&from=${fromHex}`;
+      ? `?atHeight=${atHeight}&limit=${RANGE_PAGE_MAX}`
+      : `?atHeight=${atHeight}&limit=${RANGE_PAGE_MAX}&from=${fromHex}`;
     const url = `${nodeUrl}/api/v1/range/${kind}/${ownerLower}${query}`;
 
     // CONSTANTS → Client reads — one range page.
@@ -138,7 +133,7 @@ export async function proveRange(
 
     const answerLimit = body['limit'];
     if (!isPageLimit(answerLimit)) {
-      return { ok: false, status: 'unproven', verdict: `limit must be an integer in [1, ${PAGE_ASK}]: ${shown(answerLimit)}` };
+      return { ok: false, status: 'unproven', verdict: `limit must be an integer in [1, ${RANGE_PAGE_MAX}]: ${shown(answerLimit)}` };
     }
 
     const proofText = body['proof'];
@@ -189,5 +184,5 @@ export async function proveRange(
 // A page's `limit` is an integer from 1 to the limit asked
 // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range route").
 function isPageLimit(v: unknown): v is number {
-  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= PAGE_ASK;
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= RANGE_PAGE_MAX;
 }
