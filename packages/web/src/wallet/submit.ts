@@ -1,5 +1,5 @@
 import { encodeTx, hexToBytes } from '@dagsocial/types';
-import type { UtxoTransaction } from '@dagsocial/types';
+import type { UtxoTransaction, NetworkType } from '@dagsocial/types';
 import { LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readBuildContext, readCreditContext } from './reads';
 import { readWholeList } from '../api/whole-list';
@@ -57,6 +57,12 @@ export interface SubmitDeps {
   write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitUnvouch' | 'submitInvite' | 'submitWithdraw' | 'submitClaim' | 'submitBurn' | 'submitSend'>;
   ledger: PendingLedger;
   identity: Signer;
+  /** The build's network — the App reads it from `prefs`' `BUILD_NETWORK` and
+   *  hands it here, so the submit flows import nothing that reads the document
+   *  at load (WEB_INTERFACE → Invariants → "A per-network number is read,
+   *  never assumed"). An unvouch's `releaseAtBlock` reads
+   *  `vouchCooldownBlocks` through `networkNumbers(network, status)`. */
+  network: NetworkType | null;
   /** Called after a successful sign and before the POST — the composer path
    *  uses it to collapse into the hollow card in the same slot (WEB_INTERFACE →
    *  The wallet, "the fourth ending is the composer still open"). Only
@@ -258,7 +264,7 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
   // `releaseAtBlock` is the cast height plus the cooldown (NODE_INTERFACE →
   // Vouch transition rules).
   const status = await deps.reads.status();
-  const nn = networkNumbers(status);
+  const nn = networkNumbers(deps.network, status);
   if (nn === null) return clientRejection('cannot read the network numbers.');
   const ctx: BuildContext = {
     spendable: [],

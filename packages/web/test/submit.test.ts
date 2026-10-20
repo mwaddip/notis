@@ -171,7 +171,7 @@ beforeEach(() => {
 describe('submitPostFlow', () => {
   it('builds, signs the id, POSTs { tx, content } and lands a ledger entry', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(okPost, okLike), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitPostFlow(deps, 'a thread', null);
 
     expect(res.ok).toBe(true);
@@ -189,7 +189,7 @@ describe('submitPostFlow', () => {
 
   it('a reply resolves the parent confirmedAuthor and addresses the share to it', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR), write: write(okPost, okLike), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitPostFlow(deps, 'a reply', PARENT_ID);
 
     expect(res.ok).toBe(true);
@@ -204,7 +204,7 @@ describe('submitPostFlow', () => {
   it('a rejection short-circuits: no ledger entry', async () => {
     const ledger = new PendingLedger(PUB);
     const rejection: Rejection = { status: 503, message: 'mempool full' };
-    const deps: SubmitDeps = { reads: reads(), write: write(rejection, okLike), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(rejection, okLike), ledger, identity, network: null };
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, rejection });
     expect(ledger.size).toBe(0);
@@ -212,7 +212,7 @@ describe('submitPostFlow', () => {
 
   it('a parent with no confirmed author is refused client-side before any POST', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(null), write: write(okPost, okLike), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(null), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitPostFlow(deps, 'a reply', PARENT_ID);
     expect(res.ok).toBe(false);
     expect(writeCalls).toEqual([]);
@@ -222,7 +222,7 @@ describe('submitPostFlow', () => {
   it('a spendable view that cannot cover the price comes back as one rejection, not a throw', async () => {
     const ledger = new PendingLedger(PUB);
     // Four karma cannot cover a thread's price of five.
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '4' }]), write: write(okPost, okLike), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '4' }]), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to post right now.' } });
     expect(writeCalls).toEqual([]);
@@ -231,7 +231,7 @@ describe('submitPostFlow', () => {
 
   it('a parent confirmedAuthor that is not valid hex is refused client-side, not a throw', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(BAD_KEY), write: write(okPost, okLike), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(BAD_KEY), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitPostFlow(deps, 'a reply', PARENT_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: "that post's author key is not valid." } });
     expect(writeCalls).toEqual([]);
@@ -242,7 +242,7 @@ describe('submitPostFlow', () => {
 describe('submitLikeFlow', () => {
   it('resolves the target confirmedAuthor, POSTs { tx }, and lands a like entry', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR), write: write(okPost, okLike), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitLikeFlow(deps, TARGET_ID);
 
     expect(res.ok).toBe(true);
@@ -259,7 +259,7 @@ describe('submitLikeFlow', () => {
   it('a like rejection short-circuits: no ledger entry', async () => {
     const ledger = new PendingLedger(PUB);
     const rejection: Rejection = { status: 409, message: 'Already liked this post' };
-    const deps: SubmitDeps = { reads: reads(), write: write(okPost, rejection), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(okPost, rejection), ledger, identity, network: null };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection });
     expect(ledger.size).toBe(0);
@@ -267,7 +267,7 @@ describe('submitLikeFlow', () => {
 
   it('an empty spendable view refuses a like in the voice register', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(okPost, okLike), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to like right now.' } });
     expect(writeCalls).toEqual([]);
@@ -276,7 +276,7 @@ describe('submitLikeFlow', () => {
 
   it('a target confirmedAuthor that is not valid hex is refused client-side, not a throw', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(BAD_KEY), write: write(okPost, okLike), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(BAD_KEY), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: "that post's author key is not valid." } });
     expect(writeCalls).toEqual([]);
@@ -307,13 +307,13 @@ describe('each press reads the view afresh', () => {
       usernameByOwner: async () => null,
     };
     const rejection: Rejection = { status: 409, message: 'input was spent' };
-    const deps1: SubmitDeps = { reads: freshReads, write: write(okPost, rejection), ledger, identity };
+    const deps1: SubmitDeps = { reads: freshReads, write: write(okPost, rejection), ledger, identity, network: null };
     const r1 = await submitLikeFlow(deps1, TARGET_ID);
     expect(r1).toEqual({ ok: false, rejection });
     expect(ledger.size).toBe(0);
 
     writeCalls = [];
-    const deps2: SubmitDeps = { reads: freshReads, write: write(okPost, okLike), ledger, identity };
+    const deps2: SubmitDeps = { reads: freshReads, write: write(okPost, okLike), ledger, identity, network: null };
     const r2 = await submitLikeFlow(deps2, TARGET_ID);
     expect(r2.ok).toBe(true);
     // The second build's one input is the second read's box, not the first.
@@ -369,7 +369,7 @@ describe('the node txId is compared to the client id', () => {
 
   it('a post whose node id disagrees refuses the entry and names the mismatch', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity, network: null };
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
     expect(ledger.size).toBe(0);
@@ -377,7 +377,7 @@ describe('the node txId is compared to the client id', () => {
 
   it('a like whose node id disagrees refuses the entry too', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity, network: null };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
     expect(ledger.size).toBe(0);
@@ -385,7 +385,7 @@ describe('the node txId is compared to the client id', () => {
 
   it('a withdrawal whose node id disagrees refuses the entry too', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity, network: null };
     const res = await submitWithdrawFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
     expect(ledger.size).toBe(0);
@@ -395,7 +395,7 @@ describe('the node txId is compared to the client id', () => {
 describe('submitVouchFlow', () => {
   it('builds, signs the id, POSTs { tx } and lands a vouch entry for the target', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitVouchFlow(deps, VOUCH_TARGET);
 
     expect(res.ok).toBe(true);
@@ -412,7 +412,7 @@ describe('submitVouchFlow', () => {
   it('a vouch rejection short-circuits: no ledger entry', async () => {
     const ledger = new PendingLedger(PUB);
     const rejection: Rejection = { status: 400, message: 'already vouched for this pair' };
-    const deps: SubmitDeps = { reads: reads(), write: write(okPost, okLike, rejection), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(okPost, okLike, rejection), ledger, identity, network: null };
     const res = await submitVouchFlow(deps, VOUCH_TARGET);
     expect(res).toEqual({ ok: false, rejection });
     expect(ledger.size).toBe(0);
@@ -420,7 +420,7 @@ describe('submitVouchFlow', () => {
 
   it('an empty spendable view refuses a vouch in the voice register', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity, network: null };
     const res = await submitVouchFlow(deps, VOUCH_TARGET);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to vouch right now.' } });
     expect(writeCalls).toEqual([]);
@@ -429,7 +429,7 @@ describe('submitVouchFlow', () => {
 
   it('a target that is not valid hex is refused client-side, not a throw', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitVouchFlow(deps, BAD_KEY);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'that is not a valid key.' } });
     expect(writeCalls).toEqual([]);
@@ -440,7 +440,7 @@ describe('submitVouchFlow', () => {
 describe('submitUnvouchFlow', () => {
   it('resolves the box at the press, DELETEs { tx } to the target, lands an unvouch entry with no change', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity, network: null };
     const res = await submitUnvouchFlow(deps, VOUCH_TARGET);
 
     expect(res.ok).toBe(true);
@@ -460,7 +460,7 @@ describe('submitUnvouchFlow', () => {
   it('a pair already gone re-reports withdrawn before any write', async () => {
     const ledger = new PendingLedger(PUB);
     // No vouch row for the target → the box was spent between render and press.
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, []), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, []), write: write(), ledger, identity, network: null };
     const res = await submitUnvouchFlow(deps, VOUCH_TARGET);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'that vouch was already withdrawn.' } });
     expect(writeCalls).toEqual([]);
@@ -472,7 +472,7 @@ describe('submitUnvouchFlow', () => {
     const w = write();
     // The node echoes a different id than the client signed → refused.
     w.submitUnvouch = async (targetHex, tx) => { writeCalls.push({ kind: 'unvouch', tx, targetHex }); return { ...okVouch, txId: 'ff'.repeat(32) }; };
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: w, ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: w, ledger, identity, network: null };
     const res = await submitUnvouchFlow(deps, VOUCH_TARGET);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
     expect(ledger.size).toBe(0);
@@ -482,7 +482,7 @@ describe('submitUnvouchFlow', () => {
 describe('submitInviteFlow', () => {
   it('builds, POSTs { tx } and lands an invite entry for the invitee', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitInviteFlow(deps, INVITEE, 100n);
 
     expect(res.ok).toBe(true);
@@ -498,7 +498,7 @@ describe('submitInviteFlow', () => {
 
   it('a spendable view below the bond refuses in the voice register', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '50' }]), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '50' }]), write: write(), ledger, identity, network: null };
     const res = await submitInviteFlow(deps, INVITEE, 100n);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to cover the bond right now.' } });
     expect(writeCalls).toEqual([]);
@@ -507,7 +507,7 @@ describe('submitInviteFlow', () => {
 
   it('an invitee that is not valid hex is refused client-side, not a throw', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitInviteFlow(deps, BAD_KEY, 100n);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'that is not a valid key.' } });
     expect(writeCalls).toEqual([]);
@@ -518,7 +518,7 @@ describe('submitInviteFlow', () => {
 describe('submitWithdrawFlow', () => {
   it('reads karma then status, signs the id, POSTs { tx } to the post, and lands the entry with the output as change', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitWithdrawFlow(deps, TARGET_ID);
 
     expect(res.ok).toBe(true);
@@ -543,7 +543,7 @@ describe('submitWithdrawFlow', () => {
 
   it('an empty spendable view refuses in the voice register — no box to sign with', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity, network: null };
     const res = await submitWithdrawFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'no rep box to sign a withdrawal with.' } });
     expect(writeCalls).toEqual([]);
@@ -553,7 +553,7 @@ describe('submitWithdrawFlow', () => {
   it('a rejection short-circuits: no ledger entry', async () => {
     const ledger = new PendingLedger(PUB);
     const rejection: Rejection = { status: 403, message: 'not the post author' };
-    const deps: SubmitDeps = { reads: reads(), write: write(okPost, okLike, okVouch, okInvite, okVouch, rejection), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(okPost, okLike, okVouch, okInvite, okVouch, rejection), ledger, identity, network: null };
     const res = await submitWithdrawFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection });
     expect(ledger.size).toBe(0);
@@ -569,7 +569,7 @@ describe('submitWithdrawFlow', () => {
       writeCalls.push({ kind: 'withdraw', tx, postId });
       return { status: 'submitted', txId: lastSignedTxId(), postId } as WithdrawSubmitResult;
     };
-    const deps: SubmitDeps = { reads: reads(), write: w, ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: w, ledger, identity, network: null };
     const res = await submitWithdrawFlow(deps, TARGET_ID);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -581,7 +581,7 @@ describe('submitWithdrawFlow', () => {
 describe('submitClaimFlow', () => {
   it('builds, signs the id, POSTs { tx } and lands a claim entry', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitClaimFlow(deps, 'Alice_01');
 
     expect(res.ok).toBe(true);
@@ -595,7 +595,7 @@ describe('submitClaimFlow', () => {
 
   it('an empty spendable view refuses — no karma box to sign with', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity, network: null };
     const res = await submitClaimFlow(deps, 'Alice_01');
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'no rep box to sign a claim with.' } });
     expect(writeCalls).toEqual([]);
@@ -609,7 +609,7 @@ describe('submitClaimFlow', () => {
       writeCalls.push({ kind: 'claim', tx });
       return { status: 409, message: 'name taken' };
     };
-    const deps: SubmitDeps = { reads: reads(), write: w, ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: w, ledger, identity, network: null };
     const res = await submitClaimFlow(deps, 'Alice_01');
     expect(res).toEqual({ ok: false, rejection: { status: 409, message: 'name taken' } });
     expect(ledger.size).toBe(0);
@@ -620,7 +620,7 @@ describe('submitBurnFlow', () => {
   it('resolves the name at the press, builds, POSTs to /usernames/:name/burn, and lands a burn entry', async () => {
     heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitBurnFlow(deps);
 
     expect(res.ok).toBe(true);
@@ -633,7 +633,7 @@ describe('submitBurnFlow', () => {
   it('no name held refuses before any POST', async () => {
     heldName = null;
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitBurnFlow(deps);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'this key holds no name.' } });
     expect(writeCalls).toEqual([]);
@@ -643,7 +643,7 @@ describe('submitBurnFlow', () => {
   it('a spendable view below the price refuses in the voice register', async () => {
     heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '5' }]), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '5' }]), write: write(), ledger, identity, network: null };
     const res = await submitBurnFlow(deps);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to burn right now.' } });
     expect(writeCalls).toEqual([]);
@@ -673,7 +673,7 @@ const identityRefused = {
 describe('the notSigned arm across every flow', () => {
   it('post: locked short-circuits before POST, records no entry', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityLocked };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityLocked, network: null };
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, notSigned: 'locked', reason: 'your key is locked' });
     expect(writeCalls).toEqual([]);
@@ -682,7 +682,7 @@ describe('the notSigned arm across every flow', () => {
 
   it('post: declined short-circuits before POST, records no entry', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined, network: null };
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, notSigned: 'declined', reason: 'not sent' });
     expect(writeCalls).toEqual([]);
@@ -691,7 +691,7 @@ describe('the notSigned arm across every flow', () => {
 
   it('post: refused carries the reason string through', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityRefused };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityRefused, network: null };
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'busy' });
     expect(writeCalls).toEqual([]);
@@ -701,7 +701,7 @@ describe('the notSigned arm across every flow', () => {
   it('like: notSigned short-circuits before POST for each ending', async () => {
     for (const id of [identityLocked, identityDeclined, identityRefused]) {
       const ledger = new PendingLedger(PUB);
-      const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR), write: write(), ledger, identity: id };
+      const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR), write: write(), ledger, identity: id, network: null };
       const res = await submitLikeFlow(deps, TARGET_ID);
       expect(res.ok).toBe(false);
       if (res.ok) return;
@@ -713,7 +713,7 @@ describe('the notSigned arm across every flow', () => {
 
   it('vouch: notSigned short-circuits before POST', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined, network: null };
     const res = await submitVouchFlow(deps, VOUCH_TARGET);
     expect(res).toEqual({ ok: false, notSigned: 'declined', reason: 'not sent' });
     expect(writeCalls).toEqual([]);
@@ -722,7 +722,7 @@ describe('the notSigned arm across every flow', () => {
 
   it('unvouch: notSigned short-circuits before DELETE', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity: identityLocked };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity: identityLocked, network: null };
     const res = await submitUnvouchFlow(deps, VOUCH_TARGET);
     expect(res).toEqual({ ok: false, notSigned: 'locked', reason: 'your key is locked' });
     expect(writeCalls).toEqual([]);
@@ -731,7 +731,7 @@ describe('the notSigned arm across every flow', () => {
 
   it('invite: notSigned short-circuits before POST', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityRefused };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityRefused, network: null };
     const res = await submitInviteFlow(deps, INVITEE, 100n);
     expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'busy' });
     expect(writeCalls).toEqual([]);
@@ -740,7 +740,7 @@ describe('the notSigned arm across every flow', () => {
 
   it('withdraw: notSigned short-circuits before POST', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined, network: null };
     const res = await submitWithdrawFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, notSigned: 'declined', reason: 'not sent' });
     expect(writeCalls).toEqual([]);
@@ -749,7 +749,7 @@ describe('the notSigned arm across every flow', () => {
 
   it('claim: notSigned short-circuits before POST', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityLocked };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityLocked, network: null };
     const res = await submitClaimFlow(deps, 'Alice_01');
     expect(res).toEqual({ ok: false, notSigned: 'locked', reason: 'your key is locked' });
     expect(writeCalls).toEqual([]);
@@ -759,7 +759,7 @@ describe('the notSigned arm across every flow', () => {
   it('burn: notSigned short-circuits before POST', async () => {
     heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityRefused };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityRefused, network: null };
     const res = await submitBurnFlow(deps);
     expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'busy' });
     expect(writeCalls).toEqual([]);
@@ -794,7 +794,7 @@ describe('onSigned — the collapse hook fires between sign and POST, only on po
     };
     const onSigned = () => events.push('onSigned');
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: trackedWrite, ledger, identity: trackedIdentity, onSigned };
+    const deps: SubmitDeps = { reads: reads(), write: trackedWrite, ledger, identity: trackedIdentity, onSigned, network: null };
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res.ok).toBe(true);
     // Signed, then onSigned, then POST — in that order and exactly once each.
@@ -805,7 +805,7 @@ describe('onSigned — the collapse hook fires between sign and POST, only on po
     const events: string[] = [];
     const onSigned = () => events.push('onSigned');
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined, onSigned };
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined, onSigned, network: null };
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, notSigned: 'declined', reason: 'not sent' });
     expect(events).toEqual([]);
@@ -816,7 +816,7 @@ describe('onSigned — the collapse hook fires between sign and POST, only on po
     const ledger = new PendingLedger(PUB);
     const base: SubmitDeps = {
       reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()], [{ boxId: '55'.repeat(32), value: '10000000000' }]),
-      write: write(), ledger, identity,
+      write: write(), ledger, identity, network: null,
     };
     await submitPostFlow(base, 'the content the prompt verifies', null);
     expect(signHints).toEqual([{ content: 'the content the prompt verifies' }]);
@@ -840,7 +840,7 @@ describe('onSigned — the collapse hook fires between sign and POST, only on po
     const ledger = new PendingLedger(PUB);
     const base: SubmitDeps = {
       reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()], [{ boxId: '55'.repeat(32), value: '10000000000' }]),
-      write: write(), ledger, identity, onSigned,
+      write: write(), ledger, identity, onSigned, network: null,
     };
     await submitLikeFlow(base, TARGET_ID);
     await submitVouchFlow(base, VOUCH_TARGET);
@@ -859,7 +859,7 @@ describe('submitSendFlow', () => {
   const CREDIT_BOX: CreditBoxRow = { boxId: '55'.repeat(32), value: '10000000000' }; // 100 $NOTIS
   it('reads credits then status, signs the id, POSTs { tx }, lands a send entry naming the recipient and payment box', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity, network: null };
     // toName is the bare name UsernameResult.name gives; the @ is the written
     // form and never stored (WEB_INTERFACE → The identity display).
     const res = await submitSendFlow(deps, RECIPIENT, 'bob', 1_250_000_000n);
@@ -889,7 +889,7 @@ describe('submitSendFlow', () => {
 
   it('no handle is toName null on the entry', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity, network: null };
     const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -902,7 +902,7 @@ describe('submitSendFlow', () => {
     const deps: SubmitDeps = {
       reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]),
       write: write(okPost, okLike, okVouch, okInvite, okVouch, okWithdraw, rejection),
-      ledger, identity,
+      ledger, identity, network: null,
     };
     const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
     expect(res).toEqual({ ok: false, rejection });
@@ -914,7 +914,7 @@ describe('submitSendFlow', () => {
     const w = write();
     const wrong = 'ff'.repeat(32);
     w.submitSend = async (tx) => { writeCalls.push({ kind: 'send', tx }); return { ...okSend, txId: wrong }; };
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: w, ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: w, ledger, identity, network: null };
     const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
     expect(ledger.size).toBe(0);
@@ -924,7 +924,7 @@ describe('submitSendFlow', () => {
     const ledger = new PendingLedger(PUB);
     const w = write();
     w.submitSend = async (tx) => { writeCalls.push({ kind: 'send', tx }); return { status: 'pending', txId: lastSignedTxId() } as unknown as SendSubmitResult; };
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: w, ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: w, ledger, identity, network: null };
     const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -936,7 +936,7 @@ describe('submitSendFlow', () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = {
       reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [{ boxId: '55'.repeat(32), value: '100' }]),
-      write: write(), ledger, identity,
+      write: write(), ledger, identity, network: null,
     };
     const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough $NOTIS.' } });
@@ -946,7 +946,7 @@ describe('submitSendFlow', () => {
 
   it('a recipient that is not valid hex is refused client-side, not a throw', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity, network: null };
     const res = await submitSendFlow(deps, BAD_KEY, null, 1_250_000_000n);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'that is not a valid key.' } });
     expect(writeCalls).toEqual([]);
@@ -958,7 +958,7 @@ describe('submitSendFlow', () => {
     // One base unit is far below the per-byte floor for a credit output.
     const deps: SubmitDeps = {
       reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [{ boxId: '55'.repeat(32), value: '1' }]),
-      write: write(), ledger, identity,
+      write: write(), ledger, identity, network: null,
     };
     const res = await submitSendFlow(deps, RECIPIENT, null, 1n);
     expect(res.ok).toBe(false);
@@ -976,7 +976,7 @@ describe('submitSendFlow', () => {
     // One box of value V — send V − 1, which leaves 1 base unit of change (below the floor).
     const deps: SubmitDeps = {
       reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [{ boxId: '55'.repeat(32), value: '10000000000' }]),
-      write: write(), ledger, identity,
+      write: write(), ledger, identity, network: null,
     };
     const res = await submitSendFlow(deps, RECIPIENT, null, 10000000000n - 1n);
     expect(res.ok).toBe(false);
@@ -991,7 +991,7 @@ describe('submitSendFlow', () => {
   it('notSigned in each of the three arms short-circuits before POST', async () => {
     for (const id of [identityLocked, identityDeclined, identityRefused]) {
       const ledger = new PendingLedger(PUB);
-      const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity: id };
+      const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity: id, network: null };
       const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
       expect(res.ok).toBe(false);
       if (res.ok) return;
@@ -1003,7 +1003,7 @@ describe('submitSendFlow', () => {
 
   it('the send flow passes no hint to sign', async () => {
     const ledger = new PendingLedger(PUB);
-    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity, network: null };
     await submitSendFlow(deps, RECIPIENT, 'bob', 1_250_000_000n);
     expect(signHints).toEqual([undefined]);
   });
@@ -1066,7 +1066,7 @@ describe('the reservation expiry, every flow', () => {
       const ledger = new PendingLedger(PUB);
       const deps: SubmitDeps = {
         reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()], [{ boxId: '55'.repeat(32), value: '10000000000' }]),
-        write, ledger, identity,
+        write, ledger, identity, network: null,
       };
       check(f.kind, await f.run(deps), ledger);
     }

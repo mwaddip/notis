@@ -1,15 +1,19 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { profileFor } from '@dagsocial/types';
+import { networkNumbers } from '../src/model/network-numbers';
+import { submitUnvouchFlow } from '../src/wallet/submit';
+import { PendingLedger } from '../src/wallet/ledger';
 import type { StatusResult } from '../src/api/dto';
 
 // The App answers the four — `inviteBondMin`, `inviteBondMax`,
 // `vouchCooldownBlocks`, `inviteProbationBlocks` — from one place
 // (WEB_INTERFACE → Invariants → "A per-network number is read, never assumed"):
-// where the build names its network it reads the profile, where it names
-// none it reads `/status`. Every reader of those numbers takes the one
-// place's answer, never `/status`'s field directly in a build that names
-// its network.
+// where the build names its network the caller hands `networkNumbers` that
+// network and the profile answers it, where it names none the caller hands
+// null and `/status` answers it. The App passes `BUILD_NETWORK` and submit
+// flows pass `deps.network`, so no reader of those numbers takes `/status`'s
+// field directly in a build that names its network.
 
 function statusOf(over: Partial<StatusResult> = {}): StatusResult {
   return {
@@ -22,21 +26,10 @@ function statusOf(over: Partial<StatusResult> = {}): StatusResult {
   };
 }
 
-beforeEach(() => {
-  document.head.innerHTML = '';
-  localStorage.clear();
-});
-
 describe('the four network numbers — one place', () => {
-  it('a build that names its network reads the profile, never `/status`', async () => {
-    vi.resetModules();
-    const meta = document.createElement('meta');
-    meta.setAttribute('name', 'notis-network');
-    meta.setAttribute('content', 'testnet');
-    document.head.appendChild(meta);
-    const { networkNumbers } = await import('../src/model/network-numbers');
+  it('a build that names its network reads the profile, never `/status`', () => {
     const p = profileFor('testnet');
-    const nn = networkNumbers(statusOf({ inviteBondMin: '99999', vouchCooldownBlocks: 7, inviteProbationBlocks: 9, inviteBondMax: '42' }));
+    const nn = networkNumbers('testnet', statusOf({ inviteBondMin: '99999', vouchCooldownBlocks: 7, inviteProbationBlocks: 9, inviteBondMax: '42' }));
     expect(nn).not.toBeNull();
     expect(nn!.inviteBondMin).toBe(p.inviteBondMin.toString());
     expect(nn!.inviteBondMax).toBe(p.inviteBondMax.toString());
@@ -44,10 +37,8 @@ describe('the four network numbers — one place', () => {
     expect(nn!.inviteProbationBlocks).toBe(p.inviteProbationBlocks);
   });
 
-  it('a build that names no network reads `/status`', async () => {
-    vi.resetModules();
-    const { networkNumbers } = await import('../src/model/network-numbers');
-    const nn = networkNumbers(statusOf());
+  it('a build that names no network reads `/status`', () => {
+    const nn = networkNumbers(null, statusOf());
     expect(nn).not.toBeNull();
     expect(nn!.inviteBondMin).toBe('99999');
     expect(nn!.inviteBondMax).toBe('99999');
@@ -55,24 +46,13 @@ describe('the four network numbers — one place', () => {
     expect(nn!.inviteProbationBlocks).toBe(1);
   });
 
-  it('a build that names no network and holds no `/status` yet reads null', async () => {
-    vi.resetModules();
-    const { networkNumbers } = await import('../src/model/network-numbers');
-    expect(networkNumbers(null)).toBeNull();
+  it('a build that names no network and holds no `/status` yet reads null', () => {
+    expect(networkNumbers(null, null)).toBeNull();
   });
 });
 
 describe('the unvouch flow — cooldown comes from the one place', () => {
   it('an unvouch built in a build that names its network releases at the profile\'s cooldown whatever `/status` answers', async () => {
-    vi.resetModules();
-    const meta = document.createElement('meta');
-    meta.setAttribute('name', 'notis-network');
-    meta.setAttribute('content', 'testnet');
-    document.head.appendChild(meta);
-
-    const { submitUnvouchFlow } = await import('../src/wallet/submit');
-    const { PendingLedger } = await import('../src/wallet/ledger');
-
     const PUB = 'aa'.repeat(32);
     const TARGET = '22'.repeat(32);
     const VOUCH_BOX = '44'.repeat(32);
@@ -102,6 +82,7 @@ describe('the unvouch flow — cooldown comes from the one place', () => {
         current: () => ({ pubKeyHex: PUB }),
         sign: async () => ({ signature: SIG } as const),
       },
+      network: 'testnet',
     };
 
     await submitUnvouchFlow(deps, TARGET);

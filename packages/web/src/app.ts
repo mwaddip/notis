@@ -11,7 +11,7 @@ import type { Mode } from './mode';
 import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll, endForm } from './dom';
 import { contentHashHex } from './integrity';
-import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
+import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_NETWORK, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { mountRow, type CardRow, type RowControl } from './view/card';
 import { renderPanesInto, renderRegionOver, renderBars } from './view/panes';
@@ -951,7 +951,7 @@ export class App {
       author: this.authorData,
       authorPosts: this.authorPostsData,
       invite: ((): { bondMin: string; bondMax: string; probationBlocks: number } | null => {
-        const nn = networkNumbers(this.state.status);
+        const nn = networkNumbers(BUILD_NETWORK, this.state.status);
         if (nn === null) return null;
         return { bondMin: nn.inviteBondMin, bondMax: nn.inviteBondMax, probationBlocks: nn.inviteProbationBlocks };
       })(),
@@ -1025,7 +1025,7 @@ export class App {
    *  node's refusal the truth (WEB_INTERFACE → The profile window). */
   private canAffordMinBond(): boolean {
     if (this.profileKarma === null) return false;
-    const nn = networkNumbers(this.state.status);
+    const nn = networkNumbers(BUILD_NETWORK, this.state.status);
     if (nn === null) return false;
     return BigInt(this.profileKarma.effective) >= BigInt(nn.inviteBondMin);
   }
@@ -2928,7 +2928,7 @@ export class App {
   // -------------------------------------------------------------------------
 
   private submitDeps(): SubmitDeps {
-    return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm };
+    return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm, network: BUILD_NETWORK };
   }
 
   /** The post flow's cache hook (WEB_INTERFACE → The extension → "The post
@@ -3321,7 +3321,7 @@ export class App {
     if (cur === null) return null;
     if (key === cur.pubKeyHex) return { kind: 'reason', text: 'this is you' };
     if (!this.isMember()) return { kind: 'reason', text: 'vouching comes with membership' };
-    const cooldownBlocks = networkNumbers(this.state.status)?.vouchCooldownBlocks ?? 0;
+    const cooldownBlocks = networkNumbers(BUILD_NETWORK, this.state.status)?.vouchCooldownBlocks ?? 0;
     if (this.escrowHeldUntil !== null && this.escrowHeldUntil > this.viewerTip) {
       return { kind: 'reason', text: `your stake from an unvouch is held until block ${this.escrowHeldUntil}` };
     }

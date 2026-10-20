@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 // builds and runs with the signing seam the extension's `claim` runs.
 
 describe('the wallet flows and the per-network numbers load with no DOM', () => {
-  it.fails('src/wallet/submit.ts imports under Node and names every flow', async () => {
+  it('src/wallet/submit.ts imports under Node and names every flow', async () => {
     let mod: typeof import('../src/wallet/submit') | null = null;
     let err: unknown = null;
     try {
@@ -30,7 +30,7 @@ describe('the wallet flows and the per-network numbers load with no DOM', () => 
     expect(typeof mod!.submitSendFlow).toBe('function');
   });
 
-  it.fails('src/model/network-numbers.ts imports under Node and names its one function', async () => {
+  it('src/model/network-numbers.ts imports under Node and names its one function', async () => {
     let mod: typeof import('../src/model/network-numbers') | null = null;
     let err: unknown = null;
     try {

@@ -124,6 +124,11 @@ async function main() {
       current: () => ({ pubKeyHex }),
       sign: async (_txBytes, txIdHex) => ({ signature: sign(null, Buffer.from(txIdHex, 'hex'), privateKey).toString('hex') }),
     },
+    // This script claims a name on devnet; the build names no network, so the
+    // caller passes null and `networkNumbers` reads from `/status` where any
+    // flow needs it (WEB_INTERFACE → Invariants → "A per-network number is
+    // read, never assumed"). submitClaimFlow itself reads none.
+    network: null,
   };
   const res = await submitClaimFlow(deps, NAME);
   if (!res.ok) {

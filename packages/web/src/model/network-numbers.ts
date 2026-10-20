@@ -1,12 +1,14 @@
-import { profileFor } from '@dagsocial/types';
-import { BUILD_NETWORK } from '../prefs';
+import { profileFor, type NetworkType } from '@dagsocial/types';
 import type { StatusResult } from '../api/dto';
 
 // WEB_INTERFACE → Invariants → "A per-network number is read, never assumed" —
 // the one place every reader of `inviteBondMin`, `inviteBondMax`,
 // `vouchCooldownBlocks` and `inviteProbationBlocks` passes through: where the
 // build names its network it reads the profile, where it names none it reads
-// `/status`.
+// `/status`. The network is passed in — the caller holds it (the App through
+// `prefs`' `BUILD_NETWORK`, the submit flows through `SubmitDeps.network`) —
+// so this module imports nothing that reads the document at load, and the
+// wallet's flows import under Node for the extension-check bundle.
 
 export interface NetworkNumbers {
   inviteBondMin: string;
@@ -15,9 +17,12 @@ export interface NetworkNumbers {
   inviteProbationBlocks: number;
 }
 
-export function networkNumbers(status: StatusResult | null): NetworkNumbers | null {
-  if (BUILD_NETWORK !== null) {
-    const p = profileFor(BUILD_NETWORK);
+export function networkNumbers(
+  network: NetworkType | null,
+  status: StatusResult | null,
+): NetworkNumbers | null {
+  if (network !== null) {
+    const p = profileFor(network);
     return {
       inviteBondMin: p.inviteBondMin.toString(),
       inviteBondMax: p.inviteBondMax.toString(),
