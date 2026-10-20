@@ -160,10 +160,15 @@ describe("every answer is read under its route's cap", () => {
   });
 
   it.fails('/status — a status body one byte over its route cap is refused', async () => {
-    const base = '{"pad":"';
+    // Every field `/status` writes is here, each value passing the field rule
+    // the reader rebuilds its answer under — a reader takes the fields the DTO
+    // names and carries nothing beside them (WEB_INTERFACE → Reading a node's
+    // answer → "Every answer is rebuilt from its own fields"), so the extra
+    // `pad` key is ignored and only the cap can refuse the body.
+    const stem = '{"networkType":"testnet","blockHeight":0,"protocolVersion":1,"postCount":0,"pendingPosts":0,"totalKarma":"0","liquidKarma":"0","totalCredits":"0","inviteProbationBlocks":0,"vouchCooldownBlocks":60,"inviteBondMin":"100","inviteBondMax":"1000","membership":{"memberCount":2,"memberBar":1,"memberLikesBar":2},"pad":"';
     const tail = '"}';
-    const padLen = STATUS_READ_BYTES + 1 - base.length - tail.length;
-    serveRaw(`${base}${'x'.repeat(padLen)}${tail}`);
+    const padLen = STATUS_READ_BYTES + 1 - stem.length - tail.length;
+    serveRaw(`${stem}${'x'.repeat(padLen)}${tail}`);
     await expect(client().status()).rejects.toBeInstanceOf(PageError);
   });
 });
