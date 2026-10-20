@@ -1157,11 +1157,11 @@ function readsFor(
 
 import { install as installBackground } from '../src/extension/background';
 import { bootstrapProxy } from '../src/extension/proxy';
-import { fakeChrome } from './fake-chrome';
+import { fakeChrome, fakeLockManager } from './fake-chrome';
 
 describe('submitPostFlow over the extension proxy and background', () => {
   async function identityOverProxy(c: ReturnType<typeof fakeChrome>, karma: 'silent' | 'ask' = 'ask'): Promise<SubmitDeps['identity']> {
-    installBackground(c.api, { publicBase: '' });
+    installBackground(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     // The proxy reads through `runtime.sendMessage`; route it to the
     // installed listener as the real extension's runtime does.
     const origin = c.origin + 'index.html';

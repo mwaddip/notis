@@ -5,7 +5,7 @@ import { encodeTx, computeTxId, computeContentHash, bytesToHex, hexToBytes, gene
 import type { UtxoTransaction } from '@dagsocial/types';
 import { buildPost, buildLike, buildSend, type BuildContext } from '../src/wallet/builders';
 import { install } from '../src/extension/background';
-import { fakeChrome, freshFixture, type FakeChrome } from './fake-chrome';
+import { fakeChrome, fakeLockManager, freshFixture, type FakeChrome } from './fake-chrome';
 import type { SignRecord, Message, SignAnswer } from '../src/extension/protocol';
 import { KNOWN_KINDS } from '../src/extension/protocol';
 
@@ -72,13 +72,13 @@ function unsignedCreditSendTx(
 describe('background — state and identity lifecycle', () => {
   it('state answers null with no envelope stored', async () => {
     const c = fakeChrome();
-    install(c.api, { publicBase: '' });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     expect(await c.send({ kind: 'state' })).toBeNull();
   });
 
   it('draft + create seals the identity, unlocks it, and never writes the seed to storage.local', async () => {
     const c = fakeChrome();
-    install(c.api, { publicBase: '' });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     const drafted = await c.send({ kind: 'draft' }) as { pubKeyHex: string };
     expect(drafted.pubKeyHex).toMatch(/^[0-9a-f]{64}$/);
     // The drafted seed rides storage.session, never storage.local.
@@ -100,7 +100,7 @@ describe('background — state and identity lifecycle', () => {
 
   it('unlock and lock only touch the session store; forget clears the envelope too', async () => {
     const c = fakeChrome();
-    install(c.api, { publicBase: '' });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     await c.send({ kind: 'draft' });
     await c.send({ kind: 'create', passphrase: 'pw' });
     expect(c.storage.session.has('notis.seed')).toBe(true);
@@ -138,14 +138,14 @@ describe('background — a stored envelope outside the scrypt bound', () => {
     });
     fixture.local.set('notis.identity', outside);
     const c = fakeChrome(fixture);
-    install(c.api, { publicBase: '' });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     expect(await c.send({ kind: 'state' })).toBeNull();
     expect(c.storage.local.get('notis.identity')).toBe(outside);
   });
 
   it('an importFile of a file naming N = 2^19 answers an error naming the bound and stores nothing', async () => {
     const c = fakeChrome();
-    install(c.api, { publicBase: '' });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     const outside = JSON.stringify({
       version: 1,
       pubKeyHex: 'ab'.repeat(32),
@@ -163,7 +163,7 @@ describe('background — a stored envelope outside the scrypt bound', () => {
 describe('background — policy', () => {
   it('policy defaults to silent; set to ask writes and reads back', async () => {
     const c = fakeChrome();
-    install(c.api, { publicBase: '' });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     await c.send({ kind: 'draft' });
     await c.send({ kind: 'create', passphrase: 'pw' });
     expect((await c.send({ kind: 'state' }) as { policy: string }).policy).toBe('silent');
@@ -423,7 +423,7 @@ describe('background — sign prompt path (ask or credits)', () => {
   it('on background start every record without a result is declined', async () => {
     const fixture = freshFixture();
     const first = fakeChrome(fixture);
-    install(first.api, { publicBase: '' });
+    install(first.api, { publicBase: '' }, { locks: fakeLockManager() });
     await first.send({ kind: 'draft' });
     await first.send({ kind: 'create', passphrase: 'pw' });
     await first.send({ kind: 'policy', karma: 'ask' });
@@ -434,7 +434,7 @@ describe('background — sign prompt path (ask or credits)', () => {
     // A fresh instance over the same fixture — the worker restarted. install()
     // registers onStartup; the manual fire drives the sweep.
     const second = fakeChrome(fixture, first.origin);
-    install(second.api, { publicBase: '' });
+    install(second.api, { publicBase: '' }, { locks: fakeLockManager() });
     second.fireStartup();
     await new Promise((r) => setImmediate(r));
     for (const [, record] of promptRecords(second)) {
@@ -656,7 +656,7 @@ describe('background — approve and exportFile hold the seed to the identity', 
 describe('background — the listener answers { error } when a handler throws', () => {
   it('a handler whose storage read rejects: the sender receives { error } with the failure\'s words', async () => {
     const c = fakeChrome();
-    install(c.api, { publicBase: '' });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     // Make the storage read in state() reject.
     c.api.storage.local.get = (async () => { throw new Error('I/O refused'); }) as typeof chrome.storage.local.get;
     const answer = await c.send({ kind: 'state' });
@@ -674,7 +674,7 @@ describe('background — a fresh instance over the same storage answers approve'
   it('the second instance signs the first\'s pending prompt', async () => {
     const fixture = freshFixture();
     const first = fakeChrome(fixture);
-    install(first.api, { publicBase: '' });
+    install(first.api, { publicBase: '' }, { locks: fakeLockManager() });
     await first.send({ kind: 'draft' });
     await first.send({ kind: 'create', passphrase: 'pw' });
     await first.send({ kind: 'policy', karma: 'ask' });
@@ -685,7 +685,7 @@ describe('background — a fresh instance over the same storage answers approve'
     // it has no globals from the first, and it answers `approve` for the
     // record the first wrote.
     const second = fakeChrome(fixture, first.origin);
-    install(second.api, { publicBase: '' });
+    install(second.api, { publicBase: '' }, { locks: fakeLockManager() });
     const result = await second.send({ kind: 'approve', id: answer.pending }, promptSender(second));
     expect(result).toBe('ok');
 
@@ -734,13 +734,13 @@ describe('background — sign hint verification', () => {
 describe('background — unknown messages are refused', () => {
   it('an unknown kind answers { error: "unknown message kind" }', async () => {
     const c = fakeChrome();
-    install(c.api, { publicBase: '' });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     expect(await c.send({ kind: 'not-a-real-kind' })).toEqual({ error: 'unknown message kind' });
   });
 
   it('a shape with no kind is refused too', async () => {
     const c = fakeChrome();
-    install(c.api, { publicBase: '' });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     expect(await c.send({ passphrase: 'x' })).toEqual({ error: 'unknown message kind' });
   });
 });
@@ -757,7 +757,7 @@ const PUBLIC = 'https://notis.fun/web/';
 
 function bridgeChrome(publicBase = PUBLIC): FakeChrome {
   const c = fakeChrome();
-  install(c.api, { publicBase });
+  install(c.api, { publicBase }, { locks: fakeLockManager() });
   return c;
 }
 
@@ -1189,7 +1189,7 @@ describe('background — a non-bridge kind from an outside sender refuses with n
 
 async function bootstrappedChrome(): Promise<FakeChrome> {
   const c = fakeChrome();
-  install(c.api, { publicBase: '' });
+  install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
   await c.send({ kind: 'draft' });
   await c.send({ kind: 'create', passphrase: 'pw' });
   return c;

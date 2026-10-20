@@ -8,7 +8,7 @@ import type { FeedResult, ThreadResult, PostJson } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
 import { fakeTabs } from './fake-tabs';
-import { fakeChrome, type FakeChrome } from './fake-chrome';
+import { fakeChrome, fakeLockManager, type FakeChrome } from './fake-chrome';
 
 // The page's half of the handover — WEB_INTERFACE → The extension → "Links into the extension".
 // The holder asks the background for waiting threads at two moments: `claim()` resolving, and a
@@ -381,7 +381,7 @@ describe('wrapTabs — driven from the App, the whole path', () => {
   it('a bridge-shaped arrived to the background lands as a window in column 0', async () => {
     const PUBLIC = 'https://notis.fun/web/';
     const c = fakeChrome();
-    install(c.api, { publicBase: PUBLIC });
+    install(c.api, { publicBase: PUBLIC }, { locks: fakeLockManager() });
     // Route the wrapper's sendMessage through the fake dispatch so the real background answers.
     c.api.runtime.sendMessage = ((m: unknown) => c.send(m)) as typeof chrome.runtime.sendMessage;
     // Pre-set the links preference so the bridge's `arrived` is not refused.
