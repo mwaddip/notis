@@ -13,3 +13,12 @@ export {
   HEIGHT_READ_BYTES,
   LEDGER_READ_MAX,
 } from './caps.js';
+
+export {
+  isHex64Lower,
+  isNonNegSafeInt,
+  isNonNegSafeIntOrNull,
+  isBoxValue,
+  isSum,
+  isAuthorName,
+} from './fields.js';
