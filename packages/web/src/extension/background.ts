@@ -45,11 +45,11 @@ export interface LockManager {
   request<T>(name: string, callback: () => Promise<T>): Promise<T>;
 }
 
-/** `install` reads a lock manager from here. Omitted ⇒ the browser's own
- *  `navigator.locks` when the environment has it, else an in-process FIFO
- *  the serial tests already rely on. */
+/** `install` reads the lock manager from here — a required argument. The
+ *  browser's module-load install hands the adapter over `navigator.locks`; a
+ *  Node test hands `fakeLockManager()` from `test/fake-chrome.ts`. */
 export interface InstallOptions {
-  locks?: LockManager;
+  locks: LockManager;
 }
 
 const PROMPT_LOCK = 'notis.prompt';
@@ -70,8 +70,8 @@ const PROMPT_TOP = 80;    // the drop under the toolbar
  *  every message, so a worker restart mid-conversation is safe. `options.locks`
  *  carries the Web Lock seam the record paths run under (WEB_INTERFACE → The
  *  extension → "`sign`, in the background, in order", step 9). */
-export function install(api: typeof chrome, config: BackgroundConfig, options: InstallOptions = {}): void {
-  const locks = options.locks ?? defaultLockManager();
+export function install(api: typeof chrome, config: BackgroundConfig, options: InstallOptions): void {
+  const locks = options.locks;
   api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // WEB_INTERFACE → The extension → "Every message is answered". A failure
     // inside a handler answers `{ error }` with the failure's words; no
@@ -91,32 +91,6 @@ export function install(api: typeof chrome, config: BackgroundConfig, options: I
  *  The extension → "`sign`, in the background, in order", step 9. */
 function withPromptLock<T>(locks: LockManager, callback: () => Promise<T>): Promise<T> {
   return locks.request(PROMPT_LOCK, callback);
-}
-
-/** The lock manager a browser `install` reads when none is handed to it. The
- *  browser's own `navigator.locks` wins; Node has none and the fallback is an
- *  in-process FIFO, so the serial tests pass without a seam of their own. */
-function defaultLockManager(): LockManager {
-  const n = (globalThis as { navigator?: { locks?: { request?: unknown } } }).navigator;
-  if (n && n.locks && typeof n.locks.request === 'function') {
-    const browserLocks = n.locks as { request<T>(name: string, callback: () => Promise<T>): Promise<T> };
-    return { request: (name, callback) => browserLocks.request(name, callback) };
-  }
-  const tails = new Map<string, Promise<void>>();
-  return {
-    async request<T>(name: string, callback: () => Promise<T>): Promise<T> {
-      const prev = tails.get(name) ?? Promise.resolve();
-      let release!: () => void;
-      const held = new Promise<void>((r) => { release = r; });
-      const next = prev.then(() => held);
-      tails.set(name, next);
-      await prev;
-      try { return await callback(); } finally {
-        release();
-        if (tails.get(name) === next) tails.delete(name);
-      }
-    },
-  };
 }
 
 /** Dispatch one message to the identity service. `unknown` from the wire, so
@@ -711,13 +685,20 @@ function errorMessage(e: unknown): string {
 
 // Auto-install at module load — the background is loaded by the browser's own
 // runtime, so listeners must register before the first event. Tests build the
-// module through a fake `chrome` and call install(api, config) themselves; the
-// guard keeps them from double-installing here. The default lock manager
-// reads `navigator.locks` in the browser (WEB_INTERFACE → The extension →
+// module through a fake `chrome` and call install(api, config, options)
+// themselves; the guard keeps them from double-installing here. The browser's
+// own `navigator.locks` is adapted to the LockManager shape and handed in,
+// so the record paths serialise over it (WEB_INTERFACE → The extension →
 // "`sign`, in the background, in order", step 9).
 if (typeof globalThis !== 'undefined' && typeof (globalThis as { chrome?: unknown }).chrome !== 'undefined') {
   install((globalThis as unknown as { chrome: typeof chrome }).chrome, {
     publicBase: import.meta.env.VITE_PUBLIC ?? '',
+  }, {
+    locks: {
+      request<T>(name: string, callback: () => Promise<T>): Promise<T> {
+        return navigator.locks.request(name, () => callback()) as Promise<T>;
+      },
+    },
   });
 }
 
