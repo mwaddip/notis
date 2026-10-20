@@ -178,7 +178,11 @@ describe('write client — the shape the route serves', () => {
 
 describe('write client — the cap and the deadline', () => {
   it('a 2xx one byte over WRITE_ANSWER_READ_BYTES ends as a transport failure does', async () => {
-    const over = 'a'.repeat(WRITE_ANSWER_READ_BYTES + 1);
+    const answer = { status: 'pending', txId: TX_LOWER, expiresAtHeight: 5720 };
+    const bare = JSON.stringify({ ...answer, pad: '' });
+    const pad = 'a'.repeat(WRITE_ANSWER_READ_BYTES + 1 - new TextEncoder().encode(bare).length);
+    const over = JSON.stringify({ ...answer, pad });
+    expect(new TextEncoder().encode(over).length).toBe(WRITE_ANSWER_READ_BYTES + 1);
     vi.stubGlobal('fetch', vi.fn(async () => new Response(over, { status: 200 })));
     const res = await write().submitLike({});
     expect(isRejection(res)).toBe(true);
