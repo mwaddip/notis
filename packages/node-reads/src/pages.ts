@@ -3,7 +3,7 @@
 // paged read of a node's answer is held to. One definition each, so a client
 // of the node's HTTP API runs the same check in every place that reads a page.
 
-import { isRecord } from './http.js';
+import { capped, isRecord } from './http.js';
 
 /**
  * One page the client's whole-list read holds the node's answer to. `rows`
@@ -113,7 +113,7 @@ export async function wholeListRead<Row>(opts: WholeListOpts<Row>): Promise<Whol
     for (const row of page.rows) {
       const key = keyOf(row);
       if (seenKeys.has(key)) {
-        return { ok: false, reason: `one row key named twice across pages: ${key}` };
+        return { ok: false, reason: `one row key named twice across pages: ${capped(key)}` };
       }
       seenKeys.add(key);
       rows.push(row);
@@ -126,7 +126,7 @@ export async function wholeListRead<Row>(opts: WholeListOpts<Row>): Promise<Whol
       return { ok: false, reason: `listing runs past the ${bound}-row bound: a next page still stands at the bound` };
     }
     if (seenCursors.has(page.next)) {
-      return { ok: false, reason: `one cursor named twice across pages: ${page.next}` };
+      return { ok: false, reason: `one cursor named twice across pages: ${capped(page.next)}` };
     }
     seenCursors.add(page.next);
     after = page.next;

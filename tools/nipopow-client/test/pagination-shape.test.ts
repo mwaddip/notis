@@ -228,7 +228,7 @@ describe("proveName holds a lookup answer's boxId to 64 lowercase hex", () => {
 });
 
 describe("wholeListRead's refusals name a node's string through capped", () => {
-  it.fails("a repeated cursor carrying ESC and CR reaches the reason as its \\u escapes, never raw", async () => {
+  it("a repeated cursor carrying ESC and CR reaches the reason as its \\u escapes, never raw", async () => {
     // The cursor carries two C0 controls — ESC (U+001B) and CR (U+000D). Each
     // page under the repeated cursor answers with fresh row keys, so the
     // whole-list read's row-key refusal cannot land first.
