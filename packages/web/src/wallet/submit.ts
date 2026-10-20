@@ -44,12 +44,16 @@ export type SignResult =
  *  (WEB_INTERFACE → The extension). `txBytes` is `encodeTx` of the unsigned
  *  transaction, so the background decodes and recomputes the id it signs over
  *  rather than trusting the page's claim (WEB_INTERFACE → "`sign`, in the
- *  background, in order"). The optional `hint` carries page-supplied display
- *  data — a post's content — verified against the tx's commit before it is
- *  shown, so it can never mislead the human at the prompt. */
+ *  background, in order"). `pubKeyHex` is the key the flow read from `current()`
+ *  when it began and built the transaction for; a key that is not the identity's
+ *  is `refused: key-changed`, in both modules, and nothing is signed
+ *  (WEB_INTERFACE → "A signature is made for the key the transaction was built
+ *  for"). The optional `hint` carries page-supplied display data — a post's
+ *  content — verified against the tx's commit before it is shown, so it can
+ *  never mislead the human at the prompt. */
 export interface Signer {
   current(): { pubKeyHex: string } | null;
-  sign(txBytes: Uint8Array, txIdHex: string, hint?: { content?: string }): Promise<SignResult>;
+  sign(txBytes: Uint8Array, txIdHex: string, pubKeyHex: string, hint?: { content?: string }): Promise<SignResult>;
 }
 
 export interface SubmitDeps {
@@ -99,7 +103,7 @@ async function signBody(
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; notSigned: 'locked' | 'declined' | 'refused'; reason: string }
 > {
-  const r = await identity.sign(encodeTx(tx), txId, hint);
+  const r = await identity.sign(encodeTx(tx), txId, pubKeyHex, hint);
   if ('locked' in r) return { ok: false, notSigned: 'locked', reason: 'your key is locked' };
   if ('declined' in r) return { ok: false, notSigned: 'declined', reason: 'not sent' };
   if ('refused' in r) return { ok: false, notSigned: 'refused', reason: r.refused };

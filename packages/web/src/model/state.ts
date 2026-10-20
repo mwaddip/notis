@@ -341,7 +341,7 @@ export interface Handlers {
  *  extension). */
 export interface AppIdentity {
   current(): { pubKeyHex: string; locked: boolean } | null;
-  sign(txBytes: Uint8Array, txIdHex: string, hint?: { content?: string }): Promise<SignResult>;
+  sign(txBytes: Uint8Array, txIdHex: string, pubKeyHex: string, hint?: { content?: string }): Promise<SignResult>;
   /** Draft a fresh keypair — asynchronous because the extension's proxy sends
    *  it as a message; the in-page module wraps its result in Promise.resolve. */
   draft(): Promise<{ pubKeyHex: string }>;

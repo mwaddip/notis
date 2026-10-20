@@ -90,7 +90,7 @@ const vouchRow = (over: Partial<VouchesVoucherResult['vouches'][number]> = {}): 
 let signHints: Array<{ content?: string } | undefined>;
 const identity = {
   current: () => ({ pubKeyHex: PUB }),
-  sign: async (_bytes: Uint8Array, txId: string, hint?: { content?: string }) => {
+  sign: async (_bytes: Uint8Array, txId: string, _pubKeyHex: string, hint?: { content?: string }) => {
     signCalls.push(txId);
     signHints.push(hint);
     return { signature: SIG } as const;
@@ -1112,7 +1112,7 @@ describe('the reservation expiry, every flow', () => {
 // its start, built the transaction for and ran its reads under; a signature
 // made for any other key is a `refused: key-changed`, and no node ever sees it.
 describe('a signature is made for the key the flow built for', () => {
-  it.fails('a flow passes the key read at its start; a current() flipped between the build and the signature does not reach it', async () => {
+  it('a flow passes the key read at its start; a current() flipped between the build and the signature does not reach it', async () => {
     const A = PUB;
     const B = 'bb'.repeat(32);
     const seen: Array<{ pubKeyHex: string | undefined }> = [];

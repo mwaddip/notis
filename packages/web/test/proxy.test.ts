@@ -52,7 +52,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
     const c = fakeChrome();
     wireBackground(c, { state: null, sign: { signature: 'ab'.repeat(64) } as SignAnswer });
     const proxy = await bootstrapProxy(c.api, { publicBase: '' });
-    const r = await proxy.sign(new Uint8Array([1, 2, 3]), 'cd'.repeat(32));
+    const r = await proxy.sign(new Uint8Array([1, 2, 3]), 'cd'.repeat(32), 'aa'.repeat(32));
     expect(r).toEqual({ signature: 'ab'.repeat(64) });
   });
 
@@ -60,7 +60,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
     const c = fakeChrome();
     wireBackground(c, { state: null, sign: { locked: true } as SignAnswer });
     const proxy = await bootstrapProxy(c.api, { publicBase: '' });
-    const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32));
+    const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32), 'aa'.repeat(32));
     expect(r).toEqual({ locked: true });
   });
 
@@ -68,7 +68,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
     const c = fakeChrome();
     wireBackground(c, { state: null, sign: { refused: 'busy' } as SignAnswer });
     const proxy = await bootstrapProxy(c.api, { publicBase: '' });
-    const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32));
+    const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32), 'aa'.repeat(32));
     expect(r).toEqual({ refused: 'busy' });
   });
 
@@ -81,7 +81,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
     });
     const proxy = await bootstrapProxy(c.api, { publicBase: '' });
     // Start the sign; it awaits a pending resolution.
-    const signPromise = proxy.sign(new Uint8Array(), 'cd'.repeat(32));
+    const signPromise = proxy.sign(new Uint8Array(), 'cd'.repeat(32), 'aa'.repeat(32));
     // The background then writes the record's result to session storage.
     const key = 'notis.sign.abcd1234abcd1234abcd1234abcd1234';
     const record: SignRecord = {
@@ -108,7 +108,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
       ack: 'ok',
     });
     const proxy = await bootstrapProxy(c.api, { publicBase: '' });
-    const p = proxy.sign(new Uint8Array(), 'cd'.repeat(32));
+    const p = proxy.sign(new Uint8Array(), 'cd'.repeat(32), 'aa'.repeat(32));
     const key = 'notis.sign.aabb' + '00'.repeat(14);
     const record: SignRecord = {
       id: 'aabb' + '00'.repeat(14),
@@ -143,7 +143,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
       result: { signature: 'aa'.repeat(64) },
     };
     c.storage.session.set(key, record);
-    const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32));
+    const r = await proxy.sign(new Uint8Array(), 'cd'.repeat(32), 'aa'.repeat(32));
     expect('pending' in (r as object)).toBe(false);
   });
 });
@@ -227,7 +227,7 @@ describe('proxy — ack the record after reading a result', () => {
       return 'ok';
     }) as typeof chrome.runtime.sendMessage;
     const proxy = await bootstrapProxy(c.api, { publicBase: '' });
-    const p = proxy.sign(new Uint8Array(), 'cd'.repeat(32));
+    const p = proxy.sign(new Uint8Array(), 'cd'.repeat(32), 'aa'.repeat(32));
     const key = 'notis.sign.de' + '00'.repeat(15);
     const record: SignRecord = {
       id: 'de' + '00'.repeat(15),
