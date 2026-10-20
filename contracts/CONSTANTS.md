@@ -355,11 +355,6 @@ the drift test's converse does not reach them and the rows are marked.
 
 ## HTTP view bounds
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** The four page bounds below lead their move to `@dagsocial/types`: today they are
-> literals of `node/src/routes/page.ts` and `node/src/state/avl-endpoint.ts`, the web holding a copy of
-> `BATCH_READ_MAX` and the light client one of `RANGE_PAGE_MAX`, so the drift test reads their four rows as pinned
-> and finds none of them in a barrel.
-
 `@dagsocial/types`, served by `packages/node` — the page every list a view returns is cut to (`NODE_INTERFACE →
 "Every list a view returns is a page"`), the batch read's ids and the range route's page. Interface numbers, not
 consensus: the node serves within them and every client asks within them, one definition both read
@@ -390,13 +385,9 @@ so the drift test's converse does not reach it and its row is marked.
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `POST_CACHE_BYTES` (web) | `50_000_000` | the post cache's size, over its entries' sizes | policy | provisional and unmeasured — a round figure, argued by nothing yet | PROVISIONAL | `WEB_INTERFACE → The extension → "The post cache"` |
-| `BATCH_RESOLVE_MS` (web) | `10_000` | how long one resolve of the posts a list lacks runs, over all its nodes and requests | policy | provisional: the light client's limit for one request, taken as the whole budget — argued by nothing else | PROVISIONAL | `WEB_INTERFACE → The extension → "The resolve"` |
+| `BATCH_RESOLVE_MS` (web) | `10_000` | how long one resolve of the posts a list lacks runs, over all its nodes and requests | policy | provisional: `REQUEST_TIMEOUT_MS`' figure for one request, taken as the whole budget — argued by nothing else | PROVISIONAL | `WEB_INTERFACE → The extension → "The resolve"` |
 
 ## Client reads
-
-> ⚠ **AHEAD OF CODE (2026-10-20).** Every row below is an export of `@dagsocial/node-reads` (`src/caps.ts`,
-> `src/http.ts`, `src/pages.ts`) and the light client reads under them; the web's reads take them in the work that
-> follows — today the web reads with neither cap nor deadline.
 
 `packages/node-reads` — what every client of the node's HTTP API reads under (`WEB_INTERFACE → Reading a node's
 answer`): the byte cap each route's answer is read under, the one request deadline, and the most rows one whole-list

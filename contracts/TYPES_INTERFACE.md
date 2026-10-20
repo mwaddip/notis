@@ -3560,10 +3560,6 @@ export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';  // SPKI wrapper 
 
 ### HTTP view bounds
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** The four exports below lead their move from `@dagsocial/node`
-> (`routes/page.ts`, `state/avl-endpoint.ts`): today the node defines them, and the web and the light client each hold
-> a copy of one.
-
 ```typescript
 export const PAGE_LIMIT_DEFAULT = 50;   // local — rows a view returns when no `limit` is named
 export const PAGE_LIMIT_MAX = 100;      // local — the most rows one page carries, whatever `limit` names

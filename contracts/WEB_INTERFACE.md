@@ -332,9 +332,6 @@ configuration, never in `@dagsocial/types`. **The build's `notis-public`** — t
 prefix the background checks the bridge's sender against; an empty one builds an extension with no bridge and
 no links row.
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** The paragraph below leads `@dagsocial/node-reads`: today the capped reader and
-> the caps it names live in `@dagsocial/nipopow-client`, which exports the reader and the batch cap to the resolve.
-
 **Every answer is read under its route's cap.** Each read the light client makes — `@dagsocial/nipopow-client`'s,
 which the command line and the extension both run — and the resolve's batch read (→ "The resolve") is read as every
 client's read is (→ Reading a node's answer): under its route's cap and the one deadline, through
@@ -798,13 +795,6 @@ value too, and refuses a name no network profile answers to.
 
 ## Reading a node's answer
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** This section leads `@dagsocial/node-reads` — the capped reader, the deadline, the
-> field checks, the page rule, the whole-list read and the route caps — and, over it, the web's `api/client.ts`,
-> `api/write.ts`, `api/faucet.ts`, `extension/post-resolver.ts`, `wallet/reads.ts`, `wallet/submit.ts` and the
-> whole-list reads in `app.ts`, and the light client's `fetchListing`. Today the web reads every body whole with no
-> deadline and casts all but a page's list, eight whole-list reads follow `next` with no bound, and `fetchListing`
-> follows empty pages without end.
-
 **A node's answer is a claim of its route's shape, and a client takes nothing else.** Every client of the node's HTTP
 API — this one in both builds, and the light client — reads through one package, `@dagsocial/node-reads`, and holds
 each answer to its route. **Every answer is rebuilt from its own fields**, each of its type: an id 64 lowercase hex
@@ -1258,9 +1248,6 @@ no whitespace; whitespace before the closer fails the construct. **A failed cons
 the scan continues past them**, so a bare URL among them still links — `[](https://x)` shows `[](` and `)` as
 text around a link. A `[text](url)` link is a link whatever its URL ends in.
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** The paragraph below's `//` leads `view/content.ts`' `gateUrl`: today a string
-> with the scheme and no `//` passes.
-
 **The URL gate.** One function serves the renderer and the composer: the string parses as a URL, its scheme
 is `http` or `https` **followed by `//`**, and it holds no whitespace. Without the two slashes a string such as
 `https:example.com/x` parses with the host the reader is shown, and the browser resolves it against the page's
@@ -1407,9 +1394,6 @@ key's entries and cannot try to spend its predicted change; a reload that forgot
 re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
 identity change rebuilds the ledger for the new key at once** (→ The identity module, `onChange`).
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** The paragraph below's last two sentences lead `wallet/submit.ts` and
-> `api/write.ts`: today a 2xx body is cast, its fields unchecked but for the `txId` compared, and read whole.
-
 **A pending entry's expiry is the client's, and a node's answer can only bring it sooner.** An entry expires at its
 `submittedAtHeight` plus `MEMPOOL_EXPIRY_BLOCKS` — the lifetime a node gives every transaction it pools
 (`MEMPOOL_INTERFACE → What takes an entry out of the pool`) — or at the `expiresAtHeight` its answer carried when that
@@ -1421,12 +1405,9 @@ the spendable view for good, and across a node change, since the ledger is the i
 whether or not its body carries `expiresAtHeight`** — the transaction is the reader's own and may land, so its inputs
 stay reserved. One whose `txId` differs from the built one is a client rejection — *"the node computed a different
 transaction id"* — since the client records no entry under an id the node does not share; and so is one whose fields
-the flow reads are not their types — a `txId`, `postId` or `bondBoxId` that is not 64 lowercase hex, a `name` that is
-not a well-formed one (→ Reading a node's answer). A 2xx body over its route's cap, or one that does not parse, ends
+are not their types — a `txId`, `postId` or `bondBoxId` that is not 64 lowercase hex, a `name` that is not a
+well-formed one (→ Reading a node's answer). A 2xx body over its route's cap, or one that does not parse, ends
 the flight as a transport failure does.
-
-> ⚠ **AHEAD OF CODE (2026-10-20).** The paragraph below's network numbers — the unvouch's `vouchCooldownBlocks`, the
-> invite's bond bounds — lead the extension's builders: today both builds read the four from `/status`.
 
 **Builders exist for a post, a like, a vouch, an unvouch, an invite, a withdrawal, a claim, a burn and a send, and
 nothing else.** A root
@@ -1491,10 +1472,6 @@ withdraw's transient flight, the vouch mark, an invite's, a claim's or a burn's 
 line in their report: *like not sent.*, *withdraw not sent.*, or *your key is locked* for the race. A
 `try again` on an expired card returns to *expired* on `notSigned`, `try again` still offered. A
 transport failure after the collapse stays the rejected ending.
-
-> ⚠ **AHEAD OF CODE (2026-10-20).** The two paragraphs below lead `app.ts`' reconcile and the read client: today a
-> pending invite reads one page of `/invites`, a pending send reads the recipient's whole `/credits` following `next`,
-> and the height `/blocks/current` answers is taken unchecked.
 
 **Reconcile runs on the reader's own refresh and on the bounded poll below.** A pending post is landed
 when `GET /posts/:postId` answers `confirmed`, expired on a 404 or once the tip passes
@@ -1618,10 +1595,6 @@ predicate and `invitesAvailable: null` the node saying root (`NODE_INTERFACE →
 them for what they gate — the `invites` row's line, the reason a reader cannot vouch (→ The author window) — and
 shows the word on no surface (user, 2026-09-18).
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** The paragraph below's bond and probation lead the extension's invite form and
-> `view/profile.ts`' whole-number read: today both builds take them from `/status`, and the field is parsed by `BigInt`
-> unchecked.
-
 **The `invites` row** *(membership actions)*: the line — `K invites available` for a member, *"as many
 as your rep covers"* for a root, *"invites come with membership"* for a resident; the form, a real
 `<form>` in place shown only when an invite is available and the spendable view covers the minimum
@@ -1733,10 +1706,6 @@ node            the node this client reads — blank resets to the build's
 sign each rep action · don't ask / ask — in the extension only (→ The extension)
 a Notis link opens · on the site / here — in the extension only (→ The extension)
 ```
-
-> ⚠ **AHEAD OF CODE (2026-10-20).** The paragraph below's sentence on the window drawing whatever a node answers
-> leads the web's read client (→ Reading a node's answer): today a `/karma` answer whose `effective` is not a decimal
-> throws in every render, this window's among them.
 
 **The `theme` row is the phone's theme control**: at one column the workspace header carries none
 (→ The workspace), so the row is where a phone reader switches; at tiling the header's word does the same
@@ -2013,9 +1982,6 @@ client that expects to announce itself first is built against an endpoint that d
 
 ## Dependencies
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** The workspace bullet's `@dagsocial/node-reads` leads the package: today it does not
-> exist.
-
 - **No WASM.** Pure-TS only, per the preference order the project holds for every package.
 - No server-side rendering — a static bundle, served beside the API by default.
 - Modern browser. **No Web Crypto.** Keys and signatures are pure TS through `@noble/curves`, the
@@ -2039,9 +2005,6 @@ client that expects to announce itself first is built against an endpoint that d
   behind the host's proxy for a preview, or the shell plain without one (→ Links)
 
 ## Invariants
-
-> ⚠ **AHEAD OF CODE (2026-10-20).** The bullet "A per-network number is read, never assumed" leads the extension's
-> reads of the four numbers: today both builds read them from `/status`.
 
 - **A private key never travels to any server.** It is stored, used and exported in the browser, and
   an export is the reader's own file (→ The identity module). *(write surface)*

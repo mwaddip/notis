@@ -2563,9 +2563,6 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   as the mempool cap does (`MEMPOOL_INTERFACE → Size cap — reject, never evict`),
   the way `index.ts` wires the node's other seams (`setNet`,
   `setMempoolCap`).
-
-> ⚠ **AHEAD OF CODE (2026-10-20).** The bullet below's eighth package, `@dagsocial/node-reads`, does not exist yet.
-
 - **The browser runs eight packages as they are written** — `@dagsocial/wire`, `@dagsocial/types`,
   `@dagsocial/avltree`, `@dagsocial/validation`, `@dagsocial/consensus`, `@dagsocial/nipopow`,
   `@dagsocial/node-reads` and `@dagsocial/nipopow-client`'s library
@@ -2606,9 +2603,6 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 ---
 
 ## Build and test resolution
-
-> ⚠ **AHEAD OF CODE (2026-10-20).** This section's `node-reads` — a library package, aliased in rule 1, loaded by the
-> light client in rule 4 — leads the package: today it does not exist.
 
 Every package is ESM and builds with `tsup src/index.ts --format esm --dts` to a single bundled
 `dist/index.js`. The library packages (`types`, `wire`, `avltree`, `validation`, `nipopow`, `consensus`, `net`,
