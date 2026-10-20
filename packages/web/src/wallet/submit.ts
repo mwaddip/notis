@@ -3,6 +3,7 @@ import type { UtxoTransaction } from '@dagsocial/types';
 import { LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readBuildContext, readCreditContext } from './reads';
 import { readWholeList } from '../api/whole-list';
+import { networkNumbers } from '../model/network-numbers';
 import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend, txToJson, InsufficientKarma, InsufficientCredits, BelowFloor, InvalidKey } from './builders';
 import { formatCredits } from '../model/credits';
 import type { PendingLedger } from './ledger';
@@ -250,10 +251,15 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
   const vouch = await resolveVouchBox(deps.reads, id.pubKeyHex, targetKey);
   if (vouch === null) return clientRejection('that vouch was already withdrawn.');
 
-  // No spend, so no /karma pass — only the height, the era and the cooldown, all
-  // from /status. `releaseAtBlock` is the cast height plus the cooldown
-  // (NODE_INTERFACE → Vouch transition rules).
+  // No spend, so no /karma pass — only the height and the era from /status, and
+  // the cooldown from the one place: the profile where the build names its
+  // network, `/status` where it names none (`model/network-numbers.ts`,
+  // WEB_INTERFACE → Invariants → "A per-network number is read, never assumed").
+  // `releaseAtBlock` is the cast height plus the cooldown (NODE_INTERFACE →
+  // Vouch transition rules).
   const status = await deps.reads.status();
+  const nn = networkNumbers(status);
+  if (nn === null) return clientRejection('cannot read the network numbers.');
   const ctx: BuildContext = {
     spendable: [],
     height: status.blockHeight,
@@ -263,7 +269,7 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
   const built = buildUnvouch(
     ctx,
     { boxId: vouch.boxId, value: BigInt(vouch.value), createdAtBlock: vouch.createdAtBlock },
-    status.vouchCooldownBlocks,
+    nn.vouchCooldownBlocks,
   );
   const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
   if (!signed.ok) return signed;

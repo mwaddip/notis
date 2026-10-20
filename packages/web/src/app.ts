@@ -22,6 +22,7 @@ import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost, newPostsLine, olderPostsLine } from './model/feed-reconcile';
 import { withNodeWord } from './model/light';
+import { networkNumbers } from './model/network-numbers';
 import { flattenThread } from './model/thread';
 import { WriteClient, type Rejection } from './api/write';
 import { FaucetClient, faucetLine } from './api/faucet';
@@ -949,9 +950,11 @@ export class App {
       member: this.isMember(),
       author: this.authorData,
       authorPosts: this.authorPostsData,
-      invite: this.state.status
-        ? { bondMin: this.state.status.inviteBondMin, bondMax: this.state.status.inviteBondMax, probationBlocks: this.state.status.inviteProbationBlocks }
-        : null,
+      invite: ((): { bondMin: string; bondMax: string; probationBlocks: number } | null => {
+        const nn = networkNumbers(this.state.status);
+        if (nn === null) return null;
+        return { bondMin: nn.inviteBondMin, bondMax: nn.inviteBondMax, probationBlocks: nn.inviteProbationBlocks };
+      })(),
       canAffordMinBond: this.canAffordMinBond(),
       bonds: this.bondsView,
       inviteFlight: this.inviteFlight,
@@ -1021,8 +1024,10 @@ export class App {
    *  form only when it can be filled; the effective balance is the proxy, the
    *  node's refusal the truth (WEB_INTERFACE → The profile window). */
   private canAffordMinBond(): boolean {
-    if (this.profileKarma === null || this.state.status === null) return false;
-    return BigInt(this.profileKarma.effective) >= BigInt(this.state.status.inviteBondMin);
+    if (this.profileKarma === null) return false;
+    const nn = networkNumbers(this.state.status);
+    if (nn === null) return false;
+    return BigInt(this.profileKarma.effective) >= BigInt(nn.inviteBondMin);
   }
 
   private canAffordBurn(): boolean {
@@ -3316,7 +3321,7 @@ export class App {
     if (cur === null) return null;
     if (key === cur.pubKeyHex) return { kind: 'reason', text: 'this is you' };
     if (!this.isMember()) return { kind: 'reason', text: 'vouching comes with membership' };
-    const cooldownBlocks = this.state.status?.vouchCooldownBlocks ?? 0;
+    const cooldownBlocks = networkNumbers(this.state.status)?.vouchCooldownBlocks ?? 0;
     if (this.escrowHeldUntil !== null && this.escrowHeldUntil > this.viewerTip) {
       return { kind: 'reason', text: `your stake from an unvouch is held until block ${this.escrowHeldUntil}` };
     }

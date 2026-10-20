@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 
 describe('the four network numbers — one place', () => {
-  it.fails('a build that names its network reads the profile, never `/status`', async () => {
+  it('a build that names its network reads the profile, never `/status`', async () => {
     vi.resetModules();
     const meta = document.createElement('meta');
     meta.setAttribute('name', 'notis-network');
@@ -63,7 +63,7 @@ describe('the four network numbers — one place', () => {
 });
 
 describe('the unvouch flow — cooldown comes from the one place', () => {
-  it.fails('an unvouch built in a build that names its network releases at the profile\'s cooldown whatever `/status` answers', async () => {
+  it('an unvouch built in a build that names its network releases at the profile\'s cooldown whatever `/status` answers', async () => {
     vi.resetModules();
     const meta = document.createElement('meta');
     meta.setAttribute('name', 'notis-network');

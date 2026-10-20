@@ -88,7 +88,7 @@ describe('invite form — the bond field is a whole number inside the bounds', (
     return { form, keyInput, bondInput, invited, refusal: () => form.querySelector('.pf-refusal') as HTMLElement | null };
   }
 
-  it.fails('the bond field reading 1e3 shows the refusal line and submits nothing', () => {
+  it('the bond field reading 1e3 shows the refusal line and submits nothing', () => {
     const f = form();
     f.bondInput.value = '1e3';
     f.form.dispatchEvent(new Event('submit', { cancelable: true }));
@@ -96,7 +96,7 @@ describe('invite form — the bond field is a whole number inside the bounds', (
     expect(f.invited).toHaveLength(0);
   });
 
-  it.fails('the bond field reading -5 shows the refusal line and submits nothing', () => {
+  it('the bond field reading -5 shows the refusal line and submits nothing', () => {
     const f = form();
     f.bondInput.value = '-5';
     f.form.dispatchEvent(new Event('submit', { cancelable: true }));
@@ -104,7 +104,7 @@ describe('invite form — the bond field is a whole number inside the bounds', (
     expect(f.invited).toHaveLength(0);
   });
 
-  it.fails('the bond field reading 1.5 shows the refusal line and submits nothing', () => {
+  it('the bond field reading 1.5 shows the refusal line and submits nothing', () => {
     const f = form();
     f.bondInput.value = '1.5';
     f.form.dispatchEvent(new Event('submit', { cancelable: true }));
@@ -112,7 +112,7 @@ describe('invite form — the bond field is a whole number inside the bounds', (
     expect(f.invited).toHaveLength(0);
   });
 
-  it.fails('a bond one above the maximum shows the refusal line and submits nothing', () => {
+  it('a bond one above the maximum shows the refusal line and submits nothing', () => {
     const f = form();
     f.bondInput.value = '1001';
     f.form.dispatchEvent(new Event('submit', { cancelable: true }));

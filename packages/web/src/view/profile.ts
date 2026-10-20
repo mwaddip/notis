@@ -469,8 +469,23 @@ function inviteForm(params: InviteParams, onSubmit: (inviteeKey: string, bond: b
       refusal.hidden = false;
       return;
     }
+    // WEB_INTERFACE → The profile window → "The `invites` row" — the bond is
+    // a whole number inside the bounds. The form never hands `BigInt` a
+    // string the field did not check first.
+    const typed = bondInput.value.trim() || bondInput.min;
+    if (!/^(0|[1-9][0-9]*)$/.test(typed)) {
+      refusal.textContent = `the bond is a whole number of rep between ${bondInput.min} and ${bondInput.max}.`;
+      refusal.hidden = false;
+      return;
+    }
+    const bond = BigInt(typed);
+    if (bond < BigInt(bondInput.min) || bond > BigInt(bondInput.max)) {
+      refusal.textContent = `the bond is a whole number of rep between ${bondInput.min} and ${bondInput.max}.`;
+      refusal.hidden = false;
+      return;
+    }
     refusal.hidden = true;
-    onSubmit(key, BigInt(bondInput.value || bondInput.min));
+    onSubmit(key, bond);
   });
   return {
     el: form,
