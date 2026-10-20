@@ -33,11 +33,14 @@ const BARE_TRIM = new Set(['.', ',', ';', ':', '!', '?', "'", '"']);
 const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif'];
 
 /** The URL gate — shared by the renderer and the composer (WEB_INTERFACE →
- *  Content → "The URL gate"): the string parses as a URL, its scheme is http or
- *  https, and it holds no whitespace. Returns the parsed URL for its host, or
- *  null when the string fails the gate. */
+ *  Content → "The URL gate"): the string parses as a URL, its scheme — http
+ *  or https, in any case — is followed by `//`, and it holds no whitespace.
+ *  Returns the parsed URL for its host, or null when the string fails the
+ *  gate. The `//` check refuses a scheme the browser would otherwise resolve
+ *  against the client's own origin for the host. */
 export function gateUrl(s: string): URL | null {
   if (s === '' || /\s/.test(s)) return null;
+  if (!/^https?:\/\//i.test(s)) return null;
   let u: URL;
   try {
     u = new URL(s);
