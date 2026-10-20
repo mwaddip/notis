@@ -141,7 +141,7 @@ describe("every answer is rebuilt from its own fields", () => {
 });
 
 describe("a name a lookup answers is a well-formed one", () => {
-  it.fails('/usernames?owner= — a `name` of 25 bytes is refused', async () => {
+  it('/usernames?owner= — a `name` of 25 bytes is refused', async () => {
     serveJson({
       name: 'a'.repeat(25), owner: KEY,
       boxId: 'ab'.repeat(32), claimedAtBlock: 1,
@@ -149,7 +149,7 @@ describe("a name a lookup answers is a well-formed one", () => {
     await expect(client().usernameByOwner(KEY)).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/usernames?owner= — a `name` carrying a space is refused', async () => {
+  it('/usernames?owner= — a `name` carrying a space is refused', async () => {
     serveJson({
       name: 'al ice', owner: KEY,
       boxId: 'ab'.repeat(32), claimedAtBlock: 1,
@@ -157,7 +157,7 @@ describe("a name a lookup answers is a well-formed one", () => {
     await expect(client().usernameByOwner(KEY)).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/usernames/:name — a `name` of 25 bytes is refused', async () => {
+  it('/usernames/:name — a `name` of 25 bytes is refused', async () => {
     serveJson({
       name: 'a'.repeat(25), owner: KEY,
       boxId: 'ab'.repeat(32), claimedAtBlock: 1,
@@ -165,7 +165,7 @@ describe("a name a lookup answers is a well-formed one", () => {
     await expect(client().usernameByName('alice')).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/usernames/:name — a `name` carrying a space is refused', async () => {
+  it('/usernames/:name — a `name` carrying a space is refused', async () => {
     serveJson({
       name: 'al ice', owner: KEY,
       boxId: 'ab'.repeat(32), claimedAtBlock: 1,
@@ -175,7 +175,7 @@ describe("a name a lookup answers is a well-formed one", () => {
 });
 
 describe("/status' bond bounds are box values", () => {
-  it.fails('/status — an `inviteBondMax` of 2^63 is refused', async () => {
+  it('/status — an `inviteBondMax` of 2^63 is refused', async () => {
     serveJson({
       networkType: 'testnet', blockHeight: 100, protocolVersion: 1,
       postCount: 0, pendingPosts: 0, totalKarma: '0', liquidKarma: '0',

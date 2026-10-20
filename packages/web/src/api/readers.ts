@@ -45,8 +45,10 @@ export function readStatus(data: unknown): StatusResult | null {
   if (!isSum(totalCredits)) return null;
   if (!isNonNegSafeInt(inviteProbationBlocks)) return null;
   if (!isNonNegSafeInt(vouchCooldownBlocks)) return null;
-  if (!isSum(inviteBondMin)) return null;
-  if (!isSum(inviteBondMax)) return null;
+  // The bond bounds are box values (`CONSTANTS → Client reads`,
+  // `STATUS_READ_BYTES` argument; `TYPES_INTERFACE → Box value domain`).
+  if (!isBoxValue(inviteBondMin)) return null;
+  if (!isBoxValue(inviteBondMax)) return null;
   if (!isRecord(membership)) return null;
   const { memberCount, memberBar, memberLikesBar } = membership;
   if (!isNonNegSafeInt(memberCount)) return null;
@@ -71,11 +73,12 @@ export function readBlockCurrent(data: unknown): BlockCurrent | null {
 }
 
 /** `/usernames?owner=:key` and `/usernames/:name` answer the same shape — a
- *  held name and the box that holds it. */
+ *  held name and the box that holds it. The `name` is a well-formed one
+ *  (`TYPES_INTERFACE → Content limits`), never `null` on this route. */
 export function readUsername(data: unknown): UsernameResult | null {
   if (!isRecord(data)) return null;
   const { name, owner, boxId, claimedAtBlock } = data;
-  if (typeof name !== 'string') return null;
+  if (name === null || !isAuthorName(name)) return null;
   if (!isHex64Lower(owner)) return null;
   if (!isHex64Lower(boxId)) return null;
   if (!isNonNegSafeInt(claimedAtBlock)) return null;
