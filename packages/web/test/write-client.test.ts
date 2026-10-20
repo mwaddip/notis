@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { WriteClient, isRejection } from '../src/api/write';
+import { WRITE_ANSWER_READ_BYTES } from '@dagsocial/node-reads';
 
 // The write client wraps a serialised tx in the node's envelope and normalises
 // both rejection body shapes into one Rejection { status, message }.
@@ -152,6 +153,56 @@ describe('write client — rejection normalisation', () => {
   it('a withdraw rejection normalises — the 403 not the author', async () => {
     mockResponse({ ok: false, status: 403, body: { error: 403, reason: 'not the post author' } });
     expect(await write().submitWithdraw('p7', {})).toEqual({ status: 403, message: 'not the post author' });
+  });
+});
+
+// The hex id a well-formed 2xx carries; a route-shape reader rebuilds the
+// answer from its own fields and refuses one that is not what the route
+// serves (WEB_INTERFACE → Reading a node's answer → "Every answer is rebuilt
+// from its own fields"). A rejection the reader answers takes the shape every
+// transport-level refusal takes — status 0, a sentence a reader of the error
+// line reads.
+const TX_LOWER = 'ff'.repeat(32);
+
+describe('write client — the shape the route serves', () => {
+  it.fails('a 2xx carrying a txId that is not 64 lowercase hex is a client rejection', async () => {
+    mockResponse({ ok: true, status: 200, body: { status: 'pending', txId: 'FF'.repeat(32), expiresAtHeight: 5720 } });
+    const res = await write().submitLike({});
+    expect(isRejection(res)).toBe(true);
+    expect(res).toMatchObject({ status: 0 });
+  });
+
+  it.fails('a post 2xx whose postId is 63 hex is a client rejection', async () => {
+    mockResponse({
+      ok: true, status: 200,
+      body: { postId: 'ab'.repeat(31) + 'a', status: 'pending', expiresAtHeight: 5720, txId: TX_LOWER },
+    });
+    const res = await write().submitPost({}, 'x');
+    expect(isRejection(res)).toBe(true);
+    expect(res).toMatchObject({ status: 0 });
+  });
+});
+
+describe('write client — the cap and the deadline', () => {
+  it.fails('a 2xx one byte over WRITE_ANSWER_READ_BYTES ends as a transport failure does', async () => {
+    const over = 'a'.repeat(WRITE_ANSWER_READ_BYTES + 1);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(over, { status: 200 })));
+    const res = await write().submitLike({});
+    expect(isRejection(res)).toBe(true);
+    expect(res).toMatchObject({ status: 0 });
+  });
+
+  it.fails('every write request carries the deadline signal', async () => {
+    let seen: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init?: RequestInit) => {
+      seen = init?.signal ?? undefined;
+      return new Response(
+        JSON.stringify({ status: 'pending', txId: TX_LOWER, expiresAtHeight: 5720 }),
+        { status: 200 },
+      );
+    }));
+    await write().submitLike({});
+    expect(seen).toBeInstanceOf(AbortSignal);
   });
 });
 

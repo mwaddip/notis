@@ -135,6 +135,24 @@ describe('the URL gate', () => {
     expect(il('[x](javascript:alert(1))')).toEqual([t('[x](javascript:alert(1))')]);
     expect(il('[x](ftp://y.com)')).toEqual([t('[x](ftp://y.com)')]);
   });
+
+  // The scheme is followed by `//`: the composer and the renderer alike refuse
+  // a string the browser would otherwise resolve against the `<base>`
+  // (WEB_INTERFACE → Content → "The URL gate"). The URL parser accepts
+  // `https:host/path` as path-only against the current page's base, which the
+  // gate must not: a reader-chosen link cannot point at the client's own
+  // origin for the host.
+  it.fails('a scheme not followed by // is refused — [x](https:host/path) is text', () => {
+    expect(il('[x](https:host.example/login)')).toEqual([t('[x](https:host.example/login)')]);
+  });
+
+  it.fails('an image whose URL has one slash is text — ![a](https:/x.png) is text', () => {
+    expect(il('![a](https:/x.png)')).toEqual([t('![a](https:/x.png)')]);
+  });
+
+  it('a scheme followed by // is a link — [x](https://host.example/login) is a link', () => {
+    expect(il('[x](https://host.example/login)')).toEqual([link('https://host.example/login', 'x')]);
+  });
 });
 
 describe('parseContent — images', () => {
