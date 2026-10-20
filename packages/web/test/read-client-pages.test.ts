@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { NodeClient, PageError, ApiError } from '../src/api/client';
+import { jsonResponse } from './honest-page';
 
 // Every paged read answers a page or throws where a non-2xx throws: an object
 // whose list is an array and whose `next` is null or a key — a non-empty string
@@ -17,12 +18,7 @@ function serve(body: unknown, status = 200): void {
     'fetch',
     vi.fn(async (url: string | URL) => {
       calls.push(String(url));
-      return {
-        ok: status >= 200 && status < 300,
-        status,
-        statusText: status === 200 ? 'OK' : 'Not OK',
-        json: async () => body,
-      } as Response;
+      return jsonResponse(body, status);
     }),
   );
 }

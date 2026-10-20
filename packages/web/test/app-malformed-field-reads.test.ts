@@ -5,6 +5,7 @@ import { NodeClient } from '../src/api/client';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { AppIdentity } from '../src/model/state';
 import type { WriteClient } from '../src/api/write';
+import { jsonResponse } from './honest-page';
 import { prefs, setNode } from '../src/prefs';
 
 // WEB_INTERFACE → Reading a node's answer → "Every answer is rebuilt from
@@ -71,7 +72,7 @@ function stubFetch(karma: unknown, status: unknown): void {
         : { vouches: [], count: 0, next: null };
     } else if (p.startsWith('/invites/')) body = { bonds: [], bondCount: 0, next: null };
     else st = 404;
-    return { ok: st >= 200 && st < 300, status: st, statusText: String(st), json: async () => body } as Response;
+    return jsonResponse(body, st);
   }));
 }
 

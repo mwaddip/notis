@@ -10,6 +10,7 @@ import type { BondsResult, CreditsResult, KarmaResult, PostJson, StatusResult } 
 import type { PendingEntry } from '../src/wallet/types';
 import type { Flight } from '../src/view/card';
 import { karmaResult } from './karma-fixture';
+import { jsonResponse } from './honest-page';
 import { prefs, setNode } from '../src/prefs';
 
 // A page that is not a page throws in the read client, where a non-2xx throws
@@ -134,7 +135,7 @@ function fakeNode() {
     requests.push(req);
     const nth = requests.filter((r) => r.route === route).length;
     const a = (handlers.get(route) ?? defaults[route])(req, nth);
-    return { ok: a.status >= 200 && a.status < 300, status: a.status, statusText: String(a.status), json: async () => a.body } as Response;
+    return jsonResponse(a.body, a.status);
   }));
   return {
     on(route: Route, h: Handler): void { handlers.set(route, h); },

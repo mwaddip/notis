@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NodeClient } from '../src/api/client';
+import { jsonResponse } from './honest-page';
 
 // The read client stays GET-only; these pin the URLs it builds — a `viewer` query
 // carried when passed and omitted when not, and the new `/karma/:key` read.
@@ -17,7 +18,7 @@ beforeEach(() => {
     'fetch',
     vi.fn(async (url: string | URL) => {
       calls.push(String(url));
-      return { ok: true, status: 200, statusText: 'OK', json: async () => ({ ...ANY_PAGE }) } as Response;
+      return jsonResponse({ ...ANY_PAGE });
     }),
   );
 });
@@ -102,7 +103,7 @@ describe('read client — usernameByOwner', () => {
   it('returns null on a 404', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) } as Response)),
+      vi.fn(async () => jsonResponse({}, 404)),
     );
     const result = await client().usernameByOwner('key1');
     expect(result).toBeNull();
@@ -144,7 +145,7 @@ describe('read client — credits and the handle read', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) } as Response)),
+      vi.fn(async () => jsonResponse({}, 404)),
     );
     expect(await client().usernameByName('nope')).toBeNull();
   });

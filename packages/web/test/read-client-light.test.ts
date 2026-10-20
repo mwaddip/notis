@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NodeClient, PageError } from '../src/api/client';
 import { PageError as PageErrorFromErrors } from '../src/api/errors';
 import type { LightJson, WithdrawnJson } from '../src/api/dto';
+import { jsonResponse } from './honest-page';
 
 // `light=1` beside the list reads: every list of the answer is read field by
 // field through `readLightRows` (WEB_INTERFACE → The extension → "The light
@@ -41,7 +42,7 @@ beforeEach(() => {
     vi.fn(async (url: string | URL) => {
       calls.push(String(url));
       const body = answers.shift() ?? {};
-      return { ok: true, status: 200, statusText: 'OK', json: async () => body } as Response;
+      return jsonResponse(body);
     }),
   );
 });
