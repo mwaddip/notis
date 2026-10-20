@@ -105,7 +105,7 @@ describe('background — state and identity lifecycle', () => {
 // and → The extension → "The contexts, and what each may hold": the envelope the
 // background reads from `storage.local` is held to the bound where it is parsed.
 describe('background — a stored envelope outside the scrypt bound', () => {
-  it.fails('a stored envelope naming p = 2 reads as no identity and the stored value is left in place', async () => {
+  it('a stored envelope naming p = 2 reads as no identity and the stored value is left in place', async () => {
     const fixture = freshFixture();
     const outside = JSON.stringify({
       version: 1,
@@ -121,7 +121,7 @@ describe('background — a stored envelope outside the scrypt bound', () => {
     expect(c.storage.local.get('notis.identity')).toBe(outside);
   });
 
-  it.fails('an importFile of a file naming N = 2^19 answers an error naming the bound and stores nothing', async () => {
+  it('an importFile of a file naming N = 2^19 answers an error naming the bound and stores nothing', async () => {
     const c = fakeChrome();
     install(c.api, { publicBase: '' });
     const outside = JSON.stringify({

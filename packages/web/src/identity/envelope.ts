@@ -22,6 +22,10 @@ export const ENVELOPE_VERSION = 1;
 export const SCRYPT_N = 65536;
 export const SCRYPT_R = 8;
 export const SCRYPT_P = 1;
+/** The ceiling the parse holds every envelope's `N` to — WEB_INTERFACE → The
+ *  identity module → "An envelope's scrypt cost is bounded". Four times the
+ *  seal's own cost, the room left for the seal to rise. */
+export const SCRYPT_N_MAX = 262_144;
 
 /** The fixed RFC 8410 PKCS8 wrapper for an Ed25519 seed — a 16-byte prefix before
  *  the 32-byte seed (WEB_INTERFACE → The identity module, the Key generation row).
@@ -172,7 +176,10 @@ export function parseFile(text: string): ParsedFile {
 
 // ---------------------------------------------------------------------------
 
-/** Validate an encrypted file's structure into an Envelope; open checks the rest. */
+/** Validate an encrypted file's structure into an Envelope; open checks the
+ *  rest. The scrypt bound — WEB_INTERFACE → The identity module → "An
+ *  envelope's scrypt cost is bounded" — is held here, so neither open nor the
+ *  scrypt call ever sees parameters outside it. */
 function parseEnvelope(o: Record<string, unknown>, pubKeyHex: string): Envelope {
   if (o.version !== ENVELOPE_VERSION) {
     throw new IdentityError('the file is an identity version this client does not read.');
@@ -188,6 +195,9 @@ function parseEnvelope(o: Record<string, unknown>, pubKeyHex: string): Envelope 
   ) {
     throw new IdentityError('the file has no scrypt parameters.');
   }
+  if (!holdsScryptBound(kdf.N, kdf.r, kdf.p)) {
+    throw new IdentityError('the file\'s scrypt cost is not one this client opens.');
+  }
   const cipher = o.cipher as Record<string, unknown> | undefined;
   if (!cipher || cipher.name !== 'chacha20-poly1305' || typeof cipher.nonce !== 'string') {
     throw new IdentityError('the file has no cipher parameters.');
@@ -199,6 +209,15 @@ function parseEnvelope(o: Record<string, unknown>, pubKeyHex: string): Envelope 
     cipher: { name: 'chacha20-poly1305', nonce: cipher.nonce },
     ciphertext: o.ciphertext as string,
   };
+}
+
+/** `r` is `SCRYPT_R` exactly, `p` is `SCRYPT_P` exactly, and `N` is a power of
+ *  two from 2 to `SCRYPT_N_MAX`; each is a whole number. */
+function holdsScryptBound(N: number, r: number, p: number): boolean {
+  if (r !== SCRYPT_R || p !== SCRYPT_P) return false;
+  if (!Number.isInteger(N)) return false;
+  if (N < 2 || N > SCRYPT_N_MAX) return false;
+  return (N & (N - 1)) === 0;
 }
 
 /** The clear shape's three refusals — a wrong length, a wrong prefix, a key the

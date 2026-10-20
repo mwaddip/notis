@@ -233,22 +233,22 @@ function envJsonWith(over: Partial<ScryptParams>): string {
 }
 
 describe('envelope — the parse bound on scrypt cost', () => {
-  it.fails('a kdf naming N = 2^19 is refused', () => {
+  it('a kdf naming N = 2^19 is refused', () => {
     expect(() => parseFile(envJsonWith({ N: 2 ** 19 }))).toThrow(/not one this client opens/);
   });
-  it.fails('a kdf naming r = 16 is refused', () => {
+  it('a kdf naming r = 16 is refused', () => {
     expect(() => parseFile(envJsonWith({ r: 16 }))).toThrow(/not one this client opens/);
   });
-  it.fails('a kdf naming p = 2 is refused', () => {
+  it('a kdf naming p = 2 is refused', () => {
     expect(() => parseFile(envJsonWith({ p: 2 }))).toThrow(/not one this client opens/);
   });
-  it.fails('a kdf naming N = 3 · 2^14 (not a power of two) is refused', () => {
+  it('a kdf naming N = 3 · 2^14 (not a power of two) is refused', () => {
     expect(() => parseFile(envJsonWith({ N: 3 * 2 ** 14 }))).toThrow(/not one this client opens/);
   });
-  it.fails('a kdf naming N = 1 (below the floor of two) is refused', () => {
+  it('a kdf naming N = 1 (below the floor of two) is refused', () => {
     expect(() => parseFile(envJsonWith({ N: 1 }))).toThrow(/not one this client opens/);
   });
-  it.fails('a kdf naming N = 65536.5 (not a whole number) is refused', () => {
+  it('a kdf naming N = 65536.5 (not a whole number) is refused', () => {
     expect(() => parseFile(envJsonWith({ N: 65536.5 }))).toThrow(/not one this client opens/);
   });
   it('a control: a kdf naming N = 2^18, r = 8, p = 1 parses', () => {
@@ -275,7 +275,7 @@ describe('envelope — the four constants pin at the register\'s values', () => 
   it('SCRYPT_P is 1 (CONSTANTS → Client defaults)', () => {
     expect(SCRYPT_P).toBe(1);
   });
-  it.fails('SCRYPT_N_MAX is 262_144 (CONSTANTS → Client defaults)', () => {
+  it('SCRYPT_N_MAX is 262_144 (CONSTANTS → Client defaults)', () => {
     expect(SCRYPT_N_MAX).toBe(262_144);
   });
 });

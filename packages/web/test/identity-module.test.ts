@@ -229,7 +229,7 @@ describe('identity module — persistence and storage guards', () => {
   // WEB_INTERFACE → The identity module → "An envelope's scrypt cost is bounded"
   // — a stored envelope naming an N outside the bound reads as no identity, as a
   // clear value does, and is left in place; the next create or import overwrites it.
-  it.fails('a stored envelope naming N = 2^19 reads as no identity and is left in place', () => {
+  it('a stored envelope naming N = 2^19 reads as no identity and is left in place', () => {
     const outside = JSON.stringify({
       version: 1,
       pubKeyHex: 'ab'.repeat(32),
