@@ -370,7 +370,7 @@ describe('a failed /invites read decides no invite', () => {
 
   // WEB_INTERFACE → The wallet → "Reconcile runs on the reader's own refresh and on the bounded poll below":
   // a read that answered nothing lists nothing, so it decides nothing.
-  it.fails('an invite past its expiry stays pending when /invites answers 500', async () => {
+  it('an invite past its expiry stays pending when /invites answers 500', async () => {
     const heightBox = { value: 1_000 };
     const h = harness([INVITE(INV)], {
       blockHeight: () => heightBox.value,

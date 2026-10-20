@@ -4819,16 +4819,12 @@ export class App {
       // (WEB_INTERFACE → The profile window → "The `invites` row") —
       // nothing is written into it here; a landing or an expiry below
       // re-reads the view's first page.
-      try {
-        bondRows = await readWholeList<BondsResult['bonds'][number], BondsResult>({
-          readPage: (page) => this.client.bonds(cur.pubKeyHex, page),
-          pick: (answer) => ({ rows: answer.bonds, next: answer.next }),
-          keyOf: (b) => b.id,
-          bound: LEDGER_READ_MAX,
-        });
-      } catch {
-        bondRows = [];
-      }
+      bondRows = await readWholeList<BondsResult['bonds'][number], BondsResult>({
+        readPage: (page) => this.client.bonds(cur.pubKeyHex, page),
+        pick: (answer) => ({ rows: answer.bonds, next: answer.next }),
+        keyOf: (b) => b.id,
+        bound: LEDGER_READ_MAX,
+      });
       if (gen !== this.readerGen) return;
     }
 
