@@ -186,6 +186,9 @@ its choosing.
 | `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&tx=1&light=1&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots`, `viewer`, `tx` and `light` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: (PostJson \| WithdrawnJson)[], next, pending: PostJson[], pendingCount }`, every live row a `LightJson` under `light=1` — `posts` one page of the committed rows, live and withdrawn, newest first in committed order (placeholders included; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), a present `tx` is not the string `1` (`tx must be 1`), a present `light` is not the string `1` (`light must be 1`), `tx` and `light` are both present (`tx and light cannot both be 1`), or a present `viewer` is neither 64 hex chars nor an `@handle`; 404 `unknown handle` (→ Identity parameters) |
 | `POST` | `/posts/batch` | `{ ids: postId[] }`, `?viewer=hex&tx=1` — both optional ("The batch read answers posts by id" below) | `{ posts: (PostJson \| WithdrawnJson)[] }` — a row for each id the node holds, in the order asked | 400 if `ids` is missing or not an array (`ids required (array)`), holds no id or more than `BATCH_READ_MAX` (`ids must hold 1 to 100 post ids`), holds an entry that is not 64 lowercase hex chars (`ids must be 64 lowercase hex characters`) or one id twice (`ids must not repeat`); `viewer` and `tx` as `/posts` |
 
+> ⚠ **AHEAD OF CODE (2026-10-20).** The paragraph below's two numbers lead their move to `@dagsocial/types`: today
+> `routes/page.ts` defines them.
+
 **Every list a view returns is a page.** `limit` defaults to `PAGE_LIMIT_DEFAULT` (50) and clamps
 to `PAGE_LIMIT_MAX` (100); a present `limit` that does not parse as a positive safe integer is a
 400. `after` names the key of the last row the client holds, spelled as the list's stated total
@@ -194,7 +197,8 @@ karma and credit boxes (`value` a decimal integer in the box value domain, `TYPE
 value domain`), `<boxId>` for bonds and vouches; hex is lowercase (→ HTTP API → "Hex is lowercase"),
 and a present `after` that does not parse is a 400. One parser, `routes/page.ts`,
 serves every paged route in both directions — it reads `limit` and `after` and spells `next` — and
-the two numbers live there (`CONSTANTS → HTTP view bounds`). **A page is the first `limit` rows of
+the two numbers are `@dagsocial/types`' exports, which every client asks within (`CONSTANTS → HTTP view bounds`,
+`WEB_INTERFACE → Reading a node's answer`). **A page is the first `limit` rows of
 a stated total order strictly after the key**, from the head when `after` is absent; the order is a
 function of state, never of row order, and **the key need not name a row** — a row spent
 or withdrawn since the client read it still bounds the page, which is what makes a page continue

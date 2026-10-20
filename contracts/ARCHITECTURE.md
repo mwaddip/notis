@@ -2563,9 +2563,12 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   as the mempool cap does (`MEMPOOL_INTERFACE → Size cap — reject, never evict`),
   the way `index.ts` wires the node's other seams (`setNet`,
   `setMempoolCap`).
-- **The browser runs seven packages as they are written** — `@dagsocial/wire`, `@dagsocial/types`,
-  `@dagsocial/avltree`, `@dagsocial/validation`, `@dagsocial/consensus`, `@dagsocial/nipopow` and
-  `@dagsocial/nipopow-client`'s library
+
+> ⚠ **AHEAD OF CODE (2026-10-20).** The bullet below's eighth package, `@dagsocial/node-reads`, does not exist yet.
+
+- **The browser runs eight packages as they are written** — `@dagsocial/wire`, `@dagsocial/types`,
+  `@dagsocial/avltree`, `@dagsocial/validation`, `@dagsocial/consensus`, `@dagsocial/nipopow`,
+  `@dagsocial/node-reads` and `@dagsocial/nipopow-client`'s library
   (`src/lib.ts` and what it imports): **no Node built-in import and no Node global** (`Buffer`, `process`, `require`,
   `__dirname`), so a browser build takes them with nothing substituted. Each one's `typecheck` compiles its source a
   second time against the DOM library with no Node types (`tsconfig.browser.json`), where a Node built-in or global is
@@ -2604,9 +2607,12 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 
 ## Build and test resolution
 
+> ⚠ **AHEAD OF CODE (2026-10-20).** This section's `node-reads` — a library package, aliased in rule 1, loaded by the
+> light client in rule 4 — leads the package: today it does not exist.
+
 Every package is ESM and builds with `tsup src/index.ts --format esm --dts` to a single bundled
-`dist/index.js`. The library packages (`types`, `wire`, `validation`, `nipopow`, `consensus`, `net`)
-each declare exactly one export condition — `"."` — and there are no subpath exports anywhere. **`node` has no
+`dist/index.js`. The library packages (`types`, `wire`, `avltree`, `validation`, `nipopow`, `consensus`, `net`,
+`node-reads`) each declare exactly one export condition — `"."` — and there are no subpath exports anywhere. **`node` has no
 `exports` field at all**, only `main`; it is the application package and nothing depends on it, so
 bare-specifier resolution there goes through `main`. The practical effect is identical, but `node`
 is not subject to the subpath restriction the others get from `exports`.
@@ -2617,8 +2623,8 @@ the repo root and merged into every package's vitest config.
 
 Six rules govern it:
 
-1. **Uniform across all eight packages** — `types`, `avltree`, `wire`, `validation`, `nipopow`, `consensus`,
-   `net` and `node`. Aliasing some and not others puts two copies of the same
+1. **Uniform across all nine packages** — `types`, `avltree`, `wire`, `validation`, `nipopow`, `consensus`,
+   `net`, `node` and `node-reads`. Aliasing some and not others puts two copies of the same
    module in one process — one transpiled from `src`, one bundled inside `dist`. `instanceof` fails
    across that boundary and every module-level singleton exists twice.
 2. **The alias target is `src/index.ts`, not `src/`.** The barrel stays the surface under test, so a
@@ -2631,9 +2637,10 @@ Six rules govern it:
    the vitest process. A suite that spawns `dist/index.js` as a child process runs the built
    artefact, so it needs a genuine build first and no alias reaches it. **One suite does:
    `tools/e2e` (`@dagsocial/e2e`) spawns `packages/node/dist/index.js` for every node of its mesh,
-   which loads `types`, `wire`, `validation`, `consensus`, `net` and `nipopow` from their `dist` in turn, and its
-   light-client test spawns `tools/nipopow-client/dist/index.js`, which loads `types`, `wire`,
-   `validation` and `nipopow` the same way** (a bundle externalises its workspace dependencies). It
+   which loads `wire`, `types`, `validation`, `net`, `avltree`, `nipopow` and `consensus` from their `dist` in turn,
+   and its light-client test spawns `tools/nipopow-client/dist/index.js`, which loads `wire`, `types`, `validation`,
+   `avltree`, `nipopow`, `consensus` and `node-reads` the same way** (a bundle externalises its workspace
+   dependencies). It
    refuses to run when any `dist/index.js` a process it spawns loads is
    missing or older than the newest file under that package's `src/`, naming the package — a stale
    build is a refusal, never a run against old code that reports green. The gate
