@@ -11,7 +11,7 @@ import {
 import type { PostCommit, UtxoTransaction } from '@dagsocial/types';
 import { runCli, toJson } from '../src/cli.js';
 import type { Config } from '../src/config.js';
-import type { HttpFetch } from '../src/http.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
 import {
   buildHoldingsFixture,
   buildMinedChain,

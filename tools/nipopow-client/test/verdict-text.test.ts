@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { capped, fetchJson } from '../src/http.js';
+import { fetchJson } from '@dagsocial/node-reads';
+import type { HttpFetch } from '@dagsocial/node-reads';
+import { capped } from '../src/http.js';
 import { resolveTip } from '../src/tip.js';
 import { fetchListing, proveFigures } from '../src/boxes.js';
 import type { Listing } from '../src/boxes.js';
 import { proveName } from '../src/names.js';
 import type { NameClaim } from '../src/names.js';
 import { textLines } from '../src/text.js';
-import type { HttpFetch } from '../src/http.js';
 import {
   buildAvlWithInsertions,
   boxInsertion,
@@ -34,7 +35,7 @@ import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/t
 // enters a verdict is handed a string of 500 characters — above the 120 a
 // verdict names, so the display cap fires, and below `NAME_READ_BYTES` and
 // `HEIGHT_READ_BYTES` (1 024, the smallest route caps,
-// CONSTANTS → Light client reads), so no byte cap refuses it first.
+// CONSTANTS → Client reads), so no byte cap refuses it first.
 
 const LONG = 'Z'.repeat(500);
 const NAMED = `${'Z'.repeat(120)}…`;

@@ -264,6 +264,9 @@ importers:
       '@dagsocial/nipopow-client':
         specifier: workspace:*
         version: link:../../tools/nipopow-client
+      '@dagsocial/node-reads':
+        specifier: workspace:*
+        version: link:../node-reads
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../types
@@ -375,6 +378,9 @@ importers:
       '@dagsocial/nipopow':
         specifier: workspace:*
         version: link:../../packages/nipopow
+      '@dagsocial/node-reads':
+        specifier: workspace:*
+        version: link:../../packages/node-reads
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../../packages/types

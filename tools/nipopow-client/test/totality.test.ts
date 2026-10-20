@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { fetchJson } from '../src/http.js';
+import { fetchJson } from '@dagsocial/node-reads';
+import type { HttpFetch } from '@dagsocial/node-reads';
 import { resolveTip } from '../src/tip.js';
 import { fetchListing, proveFigures } from '../src/boxes.js';
 import type { Listing } from '../src/boxes.js';
-import type { HttpFetch } from '../src/http.js';
 import {
   buildHoldingsFixture,
   devnetProfile,

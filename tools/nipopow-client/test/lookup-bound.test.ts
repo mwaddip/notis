@@ -11,14 +11,14 @@ import { label, newInternal, newLabel, newLeaf } from '@dagsocial/avltree';
 import type { AvlNode } from '@dagsocial/avltree';
 import { TREE_KEY_LENGTH, bytesToHex, boxKey, hexToBytes } from '@dagsocial/types';
 import { proveName } from '../src/names.js';
-import type { HttpFetch } from '../src/http.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
 import { jsonResponse, makeAnchor, buildAvlExclusionProof, boxProofKeyHex } from './helpers.js';
 
 // A proof whose decoded tree stands > 512 nodes under a digest declaring 255
 // is over the engine's bound at `maxNumOperations: 1, maxDeletes: 0`: a tree
 // of height 255 with one lookup takes at most 2·255+1 = 511 interior+leaf
 // nodes plus one slack. 600 ≥ 512 and sits well under the lookup route's
-// byte cap (CONSTANTS → Light client reads — LOOKUP_READ_BYTES).
+// byte cap (CONSTANTS → Client reads — LOOKUP_READ_BYTES).
 const SPINE_DEPTH = 600;
 const SPINE_HEIGHT_BYTE = 0xff;
 

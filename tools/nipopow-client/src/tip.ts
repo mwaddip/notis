@@ -3,8 +3,9 @@ import type { NipopowProof, VerifyResult, CompareResult, PoPowHeader } from '@da
 import { hexToBytes } from '@dagsocial/types';
 import type { BlockHeader, NetworkProfile } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
-import type { HttpFetch } from './http.js';
-import { capped, fetchJson, isRecord } from './http.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
+import { fetchJson, isRecord } from '@dagsocial/node-reads';
+import { capped } from './http.js';
 import { nipopowProofReadBytes } from './caps.js';
 import { verifierProfile } from './config.js';
 
@@ -49,7 +50,7 @@ export async function resolveTip(
   const nodes: NodeTipResult[] = [];
 
   for (const url of nodeUrls) {
-    // CONSTANTS → Light client reads — `nipopowProofReadBytes` is a function of the `m` and `k` asked.
+    // CONSTANTS → Client reads — `nipopowProofReadBytes` is a function of the `m` and `k` asked.
     const res = await fetchJson<unknown>(
       httpFetch,
       `${url}/nipopow/proof/${m}/${k}`,

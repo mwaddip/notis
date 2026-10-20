@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { proveName } from '../src/names.js';
 import type { NameClaim, NameResult } from '../src/names.js';
-import type { HttpFetch } from '../src/http.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
 import {
   buildAvlWithInsertions,
   boxInsertion,

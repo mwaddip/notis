@@ -53,7 +53,7 @@ import {
   treeStateView,
 } from '@dagsocial/consensus';
 import type { HoldingKind, TreeLookup, TreeSession } from '@dagsocial/consensus';
-import type { HttpFetch } from '../src/http.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
 
 export const DEVNET_POW_TARGET_BITS = 3072;
 const DEVNET_IDEAL_MS = 60_000;

@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { createPostResolver } from '../src/extension/post-resolver';
 import type { PostCheck } from '@dagsocial/nipopow-client';
-import { POST_BATCH_READ_BYTES } from '@dagsocial/nipopow-client';
+import { POST_BATCH_READ_BYTES } from '@dagsocial/node-reads';
 import { MAX_CONTENT_BYTES, MAX_TX_BYTES } from '@dagsocial/types';
 import { BATCH_READ_MAX } from '../src/model/post-resolve';
 import type { PostJson, PostStatus } from '../src/api/dto';
@@ -273,7 +273,7 @@ describe("post-resolver — the pointer moves at the call", () => {
 // WEB_INTERFACE → The extension → "Every answer is read under its route's cap"
 // — a body longer than its cap is read no further, and the request answers as
 // one whose body does not parse: it serves nothing, and its ids go on to the
-// next node. CONSTANTS → Light client reads — `POST_BATCH_READ_BYTES`.
+// next node. CONSTANTS → Client reads — `POST_BATCH_READ_BYTES`.
 
 const worstRow = (label: string): PostJson => ({
   id: hid(label),

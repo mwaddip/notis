@@ -21,9 +21,15 @@ import type {
   UserId,
 } from '@dagsocial/types';
 import type { PoPowHeader } from '@dagsocial/nipopow';
-import type { HttpFetch } from './http.js';
-import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
-import { HEIGHT_READ_BYTES, LEDGER_READ_MAX, LISTING_PAGE_READ_BYTES, LOOKUP_READ_BYTES } from './caps.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
+import { fetchJson, isRecord } from '@dagsocial/node-reads';
+import {
+  HEIGHT_READ_BYTES,
+  LEDGER_READ_MAX,
+  LISTING_PAGE_READ_BYTES,
+  LOOKUP_READ_BYTES,
+} from '@dagsocial/node-reads';
+import { base64ToBytes, capped, shown } from './http.js';
 import { proveRange } from './holdings.js';
 import type { RangeResult } from './holdings.js';
 
@@ -182,7 +188,7 @@ export async function fetchListing(
   let karmaHeight = 0;
   let karmaEffective = '0';
 
-  // CONSTANTS → Light client reads — a karma listing page.
+  // CONSTANTS → Client reads — a karma listing page.
   const firstKarma = await fetchJson<KarmaPageResponse>(
     httpFetch,
     `${nodeUrl}/karma/${user}`,
@@ -223,7 +229,7 @@ export async function fetchListing(
   }
 
   const creditsBoxes: ListedBox[] = [];
-  // CONSTANTS → Light client reads — a credit listing page.
+  // CONSTANTS → Client reads — a credit listing page.
   const firstCredit = await fetchJson<CreditPageResponse>(
     httpFetch,
     `${nodeUrl}/credits/${user}`,
@@ -329,7 +335,7 @@ async function proveKeyAtHeight(
   httpFetch: HttpFetch,
 ): Promise<KeyProofOutcome> {
   const keyHex = bytesToHex(treeKey);
-  // CONSTANTS → Light client reads — one lookup proof.
+  // CONSTANTS → Client reads — one lookup proof.
   const proofRes = await fetchJson<unknown>(
     httpFetch,
     `${nodeUrl}/api/v1/proof/${keyHex}?atHeight=${atHeight}`,
@@ -836,7 +842,7 @@ export async function proveFigures(
 // answer, or one whose `height` is not a block height, leaves `heightAfter`
 // unread (WEB_INTERFACE → The extension → "A run is total").
 export async function readHeightAfter(nodeUrl: string, httpFetch: HttpFetch): Promise<number | null> {
-  // CONSTANTS → Light client reads — `/blocks/current`.
+  // CONSTANTS → Client reads — `/blocks/current`.
   const res = await fetchJson<unknown>(httpFetch, `${nodeUrl}/blocks/current`, HEIGHT_READ_BYTES);
   if (!res.ok || !isRecord(res.data)) return null;
   const height = res.data['height'];

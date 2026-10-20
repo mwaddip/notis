@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { fetchListing, proveFigures } from '../src/boxes.js';
 import type { Listing } from '../src/boxes.js';
-import type { HttpFetch } from '../src/http.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
 import {
   avlProofJson,
   buildAvlWithInsertions,

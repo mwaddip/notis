@@ -1,7 +1,7 @@
 // WEB_INTERFACE → The extension → "The verified figures" — a ledger is read up
 // to LEDGER_READ_MAX boxes; a range that runs past it, at either height, ends
 // that ledger's read unproven; the command line's listing is held to the same
-// bound (CONSTANTS → Light client reads).
+// bound (CONSTANTS → Client reads).
 
 import { describe, it, expect } from 'vitest';
 import { hexToBytes } from '@dagsocial/types';
@@ -11,8 +11,8 @@ import { proveRange } from '../src/holdings.js';
 import { fetchListing, proveFigures } from '../src/boxes.js';
 import { makeAnchor } from './helpers.js';
 import { profileFor } from '@dagsocial/types';
-import { LEDGER_READ_MAX } from '../src/caps.js';
-import type { HttpFetch } from '../src/http.js';
+import { LEDGER_READ_MAX } from '@dagsocial/node-reads';
+import type { HttpFetch } from '@dagsocial/node-reads';
 import {
   buildHoldingsFixture,
   jsonResponse,
@@ -71,7 +71,7 @@ describe('proveRange — a range past the bound ends unproven, the verdict namin
   // boxes against a bound of 10 lets the ledger overflow in one request, with
   // the test harness holding the proof-generation cost well under a second.
   // The bound is passed as a function argument — `LEDGER_READ_MAX` stays the
-  // production default (CONSTANTS → Light client reads).
+  // production default (CONSTANTS → Client reads).
   const BOUND = 10;
 
   it('more than the bound boxes in one page ends the range unproven', async () => {
@@ -245,7 +245,7 @@ describe('fetchListing — a listing past the bound fails the listing, no furthe
 
 // WEB_INTERFACE → The extension → "The verified figures" — the default itself
 // is a bound: a caller that passes no `maxBoxes` reads the ledger up to
-// `LEDGER_READ_MAX = 10_000` (CONSTANTS → Light client reads). The cases
+// `LEDGER_READ_MAX = 10_000` (CONSTANTS → Client reads). The cases
 // below pin that default by never passing the argument.
 describe("fetchListing's default bounds the karma listing at LEDGER_READ_MAX", () => {
   // Honest keyset pages of PAGE_LIMIT_MAX (= 100 at node, CONSTANTS →

@@ -3,9 +3,9 @@ import { TREE_KEY_LENGTH, bytesToHex, hexToBytes } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
 import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';
 import type { HoldingKind } from '@dagsocial/consensus';
-import type { HttpFetch } from './http.js';
-import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
-import { LEDGER_READ_MAX, RANGE_PAGE_READ_BYTES } from './caps.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
+import { fetchJson, isRecord, LEDGER_READ_MAX, RANGE_PAGE_READ_BYTES } from '@dagsocial/node-reads';
+import { base64ToBytes, capped, shown } from './http.js';
 export type { HoldingKind };
 
 /**
@@ -105,7 +105,7 @@ export async function proveRange(
       : `?atHeight=${atHeight}&limit=${PAGE_ASK}&from=${fromHex}`;
     const url = `${nodeUrl}/api/v1/range/${kind}/${ownerLower}${query}`;
 
-    // CONSTANTS → Light client reads — one range page.
+    // CONSTANTS → Client reads — one range page.
     const res = await fetchJson<unknown>(httpFetch, url, RANGE_PAGE_READ_BYTES);
     if (!res.ok) {
       const verdict = res.status === 0
