@@ -439,6 +439,28 @@ describe('proxy.setLinks — sends the links message, then holds the new value',
   });
 });
 
+// WEB_INTERFACE → The identity module → "A signature is made for the key the
+// transaction was built for" and → The extension → "The messages" — `sign`
+// carries `pubKeyHex`, the key the flow built the transaction for.
+describe('proxy.sign — carries pubKeyHex to the background', () => {
+  it.fails('its sign sends pubKeyHex in the message', async () => {
+    const c = fakeChrome();
+    const sent: unknown[] = [];
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      sent.push(m);
+      if ((m as { kind: string }).kind === 'state') return null;
+      if ((m as { kind: string }).kind === 'sign') return { signature: 'aa'.repeat(64) };
+      return { error: 'unexpected' };
+    }) as typeof chrome.runtime.sendMessage;
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
+    await (proxy.sign as unknown as (b: Uint8Array, t: string, p: string) => Promise<unknown>)(
+      new Uint8Array([1, 2, 3]), 'cd'.repeat(32), 'ee'.repeat(32),
+    );
+    const signMsg = sent.find((m) => (m as { kind: string }).kind === 'sign');
+    expect(signMsg).toMatchObject({ pubKeyHex: 'ee'.repeat(32) });
+  });
+});
+
 describe('proxy — a storage.onChanged on local carrying notis.links moves the value silently', () => {
   it('the held value flips from the change\'s newValue, with NO message sent', async () => {
     const c = fakeChrome();

@@ -1106,3 +1106,41 @@ describe('the reservation expiry, every flow', () => {
     });
   });
 });
+
+// WEB_INTERFACE → The identity module → "A signature is made for the key the
+// transaction was built for" — a flow passes the key it read from current() at
+// its start, built the transaction for and ran its reads under; a signature
+// made for any other key is a `refused: key-changed`, and no node ever sees it.
+describe('a signature is made for the key the flow built for', () => {
+  it.fails('a flow passes the key read at its start; a current() flipped between the build and the signature does not reach it', async () => {
+    const A = PUB;
+    const B = 'bb'.repeat(32);
+    const seen: Array<{ pubKeyHex: string | undefined }> = [];
+    let reads = 0;
+    const trackedIdentity = {
+      current: () => ({ pubKeyHex: reads++ === 0 ? A : B }),
+      sign: async (_bytes: Uint8Array, _t: string, p?: string) => {
+        seen.push({ pubKeyHex: p });
+        if (p === B) return { signature: SIG } as const;
+        return { refused: 'key-changed' } as const;
+      },
+    } as unknown as SubmitDeps['identity'];
+    const ledger = new PendingLedger(A);
+    const deps: SubmitDeps = {
+      reads: readsFor(PARENT_AUTHOR, FULL_BOXES),
+      write: write(), ledger, identity: trackedIdentity, network: null,
+    };
+    const res = await submitLikeFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'key-changed' });
+    expect(seen).toEqual([{ pubKeyHex: A }]);
+  });
+});
+
+// The helper `readsFor` is just the test file's own `reads` under a non-colliding
+// name — the describe above does not shadow it the way an inline binding would.
+function readsFor(
+  confirmedAuthor: string | null,
+  boxes: KarmaBoxRow[],
+): Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> {
+  return reads(confirmedAuthor, boxes);
+}

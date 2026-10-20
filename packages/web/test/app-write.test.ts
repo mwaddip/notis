@@ -392,6 +392,21 @@ describe('the App write surface — the notSigned arm', () => {
     expect(h.drive.state.feed.report).toBe('like not sent.');
   });
 
+  // WEB_INTERFACE → The wallet → "A flow can end before the node ever sees it:
+  // `notSigned`" — a signature refused `key-changed` reads *<action> not sent:
+  // another key is loaded now.*
+  it.fails('like: a signature refused key-changed reports "like not sent: another key is loaded now."', async () => {
+    const target = 'cc'.repeat(32);
+    const h = harness({ sign: { kind: 'refused', reason: 'key-changed' } });
+    h.drive.state.feed.posts = [
+      { ...confirmedPost(target), id: target, likedByViewer: false } as unknown as (typeof h.drive.state.feed.posts)[number],
+    ];
+    await h.drive.likePost(target);
+    expect(h.drive.optimisticLikes.has(target)).toBe(false);
+    expect(h.ledger.size).toBe(0);
+    expect(h.drive.state.feed.report).toBe('like not sent: another key is loaded now.');
+  });
+
   it('like: locked reports "your key is locked" on the feed', async () => {
     const target = 'cc'.repeat(32);
     const h = harness({ sign: { kind: 'locked' } });

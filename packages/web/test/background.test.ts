@@ -1,9 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { encodeTx, computeTxId, computeContentHash, bytesToHex, hexToBytes } from '@dagsocial/types';
+import { encodeTx, computeTxId, computeContentHash, bytesToHex, hexToBytes, generateKeyPair } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { buildPost, buildLike, type BuildContext } from '../src/wallet/builders';
+import { buildPost, buildLike, buildSend, type BuildContext } from '../src/wallet/builders';
 import { install } from '../src/extension/background';
 import { fakeChrome, freshFixture, type FakeChrome } from './fake-chrome';
 import type { SignRecord, Message } from '../src/extension/protocol';
@@ -40,6 +40,23 @@ function unsignedThreadTx(pubKeyHex: string): { tx: UtxoTransaction; txIdHex: st
 
 function unsignedLikeTx(pubKeyHex: string): { tx: UtxoTransaction; txIdHex: string; txBytesHex: string } {
   const built = buildLike(ctx(pubKeyHex), TARGET_POST, AUTHOR);
+  return { tx: built.tx, txIdHex: built.txId, txBytesHex: bytesToHex(encodeTx(built.tx)) };
+}
+
+/** A credits send transaction — classifyLedger reads a `credit` output as the
+ *  credits side, so this one takes the prompt path (WEB_INTERFACE → The
+ *  extension → "`sign`, in the background, in order"). */
+function unsignedCreditSendTx(pubKeyHex: string): { tx: UtxoTransaction; txIdHex: string; txBytesHex: string } {
+  const built = buildSend(
+    {
+      spendable: [{ boxId: '55'.repeat(32), value: 10_000_000_000n }],
+      height: 6000,
+      era: 1,
+      author: pubKeyHex,
+    },
+    '44'.repeat(32),
+    1_000_000_000n,
+  );
   return { tx: built.tx, txIdHex: built.txId, txBytesHex: bytesToHex(encodeTx(built.tx)) };
 }
 
@@ -188,6 +205,64 @@ describe('background — sign steps 1-3 refusals', () => {
     const txIdHex = computeTxId(signedTx);
     const answer = await c.send({ kind: 'sign', txBytesHex: bytesToHex(signedBytes), txIdHex });
     expect(answer).toEqual({ refused: 'already-signed' });
+  });
+});
+
+// WEB_INTERFACE → "`sign`, in the background, in order" — step 4 reads the
+// envelope and compares `pubKeyHex`; a key that is not the envelope's is
+// `refused: key-changed` before the ledger is read and before any prompt
+// record is written. The seed is the identity's only when its public key is
+// the envelope's (→ "The contexts, and what each may hold"): `state`'s
+// `locked` answers that, and nothing signs with any other seed.
+describe('background — sign checks the key is the envelope\'s', () => {
+  it.fails('silent + karma + a key that is not the envelope\'s: refused key-changed, no signature, no record', async () => {
+    const c = await bootstrappedChrome();
+    const envKey = await pubKey(c);
+    const { txBytesHex, txIdHex } = unsignedThreadTx(envKey);
+    // Control: the envelope's own key signs under silent.
+    const okCtrl = await c.send({ kind: 'sign', txBytesHex, txIdHex, pubKeyHex: envKey });
+    expect(okCtrl).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
+    const wrong = 'ff'.repeat(32);
+    expect(wrong).not.toBe(envKey);
+    const answer = await c.send({ kind: 'sign', txBytesHex, txIdHex, pubKeyHex: wrong });
+    expect(answer).toEqual({ refused: 'key-changed' });
+    expect(promptRecords(c)).toHaveLength(0);
+  });
+
+  it.fails('credits + a key that is not the envelope\'s: refused key-changed, no prompt record and no window', async () => {
+    const c = await bootstrappedChrome();
+    const envKey = await pubKey(c);
+    const { txBytesHex, txIdHex } = unsignedCreditSendTx(envKey);
+    const wrong = 'ff'.repeat(32);
+    const answer = await c.send({ kind: 'sign', txBytesHex, txIdHex, pubKeyHex: wrong });
+    expect(answer).toEqual({ refused: 'key-changed' });
+    expect(promptRecords(c)).toHaveLength(0);
+    expect(c.windows.created).toEqual([]);
+  });
+
+  it.fails('a seed of another key in storage.session beside the envelope: state locked, a silent sign answers locked, control signs', async () => {
+    const c = await bootstrappedChrome();
+    const envKey = await pubKey(c);
+    const envSeedHex = c.storage.session.get('notis.seed') as string;
+    // Overwrite the session seed with another key's — the envelope's pubKeyHex
+    // is unchanged.
+    const other = generateKeyPair();
+    const otherSeedHex = bytesToHex(other.secretKey.subarray(16));
+    c.storage.session.set('notis.seed', otherSeedHex);
+    // state answers locked: true — the seed is not the envelope's.
+    const snap = await c.send({ kind: 'state' }) as { locked: boolean };
+    expect(snap.locked).toBe(true);
+    // A silent sign under the envelope's key answers locked, since no seed is
+    // the envelope's.
+    const { txBytesHex, txIdHex } = unsignedThreadTx(envKey);
+    const answer = await c.send({ kind: 'sign', txBytesHex, txIdHex, pubKeyHex: envKey });
+    expect(answer).toEqual({ locked: true });
+    // Control: the envelope's own seed restored — locked: false, signature out.
+    c.storage.session.set('notis.seed', envSeedHex);
+    const snap2 = await c.send({ kind: 'state' }) as { locked: boolean };
+    expect(snap2.locked).toBe(false);
+    const ok = await c.send({ kind: 'sign', txBytesHex, txIdHex, pubKeyHex: envKey });
+    expect(ok).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
   });
 });
 
