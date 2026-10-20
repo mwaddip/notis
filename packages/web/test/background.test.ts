@@ -588,6 +588,23 @@ describe('background — approve and exportFile hold the seed to the identity', 
     expect(c.windows.removed).toContain(windowId);
   });
 
+  it.fails('approve with the envelope cleared after the record was written: { error }, record declined, window removed', async () => {
+    const c = await bootstrappedChrome();
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const pub = await pubKey(c);
+    const tx = unsignedThreadTx(pub);
+    const pending = await c.send({ kind: 'sign', txBytesHex: tx.txBytesHex, txIdHex: tx.txIdHex, pubKeyHex: pub }) as { pending: string };
+    const [, recordBefore] = promptRecords(c).find(([, r]) => r.id === pending.pending)!;
+    const windowId = recordBefore.windowId!;
+    // Forget the identity; the record stands, naming its key, with no envelope now.
+    await c.send({ kind: 'forget' });
+    const answer = await c.send({ kind: 'approve', id: pending.pending }, promptSender(c));
+    expect(answer).toMatchObject({ error: expect.any(String) });
+    const [, after] = promptRecords(c).find(([, r]) => r.id === pending.pending)!;
+    expect(after.result).toEqual({ declined: true });
+    expect(c.windows.removed).toContain(windowId);
+  });
+
   it('approve with the seed absent answers { locked: true } and writes no result', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
