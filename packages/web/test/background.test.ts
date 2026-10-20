@@ -543,7 +543,7 @@ describe('background — sign step 7: the prompt is one at a time', () => {
     expect(rec.result).toEqual({ declined: true });
   });
 
-  it.fails('windows.create throwing: the page is answered { error }, no notis.sign.* is left, and the next sign opens its own prompt', async () => {
+  it('windows.create throwing: the page is answered { error }, no notis.sign.* is left, and the next sign opens its own prompt', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
     const pub = await pubKey(c);
@@ -566,7 +566,7 @@ describe('background — sign step 7: the prompt is one at a time', () => {
 // ---------------------------------------------------------------------------
 
 describe('background — approve and exportFile hold the seed to the identity', () => {
-  it.fails('approve with the envelope swapped to another key after the record was written: { error }, record declined, window removed', async () => {
+  it('approve with the envelope swapped to another key after the record was written: { error }, record declined, window removed', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
     const pub1 = await pubKey(c);
@@ -588,7 +588,7 @@ describe('background — approve and exportFile hold the seed to the identity', 
     expect(c.windows.removed).toContain(windowId);
   });
 
-  it.fails('approve with the seed absent answers { locked: true } and writes no result', async () => {
+  it('approve with the seed absent answers { locked: true } and writes no result', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
     const pub = await pubKey(c);
@@ -601,7 +601,7 @@ describe('background — approve and exportFile hold the seed to the identity', 
     expect(rec.result).toBeUndefined();
   });
 
-  it.fails('approve with a seed of another key beside the envelope answers { locked: true }', async () => {
+  it('approve with a seed of another key beside the envelope answers { locked: true }', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
     const pub = await pubKey(c);
@@ -617,7 +617,7 @@ describe('background — approve and exportFile hold the seed to the identity', 
     expect(rec.result).toBeUndefined();
   });
 
-  it.fails('exportFile with a seed of another key beside the envelope: { error }, no file text', async () => {
+  it('exportFile with a seed of another key beside the envelope: { error }, no file text', async () => {
     const c = await bootstrappedChrome();
     // Control: the envelope exists and the seed looks loaded.
     expect(c.storage.local.has('notis.identity')).toBe(true);

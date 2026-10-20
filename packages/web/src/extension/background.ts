@@ -243,9 +243,13 @@ async function importFile(api: typeof chrome, text: string, passphrase: string):
 }
 
 async function exportFile(api: typeof chrome, password: string): Promise<{ text: string } | { error: string }> {
-  const seed = await readSeed(api);
+  // WEB_INTERFACE → The extension → "The contexts, and what each may hold" —
+  // a seed is the identity's only when its public key is the envelope's, and
+  // `exportFile` seals no other key's seed as the identity's.
   const env = await readEnvelope(api);
-  if (seed === null || env === null) return { error: 'no unlocked identity is loaded to export.' };
+  if (env === null) return { error: 'no unlocked identity is loaded to export.' };
+  const seed = await readIdentitySeed(api, env.pubKeyHex);
+  if (seed === null) return { error: 'no unlocked identity is loaded to export.' };
   const envelope = await seal(seed, env.pubKeyHex, password);
   await api.storage.local.set({ [K_BACKEDUP]: '1' });
   return { text: JSON.stringify(envelope, null, 2) };
@@ -448,14 +452,22 @@ async function signMessage(api: typeof chrome, locks: LockManager, txBytesHex: s
     // WEB_INTERFACE → The extension → "The prompt window" — the popup opens
     // at the top-right of the last-focused browser window, under the toolbar;
     // unplaced when the geometry is unknown (a missing or non-numeric field).
-    const w = await api.windows.create({
-      type: 'popup',
-      url: api.runtime.getURL('prompt.html') + '?id=' + record.id,
-      width: PROMPT_WIDTH,
-      height: PROMPT_HEIGHT,
-      focused: true,
-      ...await promptPlacement(api),
-    });
+    // A browser that does not open the window removes the record just written
+    // and answers { error } with the failure's words (step 7).
+    let w: chrome.windows.Window;
+    try {
+      w = await api.windows.create({
+        type: 'popup',
+        url: api.runtime.getURL('prompt.html') + '?id=' + record.id,
+        width: PROMPT_WIDTH,
+        height: PROMPT_HEIGHT,
+        focused: true,
+        ...await promptPlacement(api),
+      });
+    } catch (e) {
+      await api.storage.session.remove(key);
+      return { error: errorMessage(e) };
+    }
     if (typeof w.id === 'number') {
       record.windowId = w.id;
       await api.storage.session.set({ [key]: record });
@@ -465,18 +477,31 @@ async function signMessage(api: typeof chrome, locks: LockManager, txBytesHex: s
 }
 
 /** approve is checked by the sender's URL — an approval message may come only
- *  from the prompt page (WEB_INTERFACE → "The messages"). */
-async function approve(api: typeof chrome, id: string, sender: chrome.runtime.MessageSender): Promise<'ok' | { error: string }> {
+ *  from the prompt page (WEB_INTERFACE → "The messages"). The envelope's key
+ *  must be the record's; a seed that is not the identity's answers
+ *  `{ locked: true }` so the prompt page mounts its unlock form (WEB_INTERFACE
+ *  → The extension → "`sign`, in the background, in order", step 8). */
+async function approve(api: typeof chrome, id: string, sender: chrome.runtime.MessageSender): Promise<'ok' | { locked: true } | { error: string }> {
   if (!isFromPromptPage(api, sender)) return { error: 'approve is only accepted from the prompt page' };
   const record = await readRecord(api, id);
   if (record === null || record.result) return { error: 'no open prompt for that id' };
-  const seed = await readSeed(api);
-  if (seed === null) return { error: 'locked' };
+  const env = await readEnvelope(api);
+  if (env === null) return { error: 'no identity is loaded.' };
+  if (env.pubKeyHex !== record.pubKeyHex) {
+    const declined: SignRecord = { ...record, result: { declined: true } };
+    await api.storage.session.set({ [K_SIGN_PREFIX + id]: declined });
+    if (typeof record.windowId === 'number') {
+      try { await api.windows.remove(record.windowId); } catch { /* already closed */ }
+    }
+    return { error: 'another key is loaded now.' };
+  }
+  const seed = await readIdentitySeed(api, env.pubKeyHex);
+  if (seed === null) return { locked: true };
   const signature = bytesToHex(ed25519.sign(hexToBytes(record.txIdHex), seed));
   const updated: SignRecord = { ...record, result: { signature } };
   await api.storage.session.set({ [K_SIGN_PREFIX + id]: updated });
   if (typeof record.windowId === 'number') {
-    try { await api.windows.remove(record.windowId); } catch { /* already gone */ }
+    try { await api.windows.remove(record.windowId); } catch { /* already closed */ }
   }
   return 'ok';
 }
@@ -545,13 +570,6 @@ async function raiseOrOpenPage(api: typeof chrome): Promise<void> {
 // Storage readers — every message reloads from storage on every call. Nothing
 // is cached in a global.
 // ---------------------------------------------------------------------------
-
-async function readSeed(api: typeof chrome): Promise<Uint8Array | null> {
-  const got = await api.storage.session.get(K_SEED);
-  const v = got[K_SEED];
-  if (typeof v !== 'string' || !HEX64.test(v)) return null;
-  return hexToBytes(v);
-}
 
 /** A session seed held to the envelope's `pubKeyHex` — the seed is the
  *  identity's only when its public key is the envelope's (WEB_INTERFACE →

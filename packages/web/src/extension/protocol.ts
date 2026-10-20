@@ -13,14 +13,18 @@ import type { LinksPref } from './links';
  *  others are the three pre-prompt checks. */
 export type SignRefusal = 'undecodable' | 'id-mismatch' | 'already-signed' | 'key-changed' | 'busy';
 
-/** The four things a `sign` message can answer. `pending` never reaches the
+/** The things a `sign` message can answer. `pending` never reaches the
  *  wallet — the proxy waits on the record's `result` and translates back to a
- *  wallet-side `SignResult` (WEB_INTERFACE → The wallet). */
+ *  wallet-side `SignResult` (WEB_INTERFACE → The wallet). `{ error }` is the
+ *  background's answer when the browser does not open the prompt window
+ *  (WEB_INTERFACE → The extension → "`sign`, in the background, in order",
+ *  step 7); the proxy's `sign` translates it to `{ refused: <its words> }`. */
 export type SignAnswer =
   | { signature: string }
   | { locked: true }
   | { pending: string }
-  | { refused: SignRefusal };
+  | { refused: SignRefusal }
+  | { error: string };
 
 /** The prompt record's `result` — filled by `approve` or `decline`, then the
  *  page reads it through `storage.session.onChanged` and calls `ack`. */
@@ -142,7 +146,8 @@ export type Answer<K extends MessageKind> =
   : K extends 'exportFile' ? { text: string }
   : K extends 'sign' ? SignAnswer
   : K extends 'takeOpen' ? { ids: string[] }
-  : K extends 'discardDraft' | 'unlock' | 'lock' | 'forget' | 'policy' | 'links' | 'arrived' | 'offered' | 'ack' | 'approve' | 'decline' ? 'ok'
+  : K extends 'approve' ? ('ok' | { locked: true } | ErrorAnswer)
+  : K extends 'discardDraft' | 'unlock' | 'lock' | 'forget' | 'policy' | 'links' | 'arrived' | 'offered' | 'ack' | 'decline' ? 'ok'
   : never;
 
 /** A `Message` guard the dispatcher uses to close over the input. `unknown`
