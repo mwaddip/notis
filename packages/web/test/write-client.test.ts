@@ -158,14 +158,14 @@ describe('write client — rejection normalisation', () => {
 const TX_LOWER = 'ff'.repeat(32);
 
 describe('write client — the shape the route serves', () => {
-  it.fails('a 2xx carrying a txId that is not 64 lowercase hex is a client rejection', async () => {
+  it('a 2xx carrying a txId that is not 64 lowercase hex is a client rejection', async () => {
     mockResponse({ status: 200, body: { status: 'pending', txId: 'FF'.repeat(32), expiresAtHeight: 5720 } });
     const res = await write().submitLike({});
     expect(isRejection(res)).toBe(true);
     expect(res).toMatchObject({ status: 0 });
   });
 
-  it.fails('a post 2xx whose postId is 63 hex is a client rejection', async () => {
+  it('a post 2xx whose postId is 63 hex is a client rejection', async () => {
     mockResponse({
       status: 200,
       body: { postId: 'ab'.repeat(31) + 'a', status: 'pending', expiresAtHeight: 5720, txId: TX_LOWER },
@@ -177,7 +177,7 @@ describe('write client — the shape the route serves', () => {
 });
 
 describe('write client — the cap and the deadline', () => {
-  it.fails('a 2xx one byte over WRITE_ANSWER_READ_BYTES ends as a transport failure does', async () => {
+  it('a 2xx one byte over WRITE_ANSWER_READ_BYTES ends as a transport failure does', async () => {
     const over = 'a'.repeat(WRITE_ANSWER_READ_BYTES + 1);
     vi.stubGlobal('fetch', vi.fn(async () => new Response(over, { status: 200 })));
     const res = await write().submitLike({});
@@ -185,7 +185,7 @@ describe('write client — the cap and the deadline', () => {
     expect(res).toMatchObject({ status: 0 });
   });
 
-  it.fails('every write request carries the deadline signal', async () => {
+  it('every write request carries the deadline signal', async () => {
     let seen: AbortSignal | undefined;
     vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init?: RequestInit) => {
       seen = init?.signal ?? undefined;
