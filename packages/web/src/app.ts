@@ -2,9 +2,10 @@ import { NodeClient, PageError, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, PAGE_LIMIT_DEFAULT, PAGE_LIMIT_MAX, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
 import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readWholeList } from './api/whole-list';
+import { decrementBoxId } from './wallet/box-id';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
@@ -5031,22 +5032,39 @@ export class App {
     if (creditsChanged && !creditsTaken) this.renderCreditsRowInPlace();
   }
 
-  /** Reconcile a pending send: read the recipient's /credits and look for the
-   *  payment box (`computeCandidateBoxId`, exact) among their boxes. The row's
-   *  flight slot reads *sent* or the expiry on the render the tick ends with,
-   *  beside the balance the tick's own /credits read moves (WEB_INTERFACE → The
-   *  wallet window). Answers the outcome, or null when the read failed or
-   *  answered after the reader's own state dropped. */
+  /** Reconcile a pending send: the one page the payment box would open —
+   *  `/credits` is ordered `value DESC, id` (NODE_INTERFACE → UTXO queries),
+   *  so `after=<amount>:<id-1>&limit=1` answers the box as its one row
+   *  whenever the recipient holds it; one request a block for each pending
+   *  send, whatever the recipient holds (WEB_INTERFACE → The wallet →
+   *  "Reconcile runs on the reader's own refresh and on the bounded poll
+   *  below"). An all-zero `send.boxId` has none below it, so no request
+   *  leaves and the entry reads as pending. The row's flight slot reads
+   *  *sent* or the expiry on the render the tick ends with, beside the
+   *  balance the tick's own /credits read moves (WEB_INTERFACE → The wallet
+   *  window). Answers the outcome, or null when the read failed or answered
+   *  after the reader's own state dropped. */
   private async reconcileSendEntry(entry: PendingEntry, tip: number, gen: number): Promise<EntryOutcome | null> {
     const recipient = entry.postId; // a send's subject is the recipient's key
+    const boxId = entry.send?.boxId;
+    const amount = entry.send?.amount;
+    if (boxId === undefined || amount === undefined) {
+      // a send entry missing its payload cannot land — reconcileSend treats
+      // it as expired; follow suit with no request.
+      this.ledger.remove(entry.txId);
+      this.sendFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
+      return 'expired';
+    }
+    const below = decrementBoxId(boxId);
+    if (below === null) return 'pending'; // all-zero id, no key below it
     let recipientBoxes;
     try {
-      recipientBoxes = await this.readAllCreditBoxes(recipient);
+      recipientBoxes = await this.client.credits(recipient, { limit: 1, after: `${amount.toString()}:${below}` });
     } catch {
       return null; // a failed read keeps the entry; the next tick retries
     }
     if (gen !== this.readerGen) return null;
-    const outcome = reconcileSend(entry, recipientBoxes, tip);
+    const outcome = reconcileSend(entry, recipientBoxes.boxes, tip);
     if (outcome === 'pending') return outcome;
     this.ledger.remove(entry.txId);
     // The row renders *sent* directly from the landed stage; stageLine has no
@@ -5057,19 +5075,6 @@ export class App {
       ? { stage: 'landed' }
       : { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
     return outcome;
-  }
-
-  /** Read every credit box the recipient holds — one page at a time, following
-   *  `next`. The bare {boxId} shape reconcileSend needs. */
-  private async readAllCreditBoxes(key: string): Promise<Array<{ boxId: string }>> {
-    const boxes: Array<{ boxId: string }> = [];
-    let after: string | null = null;
-    do {
-      const page: CreditsResult = await this.client.credits(key, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
-      for (const b of page.boxes) boxes.push({ boxId: b.boxId });
-      after = page.next;
-    } while (after !== null);
-    return boxes;
   }
 
   // ---- placement, focus and reports for the write surface ----

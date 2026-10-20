@@ -176,7 +176,7 @@ afterEach(() => {
 });
 
 describe('a pending send lands through the one page the payment box would open', () => {
-  it.fails('a recipient past the credits bound lands in one credits request; the URL names after=<amount>:<id-1> and limit=1', async () => {
+  it('a recipient past the credits bound lands in one credits request; the URL names after=<amount>:<id-1> and limit=1', async () => {
     const heightBox = { value: 1_000 };
     // The recipient's /credits answers only the one row the one-page read
     // asks for — a page strictly after `<amount>:<id-1>` of limit 1,
