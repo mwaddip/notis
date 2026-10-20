@@ -588,7 +588,7 @@ describe('background — approve and exportFile hold the seed to the identity', 
     expect(c.windows.removed).toContain(windowId);
   });
 
-  it.fails('approve with the envelope cleared after the record was written: { error }, record declined, window removed', async () => {
+  it('approve with the envelope cleared after the record was written: { error }, record declined, window removed', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
     const pub = await pubKey(c);
