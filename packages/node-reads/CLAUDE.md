@@ -42,6 +42,12 @@ Node ≥ 22.
 - **The field checks** (`src/fields.ts`): total predicates for an answer's fields — 64 lowercase hex, a non-negative
   safe integer and the same or `null`, a box value (a canonical decimal below `2⁶³`), a sum (a canonical decimal), a
   name (`null` or what `isValidUsernameBytes` accepts).
+- **The page rule and the whole-list read** (`src/pages.ts`): `parsePage` holds a parsed body to the page the node
+  serves — an object whose list is an array of at most the `limit` asked, whose `next` is `null` or a non-empty string
+  with no lone surrogate, and which carries exactly the `limit` asked when it names a `next`; `wholeListRead` follows
+  `next` over a `fetchPage` seam, refuses a cursor or a row key named twice, fails past its bound, never throws on the
+  node's answer and lets a throw from `fetchPage` pass, the node's text in its refusals through `capped`.
+  `KARMA_LISTING_MAX` (2) is the one place a client holds the protocol's two-box karma maximum.
 
 **It runs in the browser as written**: no Node built-in import, no Node global — held by the browser pass of
 `typecheck` (`tsconfig.browser.json`, `ARCHITECTURE → Package boundaries`). **No route path string in its source** —

@@ -66,13 +66,13 @@ literal caps, `LEDGER_READ_MAX`, `isRecord` and `capped` are that package's (`CO
 route's `nipopowProofReadBytes(m, k)`, a function of the `m` and `k` asked, is this package's `src/caps.ts`, and
 `shown` and `base64ToBytes` its `src/http.ts`.
 
-**The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user`
-following `next` to the end — a ledger listed past `LEDGER_READ_MAX` boxes fails the listing — `height` and
-`effective` from the first karma page — the node answers a key it has
-never seen with an empty page at its height, so any non-ok, a 404 among them, or a page that is not an object
-with a `boxes` array and a `next` that is
-null or a non-empty string with no lone surrogate (the next request carries it through `encodeURIComponent`),
-surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
+**The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user` through
+`@dagsocial/node-reads`' whole-list read — every page asked at `PAGE_LIMIT_MAX` and held to the page rule (a page that
+names a `next` carries the `limit` asked), a cursor or a `boxId` named twice failing the listing — the karma listing
+bounded at `KARMA_LISTING_MAX` (two boxes, the protocol's maximum) and the credit listing at `LEDGER_READ_MAX`;
+`height` and `effective` from the first karma page; each row's `boxId` 64 lowercase hex. The node answers a key it
+has never seen with an empty page at its height, so any non-ok, a 404 among them, or a page that does not hold to the
+rule surfaces as `{ ok: false, reason }`, the node's text in it through `capped`. `proveFigures(nodeUrl, user, listing,
 anchor, profile, fetch)` reads **what the key holds, whole, by range**, and judges the listing against it, in this
 order the run's whole meaning rests on: the identity record at `suffixHead`; each ledger's range at `suffixHead` —
 `karma`, and `credit` where the listing's `credits` is not `null` (`null` is *not read*, never an empty listing);
