@@ -248,7 +248,7 @@ describe('a pending send lands through the one page the payment box would open',
 });
 
 describe('a pending invite reads /invites whole, decides on the whole read, and the profile view stays its first page', () => {
-  it.fails("a pending invite whose bond is on the bonds' second page lands", async () => {
+  it("a pending invite whose bond is on the bonds' second page lands", async () => {
     const heightBox = { value: 1_000 };
     const firstPage = Array.from({ length: PAGE_LIMIT_DEFAULT }, (_, i) => ({
       id: `${((i + 1) >>> 0).toString(16).padStart(2, '0')}${'00'.repeat(31)}`,
@@ -295,7 +295,7 @@ describe('a pending invite reads /invites whole, decides on the whole read, and 
     expect(h.drive.inviteFlight).toBeNull();
   });
 
-  it.fails("an invite's landing leaves the bonds view the profile's first page, with its `more`", async () => {
+  it("an invite's landing leaves the bonds view the profile's first page, with its `more`", async () => {
     const heightBox = { value: 1_000 };
     // The first page carries PAGE_LIMIT_DEFAULT bonds beside a `next`; the
     // reconcile reads whole, but the profile's view holds only the first

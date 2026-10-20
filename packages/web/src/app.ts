@@ -4812,11 +4812,24 @@ export class App {
       vouchRows = [...vouched.keys()].map((targetId) => ({ targetId }));
     }
     if (hasInvite && cur !== null) {
-      const order = this.beginRead();
-      const bonds = await this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT });
+      // The reconcile decides on the whole /invites listing (WEB_INTERFACE
+      // → The wallet → "Reconcile runs on the reader's own refresh and on
+      // the bounded poll below"): read whole and decide on that read. The
+      // profile's bonds view stays its own first page with its `more`
+      // (WEB_INTERFACE → The profile window → "The `invites` row") —
+      // nothing is written into it here; a landing or an expiry below
+      // re-reads the view's first page.
+      try {
+        bondRows = await readWholeList<BondsResult['bonds'][number], BondsResult>({
+          readPage: (page) => this.client.bonds(cur.pubKeyHex, page),
+          pick: (answer) => ({ rows: answer.bonds, next: answer.next }),
+          keyOf: (b) => b.id,
+          bound: LEDGER_READ_MAX,
+        });
+      } catch {
+        bondRows = [];
+      }
       if (gen !== this.readerGen) return;
-      if (this.newerRead('bonds', order)) this.bondsView = bonds;
-      bondRows = bonds.bonds;
     }
 
     for (const entry of entries) {
@@ -4853,6 +4866,7 @@ export class App {
         continue;
       }
       if (entry.kind === 'invite') {
+        if (cur === null) continue;
         const outcome = reconcileInvite(entry, bondRows, tip);
         if (outcome === 'pending') continue;
         this.ledger.remove(entry.txId);
@@ -4862,6 +4876,16 @@ export class App {
           karmaLanded = true;
         } else {
           this.inviteFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
+        }
+        // The view's first page is re-read, as the membership load reads it
+        // (WEB_INTERFACE → The profile window → "The `invites` row").
+        const bondsOrder = this.beginRead();
+        try {
+          const firstPage = await this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT });
+          if (gen !== this.readerGen) return;
+          if (this.newerRead('bonds', bondsOrder)) this.bondsView = firstPage;
+        } catch {
+          // a failed read leaves the view's last-known page; the next ↻ retries
         }
         inviteChanged = true;
         continue;
