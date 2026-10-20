@@ -395,7 +395,7 @@ describe('the App write surface — the notSigned arm', () => {
   // WEB_INTERFACE → The wallet → "A flow can end before the node ever sees it:
   // `notSigned`" — a signature refused `key-changed` reads *<action> not sent:
   // another key is loaded now.*
-  it.fails('like: a signature refused key-changed reports "like not sent: another key is loaded now."', async () => {
+  it('like: a signature refused key-changed reports "like not sent: another key is loaded now."', async () => {
     const target = 'cc'.repeat(32);
     const h = harness({ sign: { kind: 'refused', reason: 'key-changed' } });
     h.drive.state.feed.posts = [

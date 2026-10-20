@@ -182,13 +182,17 @@ function withdrawRejectionCopy(r: Rejection): string {
 /** A notSigned reason mapped to what the region shows (WEB_INTERFACE → The
  *  wallet, "the fourth ending is the composer still open"). `locked` reports
  *  the race directly; the extension's `busy` refusal reads *"one approval at a
- *  time."*; a `declined` reads *"<action> not sent."*; every other `refused`
- *  carries its reason — *"<action> not sent: <reason>."*. The trailing period
- *  of the reason is stripped before the template — the in-page module's
- *  *"…64 hex characters."* would otherwise render *"…characters.."*. */
+ *  time."*; a `key-changed` refusal reads *"<action> not sent: another key is
+ *  loaded now."* (WEB_INTERFACE → The identity module → "A signature is made
+ *  for the key the transaction was built for"); a `declined` reads *"<action>
+ *  not sent."*; every other `refused` carries its reason — *"<action> not
+ *  sent: <reason>."*. The trailing period of the reason is stripped before
+ *  the template — the in-page module's *"…64 hex characters."* would
+ *  otherwise render *"…characters.."*. */
 function notSignedCopy(kind: 'locked' | 'declined' | 'refused', reason: string, action: string): string {
   if (kind === 'locked') return 'your key is locked';
   if (reason === 'busy') return 'one approval at a time.';
+  if (reason === 'key-changed') return `${action} not sent: another key is loaded now.`;
   if (kind === 'refused') return `${action} not sent: ${reason.replace(/\.$/, '')}.`;
   return `${action} not sent.`;
 }
