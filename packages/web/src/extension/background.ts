@@ -73,7 +73,12 @@ const PROMPT_TOP = 80;    // the drop under the toolbar
 export function install(api: typeof chrome, config: BackgroundConfig, options: InstallOptions = {}): void {
   const locks = options.locks ?? defaultLockManager();
   api.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    void handle(api, config, locks, message, sender).then((answer) => sendResponse(answer));
+    // WEB_INTERFACE → The extension → "Every message is answered". A failure
+    // inside a handler answers `{ error }` with the failure's words; no
+    // message is left without its answer.
+    handle(api, config, locks, message, sender)
+      .then((answer) => sendResponse(answer))
+      .catch((e) => sendResponse({ error: errorMessage(e) }));
     return true; // keep the channel open until the async handler resolves
   });
   api.runtime.onInstalled.addListener(() => { void withPromptLock(locks, () => sweepOrphanedRecords(api)); });

@@ -654,7 +654,7 @@ describe('background — approve and exportFile hold the seed to the identity', 
 // ---------------------------------------------------------------------------
 
 describe('background — the listener answers { error } when a handler throws', () => {
-  it.fails('a handler whose storage read rejects: the sender receives { error } with the failure\'s words', async () => {
+  it('a handler whose storage read rejects: the sender receives { error } with the failure\'s words', async () => {
     const c = fakeChrome();
     install(c.api, { publicBase: '' });
     // Make the storage read in state() reject.

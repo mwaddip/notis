@@ -1173,7 +1173,7 @@ describe('submitPostFlow over the extension proxy and background', () => {
     return proxy;
   }
 
-  it.fails('a post whose prompt window does not open: notSigned refused, its reason the background\'s words, not a throw', async () => {
+  it('a post whose prompt window does not open: notSigned refused, its reason the background\'s words, not a throw', async () => {
     const c = fakeChrome();
     const identity = await identityOverProxy(c, 'ask');
     c.windows.throwNextCreate(new Error('the approval window did not open.'));
@@ -1183,7 +1183,7 @@ describe('submitPostFlow over the extension proxy and background', () => {
     expect(res).toMatchObject({ ok: false, notSigned: 'refused', reason: expect.stringContaining('approval window') });
   }, 3000);
 
-  it.fails('a runtime.sendMessage that rejects for sign: notSigned refused, reason "the extension did not answer"', async () => {
+  it('a runtime.sendMessage that rejects for sign: notSigned refused, reason "the extension did not answer"', async () => {
     const c = fakeChrome();
     const identity = await identityOverProxy(c, 'ask');
     // Override sign's path so runtime.sendMessage rejects.

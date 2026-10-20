@@ -68,7 +68,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
   // a `sign` that ends without a `SignAnswer` is `{ refused: <reason> }`: the
   // `{ error }`'s words, or *the extension did not answer* for a message the
   // browser rejects.
-  it.fails('an { error } answer from the background becomes { refused: <its words> }, not a throw', async () => {
+  it('an { error } answer from the background becomes { refused: <its words> }, not a throw', async () => {
     const c = fakeChrome();
     wireBackground(c, { state: null, sign: { error: 'the approval window did not open.' } });
     const proxy = await bootstrapProxy(c.api, { publicBase: '' });
@@ -76,7 +76,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
     expect(r).toEqual({ refused: 'the approval window did not open.' });
   });
 
-  it.fails('a rejected runtime.sendMessage becomes { refused: "the extension did not answer" }, not a throw', async () => {
+  it('a rejected runtime.sendMessage becomes { refused: "the extension did not answer" }, not a throw', async () => {
     const c = fakeChrome();
     // state answers normally so bootstrap works; sign's sendMessage rejects.
     c.api.runtime.sendMessage = (async (m: unknown) => {

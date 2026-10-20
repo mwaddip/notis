@@ -84,15 +84,27 @@ export class ExtensionProxy implements AppIdentity {
   }
 
   async sign(txBytes: Uint8Array, txIdHex: string, pubKeyHex: string, hint?: SignHint): Promise<SignResult> {
+    // WEB_INTERFACE → The extension → "Every message is answered". A `sign`
+    // that ends without a `SignAnswer` is `{ refused: <reason> }`: an
+    // `{ error }` answer's words, or *the extension did not answer* for a
+    // message the browser rejects — never a throw out of the proxy.
     const bytesHex = bytesToHex(txBytes);
-    const answer = await sendMessage(this.api, {
-      kind: 'sign',
-      txBytesHex: bytesHex,
-      txIdHex,
-      pubKeyHex,
-      hint: hint ?? undefined,
-    }) as SignAnswer;
-    return this.translateSignAnswer(answer);
+    let answer: unknown;
+    try {
+      answer = await this.api.runtime.sendMessage({
+        kind: 'sign',
+        txBytesHex: bytesHex,
+        txIdHex,
+        pubKeyHex,
+        hint: hint ?? undefined,
+      });
+    } catch {
+      return { refused: 'the extension did not answer' };
+    }
+    if (typeof answer === 'object' && answer !== null && 'error' in answer) {
+      return { refused: (answer as { error: string }).error };
+    }
+    return this.translateSignAnswer(answer as SignAnswer);
   }
 
   async draft(): Promise<{ pubKeyHex: string }> {
