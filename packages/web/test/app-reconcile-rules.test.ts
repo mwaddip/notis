@@ -345,3 +345,44 @@ describe('a pending invite reads /invites whole, decides on the whole read, and 
     expect(h.drive.bondsView?.next).not.toBeNull();
   });
 });
+
+describe('a failed /invites read decides no invite', () => {
+  const bond = {
+    id: 'fe'.repeat(32), value: '100', inviterId: ME, inviteePublicKey: INV,
+    inviterName: null, inviteeName: null,
+  };
+
+  it('an invite past its expiry lands when /invites answers a page naming its bond', async () => {
+    const heightBox = { value: 1_000 };
+    const h = harness([INVITE(INV)], {
+      blockHeight: () => heightBox.value,
+      bonds: () => ({ status: 200, body: bondsBody([bond], null, 1) }),
+    });
+    await flush();
+    expect(h.ledger.all().some((e) => e.kind === 'invite')).toBe(true); // control
+    heightBox.value = 5_001;
+    await h.drive.pollTick();
+    await flush();
+    expect(h.requests.some((r) => r.path === `/invites/${ME}`)).toBe(true); // control
+    expect(h.ledger.all().find((e) => e.kind === 'invite')).toBeUndefined();
+    expect(h.drive.inviteFlight).toBeNull();
+  });
+
+  // WEB_INTERFACE → The wallet → "Reconcile runs on the reader's own refresh and on the bounded poll below":
+  // a read that answered nothing lists nothing, so it decides nothing.
+  it.fails('an invite past its expiry stays pending when /invites answers 500', async () => {
+    const heightBox = { value: 1_000 };
+    const h = harness([INVITE(INV)], {
+      blockHeight: () => heightBox.value,
+      bonds: () => ({ status: 500, body: {} }),
+    });
+    await flush();
+    expect(h.ledger.all().some((e) => e.kind === 'invite')).toBe(true); // control
+    heightBox.value = 5_001;
+    await h.drive.pollTick();
+    await flush();
+    expect(h.requests.some((r) => r.path === `/invites/${ME}`)).toBe(true); // control
+    expect(h.ledger.all().some((e) => e.kind === 'invite')).toBe(true);
+    expect(h.drive.inviteFlight?.stage).not.toBe('expired');
+  });
+});
