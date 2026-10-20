@@ -37,7 +37,7 @@ export const FEED_PAGE_READ_BYTES = 262_144;
 
 /** CONSTANTS → Client reads — the cap on one `GET /posts/:id/thread`
  *  answer. */
-export const THREAD_READ_BYTES = 1_048_576;
+export const THREAD_READ_BYTES = 524_288;
 
 /** CONSTANTS → Client reads — the cap on `GET /status`. */
 export const STATUS_READ_BYTES = 1_024;
@@ -50,8 +50,8 @@ export const VOUCH_PAGE_READ_BYTES = 65_536;
  *  `GET /invites/:userId`. */
 export const BOND_PAGE_READ_BYTES = 65_536;
 
-/** CONSTANTS → Client reads — the cap on any write route's answer, a 2xx's
- *  or a rejection's — the node's nine writes and the faucet's two. */
+/** CONSTANTS → Client reads — the cap on any write route's answer, the
+ *  node's and the faucet's, a 2xx's or a rejection's. */
 export const WRITE_ANSWER_READ_BYTES = 1_024;
 
 /** CONSTANTS → Client reads — the most boxes one ledger read takes in, a
