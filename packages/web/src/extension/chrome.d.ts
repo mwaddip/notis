@@ -96,6 +96,7 @@ declare namespace chrome {
     function create(props: CreateProps): Promise<Window>;
     function update(windowId: number, props: { focused?: boolean }): Promise<Window>;
     function remove(windowId: number): Promise<void>;
+    function get(windowId: number): Promise<Window>;
     function getLastFocused(): Promise<Window>;
     interface OnRemovedEvent {
       addListener(listener: (windowId: number) => void): void;

@@ -43,6 +43,14 @@ export interface FakeChrome {
      *  background reads it as an unknown geometry, WEB_INTERFACE → The extension
      *  → "The prompt window"). Null skips the call entirely. */
     setLastFocused(win: chrome.windows.Window | null): void;
+    /** Arm the next `windows.create` to throw. Clears after one throw. */
+    throwNextCreate(err?: Error): void;
+    /** Close a window the browser opened without firing `onRemoved` — the window
+     *  the browser dropped while no worker ran (WEB_INTERFACE → The extension →
+     *  "`sign`, in the background, in order"). `windows.get` on this id rejects. */
+    closeSilently(id: number): void;
+    /** The ids `windows.get` currently answers. */
+    isOpen(id: number): boolean;
   };
   tabs: {
     queried: Array<{ url?: string | string[] }>;
@@ -91,7 +99,10 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
     fireStartup: () => { for (const l of onStartupListeners) l(); },
     fireInstalled: (reason) => { for (const l of onInstalledListeners) l({ reason }); },
     fireActionClicked: () => { for (const l of onActionClickedListeners) l({}); },
-    fireWindowRemoved: (windowId) => { for (const l of onWindowRemovedListeners) l(windowId); },
+    fireWindowRemoved: (windowId) => {
+      openWindowIds.delete(windowId);
+      for (const l of onWindowRemovedListeners) l(windowId);
+    },
     fireTabRemoved: (tabId) => { for (const l of onTabRemovedListeners) l(tabId); },
     windows: {
       created: [],
@@ -99,6 +110,9 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       focused: [],
       setNextId: (id) => { nextWindowId = id; },
       setLastFocused: (win) => { lastFocused = win; },
+      throwNextCreate: (err) => { nextCreateThrow = err ?? new Error('windows.create refused'); },
+      closeSilently: (id) => { openWindowIds.delete(id); },
+      isOpen: (id) => openWindowIds.has(id),
     },
     tabs: {
       queried: [],
@@ -129,6 +143,13 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
   // The Window `getLastFocused` returns; null means the API throws — a caller
   // reading it defensively must treat it as an unknown geometry.
   let lastFocused: chrome.windows.Window | null = { left: 100, top: 50, width: 1200, height: 800 };
+  // The ids `windows.create` has opened and that have not been removed. A
+  // `windows.get` of an id outside this set rejects — the pre-prompt check
+  // reads a vanished window through that rejection (WEB_INTERFACE → The
+  // extension → "`sign`, in the background, in order").
+  const openWindowIds = new Set<number>();
+  // The error the next `windows.create` throws; cleared after the one throw.
+  let nextCreateThrow: Error | undefined;
 
   const storageArea = (map: Map<string, unknown>, area: 'local' | 'session'): chrome.storage.StorageArea => ({
     async get(keys) {
@@ -231,12 +252,22 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
     },
     windows: {
       async create(props) {
+        if (nextCreateThrow !== undefined) {
+          const err = nextCreateThrow;
+          nextCreateThrow = undefined;
+          throw err;
+        }
         state.windows.created.push(props);
         const id = nextWindowId++;
+        openWindowIds.add(id);
         return { id };
       },
       async update(id, props) { state.windows.focused.push([id, props]); return {}; },
-      async remove(id) { state.windows.removed.push(id); },
+      async remove(id) { state.windows.removed.push(id); openWindowIds.delete(id); },
+      async get(id) {
+        if (!openWindowIds.has(id)) throw new Error('No window with id: ' + id);
+        return { id };
+      },
       async getLastFocused() {
         if (lastFocused === null) throw new Error('no last-focused window');
         return lastFocused;
@@ -288,4 +319,44 @@ function fireChangeSet(
   changes: Record<string, chrome.storage.StorageChange>,
 ): void {
   for (const listener of fixture.changedListeners) listener(changes, area);
+}
+
+// A Web Lock as the background takes it — `install` reads one off the options
+// (WEB_INTERFACE → The extension → "`sign`, in the background, in order",
+// step 9). Node has no `navigator.locks`; the fakes below stand in.
+
+export interface LockManager {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+}
+
+/** A FIFO exclusive lock per name — queued requests run one at a time. The
+ *  real `navigator.locks` behaves this way for the default mode. */
+export function fakeLockManager(): LockManager {
+  const tails = new Map<string, Promise<void>>();
+  return {
+    async request<T>(name: string, callback: () => Promise<T>): Promise<T> {
+      const prev = tails.get(name) ?? Promise.resolve();
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      const next = prev.then(() => held);
+      tails.set(name, next);
+      await prev;
+      try {
+        return await callback();
+      } finally {
+        release();
+        if (tails.get(name) === next) tails.delete(name);
+      }
+    },
+  };
+}
+
+/** A no-op lock — the callback runs at once, side by side with another. The
+ *  guard sweep proves a case needs the lock by swapping the real one for this. */
+export function nopLockManager(): LockManager {
+  return {
+    request<T>(_name: string, callback: () => Promise<T>): Promise<T> {
+      return callback();
+    },
+  };
 }
