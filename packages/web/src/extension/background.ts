@@ -465,8 +465,7 @@ async function approve(api: typeof chrome, id: string, sender: chrome.runtime.Me
   const record = await readRecord(api, id);
   if (record === null || record.result) return { error: 'no open prompt for that id' };
   const env = await readEnvelope(api);
-  if (env === null) return { error: 'no identity is loaded.' };
-  if (env.pubKeyHex !== record.pubKeyHex) {
+  if (env === null || env.pubKeyHex !== record.pubKeyHex) {
     const declined: SignRecord = { ...record, result: { declined: true } };
     await api.storage.session.set({ [K_SIGN_PREFIX + id]: declined });
     if (typeof record.windowId === 'number') {
