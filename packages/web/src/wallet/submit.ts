@@ -1,4 +1,4 @@
-import { encodeTx, hexToBytes } from '@dagsocial/types';
+import { encodeTx, hexToBytes, PAGE_LIMIT_MAX } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import { readBuildContext, readCreditContext } from './reads';
 import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend, txToJson, InsufficientKarma, InsufficientCredits, BelowFloor, InvalidKey } from './builders';
@@ -473,7 +473,7 @@ async function resolveVouchBox(
 ): Promise<{ boxId: string; value: string; createdAtBlock: number } | null> {
   let after: string | null = null;
   do {
-    const page = await reads.vouchesByVoucher(voucherKey, after === null ? {} : { after });
+    const page = await reads.vouchesByVoucher(voucherKey, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
     const row = page.vouches.find((v) => v.targetId === targetKey);
     if (row) return { boxId: row.boxId, value: row.value, createdAtBlock: row.createdAtBlock };
     after = page.next;

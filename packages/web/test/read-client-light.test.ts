@@ -78,15 +78,25 @@ describe('read client — the list reads under light=1 carry light=1 and no tx',
 });
 
 describe('read client — the single post read keeps tx=1 where a verifier is held', () => {
+  // The post reader rebuilds a well-formed PostResult; the subject is a bound
+  // row with confirmedAuthor at hand (NODE_INTERFACE → Posts).
+  const postBody = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: SUBJECT, content: 'x', contentHash: '00'.repeat(32), author: '33'.repeat(32),
+    parentRefs: [], protocolVersion: 1, type: 'regular', status: 'confirmed',
+    blockHeight: 100, blockIndex: 0, blockCreatedAt: 0, likeCount: 0,
+    descendantCount: 0, authorName: null, likedByViewer: null,
+    txId: '44'.repeat(32), confirmedAuthor: null, ...over,
+  });
+
   it('post sends tx=1 under withTx; nothing else of the URL moves', async () => {
-    answers.push({});
+    answers.push(postBody({ tx: 'aabb' }));
     const c = client();
     await c.post(SUBJECT, VIEWER, true);
     expect(calls[0]).toBe(`/posts/${SUBJECT}?viewer=${VIEWER}&tx=1`);
   });
 
   it('post sends no tx under no withTx', async () => {
-    answers.push({});
+    answers.push(postBody());
     const c = client();
     await c.post(SUBJECT, VIEWER);
     expect(calls[0]).toBe(`/posts/${SUBJECT}?viewer=${VIEWER}`);

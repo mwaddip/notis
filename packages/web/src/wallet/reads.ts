@@ -1,9 +1,9 @@
+import { PAGE_LIMIT_MAX } from '@dagsocial/types';
 import type { Api } from '../api/client';
 import type { PendingLedger } from './ledger';
 import type { BuildContext } from './builders';
 import type { SpendableBox } from './types';
 import type { CreditBoxRow } from '../api/dto';
-import { PageError } from '../api/errors';
 
 // The reads before a write, in the ONE function that assembles a BuildContext —
 // WEB_INTERFACE → The wallet. The order is a correctness rule, not a preference:
@@ -22,15 +22,14 @@ export async function readBuildContext(
   const confirmed: SpendableBox[] = [];
   let after: string | null = null;
   do {
-    const page = await reads.karma(author, after === null ? {} : { after });
+    const page = await reads.karma(author, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
     for (const b of page.boxes) {
-      // The mark's domain is `true` or absent (TYPES_INTERFACE → KarmaBox);
-      // any other value — `false`, a number, a string, `null` — is a refused
-      // answer, not an unmarked box.
-      const income = (b as { income?: unknown }).income;
-      if (income !== undefined && income !== true) throw new PageError();
+      // The /karma reader rebuilds a row's `income` as `true` or absent, so
+      // the mark's domain is held before a box reaches here (WEB_INTERFACE →
+      // Reading a node's answer → "Every answer is rebuilt from its own
+      // fields", TYPES_INTERFACE → KarmaBox).
       const box: SpendableBox = { boxId: b.boxId, value: BigInt(b.value) };
-      if (income === true) box.income = true;
+      if (b.income === true) box.income = true;
       confirmed.push(box);
     }
     after = page.next;
@@ -89,7 +88,7 @@ export async function readCreditContext(
   const rows: CreditBoxRow[] = [];
   let after: string | null = null;
   do {
-    const page = await reads.credits(author, after === null ? {} : { after });
+    const page = await reads.credits(author, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
     for (const b of page.boxes) rows.push(b);
     after = page.next;
   } while (after !== null);

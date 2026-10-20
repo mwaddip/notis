@@ -113,7 +113,7 @@ afterEach(() => {
 });
 
 describe("a reader refusing one field leaves the renders that follow a read drawing", () => {
-  it.fails("a /karma whose `effective` is not a decimal lets the settings window draw", async () => {
+  it("a /karma whose `effective` is not a decimal lets the settings window draw", async () => {
     stubFetch(honestKarma({ effective: 'not-a-number' }), honestStatus());
     const { drive, appbar, panes } = mount();
     try { await drive.loadMembershipState(); } catch { /* the read's catch keeps the renders */ }
@@ -126,7 +126,7 @@ describe("a reader refusing one field leaves the renders that follow a read draw
     expect(panes.querySelector('.bar')).not.toBeNull();
   });
 
-  it.fails("a /status whose `inviteBondMin` is not a decimal lets the settings window draw", async () => {
+  it("a /status whose `inviteBondMin` is not a decimal lets the settings window draw", async () => {
     stubFetch(honestKarma(), honestStatus({ inviteBondMin: 'x' }));
     const { drive, appbar, panes } = mount();
     try { await drive.loadMembershipState(); } catch { /* the read's catch keeps the renders */ }

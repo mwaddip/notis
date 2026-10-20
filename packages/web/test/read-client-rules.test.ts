@@ -56,7 +56,7 @@ function fullPost(id: string): Record<string, unknown> {
 }
 
 describe("every answer is rebuilt from its own fields", () => {
-  it.fails('/karma — a box value "1e3" is refused', async () => {
+  it('/karma — a box value "1e3" is refused', async () => {
     serveJson({
       userId: KEY, total: '5', effective: '5',
       boxes: [{ boxId: 'ab'.repeat(32), value: '1e3' }],
@@ -68,7 +68,7 @@ describe("every answer is rebuilt from its own fields", () => {
     await expect(client().karma(KEY, { limit: 100 })).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/credits — a boxId in uppercase is refused', async () => {
+  it('/credits — a boxId in uppercase is refused', async () => {
     serveJson({
       userId: KEY, total: '0',
       boxes: [{ boxId: 'AB'.repeat(32), value: '1' }],
@@ -77,7 +77,7 @@ describe("every answer is rebuilt from its own fields", () => {
     await expect(client().credits(KEY, { limit: 100 })).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/status — a blockHeight of -1 is refused', async () => {
+  it('/status — a blockHeight of -1 is refused', async () => {
     serveJson({
       networkType: 'testnet', blockHeight: -1, protocolVersion: 1,
       postCount: 0, pendingPosts: 0, totalKarma: '0', liquidKarma: '0',
@@ -88,12 +88,12 @@ describe("every answer is rebuilt from its own fields", () => {
     await expect(client().status()).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/blocks/current — a height of 2**53 is refused', async () => {
+  it('/blocks/current — a height of 2**53 is refused', async () => {
     serveJson({ height: 2 ** 53, hash: null });
     await expect(client().currentBlock()).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/vouches voucher arm — a row value "01" is refused', async () => {
+  it('/vouches voucher arm — a row value "01" is refused', async () => {
     serveJson({
       vouches: [{
         boxId: 'ab'.repeat(32), value: '01', createdAtBlock: 1,
@@ -105,7 +105,7 @@ describe("every answer is rebuilt from its own fields", () => {
     await expect(client().vouchesByVoucher(KEY, { limit: 100 })).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails("/invites — a bond's inviteeName that breaks the name rule is refused", async () => {
+  it("/invites — a bond's inviteeName that breaks the name rule is refused", async () => {
     serveJson({
       bonds: [{
         id: 'ab'.repeat(32), value: '100', inviterId: KEY,
@@ -117,7 +117,7 @@ describe("every answer is rebuilt from its own fields", () => {
     await expect(client().bonds(KEY, { limit: 100 })).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/usernames/:name — an owner of 63 hex is refused', async () => {
+  it('/usernames/:name — an owner of 63 hex is refused', async () => {
     serveJson({
       name: 'alice', owner: 'a'.repeat(63),
       boxId: 'ab'.repeat(32), claimedAtBlock: 1,
@@ -125,12 +125,12 @@ describe("every answer is rebuilt from its own fields", () => {
     await expect(client().usernameByName('alice')).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('GET /posts/:id — a confirmedAuthor that is not hex is refused', async () => {
+  it('GET /posts/:id — a confirmedAuthor that is not hex is refused', async () => {
     serveJson({ ...fullPost('ab'.repeat(32)), confirmedAuthor: 'not-hex' });
     await expect(client().post('ab'.repeat(32))).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/posts — a feed row whose text is MAX_CONTENT_BYTES+1 bytes is refused', async () => {
+  it('/posts — a feed row whose text is MAX_CONTENT_BYTES+1 bytes is refused', async () => {
     const tooLong = 'x'.repeat(MAX_CONTENT_BYTES + 1);
     serveJson({
       posts: [{ ...fullPost('ab'.repeat(32)), content: tooLong }],
@@ -141,7 +141,7 @@ describe("every answer is rebuilt from its own fields", () => {
 });
 
 describe("every page is held to the page the node serves", () => {
-  it.fails('/posts — a page naming a next with fewer rows than the limit asked is refused', async () => {
+  it('/posts — a page naming a next with fewer rows than the limit asked is refused', async () => {
     serveJson({
       posts: [fullPost('ab'.repeat(32))],
       next: 'cursor', pending: [], pendingCount: 0,
@@ -151,7 +151,7 @@ describe("every page is held to the page the node serves", () => {
 });
 
 describe("every answer is read under its route's cap", () => {
-  it.fails('/posts — a feed body one byte over its route cap is refused', async () => {
+  it('/posts — a feed body one byte over its route cap is refused', async () => {
     const base = '{"posts":[],"next":null,"pending":[],"pendingCount":0,"pad":"';
     const tail = '"}';
     const padLen = FEED_PAGE_READ_BYTES + 1 - base.length - tail.length;
@@ -159,7 +159,7 @@ describe("every answer is read under its route's cap", () => {
     await expect(client().feed({ limit: 30 })).rejects.toBeInstanceOf(PageError);
   });
 
-  it.fails('/status — a status body one byte over its route cap is refused', async () => {
+  it('/status — a status body one byte over its route cap is refused', async () => {
     // Every field `/status` writes is here, each value passing the field rule
     // the reader rebuilds its answer under — a reader takes the fields the DTO
     // names and carries nothing beside them (WEB_INTERFACE → Reading a node's
@@ -174,7 +174,7 @@ describe("every answer is read under its route's cap", () => {
 });
 
 describe("every request runs under one deadline", () => {
-  it.fails('fetch is called with an AbortSignal from a timed deadline', async () => {
+  it('fetch is called with an AbortSignal from a timed deadline', async () => {
     serveJson({ height: 100, hash: null });
     await client().currentBlock();
     expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
@@ -182,7 +182,7 @@ describe("every request runs under one deadline", () => {
 });
 
 describe("every paged read's URL carries its limit", () => {
-  it.fails("/karma — a karma read whose page names no limit carries a limit= query", async () => {
+  it("/karma — a karma read whose page names no limit carries a limit= query", async () => {
     serveJson({
       userId: KEY, total: '0', effective: '0', boxes: [], boxCount: 0,
       next: null, lastActivityBlock: 0, lastDecayBlock: 0,

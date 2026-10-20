@@ -2,7 +2,7 @@ import { NodeClient, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, PAGE_LIMIT_DEFAULT, PAGE_LIMIT_MAX, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
@@ -3346,7 +3346,7 @@ export class App {
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
-        this.client.bonds(cur.pubKeyHex),
+        this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT }),
         this.client.usernameByOwner(cur.pubKeyHex),
       ]);
       if (gen !== this.readerGen) return;
@@ -3380,11 +3380,11 @@ export class App {
    *  node has (WEB_INTERFACE → "Paging is keyset, never offset"). `total` is
    *  the identity's total on every page, so the first page's value stands. */
   private async readOwnCredits(key: string): Promise<CreditsResult> {
-    const first: CreditsResult = await this.client.credits(key, {});
+    const first: CreditsResult = await this.client.credits(key, { limit: PAGE_LIMIT_MAX });
     const boxes = [...first.boxes];
     let after: string | null = first.next;
     while (after !== null) {
-      const page: CreditsResult = await this.client.credits(key, { after });
+      const page: CreditsResult = await this.client.credits(key, { limit: PAGE_LIMIT_MAX, after });
       for (const b of page.boxes) boxes.push(b);
       after = page.next;
     }
@@ -3399,11 +3399,11 @@ export class App {
    *  every page (NODE_INTERFACE → UTXO queries), so the first page's values
    *  stand. */
   private async readOwnKarma(key: string): Promise<KarmaResult> {
-    const first: KarmaResult = await this.client.karma(key, {});
+    const first: KarmaResult = await this.client.karma(key, { limit: PAGE_LIMIT_MAX });
     const boxes = [...first.boxes];
     let after: string | null = first.next;
     while (after !== null) {
-      const page: KarmaResult = await this.client.karma(key, { after });
+      const page: KarmaResult = await this.client.karma(key, { limit: PAGE_LIMIT_MAX, after });
       for (const b of page.boxes) boxes.push(b);
       after = page.next;
     }
@@ -3456,7 +3456,7 @@ export class App {
     const set = new Map<string, { boxId: string; createdAtBlock: number }>();
     let after: string | null = null;
     do {
-      const page = await this.client.vouchesByVoucher(key, after === null ? {} : { after });
+      const page = await this.client.vouchesByVoucher(key, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
       for (const v of page.vouches) set.set(v.targetId, { boxId: v.boxId, createdAtBlock: v.createdAtBlock });
       after = page.next;
     } while (after !== null);
@@ -3467,7 +3467,7 @@ export class App {
     let after: string | null = null;
     let held: number | null = null;
     do {
-      const page = await this.client.vouchCooldowns(key, after === null ? {} : { after });
+      const page = await this.client.vouchCooldowns(key, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
       for (const c of page.cooldowns) held = held === null ? c.releaseAtBlock : Math.max(held, c.releaseAtBlock);
       after = page.next;
     } while (after !== null);
@@ -3609,7 +3609,7 @@ export class App {
     const d = this.authorData.get(key);
     if (!d) return;
     try {
-      const [endorsers, username] = await Promise.all([this.client.vouchesByTarget(key), this.client.usernameByOwner(key)]);
+      const [endorsers, username] = await Promise.all([this.client.vouchesByTarget(key, { limit: PAGE_LIMIT_DEFAULT }), this.client.usernameByOwner(key)]);
       d.endorsers = endorsers;
       d.endorsersNext = endorsers.next !== null;
       d.username = username;
@@ -3633,7 +3633,7 @@ export class App {
     const from = d?.endorsers ?? null;
     if (!d || from === null || from.next === null) return;
     try {
-      const page = await this.client.vouchesByTarget(key, { after: from.next });
+      const page = await this.client.vouchesByTarget(key, { limit: PAGE_LIMIT_DEFAULT, after: from.next });
       if (d.endorsers !== from) return;
       d.endorsers = { vouches: [...from.vouches, ...page.vouches], count: page.count, next: page.next };
       d.endorsersNext = page.next !== null;
@@ -3800,7 +3800,7 @@ export class App {
     if (cur === null || from === null || from.next === null) return;
     const gen = this.readerGen;
     try {
-      const page = await this.client.bonds(cur.pubKeyHex, { after: from.next });
+      const page = await this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT, after: from.next });
       if (gen !== this.readerGen || this.bondsView !== from) return;
       this.bondsView = { bonds: [...from.bonds, ...page.bonds], bondCount: page.bondCount, next: page.next };
     } catch {
@@ -4798,7 +4798,7 @@ export class App {
     }
     if (hasInvite && cur !== null) {
       const order = this.beginRead();
-      const bonds = await this.client.bonds(cur.pubKeyHex);
+      const bonds = await this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT });
       if (gen !== this.readerGen) return;
       if (this.newerRead('bonds', order)) this.bondsView = bonds;
       bondRows = bonds.bonds;
@@ -5051,7 +5051,7 @@ export class App {
     const boxes: Array<{ boxId: string }> = [];
     let after: string | null = null;
     do {
-      const page: CreditsResult = await this.client.credits(key, after === null ? {} : { after });
+      const page: CreditsResult = await this.client.credits(key, after === null ? { limit: PAGE_LIMIT_MAX } : { limit: PAGE_LIMIT_MAX, after });
       for (const b of page.boxes) boxes.push({ boxId: b.boxId });
       after = page.next;
     } while (after !== null);

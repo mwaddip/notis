@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readBuildContext, readCreditContext } from '../src/wallet/reads';
 import { PendingLedger } from '../src/wallet/ledger';
-import { PageError } from '../src/api/errors';
+import { NodeClient, PageError } from '../src/api/client';
 import type { Api } from '../src/api/client';
 import type { KarmaResult, KarmaBoxRow, StatusResult, CreditsResult, CreditBoxRow } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
+import { jsonResponse } from './honest-page';
 
 // The order WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key` following `next`, then `GET /status`" states — /karma fully paged, THEN /status —
 // is embodied here, not at call sites; the fake records call order so the
@@ -127,7 +128,10 @@ describe('readCreditContext — WEB_INTERFACE → The wallet ("A send reads the 
 // answer with a marked box parses to a view that carries the mark; a bare
 // row parses as the owner's own box. `income: false`, or any value but
 // `true`, is a refused answer and not an unmarked box — the mark's domain is
-// `true` or absent (TYPES_INTERFACE → KarmaBox).
+// `true` or absent (TYPES_INTERFACE → KarmaBox). The rule rides in the
+// `/karma` reader (WEB_INTERFACE → Reading a node's answer → "Every answer
+// is rebuilt from its own fields"), so the case enters through `NodeClient`
+// over a fake `fetch`.
 // ---------------------------------------------------------------------------
 
 describe("readBuildContext — the mark on each karma row", () => {
@@ -136,37 +140,45 @@ describe("readBuildContext — the mark on each karma row", () => {
     // bare row has no `income` key.
     const pages = [karmaPage(
       [
-        { boxId: 'own', value: '50' },
-        { boxId: 'inc', value: '100', income: true } as unknown as KarmaBoxRow,
+        { boxId: '00'.repeat(32), value: '50' },
+        { boxId: '11'.repeat(32), value: '100', income: true } as unknown as KarmaBoxRow,
       ],
       null,
     )];
     const ctx = await readBuildContext(fakeReads(pages), new PendingLedger(AUTHOR), AUTHOR);
     expect(ctx.spendable).toEqual([
-      { boxId: 'own', value: 50n },
-      { boxId: 'inc', value: 100n, income: true },
+      { boxId: '00'.repeat(32), value: 50n },
+      { boxId: '11'.repeat(32), value: 100n, income: true },
     ]);
   });
+});
 
-  it('income: false — any value but true — is a refused answer, not an unmarked box', async () => {
-    const pages = [karmaPage(
-      [{ boxId: 'bad', value: '10', income: false } as unknown as KarmaBoxRow],
-      null,
-    )];
-    await expect(
-      readBuildContext(fakeReads(pages), new PendingLedger(AUTHOR), AUTHOR),
-    ).rejects.toBeInstanceOf(PageError);
+describe("the /karma reader rebuilds a row with `income` of the mark's domain", () => {
+  // The real NodeClient over a fake `fetch` answers the karma body the fake
+  // builds: the reader rebuilds each row of `boxes` through `isHex64Lower`
+  // and `isBoxValue`, and `income` holds to `true` or absent — any other
+  // value refuses the page (`PageError`).
+  const BOX = 'ab'.repeat(32);
+  function serve(bodies: unknown[]): void {
+    let i = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(bodies[i++] ?? bodies[bodies.length - 1])));
+  }
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const readFor = async (): Promise<unknown> => {
+    const client = new NodeClient(() => '');
+    return readBuildContext(client, new PendingLedger(AUTHOR), AUTHOR);
+  };
+
+  it('income: false — any value but true — refuses the page', async () => {
+    serve([karmaPage([{ boxId: BOX, value: '10', income: false } as unknown as KarmaBoxRow], null)]);
+    await expect(readFor()).rejects.toBeInstanceOf(PageError);
   });
 
-  it('a row carrying income as a string, a number or null is a refused answer', async () => {
-    for (const bad of ['yes', 1, 0, null]) {
-      const pages = [karmaPage(
-        [{ boxId: 'bad', value: '10', income: bad } as unknown as KarmaBoxRow],
-        null,
-      )];
-      await expect(
-        readBuildContext(fakeReads(pages), new PendingLedger(AUTHOR), AUTHOR),
-      ).rejects.toBeInstanceOf(PageError);
-    }
-  });
+  for (const bad of ['yes', 1, 0, null]) {
+    it(`income as ${JSON.stringify(bad)} refuses the page`, async () => {
+      serve([karmaPage([{ boxId: BOX, value: '10', income: bad } as unknown as KarmaBoxRow], null)]);
+      await expect(readFor()).rejects.toBeInstanceOf(PageError);
+    });
+  }
 });
