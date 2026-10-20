@@ -227,6 +227,38 @@ describe("proveName holds a lookup answer's boxId to 64 lowercase hex", () => {
   });
 });
 
+describe("wholeListRead's refusals name a node's string through capped", () => {
+  it.fails("a repeated cursor carrying ESC and CR reaches the reason as its \\u escapes, never raw", async () => {
+    // The cursor carries two C0 controls — ESC (U+001B) and CR (U+000D). Each
+    // page under the repeated cursor answers with fresh row keys, so the
+    // whole-list read's row-key refusal cannot land first.
+    const CURSOR = 'x\u001by\u000dz';
+    const first = fullCreditPage(0);
+    let n = 1;
+    const { fetch } = listingFetch(
+      () => karmaBody([], null),
+      (after) => {
+        if (after === null) return creditBody(first, CURSOR);
+        const page = fullCreditPage(100 * (n + 1));
+        n += 1;
+        return creditBody(page, CURSOR);
+      },
+    );
+
+    const result = await fetchListing('http://a', OWNER_HEX, fetch);
+
+    // Control: the result is a non-ok carrying a cursor-named-twice reason.
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain('cursor named twice');
+      expect(result.reason).toContain('\\u001b');
+      expect(result.reason).toContain('\\u000d');
+      expect(result.reason.includes('\u001b')).toBe(false);
+      expect(result.reason.includes('\u000d')).toBe(false);
+    }
+  });
+});
+
 describe("proveRange holds a page's stateRoot to 64 lowercase hex before any comparison", () => {
   it("a page whose stateRoot is well-formed except for uppercase ends the range unproven", async () => {
     const upperRoot = 'AB'.repeat(33); // 66 chars, uppercase
