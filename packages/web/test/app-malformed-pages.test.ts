@@ -434,7 +434,7 @@ describe('every other loop that follows `next` ends at a page with no `next`', (
     expect(h.drive.profileKarma).toBe(held);
   });
 
-  it('a send\'s recipient listing (readAllCreditBoxes) — one request, the send stays pending', async () => {
+  it('a send\'s landing read answered with a page that names no next — one request, the send stays pending', async () => {
     const h = harness([SEND]);
     h.node.on('credits', capped(
       (req) => (req.key === X ? without(creditsPage(X, [B2], null), 'next') : creditsPage(ME, [B1], null)),

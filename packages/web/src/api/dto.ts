@@ -1,6 +1,6 @@
-// The DTOs the read surface consumes. Declared here, against NODE_INTERFACE —
-// `@dagsocial/web` depends on no other workspace package (the node carries
-// better-sqlite3 and an Express server). These shapes mirror
+// The DTOs the read surface consumes. Declared here, against NODE_INTERFACE,
+// rather than imported from the node, which carries better-sqlite3 and an
+// Express server. These shapes mirror
 // `packages/node/src/services/feed-service.ts` and the route wrappers over it,
 // measured at 207e1c9.
 //
