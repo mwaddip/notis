@@ -112,22 +112,27 @@ describe("fetchListing holds each listing to the page the node serves and its ow
     expect(result.ok).toBe(false);
   });
 
-  it("a credit listing whose later page carries a cursor named before ends the listing", async () => {
-    const first = fullCreditPage(0);
-    const second = fullCreditPage(100);
+  it("a credit listing whose later page carries a cursor named before ends the listing in two credits requests", async () => {
+    // The first page carries 100 fresh rows and names a cursor; every page
+    // under that cursor answers with 100 fresh rows and the same cursor,
+    // so the row-key refusal cannot land first. The cursor refusal ends the
+    // listing on the second credits request's answer: the credit route is
+    // reached in exactly two requests.
+    let n = 1;
     const { fetch, calls } = listingFetch(
       () => karmaBody([], null),
       (after) => {
-        if (after === null) return creditBody(first, 'c1');
-        return creditBody(second, 'c1'); // repeated cursor
+        if (after === null) return creditBody(fullCreditPage(0), 'c1');
+        const page = fullCreditPage(100 * (n + 1));
+        n += 1;
+        return creditBody(page, 'c1');
       },
     );
 
     const result = await fetchListing('http://a', OWNER_HEX, fetch);
 
-    // Control: the credit route was reached in at least two pages.
-    expect(calls.filter((c) => c.startsWith(CREDITS_PATH)).length).toBeGreaterThanOrEqual(2);
     expect(result.ok).toBe(false);
+    expect(calls.filter((c) => c.startsWith(CREDITS_PATH)).length).toBe(2);
   });
 
   it("a credit listing naming one boxId twice across pages ends the listing", async () => {
