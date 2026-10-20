@@ -266,11 +266,13 @@ server that signs, no call home.
   identity's only when its public key is the envelope's `pubKeyHex`**: the envelope and the seed sit in two storage
   areas, written one after the other and from more than one page, so a seed of another key can stand beside the
   envelope. The identity is unlocked only where the seed is the envelope's — `state`'s `locked` answers that — and
-  nothing signs with any other seed (→ "`sign`, in the background, in order"). A drafted key
-  lives in `storage.session` under `notis.draft` between `draft` and `create`. Never in a worker global.
+  nothing signs with any other seed (→ "`sign`, in the background, in order"), and `exportFile` seals no other: a
+  seed of another key there is no unlocked identity to export, never a file naming the envelope's key over another
+  key's seed. A drafted key lives in `storage.session` under `notis.draft` between `draft` and `create`. Never in a
+  worker global.
 
   > ⚠ **AHEAD OF CODE (2026-10-20).** The seed held to the envelope's key leads `extension/background.ts`, whose
-  > `state` reads any seed as unlocked and whose *don't ask* signature reads no envelope.
+  > `exportFile` and `approve` read any seed.
 
 - **The prompt window** is a small extension page, `prompt.html`, the background opens when a signature
   needs a human — one at a time — as a popup the size and place of a wallet's: `windows.create({ type:
