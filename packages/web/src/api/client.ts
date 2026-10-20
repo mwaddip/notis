@@ -28,6 +28,16 @@ function askedLimit(page: Page): number {
   return page.limit ?? PAGE_LIMIT_DEFAULT;
 }
 
+// An `ApiError`'s message holds HOUSE_STYLE → Voice: it says what happened
+// and the status, never a byte of the node's body. A transport failure comes
+// back from `fetchJson` with `status: 0` and `body` the runtime's own error
+// message, kept as the message so a reader of the error line reads what the
+// browser said.
+function apiErrorMessage(status: number, runtimeMessage: string): string {
+  if (status === 0) return runtimeMessage;
+  return `node answered ${status}`;
+}
+
 // This module issues GET requests and nothing else — no POST, no body. A
 // `viewer` parameter is a query on a GET, not a write, so it is carried
 // here now that an identity can be loaded; a key, a signature or a write
@@ -115,12 +125,15 @@ export class NodeClient implements Api {
    *  transport failure or a timeout `ApiError` with status `0`, and a 2xx
    *  that is over its cap or does not parse is `PageError`. The returned
    *  body is the parsed `unknown` the route reader rebuilds (it may itself
-   *  be the JSON `null`, which the reader refuses as the route's shape). */
+   *  be the JSON `null`, which the reader refuses as the route's shape).
+   *  The `ApiError`'s message is the client's own words and the status,
+   *  never the node's body (`HOUSE_STYLE → Voice`); a transport failure
+   *  keeps the runtime's own message. */
   private async read(url: string, cap: number): Promise<unknown> {
     const r = await fetchJson<unknown>(this.httpFetch, url, cap);
     if (r.ok) return r.data;
     if (r.status >= 200 && r.status < 300) throw new PageError();
-    throw new ApiError(r.status, r.body);
+    throw new ApiError(r.status, apiErrorMessage(r.status, r.body));
   }
 
   /** As `read`, except a 404 answers the `absent` arm of the result (the
@@ -132,7 +145,7 @@ export class NodeClient implements Api {
     if (r.ok) return { absent: false, data: r.data };
     if (r.status >= 200 && r.status < 300) throw new PageError();
     if (r.status === 404) return { absent: true };
-    throw new ApiError(r.status, r.body);
+    throw new ApiError(r.status, apiErrorMessage(r.status, r.body));
   }
 
   /** Rebuild a parsed body as a `T`, or throw `PageError`. */

@@ -105,7 +105,7 @@ afterEach(() => {
 });
 
 describe("the error line carries what happened, not what the node sent", () => {
-  it.fails("a feed read answered 500 with ESC, CR and kilobytes of text — the feed's error line reads the client's own words and the status", async () => {
+  it("a feed read answered 500 with ESC, CR and kilobytes of text — the feed's error line reads the client's own words and the status", async () => {
     stubFetchFeed500();
     const { drive, feed } = mount();
     await drive.loadFeed();
