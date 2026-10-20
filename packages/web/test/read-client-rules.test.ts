@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { NodeClient, PageError } from '../src/api/client';
+import { NodeClient, PageError, type Page } from '../src/api/client';
 import { FEED_PAGE_READ_BYTES, STATUS_READ_BYTES } from '@dagsocial/node-reads';
 import { MAX_CONTENT_BYTES } from '@dagsocial/types';
 
@@ -182,7 +182,7 @@ describe("every request runs under one deadline", () => {
 });
 
 describe("every paged read's URL carries its limit", () => {
-  it.fails('/karma — a karma read with no page named carries a limit= query', async () => {
+  it.fails("/karma — a karma read whose page names no limit carries a limit= query", async () => {
     serveJson({
       userId: KEY, total: '0', effective: '0', boxes: [], boxCount: 0,
       next: null, lastActivityBlock: 0, lastDecayBlock: 0,
@@ -190,7 +190,10 @@ describe("every paged read's URL carries its limit", () => {
       memberVouches: 0, memberLikes: '0', invitesUsed: 0,
       member: false, invitesAvailable: 0, height: 100,
     });
-    await client().karma(KEY);
+    // A cast lets a Page whose `limit` the type requires be built as `{}` for
+    // the case the client's URL covers: a page the caller handed with no limit
+    // in it — the client's URL names one all the same.
+    await client().karma(KEY, {} as Page);
     expect(calls[0]?.url).toMatch(/[?&]limit=\d+/);
   });
 });
