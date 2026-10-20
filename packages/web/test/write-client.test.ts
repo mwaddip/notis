@@ -75,13 +75,13 @@ describe('write client — request envelopes', () => {
   });
 
   it('submitInvite POSTs { tx } to /invites and returns bondBoxId', async () => {
-    mockResponse({ status: 201, body: { status: 'pending', txId: 'a5'.repeat(32), expiresAtHeight: 5720, bondBoxId: 'bond1' } });
+    mockResponse({ status: 201, body: { status: 'pending', txId: 'a5'.repeat(32), expiresAtHeight: 5720, bondBoxId: 'b1'.repeat(32) } });
     const tx = { inputs: [], outputs: [], signatures: {}, protocolVersion: 1 };
     const res = await write().submitInvite(tx);
     expect(last.url).toBe('/invites');
     expect(last.method).toBe('POST');
     expect(last.body).toEqual({ tx });
-    expect(res).toEqual({ status: 'pending', txId: 'a5'.repeat(32), expiresAtHeight: 5720, bondBoxId: 'bond1' });
+    expect(res).toEqual({ status: 'pending', txId: 'a5'.repeat(32), expiresAtHeight: 5720, bondBoxId: 'b1'.repeat(32) });
   });
 
   it('submitClaim POSTs { tx } to /usernames and returns the 2xx body', async () => {
@@ -105,13 +105,13 @@ describe('write client — request envelopes', () => {
   });
 
   it('submitWithdraw POSTs { tx } to /posts/:id/withdraw and returns the 2xx body', async () => {
-    mockResponse({ status: 201, body: { status: 'submitted', txId: 'a8'.repeat(32), postId: 'p7', expiresAtHeight: 5720 } });
+    mockResponse({ status: 201, body: { status: 'submitted', txId: 'a8'.repeat(32), postId: 'c7'.repeat(32), expiresAtHeight: 5720 } });
     const tx = { inputs: ['cc'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1, postWithdraw: { postId: 'p7' } };
     const res = await write().submitWithdraw('p7', tx);
     expect(last.url).toBe('/posts/p7/withdraw');
     expect(last.method).toBe('POST');
     expect(last.body).toEqual({ tx });
-    expect(res).toEqual({ status: 'submitted', txId: 'a8'.repeat(32), postId: 'p7', expiresAtHeight: 5720 });
+    expect(res).toEqual({ status: 'submitted', txId: 'a8'.repeat(32), postId: 'c7'.repeat(32), expiresAtHeight: 5720 });
   });
 });
 
@@ -175,7 +175,7 @@ describe('write client — the shape the route serves', () => {
     expect(res).toMatchObject({ status: 0 });
   });
 
-  it.fails('an invite 2xx whose bondBoxId is 63 hex is a client rejection', async () => {
+  it('an invite 2xx whose bondBoxId is 63 hex is a client rejection', async () => {
     mockResponse({
       status: 200,
       body: { txId: TX_LOWER, status: 'pending', expiresAtHeight: 5720, bondBoxId: 'ab'.repeat(31) + 'a' },
@@ -185,7 +185,7 @@ describe('write client — the shape the route serves', () => {
     expect(res).toMatchObject({ status: 0 });
   });
 
-  it.fails('a withdraw 2xx whose postId is in uppercase is a client rejection', async () => {
+  it('a withdraw 2xx whose postId is in uppercase is a client rejection', async () => {
     mockResponse({
       status: 200,
       body: { txId: TX_LOWER, status: 'pending', expiresAtHeight: 5720, postId: 'AB'.repeat(32) },
@@ -195,7 +195,7 @@ describe('write client — the shape the route serves', () => {
     expect(res).toMatchObject({ status: 0 });
   });
 
-  it.fails('a claim 2xx whose name holds a space is a client rejection', async () => {
+  it('a claim 2xx whose name holds a space is a client rejection', async () => {
     mockResponse({
       status: 200,
       body: { txId: TX_LOWER, status: 'pending', expiresAtHeight: 5720, name: 'two words' },

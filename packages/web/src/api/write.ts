@@ -9,7 +9,7 @@
 // caller to act on (WEB_INTERFACE → "Nothing retries").
 
 import {
-  readCappedJson, isHex64Lower, isRecord,
+  readCappedJson, isHex64Lower, isRecord, isAuthorName,
   WRITE_ANSWER_READ_BYTES, REQUEST_TIMEOUT_MS,
 } from '@dagsocial/node-reads';
 
@@ -136,7 +136,7 @@ function readInviteResult(data: unknown): InviteSubmitResult | null {
   if (!isHex64Lower(txId)) return null;
   if (typeof status !== 'string') return null;
   if (typeof expiresAtHeight !== 'number') return null;
-  if (typeof bondBoxId !== 'string') return null;
+  if (!isHex64Lower(bondBoxId)) return null;
   return { txId, status, expiresAtHeight, bondBoxId };
 }
 
@@ -146,7 +146,7 @@ function readWithdrawResult(data: unknown): WithdrawSubmitResult | null {
   if (!isHex64Lower(txId)) return null;
   if (typeof status !== 'string') return null;
   if (typeof expiresAtHeight !== 'number') return null;
-  if (typeof postId !== 'string') return null;
+  if (!isHex64Lower(postId)) return null;
   return { txId, status, expiresAtHeight, postId };
 }
 
@@ -156,7 +156,7 @@ function readClaimResult(data: unknown): ClaimSubmitResult | null {
   if (!isHex64Lower(txId)) return null;
   if (typeof status !== 'string') return null;
   if (typeof expiresAtHeight !== 'number') return null;
-  if (typeof name !== 'string') return null;
+  if (name === null || !isAuthorName(name)) return null;
   return { txId, status, expiresAtHeight, name };
 }
 
