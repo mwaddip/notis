@@ -3558,6 +3558,18 @@ export const MEMPOOL_EXPIRY_BLOCKS = 720;          // local — blocks before me
 export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';  // SPKI wrapper stripped from raw keys
 ```
 
+### HTTP view bounds
+
+```typescript
+export const PAGE_LIMIT_DEFAULT = 50;   // local — rows a view returns when no `limit` is named
+export const PAGE_LIMIT_MAX = 100;      // local — the most rows one page carries, whatever `limit` names
+export const BATCH_READ_MAX = 100;      // local — the most post ids one `POST /posts/batch` takes
+export const RANGE_PAGE_MAX = 256;      // local — the most entries one page of `GET /api/v1/range` carries
+```
+
+Interface numbers, not consensus: the node serves within them and every client asks within them, so one definition
+reaches both (`NODE_INTERFACE → "Every list a view returns is a page"`, `CONSTANTS → HTTP view bounds`).
+
 ### Credit emission (Ergo-style linear decay)
 
 ```typescript

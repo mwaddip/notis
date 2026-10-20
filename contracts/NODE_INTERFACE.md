@@ -194,7 +194,8 @@ karma and credit boxes (`value` a decimal integer in the box value domain, `TYPE
 value domain`), `<boxId>` for bonds and vouches; hex is lowercase (→ HTTP API → "Hex is lowercase"),
 and a present `after` that does not parse is a 400. One parser, `routes/page.ts`,
 serves every paged route in both directions — it reads `limit` and `after` and spells `next` — and
-the two numbers live there (`CONSTANTS → HTTP view bounds`). **A page is the first `limit` rows of
+the two numbers are `@dagsocial/types`' exports, which every client asks within (`CONSTANTS → HTTP view bounds`,
+`WEB_INTERFACE → Reading a node's answer`). **A page is the first `limit` rows of
 a stated total order strictly after the key**, from the head when `after` is absent; the order is a
 function of state, never of row order, and **the key need not name a row** — a row spent
 or withdrawn since the client read it still bounds the page, which is what makes a page continue

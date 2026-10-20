@@ -4,7 +4,7 @@ import { hexToBytes } from '@dagsocial/types';
 import type { AnyBox, UserId } from '@dagsocial/types';
 import type { HoldingKind } from '@dagsocial/consensus';
 import { proveRange } from '../src/holdings.js';
-import type { HttpFetch } from '../src/http.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
 import {
   buildHoldingsFixture,
   creditBoxFor,

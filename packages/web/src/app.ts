@@ -1,14 +1,17 @@
-import { NodeClient, type Api } from './api/client';
+import { NodeClient, PageError, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
+import { readWholeList } from './api/whole-list';
+import { decrementBoxId } from './wallet/box-id';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll, endForm } from './dom';
 import { contentHashHex } from './integrity';
-import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
+import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_NETWORK, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { mountRow, type CardRow, type RowControl } from './view/card';
 import { renderPanesInto, renderRegionOver, renderBars } from './view/panes';
@@ -19,6 +22,7 @@ import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost, newPostsLine, olderPostsLine } from './model/feed-reconcile';
 import { withNodeWord } from './model/light';
+import { networkNumbers } from './model/network-numbers';
 import { flattenThread } from './model/thread';
 import { WriteClient, type Rejection } from './api/write';
 import { FaucetClient, faucetLine } from './api/faucet';
@@ -946,9 +950,11 @@ export class App {
       member: this.isMember(),
       author: this.authorData,
       authorPosts: this.authorPostsData,
-      invite: this.state.status
-        ? { bondMin: this.state.status.inviteBondMin, bondMax: this.state.status.inviteBondMax, probationBlocks: this.state.status.inviteProbationBlocks }
-        : null,
+      invite: ((): { bondMin: string; bondMax: string; probationBlocks: number } | null => {
+        const nn = networkNumbers(BUILD_NETWORK, this.state.status);
+        if (nn === null) return null;
+        return { bondMin: nn.inviteBondMin, bondMax: nn.inviteBondMax, probationBlocks: nn.inviteProbationBlocks };
+      })(),
       canAffordMinBond: this.canAffordMinBond(),
       bonds: this.bondsView,
       inviteFlight: this.inviteFlight,
@@ -1018,8 +1024,10 @@ export class App {
    *  form only when it can be filled; the effective balance is the proxy, the
    *  node's refusal the truth (WEB_INTERFACE → The profile window). */
   private canAffordMinBond(): boolean {
-    if (this.profileKarma === null || this.state.status === null) return false;
-    return BigInt(this.profileKarma.effective) >= BigInt(this.state.status.inviteBondMin);
+    if (this.profileKarma === null) return false;
+    const nn = networkNumbers(BUILD_NETWORK, this.state.status);
+    if (nn === null) return false;
+    return BigInt(this.profileKarma.effective) >= BigInt(nn.inviteBondMin);
   }
 
   private canAffordBurn(): boolean {
@@ -2920,7 +2928,7 @@ export class App {
   // -------------------------------------------------------------------------
 
   private submitDeps(): SubmitDeps {
-    return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm };
+    return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm, network: BUILD_NETWORK };
   }
 
   /** The post flow's cache hook (WEB_INTERFACE → The extension → "The post
@@ -3313,7 +3321,7 @@ export class App {
     if (cur === null) return null;
     if (key === cur.pubKeyHex) return { kind: 'reason', text: 'this is you' };
     if (!this.isMember()) return { kind: 'reason', text: 'vouching comes with membership' };
-    const cooldownBlocks = this.state.status?.vouchCooldownBlocks ?? 0;
+    const cooldownBlocks = networkNumbers(BUILD_NETWORK, this.state.status)?.vouchCooldownBlocks ?? 0;
     if (this.escrowHeldUntil !== null && this.escrowHeldUntil > this.viewerTip) {
       return { kind: 'reason', text: `your stake from an unvouch is held until block ${this.escrowHeldUntil}` };
     }
@@ -3346,7 +3354,7 @@ export class App {
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
-        this.client.bonds(cur.pubKeyHex),
+        this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT }),
         this.client.usernameByOwner(cur.pubKeyHex),
       ]);
       if (gen !== this.readerGen) return;
@@ -3380,15 +3388,20 @@ export class App {
    *  node has (WEB_INTERFACE → "Paging is keyset, never offset"). `total` is
    *  the identity's total on every page, so the first page's value stands. */
   private async readOwnCredits(key: string): Promise<CreditsResult> {
-    const first: CreditsResult = await this.client.credits(key, {});
-    const boxes = [...first.boxes];
-    let after: string | null = first.next;
-    while (after !== null) {
-      const page: CreditsResult = await this.client.credits(key, { after });
-      for (const b of page.boxes) boxes.push(b);
-      after = page.next;
-    }
-    return { userId: first.userId, total: first.total, boxes, boxCount: boxes.length, next: null };
+    let first: CreditsResult | null = null;
+    const boxes = await readWholeList<CreditsResult['boxes'][number], CreditsResult>({
+      readPage: async (page) => {
+        const answer = await this.client.credits(key, page);
+        if (first === null) first = answer;
+        return answer;
+      },
+      pick: (answer) => ({ rows: answer.boxes, next: answer.next }),
+      keyOf: (b) => b.boxId,
+      bound: LEDGER_READ_MAX,
+    });
+    const captured = first as CreditsResult | null;
+    if (captured === null) throw new PageError();
+    return { userId: captured.userId, total: captured.total, boxes, boxCount: boxes.length, next: null };
   }
 
   /** Read the whole /karma for a key, following `next` to the end
@@ -3399,32 +3412,37 @@ export class App {
    *  every page (NODE_INTERFACE → UTXO queries), so the first page's values
    *  stand. */
   private async readOwnKarma(key: string): Promise<KarmaResult> {
-    const first: KarmaResult = await this.client.karma(key, {});
-    const boxes = [...first.boxes];
-    let after: string | null = first.next;
-    while (after !== null) {
-      const page: KarmaResult = await this.client.karma(key, { after });
-      for (const b of page.boxes) boxes.push(b);
-      after = page.next;
-    }
+    let first: KarmaResult | null = null;
+    const boxes = await readWholeList<KarmaResult['boxes'][number], KarmaResult>({
+      readPage: async (page) => {
+        const answer = await this.client.karma(key, page);
+        if (first === null) first = answer;
+        return answer;
+      },
+      pick: (answer) => ({ rows: answer.boxes, next: answer.next }),
+      keyOf: (b) => b.boxId,
+      bound: KARMA_LISTING_MAX,
+    });
+    const captured = first as KarmaResult | null;
+    if (captured === null) throw new PageError();
     return {
-      userId: first.userId,
-      total: first.total,
-      effective: first.effective,
+      userId: captured.userId,
+      total: captured.total,
+      effective: captured.effective,
       boxes,
       boxCount: boxes.length,
       next: null,
-      lastActivityBlock: first.lastActivityBlock,
-      lastDecayBlock: first.lastDecayBlock,
-      lifetimeLikesReceived: first.lifetimeLikesReceived,
-      memberSinceBlock: first.memberSinceBlock,
-      memberBar: first.memberBar,
-      memberVouches: first.memberVouches,
-      memberLikes: first.memberLikes,
-      invitesUsed: first.invitesUsed,
-      member: first.member,
-      invitesAvailable: first.invitesAvailable,
-      height: first.height,
+      lastActivityBlock: captured.lastActivityBlock,
+      lastDecayBlock: captured.lastDecayBlock,
+      lifetimeLikesReceived: captured.lifetimeLikesReceived,
+      memberSinceBlock: captured.memberSinceBlock,
+      memberBar: captured.memberBar,
+      memberVouches: captured.memberVouches,
+      memberLikes: captured.memberLikes,
+      invitesUsed: captured.invitesUsed,
+      member: captured.member,
+      invitesAvailable: captured.invitesAvailable,
+      height: captured.height,
     };
   }
 
@@ -3453,24 +3471,26 @@ export class App {
   }
 
   private async readVouchSet(key: string): Promise<Map<string, { boxId: string; createdAtBlock: number }>> {
+    const vouches = await readWholeList<Awaited<ReturnType<Api['vouchesByVoucher']>>['vouches'][number], Awaited<ReturnType<Api['vouchesByVoucher']>>>({
+      readPage: (page) => this.client.vouchesByVoucher(key, page),
+      pick: (answer) => ({ rows: answer.vouches, next: answer.next }),
+      keyOf: (v) => v.boxId,
+      bound: LEDGER_READ_MAX,
+    });
     const set = new Map<string, { boxId: string; createdAtBlock: number }>();
-    let after: string | null = null;
-    do {
-      const page = await this.client.vouchesByVoucher(key, after === null ? {} : { after });
-      for (const v of page.vouches) set.set(v.targetId, { boxId: v.boxId, createdAtBlock: v.createdAtBlock });
-      after = page.next;
-    } while (after !== null);
+    for (const v of vouches) set.set(v.targetId, { boxId: v.boxId, createdAtBlock: v.createdAtBlock });
     return set;
   }
 
   private async readEscrow(key: string): Promise<number | null> {
-    let after: string | null = null;
+    const cooldowns = await readWholeList<Awaited<ReturnType<Api['vouchCooldowns']>>['cooldowns'][number], Awaited<ReturnType<Api['vouchCooldowns']>>>({
+      readPage: (page) => this.client.vouchCooldowns(key, page),
+      pick: (answer) => ({ rows: answer.cooldowns, next: answer.next }),
+      keyOf: (c) => c.boxId,
+      bound: LEDGER_READ_MAX,
+    });
     let held: number | null = null;
-    do {
-      const page = await this.client.vouchCooldowns(key, after === null ? {} : { after });
-      for (const c of page.cooldowns) held = held === null ? c.releaseAtBlock : Math.max(held, c.releaseAtBlock);
-      after = page.next;
-    } while (after !== null);
+    for (const c of cooldowns) held = held === null ? c.releaseAtBlock : Math.max(held, c.releaseAtBlock);
     return held;
   }
 
@@ -3609,7 +3629,7 @@ export class App {
     const d = this.authorData.get(key);
     if (!d) return;
     try {
-      const [endorsers, username] = await Promise.all([this.client.vouchesByTarget(key), this.client.usernameByOwner(key)]);
+      const [endorsers, username] = await Promise.all([this.client.vouchesByTarget(key, { limit: PAGE_LIMIT_DEFAULT }), this.client.usernameByOwner(key)]);
       d.endorsers = endorsers;
       d.endorsersNext = endorsers.next !== null;
       d.username = username;
@@ -3633,7 +3653,7 @@ export class App {
     const from = d?.endorsers ?? null;
     if (!d || from === null || from.next === null) return;
     try {
-      const page = await this.client.vouchesByTarget(key, { after: from.next });
+      const page = await this.client.vouchesByTarget(key, { limit: PAGE_LIMIT_DEFAULT, after: from.next });
       if (d.endorsers !== from) return;
       d.endorsers = { vouches: [...from.vouches, ...page.vouches], count: page.count, next: page.next };
       d.endorsersNext = page.next !== null;
@@ -3800,7 +3820,7 @@ export class App {
     if (cur === null || from === null || from.next === null) return;
     const gen = this.readerGen;
     try {
-      const page = await this.client.bonds(cur.pubKeyHex, { after: from.next });
+      const page = await this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT, after: from.next });
       if (gen !== this.readerGen || this.bondsView !== from) return;
       this.bondsView = { bonds: [...from.bonds, ...page.bonds], bondCount: page.bondCount, next: page.next };
     } catch {
@@ -4797,11 +4817,20 @@ export class App {
       vouchRows = [...vouched.keys()].map((targetId) => ({ targetId }));
     }
     if (hasInvite && cur !== null) {
-      const order = this.beginRead();
-      const bonds = await this.client.bonds(cur.pubKeyHex);
+      // The reconcile decides on the whole /invites listing (WEB_INTERFACE
+      // → The wallet → "Reconcile runs on the reader's own refresh and on
+      // the bounded poll below"): read whole and decide on that read. The
+      // profile's bonds view stays its own first page with its `more`
+      // (WEB_INTERFACE → The profile window → "The `invites` row") —
+      // nothing is written into it here; a landing or an expiry below
+      // re-reads the view's first page.
+      bondRows = await readWholeList<BondsResult['bonds'][number], BondsResult>({
+        readPage: (page) => this.client.bonds(cur.pubKeyHex, page),
+        pick: (answer) => ({ rows: answer.bonds, next: answer.next }),
+        keyOf: (b) => b.id,
+        bound: LEDGER_READ_MAX,
+      });
       if (gen !== this.readerGen) return;
-      if (this.newerRead('bonds', order)) this.bondsView = bonds;
-      bondRows = bonds.bonds;
     }
 
     for (const entry of entries) {
@@ -4838,6 +4867,7 @@ export class App {
         continue;
       }
       if (entry.kind === 'invite') {
+        if (cur === null) continue;
         const outcome = reconcileInvite(entry, bondRows, tip);
         if (outcome === 'pending') continue;
         this.ledger.remove(entry.txId);
@@ -4847,6 +4877,16 @@ export class App {
           karmaLanded = true;
         } else {
           this.inviteFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
+        }
+        // The view's first page is re-read, as the membership load reads it
+        // (WEB_INTERFACE → The profile window → "The `invites` row").
+        const bondsOrder = this.beginRead();
+        try {
+          const firstPage = await this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT });
+          if (gen !== this.readerGen) return;
+          if (this.newerRead('bonds', bondsOrder)) this.bondsView = firstPage;
+        } catch {
+          // a failed read leaves the view's last-known page; the next ↻ retries
         }
         inviteChanged = true;
         continue;
@@ -5017,22 +5057,39 @@ export class App {
     if (creditsChanged && !creditsTaken) this.renderCreditsRowInPlace();
   }
 
-  /** Reconcile a pending send: read the recipient's /credits and look for the
-   *  payment box (`computeCandidateBoxId`, exact) among their boxes. The row's
-   *  flight slot reads *sent* or the expiry on the render the tick ends with,
-   *  beside the balance the tick's own /credits read moves (WEB_INTERFACE → The
-   *  wallet window). Answers the outcome, or null when the read failed or
-   *  answered after the reader's own state dropped. */
+  /** Reconcile a pending send: the one page the payment box would open —
+   *  `/credits` is ordered `value DESC, id` (NODE_INTERFACE → UTXO queries),
+   *  so `after=<amount>:<id-1>&limit=1` answers the box as its one row
+   *  whenever the recipient holds it; one request a block for each pending
+   *  send, whatever the recipient holds (WEB_INTERFACE → The wallet →
+   *  "Reconcile runs on the reader's own refresh and on the bounded poll
+   *  below"). An all-zero `send.boxId` has none below it, so no request
+   *  leaves and the entry reads as pending. The row's flight slot reads
+   *  *sent* or the expiry on the render the tick ends with, beside the
+   *  balance the tick's own /credits read moves (WEB_INTERFACE → The wallet
+   *  window). Answers the outcome, or null when the read failed or answered
+   *  after the reader's own state dropped. */
   private async reconcileSendEntry(entry: PendingEntry, tip: number, gen: number): Promise<EntryOutcome | null> {
     const recipient = entry.postId; // a send's subject is the recipient's key
+    const boxId = entry.send?.boxId;
+    const amount = entry.send?.amount;
+    if (boxId === undefined || amount === undefined) {
+      // a send entry missing its payload cannot land — reconcileSend treats
+      // it as expired; follow suit with no request.
+      this.ledger.remove(entry.txId);
+      this.sendFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
+      return 'expired';
+    }
+    const below = decrementBoxId(boxId);
+    if (below === null) return 'pending'; // all-zero id, no key below it
     let recipientBoxes;
     try {
-      recipientBoxes = await this.readAllCreditBoxes(recipient);
+      recipientBoxes = await this.client.credits(recipient, { limit: 1, after: `${amount.toString()}:${below}` });
     } catch {
       return null; // a failed read keeps the entry; the next tick retries
     }
     if (gen !== this.readerGen) return null;
-    const outcome = reconcileSend(entry, recipientBoxes, tip);
+    const outcome = reconcileSend(entry, recipientBoxes.boxes, tip);
     if (outcome === 'pending') return outcome;
     this.ledger.remove(entry.txId);
     // The row renders *sent* directly from the landed stage; stageLine has no
@@ -5043,19 +5100,6 @@ export class App {
       ? { stage: 'landed' }
       : { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
     return outcome;
-  }
-
-  /** Read every credit box the recipient holds — one page at a time, following
-   *  `next`. The bare {boxId} shape reconcileSend needs. */
-  private async readAllCreditBoxes(key: string): Promise<Array<{ boxId: string }>> {
-    const boxes: Array<{ boxId: string }> = [];
-    let after: string | null = null;
-    do {
-      const page: CreditsResult = await this.client.credits(key, after === null ? {} : { after });
-      for (const b of page.boxes) boxes.push({ boxId: b.boxId });
-      after = page.next;
-    } while (after !== null);
-    return boxes;
   }
 
   // ---- placement, focus and reports for the write surface ----

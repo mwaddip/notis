@@ -1,5 +1,6 @@
 import { verifyAvlLookup } from '@dagsocial/avltree';
 import {
+  PAGE_LIMIT_MAX,
   TREE_KEY_LENGTH,
   boxKey,
   boxRecordFromBytes,
@@ -21,9 +22,23 @@ import type {
   UserId,
 } from '@dagsocial/types';
 import type { PoPowHeader } from '@dagsocial/nipopow';
-import type { HttpFetch } from './http.js';
-import { base64ToBytes, capped, fetchJson, isRecord, shown } from './http.js';
-import { HEIGHT_READ_BYTES, LEDGER_READ_MAX, LISTING_PAGE_READ_BYTES, LOOKUP_READ_BYTES } from './caps.js';
+import type { HttpFetch } from '@dagsocial/node-reads';
+import {
+  KARMA_LISTING_MAX,
+  capped,
+  fetchJson,
+  isHex64Lower,
+  isNonNegSafeInt,
+  isRecord,
+  isSum,
+  parsePage,
+  wholeListRead,
+  HEIGHT_READ_BYTES,
+  LEDGER_READ_MAX,
+  LISTING_PAGE_READ_BYTES,
+  LOOKUP_READ_BYTES,
+} from '@dagsocial/node-reads';
+import { base64ToBytes, shown } from './http.js';
 import { proveRange } from './holdings.js';
 import type { RangeResult } from './holdings.js';
 
@@ -124,164 +139,146 @@ export interface FiguresResult {
   failed: boolean;
 }
 
-// NODE_INTERFACE → UTXO queries — one page per fetch, follow `next` to null
-interface KarmaPageResponse {
-  boxes: { boxId: string; value: string }[];
-  next: string | null;
-  height: number;
-  effective: string;
-}
-
-interface CreditPageResponse {
-  boxes: { boxId: string; value: string; lockedUntilBlock?: number }[];
-  next: string | null;
-}
-
-// WEB_INTERFACE → The extension → "A run is total" — the paging walks a page's
-// `boxes` and follows its `next`, so a page is an object with a `boxes` array
-// and a `next` that is null or a row's key: text that is not empty, since no
-// row's key is (NODE_INTERFACE → "Every paged response carries `next`"), and
-// well-formed, the next request carrying it through `encodeURIComponent`; any
-// other answer is a malformed page. Each entry is the node's claim, checked by
-// proveFigures before a proof is asked for it.
-function isPage(data: unknown): boolean {
-  if (!isRecord(data) || !Array.isArray(data['boxes'])) return false;
-  const next = data['next'];
-  return next === null || (typeof next === 'string' && next !== '' && isWellFormedText(next));
-}
-
-// Text with no lone surrogate, the one thing `encodeURIComponent` throws on.
-// Iterating a string yields a surrogate pair as one code point and a lone
-// surrogate singly, so a code point in U+D800–U+DFFF is a lone one.
-function isWellFormedText(s: string): boolean {
-  for (const ch of s) {
-    const cp = ch.codePointAt(0);
-    if (cp !== undefined && cp >= 0xd800 && cp <= 0xdfff) return false;
-  }
-  return true;
-}
-
 // NODE_INTERFACE → UTXO queries — /karma/:userId and /credits/:userId are
-// paged by keyset, `after=<next>` on each following request until `next` is
-// null. The node answers a key it has never seen with an empty page at its
-// current height (NODE_INTERFACE → HTTP API: the two rows name a 400 and no
-// 404), so a 404 — like any other non-ok — is a listing failure carrying
-// the route, as is a malformed page. Each ledger's listing is bounded at
-// `maxBoxes` (default `LEDGER_READ_MAX`): a listing that runs past it fails
-// with the route and the bound named, no further page asked
-// (WEB_INTERFACE → The extension → "The verified figures" —
-// "the command line reads the listing it judges itself … held to the same
-// bound: a ledger listed past it fails the listing").
+// paged by keyset, each page asked at an explicit `limit` and `after=<next>`
+// on each following request until `next` is null. The node answers a key it
+// has never seen with an empty page at its current height
+// (NODE_INTERFACE → HTTP API: the two rows name a 400 and no 404), so a 404 —
+// like any other non-ok — fails the listing, as does a page that does not
+// hold to its route's page rule or a listing that runs past its bound. The
+// karma listing is held to `KARMA_LISTING_MAX` — the protocol's maximum
+// (NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+// karma boxes") — and the credit listing to `maxBoxes` (default
+// `LEDGER_READ_MAX`, CONSTANTS → Client reads).
+//
+// WEB_INTERFACE → Reading a node's answer → "Every page is held to the page
+// the node serves" and → "A whole-list read is bounded" — each ledger reads
+// through `wholeListRead` of `@dagsocial/node-reads`: every page asked at
+// `PAGE_LIMIT_MAX`, held to the page rule, with a cursor named before and a
+// boxId named before each ending the listing.
 export async function fetchListing(
   nodeUrl: string,
   user: string,
   httpFetch: HttpFetch,
   maxBoxes: number = LEDGER_READ_MAX,
 ): Promise<ListingResult> {
-  const karmaBoxes: ListedBox[] = [];
   let karmaHeight = 0;
   let karmaEffective = '0';
+  let karmaFirstSeen = false;
 
-  // CONSTANTS → Light client reads — a karma listing page.
-  const firstKarma = await fetchJson<KarmaPageResponse>(
-    httpFetch,
-    `${nodeUrl}/karma/${user}`,
-    LISTING_PAGE_READ_BYTES,
-  );
-  if (!firstKarma.ok) {
-    return { ok: false, reason: `GET /karma/${user}: HTTP ${firstKarma.status}` };
-  }
-  if (!isPage(firstKarma.data)) {
-    return { ok: false, reason: `GET /karma/${user}: malformed page` };
-  }
-  for (const b of firstKarma.data.boxes) karmaBoxes.push(b);
-  karmaHeight = firstKarma.data.height;
-  karmaEffective = firstKarma.data.effective;
-  let karmaNext: string | null = firstKarma.data.next;
-  const overflowKarma = ledgerOverflow(karmaBoxes.length, karmaNext, maxBoxes);
-  if (overflowKarma !== null) {
-    return { ok: false, reason: `GET /karma/${user}: ${overflowKarma}` };
-  }
-  while (karmaNext !== null) {
-    const r = await fetchJson<KarmaPageResponse>(
-      httpFetch,
-      `${nodeUrl}/karma/${user}?after=${encodeURIComponent(karmaNext)}`,
-      LISTING_PAGE_READ_BYTES,
-    );
-    if (!r.ok) {
-      return { ok: false, reason: `GET /karma/${user}?after=${capped(karmaNext)}: HTTP ${r.status}` };
-    }
-    if (!isPage(r.data)) {
-      return { ok: false, reason: `GET /karma/${user}?after=${capped(karmaNext)}: malformed page` };
-    }
-    for (const b of r.data.boxes) karmaBoxes.push(b);
-    karmaNext = r.data.next;
-    const over = ledgerOverflow(karmaBoxes.length, karmaNext, maxBoxes);
-    if (over !== null) {
-      return { ok: false, reason: `GET /karma/${user}: ${over}` };
-    }
-  }
+  const karmaRoute = `/karma/${user}`;
+  const karma = await wholeListRead<ListedBox>({
+    limit: PAGE_LIMIT_MAX,
+    bound: KARMA_LISTING_MAX,
+    keyOf: (b) => b.boxId,
+    fetchPage: async (after, limit) => {
+      const label = labelFor(karmaRoute, after);
+      const url = pageUrl(nodeUrl, karmaRoute, after, limit);
+      const res = await fetchJson<unknown>(httpFetch, url, LISTING_PAGE_READ_BYTES);
+      if (!res.ok) return { ok: false, reason: `${label}: HTTP ${res.status}` };
+      const parsed = parsePage<unknown>(res.data, 'boxes', limit);
+      if (!parsed.ok) return { ok: false, reason: `${label}: malformed page` };
+      if (!karmaFirstSeen && after === null) {
+        const h = isRecord(res.data) ? res.data['height'] : undefined;
+        if (!isNonNegSafeInt(h)) {
+          return { ok: false, reason: `${label}: height is not a non-negative safe integer: ${shown(h)}` };
+        }
+        const e = isRecord(res.data) ? res.data['effective'] : undefined;
+        if (!isSum(e)) {
+          return { ok: false, reason: `${label}: effective is not a decimal sum: ${shown(e)}` };
+        }
+        karmaHeight = h;
+        karmaEffective = e;
+        karmaFirstSeen = true;
+      }
+      const rowsOk = validateListedRows(parsed.rows, 'karma');
+      if (!rowsOk.ok) return { ok: false, reason: `${label}: ${rowsOk.reason}` };
+      return { ok: true, rows: rowsOk.rows, next: parsed.next };
+    },
+  });
+  if (!karma.ok) return { ok: false, reason: wrap(karmaRoute, karma.reason) };
 
-  const creditsBoxes: ListedBox[] = [];
-  // CONSTANTS → Light client reads — a credit listing page.
-  const firstCredit = await fetchJson<CreditPageResponse>(
-    httpFetch,
-    `${nodeUrl}/credits/${user}`,
-    LISTING_PAGE_READ_BYTES,
-  );
-  if (!firstCredit.ok) {
-    return { ok: false, reason: `GET /credits/${user}: HTTP ${firstCredit.status}` };
-  }
-  if (!isPage(firstCredit.data)) {
-    return { ok: false, reason: `GET /credits/${user}: malformed page` };
-  }
-  for (const b of firstCredit.data.boxes) creditsBoxes.push(b);
-  let creditsNext: string | null = firstCredit.data.next;
-  const overflowCredit = ledgerOverflow(creditsBoxes.length, creditsNext, maxBoxes);
-  if (overflowCredit !== null) {
-    return { ok: false, reason: `GET /credits/${user}: ${overflowCredit}` };
-  }
-  while (creditsNext !== null) {
-    const r = await fetchJson<CreditPageResponse>(
-      httpFetch,
-      `${nodeUrl}/credits/${user}?after=${encodeURIComponent(creditsNext)}`,
-      LISTING_PAGE_READ_BYTES,
-    );
-    if (!r.ok) {
-      return { ok: false, reason: `GET /credits/${user}?after=${capped(creditsNext)}: HTTP ${r.status}` };
-    }
-    if (!isPage(r.data)) {
-      return { ok: false, reason: `GET /credits/${user}?after=${capped(creditsNext)}: malformed page` };
-    }
-    for (const b of r.data.boxes) creditsBoxes.push(b);
-    creditsNext = r.data.next;
-    const over = ledgerOverflow(creditsBoxes.length, creditsNext, maxBoxes);
-    if (over !== null) {
-      return { ok: false, reason: `GET /credits/${user}: ${over}` };
-    }
-  }
+  const creditsRoute = `/credits/${user}`;
+  const credit = await wholeListRead<ListedBox>({
+    limit: PAGE_LIMIT_MAX,
+    bound: maxBoxes,
+    keyOf: (b) => b.boxId,
+    fetchPage: async (after, limit) => {
+      const label = labelFor(creditsRoute, after);
+      const url = pageUrl(nodeUrl, creditsRoute, after, limit);
+      const res = await fetchJson<unknown>(httpFetch, url, LISTING_PAGE_READ_BYTES);
+      if (!res.ok) return { ok: false, reason: `${label}: HTTP ${res.status}` };
+      const parsed = parsePage<unknown>(res.data, 'boxes', limit);
+      if (!parsed.ok) return { ok: false, reason: `${label}: malformed page` };
+      const rowsOk = validateListedRows(parsed.rows, 'credit');
+      if (!rowsOk.ok) return { ok: false, reason: `${label}: ${rowsOk.reason}` };
+      return { ok: true, rows: rowsOk.rows, next: parsed.next };
+    },
+  });
+  if (!credit.ok) return { ok: false, reason: wrap(creditsRoute, credit.reason) };
 
   return {
     ok: true,
     listing: {
-      karma: { boxes: karmaBoxes, height: karmaHeight, effective: karmaEffective },
-      credits: { boxes: creditsBoxes },
+      karma: { boxes: karma.rows, height: karmaHeight, effective: karmaEffective },
+      credits: { boxes: credit.rows },
     },
   };
 }
 
-// WEB_INTERFACE → The extension → "The verified figures" — "a ledger listed
-// past it fails the listing". A ledger that overflows reads either as more
-// than the bound in boxes, or as at the bound with a next still standing —
-// in which case no further page is asked.
-function ledgerOverflow(count: number, next: string | null, maxBoxes: number): string | null {
-  if (count > maxBoxes) {
-    return `listing runs past the ${maxBoxes}-box bound (${count} boxes read)`;
+function pageUrl(nodeUrl: string, route: string, after: string | null, limit: number): string {
+  return after === null
+    ? `${nodeUrl}${route}?limit=${limit}`
+    : `${nodeUrl}${route}?limit=${limit}&after=${encodeURIComponent(after)}`;
+}
+
+function labelFor(route: string, after: string | null): string {
+  return after === null ? `GET ${route}` : `GET ${route}?after=${capped(after)}`;
+}
+
+/** A reason from `wholeListRead` carries the route when it comes from
+ *  `fetchPage`; the loop's own refusals (bound, cursor, boxId) do not, so
+ *  `wrap` prepends the route for the caller to read. */
+function wrap(route: string, reason: string): string {
+  return reason.startsWith('GET ') ? reason : `GET ${route}: ${reason}`;
+}
+
+type ValidatedRows =
+  | { ok: true; rows: ListedBox[] }
+  | { ok: false; reason: string };
+
+/**
+ * Each listed row is an object with a 64 lowercase hex `boxId`
+ * (NODE_INTERFACE → HTTP API → "Hex is lowercase"); a credit row's optional
+ * `lockedUntilBlock` is a non-negative safe integer where present. `value` is
+ * not held here — the valuation step of the figures walks the listing against
+ * the range, and the listed value is checked against the held box's there.
+ */
+function validateListedRows(rows: unknown[], ledger: 'karma' | 'credit'): ValidatedRows {
+  const out: ListedBox[] = [];
+  for (const r of rows) {
+    if (!isRecord(r)) {
+      return { ok: false, reason: `a listed row is not an object: ${shown(r)}` };
+    }
+    const id = r['boxId'];
+    if (!isHex64Lower(id)) {
+      return { ok: false, reason: `a listed row's boxId is not 64 lowercase hex: ${shown(id)}` };
+    }
+    const value = r['value'];
+    const asString = typeof value === 'string' ? value : '';
+    const row: ListedBox = { boxId: id, value: asString };
+    if (ledger === 'credit') {
+      const lock = r['lockedUntilBlock'];
+      if (lock !== undefined) {
+        if (!isNonNegSafeInt(lock)) {
+          return { ok: false, reason: `a listed row's lockedUntilBlock is not a non-negative safe integer: ${shown(lock)}` };
+        }
+        row.lockedUntilBlock = lock;
+      }
+    }
+    out.push(row);
   }
-  if (count >= maxBoxes && next !== null) {
-    return `listing runs past the ${maxBoxes}-box bound: a next page still stands at the bound`;
-  }
-  return null;
+  return { ok: true, rows: out };
 }
 
 type KeyProofOutcome =
@@ -329,7 +326,7 @@ async function proveKeyAtHeight(
   httpFetch: HttpFetch,
 ): Promise<KeyProofOutcome> {
   const keyHex = bytesToHex(treeKey);
-  // CONSTANTS → Light client reads — one lookup proof.
+  // CONSTANTS → Client reads — one lookup proof.
   const proofRes = await fetchJson<unknown>(
     httpFetch,
     `${nodeUrl}/api/v1/proof/${keyHex}?atHeight=${atHeight}`,
@@ -836,7 +833,7 @@ export async function proveFigures(
 // answer, or one whose `height` is not a block height, leaves `heightAfter`
 // unread (WEB_INTERFACE → The extension → "A run is total").
 export async function readHeightAfter(nodeUrl: string, httpFetch: HttpFetch): Promise<number | null> {
-  // CONSTANTS → Light client reads — `/blocks/current`.
+  // CONSTANTS → Client reads — `/blocks/current`.
   const res = await fetchJson<unknown>(httpFetch, `${nodeUrl}/blocks/current`, HEIGHT_READ_BYTES);
   if (!res.ok || !isRecord(res.data)) return null;
   const height = res.data['height'];
@@ -865,27 +862,30 @@ function isBlockHeight(v: unknown): v is number {
   return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 }
 
+/** The hex check for client input — a 64-char string, case-insensitive, since
+ *  the caller may supply the key as the row shows it; the client lowercases
+ *  it where the chain is read against (TYPES_INTERFACE → Identity). The hex of
+ *  a node's answer takes `isHex64Lower` of `@dagsocial/node-reads`
+ *  (NODE_INTERFACE → HTTP API → "Hex is lowercase"). */
 export const HEX_64 = /^[0-9a-f]{64}$/i;
 const DECIMAL = /^[0-9]+$/;
 
 type ListedBoxCheck = { ok: true; listed: ListedBox } | { ok: false; verdict: string };
 
-// An entry is asked about only when it is an object whose `boxId` is 64 hex and
-// named nowhere earlier in the listing, in either ledger, and whose `value` is
-// a decimal string (WEB_INTERFACE → The extension → "A run is total";
+// An entry is asked about only when it is an object whose `boxId` is 64
+// lowercase hex and named nowhere earlier in the listing, in either ledger,
+// and whose `value` is a decimal string
+// (WEB_INTERFACE → The extension → "A run is total";
 // WEB_INTERFACE → The extension → "The verified figures");
-// for any other, the reason it is not, named. `named` holds every 64-hex id the
-// listing named before this entry, lowercased. A checked entry's own `boxId`
-// comes back lowercased too — the id the duplicate check compares against, and
-// the key the range run compares a held box against, is the listing's id in
-// its one lowercase form, never the node's own spelling of it.
+// for any other, the reason it is not, named. `named` holds every 64-hex id
+// the listing named before this entry.
 function checkListedBox(listed: unknown, named: Set<string>): ListedBoxCheck {
   if (!isRecord(listed)) return { ok: false, verdict: `the listed box is not an object: ${shown(listed)}` };
   const rawBoxId = listed['boxId'];
-  if (typeof rawBoxId !== 'string' || !HEX_64.test(rawBoxId)) {
+  if (!isHex64Lower(rawBoxId)) {
     return { ok: false, verdict: `the listed boxId is not 64 hex: ${shown(rawBoxId)}` };
   }
-  const boxId = rawBoxId.toLowerCase();
+  const boxId = rawBoxId;
   if (named.has(boxId)) {
     return { ok: false, verdict: `the listed boxId is named earlier in the listing: ${shown(rawBoxId)}` };
   }

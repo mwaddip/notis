@@ -1,27 +1,17 @@
-import { isValidUsernameBytes } from '@dagsocial/types';
+import {
+  isHex64Lower, isNonNegSafeInt, isNonNegSafeIntOrNull, isAuthorName,
+} from '@dagsocial/node-reads';
 import type { PostStatus, WithdrawnJson } from './dto';
 
-// Field predicates and the withdrawn-row reader shared by the two readers of
-// the extension's post reads — the light reader (`light-page.ts`) and the
-// bound-row reader (`post-row.ts`). One implementation of each field rule,
-// imported from both, keeps every list and every single read holding to the
-// same shape (WEB_INTERFACE → The extension → "Each row is taken field by
-// field", → "A checked row is taken field by field").
+// The two post-row readers of the extension's post reads — the light reader
+// (`light-page.ts`) and the bound-row reader (`post-row.ts`) — share the
+// field predicates `@dagsocial/node-reads`' `fields.ts` names and the
+// web-only pieces named here: the post status enum, parentRefs and the
+// withdrawn-row rule, which are the web's alone.
+// (WEB_INTERFACE → The extension → "Each row is taken field by field",
+// → "A checked row is taken field by field").
 
-const HEX64 = /^[0-9a-f]{64}$/;
-const utf8 = new TextEncoder();
-
-export function isHex64Lower(v: unknown): v is string {
-  return typeof v === 'string' && HEX64.test(v);
-}
-
-export function isNonNegSafeInt(v: unknown): v is number {
-  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
-}
-
-export function isNonNegSafeIntOrNull(v: unknown): v is number | null {
-  return v === null || isNonNegSafeInt(v);
-}
+export { isHex64Lower, isNonNegSafeInt, isNonNegSafeIntOrNull, isAuthorName };
 
 export function isStatus(v: unknown): v is PostStatus {
   return v === 'pending' || v === 'confirmed';
@@ -34,16 +24,6 @@ export function isParentRefs(v: unknown): v is string[] {
   if (!Array.isArray(v) || v.length > 1) return false;
   for (const p of v) if (!isHex64Lower(p)) return false;
   return true;
-}
-
-/** `authorName` is `null` or a well-formed name — the one rule
- *  `isValidUsernameBytes` of `@dagsocial/types` states over its UTF-8 bytes
- *  (TYPES_INTERFACE → Content limits). The web client is served by that rule,
- *  never a copy of it. */
-export function isAuthorName(v: unknown): v is string | null {
-  if (v === null) return true;
-  if (typeof v !== 'string') return false;
-  return isValidUsernameBytes(utf8.encode(v));
 }
 
 /** A withdrawn row, rebuilt from its own fields; `null` where a field is not

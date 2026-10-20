@@ -59,19 +59,20 @@ is what tells them apart. The library runs in a browser bundle: it may import no
 no Node global (the command line's `index.ts` alone does) — held by the browser pass of `typecheck`, which compiles
 `src/lib.ts` and what it imports against the DOM library (`tsconfig.browser.json`, `ARCHITECTURE → Package boundaries`).
 
-**Every answer is read under its route's cap.** `fetchJson(fetch, url, cap)` and `readCappedJson(res, cap)`
-(`src/http.ts`) read a body as a stream up to the cap the caller names, cancel it past the cap and answer as a body
-that will not parse does; the caps are `src/caps.ts`' (`CONSTANTS → Light client reads`), the proof route's
-`nipopowProofReadBytes(m, k)` a function of the `m` and `k` asked. `readCappedJson` and `POST_BATCH_READ_BYTES` are
-exported for the extension's batch read.
+**Every answer is read under its route's cap.** The light client reads through `@dagsocial/node-reads`
+(`WEB_INTERFACE → Reading a node's answer`): its `fetchJson(fetch, url, cap)` reads a body as a stream up to the cap
+the caller names, under one deadline, cancels it past the cap and answers as a body that will not parse does. The
+literal caps, `LEDGER_READ_MAX`, `isRecord` and `capped` are that package's (`CONSTANTS → Client reads`); the proof
+route's `nipopowProofReadBytes(m, k)`, a function of the `m` and `k` asked, is this package's `src/caps.ts`, and
+`shown` and `base64ToBytes` its `src/http.ts`.
 
-**The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user`
-following `next` to the end — a ledger listed past `LEDGER_READ_MAX` boxes fails the listing — `height` and
-`effective` from the first karma page — the node answers a key it has
-never seen with an empty page at its height, so any non-ok, a 404 among them, or a page that is not an object
-with a `boxes` array and a `next` that is
-null or a non-empty string with no lone surrogate (the next request carries it through `encodeURIComponent`),
-surfaces as `{ ok: false, reason }`. `proveFigures(nodeUrl, user, listing,
+**The figures.** `fetchListing(nodeUrl, user, fetch)` reads `/karma/:user` and `/credits/:user` through
+`@dagsocial/node-reads`' whole-list read — every page asked at `PAGE_LIMIT_MAX` and held to the page rule (a page that
+names a `next` carries the `limit` asked), a cursor or a `boxId` named twice failing the listing — the karma listing
+bounded at `KARMA_LISTING_MAX` (two boxes, the protocol's maximum) and the credit listing at `LEDGER_READ_MAX`;
+`height` and `effective` from the first karma page; each row's `boxId` 64 lowercase hex. The node answers a key it
+has never seen with an empty page at its height, so any non-ok, a 404 among them, or a page that does not hold to the
+rule surfaces as `{ ok: false, reason }`, the node's text in it through `capped`. `proveFigures(nodeUrl, user, listing,
 anchor, profile, fetch)` reads **what the key holds, whole, by range**, and judges the listing against it, in this
 order the run's whole meaning rests on: the identity record at `suffixHead`; each ledger's range at `suffixHead` —
 `karma`, and `credit` where the listing's `credits` is not `null` (`null` is *not read*, never an empty listing);
@@ -132,7 +133,7 @@ one AVL verification — and a check is total as a run is
 
 **A verdict names node text for a person to read**: every node string a verdict, a refusal or a line of
 the command line's text (`textLines`, `src/text.ts`, which runs nothing at import) names passes through
-`capped()` — each C0 control, DEL and C1 control as its `\u` escape, never raw, the text so shown cut at
+`capped()` (`@dagsocial/node-reads`) — each C0 control, DEL and C1 control as its `\u` escape, never raw, the text so shown cut at
 120 characters with `…`, never inside a surrogate pair or an escape — and nothing a status is decided on
 does; `--json` carries the node's data raw.
 

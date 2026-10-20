@@ -1,7 +1,7 @@
 import type { PoPowHeader } from '@dagsocial/nipopow';
 import type { FiguresResult, HoldingsRead, LedgerSums, Listing } from './boxes.js';
 import type { PostCommandResult } from './cli.js';
-import { capped } from './http.js';
+import { capped } from '@dagsocial/node-reads';
 import type { TipResult } from './tip.js';
 
 export interface Run {

@@ -336,6 +336,12 @@ export const LEVEL_CAP = 256;
 /** The interlink vector's maximum length: LEVEL_CAP + 1 (the genesis entry). */
 export const MAX_INTERLINKS = 257;
 
+// HTTP view bounds — TYPES_INTERFACE → HTTP view bounds
+export const PAGE_LIMIT_DEFAULT = 50;   // local — rows a view returns when no `limit` is named
+export const PAGE_LIMIT_MAX = 100;      // local — the most rows one page carries, whatever `limit` names
+export const BATCH_READ_MAX = 100;      // local — the most post ids one `POST /posts/batch` takes
+export const RANGE_PAGE_MAX = 256;      // local — the most entries one page of `GET /api/v1/range` carries
+
 // Crypto
 /** DER-encoded SPKI prefix for raw Ed25519 32-byte public keys (RFC 8410). */
 export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';

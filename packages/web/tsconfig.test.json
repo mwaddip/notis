@@ -1,11 +1,12 @@
 {
-  // Typechecks the TEST tree alongside src (ARCHITECTURE → "Build and test
-  // resolution"). Extends the base directly rather than tsconfig.json, so the
-  // app config's `include` does not narrow the test tree out.
-  //
-  // No `paths` block: this package depends on no other workspace package, so
-  // there is no `@dagsocial/*` alias to mirror. No `types` either — every test
-  // imports from 'vitest' explicitly rather than leaning on globals.
+  // Typechecks the TEST tree alongside src (ARCHITECTURE → Build and test
+  // resolution). Extends the base directly rather than tsconfig.json, so the
+  // app config's `include` does not narrow the test tree out. The base has no
+  // `paths`: the `@dagsocial/*` imports resolve through the workspace's package
+  // links in node_modules to each package's `package.json` `types`, its built
+  // `dist` — those packages are built before this typecheck runs. No `types`
+  // field: every test imports from 'vitest' explicitly rather than leaning on
+  // globals.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,

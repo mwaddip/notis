@@ -15,6 +15,7 @@ import {
   networkRecordFromBytes,
   postRecordFromBytes,
   vouchPairBoxId,
+  RANGE_PAGE_MAX,
 } from '@dagsocial/types';
 import { TreeInconsistencyError, holdingsPage, isSentinel, treeStateView } from '@dagsocial/consensus';
 import type { HoldingKind } from '@dagsocial/consensus';
@@ -27,9 +28,6 @@ import {
   InconsistentStateTreeError,
   failStopIfCorruptChain,
 } from '../services/corrupt-state.js';
-
-/** The holdings-page range cap served when a client sends none or asks above it. */
-export const RANGE_PAGE_MAX = 256;
 
 /** The five kinds `/api/v1/range` serves — one each per range (CONSENSUS_INTERFACE → The holdings page). */
 const HOLDING_KINDS = Object.freeze({
@@ -365,6 +363,7 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
     }
 
     const limitRaw = req.query['limit'];
+    // RANGE_PAGE_MAX: TYPES_INTERFACE → HTTP view bounds.
     let limit = RANGE_PAGE_MAX;
     if (limitRaw !== undefined) {
       // Decimal digits of any length are well-formed; `limit` is served at

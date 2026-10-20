@@ -24,7 +24,8 @@ import {
 import type { PostType, UtxoTransaction } from '@dagsocial/types';
 import { verifyEd25519, verifyEd25519Batch, verifyPostBody } from '@dagsocial/validation';
 import type { Ed25519BatchEntry } from '@dagsocial/validation';
-import { isRecord, shown } from './http.js';
+import { isRecord } from '@dagsocial/node-reads';
+import { shown } from './http.js';
 
 /**
  * The closed set of reasons an `unbound` row carries, in the order checkPosts

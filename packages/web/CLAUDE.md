@@ -110,6 +110,23 @@ extension's prompt reads too.
 reads (`GET /vouches` by target, by voucher, the cooldown arm; `GET /invites/:userId`) and the name read
 (`GET /usernames?owner=`), a handle's holder (`GET /usernames/:name`) and the balance (`GET /credits/:userId`) are `GET`s in it.
 
+**Every answer is read through `@dagsocial/node-reads` and rebuilt, or refused** (`WEB_INTERFACE → Reading a node's
+answer`). `NodeClient` asks each route under its byte cap and the one deadline (`fetchJson`, `REQUEST_TIMEOUT_MS`) and
+hands the answer to its route's reader in `src/api/readers.ts`, which rebuilds the DTO from its fields — each held to
+its type by the package's predicates — or answers `PageError`; a non-2xx is `ApiError`, whose message is the client's
+own words and the status, never the node's body. A full post row takes the checked row's rules (`readBoundRow`,
+`readWithdrawnRow`), so no text over `MAX_CONTENT_BYTES` reaches the renderer in either build; the single post read
+keeps `confirmedAuthor` and, under `tx=1`, `tx`. **Every paged read names its `limit`** (`Page.limit` is required) and
+each page is held to `parsePage`: a page naming a `next` carries the `limit` asked. **A read that follows `next` to the
+end goes through `readWholeList`** (`src/api/whole-list.ts`) — every page at `PAGE_LIMIT_MAX`, a cursor or a row key
+named twice refused, the bound `KARMA_LISTING_MAX` for `/karma` and `LEDGER_READ_MAX` for every other list, a refusal
+thrown as `PageError`. A pending send's landing reads the one page its payment box would open (`decrementBoxId`,
+`src/wallet/box-id.ts`); the invite reconcile reads the bonds whole and re-reads the profile's first page on a landing.
+The write and faucet clients read their answers under `WRITE_ANSWER_READ_BYTES` and the deadline, every field of a 2xx
+held to its type. **The four per-network numbers pass through `networkNumbers`** (`src/model/network-numbers.ts`): the
+build network's profile where `notis-network` names one, `/status` in the web build. Test fakes that answer as a node
+answer real `Response`s (`test/honest-page.ts`) and serve honest pages — a page naming a `next` is full.
+
 **It hashes only through `@dagsocial/types`** — and, in the extension's tip verifier, `@dagsocial/validation`'s
 header hash and PoW check, through `@dagsocial/nipopow-client` — built as they are written, substituting nothing for Node — the wallet builders type
 their box candidates and compute every id through the shared implementation, never a copy, which is why
@@ -400,9 +417,8 @@ read — never silence; **an empty listing takes the same lines**, beneath the f
 there, since that the key holds nothing is a claim the range decides. The numbers update in
 their slots whenever a read brings a new one (`HOUSE_STYLE → Motion`). The web build is handed no figures verifier, and
 `build-release.sh` refuses `api/v1/proof` and `api/v1/range` in its assets beside `nipopow/proof`. **The run is total**: a node's answer of
-any shape ends in a status, never a thrown run — and `NodeClient`'s paged reads refuse a page whose list is not an
-array or whose `next` is neither `null` nor a non-empty string with no lone surrogate (`PageError`, taken where a
-non-2xx's `ApiError` is), so no read loops on a malformed cursor. **A run ends**: `createFiguresVerifier` hands
+any shape ends in a status, never a thrown run — and `NodeClient`'s reads answer a page not held to `parsePage`, and
+an answer not of its route's shape, as `PageError`, taken where a non-2xx's `ApiError` is. **A run ends**: `createFiguresVerifier` hands
 `proveFigures` a `fetch` that rejects a request asked more than 60 seconds after the run began (`RUN_DEADLINE_MS`;
 the clock is an option beside `prove`), which the tool reads as not served — the row reads *the node served no proof
 for …*, never no line.

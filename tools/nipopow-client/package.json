@@ -21,11 +21,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@dagsocial/avltree": "workspace:*",
     "@dagsocial/consensus": "workspace:*",
-    "@dagsocial/types": "workspace:*",
     "@dagsocial/nipopow": "workspace:*",
-    "@dagsocial/validation": "workspace:*",
-    "@dagsocial/avltree": "workspace:*"
+    "@dagsocial/node-reads": "workspace:*",
+    "@dagsocial/types": "workspace:*",
+    "@dagsocial/validation": "workspace:*"
   },
   "devDependencies": {
     "@noble/curves": "^2.2.0",

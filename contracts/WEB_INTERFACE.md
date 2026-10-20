@@ -333,12 +333,9 @@ prefix the background checks the bridge's sender against; an empty one builds an
 no links row.
 
 **Every answer is read under its route's cap.** Each read the light client makes — `@dagsocial/nipopow-client`'s,
-which the command line and the extension both run, and the resolve's batch read (→ "The resolve") — takes the body
-under a byte cap: the longest answer an honest node gives on that route, argued from the bounds that already hold
-what the route serves (`CONSTANTS → Light client reads`), the proof route's from the `m` and `k` the client asks. A
-body longer than its cap is read no further, and the read answers as a body that will not parse does — no honest
-node sends one, so it is the node's answer that failed, not the transport. **Every reader names its route's cap**;
-none reads a body whole.
+which the command line and the extension both run — and the resolve's batch read (→ "The resolve") is read as every
+client's read is (→ Reading a node's answer): under its route's cap and the one deadline, through
+`@dagsocial/node-reads`, the proof route's cap computed by the light client from the `m` and `k` it asks.
 
 **The verified tip.** The extension checks the chain it reads: a NiPoPoW proof from the node it reads and from every
 other base of the seed list, each verified against the build's own profile and the best kept
@@ -408,7 +405,7 @@ ledger whose listing the run is handed — `karma`, `credit` — page by page un
 (`NODE_INTERFACE → AVL+ State Root`, the range route; `CONSENSUS_INTERFACE → The holdings page`); the same ranges at
 `tip.height`; then one `GET /blocks/current`, `heightAfter`. **A range read leaves nothing out** — each entry's next
 key is authenticated — so the two reads are what the key holds of a ledger, whole, at each height. **A ledger is read
-up to `LEDGER_READ_MAX` boxes** (`CONSTANTS → Light client reads`): a range that runs past it, at either height, ends
+up to `LEDGER_READ_MAX` boxes** (`CONSTANTS → Client reads`): a range that runs past it, at either height, ends
 that ledger's read `unproven`, its verdict naming the bound — a tip a node mined over a tree of its own making holds a
 run to no more — and a key that keeps its boxes consolidated stays far inside it, the holder being the one who pays
 for many small boxes (one rent each, about 300 inputs a transaction). The command line reads the listing it judges
@@ -795,6 +792,49 @@ carries none, both manifests' `optional_host_permissions` is the pattern the bui
 absent under an empty base — and `web-ext lint --self-hosted` is clean; without the flag the lint reads the
 manifest as a listed add-on's, where an `update_url` is an error. It checks the shell's `notis-network` at the build's
 value too, and refuses a name no network profile answers to.
+
+## Reading a node's answer
+
+**A node's answer is a claim of its route's shape, and a client takes nothing else.** Every client of the node's HTTP
+API — this one in both builds, and the light client — reads through one package, `@dagsocial/node-reads`, and holds
+each answer to its route. **Every answer is rebuilt from its own fields**, each of its type: an id 64 lowercase hex
+(`NODE_INTERFACE → HTTP API → "Hex is lowercase"`), a height or a count a non-negative safe integer, a box value a
+decimal string in `[0, 2⁶³)` (`TYPES_INTERFACE → Box value domain`) and a sum a non-negative decimal string, a name
+`null` or a well-formed one (`TYPES_INTERFACE → Content limits`). An answer that is not is one the node did not give,
+and the read fails as a non-2xx does, down the same path. So no value a node chose reaches a parse that throws — no
+`BigInt` of a string that is not a decimal — and no node can keep the settings window, the one way to another node,
+from drawing (→ The settings window). **A post row of a full list, and the single post read, take the checked row's
+field rules** (→ The extension → "A checked row is taken field by field"): the text `null` or 1 to
+`MAX_CONTENT_BYTES` bytes, so no text longer than the network carries reaches the renderer in either build
+(→ Content); the single post read keeps `confirmedAuthor` beside them, which a reply and a like are built on
+(→ The wallet), and under `tx=1` the `tx` the post check reads. **A list holding one row that is not of its type is
+not a page**: the whole read fails, as a light page does (→ The extension → "A light page is held to its shape") — no
+row is dropped and the rest shown.
+
+**Every page is held to the page the node serves.** Every paged read asks an explicit `limit`, at most
+`PAGE_LIMIT_MAX` (`CONSTANTS → HTTP view bounds`); the answer's list carries at most that many rows; its `next` is
+`null` or a non-empty string with no lone surrogate, since the next request carries it through `encodeURIComponent`;
+and **a page that names a `next` carries exactly the `limit` asked** — the node reads one row past `limit`
+(`NODE_INTERFACE → "Every list a view returns is a page"`), so only a list's last page is short. Any other answer is
+not a page.
+
+**A whole-list read is bounded.** A read that follows `next` to the end — the reads before a write, the reader's own
+listings, the vouch set and the escrow, the reconcile's reads (→ The wallet) — asks every page at `PAGE_LIMIT_MAX`,
+refuses a cursor it has followed before and a row whose key it has taken before, and fails past its list's bound:
+**the protocol's maximum where one exists** — a `/karma` listing holds at most two boxes (`NODE_INTERFACE → Karma
+transition rules → "An identity holds at most two karma boxes"`) — **and `LEDGER_READ_MAX` for every other list**
+(`CONSTANTS → Client reads`), credit boxes, vouches, cooldowns and standing bonds, which no protocol maximum bounds. So
+a whole-list read asks at most `⌈bound / PAGE_LIMIT_MAX⌉ + 1` pages. **A listing past its bound is a refused
+listing, never a figure read from part of it**: a key holding more credit boxes than the bound reads its own
+`/credits` as a failed read — the balance row takes nothing from it — and builds no send.
+
+**Every answer is read under its route's cap, and every request runs under one deadline.** The body is read as a
+stream and refused past the longest answer an honest node gives on that route — argued from the bounds that already
+hold what the route serves (`CONSTANTS → Client reads`), the NiPoPoW proof route's from the `m` and `k` the client asks
+— and a body longer than its cap is read no further and reads as a body that will not parse: no honest node sends one,
+so the node's answer failed, not the transport. **Every reader names its route's cap**; none reads a body whole. A
+request not answered within `REQUEST_TIMEOUT_MS` (`CONSTANTS → Client reads`) is ended and reads as a transport
+failure — for a write, the flight's ending for one (→ The wallet).
 
 ## Reading the feed and threads
 
@@ -1209,7 +1249,9 @@ the scan continues past them**, so a bare URL among them still links — `[](htt
 text around a link. A `[text](url)` link is a link whatever its URL ends in.
 
 **The URL gate.** One function serves the renderer and the composer: the string parses as a URL, its scheme
-is `http` or `https`, and it holds no whitespace. A construct whose URL fails the gate is text,
+is `http` or `https` **followed by `//`**, and it holds no whitespace. Without the two slashes a string such as
+`https:example.com/x` parses with the host the reader is shown, and the browser resolves it against the page's
+`<base>` to a path of the client's own origin — one host shown, another opened. A construct whose URL fails the gate is text,
 `[text](javascript:…)` included — its characters are, and the scan continues past them. The `href` is the author's string, never a normalised form; the host shown
 is the parser's host — ASCII, so a lookalike domain shows as punycode — and it renders in mono
 (`HOUSE_STYLE → Typography`).
@@ -1362,7 +1404,10 @@ later height is cut back at the next load: an answered height alone would let a 
 the spendable view for good, and across a node change, since the ledger is the identity's. **A 2xx is recorded
 whether or not its body carries `expiresAtHeight`** — the transaction is the reader's own and may land, so its inputs
 stay reserved. One whose `txId` differs from the built one is a client rejection — *"the node computed a different
-transaction id"* — since the client records no entry under an id the node does not share.
+transaction id"* — since the client records no entry under an id the node does not share; and so is one whose fields
+are not their types — a `txId`, `postId` or `bondBoxId` that is not 64 lowercase hex, a `name` that is not a
+well-formed one (→ Reading a node's answer). A 2xx body over its route's cap, or one that does not parse, ends
+the flight as a transport failure does.
 
 **Builders exist for a post, a like, a vouch, an unvouch, an invite, a withdrawal, a claim, a burn and a send, and
 nothing else.** A root
@@ -1375,9 +1420,10 @@ topology. A like: change and a `like_accrual` of `LIKE_KARMA_COST` to the target
 reader's live `vouch` box naming that identity, resolved from `GET /vouches?voucher=` **at the press**,
 never from a cached set, since a box can be spent between a render and a click — and one
 `vouch_escrow` output of the same value, `owner` the reader's key, `releaseAtBlock` the vouch's
-`createdAtBlock` plus `vouchCooldownBlocks` from `/status` (`NODE_INTERFACE → Vouch transition rules`:
-the cooldown runs from the cast); no karma input and no change. An invite: change and a `bond` box of
-the amount the reader chose inside `/status`'s `inviteBondMin`–`inviteBondMax`, `inviterId` the reader's
+`createdAtBlock` plus the network's `vouchCooldownBlocks` (`NODE_INTERFACE → Vouch transition rules`:
+the cooldown runs from the cast; → Invariants → "A per-network number is read, never assumed"); no karma input and no
+change. An invite: change and a `bond` box of
+the amount the reader chose inside the network's `inviteBondMin`–`inviteBondMax`, `inviterId` the reader's
 key, `inviteePublicKey` the pasted key. A withdrawal: one karma input — the reader's own box, or the income
 box where they hold no own box — and one karma output of its value to the reader's key,
 `postWithdraw` naming the post; the returned box is the entry's `change` (→ The withdraw control). A claim: the
@@ -1438,17 +1484,28 @@ word `like` gone — until it lands or expires.
 A pending vouch is landed when `GET /vouches?voucher=<key>` lists the pair; a pending unvouch when the
 pair is absent — the escrow it creates is no signal, since one born past its release height is returned
 by the next block's settlement and its cooldown row can stand for a single block the poll never sees
-(`NODE_INTERFACE → Vouch transition rules`); a pending invite when `GET /invites/<key>` lists a bond
-naming the invitee; a pending withdrawal when `GET /posts/:id` answers a tombstone — the withdrawn
-marker (`NODE_INTERFACE → The withdrawal phase`), and expired at once on a 404 — each expired once the tip passes its `expiresAtHeight`.
+(`NODE_INTERFACE → Vouch transition rules`); a pending invite when `GET /invites/<key>`, read whole
+(→ Reading a node's answer → "A whole-list read is bounded"), lists a bond naming the invitee; a pending withdrawal
+when `GET /posts/:id` answers a tombstone — the withdrawn marker (`NODE_INTERFACE → The withdrawal phase`), and expired
+at once on a 404 — each expired once the tip passes its `expiresAtHeight`.
 A pending claim is landed when `GET /usernames?owner=<key>` answers the name, a pending burn when it no longer
 does — one read per reconcile while either stands, as the bonds are read once for an invite — each expired once
 the tip passes its `expiresAtHeight`; the answer is the reader's own name (→ The username row).
-A pending send is landed when `GET /credits/<recipient>` following `next` lists the payment box —
-`computeCandidateBoxId(payment, txId, index)`, exact — and expired once the tip passes its `expiresAtHeight`; on
-landing the reader's own `/credits` is re-read and the `$NOTIS` row's balance moves in place (→ The profile
-window). A pending credits grant is landed when `GET /credits/<key>` lists the box the faucet named
-(→ The faucet step).
+A pending send is landed when **the one page its payment box would open** lists it: the box's value is the amount and
+its id `computeCandidateBoxId(payment, txId, index)`, exact, and `/credits` is ordered `value DESC, id`
+(`NODE_INTERFACE → UTXO queries`), so `GET /credits/<recipient>?after=<amount>:<the id less one>&limit=1` answers the
+box as its one row whenever the recipient holds it — a page is strictly after its key, and no id lies between an id
+and the id less one. One request a block for each pending send, whatever the recipient holds, so a send to a key
+whose listing runs past its bound still lands; an id of all zeros, which has no id below it, is read as pending. It is
+expired once the tip passes its `expiresAtHeight`; on landing the reader's own `/credits` is re-read and the `$NOTIS`
+row's balance moves in place (→ The wallet window). A pending credits grant is landed when `GET /credits/<key>` lists
+the box the faucet named (→ The faucet step).
+
+**Every ending of a pending entry is the reading node's word, in both builds**: a row it answers, a 404, a list that
+names the box or does not, and the height `/blocks/current` answers. A node that answers a height past every entry's
+ends them all, as it could by a 404 each; their inputs return to the spendable view, and a spend of one the node
+still pools is its 409 (→ "Nothing retries"). No ending moves value. The height is held to a block height, as every
+field of an answer is held to its type (→ Reading a node's answer).
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
@@ -1541,11 +1598,12 @@ shows the word on no surface (user, 2026-09-18).
 **The `invites` row** *(membership actions)*: the line — `K invites available` for a member, *"as many
 as your rep covers"* for a root, *"invites come with membership"* for a resident; the form, a real
 `<form>` in place shown only when an invite is available and the spendable view covers the minimum
-bond — the invitee's key, 64 hex pasted out of band, and the bond, a number inside `/status`'s
-`inviteBondMin`–`inviteBondMax`, **default the minimum** — with what happens under it: *"they receive the
+bond — the invitee's key, 64 hex pasted out of band, and the bond, a whole number inside the network's
+`inviteBondMin`–`inviteBondMax` (→ Invariants → "A per-network number is read, never assumed"), **default the
+minimum**, anything else the form's refusal line — with what happens under it: *"they receive the
 bond's rep from the pool. your bond comes back as they receive likes, one rep per three, and the
-rest goes to the pool after N blocks."* (`INVITE_BOND_VEST_PER_LIKES` from `@dagsocial/types`,
-`inviteProbationBlocks` from `/status`); the flight in the row, the deferred unlock in the row when
+rest goes to the pool after N blocks."* (`INVITE_BOND_VEST_PER_LIKES` from `@dagsocial/types`, the network's
+`inviteProbationBlocks`); the flight in the row, the deferred unlock in the row when
 locked; and beneath, **the reader's standing bonds** from `GET /invites/<key>`, one row per bond —
 the invitee's identity (→ The identity display, so the reader can vouch for their own invitee here)
 and the bond's value — following `next`. No settle height: no view serves it, and the client invents
@@ -1657,7 +1715,9 @@ chosen tint. They are not controls: no handler, no pointer, hidden from assistiv
 press with no re-render, since the tint is the root's attribute and custom properties — the press moves the four
 words' pressed state in place and rebuilds nothing, so the pressed word keeps the keyboard's focus. **The `node` row** holds
 the effective base: any origin works, blank resets to the build's default, and a change drops everything loaded
-and re-reads it from the new node (→ The client is served from the node's own origin). **The policy row**, *sign
+and re-reads it from the new node (→ The client is served from the node's own origin). **The window draws whatever a
+node answers**: it reads nothing from the node, and no answer a node gives reaches it unchecked (→ Reading a node's
+answer), so the way to another node is always open. **The policy row**, *sign
 each rep action: don't ask · ask*, is the background's policy (→ The extension), read through `state` and set
 through `policy`; it renders only when the identity module implements `policy` — the extension's proxy — so the
 web build has no such row. **The links row**, *a Notis link opens: on the site · here*, is the background's links
@@ -1929,7 +1989,8 @@ client that expects to announce itself first is built against an endpoint that d
   primitive the read surface lacks. The identity envelope's scrypt and ChaCha20-Poly1305 are the same
   family — `@noble/hashes` and `@noble/ciphers` — and its randomness is `getRandomValues`, which no
   secure context gates (→ The identity module).
-- **In the workspace the client depends on `@dagsocial/types`, and on `@dagsocial/nipopow-client` for the extension's
+- **In the workspace the client depends on `@dagsocial/types`, on `@dagsocial/node-reads` for reading a node's
+  answers in both builds (→ Reading a node's answer), and on `@dagsocial/nipopow-client` for the extension's
   verifier**, which brings `@dagsocial/nipopow` and `@dagsocial/validation` with it; tree-shaking keeps `validation`'s
   signature path out of every bundle, and the web build's assets carry none of the three (→ The extension, the build
   check).
@@ -1969,8 +2030,8 @@ client that expects to announce itself first is built against an endpoint that d
   surface)*
 - **A consensus constant is imported; a per-network number is read.** `POST_PRICE_THREAD`,
   `POST_PRICE_REPLY`, `REPLY_AUTHOR_SHARE`, `LIKE_KARMA_COST` and `USERNAME_BURN_PRICE` are consensus and ruled
-  (`CONSTANTS → Post price and likes`, `CONSTANTS → Usernames`) and come from `@dagsocial/types`; what `/status` serves
-  differs per network and is never held. *(write surface)*
+  (`CONSTANTS → Post price and likes`, `CONSTANTS → Usernames`) and come from `@dagsocial/types`; what differs per
+  network is never held as a constant (→ "A per-network number is read, never assumed"). *(write surface)*
 - **Affordability is known before the attempt.** Opening a composer reads the spendable view once; a
   price it cannot cover disables `post` and says so, so the reader never spends a rejection to learn
   what the client already knew. *(write surface)*
@@ -1979,9 +2040,13 @@ client that expects to announce itself first is built against an endpoint that d
   it signs. A build constant would agree with one network and be refused by another
   (`ARCHITECTURE → Protocol Versioning`). *(write surface)*
 - **A per-network number is read, never assumed.** `vouchCooldownBlocks`, `inviteBondMin`,
-  `inviteBondMax` and `inviteProbationBlocks` are served by `GET /status` for the same reason: an
-  unvouch's `VouchEscrowBox.releaseAtBlock` is pinned as `vouch.createdAtBlock + vouchCooldownBlocks`,
-  so a client holding a constant builds a transaction the node rejects. *(write surface)*
+  `inviteBondMax` and `inviteProbationBlocks` differ per network: an unvouch's `VouchEscrowBox.releaseAtBlock` is
+  pinned as `vouch.createdAtBlock + vouchCooldownBlocks`, so a client holding a constant builds a transaction the node
+  rejects. **A build that names its network reads them from that network's profile** (`profileFor` of the shell's
+  `notis-network`, → The client is served from the node's own origin), never from a node's `/status` — the network
+  is the build's, as the proof-of-work profile the extension's tip verifier holds is, so no node moves the bond a
+  reader signs silently; **a build that names none — the web build — reads them from `GET /status`**, its node being
+  its authority by contract. *(write surface)*
 - **Content length is enforced in UTF-8 bytes before submission** — `MAX_CONTENT_BYTES` is 300 bytes,
   and one emoji is four of them; the composer counts it down from the moment it opens (→ Content).
   *(write surface)*

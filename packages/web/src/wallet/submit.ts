@@ -1,12 +1,16 @@
 import { encodeTx, hexToBytes } from '@dagsocial/types';
-import type { UtxoTransaction } from '@dagsocial/types';
+import type { UtxoTransaction, NetworkType } from '@dagsocial/types';
+import { LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readBuildContext, readCreditContext } from './reads';
+import { readWholeList } from '../api/whole-list';
+import { networkNumbers } from '../model/network-numbers';
 import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend, txToJson, InsufficientKarma, InsufficientCredits, BelowFloor, InvalidKey } from './builders';
 import { formatCredits } from '../model/credits';
 import type { PendingLedger } from './ledger';
 import type { BuildContext } from './builders';
 import type { PendingEntry } from './types';
 import type { Api } from '../api/client';
+import type { VouchesVoucherResult } from './../api/dto';
 import type {
   WriteClient, Rejection, PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult, SendSubmitResult,
 } from '../api/write';
@@ -53,6 +57,12 @@ export interface SubmitDeps {
   write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitUnvouch' | 'submitInvite' | 'submitWithdraw' | 'submitClaim' | 'submitBurn' | 'submitSend'>;
   ledger: PendingLedger;
   identity: Signer;
+  /** The build's network — the App reads it from `prefs`' `BUILD_NETWORK` and
+   *  hands it here, so the submit flows import nothing that reads the document
+   *  at load (WEB_INTERFACE → Invariants → "A per-network number is read,
+   *  never assumed"). An unvouch's `releaseAtBlock` reads
+   *  `vouchCooldownBlocks` through `networkNumbers(network, status)`. */
+  network: NetworkType | null;
   /** Called after a successful sign and before the POST — the composer path
    *  uses it to collapse into the hollow card in the same slot (WEB_INTERFACE →
    *  The wallet, "the fourth ending is the composer still open"). Only
@@ -247,10 +257,15 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
   const vouch = await resolveVouchBox(deps.reads, id.pubKeyHex, targetKey);
   if (vouch === null) return clientRejection('that vouch was already withdrawn.');
 
-  // No spend, so no /karma pass — only the height, the era and the cooldown, all
-  // from /status. `releaseAtBlock` is the cast height plus the cooldown
-  // (NODE_INTERFACE → Vouch transition rules).
+  // No spend, so no /karma pass — only the height and the era from /status, and
+  // the cooldown from the one place: the profile where the build names its
+  // network, `/status` where it names none (`model/network-numbers.ts`,
+  // WEB_INTERFACE → Invariants → "A per-network number is read, never assumed").
+  // `releaseAtBlock` is the cast height plus the cooldown (NODE_INTERFACE →
+  // Vouch transition rules).
   const status = await deps.reads.status();
+  const nn = networkNumbers(deps.network, status);
+  if (nn === null) return clientRejection('cannot read the network numbers.');
   const ctx: BuildContext = {
     spendable: [],
     height: status.blockHeight,
@@ -260,7 +275,7 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
   const built = buildUnvouch(
     ctx,
     { boxId: vouch.boxId, value: BigInt(vouch.value), createdAtBlock: vouch.createdAtBlock },
-    status.vouchCooldownBlocks,
+    nn.vouchCooldownBlocks,
   );
   const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
   if (!signed.ok) return signed;
@@ -464,20 +479,22 @@ export async function submitSendFlow(
 }
 
 /** The reader's live `vouch` box naming `targetKey`, resolved at the press by
- *  following `next` to the end of `GET /vouches?voucher=<me>` — null when the pair
- *  is gone (WEB_INTERFACE → The wallet). */
+ *  reading `GET /vouches?voucher=<me>` whole — null when the pair stands no
+ *  more (WEB_INTERFACE → The wallet, → Reading a node's answer → "A whole-list
+ *  read is bounded"). The listing is bounded by LEDGER_READ_MAX. */
 async function resolveVouchBox(
   reads: Pick<Api, 'vouchesByVoucher'>,
   voucherKey: string,
   targetKey: string,
 ): Promise<{ boxId: string; value: string; createdAtBlock: number } | null> {
-  let after: string | null = null;
-  do {
-    const page = await reads.vouchesByVoucher(voucherKey, after === null ? {} : { after });
-    const row = page.vouches.find((v) => v.targetId === targetKey);
-    if (row) return { boxId: row.boxId, value: row.value, createdAtBlock: row.createdAtBlock };
-    after = page.next;
-  } while (after !== null);
+  const vouches = await readWholeList<VouchesVoucherResult['vouches'][number], VouchesVoucherResult>({
+    readPage: (page) => reads.vouchesByVoucher(voucherKey, page),
+    pick: (answer) => ({ rows: answer.vouches, next: answer.next }),
+    keyOf: (v) => v.boxId,
+    bound: LEDGER_READ_MAX,
+  });
+  const row = vouches.find((v) => v.targetId === targetKey);
+  if (row) return { boxId: row.boxId, value: row.value, createdAtBlock: row.createdAtBlock };
   return null;
 }
 

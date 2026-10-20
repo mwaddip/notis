@@ -1,0 +1,141 @@
+// WEB_INTERFACE → Reading a node's answer — the one reader every client of
+// the node's HTTP API passes a body through: capped at the byte count the
+// caller names, ended at REQUEST_TIMEOUT_MS, and non-ok results instead of
+// thrown exceptions. One dead or hostile peer is a non-ok, not fatal, so the
+// reachable nodes still decide (NIPOPOW_INTERFACE → compareProofs).
+
+export type HttpFetch = (url: string, init?: RequestInit) => Promise<Response>;
+
+/** CONSTANTS → Client reads — a call that has not answered in this many ms
+ *  reads as a transport failure. */
+export const REQUEST_TIMEOUT_MS = 10_000;
+
+/** The most characters of any one node-supplied string a verdict names,
+ *  counted as shown. */
+const VERDICT_TEXT_MAX = 120;
+
+export interface NodeResponse<T> {
+  ok: true;
+  data: T;
+}
+export interface NodeError {
+  ok: false;
+  status: number;
+  body: string;
+}
+export type NodeResult<T> = NodeResponse<T> | NodeError;
+
+/**
+ * WEB_INTERFACE → Reading a node's answer — a transport failure, a timed-out
+ * call, a body cut off in flight, or a body that will not parse as JSON is a
+ * non-ok result (`status: 0` for a transport failure). The caller names the
+ * byte cap (CONSTANTS → Client reads).
+ */
+export async function fetchJson<T>(
+  httpFetch: HttpFetch,
+  url: string,
+  cap: number,
+): Promise<NodeResult<T>> {
+  let res: Response;
+  try {
+    res = await httpFetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch (e) {
+    return { ok: false, status: 0, body: e instanceof Error ? e.message : String(e) };
+  }
+  return readCappedJson<T>(res, cap);
+}
+
+/**
+ * WEB_INTERFACE → Reading a node's answer — read a `Response` under a byte
+ * cap and parse it. A caller that already holds a `Response` (the batch
+ * answer the extension's resolve reads) hands it here instead of going
+ * through `fetchJson`. The returned shape is what every caller maps the same
+ * way: an over-cap body is `{ ok: false, status, body: \`body over <cap>
+ * bytes\` }`, a non-2xx body is `{ ok: false, status, body: text }`, an
+ * unparseable 2xx body is `{ ok: false, status, body: 'unparseable body: …' }`
+ * — the text held by `capped`, controls as their escapes — and a parsed 2xx
+ * is `{ ok: true, data }`. A mid-stream transport failure answers
+ * `{ ok: false, status: 0, body: errorMessage }`, as a connect failure does.
+ */
+export async function readCappedJson<T>(
+  res: Response,
+  cap: number,
+): Promise<NodeResult<T>> {
+  let read: { ok: true; text: string } | { ok: false; overflowed: true };
+  try {
+    read = await readCappedText(res, cap);
+  } catch (e) {
+    return { ok: false, status: 0, body: e instanceof Error ? e.message : String(e) };
+  }
+  if (!read.ok) return { ok: false, status: res.status, body: `body over ${cap} bytes` };
+  if (!res.ok) return { ok: false, status: res.status, body: read.text };
+  try {
+    return { ok: true, data: JSON.parse(read.text) as T };
+  } catch {
+    return { ok: false, status: res.status, body: `unparseable body: ${capped(read.text)}` };
+  }
+}
+
+/**
+ * Read a `Response`'s body as UTF-8 text, counting the bytes delivered by the
+ * stream. The stream is read chunk by chunk; once more than `cap` bytes have
+ * arrived, the reader is cancelled and the body is refused. A `Response` with
+ * no body reads as the empty string. UTF-8 is decoded as `res.text()` does
+ * (replacement characters, no throw) through a `TextDecoder` with
+ * `fatal: false`.
+ */
+async function readCappedText(
+  res: Response,
+  cap: number,
+): Promise<{ ok: true; text: string } | { ok: false; overflowed: true }> {
+  const body = res.body;
+  if (body === null) return { ok: true, text: '' };
+  const reader = body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  let count = 0;
+  let text = '';
+  for (;;) {
+    const r = await reader.read();
+    if (r.done) break;
+    count += r.value.byteLength;
+    text += decoder.decode(r.value, { stream: true });
+    if (count > cap) {
+      await reader.cancel();
+      return { ok: false, overflowed: true };
+    }
+  }
+  text += decoder.decode();
+  return { ok: true, text };
+}
+
+/**
+ * A node's text as a verdict names it, for a person to read: every C0 control,
+ * DEL and C1 control as its `\u` escape — ESC as `\u001b`, CR as `\u000d` —
+ * never raw; the text so shown whole up to 120 characters, else as much of it
+ * as fits in 120 and `…`, a surrogate pair and an escape never split. Applied
+ * where the text enters a verdict, never to the data a status is decided on —
+ * the nipopow route's 404 is classified by its body's `error` (NODE_INTERFACE →
+ * Nipopow).
+ */
+export function capped(text: string): string {
+  let out = '';
+  // A string iterates by code point, a surrogate pair as one step.
+  for (const ch of text) {
+    const unit = isControl(ch) ? `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}` : ch;
+    if (out.length + unit.length > VERDICT_TEXT_MAX) return `${out}…`;
+    out += unit;
+  }
+  return out;
+}
+
+// C0 (U+0000–U+001F), DEL (U+007F) and C1 (U+0080–U+009F).
+function isControl(ch: string): boolean {
+  const c = ch.charCodeAt(0);
+  return c <= 0x1f || (c >= 0x7f && c <= 0x9f);
+}
+
+/** A parsed body read as an object: not null, not an array. Its fields are
+ *  the node's claims, each checked where a status is decided on it. */
+export function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}

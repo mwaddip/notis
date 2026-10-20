@@ -21,6 +21,7 @@ import {
   makeApi, testResolver, makeCache, makeIdentity, harness, seedCache, stubResolver, stubVerifier,
   type Fake,
 } from './app-light-shared';
+import { jsonResponse } from './honest-page';
 
 beforeEach(() => {
   localStorage.clear();
@@ -1517,12 +1518,9 @@ describe('the seed walk under a resolver', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       probed.push(url);
       if (url.startsWith(SEED2)) {
-        return {
-          ok: true, status: 200, statusText: 'OK',
-          json: async () => ({ posts: [la], next: null, pending: [], pendingCount: 0 }),
-        };
+        return jsonResponse({ posts: [la], next: null, pending: [], pendingCount: 0 });
       }
-      return { ok: false, status: 503, statusText: 'Service Unavailable', json: async () => ({}) };
+      return jsonResponse({}, 503);
     }));
     try {
       const r = testResolver();

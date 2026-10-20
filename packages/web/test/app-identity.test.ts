@@ -258,12 +258,10 @@ describe('the App profile window — /karma and the faucet grant', () => {
     prefs.faucet = '/faucet';
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        status: 202,
-        statusText: '',
-        json: async () => ({ txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 6100 }),
-      })),
+      vi.fn(async () => new Response(
+        JSON.stringify({ txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 6100 }),
+        { status: 202 },
+      )),
     );
 
     vi.useFakeTimers();
@@ -322,12 +320,10 @@ describe('the App profile window — /karma and the faucet grant', () => {
     prefs.faucet = '/faucet';
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        status: 202,
-        statusText: '',
-        json: async () => ({ txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 6100 }),
-      })),
+      vi.fn(async () => new Response(
+        JSON.stringify({ txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 6100 }),
+        { status: 202 },
+      )),
     );
     vi.useFakeTimers();
     await h.drive.askFaucet();

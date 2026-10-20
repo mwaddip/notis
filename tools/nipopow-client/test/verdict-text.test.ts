@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { capped, fetchJson } from '../src/http.js';
+import { fetchJson } from '@dagsocial/node-reads';
+import type { HttpFetch } from '@dagsocial/node-reads';
 import { resolveTip } from '../src/tip.js';
 import { fetchListing, proveFigures } from '../src/boxes.js';
 import type { Listing } from '../src/boxes.js';
 import { proveName } from '../src/names.js';
 import type { NameClaim } from '../src/names.js';
 import { textLines } from '../src/text.js';
-import type { HttpFetch } from '../src/http.js';
 import {
   buildAvlWithInsertions,
   boxInsertion,
@@ -34,7 +34,7 @@ import type { AnyBoxCandidate, IdentityRecord, TxId, UserId } from '@dagsocial/t
 // enters a verdict is handed a string of 500 characters — above the 120 a
 // verdict names, so the display cap fires, and below `NAME_READ_BYTES` and
 // `HEIGHT_READ_BYTES` (1 024, the smallest route caps,
-// CONSTANTS → Light client reads), so no byte cap refuses it first.
+// CONSTANTS → Client reads), so no byte cap refuses it first.
 
 const LONG = 'Z'.repeat(500);
 const NAMED = `${'Z'.repeat(120)}…`;
@@ -113,24 +113,6 @@ function prove(karma: unknown[], fetch: HttpFetch) {
   return proveFigures('http://a', USER_HEX, listing, ANCHOR, devnetProfile(), fetch);
 }
 
-describe('capped — the node text a verdict names', () => {
-  it('a string of 120 characters is named whole', () => {
-    expect(capped('Z'.repeat(120))).toBe('Z'.repeat(120));
-  });
-
-  it('a longer string is named by its first 120 characters and …', () => {
-    expect(capped(LONG)).toBe(NAMED);
-  });
-
-  it('a surrogate pair across the cut is left out whole, never split', () => {
-    expect(capped(`${'Z'.repeat(119)}\u{1F600}${'Z'.repeat(10)}`)).toBe(`${'Z'.repeat(119)}…`);
-  });
-
-  it('a surrogate pair ending at the cut is kept whole', () => {
-    expect(capped(`${'Z'.repeat(118)}\u{1F600}${'Z'.repeat(10)}`)).toBe(`${'Z'.repeat(118)}\u{1F600}…`);
-  });
-});
-
 describe('fetchJson — a body that will not parse', () => {
   it('a 200 whose body will not parse names it capped', async () => {
     const res = await fetchJson(async () => textResponse(200, LONG), 'http://node', 1_024);
@@ -139,29 +121,32 @@ describe('fetchJson — a body that will not parse', () => {
 });
 
 describe('fetchListing — a failed page names its cursor capped, and the request carries it whole', () => {
+  // The karma listing holds at most two boxes (NODE_INTERFACE → Karma
+  // transition rules → "An identity holds at most two karma boxes"), so an
+  // honest full first page naming a cursor can only land on the credit route.
+  // The karma listing is empty here; the credit listing's first page is a
+  // full page of PAGE_LIMIT_MAX rows carrying the cursor; the second page
+  // ends in the named failure.
+  const firstCredit: Array<{ boxId: string; value: string }> = [];
+  for (let i = 0; i < 100; i++) firstCredit.push({ boxId: i.toString(16).padStart(64, '0'), value: '1' });
+
   it.each([
-    ['karma', 'HTTP 500'],
-    ['karma', 'malformed page'],
-    ['credits', 'HTTP 500'],
-    ['credits', 'malformed page'],
-  ])('a following %s page ending in %s', async (route, failure) => {
+    ['HTTP 500'],
+    ['malformed page'],
+  ])('a following credits page ending in %s', async (failure) => {
     const cursors: (string | null)[] = [];
     const fetch: HttpFetch = async (url: string) => {
       const u = new URL(url);
-      // The non-tested route answers an empty page so the listing reaches
-      // the tested route's cursor-walking failure (NODE_INTERFACE → UTXO
-      // queries: a hex key the node has never seen is answered with the
-      // empty page, never a 404).
-      if (u.pathname === `/karma/${USER_HEX}` && route === 'credits') {
+      if (u.pathname === `/karma/${USER_HEX}`) {
         return jsonResponse(200, { boxes: [], next: null, height: 1, effective: '0' });
       }
-      if (u.pathname !== `/${route}/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
-      if (!u.searchParams.has('after')) return jsonResponse(200, { boxes: [], next: LONG, height: 1, effective: '0' });
+      if (u.pathname !== `/credits/${USER_HEX}`) return jsonResponse(404, { error: 'not found' });
+      if (!u.searchParams.has('after')) return jsonResponse(200, { boxes: firstCredit, next: LONG });
       cursors.push(u.searchParams.get('after'));
       return failure === 'HTTP 500' ? textResponse(500, 'internal') : jsonResponse(200, null);
     };
     const result = await fetchListing('http://a', USER_HEX, fetch);
-    expect(result).toEqual({ ok: false, reason: `GET /${route}/${USER_HEX}?after=${NAMED}: ${failure}` });
+    expect(result).toEqual({ ok: false, reason: `GET /credits/${USER_HEX}?after=${NAMED}: ${failure}` });
     expect(cursors).toEqual([LONG]);
   });
 });
@@ -254,38 +239,6 @@ const RAW_CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const ERASING = '\u001b[2K\rproven at suffixHead\u009b0m';
 const ERASING_SHOWN = '\\u001b[2K\\u000dproven at suffixHead\\u009b0m';
 
-describe("capped — a node's control characters as their escapes, never raw", () => {
-  it.each([
-    ['NUL', '\u0000', '\\u0000'],
-    ['TAB', '\t', '\\u0009'],
-    ['LF', '\n', '\\u000a'],
-    ['CR', '\r', '\\u000d'],
-    ['ESC', '\u001b', '\\u001b'],
-    ['US, the last C0', '\u001f', '\\u001f'],
-    ['DEL', '\u007f', '\\u007f'],
-    ['PAD, the first C1', '\u0080', '\\u0080'],
-    ['CSI', '\u009b', '\\u009b'],
-    ['APC, the last C1', '\u009f', '\\u009f'],
-  ])('%s is shown as its escape', (_name, raw, escape) => {
-    expect(capped(`a${raw}b`)).toBe(`a${escape}b`);
-  });
-
-  it('the characters beside the three ranges are shown as they are', () => {
-    expect(capped(' ~ ')).toBe(' ~ ');
-  });
-
-  it('a 120-character body of escapes — the text as shown is capped', () => {
-    expect(capped('\u001b'.repeat(120))).toBe(`${'\\u001b'.repeat(20)}…`);
-  });
-
-  it('an escape across the cut is left out whole, never split', () => {
-    expect(capped(`${'Z'.repeat(117)}\u001bZ`)).toBe(`${'Z'.repeat(117)}…`);
-  });
-
-  it('an escape ending at the cut is kept whole', () => {
-    expect(capped(`${'Z'.repeat(114)}\u001bZ`)).toBe(`${'Z'.repeat(114)}\\u001b…`);
-  });
-});
 
 describe('a range route answering 500 with a body carrying ESC [2K, CR and a C1 CSI', () => {
   it('the box verdict holds them as escapes, and no raw control', async () => {
@@ -420,17 +373,19 @@ describe("textLines — the command line's text of a node that sends a newline, 
     const hostile = 'x\ny\u001b[2Kz\r';
     const shown = 'x\\u000ay\\u001b[2Kz\\u000d';
 
-    // Node `a` serves the chain and the listing, with a hostile boxId
-    // listed; the record route answers 500 with the hostile body. Node `b`
-    // answers every request 500. Range route for the listing's hostile
-    // boxId won't match (it's not a 64-hex id), so no range request fires
-    // for it; the honest karma/credit ranges just return empty.
+    // Node `a` serves the chain and the listing, with a listed row carrying
+    // a 64-lowercase-hex boxId and a hostile `value`; the record route
+    // answers 500 with the hostile body. Node `b` answers every request 500.
+    // Range route for the listing's row won't match the fixture's held key,
+    // so no range request fires for it; the honest karma/credit ranges just
+    // return empty.
+    const listedBoxId = 'ff'.repeat(32);
     const fetch: HttpFetch = async (url: string) => {
       const u = new URL(url);
       if (u.host !== 'a') return textResponse(500, hostile);
       if (u.pathname === `/nipopow/proof/${M}/${K}`) return jsonResponse(200, { proof: proofHex });
       if (u.pathname === `/karma/${USER_HEX}`) {
-        return jsonResponse(200, { boxes: [{ boxId: hostile, value: '5' }], next: null, height, effective: '5' });
+        return jsonResponse(200, { boxes: [{ boxId: listedBoxId, value: hostile }], next: null, height, effective: '5' });
       }
       if (u.pathname === `/credits/${USER_HEX}`) {
         return jsonResponse(200, { boxes: [], next: null });
@@ -455,7 +410,7 @@ describe("textLines — the command line's text of a node that sends a newline, 
     const lines = textLines(tip, { figures, listing: listed.listing });
     // FIXTURE holds KARMA with value 100 — but the fixture's prover answers
     // the range at this height from its state, and KARMA sits at the tip.
-    // The listing names a hostile (non-hex) id, so it is unproven; the
+    // The listed row's value is a hostile string, so it is unproven; the
     // KARMA box the tree holds is `unlisted` (heightAfter === tip).
     expect(lines).toEqual([
       `tip: height ${height}`,
@@ -463,7 +418,7 @@ describe("textLines — the command line's text of a node that sends a newline, 
       '  http://a: verified (best)',
       `  http://b: refused — HTTP 500: ${shown}`,
       '',
-      `  karma ${shown}: unproven: the listed boxId is not 64 hex: '${shown}'`,
+      `  karma ${listedBoxId}: unproven: the listed value is not a decimal integer: '${shown}'`,
       `  karma ${KARMA.id!}: unlisted — the chain holds what the node did not list at height ${height} value=100`,
       'karma total (face value at suffixHead): 0',
       'credit total (face value at suffixHead): 0',

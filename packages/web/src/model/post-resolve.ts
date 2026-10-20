@@ -1,3 +1,4 @@
+import { BATCH_READ_MAX } from '@dagsocial/types';
 import type { PostJson } from '../api/dto';
 import { readBoundRow } from '../api/post-row';
 import type { PostCheck } from '@dagsocial/nipopow-client';
@@ -9,8 +10,10 @@ import type { PostCheck } from '@dagsocial/nipopow-client';
 // IndexedDB; every seam is in `ResolveDeps`, and the extension's resolver
 // (`src/extension/post-resolver.ts`) is the one place `fetch` lives.
 
-/** The most ids one request takes (CONSTANTS → HTTP view bounds). */
-export const BATCH_READ_MAX = 100;
+/** The most ids one request takes — one implementation in `@dagsocial/types`
+ *  (TYPES_INTERFACE → HTTP view bounds), re-exported where the resolve
+ *  reads it. */
+export { BATCH_READ_MAX };
 /** How long one resolve runs, over all its nodes and requests
  *  (CONSTANTS → Client defaults). */
 export const BATCH_RESOLVE_MS = 10_000;

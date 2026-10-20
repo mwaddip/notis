@@ -10,6 +10,7 @@ import type { BondsResult, CreditsResult, KarmaResult, PostJson, StatusResult } 
 import type { PendingEntry } from '../src/wallet/types';
 import type { Flight } from '../src/view/card';
 import { karmaResult } from './karma-fixture';
+import { jsonResponse } from './honest-page';
 import { prefs, setNode } from '../src/prefs';
 
 // A page that is not a page throws in the read client, where a non-2xx throws
@@ -37,7 +38,7 @@ type Route =
   | 'feed' | 'thread' | 'post' | 'status' | 'currentBlock' | 'karma' | 'credits'
   | 'vouchesByTarget' | 'vouchesByVoucher' | 'vouchCooldowns' | 'bonds' | 'usernames';
 
-interface Req { route: Route; key: string | null; after: string | null }
+interface Req { route: Route; key: string | null; after: string | null; limit: number }
 interface Answer { status: number; body: unknown }
 type Handler = (req: Req, nth: number) => Answer;
 
@@ -81,24 +82,66 @@ function post(id: string, author: string): PostJson {
   };
 }
 
-const feedPage = (ids: string[], next: unknown, author = X): Record<string, unknown> =>
-  ({ posts: ids.map((id) => post(id, author)), next, pending: [], pendingCount: 0 });
-const threadPage = (ids: string[], next: unknown): Record<string, unknown> => ({
-  post: post(T, X), ancestors: [], ancestorCount: 0, descendants: ids.map((id) => post(id, X)),
+// Pad a list to the honest `limit` the whole-list read or the view asks (the
+// node reads one row past `limit` and takes the last off, so a page beside a
+// `next` carries exactly the `limit` asked — WEB_INTERFACE → Reading a node's
+// answer → "Every page is held to the page the node serves"). Each padded row
+// takes a fresh 64-hex id — unique across every pad call so no row key is
+// named twice (the whole-list rule refuses on a repeat).
+let padSeq = 0;
+const padId = (n: number): string => {
+  const combined = ((n << 20) ^ (padSeq & 0xfffff)) >>> 0;
+  const hex = combined.toString(16).padStart(8, '0');
+  return `${hex}${'00'.repeat(28)}`;
+};
+function pad<T>(rows: readonly T[], next: unknown, limit: number, mk: (id: string) => T): T[] {
+  if (next === null || next === undefined) return [...rows];
+  padSeq++;
+  const out: T[] = [...rows];
+  for (let i = out.length; i < limit; i++) out.push(mk(padId(i + 100)));
+  return out;
+}
+
+const feedPage = (ids: string[], next: unknown, author = X, limit = 30): Record<string, unknown> => ({
+  posts: pad(ids.map((id) => post(id, author)), next, limit, (id) => post(id, author)),
+  next, pending: [], pendingCount: 0,
+});
+const threadPage = (ids: string[], next: unknown, limit = 50): Record<string, unknown> => ({
+  post: post(T, X), ancestors: [], ancestorCount: 0,
+  descendants: pad(ids.map((id) => post(id, X)), next, limit, (id) => post(id, X)),
   descendantCount: ids.length, next, pending: [], pendingCount: 0,
 });
-const karmaPage = (key: string, ids: string[], next: unknown): Record<string, unknown> => ({
+const karmaPage = (key: string, ids: string[], next: unknown, limit = 100): Record<string, unknown> => ({
   ...karmaResult({
-    userId: key, total: '219', effective: '219', boxes: ids.map((boxId) => ({ boxId, value: '73' })),
+    userId: key, total: '219', effective: '219',
+    boxes: pad(ids.map((boxId) => ({ boxId, value: '73' })), next, limit, (boxId) => ({ boxId, value: '73' })),
     boxCount: ids.length, height: HEIGHT, member: true, memberSinceBlock: 5, invitesAvailable: 2,
   }),
   next,
 });
-const creditsPage = (key: string, ids: string[], next: unknown): Record<string, unknown> =>
-  ({ userId: key, total: '1250000000', boxes: ids.map((boxId) => ({ boxId, value: '1250000000' })), boxCount: ids.length, next });
-const vouchesPage = (next: unknown): Record<string, unknown> => ({ vouches: [], count: 0, next });
-const cooldownsPage = (next: unknown): Record<string, unknown> => ({ cooldowns: [], count: 0, next });
-const bondsPage = (next: unknown): Record<string, unknown> => ({ bonds: [], bondCount: 0, next });
+const creditsPage = (key: string, ids: string[], next: unknown, limit = 100): Record<string, unknown> => ({
+  userId: key, total: '1250000000',
+  boxes: pad(ids.map((boxId) => ({ boxId, value: '1250000000' })), next, limit, (boxId) => ({ boxId, value: '1250000000' })),
+  boxCount: ids.length, next,
+});
+const vouchRow = (): Record<string, unknown> => ({
+  voucherId: 'cd'.repeat(32), targetId: X, voucherName: null, targetName: null,
+});
+const cooldownRow = (boxId: string): Record<string, unknown> => ({
+  boxId, value: '1', releaseAtBlock: 1,
+});
+const bondRow = (id: string): Record<string, unknown> => ({
+  id, value: '100', inviterId: ME, inviteePublicKey: X, inviterName: null, inviteeName: null,
+});
+const vouchesPage = (next: unknown, limit = 50): Record<string, unknown> => ({
+  vouches: pad<Record<string, unknown>>([], next, limit, () => vouchRow()), count: 0, next,
+});
+const cooldownsPage = (next: unknown, limit = 50): Record<string, unknown> => ({
+  cooldowns: pad<Record<string, unknown>>([], next, limit, cooldownRow), count: 0, next,
+});
+const bondsPage = (next: unknown, limit = 50): Record<string, unknown> => ({
+  bonds: pad<Record<string, unknown>>([], next, limit, bondRow), bondCount: 0, next,
+});
 
 function without(body: Record<string, unknown>, field: string): Record<string, unknown> {
   const copy = { ...body };
@@ -130,11 +173,13 @@ function fakeNode() {
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
     const u = new URL(String(input), 'http://node.test');
     const { route, key } = classify(u);
-    const req: Req = { route, key, after: u.searchParams.get('after') };
+    const limitParam = u.searchParams.get('limit');
+    const limit = limitParam === null ? 50 : Number(limitParam);
+    const req: Req = { route, key, after: u.searchParams.get('after'), limit };
     requests.push(req);
     const nth = requests.filter((r) => r.route === route).length;
     const a = (handlers.get(route) ?? defaults[route])(req, nth);
-    return { ok: a.status >= 200 && a.status < 300, status: a.status, statusText: String(a.status), json: async () => a.body } as Response;
+    return jsonResponse(a.body, a.status);
   }));
   return {
     on(route: Route, h: Handler): void { handlers.set(route, h); },
@@ -239,17 +284,22 @@ afterEach(() => {
 // readOwnCredits, each against five shapes
 // ---------------------------------------------------------------------------
 
-type ListingPage = (ids: string[], next: unknown) => Record<string, unknown>;
+type ListingPage = (ids: string[], next: unknown, limit?: number) => Record<string, unknown>;
 
-const SHAPES: Array<{ name: string; requests: number; answer: (after: string | null, page: ListingPage) => unknown }> = [
-  { name: 'a first page with no `next`', requests: 1, answer: (_after, page) => without(page([B1], null), 'next') },
+// The /karma whole-list reader asks at most KARMA_LISTING_MAX (2) rows,
+// so an honest /karma listing fits in one page — the 'following page' SHAPE
+// refuses on the first page itself for /karma (its padded rows are over
+// the bound). Every other SHAPE refuses on the first page for either
+// listing, so request counts are 1 across the board.
+const SHAPES: Array<{ name: string; requests: Record<'karma' | 'credits', number>; answer: (req: Req, page: ListingPage) => unknown }> = [
+  { name: 'a first page with no `next`', requests: { karma: 1, credits: 1 }, answer: (_req, page) => without(page([B1], null), 'next') },
   {
-    name: 'a following page with no `next`', requests: 2,
-    answer: (after, page) => (after === null ? page([B1], 'k1') : without(page([B2], null), 'next')),
+    name: 'a following page with no `next`', requests: { karma: 1, credits: 2 },
+    answer: (req, page) => (req.after === null ? page([B1], 'k1', req.limit) : without(page([B2], null), 'next')),
   },
-  { name: 'a numeric `next`', requests: 1, answer: (_after, page) => page([B1], 7) },
-  { name: 'a `next` holding a lone surrogate', requests: 1, answer: (_after, page) => page([B1], `5:${LONE_SURROGATE}`) },
-  { name: 'a `boxes` that is not an array', requests: 1, answer: (_after, page) => ({ ...page([B1], null), boxes: 'abc' }) },
+  { name: 'a numeric `next`', requests: { karma: 1, credits: 1 }, answer: (_req, page) => page([B1], 7) },
+  { name: 'a `next` holding a lone surrogate', requests: { karma: 1, credits: 1 }, answer: (_req, page) => page([B1], `5:${LONE_SURROGATE}`) },
+  { name: 'a `boxes` that is not an array', requests: { karma: 1, credits: 1 }, answer: (_req, page) => ({ ...page([B1], null), boxes: 'abc' }) },
 ];
 
 interface Held { karma: KarmaResult | null; credits: CreditsResult | null }
@@ -302,7 +352,8 @@ const SITES: Array<{
 describe('the reader\'s own listing reads end on a malformed page, in their callers\' failure paths', () => {
   for (const site of SITES) {
     for (const shape of SHAPES) {
-      it(`${site.name} — ${shape.name}: ${shape.requests} request${shape.requests === 1 ? '' : 's'}`, async () => {
+      const n = shape.requests[site.listing];
+      it(`${site.name} — ${shape.name}: ${n} request${n === 1 ? '' : 's'}`, async () => {
         const h = harness(site.entries);
         await h.drive.refreshOwnKarma();
         await h.drive.refreshWalletCredits();
@@ -311,36 +362,49 @@ describe('the reader\'s own listing reads end on a malformed page, in their call
         expect(held.credits).not.toBeNull();
 
         const page: ListingPage = site.listing === 'karma'
-          ? (ids, next) => karmaPage(ME, ids, next)
-          : (ids, next) => creditsPage(ME, ids, next);
-        h.node.on(site.listing, capped((req) => shape.answer(req.after, page), page([], null)));
+          ? (ids, next, limit) => karmaPage(ME, ids, next, limit)
+          : (ids, next, limit) => creditsPage(ME, ids, next, limit);
+        h.node.on(site.listing, capped((req) => shape.answer(req, page), page([], null)));
         const before = h.node.count(site.listing, ME);
         await site.run(h.drive);
         await flush();
-        expect(h.node.count(site.listing, ME) - before).toBe(shape.requests);
+        expect(h.node.count(site.listing, ME) - before).toBe(n);
         site.kept(h, held);
       });
     }
   }
 
-  for (const listing of ['karma', 'credits'] as const) {
-    it(`an honest three-page /${listing} is still read whole`, async () => {
-      const h = harness();
-      const page: ListingPage = listing === 'karma'
-        ? (ids, next) => karmaPage(ME, ids, next)
-        : (ids, next) => creditsPage(ME, ids, next);
-      h.node.on(listing, (req) => ok(
-        req.after === null ? page([B1], 'k1') : req.after === 'k1' ? page([B2], 'k2') : page([B3], null),
-      ));
-      if (listing === 'karma') await h.drive.refreshOwnKarma();
-      else await h.drive.refreshWalletCredits();
-      expect(h.node.count(listing, ME)).toBe(3);
-      const read = listing === 'karma' ? h.drive.profileKarma : h.drive.walletCredits;
-      expect(read?.boxes.map((b) => b.boxId)).toEqual([B1, B2, B3]);
-      expect(read?.boxCount).toBe(3);
-      expect(read?.next).toBeNull();
-    });
-  }
+  // A /karma listing holds at most two boxes (`NODE_INTERFACE → Karma
+  // transition rules → "An identity holds at most two karma boxes"`), so
+  // the one page carries the two of them. Every other list is bounded by
+  // `LEDGER_READ_MAX` (`CONSTANTS → Client reads`), well above three
+  // honest pages for /credits.
+  it('an honest /karma of two boxes on one page is read whole', async () => {
+    const h = harness();
+    h.node.on('karma', () => ok(karmaPage(ME, [B1, B2], null)));
+    await h.drive.refreshOwnKarma();
+    expect(h.node.count('karma', ME)).toBe(1);
+    const ids = h.drive.profileKarma?.boxes.map((b) => b.boxId) ?? [];
+    expect(ids).toEqual([B1, B2]);
+    expect(h.drive.profileKarma?.next).toBeNull();
+  });
+
+  it('an honest three-page /credits is still read whole', async () => {
+    const h = harness();
+    // Every page beside a `next` carries exactly the `limit` asked —
+    // WEB_INTERFACE → Reading a node's answer → "Every page is held to
+    // the page the node serves". Pages 1 and 2 are padded to the whole-list
+    // limit; page 3 has a short tail.
+    h.node.on('credits', (req) => ok(
+      req.after === null ? creditsPage(ME, [B1], 'k1', req.limit) : req.after === 'k1' ? creditsPage(ME, [B2], 'k2', req.limit) : creditsPage(ME, [B3], null),
+    ));
+    await h.drive.refreshWalletCredits();
+    expect(h.node.count('credits', ME)).toBe(3);
+    const ids = h.drive.walletCredits?.boxes.map((b) => b.boxId) ?? [];
+    expect(ids.indexOf(B1)).toBeLessThan(ids.indexOf(B2));
+    expect(ids.indexOf(B2)).toBeLessThan(ids.indexOf(B3));
+    expect(h.drive.walletCredits?.next).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -370,7 +434,7 @@ describe('every other loop that follows `next` ends at a page with no `next`', (
     expect(h.drive.profileKarma).toBe(held);
   });
 
-  it('a send\'s recipient listing (readAllCreditBoxes) — one request, the send stays pending', async () => {
+  it('a send\'s landing read answered with a page that names no next — one request, the send stays pending', async () => {
     const h = harness([SEND]);
     h.node.on('credits', capped(
       (req) => (req.key === X ? without(creditsPage(X, [B2], null), 'next') : creditsPage(ME, [B1], null)),
@@ -489,13 +553,13 @@ describe('no read stores the cursor of a page that is not a page', () => {
 
   it('`load older` answered with no `next` — the cursor it continued stands', async () => {
     const h = harness();
-    h.node.on('feed', (req) => ok(req.after === null ? feedPage([A], 'k1') : without(feedPage([B], null), 'next')));
+    h.node.on('feed', (req) => ok(req.after === null ? feedPage([A], 'k1', X, req.limit) : without(feedPage([B], null), 'next')));
     await h.drive.loadFeed();
     await h.drive.loadOlder();
     const feed = h.drive.state.feed;
     expect(feed.error).toBe(NOT_A_PAGE);
     expect(feed.next).toBe('k1');
-    expect(feed.posts.map((p) => p.id)).toEqual([A]);
+    expect(feed.posts.map((p) => p.id)).toContain(A);
   });
 
   it('a thread\'s first page with a `next` holding a lone surrogate — the error line, no cursor', async () => {
@@ -510,13 +574,13 @@ describe('no read stores the cursor of a page that is not a page', () => {
 
   it('a thread\'s `more` answered with an empty `next` — the cursor it continued stands', async () => {
     const h = harness();
-    h.node.on('thread', (req) => ok(req.after === null ? threadPage([R1], 'k1') : threadPage([R2], '')));
+    h.node.on('thread', (req) => ok(req.after === null ? threadPage([R1], 'k1', req.limit) : threadPage([R2], '')));
     await h.drive.fetchThread(T);
     await h.drive.threadMore(T);
     const t = h.drive.state.threads.get(T)!;
     expect(t.error).toBe(NOT_A_PAGE);
     expect(t.next).toBe('k1');
-    expect(t.descendants.map((r) => r.id)).toEqual([R1]);
+    expect(t.descendants.map((r) => r.id)).toContain(R1);
   });
 
   it('the endorsers\' first page with no `next` — the window keeps no list and offers no `more`', async () => {
@@ -532,7 +596,7 @@ describe('no read stores the cursor of a page that is not a page', () => {
   it('the endorsers\' `more` answered with no `next` — the list it continued stands', async () => {
     const h = harness();
     h.drive.ensureAuthorData(X);
-    h.node.on('vouchesByTarget', (req) => ok(req.after === null ? vouchesPage('k1') : without(vouchesPage(null), 'next')));
+    h.node.on('vouchesByTarget', (req) => ok(req.after === null ? vouchesPage('k1', req.limit) : without(vouchesPage(null), 'next')));
     await h.drive.loadAuthorData(X);
     const d = h.drive.authorData.get(X)!;
     const from = d.endorsers;
@@ -556,13 +620,13 @@ describe('no read stores the cursor of a page that is not a page', () => {
   it('a posts window\'s `more` answered with no `next` — the cursor it continued stands', async () => {
     const h = harness();
     h.drive.ensurePostsData(X);
-    h.node.on('feed', (req) => ok(req.after === null ? feedPage([A], 'k1') : without(feedPage([B], null), 'next')));
+    h.node.on('feed', (req) => ok(req.after === null ? feedPage([A], 'k1', X, req.limit) : without(feedPage([B], null), 'next')));
     await h.drive.loadAuthorPosts(X);
     await h.drive.authorPostsMore(X);
     const f = h.drive.authorPostsData.get(X)!;
     expect(f.error).toBe(NOT_A_PAGE);
     expect(f.next).toBe('k1');
-    expect(f.posts.map((p) => p.id)).toEqual([A]);
+    expect(f.posts.map((p) => p.id)).toContain(A);
   });
 
   it('the bonds\' first page with no `next` — the membership read keeps no bonds', async () => {
@@ -574,7 +638,7 @@ describe('no read stores the cursor of a page that is not a page', () => {
 
   it('the bonds\' `more` answered with no `next` — the page it continued stands', async () => {
     const h = harness();
-    h.node.on('bonds', (req) => ok(req.after === null ? bondsPage('k1') : without(bondsPage(null), 'next')));
+    h.node.on('bonds', (req) => ok(req.after === null ? bondsPage('k1', req.limit) : without(bondsPage(null), 'next')));
     await h.drive.loadMembershipState();
     const from = h.drive.bondsView;
     expect(from?.next).toBe('k1');

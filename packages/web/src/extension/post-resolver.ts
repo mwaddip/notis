@@ -1,7 +1,7 @@
 import { resolvePosts, type ResolveEnd, type BoundPost } from '../model/post-resolve';
 import type { PostResolver } from '../model/state';
 import type { PostCheck } from '@dagsocial/nipopow-client';
-import { POST_BATCH_READ_BYTES, readCappedJson } from '@dagsocial/nipopow-client';
+import { POST_BATCH_READ_BYTES, readCappedJson } from '@dagsocial/node-reads';
 
 // The extension's resolver (WEB_INTERFACE → The extension → "The resolve"):
 // `createPostResolver` wraps the pure `resolvePosts` with a real `fetch`,
@@ -70,13 +70,12 @@ export function createPostResolver(deps: PostResolverDeps): PostResolver {
     // open when the deadline fires is aborted (WEB_INTERFACE → The
     // extension → "The resolve"). The answer is read under
     // `POST_BATCH_READ_BYTES` through `readCappedJson` of
-    // `@dagsocial/nipopow-client` (WEB_INTERFACE → The extension →
-    // "Every answer is read under its route's cap"; CONSTANTS → Light
-    // client reads): a mid-body abort reaches the stream reader through
-    // the signal, as a mid-stream transport failure does, so the aborted
-    // arm rejects. A status outside 2xx, a body over the cap, a body
-    // that will not parse as JSON, a network failure and the aborted arm
-    // all reject.
+    // `@dagsocial/node-reads` (WEB_INTERFACE → Reading a node's answer;
+    // CONSTANTS → Client reads): a mid-body abort reaches the stream
+    // reader through the signal, as a mid-stream transport failure does,
+    // so the aborted arm rejects. A status outside 2xx, a body over the
+    // cap, a body that will not parse as JSON, a network failure and the
+    // aborted arm all reject.
     const url = base + '/posts/batch?tx=1';
     return deps.fetch(url, {
       method: 'POST',

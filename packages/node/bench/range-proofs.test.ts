@@ -24,6 +24,7 @@ import {
   creditOfKey,
   equalBytes,
   hexToBytes,
+  RANGE_PAGE_MAX,
 } from '@dagsocial/types';
 import type { CandidateOf, CreditBox } from '@dagsocial/types';
 import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';
@@ -39,7 +40,6 @@ import {
 import type { AvlProver, AvlProverHandle } from '../src/state/avl-prover.js';
 import { RecentRoots } from '../src/state/recent-roots.js';
 import {
-  RANGE_PAGE_MAX,
   registerProofEndpoint,
   registerRangeEndpoint,
 } from '../src/state/avl-endpoint.js';

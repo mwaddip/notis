@@ -7,6 +7,7 @@ import type { AppIdentity, FiguresVerifier, TipVerifier } from '../src/model/sta
 import type { WriteClient } from '../src/api/write';
 import type { CreditsResult, FeedResult, KarmaResult, StatusResult, UsernameResult } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
+import { jsonResponse } from './honest-page';
 import { prefs, setNode, KEY_LAYOUT } from '../src/prefs';
 import type { Anchor, FiguresResult, Listing } from '@dagsocial/nipopow-client';
 import type { BlockHeader } from '@dagsocial/types';
@@ -523,10 +524,7 @@ describe('the seed adoption drops and re-reads as the settings row does', () => 
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       probed.push(url);
       const ok = url.startsWith(B + '/');
-      return {
-        ok, status: ok ? 200 : 503, statusText: ok ? 'OK' : 'Service Unavailable',
-        json: async (): Promise<FeedResult> => ({ posts: [], next: null, pending: [], pendingCount: 0 }),
-      };
+      return jsonResponse({ posts: [], next: null, pending: [], pendingCount: 0 }, ok ? 200 : 503);
     }));
 
     const id = keyed(ME);

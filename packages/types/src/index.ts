@@ -66,6 +66,10 @@ export {
   USERNAME_BURN_PRICE,
   LEVEL_CAP,
   MAX_INTERLINKS,
+  PAGE_LIMIT_DEFAULT,
+  PAGE_LIMIT_MAX,
+  BATCH_READ_MAX,
+  RANGE_PAGE_MAX,
 } from './constants.js';
 
 // Network profiles

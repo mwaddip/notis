@@ -30,6 +30,7 @@ export const NIPOPOW_CLIENT_LOADS: readonly string[] = [
   'packages/avltree',
   'packages/nipopow',
   'packages/consensus',
+  'packages/node-reads',
   'tools/nipopow-client',
 ];
 

@@ -1,17 +1,19 @@
 import type { PostKey, BoxKey } from '../store/index.js';
-import { isValidUsernameBytes, canonicalUsernameBytes } from '@dagsocial/types';
+import {
+  isValidUsernameBytes,
+  canonicalUsernameBytes,
+  PAGE_LIMIT_DEFAULT,
+  PAGE_LIMIT_MAX,
+  BATCH_READ_MAX,
+} from '@dagsocial/types';
 
 export type UsernameLookup = (nameLower: string) => { owner: string } | null;
-
-// CONSTANTS → HTTP view bounds
-export const PAGE_LIMIT_DEFAULT = 50;
-export const PAGE_LIMIT_MAX = 100;
-export const BATCH_READ_MAX = 100;
 
 const BOX_VALUE_BOUND = 1n << 63n;
 const DECIMAL_INT = /^\d+$/;
 
-// NODE_INTERFACE → "Every list a view returns is a page"
+// NODE_INTERFACE → "Every list a view returns is a page"; the bounds are
+// `@dagsocial/types`' (TYPES_INTERFACE → HTTP view bounds).
 export function parseLimit(query: Record<string, unknown>): number | { error: string } {
   const raw = query['limit'] as string | undefined;
   if (raw === undefined) return PAGE_LIMIT_DEFAULT;

@@ -1,50 +1,75 @@
+import { PAGE_LIMIT_DEFAULT } from '@dagsocial/types';
+import {
+  fetchJson,
+  FEED_PAGE_READ_BYTES, THREAD_READ_BYTES, POST_READ_BYTES,
+  STATUS_READ_BYTES, HEIGHT_READ_BYTES, LISTING_PAGE_READ_BYTES,
+  VOUCH_PAGE_READ_BYTES, BOND_PAGE_READ_BYTES, NAME_READ_BYTES,
+  type HttpFetch,
+} from '@dagsocial/node-reads';
 import type {
   FeedResult, ThreadResult, PostResult, StatusResult, BlockCurrent, KarmaResult,
   VouchesTargetResult, VouchesVoucherResult, VouchCooldownsResult, BondsResult,
   UsernameResult, CreditsResult,
 } from './dto';
-import { readLightRow, readLightRows } from './light-page';
+import {
+  readStatus, readBlockCurrent, readKarmaResult, readCreditsResult,
+  readVouchesByTargetResult, readVouchesByVoucherResult,
+  readVouchCooldownsResult, readBondsResult, readUsername, readPostResult,
+  readFeedResult, readThreadResult,
+} from './readers';
 import { ApiError, PageError } from './errors';
 
-// This module issues GET requests and nothing else — no POST, no body. A `viewer`
-// parameter is a query on a GET, not a write, so it is carried here now that an
-// identity can be loaded; a key, a signature or a write this module does not hold.
-// The writes live next door in write.ts.
-// WEB_INTERFACE → "The write client is its own module beside the read client".
+// A caller that cast `{}` as `Page` carries no `limit`; the client falls back
+// to `PAGE_LIMIT_DEFAULT`, the limit the node applies to a `GET` with no
+// `limit` query (TYPES_INTERFACE → HTTP view bounds). Both the URL the client
+// asks and the `parsePage` the reader applies take the same value, so the
+// page the node serves is held to the limit the URL asks.
+function askedLimit(page: Page): number {
+  return page.limit ?? PAGE_LIMIT_DEFAULT;
+}
+
+// An `ApiError`'s message holds HOUSE_STYLE → Voice: it says what happened
+// and the status, never a byte of the node's body. A transport failure comes
+// back from `fetchJson` with `status: 0` and `body` the runtime's own error
+// message, kept as the message so a reader of the error line reads what the
+// browser said.
+function apiErrorMessage(status: number, runtimeMessage: string): string {
+  if (status === 0) return runtimeMessage;
+  return `node answered ${status}`;
+}
+
+// This module issues GET requests and nothing else — no POST, no body. A
+// `viewer` parameter is a query on a GET, not a write, so it is carried
+// here; this module holds no key, no signature and no write. The writes
+// live next door in write.ts
+// (WEB_INTERFACE → "The write client is its own module beside the read
+// client").
+//
+// Every read goes through `@dagsocial/node-reads`' `fetchJson` under its
+// route's cap and `REQUEST_TIMEOUT_MS` deadline, and every answer is
+// rebuilt from its own fields by a total reader of its route (`./readers`,
+// WEB_INTERFACE → Reading a node's answer). A non-2xx is `ApiError` (a 404
+// `null` where the read answers `null` today), a transport failure or a
+// timeout `ApiError` with status `0`, and a 2xx that is over its cap, does
+// not parse, or is not the route's answer is `PageError`.
 
 export { ApiError, PageError };
 
-/** The list each paged route answers its rows in: `posts`, the thread's
- *  `descendants`, the `boxes` of /karma and /credits, the `vouches` of both
- *  /vouches arms, the cooldown arm's `cooldowns` and the `bonds` of /invites
- *  (NODE_INTERFACE → "Every list a view returns is a page"). */
-type PageList = 'posts' | 'descendants' | 'boxes' | 'vouches' | 'cooldowns' | 'bonds';
-
-// The one thing `encodeURIComponent` throws on.
-const LONE_SURROGATE = /\p{Cs}/u;
-
-/** A page is an object whose list is an array and whose `next` is null or a
- *  key the next read carries as `after` — a non-empty string, since `url()`
- *  drops an empty query value, with no lone surrogate (NODE_INTERFACE → "Every
- *  list a view returns is a page", WEB_INTERFACE → "Paging is keyset, never
- *  offset"). */
-function isPage(data: unknown, list: PageList): boolean {
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) return false;
-  const fields = data as Record<string, unknown>;
-  if (!Array.isArray(fields[list])) return false;
-  const next = fields['next'];
-  return next === null || (typeof next === 'string' && next !== '' && !LONE_SURROGATE.test(next));
-}
-
 export interface Page {
-  limit?: number;
+  /** The rows this page asks for — at most `PAGE_LIMIT_MAX`
+   *  (TYPES_INTERFACE → HTTP view bounds). Every paged read names it, so
+   *  the page the node serves is held to the rule
+   *  (`@dagsocial/node-reads`' `parsePage`, WEB_INTERFACE → Reading a
+   *  node's answer → "Every page is held to the page the node serves"). */
+  limit: number;
   after?: string | null;
 }
 
-/** The reads the client offers — the seam the App depends on, so a test can drive
- *  it over a fake. Every call is a GET. `viewer` is the loaded identity's key,
- *  carried once one exists so `likedByViewer` is the node's answer
- *  (WEB_INTERFACE → "Every read carries the viewer's key once an identity is loaded, and none does before"). */
+/** The reads the client offers — the seam the App depends on, so a test can
+ *  drive it over a fake. Every call is a GET. `viewer` is the loaded
+ *  identity's key, carried once one exists so `likedByViewer` is the node's
+ *  answer (WEB_INTERFACE → "Every read carries the viewer's key once an
+ *  identity is loaded, and none does before"). */
 export interface Api {
   /** `light` adds `light=1` beside the list reads, so every row of every
    *  list of the answer is a `LightJson` or a `WithdrawnJson` (NODE_INTERFACE
@@ -55,19 +80,19 @@ export interface Api {
    *  rides the single post read's call alone — the only post read whose
    *  row the check runs over, read with `tx=1` where a verifier is held
    *  (→ "The post check"). */
-  feed(page?: Page, viewer?: string, author?: string, roots?: boolean, light?: boolean): Promise<FeedResult>;
-  thread(id: string, page?: Page, viewer?: string, light?: boolean): Promise<ThreadResult | null>;
+  feed(page: Page, viewer?: string, author?: string, roots?: boolean, light?: boolean): Promise<FeedResult>;
+  thread(id: string, page: Page, viewer?: string, light?: boolean): Promise<ThreadResult | null>;
   post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null>;
   status(): Promise<StatusResult>;
   currentBlock(): Promise<BlockCurrent>;
-  karma(key: string, page?: Page): Promise<KarmaResult>;
-  credits(key: string, page?: Page): Promise<CreditsResult>;
+  karma(key: string, page: Page): Promise<KarmaResult>;
+  credits(key: string, page: Page): Promise<CreditsResult>;
   // The membership reads — GETs, none viewer-bearing (WEB_INTERFACE → The author
   // window, → The profile window). Keyset-paged like `karma`.
-  vouchesByTarget(key: string, page?: Page): Promise<VouchesTargetResult>;
-  vouchesByVoucher(key: string, page?: Page): Promise<VouchesVoucherResult>;
-  vouchCooldowns(key: string, page?: Page): Promise<VouchCooldownsResult>;
-  bonds(key: string, page?: Page): Promise<BondsResult>;
+  vouchesByTarget(key: string, page: Page): Promise<VouchesTargetResult>;
+  vouchesByVoucher(key: string, page: Page): Promise<VouchesVoucherResult>;
+  vouchCooldowns(key: string, page: Page): Promise<VouchCooldownsResult>;
+  bonds(key: string, page: Page): Promise<BondsResult>;
   usernameByOwner(key: string): Promise<UsernameResult | null>;
   // The handle → holder resolution the send form runs at the press; a leading
   // `@` is stripped, a 404 answers null (WEB_INTERFACE → The wallet window →
@@ -92,29 +117,45 @@ export class NodeClient implements Api {
     return base + path + (qs ? '?' + qs : '');
   }
 
-  private async get<T>(url: string, list?: keyof T & PageList): Promise<T> {
-    const res = await fetch(url);
-    if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
-    return this.body<T>(res, list);
+  /** Call `fetchJson` with the live `fetch`, so a `vi.stubGlobal('fetch', …)`
+   *  takes effect per call. */
+  private httpFetch: HttpFetch = (url, init) => fetch(url, init);
+
+  /** The parsed body of a 2xx, or a throw: a non-2xx is `ApiError`, a
+   *  transport failure or a timeout `ApiError` with status `0`, and a 2xx
+   *  that is over its cap or does not parse is `PageError`. The returned
+   *  body is the parsed `unknown` the route reader rebuilds (it may itself
+   *  be the JSON `null`, which the reader refuses as the route's shape).
+   *  The `ApiError`'s message is the client's own words and the status,
+   *  never the node's body (`HOUSE_STYLE → Voice`); a transport failure
+   *  keeps the runtime's own message. */
+  private async read(url: string, cap: number): Promise<unknown> {
+    const r = await fetchJson<unknown>(this.httpFetch, url, cap);
+    if (r.ok) return r.data;
+    if (r.status >= 200 && r.status < 300) throw new PageError();
+    throw new ApiError(r.status, apiErrorMessage(r.status, r.body));
   }
 
-  /** A 404 is a legitimate absence (no such post), not a transport failure. */
-  private async getOrNull<T>(url: string, list?: keyof T & PageList): Promise<T | null> {
-    const res = await fetch(url);
-    if (res.status === 404) return null;
-    if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
-    return this.body<T>(res, list);
+  /** As `read`, except a 404 answers the `absent` arm of the result (the
+   *  caller returns `null`), never thrown. A 2xx whose body is JSON `null`
+   *  stays `{ absent: false, data: null }` so the route reader refuses the
+   *  shape. */
+  private async readMaybeAbsent(url: string, cap: number): Promise<{ absent: true } | { absent: false; data: unknown }> {
+    const r = await fetchJson<unknown>(this.httpFetch, url, cap);
+    if (r.ok) return { absent: false, data: r.data };
+    if (r.status >= 200 && r.status < 300) throw new PageError();
+    if (r.status === 404) return { absent: true };
+    throw new ApiError(r.status, apiErrorMessage(r.status, r.body));
   }
 
-  /** A 2xx's body. A paged read names its list, and a body that is not a page
-   *  throws there. */
-  private async body<T>(res: Response, list?: keyof T & PageList): Promise<T> {
-    const data: unknown = await res.json();
-    if (list !== undefined && !isPage(data, list)) throw new PageError();
-    return data as T;
+  /** Rebuild a parsed body as a `T`, or throw `PageError`. */
+  private rebuild<T>(data: unknown, reader: (d: unknown) => T | null): T {
+    const out = reader(data);
+    if (out === null) throw new PageError();
+    return out;
   }
 
-  async feed(page: Page = {}, viewer?: string, author?: string, roots?: boolean, light?: boolean): Promise<FeedResult> {
+  async feed(page: Page, viewer?: string, author?: string, roots?: boolean, light?: boolean): Promise<FeedResult> {
     // `author` filters to one identity's committed posts — the author-posts
     // window (WEB_INTERFACE → The author window); `roots=1` restricts to
     // posts with no parent, the feed's own read (WEB_INTERFACE → What the
@@ -123,80 +164,123 @@ export class NodeClient implements Api {
     // field (WEB_INTERFACE → The extension → "The light read"); a list
     // read brings no bytes and is not checked (→ "The post check" → "A
     // list read brings no bytes and is not checked").
-    const q: Record<string, string | number | undefined> = { limit: page.limit, after: page.after ?? undefined, author, viewer, roots: roots ? 1 : undefined };
-    if (light) q['light'] = 1;
-    const res = await this.get<FeedResult>(this.url('/posts', q), 'posts');
-    if (!light) return res;
-    // Each list is read as one unknown value — `readLightRows` answers
-    // `PageError` for a list that is not an array, as it does for a malformed
-    // row (WEB_INTERFACE → The extension → "The light read" → "A light page is
-    // held to its shape").
-    return { ...res, posts: readLightRows(res.posts), pending: readLightRows(res.pending) };
-  }
-
-  async thread(id: string, page: Page = {}, viewer?: string, light?: boolean): Promise<ThreadResult | null> {
-    const q: Record<string, string | number | undefined> = { limit: page.limit, after: page.after ?? undefined, viewer };
-    if (light) q['light'] = 1;
-    const res = await this.getOrNull<ThreadResult>(this.url(`/posts/${encodeURIComponent(id)}/thread`, q), 'descendants');
-    if (res === null || !light) return res;
-    // Each list is read as one unknown value — `readLightRows` answers
-    // `PageError` for a list that is not an array, as it does for a malformed
-    // row (WEB_INTERFACE → The extension → "The light read" → "A light page is
-    // held to its shape"). The subject is `null` or one row, so a `null`
-    // short-circuits — `readLightRow` reads a non-null subject.
-    return {
-      ...res,
-      post: res.post === null ? null : readLightRow(res.post),
-      ancestors: readLightRows(res.ancestors),
-      descendants: readLightRows(res.descendants),
-      pending: readLightRows(res.pending),
+    const limit = askedLimit(page);
+    const q: Record<string, string | number | undefined> = {
+      limit,
+      after: page.after ?? undefined,
+      author,
+      viewer,
+      roots: roots ? 1 : undefined,
     };
+    if (light) q['light'] = 1;
+    const data = await this.read(this.url('/posts', q), FEED_PAGE_READ_BYTES);
+    return this.rebuild(data, (d) => readFeedResult(d, limit, light === true));
   }
 
-  post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null> {
-    return this.getOrNull<PostResult>(this.url(`/posts/${encodeURIComponent(id)}`, { viewer, tx: withTx ? 1 : undefined }));
+  async thread(id: string, page: Page, viewer?: string, light?: boolean): Promise<ThreadResult | null> {
+    const limit = askedLimit(page);
+    const q: Record<string, string | number | undefined> = {
+      limit,
+      after: page.after ?? undefined,
+      viewer,
+    };
+    if (light) q['light'] = 1;
+    const r = await this.readMaybeAbsent(
+      this.url(`/posts/${encodeURIComponent(id)}/thread`, q),
+      THREAD_READ_BYTES,
+    );
+    if (r.absent) return null;
+    return this.rebuild(r.data, (d) => readThreadResult(d, limit, light === true));
   }
 
-  status(): Promise<StatusResult> {
-    return this.get<StatusResult>(this.url('/status'));
+  async post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null> {
+    const r = await this.readMaybeAbsent(
+      this.url(`/posts/${encodeURIComponent(id)}`, { viewer, tx: withTx ? 1 : undefined }),
+      POST_READ_BYTES,
+    );
+    if (r.absent) return null;
+    return this.rebuild(r.data, (d) => readPostResult(d, withTx === true));
   }
 
-  currentBlock(): Promise<BlockCurrent> {
-    return this.get<BlockCurrent>(this.url('/blocks/current'));
+  async status(): Promise<StatusResult> {
+    const data = await this.read(this.url('/status'), STATUS_READ_BYTES);
+    return this.rebuild(data, readStatus);
+  }
+
+  async currentBlock(): Promise<BlockCurrent> {
+    const data = await this.read(this.url('/blocks/current'), HEIGHT_READ_BYTES);
+    return this.rebuild(data, readBlockCurrent);
   }
 
   // The spendable view's confirmed boxes, paged by `next`. No viewer — a balance
   // read is keyed by the identity in the path, not by a viewer query.
-  karma(key: string, page: Page = {}): Promise<KarmaResult> {
-    return this.get<KarmaResult>(this.url(`/karma/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }), 'boxes');
+  async karma(key: string, page: Page): Promise<KarmaResult> {
+    const limit = askedLimit(page);
+    const data = await this.read(
+      this.url(`/karma/${encodeURIComponent(key)}`, { limit, after: page.after ?? undefined }),
+      LISTING_PAGE_READ_BYTES,
+    );
+    return this.rebuild(data, (d) => readKarmaResult(d, limit));
   }
 
-  credits(key: string, page: Page = {}): Promise<CreditsResult> {
-    return this.get<CreditsResult>(this.url(`/credits/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }), 'boxes');
+  async credits(key: string, page: Page): Promise<CreditsResult> {
+    const limit = askedLimit(page);
+    const data = await this.read(
+      this.url(`/credits/${encodeURIComponent(key)}`, { limit, after: page.after ?? undefined }),
+      LISTING_PAGE_READ_BYTES,
+    );
+    return this.rebuild(data, (d) => readCreditsResult(d, limit));
   }
 
-  vouchesByTarget(key: string, page: Page = {}): Promise<VouchesTargetResult> {
-    return this.get<VouchesTargetResult>(this.url('/vouches', { target: key, limit: page.limit, after: page.after ?? undefined }), 'vouches');
+  async vouchesByTarget(key: string, page: Page): Promise<VouchesTargetResult> {
+    const limit = askedLimit(page);
+    const data = await this.read(
+      this.url('/vouches', { target: key, limit, after: page.after ?? undefined }),
+      VOUCH_PAGE_READ_BYTES,
+    );
+    return this.rebuild(data, (d) => readVouchesByTargetResult(d, limit));
   }
 
-  vouchesByVoucher(key: string, page: Page = {}): Promise<VouchesVoucherResult> {
-    return this.get<VouchesVoucherResult>(this.url('/vouches', { voucher: key, limit: page.limit, after: page.after ?? undefined }), 'vouches');
+  async vouchesByVoucher(key: string, page: Page): Promise<VouchesVoucherResult> {
+    const limit = askedLimit(page);
+    const data = await this.read(
+      this.url('/vouches', { voucher: key, limit, after: page.after ?? undefined }),
+      VOUCH_PAGE_READ_BYTES,
+    );
+    return this.rebuild(data, (d) => readVouchesByVoucherResult(d, limit));
   }
 
-  vouchCooldowns(key: string, page: Page = {}): Promise<VouchCooldownsResult> {
-    return this.get<VouchCooldownsResult>(this.url('/vouches', { voucher: key, cooldowns: 1, limit: page.limit, after: page.after ?? undefined }), 'cooldowns');
+  async vouchCooldowns(key: string, page: Page): Promise<VouchCooldownsResult> {
+    const limit = askedLimit(page);
+    const data = await this.read(
+      this.url('/vouches', { voucher: key, cooldowns: 1, limit, after: page.after ?? undefined }),
+      VOUCH_PAGE_READ_BYTES,
+    );
+    return this.rebuild(data, (d) => readVouchCooldownsResult(d, limit));
   }
 
-  bonds(key: string, page: Page = {}): Promise<BondsResult> {
-    return this.get<BondsResult>(this.url(`/invites/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }), 'bonds');
+  async bonds(key: string, page: Page): Promise<BondsResult> {
+    const limit = askedLimit(page);
+    const data = await this.read(
+      this.url(`/invites/${encodeURIComponent(key)}`, { limit, after: page.after ?? undefined }),
+      BOND_PAGE_READ_BYTES,
+    );
+    return this.rebuild(data, (d) => readBondsResult(d, limit));
   }
 
-  usernameByOwner(key: string): Promise<UsernameResult | null> {
-    return this.getOrNull<UsernameResult>(this.url('/usernames', { owner: key }));
+  async usernameByOwner(key: string): Promise<UsernameResult | null> {
+    const r = await this.readMaybeAbsent(this.url('/usernames', { owner: key }), NAME_READ_BYTES);
+    if (r.absent) return null;
+    return this.rebuild(r.data, readUsername);
   }
 
-  usernameByName(name: string): Promise<UsernameResult | null> {
+  async usernameByName(name: string): Promise<UsernameResult | null> {
     const bare = name.startsWith('@') ? name.slice(1) : name;
-    return this.getOrNull<UsernameResult>(this.url(`/usernames/${encodeURIComponent(bare)}`));
+    const r = await this.readMaybeAbsent(
+      this.url(`/usernames/${encodeURIComponent(bare)}`),
+      NAME_READ_BYTES,
+    );
+    if (r.absent) return null;
+    return this.rebuild(r.data, readUsername);
   }
 }
