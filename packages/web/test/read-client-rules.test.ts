@@ -228,6 +228,70 @@ describe("every request runs under one deadline", () => {
   });
 });
 
+// Honest-shaped empty bodies for each paged route — one row list, `next: null`
+// and the fields the reader reads from the surrounding object.
+const emptyFeed = { posts: [], next: null, pending: [], pendingCount: 0 };
+const emptyThread = {
+  post: null, ancestors: [], ancestorCount: 0,
+  descendants: [], descendantCount: 0, next: null,
+  pending: [], pendingCount: 0,
+};
+const emptyKarma = {
+  userId: KEY, total: '0', effective: '0', boxes: [], boxCount: 0, next: null,
+  lastActivityBlock: 0, lastDecayBlock: 0, lifetimeLikesReceived: '0',
+  memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: '0',
+  invitesUsed: 0, member: false, invitesAvailable: 0, height: 100,
+};
+const emptyCredits = { userId: KEY, total: '0', boxes: [], boxCount: 0, next: null };
+const emptyVouches = { vouches: [], count: 0, next: null };
+const emptyCooldowns = { cooldowns: [], count: 0, next: null };
+const emptyBonds = { bonds: [], bondCount: 0, next: null };
+
+interface PagedCase {
+  readonly name: string;
+  readonly body: unknown;
+  readonly call: (c: NodeClient, p: Page) => Promise<unknown>;
+}
+
+const pagedCases: readonly PagedCase[] = [
+  { name: '/posts (feed)',
+    body: emptyFeed,
+    call: (c, p) => c.feed(p) },
+  { name: '/posts/:id/thread',
+    body: emptyThread,
+    call: (c, p) => c.thread('ab'.repeat(32), p) },
+  { name: '/karma/:key',
+    body: emptyKarma,
+    call: (c, p) => c.karma(KEY, p) },
+  { name: '/credits/:key',
+    body: emptyCredits,
+    call: (c, p) => c.credits(KEY, p) },
+  { name: '/vouches?target=',
+    body: emptyVouches,
+    call: (c, p) => c.vouchesByTarget(KEY, p) },
+  { name: '/vouches?voucher=',
+    body: emptyVouches,
+    call: (c, p) => c.vouchesByVoucher(KEY, p) },
+  { name: '/vouches?voucher=&cooldowns=1',
+    body: emptyCooldowns,
+    call: (c, p) => c.vouchCooldowns(KEY, p) },
+  { name: '/invites/:key',
+    body: emptyBonds,
+    call: (c, p) => c.bonds(KEY, p) },
+];
+
+describe("every paged URL carries the limit and the after it was handed", () => {
+  for (const { name, body, call } of pagedCases) {
+    it(`${name} — the URL carries limit=25 and after=cursor-x`, async () => {
+      serveJson(body);
+      await call(client(), { limit: 25, after: 'cursor-x' });
+      const url = calls[0]?.url ?? '';
+      expect(url).toMatch(/[?&]limit=25(?:&|$)/);
+      expect(url).toMatch(/[?&]after=cursor-x(?:&|$)/);
+    });
+  }
+});
+
 describe("every paged read's URL carries its limit", () => {
   it("/karma — a karma read whose page names no limit carries a limit= query", async () => {
     serveJson({
