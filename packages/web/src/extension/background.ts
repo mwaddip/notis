@@ -37,6 +37,23 @@ export interface BackgroundConfig {
   publicBase: string;
 }
 
+/** The Web Locks seam the background takes — WEB_INTERFACE → The extension →
+ *  "`sign`, in the background, in order", step 9. Every read and write of a
+ *  prompt record runs under one exclusive lock named `notis.prompt`, so a
+ *  worker that dies releases it and nothing in a worker global holds it. */
+export interface LockManager {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+}
+
+/** `install` reads a lock manager from here. Omitted ⇒ the browser's own
+ *  `navigator.locks` when the environment has it, else an in-process FIFO
+ *  the serial tests already rely on. */
+export interface InstallOptions {
+  locks?: LockManager;
+}
+
+const PROMPT_LOCK = 'notis.prompt';
+
 // The prompt window's size — WEB_INTERFACE → The extension → "The prompt window".
 const PROMPT_WIDTH = 360;
 const PROMPT_HEIGHT = 420;
@@ -50,21 +67,56 @@ const PROMPT_TOP = 80;    // the drop under the toolbar
 
 /** Wire the identity service into a `chrome`-shaped surface. `install()` is
  *  called at module load; the service reads back what it needs from storage on
- *  every message, so a worker restart mid-conversation is safe. */
-export function install(api: typeof chrome, config: BackgroundConfig): void {
+ *  every message, so a worker restart mid-conversation is safe. `options.locks`
+ *  carries the Web Lock seam the record paths run under (WEB_INTERFACE → The
+ *  extension → "`sign`, in the background, in order", step 9). */
+export function install(api: typeof chrome, config: BackgroundConfig, options: InstallOptions = {}): void {
+  const locks = options.locks ?? defaultLockManager();
   api.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    void handle(api, config, message, sender).then((answer) => sendResponse(answer));
+    void handle(api, config, locks, message, sender).then((answer) => sendResponse(answer));
     return true; // keep the channel open until the async handler resolves
   });
-  api.runtime.onInstalled.addListener(() => { void sweepOrphanedRecords(api); });
-  api.runtime.onStartup.addListener(() => { void sweepOrphanedRecords(api); });
+  api.runtime.onInstalled.addListener(() => { void withPromptLock(locks, () => sweepOrphanedRecords(api)); });
+  api.runtime.onStartup.addListener(() => { void withPromptLock(locks, () => sweepOrphanedRecords(api)); });
   api.action.onClicked.addListener(() => { void raiseOrOpenPage(api); });
-  api.windows.onRemoved.addListener((windowId) => { void windowClosed(api, windowId); });
+  api.windows.onRemoved.addListener((windowId) => { void withPromptLock(locks, () => windowClosed(api, windowId)); });
+}
+
+/** The lock a prompt-record path runs its whole body under — WEB_INTERFACE →
+ *  The extension → "`sign`, in the background, in order", step 9. */
+function withPromptLock<T>(locks: LockManager, callback: () => Promise<T>): Promise<T> {
+  return locks.request(PROMPT_LOCK, callback);
+}
+
+/** The lock manager a browser `install` reads when none is handed to it. The
+ *  browser's own `navigator.locks` wins; Node has none and the fallback is an
+ *  in-process FIFO, so the serial tests pass without a seam of their own. */
+function defaultLockManager(): LockManager {
+  const n = (globalThis as { navigator?: { locks?: { request?: unknown } } }).navigator;
+  if (n && n.locks && typeof n.locks.request === 'function') {
+    const browserLocks = n.locks as { request<T>(name: string, callback: () => Promise<T>): Promise<T> };
+    return { request: (name, callback) => browserLocks.request(name, callback) };
+  }
+  const tails = new Map<string, Promise<void>>();
+  return {
+    async request<T>(name: string, callback: () => Promise<T>): Promise<T> {
+      const prev = tails.get(name) ?? Promise.resolve();
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      const next = prev.then(() => held);
+      tails.set(name, next);
+      await prev;
+      try { return await callback(); } finally {
+        release();
+        if (tails.get(name) === next) tails.delete(name);
+      }
+    },
+  };
 }
 
 /** Dispatch one message to the identity service. `unknown` from the wire, so
  *  every branch reads from `Message`'s typed shape after `isMessage`. */
-async function handle(api: typeof chrome, config: BackgroundConfig, message: unknown, sender: chrome.runtime.MessageSender): Promise<unknown> {
+async function handle(api: typeof chrome, config: BackgroundConfig, locks: LockManager, message: unknown, sender: chrome.runtime.MessageSender): Promise<unknown> {
   if (!isMessage(message)) return REFUSED_UNKNOWN;
   // WEB_INTERFACE → The extension → "The messages" — every kind but the
   // bridge's two is taken from the extension's own pages alone, checked first.
@@ -89,10 +141,10 @@ async function handle(api: typeof chrome, config: BackgroundConfig, message: unk
     case 'takeOpen': return await takeOpen(api, sender);
     case 'arrived': return await arrived(api, config, message.id, sender);
     case 'offered': return await offered(api, config, message.id, sender);
-    case 'sign': return await signMessage(api, message.txBytesHex, message.txIdHex, message.pubKeyHex, message.hint ?? {});
-    case 'ack': return await ack(api, message.id);
-    case 'approve': return await approve(api, message.id, sender);
-    case 'decline': return await decline(api, message.id, sender);
+    case 'sign': return await signMessage(api, locks, message.txBytesHex, message.txIdHex, message.pubKeyHex, message.hint ?? {});
+    case 'ack': return await withPromptLock(locks, () => ack(api, message.id));
+    case 'approve': return await withPromptLock(locks, () => approve(api, message.id, sender));
+    case 'decline': return await withPromptLock(locks, () => decline(api, message.id, sender));
   }
 }
 
@@ -343,7 +395,7 @@ async function takeOpen(api: typeof chrome, sender: chrome.runtime.MessageSender
 // sign — WEB_INTERFACE → "`sign`, in the background, in order".
 // ---------------------------------------------------------------------------
 
-async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: string, pubKeyHex: string, hint: SignHint): Promise<SignAnswer> {
+async function signMessage(api: typeof chrome, locks: LockManager, txBytesHex: string, txIdHex: string, pubKeyHex: string, hint: SignHint): Promise<SignAnswer> {
   // 1. Decode. A failure ⇒ undecodable.
   let tx: UtxoTransaction;
   try {
@@ -374,36 +426,42 @@ async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: stri
     if (seed === null) return { locked: true };
     return { signature: bytesToHex(ed25519.sign(hexToBytes(txIdHex), seed)) };
   }
-  // 7. Otherwise, the prompt. One at a time.
-  if (await hasOpenPromptRecord(api)) return { refused: 'busy' };
-  const summary = summarise(tx, env.pubKeyHex);
-  const record: SignRecord = {
-    id: randomId(),
-    txIdHex,
-    txBytesHex,
-    pubKeyHex: env.pubKeyHex,
-    summary,
-    hint: verifiedHint(tx, hint),
-    createdAt: Date.now(),
-  };
-  const key = K_SIGN_PREFIX + record.id;
-  await api.storage.session.set({ [key]: record });
-  // WEB_INTERFACE → The extension → "The prompt window" — the popup opens at the
-  // top-right of the last-focused browser window, under the toolbar; unplaced
-  // when the geometry is unknown (a missing or non-numeric field).
-  const w = await api.windows.create({
-    type: 'popup',
-    url: api.runtime.getURL('prompt.html') + '?id=' + record.id,
-    width: PROMPT_WIDTH,
-    height: PROMPT_HEIGHT,
-    focused: true,
-    ...await promptPlacement(api),
-  });
-  if (typeof w.id === 'number') {
-    record.windowId = w.id;
+  // 7-9. Otherwise, the prompt. One at a time, under the Web Lock. The whole
+  // block — check, write, open, update the id into the record — runs in one
+  // callback so two signs delivered together are serialised, and the close's
+  // handler runs after the open has written the id (WEB_INTERFACE → The
+  // extension → "`sign`, in the background, in order", steps 7-9).
+  return await withPromptLock(locks, async () => {
+    if (!(await canOpenNewPrompt(api))) return { refused: 'busy' };
+    const summary = summarise(tx, env.pubKeyHex);
+    const record: SignRecord = {
+      id: randomId(),
+      txIdHex,
+      txBytesHex,
+      pubKeyHex: env.pubKeyHex,
+      summary,
+      hint: verifiedHint(tx, hint),
+      createdAt: Date.now(),
+    };
+    const key = K_SIGN_PREFIX + record.id;
     await api.storage.session.set({ [key]: record });
-  }
-  return { pending: record.id };
+    // WEB_INTERFACE → The extension → "The prompt window" — the popup opens
+    // at the top-right of the last-focused browser window, under the toolbar;
+    // unplaced when the geometry is unknown (a missing or non-numeric field).
+    const w = await api.windows.create({
+      type: 'popup',
+      url: api.runtime.getURL('prompt.html') + '?id=' + record.id,
+      width: PROMPT_WIDTH,
+      height: PROMPT_HEIGHT,
+      focused: true,
+      ...await promptPlacement(api),
+    });
+    if (typeof w.id === 'number') {
+      record.windowId = w.id;
+      await api.storage.session.set({ [key]: record });
+    }
+    return { pending: record.id };
+  });
 }
 
 /** approve is checked by the sender's URL — an approval message may come only
@@ -546,9 +604,28 @@ async function readAllRecords(api: typeof chrome): Promise<Array<[string, SignRe
   return rows;
 }
 
-async function hasOpenPromptRecord(api: typeof chrome): Promise<boolean> {
+/** True when a new prompt may open: no result-less record whose window is
+ *  still open. Along the way, a record naming no `windowId`, or one whose
+ *  window the browser no longer has (`windows.get` rejects), is declined in
+ *  place (WEB_INTERFACE → The extension → "`sign`, in the background, in
+ *  order", step 7). Runs under the prompt lock. */
+async function canOpenNewPrompt(api: typeof chrome): Promise<boolean> {
   const rows = await readAllRecords(api);
-  return rows.some(([, r]) => !r.result);
+  for (const [key, record] of rows) {
+    if (record.result) continue;
+    const wid = record.windowId;
+    if (typeof wid !== 'number') {
+      const updated: SignRecord = { ...record, result: { declined: true } };
+      await api.storage.session.set({ [key]: updated });
+      continue;
+    }
+    let open = false;
+    try { await api.windows.get(wid); open = true; } catch { open = false; }
+    if (open) return false;
+    const updated: SignRecord = { ...record, result: { declined: true } };
+    await api.storage.session.set({ [key]: updated });
+  }
+  return true;
 }
 
 function isRecord(v: unknown): v is SignRecord {
@@ -612,7 +689,9 @@ function errorMessage(e: unknown): string {
 // Auto-install at module load — the background is loaded by the browser's own
 // runtime, so listeners must register before the first event. Tests build the
 // module through a fake `chrome` and call install(api, config) themselves; the
-// guard keeps them from double-installing here.
+// guard keeps them from double-installing here. The default lock manager
+// reads `navigator.locks` in the browser (WEB_INTERFACE → The extension →
+// "`sign`, in the background, in order", step 9).
 if (typeof globalThis !== 'undefined' && typeof (globalThis as { chrome?: unknown }).chrome !== 'undefined') {
   install((globalThis as unknown as { chrome: typeof chrome }).chrome, {
     publicBase: import.meta.env.VITE_PUBLIC ?? '',

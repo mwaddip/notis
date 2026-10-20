@@ -453,7 +453,7 @@ describe('background — sign prompt path (ask or credits)', () => {
 // ---------------------------------------------------------------------------
 
 describe('background — sign step 7: the prompt is one at a time', () => {
-  it.fails('two credits signs delivered together: one window created, one answer pending, the other busy', async () => {
+  it('two credits signs delivered together: one window created, one answer pending, the other busy', async () => {
     const c = await bootstrappedChrome();
     const pub = await pubKey(c);
     // Two different recipients so each tx has its own id.
@@ -473,7 +473,7 @@ describe('background — sign step 7: the prompt is one at a time', () => {
     expect(c.windows.created).toHaveLength(1);
   });
 
-  it.fails('a record whose window the browser closed with no event: the next sign declines it and opens its own prompt', async () => {
+  it('a record whose window the browser closed with no event: the next sign declines it and opens its own prompt', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
     const pub = await pubKey(c);
@@ -495,7 +495,7 @@ describe('background — sign step 7: the prompt is one at a time', () => {
     expect(c.windows.created).toHaveLength(2);
   });
 
-  it.fails('a record naming no window: the next sign declines it and opens its own prompt', async () => {
+  it('a record naming no window: the next sign declines it and opens its own prompt', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
     const pub = await pubKey(c);
@@ -520,7 +520,7 @@ describe('background — sign step 7: the prompt is one at a time', () => {
     expect(strayFound[1].result).toEqual({ declined: true });
   });
 
-  it.fails('a popup the browser closed before its id reaches the record is declined once the open writes the id', async () => {
+  it('a popup the browser closed before its id reaches the record is declined once the open writes the id', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });
     const pub = await pubKey(c);
