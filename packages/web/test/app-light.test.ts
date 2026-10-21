@@ -1059,6 +1059,47 @@ describe('the reader\'s own pending post is a card and never a slot', () => {
 });
 
 // ---------------------------------------------------------------------------
+// After a reload the pending ledger holds the reader's own post entry while
+// `state.submissions` starts empty — a submission is made only by the
+// composer's flight. The feed's `pending` carries the node's row, and the
+// row stands in the feed's DOM as a card
+// (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "The reader's own pending post is drawn once").
+// ---------------------------------------------------------------------------
+describe('after a reload the reader\'s own pending post stands in feed.pending as a card', () => {
+  it.fails('the web build: a pre-seeded ledger post entry and no submission card — the node\'s row stands in the feed\'s DOM, a card with the post\'s text', async () => {
+    // Pre-seed the pending ledger in localStorage, as the last session's
+    // write would have left it. The fresh App's `new PendingLedger(ME)`
+    // reads this entry; `state.submissions` starts empty.
+    const own = fullRow('o', { author: ME, status: 'pending', content: 'reader-text' });
+    const seed = new PendingLedger(ME);
+    seed.add({
+      txId: own.txId!,
+      kind: 'post',
+      postId: own.id,
+      inputs: [],
+      submittedAtHeight: 0,
+      expiresAtHeight: 999,
+    });
+    expect(new PendingLedger(ME).all().length).toBe(1); // the ledger survives the reload
+    // The web build: no resolver, no cache, no verifier.
+    const h = harness({
+      resolver: null, verifier: null, cache: null, identityKey: ME,
+      feedResults: [{ posts: [], next: null, pending: [own], pendingCount: 1 }],
+    });
+    expect(h.drive.state.submissions.length).toBe(0); // a reload starts the session with no submission
+    await h.drive.loadFeed();
+    await settle();
+    // The row stands in feed.pending.
+    expect(h.drive.state.feed.pending.length).toBe(1);
+    expect(h.drive.state.feed.pending[0]!.id).toBe(own.id);
+    // A card with the post's text stands in the feed's DOM.
+    const texts = Array.from(h.feedEl.querySelectorAll('.card-content')).map((n) => n.textContent ?? '');
+    expect(texts.some((t) => t.includes('reader-text'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A resolve that rejects closes its slots with no line.
 // ---------------------------------------------------------------------------
 describe('a resolve that rejects closes its slots with no line', () => {
