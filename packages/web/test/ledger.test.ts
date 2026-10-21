@@ -292,11 +292,13 @@ describe('reconcile', () => {
 });
 
 describe('dedupe and the pending-like overlay', () => {
-  it('a row a submission card names is dropped; a row only the ledger holds is kept (WEB_INTERFACE → What the feed reads, and what a card shows for it → "The reader\'s own pending post is drawn once")', () => {
+  it('a row a submission card names is dropped; a row only the ledger holds is kept', () => {
+    // WEB_INTERFACE → What the feed reads, and what a card shows for it →
+    // "The reader's own pending post is drawn once": a submission card
+    // standing in the page names 'p1'; 'p9' and 'target1' are only in the
+    // pending ledger (postEntry.postId is 'p1'; likeEntry's target is not a
+    // post row), and the function reads cardIds alone.
     const nodePending = [{ id: 'p1' }, { id: 'p9' }, { id: 'target1' }];
-    // A submission card standing in the page names 'p1'; 'p9' and 'target1'
-    // are only in the pending ledger (postEntry.postId is 'p1'; likeEntry's
-    // target is not a post row), and the function reads cardIds alone.
     const cardIds = new Set<string>(['p1']);
     expect(pendingWithoutStandingCards(nodePending, cardIds).map((r) => r.id)).toEqual(['p9', 'target1']);
   });
