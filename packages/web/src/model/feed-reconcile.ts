@@ -8,6 +8,20 @@ import { isWithdrawn } from '../api/dto';
 // The withdrawn state).
 export const isLivePost = (r: FeedRow): r is PostJson | LightJson => !isWithdrawn(r);
 
+/** The feed's `pending` rows a submission card does not stand for
+ *  (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+ *  "The reader's own pending post is drawn once"). A row whose id a submission
+ *  card standing in the page names is dropped — the card stands for it until a
+ *  `↻` reads the node's row. A row the pending ledger holds with no card
+ *  standing for it, as after a reload, is kept and drawn as the node gives it.
+ *  `cardIds` is the set of `postId`s of the submissions on screen. */
+export function pendingWithoutStandingCards<T extends { id: string }>(
+  rows: T[],
+  cardIds: ReadonlySet<string>,
+): T[] {
+  return rows.filter((r) => !cardIds.has(r.id));
+}
+
 export interface RawPage {
   posts: FeedRow[];
   next: string | null;
