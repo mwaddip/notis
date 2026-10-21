@@ -143,14 +143,14 @@ describe('web build — the shell the build writes', () => {
     expect(shell).toMatch(/<meta name="notis-public" content=""/);
   });
 
-  it.fails('carries exactly one Content-Security-Policy meta', async () => {
+  it('carries exactly one Content-Security-Policy meta', async () => {
     const shell = await buildWithRealConfig(VITE_CONFIG);
     expect(shell).toContain('<title>Notis</title>');
     const matches = shell.match(/http-equiv="Content-Security-Policy"/g) ?? [];
     expect(matches.length).toBe(1);
   });
 
-  it.fails('writes the policy meta with the module\'s string as its content', async () => {
+  it('writes the policy meta with the module\'s string as its content', async () => {
     const shell = await buildWithRealConfig(VITE_CONFIG);
     expect(shell).toContain('<title>Notis</title>');
     expect(shell).toContain(
@@ -158,7 +158,7 @@ describe('web build — the shell the build writes', () => {
     );
   });
 
-  it.fails('places the policy meta after <meta charset="utf-8"> and before <base', async () => {
+  it('places the policy meta after <meta charset="utf-8"> and before <base', async () => {
     const shell = await buildWithRealConfig(VITE_CONFIG);
     const charset = shell.indexOf('<meta charset="utf-8">');
     const policy = shell.indexOf('http-equiv="Content-Security-Policy"');
@@ -216,7 +216,7 @@ describe('extension pages build — the shell its config emits', () => {
 });
 
 describe('webSecurityPolicyPlugin — the plugin\'s own refusals', () => {
-  it.fails('refuses a shell with no <meta charset="utf-8"> and names the reason', () => {
+  it('refuses a shell with no <meta charset="utf-8"> and names the reason', () => {
     const handler = pluginHandler();
     const shell = '<!doctype html><html><head><title>x</title></head></html>';
     let message = '';
@@ -228,7 +228,7 @@ describe('webSecurityPolicyPlugin — the plugin\'s own refusals', () => {
     expect(message).toMatch(/charset/i);
   });
 
-  it.fails('refuses a shell that already carries a Content-Security-Policy meta and names the reason', () => {
+  it('refuses a shell that already carries a Content-Security-Policy meta and names the reason', () => {
     const handler = pluginHandler();
     const shell =
       '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="x"></head></html>';

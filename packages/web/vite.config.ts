@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { refuseNodeBuiltins } from './scripts/refuse-node-builtins.mjs';
+import { webSecurityPolicyPlugin } from './scripts/content-security-policy.mjs';
 
 // The client's default API base is same-origin
 // (WEB_INTERFACE → The client is served from the node's own origin), so the dev
@@ -48,9 +49,13 @@ if (!process.env['VITE_NETWORK']) process.env['VITE_NETWORK'] = '';
 const API_PATHS = ['/posts', '/status', '/blocks', '/karma', '/credits', '/likes', '/vouches', '/invites', '/usernames'];
 
 // WEB_INTERFACE → The client's builds substitute nothing.
+// WEB_INTERFACE → The client is served from the node's own origin →
+// "The web build's shell carries its own security policy" — the policy
+// plugin applies to builds alone (vite's dev server injects client styles
+// inline, which the policy's `style-src 'self'` would block).
 export default defineConfig(({ command }) => ({
   base: command === 'build' ? './' : '/',
-  plugins: [refuseNodeBuiltins()],
+  plugins: [refuseNodeBuiltins(), webSecurityPolicyPlugin()],
   server: {
     proxy: {
       ...Object.fromEntries(API_PATHS.map((p) => [p, { target: NODE_ORIGIN, changeOrigin: true }])),
