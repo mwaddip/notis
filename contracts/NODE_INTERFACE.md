@@ -3079,7 +3079,7 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     carries **no coinbase outputs at all** — no output may hold `value === 0`.
     ⚠ **One exception, and only one: a body its own mutation
     phase rejects.** See step 15b — the creator evicts the rows of the
-    transactions the body's screen refuses (every row, where it refuses none) and builds again from
+    transactions the body's screen refuses (every row, where it refuses no pooled one) and builds again from
     what remains, until it holds a template or a
     body carrying no row is rejected (`MINING_INTERFACE → Template and submit`).
     Mining over a body the node itself will not apply wastes PoW on a block
@@ -3094,7 +3094,7 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 15b. Compute `stateRoot` — the **post-block** digest (see "Post-block
     stateRoot" below). Never the creator's current (pre-block) digest. A
     `body-rejected` speculation evicts the rows of the transactions the body's screen refuses — the
-    body's rows (step 13), where it refuses none — and returns to step 1; a rejected body that
+    body's rows (step 13), where it refuses no pooled one — and returns to step 1; a rejected body that
     carried no row is terminal, and the build ends holding no template (`MINING_INTERFACE → Template and submit`).
 16. Build block template (powNonce=0, empty signature). Its `utxoTxRoot` is `computeUtxoTxRoot(tree)`
     over the finished body — every transaction's id, then every transaction's bytes, the settlement
@@ -3209,7 +3209,7 @@ union so no caller can conflate them):
 |---|---|---|
 | computed | the post-block digest and the proof's | mine over them |
 | **over budget** | the body's cost is over `MAX_BLOCK_COST` — `applyBlock`'s own refusal saying so, or `checkBlockCost`'s | **trim the selection and build again** (`MINING_INTERFACE → Template and submit → "Packing to the budget"`); nothing is evicted |
-| **body rejected** | the mutation phase rejected this body | **produce nothing, evict the entries its screen refuses — every included entry, where it refuses none — and build again** |
+| **body rejected** | the mutation phase rejected this body | **produce nothing, evict the entries its screen refuses — every included entry, where it refuses no pooled one — and build again** |
 
 **A node applies and produces over its prover, and has no other way to** — the rules read the tree and nothing else
 (→ AVL+ State Root). Production creates the prover at startup, before the genesis seed. A producer that finds none
@@ -3232,8 +3232,8 @@ that crashes speculation is one no node will apply.
 **The eviction takes what the body's own transactions refuse.** The creator screens the rejected body
 (`CONSENSUS_INTERFACE → Screening a body`) and evicts the rows of the transactions the screen refuses, each
 judged against the state the ones before it leave; one screen finds every such transaction, so a build's work
-does not grow with their number. A body the screen refuses nothing of — the settlement, the signature batch or a
-throw refused it — is evicted whole and logged as internal (`MINING_INTERFACE → Template and submit`).
+does not grow with their number. A body the screen refuses no pooled transaction of — the settlement, the signature
+batch or a throw refused it — is evicted whole and logged as internal (`MINING_INTERFACE → Template and submit`).
 
 **External mining.** The template's `stateRoot` is computed at template-build
 time and the block is submitted later. This stays sound because any block that

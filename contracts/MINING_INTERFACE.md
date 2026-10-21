@@ -329,10 +329,11 @@ pool still holds, until it holds a template or a body carrying **no pool row** i
 refuses fails against the state the body leaves before it: gone stale since its admission (a like of a post since
 withdrawn, a bond naming a key that has since become an account), or invalid beside a transaction ahead of it. It is
 never one that waits: the fill selects no entry that depends on what its body does not hold (`MEMPOOL_INTERFACE →
-Block Creator Integration`). **A rejected body the screen refuses nothing of is evicted whole**, and the creator logs it as
-internal: no transaction accounts for the refusal — the settlement, the signature batch or a throw does — and the
-build must still move the chain. Every repetition strictly shrinks the pool, which is what bounds the loop. A
-rejected body that carried nothing is terminal: the chain state cannot back even the empty body, or a defect is throwing, and no repetition changes either — the creator logs it once
+Block Creator Integration`). **A rejected body the screen refuses no pooled transaction of is evicted whole** — the
+screen refused nothing, or only a rent transaction this node built, which carries no row — and the creator logs it as
+internal: no pooled transaction accounts for the refusal, and the build must still move the chain. Every repetition
+strictly shrinks the pool, which is what bounds the loop. A rejected body that carried nothing is terminal: the chain
+state cannot back even the empty body, or a defect is throwing, and no repetition changes either — the creator logs it once
 (`Not producing block at height N: …`) and holds no template until the tip moves. A settlement this
 chain cannot build at all (no emission box at a height that releases, no karma pool at a height that
 draws on it) is terminal on the first attempt for the same reason. The loop runs only inside a build

@@ -384,7 +384,7 @@ leaves the bound unchanged.
 |-------|------------|------------|
 | **Pending** | `insertUtxoTx` | Carried by a body this node built → `removeEntry` (finalized or rejected); confirmed by an applied block → `removeUtxoTxEntry`; or `purgeExpired` |
 | **Confirmed** | Block finalization (`removeEntry`), or an applied block's cleanup (`removeUtxoTxEntry`) | Gone from mempool; state now in ledger |
-| **Evicted** | A body this node built was rejected — at speculation, the rows its screen refuses (every row, where it refuses none); at finalize, every row it carried (`removeEntry` per rowid) | Gone from mempool; state never applied |
+| **Evicted** | A body this node built was rejected — at speculation, the rows its screen refuses (every row, where it refuses no pooled one); at finalize, every row it carried (`removeEntry` per rowid) | Gone from mempool; state never applied |
 | **Expired** | `purgeExpired` during block assembly | Gone from mempool; state never applied |
 
 ### Expiry
@@ -442,7 +442,7 @@ pending entries:
 4. Tracks `confirmedRowids` — **every** row the template carries
 5. After block finalization: `removeEntry(rowid)` for each tracked rowid. **A
    body the mutation phase rejects loses, the same way, the rows of the transactions its screen
-   refuses** — every row it carried, where the screen refuses none — and the creator fills again from
+   refuses** — every row it carried, where the screen refuses no pooled one — and the creator fills again from
    what remains (`MINING_INTERFACE → Template and submit`); a rejected body that carried no row ends
    the build. Rows a *peer's* block
    confirms are reached by that block's application (`removeUtxoTxEntry` /
@@ -620,7 +620,7 @@ authorization, transitions and conservation must not be assumed of anything a bl
 3. **The cap.** The credit class evicts its lowest fee-rate row; the karma class rejects at the cap
    and never evicts (→ Size cap).
 4. **A rejected body.** When the mutation phase refuses the body, the build evicts the rows of the
-   transactions the body's screen refuses — every row the body included, where the screen refuses none —
+   transactions the body's screen refuses — every row the body included, where the screen refuses no pooled one —
    and reassembles (MINING_INTERFACE → Template and submit). **This is what
    removes an entry that has gone invalid while its inputs are still live** — a liveness test cannot
    see that class, and nothing else looks for it.

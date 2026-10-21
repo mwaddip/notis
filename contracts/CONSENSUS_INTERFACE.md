@@ -126,8 +126,9 @@ and inputs no longer belong among them; the passes end at one that refuses nothi
 transaction any pass refused, in body order. The settlement, last, is never screened, and neither are the grants, the
 counters, the membership pass, the decay clocks or the block's cost.
 
-**One implementation.** The per-transaction rules are the code `applyBlock` runs — its loop and its withdrawal arm,
-called by both — and neither copies the other. A body `applyBlock` accepts is one `screenBody` refuses nothing of.
+**One implementation.** The phases are the code `applyBlock` runs — its decoding of one entry, the posts it lays and
+the withdrawals it finds, its owed capture, its loop and its withdrawal arm, called by both — and neither copies the
+other; the screen differs only in checking each signature alone. A body `applyBlock` accepts is one `screenBody` refuses nothing of.
 Deterministic, and a throw is not a verdict, as `applyBlock`'s.
 
 > ⚠ **AHEAD OF CODE (2026-10-21).** `screenBody` leads `apply-block.ts`, which runs its transaction loop and its
