@@ -558,7 +558,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   // -------------------------------------------------------------------------
   // Case 7 — the unstake route's shape.
   // -------------------------------------------------------------------------
-  it.fails('POST /backers/unstake refuses a credit transfer and admits a well-formed unstake', async () => {
+  it('POST /backers/unstake refuses a credit transfer and admits a well-formed unstake', async () => {
     const holder = makeKey();
     seedRoot(holder.pub);
     const stake = seedStake(holder.pub, 100n, 50);
