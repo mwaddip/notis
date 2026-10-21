@@ -270,10 +270,6 @@ server that signs, no call home.
   seed of another key there is no unlocked identity to export, never a file naming the envelope's key over another
   key's seed. A drafted key lives in `storage.session` under `notis.draft` between `draft` and `create`. Never in a
   worker global.
-
-  > ⚠ **AHEAD OF CODE (2026-10-20).** The seed held to the envelope's key leads `extension/background.ts`, whose
-  > `exportFile` and `approve` read any seed.
-
 - **The prompt window** is a small extension page, `prompt.html`, the background opens when a signature
   needs a human — one at a time — as a popup the size and place of a wallet's: `windows.create({ type:
   'popup', width: 360, height: 420, focused: true, left, top })`, `left` and `top` placing it at the top-right
@@ -679,9 +675,6 @@ recently seen first and the reader's own never, and a put that still does not fi
 dropped. Where the browser gives the page no IndexedDB the client runs without a cache and says nothing. It takes no
 permission, and it is the extension build's alone.
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** One chain's database at a time leads `extension/post-cache.ts`, which deletes no
-> database and does not close on `versionchange`.
-
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
 (`TYPES_INTERFACE → Layout — UtxoTransaction`), so the read is output-side by necessity, and it is
@@ -719,10 +712,6 @@ message the browser rejects because no answer came, *the extension did not answe
 `notSigned` (→ The wallet): nothing was spent and the node never saw it, and it is never the flight's transport
 failure.
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** Every message answered leads `extension/background.ts`, whose listener answers
-> nothing when a handler throws, and `extension/proxy.ts`, whose `sign` throws on `{ error }` and on a rejected
-> message.
-
 **`sign`, in the background, in order.** `txBytes` is `encodeTx` of the unsigned transaction; `pubKeyHex` the key the
 page built it for; `hint` is `{ content? }`, a post's body, shown only when it verifies.
 
@@ -755,10 +744,6 @@ page built it for; `hint` is `{ content? }`, a post's body, shown only when it v
    every record without a result — so two `sign`s cannot both pass the check before either writes, and a window
    closed before its id reaches the record is declined once it does. The lock is the browser's: nothing in a worker
    global holds it, and a worker that dies releases it. A record is removed on the page's `ack`.
-
-> ⚠ **AHEAD OF CODE (2026-10-20).** Steps 4 and 6 to 9 lead `extension/background.ts` — no key compared, no lock, a
-> record left behind when its window does not open, any record without a result counted as open — and
-> `extension/prompt.ts`, which mounts the unlock form on every error.
 
 **The summary the prompt shows is derived from the transaction.** Its kind — thread or reply from
 `tx.post` and its parent refs, like from `likeTarget`, withdraw from `postWithdraw`, vouch, unvouch,
@@ -1364,9 +1349,6 @@ cost above `SCRYPT_N_MAX`'s, whatever an envelope names — 256 MiB and 0.72 s o
 185 ms (measured 2026-10-20). A large `p` beside a small `N` stays under scrypt's own 1 GiB memory limit: `p` = 2¹⁶
 took 3.2 s, and the limit admits sixteen times that.
 
-> ⚠ **AHEAD OF CODE (2026-10-20).** The paragraph above leads `identity/envelope.ts`, whose parse takes any `N`, `r`
-> and `p`, and `SCRYPT_N_MAX`, which the code does not define.
-
 **No Web Crypto, still.** scrypt and ChaCha20 are pure TS in the `@noble` family `@dagsocial/types` builds on, and the
 randomness is `getRandomValues`, which no secure context gates. Both primitives are in Node's own
 `crypto` (`scryptSync`, `createDecipheriv('chacha20-poly1305')`), so any Node tool opens the file with
@@ -1394,10 +1376,6 @@ background's session store between `draft` and `create`.
 `refused: key-changed`**, in both modules, and nothing is signed — an identity created or imported between the build
 and the signature, in this page or another. The key is the page's claim: it can refuse a signature, and
 neither module signs with it or computes anything for it.
-
-> ⚠ **AHEAD OF CODE (2026-10-20).** The paragraph above and `pubKeyHex` on `sign` lead `identity/identity.ts`,
-> `extension/proxy.ts`, `extension/protocol.ts`, `extension/background.ts` and `wallet/submit.ts`, whose `sign` takes
-> no key, and `app.ts`' not-signed copy, which has no line for `key-changed` (→ The wallet).
 
 **`sign` is the only path to the seed.** `current()` returns the public key and the lock state and
 nothing else, and no DTO carries the seed. The module's surface:
