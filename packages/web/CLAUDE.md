@@ -67,8 +67,11 @@ stands where a row carries a name** — the who row, the bars, the header, the s
 at 600, the same control the prefix is (`WEB_INTERFACE → The identity display`). **The extension**
 (`WEB_INTERFACE → The extension`): the same client built as a browser extension for Chrome and Firefox — the
 App as the extension's own page, the identity held by the background (the envelope in `storage.local`, the
-unlocked seed in `storage.session`, never a worker global), every write signed there through the
-`Signer` seam's proxy; credits always prompted in the prompt window, rep silent while unlocked unless the
+unlocked seed in `storage.session`, never a worker global, a seed counting only where its public key is the envelope's),
+every write signed there through the `Signer` seam's proxy, every message answered — a handler's failure is `{ error }`,
+and the proxy reads a `sign` that ends without an answer as `refused`; every read and write of a prompt record under the
+Web Lock `notis.prompt` (`navigator.locks`, which `install` takes; the tests pass `fakeLockManager()`), one prompt at a
+time and a record whose window is gone declined; credits always prompted in the prompt window, rep silent while unlocked unless the
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
 the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips; **the
 chain it reads checked by NiPoPoW proofs from the seed list's nodes, the verdict folded into the status corner**
@@ -141,8 +144,13 @@ identity is loaded, every read carries `viewer=<pubKeyHex>`** and `likedByViewer
 (`WEB_INTERFACE → The identity module`, `→ The extension`).
 Storage holds an envelope — scrypt and ChaCha20-Poly1305 over the seed, `identity/envelope.ts` — never
 the seed in the clear; a page load restores the envelope and the public key only, so `current()` reads
-`{ pubKeyHex, locked: true }` until an unlock, and `sign(txBytes, txIdHex, hint?)` — the only path to the seed —
-answers `locked` while locked (`WEB_INTERFACE → The wallet`). **Every write checks `locked` before its flight** and mounts the unlock form in place: the
+`{ pubKeyHex, locked: true }` until an unlock, and `sign(txBytes, txIdHex, pubKeyHex, hint?)` — the only path to the
+seed — answers `locked` while locked (`WEB_INTERFACE → The wallet`) and `refused: key-changed` for a key that is not the
+identity's: `pubKeyHex` is the key the flow read from `current()` when it began, so an identity created or imported
+between the build and the signature signs nothing (`WEB_INTERFACE → The identity module → "A signature is made for the
+key the transaction was built for"`). An envelope's scrypt cost is held where `parseFile` reads it — `r` 8, `p` 1, `N` a
+power of two up to `SCRYPT_N_MAX` (2¹⁸); a stored one outside it reads as no identity (`→ "An envelope's scrypt cost is
+bounded"`). **Every write checks `locked` before its flight** and mounts the unlock form in place: the
 composer's foot for `post`, a row under the card's meta for `like`, the confirm row's place for
 `withdraw`. **A row the reader opened under a card outlasts a redraw of its list**
 (`WEB_INTERFACE → What the feed reads, and what a card shows for it → "A row the reader opened under a card
@@ -465,7 +473,9 @@ landings read. The web build is handed no verifier, sends no `tx` and shows ever
 
 **The post cache** (`WEB_INTERFACE → The extension → "The post cache"`): `src/extension/post-cache.ts`, IndexedDB at the
 extension page's origin, the database `notis.posts.<chain>` — `chain` the tip run's (`TipRun.chain`, the reading
-node's `genesisHash`), the last name remembered in `localStorage` under `notis.posts.chain`. An entry holds the
+node's `genesisHash`), the last name remembered in `localStorage` under `notis.posts.chain`. **One chain's database at
+a time**: once a chain's database opens, every other `notis.posts.*` database `indexedDB.databases()` lists is deleted,
+the open not waiting on the deletes, and the module's connection closes on `versionchange`. An entry holds the
 transaction's bytes, the row as the node last gave it, the author and the parent as the transaction states them, its
 last-seen time, its size and `own`; the running total is a record in a second store, written in the same transaction as
 every put, withdrawal and eviction. `POST_CACHE_BYTES` caps it: least recently seen evicted first, the reader's own
@@ -640,8 +650,9 @@ with `RB` `down` — that slot gone and *1 post withheld — it does not match i
 twelve, the client's close of the batch at `BATCH_RESOLVE_MS`; **L10** a cold thread under `hold` on both relays —
 each reply's slot at the depth its card takes; **L11** `list-down` on a held thread — the error line over the held
 rows; **L12** a withdrawal — the withdrawn card, the entry's text gone, no batch after a reload; **L13** both relays
-in front of an isolated node **D** on another chain — a second database beside the first, a replayed listing drawing
-nothing from the first chain's entries; **L14** the hosted web build — no `light`, no `tx`, no batch, no database.
+in front of an isolated node **D** on another chain — D's database listed and A's not, the list polled until the
+delete lands and A's name never opened after the switch (an `indexedDB.open` of a missing database creates it), a
+replayed listing drawing nothing from the first chain's entries; **L14** the hosted web build — no `light`, no `tx`, no batch, no database.
 ⚠ **The workspace restores its open windows on every reload, and each restored thread is a resolve of its own**: a
 step that reads the feed alone closes every pane first. ⚠ **The pointer walks**: a page session's second resolve
 starts at the other relay, so a step that holds or hangs it sets both. ⚠ **A request's `close` fires when its body
