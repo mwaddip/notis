@@ -3,7 +3,7 @@ import { prefs } from '../prefs';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { markHandle } from './name-handle';
-import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, isValidUsernameBytes } from '@dagsocial/types';
+import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, isValidUsernameBytes } from '@dagsocial/types';
 import { figuresLine } from '../model/figures-line';
 import type { FiguresView, WindowBody } from '../model/state';
 import type { TipVerdict } from '../model/tip-verdict';
@@ -885,7 +885,7 @@ function usernameRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow
     const input = el('input') as HTMLInputElement;
     input.setAttribute('aria-label', 'the name to claim');
     input.placeholder = 'a name';
-    input.maxLength = 24;
+    input.maxLength = USERNAME_MAX_BYTES;
     input.autocomplete = 'off';
     (input as HTMLInputElement).autocapitalize = 'off';
     input.spellcheck = false;
@@ -906,7 +906,7 @@ function usernameRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow
 
     const hint = el('div', 'hint');
     hint.append(
-      `free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is one name whatever its case. a later burn costs ${USERNAME_BURN_PRICE} rep and restores the claim.`,
+      `free, once per key. 1 to ${USERNAME_MAX_BYTES} letters, digits or _, shown as typed; one name is one name whatever its case. a later burn costs ${USERNAME_BURN_PRICE} rep and restores the claim.`,
     );
 
     form.append(nameRow, refusal, hint);
@@ -916,7 +916,7 @@ function usernameRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow
       if (v.startsWith('@')) v = v.slice(1);
       const bytes = new TextEncoder().encode(v);
       if (!isValidUsernameBytes(bytes)) {
-        refusal.textContent = 'a name is 1 to 24 letters, digits or _.';
+        refusal.textContent = `a name is 1 to ${USERNAME_MAX_BYTES} letters, digits or _.`;
         refusal.hidden = false;
         return;
       }

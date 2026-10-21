@@ -2,7 +2,7 @@ import { NodeClient, PageError, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
 import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readWholeList } from './api/whole-list';
 import { decrementBoxId } from './wallet/box-id';
@@ -203,7 +203,7 @@ function usernameRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
   if (r.status === 503) return "the node's pool is full right now.";
   const m = r.message.toLowerCase();
-  if (/name invalid|invalid name/.test(m)) return 'that name is not 1 to 24 letters, digits or _.';
+  if (/name invalid|invalid name/.test(m)) return `that name is not 1 to ${USERNAME_MAX_BYTES} letters, digits or _.`;
   if (/name taken/.test(m)) return 'that name is taken.';
   if (/identity holds a name/.test(m)) return 'this key already holds a name.';
   if (/pending claim.*name|name.*pending claim/.test(m)) return 'a claim for that name is already pending.';
