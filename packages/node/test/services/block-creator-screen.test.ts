@@ -362,7 +362,7 @@ describe('block creator vs a screened body', () => {
     expect(userTxIds(next!)).toContain(childTxId);
   });
 
-  it.fails('a pair of claims whose second spends the first\'s karma change leaves the honest transfer and the first claim in the template, and evicts the second claim\'s row alone', async () => {
+  it('a pair of claims whose second spends the first\'s karma change leaves the honest transfer and the first claim in the template, and evicts the second claim\'s row alone', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -410,7 +410,7 @@ describe('block creator vs a screened body', () => {
     expect(rowids).toContain(honestRow);
   });
 
-  it.fails('a stale vouch cast beside two honest transfers leaves the two in the template and evicts the cast\'s row alone', async () => {
+  it('a stale vouch cast beside two honest transfers leaves the two in the template and evicts the cast\'s row alone', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -470,7 +470,7 @@ describe('block creator vs a screened body', () => {
     expect(rowids).not.toContain(castRow);
   });
 
-  it.fails('a refusal no pooled transaction accounts for evicts every row the body carried, logs INTERNAL on console.error, and the rebuild holds a template', async () => {
+  it('a refusal no pooled transaction accounts for evicts every row the body carried, logs INTERNAL on console.error, and the rebuild holds a template', async () => {
     let callCount = 0;
     vi.doMock('../../src/services/block-apply.js', async (importOriginal) => {
       const actual = await importOriginal<typeof import('../../src/services/block-apply.js')>();
