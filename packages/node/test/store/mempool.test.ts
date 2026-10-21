@@ -1043,6 +1043,146 @@ describe('mempool store', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The conflict gate before the capacity gate, in one transaction
+// (MEMPOOL_INTERFACE → insertUtxoTx → "The conflict gate runs before the
+// capacity gate.", → "One SQLite transaction.").
+// ---------------------------------------------------------------------------
+
+describe('insertUtxoTx — the conflict gate before the capacity gate, in one transaction', () => {
+  async function importCappedWithBoxes(cap: number, boxes: Record<string, unknown>[]) {
+    vi.resetModules();
+    const dbMod = await import('../../src/store/db.js');
+    dbMod.initDb(':memory:');
+    const utxo = await import('../../src/store/utxo.js');
+    for (const box of boxes) utxo.insertBox(box as never);
+    const mem = await import('../../src/store/mempool.js');
+    mem.setMempoolCap(cap);
+    return mem as any;
+  }
+
+  /** A credit-side transaction spending `inputId` that bids `fee`. */
+  function creditTxSpending(inputId: string, fee: bigint): any {
+    return {
+      inputs: [inputId],
+      outputs: [
+        { boxType: 'credit', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) },
+        ...(fee > 0n ? [{ boxType: 'fee', value: fee, createdAtBlock: 0 }] : []),
+      ],
+      signatures: {},
+      protocolVersion: 1,
+    };
+  }
+
+  afterEach(async () => {
+    const db = await importDbFresh();
+    db.closeDb();
+  });
+
+  it.fails('a relayed conflict replaces nothing', async () => {
+    // One credit slot. The resident spends box X at the cheapest rate, so an
+    // arrival that outbids it is a replacement in the current code — the
+    // capacity gate evicts the resident before the conflict gate sees it.
+    const resident = seededCreditTx('cheap_resident_X', 1000n, 990n); // fee 10
+    const mem = await importCappedWithBoxes(2, [resident.box]);
+
+    mem.insertUtxoTx(resident.tx as any, 100);
+    const residentTxId = (await importDbFresh()).getDb()
+      .prepare('SELECT tx_id FROM mempool').get() as { tx_id: string };
+
+    const residentInput = (resident.tx as any).inputs[0] as string;
+    const arrival = creditTxSpending(residentInput, 900n);
+
+    // Controls: class full, resident pooled, arrival outbids resident.
+    const row = (await importDbFresh()).getDb()
+      .prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL').get() as { n: number };
+    expect(row.n).toBe(1);
+    expect(mem.hasPendingSpend([residentInput])).toBe(residentInput);
+    // The arrival's bid-per-byte beats the resident's. Cross-multiplied, as
+    // the eviction query itself compares (MEMPOOL_INTERFACE → Eviction).
+    const bidOfArrival = 900n;
+    const bidOfResident = 10n;
+    expect(bidOfArrival).toBeGreaterThan(bidOfResident);
+
+    // The action — the arrival reaches `insertUtxoTx` with the resident
+    // still pooled.
+    try { mem.insertUtxoTx(arrival as any, 100); } catch { /* conflict ok */ }
+
+    const residentStill = (await importDbFresh()).getDb()
+      .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(residentTxId.tx_id);
+    expect(residentStill).toBeDefined();
+  });
+
+  it.fails('a relayed conflict evicts no bystander', async () => {
+    // Two credit slots. The cheapest spends Y; a bystander spends X. An
+    // arrival spending X outbids the cheapest and reaches the conflict on X
+    // — in the current code, the capacity gate evicts the cheapest first.
+    const cheapest = seededCreditTx('cheap_Y', 1000n, 990n); // fee 10
+    const bystander = seededCreditTx('bystander_X', 1000n, 500n); // fee 500
+    const mem = await importCappedWithBoxes(4, [cheapest.box, bystander.box]);
+
+    mem.insertUtxoTx(cheapest.tx as any, 100);
+    mem.insertUtxoTx(bystander.tx as any, 100);
+    const cheapestInput = (cheapest.tx as any).inputs[0] as string;
+    const bystanderInput = (bystander.tx as any).inputs[0] as string;
+
+    const cheapestTxId = (await importDbFresh()).getDb()
+      .prepare('SELECT tx_id FROM mempool WHERE tx_fee = 10').get() as { tx_id: string };
+
+    const arrival = creditTxSpending(bystanderInput, 900n);
+
+    // Controls: credit class full with the cheapest and the bystander.
+    const row = (await importDbFresh()).getDb()
+      .prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL').get() as { n: number };
+    expect(row.n).toBe(2);
+    expect(mem.hasPendingSpend([cheapestInput])).toBe(cheapestInput);
+    expect(mem.hasPendingSpend([bystanderInput])).toBe(bystanderInput);
+
+    try { mem.insertUtxoTx(arrival as any, 100); } catch { /* conflict ok */ }
+
+    const cheapestStill = (await importDbFresh()).getDb()
+      .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(cheapestTxId.tx_id);
+    expect(cheapestStill).toBeDefined();
+  });
+
+  it.fails('an insert that fails after its eviction leaves the pool as it was', async () => {
+    // The capacity gate's eviction and the row's INSERT commit together or
+    // not at all (MEMPOOL_INTERFACE → insertUtxoTx → "One SQLite
+    // transaction."). A trigger aborts the INSERT of the arrival's `tx_id`
+    // after the eviction has run.
+    const { computeTxId } = await import('@dagsocial/types');
+    const resident = seededCreditTx('cheap_resident_Z', 1000n, 990n); // fee 10
+    const mem = await importCappedWithBoxes(2, [resident.box]);
+
+    mem.insertUtxoTx(resident.tx as any, 100);
+    const residentTxId = (await importDbFresh()).getDb()
+      .prepare('SELECT tx_id FROM mempool').get() as { tx_id: string };
+
+    const arrival = creditTxSpending('ab'.repeat(32), 900n);
+    const arrivalTxId = computeTxId(arrival as never);
+    const db = (await importDbFresh()).getDb();
+    db.exec(
+      `CREATE TRIGGER abort_arrival_insert BEFORE INSERT ON mempool
+         WHEN NEW.tx_id = '${arrivalTxId}'
+         BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+    );
+
+    // Controls: class full, resident pooled, arrival outbids resident.
+    const row = db.prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL')
+      .get() as { n: number };
+    expect(row.n).toBe(1);
+    const bidResident = 10n;
+    const bidArrival = 900n;
+    expect(bidArrival).toBeGreaterThan(bidResident);
+
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow();
+
+    const residentStill = db.prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1')
+      .get(residentTxId.tx_id);
+    expect(residentStill).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The cost estimate (MEMPOOL_INTERFACE → The cost gate → "The gate keeps what it
 // measured"): a row carries the marginal cost the gate measured, or NULL where
 // nothing costed it, and every reader of the pool hands it on.
