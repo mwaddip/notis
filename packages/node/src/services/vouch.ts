@@ -2,9 +2,6 @@ import {
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
 import type { VouchBox, VouchEscrowBox, UtxoTransaction } from '@dagsocial/types';
-import {
-  hasPendingVouch,
-} from '../store/index.js';
 import { isValidVouchTarget } from '@dagsocial/validation';
 import { isMember, validateTx } from '@dagsocial/consensus';
 import { admitWriteTx } from './admit-tx.js';
@@ -43,14 +40,11 @@ export function castVouch(
     throw new ClientError('Cannot vouch for yourself');
   }
 
-  // One live vouch per (voucher, target) pair — confirmed and pending.
+  // One live vouch per (voucher, target) pair — the confirmed check stays
+  // here; the pending-pair gate rides admission (MEMPOOL_INTERFACE →
+  // Correctness gates).
   if (deps.getVouchBox(voucherId, targetId)) {
     throw new ClientError('A live vouch already exists for this (voucher, target) pair');
-  }
-  const voucherHex = Buffer.from(voucherId).toString('hex');
-  const targetHex = Buffer.from(targetId).toString('hex');
-  if (hasPendingVouch(voucherHex, targetHex)) {
-    throw new ClientError('A vouch for this pair is already pending');
   }
 
   // A vouch cast is a karma spend of VOUCH_KARMA_AMOUNT, which must leave the

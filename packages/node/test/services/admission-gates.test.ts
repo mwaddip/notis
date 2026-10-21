@@ -274,7 +274,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   // -------------------------------------------------------------------------
   // Case 2 — the relay meets the claim gates (name and claimant).
   // -------------------------------------------------------------------------
-  it.fails('the relay refuses a second claim of one canonical name', async () => {
+  it('the relay refuses a second claim of one canonical name', async () => {
     const first = makeKey();
     seedRoot(first.pub);
     const karma1 = seedKarma(first.pub, 100n, 1);
@@ -377,7 +377,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   // -------------------------------------------------------------------------
   // Case 4 — one pending bond per invitee (HTTP + relay).
   // -------------------------------------------------------------------------
-  it.fails('two invites naming one invitee: HTTP refuses the second 409, the relay false', async () => {
+  it('two invites naming one invitee: HTTP refuses the second 409, the relay false', async () => {
     const inviterA = makeKey();
     const inviterB = makeKey();
     seedRoot(inviterA.pub);
@@ -426,7 +426,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   // -------------------------------------------------------------------------
   // Case 5 — a member's pending bonds hold to its invites; a root is uncapped.
   // -------------------------------------------------------------------------
-  it.fails('a member\'s second pending bond is refused; a root\'s is admitted', async () => {
+  it('a member\'s second pending bond is refused; a root\'s is admitted', async () => {
     const member = makeKey();
     seedMember(member.pub, { memberVouches: 1, invitesUsed: 0 });
     const km = seedKarma(member.pub, 500n, 20);
@@ -501,7 +501,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   // -------------------------------------------------------------------------
   // Case 6 — one pending withdrawal per post.
   // -------------------------------------------------------------------------
-  it.fails('two withdrawals of one post: the second is 409 with its words', async () => {
+  it('two withdrawals of one post: the second is 409 with its words', async () => {
     const author = makeKey();
     seedMember(author.pub);
     const km = seedKarma(author.pub, 100n, 40);

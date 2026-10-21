@@ -35,11 +35,13 @@ import {
   insertPost,
   withdrawPost,
   getBox as storeGetBox,
+  getBoxWithPending,
   getIdentityRecord as storeGetIdentityRecord,
   hasPendingLike, insertUtxoTx,
   getVouchBox as storeGetVouchBox,
   putIdentityRecord as storePutIdentityRecord,
   getNetworkRecord as storeGetNetworkRecord,
+  getOwnKarmaBoxIdsWithPending,
 } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
@@ -101,13 +103,19 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
 
   function makeDeps(): UtxoEngineDeps {
     return {
+      // The pending view, as the write-side admission wires it
+      // (NODE_INTERFACE → Service Layer Architecture → "One function admits"):
+      // a chained input is seen by `validateTx` and the pool's spent karma box
+      // is seen by the karma-spend rule.
       getBox: (id: string): AnyBox | null => {
-        const box = storeGetBox(id);
-        if (!box) return null;
-        const r = db
-          .prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?')
-          .get(id) as { spent_at_block: number | null } | undefined;
-        return r && r.spent_at_block === null ? box : null;
+        const base = storeGetBox(id);
+        if (base) {
+          const r = db
+            .prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?')
+            .get(id) as { spent_at_block: number | null } | undefined;
+          if (r && r.spent_at_block === null) return base;
+        }
+        return getBoxWithPending(id);
       },
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => {
@@ -120,7 +128,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       getOwnKarmaBoxIds: (owner: Uint8Array) =>
-        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
+        getOwnKarmaBoxIdsWithPending(Buffer.from(owner).toString('hex')),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
       // ⛔ The like marker's author pin: every post this fixture builds is the
@@ -302,15 +310,19 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     expect(() => castLike(deps, tx, 5)).toThrow('Already liked');
   });
 
-  it('castLike fails if already liked (pending in mempool)', () => {
+  it('castLike fails if already liked (pending in mempool)', async () => {
     const karma = createKarmaBox(likerPubKey, 100n, 1);
     const postId = createTestPost(likerId);
 
-    castLike(deps, buildBurnLikeTx(karma, postId), 5);
+    const tx1 = buildBurnLikeTx(karma, postId);
+    castLike(deps, tx1, 5);
 
-    // A fresh tx for the same (liker, post) — different bytes, same pair.
-    const karma2 = createKarmaBox(likerPubKey, 50n, 2);
-    const tx2 = buildBurnLikeTx(karma2, postId);
+    // A fresh tx for the same (liker, post), chained through the first's
+    // change — the pending view resolves it, admission's gate
+    // (MEMPOOL_INTERFACE → Correctness gates) refuses it.
+    const { materializeOutput } = await import('@dagsocial/consensus');
+    const change1 = materializeOutput(tx1.outputs[0]!, computeTxId(tx1), 0) as KarmaBox;
+    const tx2 = buildBurnLikeTx(change1, postId);
     expect(() => castLike(deps, tx2, 5)).toThrow('Already liked');
   });
 
@@ -318,16 +330,18 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
   // 4b. The mempool gate sees a pending like past the old 1000-row scan
   //     bound (audit M-8).
   // -----------------------------------------------------------------------
-  it('castLike rejects a duplicate whose pending like sits past row 1000', () => {
+  it('castLike rejects a duplicate whose pending like sits past row 1000', async () => {
     const karma = createKarmaBox(likerPubKey, 100n, 1);
     const postId = createTestPost(likerId);
 
     // Bury the pending like behind 1000 unrelated entries.
     for (let i = 0; i < 1000; i++) insertUtxoTx(fillerTx(`filler_${i}`), 900);
-    castLike(deps, buildBurnLikeTx(karma, postId), 5);
+    const tx1 = buildBurnLikeTx(karma, postId);
+    castLike(deps, tx1, 5);
 
-    const karma2 = createKarmaBox(likerPubKey, 50n, 2);
-    expect(() => castLike(deps, buildBurnLikeTx(karma2, postId), 5)).toThrow('Already liked');
+    const { materializeOutput } = await import('@dagsocial/consensus');
+    const change1 = materializeOutput(tx1.outputs[0]!, computeTxId(tx1), 0) as KarmaBox;
+    expect(() => castLike(deps, buildBurnLikeTx(change1, postId), 5)).toThrow('Already liked');
 
     // Control — same post, different liker: single-field delta, still accepted.
     const otherKeys = generateKeyPairSync('ed25519');

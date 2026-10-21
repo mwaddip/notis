@@ -7,7 +7,6 @@ import { getNet } from '../services/net-instance.js';
 import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import { resolveIdentityParam, isResolveError } from './page.js';
-import { hasPendingClaim, hasPendingClaimBy } from '../store/mempool.js';
 import type { UsernameRow } from '../store/usernames.js';
 
 // NODE_INTERFACE → Usernames
@@ -49,16 +48,8 @@ export function createRouter(deps: UsernameRouteDeps): Router {
       return;
     }
 
-    const canonical = Buffer.from(canonicalUsernameBytes(usernameOut.name)).toString('utf8');
-    if (hasPendingClaim(canonical)) {
-      res.status(409).json({ error: 'A pending claim for this name exists' });
-      return;
-    }
-    const claimantHex = Buffer.from(usernameOut.owner).toString('hex');
-    if (hasPendingClaimBy(claimantHex)) {
-      res.status(409).json({ error: 'This identity already has a pending claim' });
-      return;
-    }
+    // The pending-name gates ride admission (MEMPOOL_INTERFACE →
+    // Correctness gates). The handler keeps the shape-level checks only.
 
     try {
       const currentHeight = deps.getCurrentHeight() + 1;
