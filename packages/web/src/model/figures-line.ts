@@ -20,8 +20,8 @@
 // listing that has passed: rows 4 and 5 do not read it, and no sum of it
 // is printed.
 //
-// The line's shape mirrors `tipVerdict` (`src/model/tip-verdict.ts`): one pure
-// function, total by itself, no exception thrown.
+// The line's shape mirrors `tipVerdict`: one pure function, total by itself,
+// no exception thrown.
 
 import type { FiguresResult, FigureBox } from '@dagsocial/nipopow-client';
 import type { TipVerdict } from './tip-verdict';
@@ -182,9 +182,8 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
   // The proven figure P.
   // For credits: the balance line's rule over the proven credit boxes at the
   // row's height — a proven box with `lockedUntilBlock` above `height` is not
-  // spendable, so it is left out. (`spendableCreditBoxes` in
-  // src/wallet/reads.ts is the same predicate; the shape differs so the rule
-  // is written out.)
+  // spendable, so it is left out. (`spendableCreditBoxes` is the same
+  // predicate; the shape differs so the rule is written out.)
   // For karma: `result.karma.effective`, non-null here — rows 4 and 5 took
   // every null valuation, beside an unproven or no-proof record and beside a
   // proven or absent one.

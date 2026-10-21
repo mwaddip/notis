@@ -18,6 +18,7 @@ import {
   readFeedResult, readThreadResult,
 } from './readers';
 import { ApiError, PageError } from './errors';
+import { trimBase } from '../base';
 
 // A caller that cast `{}` as `Page` carries no `limit`; the client falls back
 // to `PAGE_LIMIT_DEFAULT`, the limit the node applies to a `GET` with no
@@ -107,7 +108,7 @@ export class NodeClient implements Api {
   constructor(private origin: () => string) {}
 
   private url(path: string, query?: Record<string, string | number | undefined>): string {
-    const base = this.origin().replace(/\/$/, '');
+    const base = trimBase(this.origin());
     const qs = query
       ? Object.entries(query)
           .filter(([, v]) => v !== undefined && v !== null && v !== '')

@@ -2,8 +2,8 @@ import { NodeClient, PageError, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
-import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import { KARMA_LISTING_MAX, LEDGER_READ_MAX, isHex64Lower } from '@dagsocial/node-reads';
 import { readWholeList } from './api/whole-list';
 import { decrementBoxId } from './wallet/box-id';
 import type { UtxoTransaction } from '@dagsocial/types';
@@ -20,7 +20,7 @@ import { buildUnlockRow, buildConfirmRow, buildLinkFallbackRow } from './view/ca
 import { personGlyph, sunGlyph, moonGlyph, gearGlyph, walletGlyph } from './view/glyphs';
 import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
-import { reconcileNewer, isLivePost, newPostsLine, olderPostsLine } from './model/feed-reconcile';
+import { reconcileNewer, isLivePost, newPostsLine, olderPostsLine, pendingWithoutStandingCards } from './model/feed-reconcile';
 import { withNodeWord } from './model/light';
 import { networkNumbers } from './model/network-numbers';
 import { flattenThread } from './model/thread';
@@ -203,7 +203,7 @@ function usernameRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
   if (r.status === 503) return "the node's pool is full right now.";
   const m = r.message.toLowerCase();
-  if (/name invalid|invalid name/.test(m)) return 'that name is not 1 to 24 letters, digits or _.';
+  if (/name invalid|invalid name/.test(m)) return `that name is not 1 to ${USERNAME_MAX_BYTES} letters, digits or _.`;
   if (/name taken/.test(m)) return 'that name is taken.';
   if (/identity holds a name/.test(m)) return 'this key already holds a name.';
   if (/pending claim.*name|name.*pending claim/.test(m)) return 'a claim for that name is already pending.';
@@ -808,7 +808,7 @@ export class App {
       window.addEventListener('popstate', (e) => {
         if (!this.standalone) return;
         const id = e.state?.id;
-        if (typeof id === 'string' && /^[0-9a-f]{64}$/i.test(id)) {
+        if (isHex64Lower(id)) {
           this.standaloneReroot(id);
         }
       });
@@ -2053,7 +2053,7 @@ export class App {
     const keptPosts = kept.slice(0, res.posts.length);
     const keptPending = kept.slice(res.posts.length);
     feed.posts = this.liveRows(keptPosts).map(this.keeper(feed.posts, since));
-    feed.pending = this.dedupeOwn(keptPending.filter(isLivePost));
+    feed.pending = pendingWithoutStandingCards(keptPending.filter(isLivePost), this.standingCardIds());
     feed.next = res.next;
     feed.loaded = true;
     feed.loading = false;
@@ -2140,7 +2140,7 @@ export class App {
       );
       if (gen !== this.readerGen) return;
       this.indexRows(rows);
-      feed.pending = this.dedupeOwn(pending.filter(isLivePost));
+      feed.pending = pendingWithoutStandingCards(pending.filter(isLivePost), this.standingCardIds());
       feed.posts = landRefresh(feed.posts, r);
       if (r.next !== undefined) feed.next = r.next; // reset only on the replace branch
       feed.unboundCount = 0;
@@ -2688,10 +2688,10 @@ export class App {
   }
 
   private changeIdTint(m: IdTint): void {
-    // The tint is :root's data-idtint and custom properties (src/prefs.ts
-    // applyIdTint); the seg's own click moves the four words' pressed state in
-    // place (WEB_INTERFACE → The settings window → "The identity tint shows
-    // what it sets"), so no region re-render is owed.
+    // The tint is :root's data-idtint and custom properties, applied by
+    // `applyIdTint`; the seg's own click moves the four words' pressed
+    // state in place (WEB_INTERFACE → The settings window → "The identity
+    // tint shows what it sets"), so no region re-render is owed.
     setIdTint(m);
   }
 
@@ -5392,16 +5392,13 @@ export class App {
     return 1;
   }
 
-  private ownPostIds(): Set<string> {
+  /** The post ids of the submission cards standing in the page — the input to
+   *  the pure feed-pending rule (WEB_INTERFACE → What the feed reads, and what
+   *  a card shows for it → "The reader's own pending post is drawn once"). */
+  private standingCardIds(): Set<string> {
     const s = new Set<string>();
-    for (const e of this.ledger.all()) if (e.kind === 'post') s.add(e.postId);
     for (const sub of this.state.submissions) if (sub.postId !== null) s.add(sub.postId);
     return s;
-  }
-
-  private dedupeOwn<T extends { id: string }>(rows: T[]): T[] {
-    const own = this.ownPostIds();
-    return rows.filter((r) => !own.has(r.id));
   }
 
   private clearSettledFeed(): void {

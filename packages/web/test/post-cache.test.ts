@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 // The extension's post cache, standalone (WEB_INTERFACE → The extension → "The
-// post cache"): the module behind IndexedDB. The App wiring is driven by
-// test/app-post-cache.test.ts; this suite tests the module in isolation over
+// post cache"): the module behind IndexedDB, tested in isolation over
 // `fake-indexeddb`, so a browser's own IndexedDB does not have to be present.
 
 import { describe, it, expect, beforeEach } from 'vitest';

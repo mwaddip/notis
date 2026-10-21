@@ -167,13 +167,6 @@ export function reconcileCreditGrant(entry: PendingEntry, credits: CreditsResult
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 
-/** Drop the node's pending rows the ledger already holds, so the client's own
- *  submission never renders twice (WEB_INTERFACE → "The feed carries four things"). */
-export function dedupePending<T extends { id: string }>(nodePending: T[], entries: PendingEntry[]): T[] {
-  const own = new Set(entries.filter((e) => e.kind === 'post').map((e) => e.postId));
-  return nodePending.filter((row) => !own.has(row.id));
-}
-
 /** The targets the client has a pending like for — overlaid onto `likedByViewer`
  *  until they land or expire, because the node's field reflects store records
  *  only (WEB_INTERFACE → The wallet). */

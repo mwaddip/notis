@@ -7,8 +7,8 @@ import type { PostCheck } from '@dagsocial/nipopow-client';
 // a list lacks are read by id from the seed list's nodes in turn, through
 // `POST /posts/batch` (NODE_INTERFACE → Posts → "The batch read answers posts
 // by id"). This module takes nothing from `fetch`, from the clock or from
-// IndexedDB; every seam is in `ResolveDeps`, and the extension's resolver
-// (`src/extension/post-resolver.ts`) is the one place `fetch` lives.
+// IndexedDB; every seam is in `ResolveDeps`, and the extension's resolver —
+// `createPostResolver` — is the one place `fetch` lives.
 
 /** The most ids one request takes — one implementation in `@dagsocial/types`
  *  (TYPES_INTERFACE → HTTP view bounds), re-exported where the resolve

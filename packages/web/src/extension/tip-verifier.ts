@@ -8,6 +8,7 @@ import type { Anchor, TipResult, HttpFetch, NodeTipResult } from '@dagsocial/nip
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import { tipVerdict } from '../model/tip-verdict';
+import { trimBase } from '../base';
 import type { TipRun, TipVerifier } from '../model/state';
 
 // The pair the extension asks — the tool's own `DEFAULT_M` and `DEFAULT_K`,
@@ -25,11 +26,6 @@ export interface TipVerifierOptions {
   resolve?: typeof resolveTip;
 }
 
-/** Strip one trailing `/` so a base and its trailing-slash twin de-duplicate. */
-function normaliseBase(base: string): string {
-  return base.endsWith('/') ? base.slice(0, -1) : base;
-}
-
 export function createTipVerifier(opts: TipVerifierOptions): TipVerifier {
   const resolve = opts.resolve ?? resolveTip;
   const profile = profileFor(opts.network);
@@ -42,7 +38,7 @@ export function createTipVerifier(opts: TipVerifierOptions): TipVerifier {
       const urls: string[] = [];
       const seen = new Set<string>();
       const addIfNew = (base: string): void => {
-        const key = normaliseBase(base);
+        const key = trimBase(base);
         if (seen.has(key)) return;
         seen.add(key);
         urls.push(key);

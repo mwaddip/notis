@@ -2,11 +2,12 @@
 import { describe, it, expect } from 'vitest';
 
 // WEB_INTERFACE → Invariants → "A per-network number is read, never assumed" —
-// the one place that answers the four is `src/model/network-numbers.ts`, and
-// the wallet's flows reach it through `src/wallet/submit.ts`. Neither module
-// imports anything that reads the document when it loads, so both can be
-// imported under Node — the bundle `scripts/extension-check/claim-name.mjs`
-// builds and runs with the signing seam the extension's `claim` runs.
+// the one place that answers the four is `networkNumbers`, and the wallet's
+// flows reach it through `submitClaimFlow`, `submitPostFlow`, `submitLikeFlow`,
+// `submitVouchFlow` and `submitSendFlow`. Neither module imports anything that
+// reads the document when it loads, so both can be imported under Node — the
+// bundle `claim-name.mjs` builds and runs with the signing seam the extension's
+// `claim` runs.
 
 describe('the wallet flows and the per-network numbers load with no DOM', () => {
   it('src/wallet/submit.ts imports under Node and names every flow', async () => {

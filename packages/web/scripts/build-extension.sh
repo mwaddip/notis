@@ -35,10 +35,11 @@ cd "$REPO_ROOT"
 
 VERSION=$(node -p "require('./package.json').version")
 STAGE=$(mktemp -d)
-
-# One variable pins the linter's major — web-ext@10 is the release measured
-# against the emitted manifests.
-WEBEXT_MAJOR=10
+# WEB_INTERFACE → The client is served from the node's own origin →
+# "A zip holds one build" — both staging directories go however the script
+# ends, never leaving a half-written build behind.
+cleanup() { rm -rf "$STAGE" "${SCRATCH:-}"; }
+trap cleanup EXIT
 
 echo "==> Building notis-extension-${VERSION}"
 
@@ -66,13 +67,14 @@ export VITE_PUBLIC=${VITE_PUBLIC-https://notis.fun/web/}
 export VITE_NETWORK=${VITE_NETWORK-testnet}
 export VITE_IDENTITY=extension
 
-# Staging: a fresh temp dir every build — the 216-2 append trap is impossible
-# by construction (WEB_INTERFACE → The extension).
+# Staging: a fresh temp dir every build, so the zip is assembled against
+# nothing left over (WEB_INTERFACE → The client is served from the node's
+# own origin → "A zip holds one build").
 CHROME_DIR="${STAGE}/chrome"
 FIREFOX_DIR="${STAGE}/firefox"
 mkdir -p "$CHROME_DIR" "$FIREFOX_DIR"
 
-# Three Vite builds share output into a scratch — pages first, background
+# Three Vite builds share output into a staging dir — pages first, background
 # lib next, then the bridge lib when a public base is set. The bridge is one
 # classic IIFE file with no `import`, so both browsers inject it at
 # `document_start` as they are (WEB_INTERFACE → The extension → "The manifest").
@@ -270,27 +272,36 @@ canonical_bss=$(node -e "$CANON_JS" "$EXPECTED_BSS")
 chrome_bss=$(node -e "const m = JSON.parse(require('fs').readFileSync('$CHROME_DIR/manifest.json','utf8')); process.stdout.write('browser_specific_settings' in m ? 'present' : 'absent')")
 [ "$chrome_bss" = 'absent' ] || { echo "FAIL: $CHROME_DIR/manifest.json carries browser_specific_settings"; exit 1; }
 
-# web-ext lint on the Firefox stage — the extension's own manifest linter,
-# major pinned above. `--self-hosted` reads the manifest as a self-hosted
-# add-on's, where an `update_url` is legitimate; without it the lint errors
-# on `MANIFEST_UPDATE_URL`
+# web-ext lint on the Firefox stage — the package's own web-ext, installed
+# with the package by the workspace's lockfile, so the lint needs no network
+# and resolves no package as it runs; `NO_UPDATE_NOTIFIER=1` turns the
+# linter's three-day registry check off
+# (WEB_INTERFACE → The client is served from the node's own origin →
+# "The Firefox build ships signed as well"). The binary is the package's own
+# `node_modules/.bin/web-ext`, named by path so no second tool runner stands
+# between the shell and it. `--self-hosted` reads the manifest as a
+# self-hosted add-on's, where an `update_url` is legitimate; without it the
+# lint errors on `MANIFEST_UPDATE_URL`
 # (WEB_INTERFACE → "The build check that keeps the web bundle honest").
 echo "==> web-ext lint (Firefox stage)"
-npx --yes -p "web-ext@${WEBEXT_MAJOR}" web-ext lint --source-dir "$FIREFOX_DIR" --self-hosted
+NO_UPDATE_NOTIFIER=1 ./node_modules/.bin/web-ext lint --source-dir "$FIREFOX_DIR" --self-hosted
 
 echo "==> Build checks passed"
 
 # ---------------------------------------------------------------------------
-# Zip. `zip -r -X` — no extended attributes.
+# Zip. `zip -r -X` — no extended attributes. Each zip moves to the
+# repository's root with `mv -f`, so a zip of that name standing there is
+# replaced — never added to (WEB_INTERFACE → The client is served from the
+# node's own origin → "A zip holds one build").
 # ---------------------------------------------------------------------------
 cd "$STAGE"
 CHROME_ZIP="notis-extension-${VERSION}-chrome.zip"
 FIREFOX_ZIP="notis-extension-${VERSION}-firefox.zip"
 (cd chrome && zip -r -X "$STAGE/$CHROME_ZIP" .)
 (cd firefox && zip -r -X "$STAGE/$FIREFOX_ZIP" .)
-mv "$STAGE/$CHROME_ZIP" "$STAGE/$FIREFOX_ZIP" "$REPO_ROOT/"
+mv -f "$STAGE/$CHROME_ZIP" "$REPO_ROOT/$CHROME_ZIP"
+mv -f "$STAGE/$FIREFOX_ZIP" "$REPO_ROOT/$FIREFOX_ZIP"
 cd "$REPO_ROOT"
-rm -rf "$STAGE" "$SCRATCH"
 
 echo "==> Done: $CHROME_ZIP and $FIREFOX_ZIP"
 for z in "$CHROME_ZIP" "$FIREFOX_ZIP"; do

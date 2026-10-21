@@ -7,6 +7,7 @@ import { proveFigures } from '@dagsocial/nipopow-client';
 import type { Anchor, FiguresResult, HttpFetch, Listing } from '@dagsocial/nipopow-client';
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
+import { trimBase } from '../base';
 import type { FiguresVerifier } from '../model/state';
 
 export interface FiguresVerifierOptions {
@@ -30,12 +31,6 @@ export interface FiguresVerifierOptions {
  *  verified figures"). */
 const RUN_DEADLINE_MS = 60_000;
 
-/** Strip one trailing `/` so the tool's `${nodeUrl}/api/v1/proof/...` never
- *  asks a double-slash URL — the same rule the tip verifier applies. */
-function normaliseBase(base: string): string {
-  return base.endsWith('/') ? base.slice(0, -1) : base;
-}
-
 export function createFiguresVerifier(opts: FiguresVerifierOptions): FiguresVerifier {
   const prove = opts.prove ?? proveFigures;
   const profile = profileFor(opts.network);
@@ -56,7 +51,7 @@ export function createFiguresVerifier(opts: FiguresVerifierOptions): FiguresVeri
         }
         return baseFetch(url, init);
       };
-      return prove(normaliseBase(readingBase), user, listing, anchor, profile, fetch);
+      return prove(trimBase(readingBase), user, listing, anchor, profile, fetch);
     },
   };
 }

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { refuseNodeBuiltins } from './scripts/refuse-node-builtins.mjs';
+import { webSecurityPolicyPlugin } from './scripts/content-security-policy.mjs';
 
 // The client's default API base is same-origin
 // (WEB_INTERFACE → The client is served from the node's own origin), so the dev
@@ -7,8 +8,7 @@ import { refuseNodeBuiltins } from './scripts/refuse-node-builtins.mjs';
 // nginx or another front does the same, or the client is pointed at a node on
 // any origin — the node answers every origin (NODE_INTERFACE → Cross-origin requests).
 //
-// A dev node listens on 3000 (packages/node/scripts/dev.mjs → httpPort). Set
-// NOTIS_NODE to point the proxy elsewhere.
+// A dev node listens on 3000. Set NOTIS_NODE to point the proxy elsewhere.
 const NODE_ORIGIN = process.env['NOTIS_NODE'] ?? 'http://localhost:3000';
 
 // The faucet is a separate service, not on the node's API prefix
@@ -32,10 +32,14 @@ if (FAUCET_ORIGIN && !process.env['VITE_FAUCET_BASE']) {
 }
 
 // Defaults so no %VITE_…% literal survives in the built shell
-// (WEB_INTERFACE → The client is served from the node's own origin).
+// (WEB_INTERFACE → The client is served from the node's own origin →
+// "The deployment is six tags in the shell's head, and nothing in the
+// bundle's bytes").
 if (!process.env['VITE_WEB_BASE']) process.env['VITE_WEB_BASE'] = '/';
 if (!process.env['VITE_API_BASE']) process.env['VITE_API_BASE'] = '';
 if (!process.env['VITE_FAUCET_BASE']) process.env['VITE_FAUCET_BASE'] = '';
+if (!process.env['VITE_NODES']) process.env['VITE_NODES'] = '[]';
+if (!process.env['VITE_PUBLIC']) process.env['VITE_PUBLIC'] = '';
 if (!process.env['VITE_PUBLIC_ORIGIN']) process.env['VITE_PUBLIC_ORIGIN'] = '';
 if (!process.env['VITE_NETWORK']) process.env['VITE_NETWORK'] = '';
 
@@ -48,9 +52,13 @@ if (!process.env['VITE_NETWORK']) process.env['VITE_NETWORK'] = '';
 const API_PATHS = ['/posts', '/status', '/blocks', '/karma', '/credits', '/likes', '/vouches', '/invites', '/usernames'];
 
 // WEB_INTERFACE → The client's builds substitute nothing.
+// WEB_INTERFACE → The client is served from the node's own origin →
+// "The web build's shell carries its own security policy" — the policy
+// plugin applies to builds alone (vite's dev server injects client styles
+// inline, which the policy's `style-src 'self'` would block).
 export default defineConfig(({ command }) => ({
   base: command === 'build' ? './' : '/',
-  plugins: [refuseNodeBuiltins()],
+  plugins: [refuseNodeBuiltins(), webSecurityPolicyPlugin()],
   server: {
     proxy: {
       ...Object.fromEntries(API_PATHS.map((p) => [p, { target: NODE_ORIGIN, changeOrigin: true }])),

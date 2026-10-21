@@ -16,11 +16,11 @@ import {
   reconcileCreditGrant,
   pendingUsernameEntry,
   pendingSendEntries,
-  dedupePending,
   pendingLikeTargets,
   pendingVouchTargets,
   pendingWithdrawTargets,
 } from '../src/wallet/ledger';
+import { pendingWithoutStandingCards } from '../src/model/feed-reconcile';
 import type { PendingEntry } from '../src/wallet/types';
 import type { PostJson, PostResult, WithdrawnJson, CreditsResult } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
@@ -292,10 +292,15 @@ describe('reconcile', () => {
 });
 
 describe('dedupe and the pending-like overlay', () => {
-  it('drops the node pending rows the ledger holds as posts, keeping the rest', () => {
+  it('a row a submission card names is dropped; a row only the ledger holds is kept', () => {
+    // WEB_INTERFACE → What the feed reads, and what a card shows for it →
+    // "The reader's own pending post is drawn once": a submission card
+    // standing in the page names 'p1'; 'p9' and 'target1' are only in the
+    // pending ledger (postEntry.postId is 'p1'; likeEntry's target is not a
+    // post row), and the function reads cardIds alone.
     const nodePending = [{ id: 'p1' }, { id: 'p9' }, { id: 'target1' }];
-    // Only the post entry's postId ('p1') is dropped; a like's target is not a post row.
-    expect(dedupePending(nodePending, [postEntry, likeEntry]).map((r) => r.id)).toEqual(['p9', 'target1']);
+    const cardIds = new Set<string>(['p1']);
+    expect(pendingWithoutStandingCards(nodePending, cardIds).map((r) => r.id)).toEqual(['p9', 'target1']);
   });
 
   it('the overlay names only the like targets', () => {
@@ -423,7 +428,12 @@ describe('the faucet grant entry', () => {
   });
 
   it('is neither a dedupe target nor a like-overlay target', () => {
-    expect(dedupePending([{ id: KEY }], [grantEntry]).map((r) => r.id)).toEqual([KEY]);
+    // The feed's pending rule reads the postIds of standing submission cards
+    // alone; a grant entry is not a submission card, so a row whose id matches
+    // the grant's key passes through under an empty `cardIds`
+    // (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+    // "The reader's own pending post is drawn once").
+    expect(pendingWithoutStandingCards([{ id: KEY }], new Set<string>()).map((r) => r.id)).toEqual([KEY]);
     expect(pendingLikeTargets([grantEntry]).size).toBe(0);
   });
 });

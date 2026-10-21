@@ -347,8 +347,7 @@ describe('profile window — the two states', () => {
 
   it('preference rows do not appear in the profile window — they belong to @settings', () => {
     // WEB_INTERFACE → The profile window: everything the settings window holds
-    // is absent here (WEB_INTERFACE → The settings window). test/settings.test.ts
-    // pins the presence there.
+    // is absent here (WEB_INTERFACE → The settings window).
     for (const c of [ctx(), ctx({ identity: unlocked })]) {
       const body = render(handlers(), c);
       for (const label of ['theme', 'identity tint', 'node', 'faucet', 'sign each rep action', 'arrangement']) {
@@ -1529,9 +1528,8 @@ describe('profile — Esc in a passphrase form cancels that form and reaches not
 // ---------------------------------------------------------------------------
 // The verified-figures line beneath the rep number (WEB_INTERFACE → The
 // extension → "The verified figures", → The profile window → "The `rep` row
-// is the `effective` number alone"). The pure model's rows are pinned in
-// test/figures-line.test.ts; these tests pin the row's plumbing: the hint
-// element renders under the mono number, and under the full rule (row 4)
+// is the `effective` number alone"). These tests pin the row's plumbing: the
+// hint element renders under the mono number, and under the full rule (row 4)
 // the mono span gains `.clay` alongside the hint. The number stays the live
 // `effective` in every state.
 // ---------------------------------------------------------------------------

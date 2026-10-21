@@ -5,6 +5,7 @@
 
 import { proveName } from '@dagsocial/nipopow-client';
 import type { Anchor, HttpFetch, NameClaim, NameResult } from '@dagsocial/nipopow-client';
+import { trimBase } from '../base';
 import type { NamesVerifier } from '../model/state';
 
 export interface NamesVerifierOptions {
@@ -14,17 +15,11 @@ export interface NamesVerifierOptions {
   prove?: typeof proveName;
 }
 
-/** Strip one trailing `/` so the tool's `${nodeUrl}/usernames…` never asks a
- *  double-slash URL — the same rule the tip and figures verifiers apply. */
-function normaliseBase(base: string): string {
-  return base.endsWith('/') ? base.slice(0, -1) : base;
-}
-
 export function createNamesVerifier(opts: NamesVerifierOptions): NamesVerifier {
   const prove = opts.prove ?? proveName;
   return {
     async run(readingBase: string, claim: NameClaim, anchor: Anchor): Promise<NameResult> {
-      return prove(normaliseBase(readingBase), claim, anchor, opts.fetch);
+      return prove(trimBase(readingBase), claim, anchor, opts.fetch);
     },
   };
 }

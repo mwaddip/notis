@@ -106,8 +106,8 @@ the extension itself sends the website nothing.
 browser typecheck. The client supplies nothing in their place — no alias, no injected global, no polyfill — and its hex
 conversions are `@dagsocial/types`' pair (`TYPES_INTERFACE → Export table`), not copies of it.
 
-⛔ **A Node built-in fails every build.** `vite.config.ts`, `vite.background.config.ts` and
-`vite.extension.config.ts` each carry a plugin that refuses any Node built-in a module imports, `node:`-prefixed or
+⛔ **A Node built-in fails every build.** `vite.config.ts`, `vite.background.config.ts`, `vite.extension.config.ts`
+and `vite.bridge.config.ts` each carry a plugin that refuses any Node built-in a module imports, `node:`-prefixed or
 bare. vite alone refuses only a *named* import from one; a namespace or a default import passes it with a warning and
 fails at run time, and so would a new dependency that reached for one. The plugin applies to builds alone: vitest runs
 the test tree through the same `vite.config.ts`, and a mirror test imports Node's `crypto` on purpose.
@@ -136,7 +136,9 @@ Each GitHub release carries it as **`notis-web-<ver>.zip`** beside the node's th
 `notis-web-<ver>/` holding `web/`, the built bundle; `nginx.example.conf`, the vhost excerpt; and
 `README.txt`, the serving note — built by `packages/web/scripts/build-release.sh`, which the release
 workflow's linux job runs. Never an installer. `<ver>` is the repository's version, the one the node's
-artifacts carry.
+artifacts carry. **A zip holds one build**: each script assembles its zips in a directory of its own, made empty for
+that run and removed however the run ends, and moves each finished zip into the repository's root over any zip of
+that name — never adding to one that stands there.
 
 **The extension ships beside it, twice.** Each release also carries **`notis-extension-<ver>-chrome.zip`**
 and **`notis-extension-<ver>-firefox.zip`** — the same client built as an extension page (→ The
@@ -155,10 +157,13 @@ tag's `git archive` has the same contents, the build a reviewer at Mozilla repea
 `packages/web/extension/REVIEWERS.md` — and the xpi it returns is attached to the release. **A version is signed
 once**, so the script lands the signed file in the repository's root before any check of it can refuse: a refusal
 leaves `notis-extension-<ver>-firefox.unverified.xpi` there and names it, and the copy goes only once the verified
-file is proven landed. The signing step runs
-`web-ext` at one exact version, because that process holds the credentials; they are the publisher's own, kept in
-a file outside the repository that the signing step alone reads, and live in no tracked file. **An installed copy
-updates itself:** the manifest's `update_url` names
+file is proven landed. **`web-ext` is the web package's own dev dependency**, at one exact version, its whole tree
+pinned by the workspace's lockfile and installed with the package, because the signing process holds the
+credentials: the build's lint runs that install and needs no network, and the signing step runs the one the clean
+build from the tag's archive installed; neither resolves a package as it runs, and each runs with `web-ext`'s update
+check off (`NO_UPDATE_NOTIFIER`). The credentials are the publisher's
+own, kept in a file outside the repository that the signing step alone reads, and live in no tracked file. **An
+installed copy updates itself:** the manifest's `update_url` names
 `https://raw.githubusercontent.com/mwaddip/notis/updates/firefox/updates.json` — the file `firefox/updates.json`
 on the repository's branch `updates`, one entry per release carrying the version, the release asset's URL, its
 sha256 and the Firefox minimum — and **that URL is permanent**, because an installed copy reads the `update_url`
@@ -187,9 +192,11 @@ no faucet (→ The faucet step). Every reference the
 built shell makes is relative, and so is every reference inside `public/` — the fonts stylesheet names its
 files beside itself — so the `<base>` alone decides where the client's files resolve, on the workspace page
 and on a standalone page alike. The build writes the six from `VITE_WEB_BASE`, `VITE_API_BASE`,
-`VITE_FAUCET_BASE`, `VITE_NODES`, `VITE_PUBLIC` and `VITE_NETWORK` — `/`, empty, empty, `[]`, empty and empty under
-the dev server and in the web release; the extension build's values are its own (→ The extension) — and a
-host with another layout edits those six values, and the picture's URL below, in one file. The client reads them once, at load: the
+`VITE_FAUCET_BASE`, `VITE_NODES`, `VITE_PUBLIC` and `VITE_NETWORK` — each one left unset written as `/`, empty,
+empty, `[]`, empty and empty, under the dev server and in a web build alike, so no `%VITE_…%` literal reaches the
+shell; the web release writes notis.fun's three paths and `[]`, empty and empty; the extension build's values are its
+own (→ The extension) — and a host with another layout edits those six values, and the picture's URL below, in one
+file. The client reads them once, at load: the
 `<base>`'s `href` resolved against the page, its path with a trailing `/` (`/` when the element is absent),
 is the base `decideMode` takes (→ The standalone thread); each meta's content, trimmed, one trailing `/`
 stripped, is the value the client uses — `notis-api` the default the stored `node` preference overrides
@@ -209,9 +216,10 @@ page's own location. `notis-network` names the network the build is for — `tes
 `networkType` a node reports** — a verifier that took its profile from the node it checks would hold a lying node to
 whatever target that node named. Empty, or a name no profile answers to, is a build with no verifier; the web release
 writes it empty. **The node the client talks to resolves in one order:** the stored
-`node` preference, else the first entry of `notis-nodes`, else `notis-api`. At start, when `GET /status`
-fails and the list has more entries, the App adopts the next one that answers — for the session, not
-stored, so the list keeps governing; when none answers, the feed's own report line says *no node
+`node` preference, else the first entry of `notis-nodes`, else `notis-api`. At start, when no `node` preference
+is stored and the feed's first read fails — no answer, a refusal, or an answer not of its route's shape (→ Reading a
+node's answer) — and the list has more entries, the App adopts the next one whose feed read answers — for the
+session, not stored, so the list keeps governing; when none answers, the feed's own report line says *no node
 answered — set one in settings*, and the settings window's `node` row is where one is typed. No first-run screen.
 
 **The shell carries the site's preview card, and the picture's URL is the seventh configured value.** After the
@@ -225,6 +233,24 @@ is a path, so the build composes `og:image` as `<origin><base>og.png` from `VITE
 dev server, `https://notis.fun` in the release — and a host under another origin or base edits that value with the
 other six; `build-release.sh` checks it. No `og:url` on the root: a scraper takes the page's own. A post's page
 carries none of this block — the node removes it before injecting the post's tags (`NODE_INTERFACE → Link previews`).
+
+**The web build's shell carries its own security policy.** The shell a web build writes holds, after its `charset`
+and before `<base>`,
+
+```html
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src *; connect-src *; object-src 'none'; base-uri 'self'; form-action 'none'">
+```
+
+— every script, stylesheet and font the bundle's own, no inline script and no inline style; `connect-src` open
+because the `node` preference names any origin (→ The settings window), `img-src` because an image loads from its own
+host on the reader's press (→ Content — what a card renders, and what the composer writes). The policy rides the shell,
+so every host that serves the bundle serves it, and the node's tagged answer carries it (`NODE_INTERFACE → Link
+previews`). The build writes it and the dev server does not, since vite's development styles arrive inline; the
+extension's pages run under the browser's extension policy instead (→ The extension → "Permissions and policy, the
+whole list"). `build-release.sh` checks the shell holds the policy the build writes. **A meta cannot forbid
+framing**, so `frame-ancestors 'none'` is the one header a host adds: `nginx.example.conf` sends
+`Content-Security-Policy: frame-ancestors 'none'` on the client's two locations, and `README.txt` names it. The
+example routes `/web/p/<id>` to `GET /shell/:id` for an id of 64 lowercase hex alone, the ids the node answers.
 
 ⚠ **A `<base>` element resolves every relative URL in the document, fragments included.** A same-document
 fragment reference — `<use href="#id">`, `<a href="#id">` — becomes a reference to `<base>#id`, another
@@ -819,9 +845,10 @@ script, its background and its bridge have no `import`, its manifests parse, the
 the pattern the build's `notis-public` derives — and an empty `notis-public` emits no `content_scripts` and no
 `bridge.js` — Firefox's `browser_specific_settings` is the object → "The manifest" states and Chrome's manifest
 carries none, both manifests' `optional_host_permissions` is the pattern the build's faucet base derives — the key
-absent under an empty base — and `web-ext lint --self-hosted` is clean; without the flag the lint reads the
-manifest as a listed add-on's, where an `update_url` is an error. It checks the shell's `notis-network` at the build's
-value too, and refuses a name no network profile answers to.
+absent under an empty base — and the package's own `web-ext` (→ "The Firefox build ships signed as well") lints the
+Firefox stage clean with `--self-hosted`; without the flag the lint reads the manifest as a listed add-on's, where an
+`update_url` is an error. It checks the shell's `notis-network` at the build's value too, and refuses a name no network
+profile answers to.
 
 ## Reading a node's answer
 
@@ -945,6 +972,9 @@ one.
   it lands).
 - **The feed's rows are posts and withdrawn markers only.** The client filters the withdrawn ones out,
   which costs it rows from a page and is the second reason paging follows `next`.
+- **The reader's own pending post is drawn once.** A row of the feed's `pending` whose id a submission card standing
+  in the page names is not drawn — the card stands for it until a `↻` reads the node's row; a row the pending ledger
+  holds with no card standing for it, as after a reload, is drawn as the node gives it.
 
 ## The workspace
 
@@ -1199,8 +1229,8 @@ a lock held or waited for answers held.
   ends here too, that tab having released the lock when it navigated.
 
 **Without Web Locks** every workspace tab writes, as a browser without the API cannot know about another
-tab, and the way in always switches in place. **Nothing crosses the channel but a post id**, and only a
-64-hex one is acted on; the `notis:open` event carries the same and no more.
+tab, and the way in always switches in place. **Nothing crosses the channel but a post id**, and only one of 64
+lowercase hex — the ids the client itself writes — is acted on; the `notis:open` event carries the same and no more.
 
 ## Links
 
@@ -1837,12 +1867,13 @@ reader's own name, read from `GET /usernames?owner=<key>` at identity load, on t
 or burn stands (→ The wallet); a 404 is *holding none*, and a read not yet answered is `—`.
 
 - **Holding none, nothing pending, a rep box to spend:** the claim form — a real `<form>`: one text field
-  (*the name to claim*, `maxlength` 24, no autocomplete, no autocapitalise, no spellcheck) and the boxed `claim`
+  (*the name to claim*, `maxlength` `M`, no autocomplete, no autocapitalise, no spellcheck) and the boxed `claim`
   beside it on one line — the box the primary action's, green as `send` is (`HOUSE_STYLE → Interaction`) —
-  one refusal line, and under it *free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is
-  one name whatever its case. a later burn costs N rep and restores the claim.* — `N` is
-  `USERNAME_BURN_PRICE` from `@dagsocial/types`. The value is trimmed and one leading `@` dropped, since `@` is the
-  written form and never the name (`ARCHITECTURE → Usernames`), and refused with *a name is 1 to 24 letters,
+  one refusal line, and under it *free, once per key. 1 to M letters, digits or _, shown as typed; one name is
+  one name whatever its case. a later burn costs N rep and restores the claim.* — `M` is `USERNAME_MAX_BYTES` (24)
+  and `N` is `USERNAME_BURN_PRICE`, both from `@dagsocial/types`, wherever the row or a refusal names them. The
+  value is trimmed and one leading `@` dropped, since `@` is the
+  written form and never the name (`ARCHITECTURE → Usernames`), and refused with *a name is 1 to M letters,
   digits or _.* unless `isValidUsernameBytes` accepts its UTF-8 bytes — the one implementation of the rule,
   never a copy and never an HTML `pattern` (`TYPES_INTERFACE → Content limits`). A locked identity mounts the
   unlock form in a row under the form, and success continues (→ The identity module). The client looks no
@@ -1860,11 +1891,11 @@ or burn stands (→ The wallet); a 404 is *holding none*, and a read not yet ans
   identity is locked. The name and its box are resolved at the press (→ The wallet).
 
 **The flight ends in the row.** A rejection reads *claim rejected:* or *burn rejected:* and the node's refusal
-as a sentence — *that name is taken.*, *this key already holds a name.*, *that name is not 1 to 24 letters,
-digits or _.*, *a claim for that name is already pending.*, *this key already has a claim pending.*, *that name
-is not held any more.*, *the node's pool is full right now.*, *can't reach the node right now.*, else the node's
-message lowercased — and the form or the word returns (`HOUSE_STYLE → Voice`). A landing re-renders the row and
-the header (→ The identity display) and nothing else. An expiry reads *no block took this by height N.* with
+as a sentence — *that name is taken.*, *this key already holds a name.*, *that name is not 1 to M letters,
+digits or _.* (`M` as above), *a claim for that name is already pending.*, *this key already has a claim pending.*,
+*that name is not held any more.*, *the node's pool is full right now.*, *can't reach the node right now.*, else the
+node's message lowercased — and the form or the word returns (`HOUSE_STYLE → Voice`). A landing re-renders the row
+and the header (→ The identity display) and nothing else. An expiry reads *no block took this by height N.* with
 `try again`, which rebuilds from the current view with the same name; the entry is removed and the box returns
 to the view.
 

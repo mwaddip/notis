@@ -10,8 +10,7 @@
 
 import { K_LINKS, readLinksPref } from './links';
 import { decideMode } from '../mode';
-
-const HEX64_ANYCASE = /^[0-9a-fA-F]{64}$/;
+import { readHex64 } from '../hex64';
 
 /** The bridge's environment — the `chrome` surface, the page globals it reads,
  *  and the build's public base (WEB_INTERFACE → The extension → "The build's
@@ -66,14 +65,13 @@ export function bridge(env: BridgeEnv): void {
     // a page's event reaches a content script across a world boundary, where
     // the constructor is not the listener's own. A plain `Event` carries no
     // `detail`, which the `typeof` arm below refuses.
-    const detail: unknown = (event as { detail?: unknown }).detail;
-    if (typeof detail !== 'string') return;
-    if (!HEX64_ANYCASE.test(detail)) return;
+    const idRead = readHex64((event as { detail?: unknown }).detail);
+    if (idRead === null) return;
     // The reader's press is the browser's transient user activation, which a
     // page cannot forge; a timer sees `isActive` false.
     if (env.navigator.userActivation?.isActive !== true) return;
     event.preventDefault();
-    void chromeApi.runtime.sendMessage({ kind: 'offered', id: detail.toLowerCase() });
+    void chromeApi.runtime.sendMessage({ kind: 'offered', id: idRead });
   });
 
   // WEB_INTERFACE → The extension → "A takeover needs a tab created for the

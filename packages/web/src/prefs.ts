@@ -7,6 +7,7 @@
 // (WEB_INTERFACE → "A faucet is a fact of the deployment, not of the network").
 
 import { NETWORK_PROFILES, type NetworkType } from '@dagsocial/types';
+import { trimBase } from './base';
 
 export type Theme = 'light' | 'dark';
 export type IdTint = 'spine' | 'wash' | 'both' | 'off';
@@ -31,8 +32,7 @@ export function readBase(): string {
 export function readMeta(name: string): string {
   const el = document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
   if (!el) return '';
-  const v = el.content.trim();
-  return v.endsWith('/') ? v.slice(0, -1) : v;
+  return trimBase(el.content.trim());
 }
 
 /** Parse the `notis-nodes` meta as a JSON array of strings — anything else

@@ -90,6 +90,15 @@ describe('envelope — seal and open', () => {
     await expect(seal(new Uint8Array(31), pubKeyHex, 'pw', SMALL)).rejects.toThrow(/32 bytes/);
     await expect(seal(new Uint8Array(32), 'zz', 'pw', SMALL)).rejects.toThrow(/64 hex/);
   });
+
+  it('seal refuses an upper-case public key, seals a lower-case one of the same bytes', async () => {
+    const { seed, pubKeyHex } = freshKey();
+    // Control: the lower-case form seals.
+    await expect(seal(seed, pubKeyHex, 'pw', SMALL)).resolves.toMatchObject({ pubKeyHex });
+    // The strict rule: a public key is 64 lowercase hex
+    // (NODE_INTERFACE → HTTP API → "Hex is lowercase").
+    await expect(seal(seed, pubKeyHex.toUpperCase(), 'pw', SMALL)).rejects.toThrow(/64 hex/);
+  });
 });
 
 describe('envelope — parseFile distinguishes the shapes', () => {
@@ -136,6 +145,17 @@ describe('envelope — parseFile distinguishes the shapes', () => {
     expect(() => parseFile('123')).toThrow(/identity file/);
     expect(() => parseFile(JSON.stringify({ pubKeyHex: 'zz' }))).toThrow(/valid public key/);
     expect(() => parseFile(JSON.stringify({ pubKeyHex: 'ab'.repeat(32) }))).toThrow(/not an identity file/);
+  });
+
+  it('parseFile refuses a file whose public key is upper-case, parses the same bytes lower-cased', async () => {
+    const { seed, pubKeyHex } = freshKey();
+    const env = await seal(seed, pubKeyHex, 'pw', SMALL);
+    // Control: the lower-case form parses.
+    expect(parseFile(JSON.stringify(env)).pubKeyHex).toBe(pubKeyHex);
+    // The strict rule: a public key is 64 lowercase hex
+    // (NODE_INTERFACE → HTTP API → "Hex is lowercase").
+    const upper = { ...env, pubKeyHex: pubKeyHex.toUpperCase() };
+    expect(() => parseFile(JSON.stringify(upper))).toThrow(/valid public key/);
   });
 
   it('parseFile refuses an envelope of an unread version and one missing its parameters', async () => {

@@ -1,13 +1,16 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { computeTxId, decodeTx, computeContentHash, bytesToHex, hexToBytes, generateKeyPair } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
+import { isHex64Lower } from '@dagsocial/node-reads';
 import { seal, open, parseFile, IdentityError, type Envelope } from '../identity/envelope';
 import {
-  isMessage, REFUSED_UNKNOWN,
+  isMessage, isSignRecord, REFUSED_UNKNOWN,
   type AppSnapshot, type SignAnswer, type SignHint, type SignRecord,
 } from './protocol';
 import { summarise, classifyLedger } from './policy';
 import { K_LINKS, K_OPEN_PREFIX, readLinksPref, type LinksPref } from './links';
+import { IDENTITY_KEY, BACKEDUP_KEY, POLICY_KEY, SEED_KEY } from './storage-keys';
+import { readHex64 } from '../hex64';
 
 // The extension's identity service — WEB_INTERFACE → The extension. It holds
 // the envelope in `storage.local` and the unlocked seed in `storage.session`,
@@ -17,18 +20,13 @@ import { K_LINKS, K_OPEN_PREFIX, readLinksPref, type LinksPref } from './links';
 // (WEB_INTERFACE → "The contexts, and what each may hold").
 
 // ---------------------------------------------------------------------------
-// Storage keys — WEB_INTERFACE → "The contexts, and what each may hold".
+// Local storage keys with no reader outside this module —
+// WEB_INTERFACE → "The contexts, and what each may hold". The identity, seed,
+// backed-up flag and sign-policy keys live in `./storage-keys`.
 // ---------------------------------------------------------------------------
 
-const K_ENVELOPE = 'notis.identity';
-const K_BACKEDUP = 'notis.identity.backedup';
-const K_POLICY = 'notis.signPolicy';
-const K_SEED = 'notis.seed';
 const K_DRAFT = 'notis.draft';
 const K_SIGN_PREFIX = 'notis.sign.';
-
-const HEX64 = /^[0-9a-f]{64}$/;
-const HEX64_ANYCASE = /^[0-9a-fA-F]{64}$/;
 
 /** The build's per-install shape — WEB_INTERFACE → The extension. `publicBase`
  *  is the shell's `notis-public`, empty for a build with no bridge, checked
@@ -47,7 +45,7 @@ export interface LockManager {
 
 /** `install` reads the lock manager from here — a required argument. The
  *  browser's module-load install hands the adapter over `navigator.locks`; a
- *  Node test hands `fakeLockManager()` from `test/fake-chrome.ts`. */
+ *  Node test hands `fakeLockManager()`. */
 export interface InstallOptions {
   locks: LockManager;
 }
@@ -133,21 +131,21 @@ async function handle(api: typeof chrome, config: BackgroundConfig, locks: LockM
 
 async function stateSnapshot(api: typeof chrome): Promise<AppSnapshot | null> {
   const [localGet, seedGet, policy] = await Promise.all([
-    api.storage.local.get([K_ENVELOPE, K_BACKEDUP]),
-    api.storage.session.get(K_SEED),
+    api.storage.local.get([IDENTITY_KEY, BACKEDUP_KEY]),
+    api.storage.session.get(SEED_KEY),
     readPolicy(api),
   ]);
-  const envelope = parseEnvelope(localGet[K_ENVELOPE]);
+  const envelope = parseEnvelope(localGet[IDENTITY_KEY]);
   if (envelope === null) return null;
   // WEB_INTERFACE → The extension → "The contexts, and what each may hold" —
   // a seed is the identity's only when its public key is the envelope's
   // `pubKeyHex`, and `state`'s `locked` answers that. A seed of another key
   // sitting in `storage.session` reads as locked.
-  const locked = identitySeed(seedGet[K_SEED], envelope.pubKeyHex) === null;
+  const locked = identitySeed(seedGet[SEED_KEY], envelope.pubKeyHex) === null;
   return {
     pubKeyHex: envelope.pubKeyHex,
     locked,
-    backedUp: localGet[K_BACKEDUP] === '1',
+    backedUp: localGet[BACKEDUP_KEY] === '1',
     policy,
   };
 }
@@ -173,14 +171,14 @@ async function discardDraft(api: typeof chrome): Promise<'ok'> {
 async function create(api: typeof chrome, passphrase: string): Promise<{ pubKeyHex: string } | { error: string }> {
   const draftGet = await api.storage.session.get(K_DRAFT);
   const d = draftGet[K_DRAFT] as { pubKeyHex?: unknown; seedHex?: unknown } | undefined;
-  if (!d || typeof d.pubKeyHex !== 'string' || typeof d.seedHex !== 'string' || !HEX64.test(d.pubKeyHex) || !HEX64.test(d.seedHex)) {
+  if (!d || !isHex64Lower(d.pubKeyHex) || !isHex64Lower(d.seedHex)) {
     return { error: 'no drafted key to create.' };
   }
   const seed = hexToBytes(d.seedHex);
   const envelope = await seal(seed, d.pubKeyHex, passphrase);
-  await api.storage.local.set({ [K_ENVELOPE]: JSON.stringify(envelope) });
-  await api.storage.local.remove(K_BACKEDUP);
-  await api.storage.session.set({ [K_SEED]: d.seedHex });
+  await api.storage.local.set({ [IDENTITY_KEY]: JSON.stringify(envelope) });
+  await api.storage.local.remove(BACKEDUP_KEY);
+  await api.storage.session.set({ [SEED_KEY]: d.seedHex });
   await api.storage.session.remove(K_DRAFT);
   return { pubKeyHex: d.pubKeyHex };
 }
@@ -216,8 +214,8 @@ async function importFile(api: typeof chrome, text: string, passphrase: string):
   } catch (e) {
     return { error: errorMessage(e) };
   }
-  await api.storage.local.set({ [K_ENVELOPE]: JSON.stringify(envelope), [K_BACKEDUP]: '1' });
-  await api.storage.session.set({ [K_SEED]: bytesToHex(seed) });
+  await api.storage.local.set({ [IDENTITY_KEY]: JSON.stringify(envelope), [BACKEDUP_KEY]: '1' });
+  await api.storage.session.set({ [SEED_KEY]: bytesToHex(seed) });
   return { pubKeyHex: envelope.pubKeyHex };
 }
 
@@ -230,7 +228,7 @@ async function exportFile(api: typeof chrome, password: string): Promise<{ text:
   const seed = await readIdentitySeed(api, env.pubKeyHex);
   if (seed === null) return { error: 'no unlocked identity is loaded to export.' };
   const envelope = await seal(seed, env.pubKeyHex, password);
-  await api.storage.local.set({ [K_BACKEDUP]: '1' });
+  await api.storage.local.set({ [BACKEDUP_KEY]: '1' });
   return { text: JSON.stringify(envelope, null, 2) };
 }
 
@@ -248,18 +246,18 @@ async function unlock(api: typeof chrome, passphrase: string): Promise<'ok' | { 
   } catch (e) {
     return { error: errorMessage(e) };
   }
-  await api.storage.session.set({ [K_SEED]: bytesToHex(seed) });
+  await api.storage.session.set({ [SEED_KEY]: bytesToHex(seed) });
   return 'ok';
 }
 
 async function lock(api: typeof chrome): Promise<'ok'> {
-  await api.storage.session.remove(K_SEED);
+  await api.storage.session.remove(SEED_KEY);
   return 'ok';
 }
 
 async function forget(api: typeof chrome): Promise<'ok'> {
-  await api.storage.local.remove([K_ENVELOPE, K_BACKEDUP]);
-  await api.storage.session.remove(K_SEED);
+  await api.storage.local.remove([IDENTITY_KEY, BACKEDUP_KEY]);
+  await api.storage.session.remove(SEED_KEY);
   return 'ok';
 }
 
@@ -268,12 +266,12 @@ async function forget(api: typeof chrome): Promise<'ok'> {
 // ---------------------------------------------------------------------------
 
 async function readPolicy(api: typeof chrome): Promise<'silent' | 'ask'> {
-  const got = await api.storage.local.get(K_POLICY);
-  return got[K_POLICY] === 'ask' ? 'ask' : 'silent';
+  const got = await api.storage.local.get(POLICY_KEY);
+  return got[POLICY_KEY] === 'ask' ? 'ask' : 'silent';
 }
 
 async function setPolicy(api: typeof chrome, karma: 'silent' | 'ask'): Promise<'ok'> {
-  await api.storage.local.set({ [K_POLICY]: karma });
+  await api.storage.local.set({ [POLICY_KEY]: karma });
   return 'ok';
 }
 
@@ -305,8 +303,7 @@ function checkBridgeSender(
   if (typeof sender.tab?.id !== 'number') return null;
   const url = typeof sender.url === 'string' ? sender.url : '';
   if (!url.startsWith(config.publicBase + 'p/')) return null;
-  if (typeof id !== 'string' || !HEX64_ANYCASE.test(id)) return null;
-  return id.toLowerCase();
+  return readHex64(id);
 }
 
 async function arrived(api: typeof chrome, config: BackgroundConfig, rawId: string, sender: chrome.runtime.MessageSender): Promise<'ok' | { error: string }> {
@@ -555,23 +552,23 @@ async function raiseOrOpenPage(api: typeof chrome): Promise<void> {
  *  in `storage.session` reads as none. `state`'s `locked` and `sign`'s step
  *  6 both go through this one reader. */
 async function readIdentitySeed(api: typeof chrome, envPubKeyHex: string): Promise<Uint8Array | null> {
-  const got = await api.storage.session.get(K_SEED);
-  return identitySeed(got[K_SEED], envPubKeyHex);
+  const got = await api.storage.session.get(SEED_KEY);
+  return identitySeed(got[SEED_KEY], envPubKeyHex);
 }
 
 /** The seed as the identity's — null when the stored value is not 64 hex or
  *  its public key is not the envelope's (WEB_INTERFACE → "The contexts, and
  *  what each may hold"). */
 function identitySeed(raw: unknown, envPubKeyHex: string): Uint8Array | null {
-  if (typeof raw !== 'string' || !HEX64.test(raw)) return null;
+  if (!isHex64Lower(raw)) return null;
   const seed = hexToBytes(raw);
   const pub = bytesToHex(ed25519.getPublicKey(seed));
   return pub === envPubKeyHex ? seed : null;
 }
 
 async function readEnvelope(api: typeof chrome): Promise<Envelope | null> {
-  const got = await api.storage.local.get(K_ENVELOPE);
-  return parseEnvelope(got[K_ENVELOPE]);
+  const got = await api.storage.local.get(IDENTITY_KEY);
+  return parseEnvelope(got[IDENTITY_KEY]);
 }
 
 function parseEnvelope(raw: unknown): Envelope | null {
@@ -587,7 +584,7 @@ function parseEnvelope(raw: unknown): Envelope | null {
 async function readRecord(api: typeof chrome, id: string): Promise<SignRecord | null> {
   const got = await api.storage.session.get(K_SIGN_PREFIX + id);
   const v = got[K_SIGN_PREFIX + id];
-  return isRecord(v) ? v : null;
+  return isSignRecord(v) ? v : null;
 }
 
 async function readAllRecords(api: typeof chrome): Promise<Array<[string, SignRecord]>> {
@@ -595,7 +592,7 @@ async function readAllRecords(api: typeof chrome): Promise<Array<[string, SignRe
   const rows: Array<[string, SignRecord]> = [];
   for (const [k, v] of Object.entries(all)) {
     if (!k.startsWith(K_SIGN_PREFIX)) continue;
-    if (isRecord(v)) rows.push([k, v]);
+    if (isSignRecord(v)) rows.push([k, v]);
   }
   return rows;
 }
@@ -622,12 +619,6 @@ async function canOpenNewPrompt(api: typeof chrome): Promise<boolean> {
     await api.storage.session.set({ [key]: updated });
   }
   return true;
-}
-
-function isRecord(v: unknown): v is SignRecord {
-  if (typeof v !== 'object' || v === null) return false;
-  const r = v as { id?: unknown; txIdHex?: unknown; txBytesHex?: unknown; summary?: unknown };
-  return typeof r.id === 'string' && typeof r.txIdHex === 'string' && typeof r.txBytesHex === 'string' && typeof r.summary === 'object';
 }
 
 // ---------------------------------------------------------------------------

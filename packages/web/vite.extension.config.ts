@@ -12,7 +12,8 @@ export default defineConfig({
   plugins: [refuseNodeBuiltins()],
   build: {
     // Top-level await lives in main.ts's identity swap; both browsers'
-    // minimum versions (Chrome 112, Firefox 121) support it.
+    // minimum versions carry it (WEB_INTERFACE → The extension →
+    // "The manifest" names the floors).
     target: 'es2022',
     outDir: process.env['NOTIS_EXT_OUTDIR'] ?? 'dist-extension',
     emptyOutDir: false,

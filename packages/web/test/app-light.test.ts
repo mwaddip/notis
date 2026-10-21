@@ -19,6 +19,7 @@ import type {
 import {
   ME, flush, settle, hid, status, fullRow, light, tomb,
   makeApi, testResolver, makeCache, makeIdentity, harness, seedCache, stubResolver, stubVerifier,
+  lockableIdentity, recordingWrites, karmaWithBox,
   type Fake,
 } from './app-light-shared';
 import { jsonResponse } from './honest-page';
@@ -1013,11 +1014,13 @@ describe('no cache: rows are slots and fill from the resolver alone', () => {
 
 // ---------------------------------------------------------------------------
 // The reader's own pending post rides a light row from the feed's pending.
-// The cache holds it as the reader's own; intake composes it; dedupeOwn drops
-// it beside its submission card.
+// The cache holds it as the reader's own and intake composes it; with no
+// submission card standing for it, the row stays in feed.pending and is drawn
+// as a card from the cache (WEB_INTERFACE → What the feed reads, and what a
+// card shows for it → "The reader's own pending post is drawn once").
 // ---------------------------------------------------------------------------
 describe('the reader\'s own pending post is a card and never a slot', () => {
-  it('intake composes it from the cache; dedupeOwn drops it from feed.pending', async () => {
+  it('intake composes it from the cache; with no submission card standing, the row is in feed.pending and drawn as a card', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -1033,8 +1036,9 @@ describe('the reader\'s own pending post is a card and never a slot', () => {
       resolver: r.resolver, cache, identityKey: ME,
       feedResults: [{ posts: [], next: null, pending: [lo], pendingCount: 1 }],
     });
-    // A pending post entry in the ledger: dedupeOwn drops the row from
-    // feed.pending beside the submission card.
+    // The pending ledger holds a post entry whose id names the row above, and
+    // no submission card stands for it — as after a reload, where submissions
+    // start empty while the ledger carries the entry on from the last session.
     const ledger = (h.app as unknown as { ledger: PendingLedger }).ledger;
     ledger.add({
       txId: own.txId!,
@@ -1049,8 +1053,210 @@ describe('the reader\'s own pending post is a card and never a slot', () => {
     // No slot was ever drawn and no resolve was asked — the cache held it.
     expect(h.feedEl.querySelectorAll('.card.slot').length).toBe(0);
     expect(r.calls.length).toBe(0);
-    // dedupeOwn dropped the pending row — feed.pending is empty.
+    // feed.pending carries the row, drawn as a card from the cache.
+    expect(h.drive.state.feed.pending.length).toBe(1);
+    expect(h.drive.state.feed.pending[0]!.id).toBe(own.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// After a reload the pending ledger holds the reader's own post entry while
+// `state.submissions` starts empty — a submission is made only by the
+// composer's flight. The feed's `pending` carries the node's row, and the
+// row stands in the feed's DOM as a card
+// (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "The reader's own pending post is drawn once").
+// ---------------------------------------------------------------------------
+describe('after a reload the reader\'s own pending post stands in feed.pending as a card', () => {
+  it('the web build: a pre-seeded ledger post entry and no submission card — the node\'s row stands in the feed\'s DOM, a card with the post\'s text', async () => {
+    // Pre-seed the pending ledger in localStorage, as the last session's
+    // write would have left it. The fresh App's `new PendingLedger(ME)`
+    // reads this entry; `state.submissions` starts empty.
+    const own = fullRow('o', { author: ME, status: 'pending', content: 'reader-text' });
+    const seed = new PendingLedger(ME);
+    seed.add({
+      txId: own.txId!,
+      kind: 'post',
+      postId: own.id,
+      inputs: [],
+      submittedAtHeight: 0,
+      expiresAtHeight: 999,
+    });
+    expect(new PendingLedger(ME).all().length).toBe(1); // the ledger survives the reload
+    // The web build: no resolver, no cache, no verifier.
+    const h = harness({
+      resolver: null, verifier: null, cache: null, identityKey: ME,
+      feedResults: [{ posts: [], next: null, pending: [own], pendingCount: 1 }],
+    });
+    expect(h.drive.state.submissions.length).toBe(0); // a reload starts the session with no submission
+    await h.drive.loadFeed();
+    await settle();
+    // The row stands in feed.pending.
+    expect(h.drive.state.feed.pending.length).toBe(1);
+    expect(h.drive.state.feed.pending[0]!.id).toBe(own.id);
+    // A card with the post's text stands in the feed's DOM.
+    const texts = Array.from(h.feedEl.querySelectorAll('.card-content')).map((n) => n.textContent ?? '');
+    expect(texts.some((t) => t.includes('reader-text'))).toBe(true);
+  });
+
+  it('the extension\'s light read: the cache holds the post and composes the row — the row stands in feed.pending as a card, no slot, no resolve', async () => {
+    const r = testResolver();
+    const { cache } = makeCache();
+    await cache.open('C');
+    const own = fullRow('o', { author: ME, status: 'pending', content: 'reader-text' });
+    await cache.put({
+      id: own.id, txBytes: new Uint8Array([1, 2, 3]), row: own,
+      author: own.author, parent: null, own: true,
+    });
+    const lo = light('o', { authorName: null });
+    // Pre-seed the pending ledger in localStorage, as the last session's
+    // write would have left it. The fresh App's own PendingLedger reads it.
+    const seed = new PendingLedger(ME);
+    seed.add({
+      txId: own.txId!,
+      kind: 'post',
+      postId: own.id,
+      inputs: [],
+      submittedAtHeight: 0,
+      expiresAtHeight: 999,
+    });
+    expect(new PendingLedger(ME).all().length).toBe(1);
+    const h = harness({
+      resolver: r.resolver, cache, identityKey: ME,
+      feedResults: [{ posts: [], next: null, pending: [lo], pendingCount: 1 }],
+    });
+    expect(h.drive.state.submissions.length).toBe(0);
+    await h.drive.loadFeed();
+    await settle();
+    // No slot drawn and no resolve asked — the cache held the row.
+    expect(h.feedEl.querySelectorAll('.card.slot').length).toBe(0);
+    expect(r.calls.length).toBe(0);
+    // The row stands in feed.pending as a card from the cache.
+    expect(h.drive.state.feed.pending.length).toBe(1);
+    expect(h.drive.state.feed.pending[0]!.id).toBe(own.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// In one session the composer's post leaves a submission in the state with
+// its node postId; the node's feed then answers that id among pending — the
+// row is not drawn, since a submission card standing in the page names it
+// (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "The reader's own pending post is drawn once").
+// ---------------------------------------------------------------------------
+describe('in one session the submission card stands for the reader\'s own pending post', () => {
+  it('the composer posts; the feed then answers that id in pending; the row is not drawn and the submission card stands', async () => {
+    const idObj = lockableIdentity(ME, false);
+    const wr = recordingWrites(idObj);
+    const newPostId = hid('mine');
+    wr.nextPostId = newPostId;
+    // The node's feed answers the same id among `pending` on a later read.
+    const nodeRow = fullRow('mine', { id: newPostId, author: ME, status: 'pending', content: 'in session' });
+    const h = harness({
+      resolver: null, verifier: null, cache: null, identityKey: ME,
+      identity: idObj.identity,
+      writeClient: wr.client,
+      karma: karmaWithBox(ME),
+      feedResults: [
+        // The first feed read: empty, as the composer opens.
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        // The second feed read on `↻`: the node now carries the row.
+        { posts: [], next: null, pending: [nodeRow], pendingCount: 1 },
+      ],
+    });
+    const drive = h.drive as unknown as {
+      openComposer(p: string | null): void;
+      submitComposer(p: string | null, text: string): Promise<void>;
+      refreshFeed(): Promise<void>;
+      loadMembershipState(): Promise<void>;
+    };
+    await h.drive.loadFeed();
+    await drive.loadMembershipState();
+    await flush();
+    drive.openComposer(null);
+    await flush();
+    await drive.submitComposer(null, 'in session');
+    await flush();
+    // The submission card stands with its postId.
+    const sub = h.drive.state.submissions.find((s) => s.postId === newPostId);
+    expect(sub).toBeDefined();
+    // A refresh reads the node's row; the submission card still stands.
+    await drive.refreshFeed();
+    await settle();
+    // The row is not drawn in feed.pending — the submission card names it.
     expect(h.drive.state.feed.pending.length).toBe(0);
+    // The submission card is the one card in the feed's DOM for that content.
+    const cards = Array.from(h.feedEl.querySelectorAll('.card'));
+    const text = cards.map((c) => c.textContent ?? '').filter((t) => t.includes('in session'));
+    expect(text.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `changeNode` leaves `state.submissions` alone (only an identity change
+// clears it), so a submission card standing from the composer's own path
+// stands through a reading-node change, and the new node's first feed page
+// answers that id among `pending` — `takeFeedPage` reads
+// `pendingWithoutStandingCards` over `standingCardIds` and keeps the row off
+// the screen (WEB_INTERFACE → What the feed reads, and what a card shows for
+// it → "The reader's own pending post is drawn once").
+//
+// Entered through `changeNode` on the drive — the handler the settings
+// node field's `change` event fires through `handlers.setNode(input.value)`,
+// which the App binds as `setNode: (origin) => void this.changeNode(origin)`.
+// ---------------------------------------------------------------------------
+describe('the submission card survives a reading-node change and stands for the new node\'s pending row', () => {
+  it('the composer posts a root; the reader commits a new node; the new node\'s first feed page answers that id in pending — the row is not drawn and one card with the post\'s text stands', async () => {
+    const idObj = lockableIdentity(ME, false);
+    const wr = recordingWrites(idObj);
+    const newPostId = hid('nodechange');
+    wr.nextPostId = newPostId;
+    const nodeRow = fullRow('nodechange', { id: newPostId, author: ME, status: 'pending', content: 'across the node change' });
+    const h = harness({
+      resolver: null, verifier: null, cache: null, identityKey: ME,
+      identity: idObj.identity,
+      writeClient: wr.client,
+      karma: karmaWithBox(ME),
+      feedResults: [
+        // The first feed read: empty, as the composer opens.
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        // The new node's first feed page carries the row among pending —
+        // `changeNode` calls `loadFeed`, which reads this entry.
+        { posts: [], next: null, pending: [nodeRow], pendingCount: 1 },
+      ],
+    });
+    const drive = h.drive as unknown as {
+      openComposer(p: string | null): void;
+      submitComposer(p: string | null, text: string): Promise<void>;
+      loadMembershipState(): Promise<void>;
+      changeNode(origin: string): Promise<void>;
+    };
+    await h.drive.loadFeed();
+    await drive.loadMembershipState();
+    await flush();
+    drive.openComposer(null);
+    await flush();
+    await drive.submitComposer(null, 'across the node change');
+    await flush();
+    // The submission card stands in state.submissions with its postId — a
+    // control over the composer's path.
+    const sub = h.drive.state.submissions.find((s) => s.postId === newPostId);
+    expect(sub).toBeDefined();
+    // The reading node changes — `changeNode` drops the feed's rows and reads
+    // the new node's feed. `state.submissions` is unchanged by the node
+    // change (only an identity change clears it).
+    await drive.changeNode('http://new-node');
+    await settle();
+    // The submission still stands — a control that the node change kept it.
+    expect(h.drive.state.submissions.find((s) => s.postId === newPostId)).toBeDefined();
+    // The row is not drawn in feed.pending — `takeFeedPage`'s filter dropped
+    // it because the submission card names its id.
+    expect(h.drive.state.feed.pending.length).toBe(0);
+    // One card with the post's text stands in the feed's DOM — the
+    // submission card.
+    const cards = Array.from(h.feedEl.querySelectorAll('.card'));
+    const text = cards.map((c) => c.textContent ?? '').filter((t) => t.includes('across the node change'));
+    expect(text.length).toBe(1);
   });
 });
 
@@ -1315,7 +1521,7 @@ describe('a report counts the posts that stand', () => {
     await settle();
     expect(h.drive.state.feed.olderReport).toBe('2 older posts');
     // `renderFeedInto` draws `olderReport` as a `.note` span inside the
-    // `.feed-foot` (src/view/feed.ts).
+    // `.feed-foot`.
     expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('2 older posts');
     const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
     call!.end({ [la.id]: 'unserved' });
@@ -1370,8 +1576,8 @@ describe('a report counts the posts that stand', () => {
       state: AppState;
     }).state.workspace.columns[0]!;
     expect(column.report).toBe('2 new posts');
-    // `renderRegionElement` draws `column.report` as a `.report` node
-    // under the region (src/view/panes.ts, through `reportNode`).
+    // `renderRegionElement` draws `column.report` through `reportNode` as
+    // a `.report` node under the region.
     expect(h.panes.querySelector('.region .report')?.textContent).toBe('2 new posts');
     const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
     call!.end({ [la.id]: 'unserved' });
@@ -1409,8 +1615,8 @@ describe('a report counts the posts that stand', () => {
     call!.end({ [la.id]: 'unserved', [lb.id]: 'unserved' });
     await settle();
     expect(column.report).toBeNull();
-    // No `.report` node is drawn under the region
-    // (src/view/panes.ts: `if (column.report) regionEl.appendChild(reportNode(...))`).
+    // No `.report` node is drawn under the region — `renderRegionElement`
+    // appends the report node only when `column.report` is non-null.
     expect(h.panes.querySelector('.region .report')).toBeNull();
   });
 
