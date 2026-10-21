@@ -19,6 +19,7 @@ import type {
 import {
   ME, flush, settle, hid, status, fullRow, light, tomb,
   makeApi, testResolver, makeCache, makeIdentity, harness, seedCache, stubResolver, stubVerifier,
+  lockableIdentity, recordingWrites, karmaWithBox,
   type Fake,
 } from './app-light-shared';
 import { jsonResponse } from './honest-page';
@@ -1133,6 +1134,61 @@ describe('after a reload the reader\'s own pending post stands in feed.pending a
     // The row stands in feed.pending as a card from the cache.
     expect(h.drive.state.feed.pending.length).toBe(1);
     expect(h.drive.state.feed.pending[0]!.id).toBe(own.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// In one session the composer's post leaves a submission in the state with
+// its node postId; the node's feed then answers that id among pending — the
+// row is not drawn, since a submission card standing in the page names it
+// (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+// "The reader's own pending post is drawn once").
+// ---------------------------------------------------------------------------
+describe('in one session the submission card stands for the reader\'s own pending post', () => {
+  it('the composer posts; the feed then answers that id in pending; the row is not drawn and the submission card stands', async () => {
+    const idObj = lockableIdentity(ME, false);
+    const wr = recordingWrites(idObj);
+    const newPostId = hid('mine');
+    wr.nextPostId = newPostId;
+    // The node's feed answers the same id among `pending` on a later read.
+    const nodeRow = fullRow('mine', { id: newPostId, author: ME, status: 'pending', content: 'in session' });
+    const h = harness({
+      resolver: null, verifier: null, cache: null, identityKey: ME,
+      identity: idObj.identity,
+      writeClient: wr.client,
+      karma: karmaWithBox(ME),
+      feedResults: [
+        // The first feed read: empty, as the composer opens.
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        // The second feed read on `↻`: the node now carries the row.
+        { posts: [], next: null, pending: [nodeRow], pendingCount: 1 },
+      ],
+    });
+    const drive = h.drive as unknown as {
+      openComposer(p: string | null): void;
+      submitComposer(p: string | null, text: string): Promise<void>;
+      refreshFeed(): Promise<void>;
+      loadMembershipState(): Promise<void>;
+    };
+    await h.drive.loadFeed();
+    await drive.loadMembershipState();
+    await flush();
+    drive.openComposer(null);
+    await flush();
+    await drive.submitComposer(null, 'in session');
+    await flush();
+    // The submission card stands with its postId.
+    const sub = h.drive.state.submissions.find((s) => s.postId === newPostId);
+    expect(sub).toBeDefined();
+    // A refresh reads the node's row; the submission card still stands.
+    await drive.refreshFeed();
+    await settle();
+    // The row is not drawn in feed.pending — the submission card names it.
+    expect(h.drive.state.feed.pending.length).toBe(0);
+    // The submission card is the one card in the feed's DOM for that content.
+    const cards = Array.from(h.feedEl.querySelectorAll('.card'));
+    const text = cards.map((c) => c.textContent ?? '').filter((t) => t.includes('in session'));
+    expect(text.length).toBe(1);
   });
 });
 
