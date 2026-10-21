@@ -6352,10 +6352,10 @@ async function lightSteps(cx, targetId = 'unknown') {
 
   // ---- L13 — another chain. A light page of the feed is recorded from
   // RA. Both relays' upstreams move to D, and the reading node is read
-  // afresh: a second database beside the first, whose entry count is what
-  // it was. Then RA on list-replay with the recorded page and a ↻: the
-  // listed ids stand as slots and are asked of the relays — no card is
-  // drawn from the first chain's entries — and at the end no slot stands.
+  // afresh: the browser lists D's database and not A's. Then RA on
+  // list-replay with the recorded page and a ↻: the listed ids stand as
+  // slots and are asked of the relays — no card is drawn from the first
+  // chain's entries — and at the end no slot stands.
   try {
     RA.mode = 'honest';
     RB.mode = 'honest';
@@ -6368,9 +6368,9 @@ async function lightSteps(cx, targetId = 'unknown') {
     if (RA.replayPage === null) {
       record('L13', false, 'the recorded light page was not captured within 15s');
     } else {
-      // Count A's cache entries before the switch.
+      // Read A's cache ids while A's chain is still open — this set is
+      // what the replay half's `drew from A's chain` compares against.
       const aIdsBefore = await readCacheIds(cx, aDbName);
-      const aCountBefore = Array.isArray(aIdsBefore) ? aIdsBefore.length : null;
       // Bring up D, point relays' upstreams at D, read afresh.
       const dUp = await bringUpLightD();
       if (!dUp.ok) {
@@ -6387,18 +6387,30 @@ async function lightSteps(cx, targetId = 'unknown') {
           RA.mode = 'honest';
           RB.mode = 'honest';
           // The reader stays on RA — a page reload re-reads the chain's
-          // name from whatever /blocks/1 the relay now serves (D). A
-          // verified-tip run names D's chain and the cache opens a
-          // second database.
+          // name from whatever /blocks/1 the relay serves (D). A
+          // verified-tip run names D's chain, the cache opens D's
+          // database and deletes A's (WEB_INTERFACE → The extension →
+          // "The post cache").
           await cx.call('Page.reload');
           await cx.waitFor(`!!document.querySelector('#feed')`, 'L13 feed after reload with upstream=D', 60000);
           await pressAndReadVerdict(cx, { atLeast: 1, ms: 60000, quietMs: 2000 }).catch(() => {});
-          await sleep(3000);
-          const dbsOnD = await listIndexedDBDatabases(cx);
-          const namesOnD = Array.isArray(dbsOnD) ? dbsOnD.map((d) => d.name) : null;
-          const bothDbs = Array.isArray(namesOnD) && namesOnD.includes(aDbName) && namesOnD.includes(dDbName);
-          const aIdsAfterSwitch = await readCacheIds(cx, aDbName);
-          const aCountKept = Array.isArray(aIdsAfterSwitch) && aIdsAfterSwitch.length === aCountBefore;
+          // Poll the browser's database list — D's database present and
+          // A's absent — until the delete lands; bounded to 15 s. No
+          // call opens aDbName here: `indexedDB.open` of a database
+          // that does not exist creates one (empty, version 1), which
+          // would put A's name back in the list.
+          const pollDeadline = Date.now() + 15000;
+          let namesOnD = null;
+          let dListedANotListed = false;
+          while (Date.now() < pollDeadline) {
+            const dbsOnD = await listIndexedDBDatabases(cx);
+            namesOnD = Array.isArray(dbsOnD) ? dbsOnD.map((d) => d.name) : null;
+            if (Array.isArray(namesOnD) && namesOnD.includes(dDbName) && !namesOnD.includes(aDbName)) {
+              dListedANotListed = true;
+              break;
+            }
+            await sleep(250);
+          }
           // Switch RA to list-replay and press ↻ — the listed ids stand
           // as slots and are asked of the relays; no card is drawn from
           // the first chain's entries; at the end no slot stands (D does
@@ -6413,9 +6425,8 @@ async function lightSteps(cx, targetId = 'unknown') {
           const askedIds = new Set(batchesSeen.flatMap(batchIdsOf));
           const noSlots = (feedShape.slots?.length ?? 0) === 0;
           const noCardsFromAChain = (feedShape.liveCards ?? []).every((id) => !aIdsBefore?.includes(id));
-          record('L13', bothDbs && aCountKept && askedIds.size > 0 && noSlots && noCardsFromAChain,
-            `both DBs present=${bothDbs} (A ${aDbName.slice(0, 24)}…, D ${dDbName.slice(0, 24)}…, namesOnD=${JSON.stringify(namesOnD)}); ` +
-            `A cache entries before=${aCountBefore} after switch=${aIdsAfterSwitch?.length}, kept=${aCountKept}; ` +
+          record('L13', dListedANotListed && askedIds.size > 0 && noSlots && noCardsFromAChain,
+            `D listed, A absent=${dListedANotListed} (A ${aDbName.slice(0, 24)}…, D ${dDbName.slice(0, 24)}…, namesOnD=${JSON.stringify(namesOnD)}); ` +
             `batches during replay=${batchesSeen.length} ids asked×${askedIds.size}; ` +
             `at the end slots=${feedShape.slots?.length} cards=${feedShape.liveCards?.length} drew from A's chain=${!noCardsFromAChain}`);
           // Back to A for L14 and the run end.
