@@ -1,27 +1,20 @@
-import {
-  bytesToHex,
-  computePostId,
-  computeTxId,
-  decodeTx,
-  hexToBytes,
-} from '@dagsocial/types';
-import type { AnyBox, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import { hexToBytes } from '@dagsocial/types';
+import type { OrderingBlock } from '@dagsocial/types';
 import { verifyEd25519 } from '@dagsocial/validation';
 import {
   applyBlockWithdrawal,
   applyQueuedTx,
+  capturePreBodyOwed,
+  decodeBodyEntry,
   newTxApplyAcc,
+  overSignedReason,
   signatureEntryKey,
   utxoDepsOver,
+  type QueuedTx,
 } from './apply-block.js';
-import { collectPostBodyKarma, karmaOwed } from './decay.js';
+import { postsOf, withdrawalsOf } from './block-posts.js';
 import { BlockOverlay } from './overlay.js';
 import type { ApplyContext, StateView } from './state-view.js';
-import {
-  checkOutputShape,
-  checkTxEnvelope,
-  materializeOutput,
-} from './utxo-engine.js';
 
 /**
  * The screen's answer: every user transaction `applyBlock` would refuse against the state the ones
@@ -59,98 +52,77 @@ export function screenBody(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // posts and the captures are read from the whole body before its transactions
   // apply, and a refused transaction's post and inputs no longer belong among
   // them (CONSENSUS_INTERFACE → Screening a body).
-  while (runPass(view, block, ctx, height, survivors, refused) > 0) {
+  while (runPass(view, block, ctx, height, lastIndex, survivors, refused) > 0) {
     // keep going until a pass refuses nothing
   }
 
   return { refused: [...refused.values()].sort((a, b) => a.index - b.index) };
 }
 
-interface Decoded {
-  index: number;
-  txId: string;
-  tx: UtxoTransaction;
-  outputs: AnyBox[];
-}
-
-/** The refusals this pass added; the loop stops at zero. */
+/** The new refusals this pass added; the loop stops at zero. */
 function runPass(
   view: StateView,
   block: OrderingBlock,
   ctx: ApplyContext,
   height: number,
+  lastIndex: number,
   survivors: Set<number>,
   refused: Map<number, { index: number; reason: string }>,
 ): number {
   const before = refused.size;
   const state = new BlockOverlay(view);
+
+  // The survivors' block: the original header, the surviving user entries in body order and the
+  // settlement at the end. The screen lays its posts and finds its withdrawals through this block,
+  // as `applyBlock` does over its own (CONSENSUS_INTERFACE → Screening a body).
+  const sortedSurvivors = [...survivors].sort((a, b) => a - b);
+  const survivorsBlock: OrderingBlock = {
+    ...block,
+    utxoTxTree: {
+      utxoTxIds: [
+        ...sortedSurvivors.map((i) => block.utxoTxTree.utxoTxIds[i]!),
+        block.utxoTxTree.utxoTxIds[lastIndex]!,
+      ],
+      utxoTxs: [
+        ...sortedSurvivors.map((i) => block.utxoTxTree.utxoTxs[i]!),
+        block.utxoTxTree.utxoTxs[lastIndex]!,
+      ],
+    },
+  };
+
+  // Confirm each surviving post and lay its topology row. A row the body's own
+  // withdrawal arm reads through `state.getTopologyHeight` is only this
+  // overlay's confirmation; the view carries no height for it, so the arm
+  // reads `null` and refuses the withdrawal (`applyBlockWithdrawal`'s "not
+  // confirmed in an earlier block"). This matches `applyBlock`'s own rule.
+  const blockPosts = postsOf(survivorsBlock);
+  for (const { postId } of blockPosts) state.confirmPost(postId);
+  for (const { postId, post } of blockPosts) state.insertBlockTopology(postId, post.author, height);
+
+  // Per-entry decode, over-signed and signatures — each signature checked
+  // alone through `verifyEd25519`. A failure refuses that index with the
+  // reason `applyBlock` would give.
+  interface Decoded extends QueuedTx { index: number; }
   const decoded: Decoded[] = [];
   const verified = new Set<string>();
-
-  // Per-entry decode, id proof, envelope, output shape, over-signed, and the
-  // signatures checked alone (CONSENSUS_INTERFACE → Screening a body → "Each
-  // signature is checked alone"). An entry `applyBlock` refuses before the
-  // loop is refused alone at its index.
   const refuseAt = (i: number, reason: string): void => {
     refused.set(i, { index: i, reason });
     survivors.delete(i);
   };
-  for (const i of [...survivors].sort((a, b) => a - b)) {
-    const txId = block.utxoTxTree.utxoTxIds[i]!;
-    const txBytes = block.utxoTxTree.utxoTxs[i];
-    if (!txBytes) {
-      refuseAt(i, `Rejected block height=${height}: embedded UTXO tx ${txId} carries no body`);
+  for (const i of sortedSurvivors) {
+    const d = decodeBodyEntry(block, i, false, height, ctx);
+    if (!d.ok) {
+      refuseAt(i, d.reason);
       continue;
     }
-    let tx: UtxoTransaction;
-    try {
-      tx = decodeTx(txBytes);
-    } catch (err) {
-      refuseAt(
-        i,
-        `Rejected block height=${height}: embedded UTXO tx ${txId} did not ` +
-        `decode: ${String(err)}`,
-      );
+    const overSigned = overSignedReason(d.item.tx, d.item.txId, height);
+    if (overSigned !== null) {
+      refuseAt(i, overSigned);
       continue;
     }
-    const envelopeCheck = checkTxEnvelope(tx, height, ctx.protocolVersionSchedule);
-    if (!envelopeCheck.valid) {
-      refuseAt(
-        i,
-        `Rejected block height=${height}: embedded UTXO tx ${txId} has a ` +
-        `malformed envelope: ${envelopeCheck.error}`,
-      );
-      continue;
-    }
-    const outputCheck = checkOutputShape(tx.outputs);
-    if (!outputCheck.valid) {
-      refuseAt(
-        i,
-        `Rejected block height=${height}: embedded UTXO tx ${txId} has an ` +
-        `out-of-domain output: ${outputCheck.error}`,
-      );
-      continue;
-    }
-    const decodedId = computeTxId(tx);
-    if (decodedId !== txId) {
-      refuseAt(
-        i,
-        `Rejected block height=${height}: embedded UTXO tx ${txId} declares an ` +
-        `id its bytes do not produce (${decodedId})`,
-      );
-      continue;
-    }
-    if (Object.keys(tx.signatures).length > tx.inputs.length) {
-      refuseAt(
-        i,
-        `Rejected block height=${height}: embedded UTXO tx ${txId} ` +
-        `carries more signatures than inputs`,
-      );
-      continue;
-    }
-    const message = hexToBytes(txId);
+    const message = hexToBytes(d.item.txId);
     let allVerify = true;
-    for (const [keyHex, signature] of Object.entries(tx.signatures)) {
+    for (const [keyHex, signature] of Object.entries(d.item.tx.signatures)) {
       if (!verifyEd25519(signature, message, hexToBytes(keyHex))) {
         allVerify = false;
         break;
@@ -160,46 +132,31 @@ function runPass(
       refuseAt(i, `Rejected block height=${height}: a signature in the body does not verify`);
       continue;
     }
-    for (const [keyHex, signature] of Object.entries(tx.signatures)) {
-      verified.add(signatureEntryKey(txId, keyHex, signature));
+    for (const [keyHex, signature] of Object.entries(d.item.tx.signatures)) {
+      verified.add(signatureEntryKey(d.item.txId, keyHex, signature));
     }
-    const outputs = tx.outputs.map((box, idx) => materializeOutput(box as AnyBox, txId, idx));
-    decoded.push({ index: i, txId, tx, outputs });
+    decoded.push({ index: i, ...d.item });
   }
 
-  // Posts and their topology rows for every surviving decoded transaction
-  // (CONSENSUS_INTERFACE → Applying a block). A tx without a post adds no row.
-  for (const d of decoded) {
-    if (d.tx.post) state.confirmPost(computePostId(d.txId, 0));
-  }
-  for (const d of decoded) {
-    if (d.tx.post) state.insertBlockTopology(computePostId(d.txId, 0), d.tx.post.author, height);
-  }
-
-  // Pre-body captures: `owed` for every identity the body touches, from the
-  // view as it stands before any transaction applies (CONSENSUS_INTERFACE →
-  // Applying a block → "The owed-decay capture reads the record of every
-  // identity the body touches"). Decay plans, escrows, lapsed vouches and the
-  // backer pool belong to the settlement, which the screen does not run.
-  const postBodyKarma = collectPostBodyKarma(
+  // The pre-body `owed` capture, shared with `applyBlock`. The screen does not
+  // run decay plans or settlement.
+  const { preBodyOwed } = capturePreBodyOwed(
     state,
     decoded.map((d) => ({ txId: d.txId, inputs: d.tx.inputs, outputs: d.outputs })),
+    height,
+    ctx.decayCfg,
   );
-  const preBodyOwed = new Map<string, bigint>();
-  for (const { owner } of postBodyKarma.values()) {
-    const face = state.getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n);
-    const record = state.getIdentityRecord(owner);
-    preBodyOwed.set(bytesToHex(owner), karmaOwed(face, record, height, ctx.decayCfg));
-  }
   const utxoDeps = utxoDepsOver(state, ctx, verified, preBodyOwed, height);
 
-  // The per-transaction loop, in committed order. A refused transaction
-  // applies nothing (its would-be outputs do not reach the overlay), so a
-  // later transaction that spends one of them fails the unresolved-input gate.
+  // The per-transaction loop, in body order. A refused transaction applies
+  // nothing (its would-be outputs do not reach the overlay), so a later
+  // transaction that spends one of them fails the unresolved-input gate.
   const acc = newTxApplyAcc();
   const refusedThisPass = new Set<number>();
+  const indexByTxId = new Map<string, number>();
   for (const d of decoded) {
-    const result = applyQueuedTx(state, utxoDeps, { txId: d.txId, tx: d.tx, outputs: d.outputs }, height, acc);
+    indexByTxId.set(d.txId, d.index);
+    const result = applyQueuedTx(state, utxoDeps, d, height, acc);
     if (!result.ok) {
       refused.set(d.index, { index: d.index, reason: result.reason });
       survivors.delete(d.index);
@@ -207,24 +164,20 @@ function runPass(
     }
   }
 
-  // The withdrawal arm, over the surviving decoded transactions carrying a
-  // post-withdraw commit. A transaction the loop refused is skipped — nothing
-  // of it applies — so its withdrawal step is skipped too.
+  // The withdrawal arm, over `withdrawalsOf` of the survivors' block. A
+  // withdrawal whose transaction the pass's loop refused is skipped — nothing
+  // of it applies — and so is one whose transaction failed the pre-loop
+  // gates, which `withdrawalsOf` picks up by decoded shape rather than by
+  // envelope.
   const withdrawnThisBlock = new Set<string>();
-  for (const d of decoded) {
-    if (!d.tx.postWithdraw) continue;
-    if (refusedThisPass.has(d.index)) continue;
-    const author = state.getTopologyAuthor(d.tx.postWithdraw.postId);
-    if (author === null) continue;
-    const result = applyBlockWithdrawal(
-      state,
-      { txId: d.txId, author, postWithdraw: d.tx.postWithdraw },
-      height,
-      withdrawnThisBlock,
-    );
+  for (const bw of withdrawalsOf(survivorsBlock, (postId) => state.getTopologyAuthor(postId))) {
+    const index = indexByTxId.get(bw.txId);
+    if (index === undefined) continue;
+    if (refusedThisPass.has(index)) continue;
+    const result = applyBlockWithdrawal(state, bw, height, withdrawnThisBlock);
     if (!result.ok) {
-      refused.set(d.index, { index: d.index, reason: result.reason });
-      survivors.delete(d.index);
+      refused.set(index, { index, reason: result.reason });
+      survivors.delete(index);
     }
   }
 
