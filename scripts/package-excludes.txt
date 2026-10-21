@@ -1,0 +1,49 @@
+# scripts/package-excludes.txt — paths left out when scripts/build-deb.sh,
+# scripts/build-tarball.sh and scripts/windows/build-bundle.ps1 copy the
+# working tree into their staging directory. One pattern per line, matched
+# against every path component's name — a bare name or a wildcard with no
+# slash catches a file or a directory of that name at any depth.
+
+# Version control, dependencies, local database files.
+.git
+.github
+.claude
+node_modules
+*.db
+*.db-wal
+*.db-shm
+
+# Release artifacts a build writes into the repo root.
+*.deb
+*.tar.gz
+*.zip
+*.exe
+# The signed Firefox build, which packages/web/scripts/sign-extension.sh
+# copies into the repo root.
+*.xpi
+
+# Working scaffolding and cross-session notes.
+prompts
+tmp
+CLAUDE.md
+SESSION_CONTEXT.md
+# SETTINGS.md is the machine-local workflow file, kept out of git by
+# .git/info/exclude.
+SETTINGS.md
+dagsocial.md
+HOW_IT_WORKS.md
+AUDIT-*.md
+
+# The daemon needs nothing under docs, and rsync copies the working tree,
+# not the git index, so local-only files there would otherwise ride a
+# package headed for a public host.
+docs
+
+# Secrets never ride a package headed for a public host — the common
+# dotenv and private-key patterns, whether or not one is tracked, so a
+# stray secret cannot ride along by omission from the list above.
+.env
+.env.*
+*.key
+*.pem
+*.der

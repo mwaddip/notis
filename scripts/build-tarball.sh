@@ -25,17 +25,12 @@ echo "==> Building $PKG.tar.gz (Node $NODE_VER)"
 pnpm build
 
 # ---------------------------------------------------------------------------
-# 1. App tree + production node_modules (mirrors build-deb.sh)
+# 1. App tree + production node_modules — scripts/package-excludes.txt is
+#    the one exclude list, shared with build-deb.sh and
+#    windows/build-bundle.ps1.
 # ---------------------------------------------------------------------------
 echo "==> Assembling app tree"
-rsync -a \
-  --exclude '.git' --exclude '.github' --exclude '.claude' \
-  --exclude 'node_modules' --exclude '*.db' --exclude '*.db-wal' --exclude '*.db-shm' \
-  --exclude '*.deb' --exclude '*.tar.gz' --exclude 'prompts' --exclude 'tmp' \
-  --exclude 'CLAUDE.md' --exclude 'SETTINGS.md' --exclude 'SESSION_CONTEXT.md' \
-  --exclude 'dagsocial.md' --exclude 'HOW_IT_WORKS.md' --exclude 'AUDIT-*.md' \
-  --exclude 'docs' \
-  --exclude '.env' --exclude '.env.*' --exclude '*.key' --exclude '*.pem' --exclude '*.der' \
+rsync -a --exclude-from="$REPO_ROOT/scripts/package-excludes.txt" \
   "$REPO_ROOT/" "$APP/app/"
 
 echo "==> Installing production dependencies"
@@ -54,6 +49,7 @@ done
 # 2. Bundle the official Node linux-x64 runtime
 # ---------------------------------------------------------------------------
 echo "==> Downloading Node $NODE_VER runtime"
+# The runtime is taken from nodejs.org as served, with no checksum (NODE_INTERFACE → The packaged node).
 curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-x64.tar.xz" | tar -xJ -C "$STAGE"
 cp "$STAGE/node-${NODE_VER}-linux-x64/bin/node" "$APP/bin/node"
 chmod +x "$APP/bin/node"

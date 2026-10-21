@@ -5463,6 +5463,25 @@ its actual reach.
 
 ---
 
+## The packaged node — its user, its file modes and its runtime
+
+**The packaged services run as root, unsandboxed, by choice.** `dagsocial-node.service` and
+`dagsocial-faucet.service` carry no `User=`, `Group=` or sandbox directive, and the `.deb`'s postinst owns
+`/var/lib/dagsocial` as root. The choice rests on how testnet is hosted: each host runs the node — one host the
+faucet beside it — and nothing else, and holds no private data.
+
+**File modes are the operator's.** The `.deb` ships `/etc/dagsocial/node.env` and `/etc/dagsocial/faucet.env` at
+the build's default mode; it ships no `faucet.key`, and its postinst names 0600 for the one the operator copies in.
+The reference miner unit, `packages/node/scripts/dagsocial-miner.service`, carries `MINING_SECRET` and
+`MINER_PUBKEY` as `Environment=` lines for the operator to fill, and `gen-miner-key.mjs` writes the miner key with
+the process's default mode.
+
+**The bundled Node runtime is the one nodejs.org serves.** `scripts/build-tarball.sh` and
+`scripts/windows/build-bundle.ps1` download the build host's Node version from `https://nodejs.org/dist/` over
+HTTPS and check no checksum: the official source is trusted as served.
+
+---
+
 ## Net Integration
 
 The node creates a `NetNode` from `@dagsocial/net` during startup and registers

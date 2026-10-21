@@ -26,5 +26,6 @@ const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
 const publicKeyHex = Buffer.from(pubDer.subarray(pubDer.length - 32)).toString('hex');
 const secretKeyHex = Buffer.from(privDer).toString('hex');
 
+// The file takes the process's default mode (NODE_INTERFACE → The packaged node).
 writeFileSync(out, JSON.stringify({ publicKey: publicKeyHex, secretKeyHex }, null, 2) + '\n');
 console.log(publicKeyHex);

@@ -35,45 +35,10 @@ mkdir -p "$STAGING/usr/lib/systemd/system"
 mkdir -p "$STAGING/DEBIAN"
 
 # ---------------------------------------------------------------------------
-# 3. Copy project files (exclude git, node_modules, temp files)
+# 3. Copy project files — scripts/package-excludes.txt is the one exclude
+#    list, shared with build-tarball.sh and windows/build-bundle.ps1.
 # ---------------------------------------------------------------------------
-rsync -a \
-  --exclude '.git' \
-  --exclude '.github' \
-  --exclude '.claude' \
-  --exclude 'node_modules' \
-  --exclude '*.db' \
-  --exclude '*.db-wal' \
-  --exclude '*.db-shm' \
-  --exclude '*.deb' \
-  `# The release job builds the tarball and the web zip into this root before the .deb` \
-  --exclude '*.tar.gz' \
-  --exclude '*.zip' \
-  `# sign-extension.sh writes the signed Firefox build into this root` \
-  --exclude '*.xpi' \
-  --exclude 'prompts' \
-  --exclude 'tmp' \
-  --exclude 'CLAUDE.md' \
-  --exclude 'SESSION_CONTEXT.md' \
-  `# SETTINGS.md is the machine-local workflow file, excluded from git via .git/info/exclude` \
-  --exclude 'SETTINGS.md' \
-  --exclude 'dagsocial.md' \
-  --exclude 'HOW_IT_WORKS.md' \
-  --exclude 'AUDIT-*.md' \
-  --exclude 'scripts/build-deb.sh' \
-  `# The daemon needs none of docs/, and rsync copies the WORKING TREE — so a` \
-  `# git-excluded file is not an excluded file here. docs/ holds the local-only` \
-  `# governance notes (.git/info/exclude) and docs/specs/ (.gitignore); both` \
-  `# would otherwise ship in a package headed for a public host.` \
-  --exclude 'docs' \
-  `# Secrets never ship in a package headed for a public host — exclude the` \
-  `# common dotenv and private-key patterns whether or not one is tracked now,` \
-  `# so a stray secret cannot ride along by omission from the list above.` \
-  --exclude '.env' \
-  --exclude '.env.*' \
-  --exclude '*.key' \
-  --exclude '*.pem' \
-  --exclude '*.der' \
+rsync -a --exclude-from="$REPO_ROOT/scripts/package-excludes.txt" \
   "$REPO_ROOT/" "$APP_DIR/"
 
 # ---------------------------------------------------------------------------
@@ -122,6 +87,7 @@ cp "$REPO_ROOT/tools/faucet/scripts/dagsocial-faucet.service" \
 # ---------------------------------------------------------------------------
 # 6. Default environment file
 # ---------------------------------------------------------------------------
+# The env files ship at the build's default mode (NODE_INTERFACE → The packaged node).
 cat > "$STAGING/etc/dagsocial/node.env" <<'ENVEOF'
 # DAGsocial node environment — edit after install
 NODE_ROLE=server
@@ -130,9 +96,8 @@ PORT=3000
 ADMIN_PORT=3001
 ADMIN_BIND_ADDRESS=127.0.0.1
 DB_PATH=/var/lib/dagsocial/dagsocial.db
-# NETWORK_TYPE is the name config.ts reads. This said NETWORK_MODE until
-# 2026-08-11, which nothing read — invisible only because the code default is
-# also testnet, so any other value was silently ignored.
+# NETWORK_TYPE selects the consensus profile: mainnet, testnet or devnet. An
+# unrecognised value stops the node at startup.
 NETWORK_TYPE=testnet
 LISTEN_ADDRS=/ip4/0.0.0.0/tcp/9733
 # The web client's index.html; set, GET /shell/:id answers that shell with a
@@ -206,6 +171,7 @@ set -e
 
 # Create data directory
 mkdir -p /var/lib/dagsocial
+# The store is root's (NODE_INTERFACE → The packaged node).
 chown -R root:root /var/lib/dagsocial
 
 # Enable and start the service if this is an install (not upgrade)

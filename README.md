@@ -232,7 +232,7 @@ testnet software: don't run it with anything at stake.
 
 ### From a release
 
-Each [GitHub release](https://github.com/mwaddip/notis/releases) carries four artifacts, every one
+Each [GitHub release](https://github.com/mwaddip/notis/releases) carries these artifacts, every one
 preconfigured for testnet:
 
 | Artifact | What it is |
@@ -242,6 +242,7 @@ preconfigured for testnet:
 | `notis-node-<ver>-win-x64-setup.exe` | a per-user Windows installer with **Notis Node** and **Notis Node (Miner)** shortcuts |
 | `notis-web-<ver>.zip` | the browser client, a static bundle configured after download (→ Web client) |
 | `notis-extension-<ver>-chrome.zip` · `-firefox.zip` | the same client as a browser extension, the key held by the extension (→ Browser extension) |
+| `notis-extension-<ver>-firefox.xpi` | the Firefox extension signed by Mozilla, installed with a click and updating itself (→ Browser extension) |
 
 The Windows installer is unsigned, so SmartScreen warns on first run.
 

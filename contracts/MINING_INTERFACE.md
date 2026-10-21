@@ -777,7 +777,7 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 ## Miner Script
 
 `packages/node/scripts/miner.mjs` — standalone Node.js process (the only miner
-script; deployed via `scripts/dagsocial-miner.service`):
+script; its reference systemd unit is `packages/node/scripts/dagsocial-miner.service`):
 
 1. `GET /mining/template` (Bearer `MINING_SECRET`; `?miner=MINER_PUBKEY` when
    set) → reads `powPreimage`, `header.powTargetBits`, `header.height`.
