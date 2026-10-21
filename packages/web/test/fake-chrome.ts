@@ -350,13 +350,3 @@ export function fakeLockManager(): LockManager {
     },
   };
 }
-
-/** A no-op lock — the callback runs at once, side by side with another. The
- *  guard sweep proves a case needs the lock by swapping the real one for this. */
-export function nopLockManager(): LockManager {
-  return {
-    request<T>(_name: string, callback: () => Promise<T>): Promise<T> {
-      return callback();
-    },
-  };
-}
