@@ -41,10 +41,6 @@ STAGE=$(mktemp -d)
 cleanup() { rm -rf "$STAGE" "${SCRATCH:-}"; }
 trap cleanup EXIT
 
-# One variable pins the linter's major — web-ext@10 is the release measured
-# against the emitted manifests.
-WEBEXT_MAJOR=10
-
 echo "==> Building notis-extension-${VERSION}"
 
 pnpm --filter '@dagsocial/web^...' build
@@ -276,13 +272,19 @@ canonical_bss=$(node -e "$CANON_JS" "$EXPECTED_BSS")
 chrome_bss=$(node -e "const m = JSON.parse(require('fs').readFileSync('$CHROME_DIR/manifest.json','utf8')); process.stdout.write('browser_specific_settings' in m ? 'present' : 'absent')")
 [ "$chrome_bss" = 'absent' ] || { echo "FAIL: $CHROME_DIR/manifest.json carries browser_specific_settings"; exit 1; }
 
-# web-ext lint on the Firefox stage — the extension's own manifest linter,
-# major pinned above. `--self-hosted` reads the manifest as a self-hosted
-# add-on's, where an `update_url` is legitimate; without it the lint errors
-# on `MANIFEST_UPDATE_URL`
+# web-ext lint on the Firefox stage — the package's own web-ext, installed
+# with the package by the workspace's lockfile, so the lint needs no network
+# and resolves no package as it runs; `NO_UPDATE_NOTIFIER=1` turns the
+# linter's three-day registry check off
+# (WEB_INTERFACE → The client is served from the node's own origin →
+# "The Firefox build ships signed as well"). The binary is the package's own
+# `node_modules/.bin/web-ext`, named by path so no second tool runner stands
+# between the shell and it. `--self-hosted` reads the manifest as a
+# self-hosted add-on's, where an `update_url` is legitimate; without it the
+# lint errors on `MANIFEST_UPDATE_URL`
 # (WEB_INTERFACE → "The build check that keeps the web bundle honest").
 echo "==> web-ext lint (Firefox stage)"
-npx --yes -p "web-ext@${WEBEXT_MAJOR}" web-ext lint --source-dir "$FIREFOX_DIR" --self-hosted
+NO_UPDATE_NOTIFIER=1 ./node_modules/.bin/web-ext lint --source-dir "$FIREFOX_DIR" --self-hosted
 
 echo "==> Build checks passed"
 
