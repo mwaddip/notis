@@ -91,10 +91,10 @@ function runPass(
   };
 
   // Confirm each surviving post and lay its topology row. A row the body's own
-  // withdrawal arm reads through `state.getTopologyHeight` is only this
-  // overlay's confirmation; the view carries no height for it, so the arm
-  // reads `null` and refuses the withdrawal (`applyBlockWithdrawal`'s "not
-  // confirmed in an earlier block"). This matches `applyBlock`'s own rule.
+  // withdrawal arm reads through `state.getTopologyHeight` holds this block's
+  // height, so `postHeight >= height` refuses the withdrawal as not confirmed
+  // in an earlier block (`applyBlockWithdrawal`). This matches `applyBlock`'s
+  // own rule.
   const blockPosts = postsOf(survivorsBlock);
   for (const { postId } of blockPosts) state.confirmPost(postId);
   for (const { postId, post } of blockPosts) state.insertBlockTopology(postId, post.author, height);

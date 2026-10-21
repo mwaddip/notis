@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { sign as cryptoSign } from 'crypto';
 import {
+  PROTOCOL_VERSION,
   computeTxId,
   decodeTx,
   encodeTx,
@@ -14,6 +16,7 @@ import {
   candidateBlock,
   changeOf,
   claimTx,
+  finish,
   identityRecord,
   inviteTx,
   karmaBox,
@@ -24,6 +27,7 @@ import {
   withdrawTx,
   hex,
   type Built,
+  type TestIdentity,
 } from './helpers.js';
 
 /**
@@ -94,6 +98,11 @@ function flipped(signature: Uint8Array): Uint8Array {
   const out = Uint8Array.from(signature);
   out[0] = out[0]! ^ 1;
   return out;
+}
+
+/** `who`'s signature over the transaction id. */
+function signatureBy(who: TestIdentity, txId: string): Uint8Array {
+  return new Uint8Array(cryptoSign(null, Buffer.from(txId, 'hex'), who.privateKey));
 }
 
 describe('screenBody — which of a body\'s transactions apply', () => {
@@ -188,6 +197,55 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     const reason = reasonFor(view, block);
     expect(reason).toContain('which another bond in this block already names');
     expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [{ index: 1, reason }] });
+  });
+
+  it('a refused withdrawal leaves its post withdrawable — the first alone, the second applies', () => {
+    const view = genesis();
+    const postId = '12'.repeat(32);
+    view.confirmPost(postId);
+    view.insertBlockTopology(postId, a.userId, 1);
+    // The first withdrawal spends an input no live box carries, so
+    // `applyQueuedTx` refuses it at the unresolved-input gate; its own
+    // withdrawal arm must not run, or the post is marked withdrawn and the
+    // valid second withdrawal is refused as already-withdrawn.
+    const unresolved = '00'.repeat(32);
+    const first: Built = finish(
+      {
+        inputs: [unresolved],
+        outputs: [{ boxType: 'karma', value: 100n, createdAtBlock: 2, owner: a.userId } as AnyBoxCandidate],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+        postWithdraw: { postId },
+      },
+      a,
+    );
+    const second = withdrawTx(a, largest(view, a), postId, 2);
+    const block = candidateBlock(view, 2, [first, second], miner.userId, ctx);
+    const reason = reasonFor(view, block);
+    expect(reason).toContain(`has an unresolved input ${unresolved}`);
+    expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [{ index: 0, reason }] });
+  });
+
+  it('an over-signed transaction is refused alone — the second key signs, every entry verifies', () => {
+    const view = genesis();
+    const input = largest(view, a);
+    const tx: UtxoTransaction = {
+      inputs: [input.id!],
+      outputs: [{ boxType: 'karma', value: input.value, createdAtBlock: 2, owner: a.userId } as AnyBoxCandidate],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    // Signatures do not enter the id, so both are over the same `txId`.
+    const txId = computeTxId(tx);
+    tx.signatures[hex(a.userId)] = signatureBy(a, txId);
+    tx.signatures[hex(b.userId)] = signatureBy(b, txId);
+    const over = finish(tx, null);
+    const block = candidateBlock(view, 2, [over], miner.userId, ctx);
+    const reason = reasonFor(view, block);
+    expect(reason).toBe(
+      `Rejected block height=2: embedded UTXO tx ${over.txId} carries more signatures than inputs`,
+    );
+    expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [{ index: 0, reason }] });
   });
 
   it('an accepted body is refused nothing', () => {
