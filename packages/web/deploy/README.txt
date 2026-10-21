@@ -43,6 +43,16 @@ Seven values in web/index.html control where the client looks:
 The defaults match notis.fun's layout. Edit all seven for another.
 
 
+The shell's security policy
+---------------------------
+
+The shell the web build writes carries its own Content-Security-Policy
+meta — the policy the client applies to itself. A host adds one header
+beside it, `Content-Security-Policy: frame-ancestors 'none'`, because a
+meta cannot forbid framing; nginx.example.conf sends it on the client's
+two locations.
+
+
 The standalone page
 -------------------
 
