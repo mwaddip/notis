@@ -972,7 +972,7 @@ function verifiedSignaturesOf(
 }
 
 /** An entry of the verified set: the transaction id, the key and the signature, as hex. */
-function signatureEntryKey(txIdHex: string, keyHex: string, signature: Uint8Array): string {
+export function signatureEntryKey(txIdHex: string, keyHex: string, signature: Uint8Array): string {
   return `${txIdHex}:${keyHex}:${bytesToHex(signature)}`;
 }
 
@@ -986,7 +986,7 @@ function signatureEntryKey(txIdHex: string, keyHex: string, signature: Uint8Arra
  * does a height other than the block's. A silent default would switch the
  * spend rule off for that owner (NODE_INTERFACE → Karma transition rules).
  */
-function utxoDepsOver(
+export function utxoDepsOver(
   state: BlockOverlay,
   ctx: ApplyContext,
   verified: ReadonlySet<string>,

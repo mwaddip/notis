@@ -97,7 +97,7 @@ function flipped(signature: Uint8Array): Uint8Array {
 }
 
 describe('screenBody — which of a body\'s transactions apply', () => {
-  it.fails('a stale like among honest transactions — the like alone, at its index', () => {
+  it('a stale like among honest transactions — the like alone, at its index', () => {
     const view = genesis();
     const postId = 'ab'.repeat(32);
     view.confirmPost(postId);
@@ -114,7 +114,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [{ index: 1, reason }] });
   });
 
-  it.fails('two claims by one identity — the second alone, "identity holds a name"', () => {
+  it('two claims by one identity — the second alone, "identity holds a name"', () => {
     const view = genesis();
     const first = claimTx(u, largest(view, u), 'firstname', 2);
     const second = claimTx(u, changeOf(first), 'Secondname', 2);
@@ -124,7 +124,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [{ index: 1, reason }] });
   });
 
-  it.fails('a refusal takes its dependants — the chained spend refused beside the refused like', () => {
+  it('a refusal takes its dependants — the chained spend refused beside the refused like', () => {
     const view = genesis();
     const postId = 'cd'.repeat(32);
     view.confirmPost(postId);
@@ -141,7 +141,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     expect(screen.refused[1]!.reason).toContain('has an unresolved input');
   });
 
-  it.fails('the passes repeat — a short-karma post and a like of it, the like refused only by a second pass', () => {
+  it('the passes repeat — a short-karma post and a like of it, the like refused only by a second pass', () => {
     const view = genesis();
     const bad = threadTx(sparse, largest(view, sparse), 'a post the author cannot afford', 2);
     const likeOfBad = likeTx(l, largest(view, l), bad.postId, sparse.userId, 2);
@@ -150,10 +150,10 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     const screen = screenBody(view, block, ctx);
     expect(screen.refused.map((r) => r.index)).toEqual([0, 1]);
     expect(screen.refused[0]!.reason).toBe(badReason);
-    expect(screen.refused[1]!.reason).toContain('unconfirmed post');
+    expect(screen.refused[1]!.reason).toContain('is not confirmed, so it names no author');
   });
 
-  it.fails('a signature is judged alone — the batch names none, the screen names the one', () => {
+  it('a signature is judged alone — the batch names none, the screen names the one', () => {
     const view = genesis();
     const txs: Built[] = [
       threadTx(a, largest(view, a), 'first honest', 2),
@@ -168,7 +168,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [{ index: 1, reason }] });
   });
 
-  it.fails('the withdrawal arm — two withdrawals of one post, the second alone', () => {
+  it('the withdrawal arm — two withdrawals of one post, the second alone', () => {
     const view = genesis();
     const postId = 'ef'.repeat(32);
     view.confirmPost(postId);
@@ -180,7 +180,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [{ index: 1, reason }] });
   });
 
-  it.fails('one invitee per block — two bonds naming one key, the second alone', () => {
+  it('one invitee per block — two bonds naming one key, the second alone', () => {
     const view = genesis();
     const first = inviteTx(author, largest(view, author), i1.userId, 25n, 2);
     const second = inviteTx(u, largest(view, u), i1.userId, 25n, 2);
@@ -225,7 +225,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [] });
   });
 
-  it.fails('deterministic — case 1\'s body screened twice over two identical views answers the same', () => {
+  it('deterministic — case 1\'s body screened twice over two identical views answers the same', () => {
     const build = (): { view: MemoryStateView; block: OrderingBlock } => {
       const view = genesis();
       const postId = 'ab'.repeat(32);
