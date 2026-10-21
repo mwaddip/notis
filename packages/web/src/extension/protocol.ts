@@ -158,3 +158,19 @@ export function isMessage(value: unknown): value is Message {
   const kind = (value as { kind?: unknown }).kind;
   return typeof kind === 'string' && KNOWN_KINDS.has(kind as MessageKind);
 }
+
+/** A guard the background and the proxy read a `storage.session` value as a
+ *  `SignRecord` through — WEB_INTERFACE → The extension → "`sign`, in the
+ *  background, in order". Each required field of `SignRecord` is held to its
+ *  type; `windowId` and `result` are optional and are not asked for here. */
+export function isSignRecord(value: unknown): value is SignRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return typeof r['id'] === 'string'
+    && typeof r['txIdHex'] === 'string'
+    && typeof r['txBytesHex'] === 'string'
+    && typeof r['pubKeyHex'] === 'string'
+    && typeof r['summary'] === 'object' && r['summary'] !== null
+    && typeof r['hint'] === 'object' && r['hint'] !== null
+    && typeof r['createdAt'] === 'number';
+}

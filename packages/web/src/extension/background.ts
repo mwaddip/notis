@@ -3,7 +3,7 @@ import { computeTxId, decodeTx, computeContentHash, bytesToHex, hexToBytes, gene
 import type { UtxoTransaction } from '@dagsocial/types';
 import { seal, open, parseFile, IdentityError, type Envelope } from '../identity/envelope';
 import {
-  isMessage, REFUSED_UNKNOWN,
+  isMessage, isSignRecord, REFUSED_UNKNOWN,
   type AppSnapshot, type SignAnswer, type SignHint, type SignRecord,
 } from './protocol';
 import { summarise, classifyLedger } from './policy';
@@ -586,7 +586,7 @@ function parseEnvelope(raw: unknown): Envelope | null {
 async function readRecord(api: typeof chrome, id: string): Promise<SignRecord | null> {
   const got = await api.storage.session.get(K_SIGN_PREFIX + id);
   const v = got[K_SIGN_PREFIX + id];
-  return isRecord(v) ? v : null;
+  return isSignRecord(v) ? v : null;
 }
 
 async function readAllRecords(api: typeof chrome): Promise<Array<[string, SignRecord]>> {
@@ -594,7 +594,7 @@ async function readAllRecords(api: typeof chrome): Promise<Array<[string, SignRe
   const rows: Array<[string, SignRecord]> = [];
   for (const [k, v] of Object.entries(all)) {
     if (!k.startsWith(K_SIGN_PREFIX)) continue;
-    if (isRecord(v)) rows.push([k, v]);
+    if (isSignRecord(v)) rows.push([k, v]);
   }
   return rows;
 }
@@ -621,12 +621,6 @@ async function canOpenNewPrompt(api: typeof chrome): Promise<boolean> {
     await api.storage.session.set({ [key]: updated });
   }
   return true;
-}
-
-function isRecord(v: unknown): v is SignRecord {
-  if (typeof v !== 'object' || v === null) return false;
-  const r = v as { id?: unknown; txIdHex?: unknown; txBytesHex?: unknown; summary?: unknown };
-  return typeof r.id === 'string' && typeof r.txIdHex === 'string' && typeof r.txBytesHex === 'string' && typeof r.summary === 'object';
 }
 
 // ---------------------------------------------------------------------------

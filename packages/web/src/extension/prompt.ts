@@ -1,6 +1,7 @@
 import { el } from '../dom';
 import { unlockForm } from '../view/passphrase';
 import { whatFor, amountFor, targetFor, feeFor } from './prompt-summary';
+import { isSignRecord } from './protocol';
 import type { SignRecord } from './protocol';
 
 // The prompt page — WEB_INTERFACE → The extension → "The prompt window". The
@@ -45,7 +46,7 @@ async function readRecord(): Promise<SignRecord | null> {
   const key = 'notis.sign.' + id;
   const got = await chrome.storage.session.get(key);
   const v = got[key];
-  return isRecord(v) ? v : null;
+  return isSignRecord(v) ? v : null;
 }
 
 function waitForRecord(): Promise<void> {
@@ -56,7 +57,7 @@ function waitForRecord(): Promise<void> {
       const change = changes[key];
       if (!change) return;
       const v = change.newValue;
-      if (isRecord(v)) {
+      if (isSignRecord(v)) {
         chrome.storage.onChanged.removeListener(handler);
         drawPrompt(v);
         resolve();
@@ -184,6 +185,3 @@ function showUnlockThenApprove(record: SignRecord, button: HTMLButtonElement): v
   container.insertBefore(box, actions);
 }
 
-function isRecord(v: unknown): v is SignRecord {
-  return typeof v === 'object' && v !== null && 'id' in v && 'txIdHex' in v && 'summary' in v;
-}

@@ -1,6 +1,7 @@
 import type { AppIdentity } from '../model/state';
 import type { SignResult } from '../wallet/submit';
 import { bytesToHex } from '@dagsocial/types';
+import { isSignRecord } from './protocol';
 import type { Message, AppSnapshot, SignAnswer, SignHint, SignRecord } from './protocol';
 import { K_LINKS, LINKS_DEFAULT, readLinksPref, type LinksPref } from './links';
 import { IDENTITY_KEY, BACKEDUP_KEY, POLICY_KEY, SEED_KEY } from './storage-keys';
@@ -258,10 +259,6 @@ export class ExtensionProxy implements AppIdentity {
 // ---------------------------------------------------------------------------
 // Helpers.
 // ---------------------------------------------------------------------------
-
-function isSignRecord(v: unknown): v is SignRecord {
-  return typeof v === 'object' && v !== null && 'id' in v && 'txIdHex' in v;
-}
 
 /** Send a message and unwrap the `{ error }` shape into a rejected promise —
  *  the message layer is a private wire, so callers see errors as thrown
