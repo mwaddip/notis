@@ -218,7 +218,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   afterEach(() => { closeDb(); });
 
   // -------------------------------------------------------------------------
-  // Case 1 — the relay meets the like gate.
+  // The relay meets the like gate.
   // -------------------------------------------------------------------------
   it('the relay refuses a second like of one post by one liker', async () => {
     const liker = makeKey();
@@ -272,7 +272,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 2 — the relay meets the claim gates (name and claimant).
+  // The relay meets the claim gates (name and claimant).
   // -------------------------------------------------------------------------
   it('the relay refuses a second claim of one canonical name', async () => {
     const first = makeKey();
@@ -339,7 +339,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 3 — the relay meets the vouch gate.
+  // The relay meets the vouch gate.
   // -------------------------------------------------------------------------
   it('the relay refuses a second vouch for one (voucher, target)', async () => {
     const voucher = makeKey();
@@ -375,7 +375,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 4 — one pending bond per invitee (HTTP + relay).
+  // One pending bond per invitee (HTTP + relay).
   // -------------------------------------------------------------------------
   it('two invites naming one invitee: HTTP refuses the second 409, the relay false', async () => {
     const inviterA = makeKey();
@@ -424,7 +424,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 5 — a member's pending bonds hold to its invites; a root is uncapped.
+  // A member's pending bonds hold to its invites; a root is uncapped.
   // -------------------------------------------------------------------------
   it('a member\'s second pending bond is refused; a root\'s is admitted', async () => {
     const member = makeKey();
@@ -499,7 +499,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 6 — one pending withdrawal per post.
+  // One pending withdrawal per post.
   // -------------------------------------------------------------------------
   it('two withdrawals of one post: the second is 409 with its words', async () => {
     const author = makeKey();
@@ -556,7 +556,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 7 — the unstake route's shape.
+  // The unstake route's shape.
   // -------------------------------------------------------------------------
   it('POST /backers/unstake refuses a credit transfer and admits a well-formed unstake', async () => {
     const holder = makeKey();

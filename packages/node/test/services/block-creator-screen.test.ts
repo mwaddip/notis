@@ -312,14 +312,14 @@ describe('block creator vs a screened body', () => {
       honestTxs.push(creditTransferFrom(u, [{ id: box.id!, value: 100_000n }], 2_000n));
     }
 
-    const attacker = makeTestIdentity();
-    const attackerBox = makeCreditBox(100_000n, attacker.userId, 0, 7);
-    utxo.insertBox(attackerBox);
+    const spender = makeTestIdentity();
+    const spenderBox = makeCreditBox(100_000n, spender.userId, 0, 7);
+    utxo.insertBox(spenderBox);
 
-    const parent = creditTransferFrom(attacker, [{ id: attackerBox.id!, value: 100_000n }], 0n);
+    const parent = creditTransferFrom(spender, [{ id: spenderBox.id!, value: 100_000n }], 0n);
     const parentTxId = computeTxId(parent);
     const parentChange = materializeOutput(parent.outputs[0] as AnyBox, parentTxId, 0);
-    const child = creditTransferFrom(attacker, [{ id: parentChange.id!, value: 100_000n }], 50_000n);
+    const child = creditTransferFrom(spender, [{ id: parentChange.id!, value: 100_000n }], 50_000n);
     const childTxId = computeTxId(child);
 
     await activateProverOverStore();
@@ -369,15 +369,15 @@ describe('block creator vs a screened body', () => {
     const utxo = await importUtxo();
     const records = await importRecords();
 
-    const attacker = makeTestIdentity();
-    records.putIdentityRecord(attacker.userId, memberRecord());
-    const karma = makeKarmaBox(10n, attacker.userId, 0, 1);
+    const spender = makeTestIdentity();
+    records.putIdentityRecord(spender.userId, memberRecord());
+    const karma = makeKarmaBox(10n, spender.userId, 0, 1);
     utxo.insertBox(karma);
 
-    const claim1 = claimName(attacker, karma, 'alice');
+    const claim1 = claimName(spender, karma, 'alice');
     const claim1TxId = computeTxId(claim1);
     const karmaAfter = materializeOutput(claim1.outputs[0] as AnyBox, claim1TxId, 0) as KarmaBox;
-    const claim2 = claimName(attacker, karmaAfter, 'bobby');
+    const claim2 = claimName(spender, karmaAfter, 'bobby');
     const claim2TxId = computeTxId(claim2);
 
     const honestId = makeTestIdentity();
@@ -697,14 +697,14 @@ describe('block creator vs a screened body', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
-    const attacker = makeTestIdentity();
-    const attackerBox = makeCreditBox(100_000n, attacker.userId, 0, 90);
-    utxo.insertBox(attackerBox);
+    const spender = makeTestIdentity();
+    const spenderBox = makeCreditBox(100_000n, spender.userId, 0, 90);
+    utxo.insertBox(spenderBox);
 
-    const parent = creditTransferFrom(attacker, [{ id: attackerBox.id!, value: 100_000n }], 0n);
+    const parent = creditTransferFrom(spender, [{ id: spenderBox.id!, value: 100_000n }], 0n);
     const parentTxId = computeTxId(parent);
     const parentChange = materializeOutput(parent.outputs[0] as AnyBox, parentTxId, 0);
-    const child = creditTransferFrom(attacker, [{ id: parentChange.id!, value: 100_000n }], 50_000n);
+    const child = creditTransferFrom(spender, [{ id: parentChange.id!, value: 100_000n }], 50_000n);
     const childTxId = computeTxId(child);
 
     await activateProverOverStore();

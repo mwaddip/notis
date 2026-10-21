@@ -50,7 +50,7 @@ export function screenBody(view: StateView, block: OrderingBlock, ctx: ApplyCont
 
   // A pass that refuses a transaction runs again over the ones it kept — the
   // posts and the captures are read from the whole body before its transactions
-  // apply, and a refused transaction's post and inputs no longer belong among
+  // apply, and a refused transaction's post and inputs do not belong among
   // them (CONSENSUS_INTERFACE → Screening a body).
   while (runPass(view, block, ctx, height, lastIndex, survivors, refused) > 0) {
     // keep going until a pass refuses nothing

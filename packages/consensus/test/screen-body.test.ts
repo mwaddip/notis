@@ -283,7 +283,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [] });
   });
 
-  it('deterministic — case 1\'s body screened twice over two identical views answers the same', () => {
+  it('deterministic — the stale-like body screened twice over two identical views answers the same', () => {
     const build = (): { view: MemoryStateView; block: OrderingBlock } => {
       const view = genesis();
       const postId = 'ab'.repeat(32);
