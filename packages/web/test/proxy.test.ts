@@ -478,7 +478,7 @@ describe('proxy.sign — carries pubKeyHex to the background', () => {
       return { error: 'unexpected' };
     }) as typeof chrome.runtime.sendMessage;
     const proxy = await bootstrapProxy(c.api, { publicBase: '' });
-    await (proxy.sign as unknown as (b: Uint8Array, t: string, p: string) => Promise<unknown>)(
+    await proxy.sign(
       new Uint8Array([1, 2, 3]), 'cd'.repeat(32), 'ee'.repeat(32),
     );
     const signMsg = sent.find((m) => (m as { kind: string }).kind === 'sign');

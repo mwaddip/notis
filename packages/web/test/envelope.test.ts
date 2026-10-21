@@ -11,10 +11,10 @@ import {
   SCRYPT_N,
   SCRYPT_R,
   SCRYPT_P,
+  SCRYPT_N_MAX,
   type Envelope,
   type ScryptParams,
 } from '../src/identity/envelope';
-import * as envModule from '../src/identity/envelope';
 
 // The envelope codec — WEB_INTERFACE → The identity module. seal→open round trips
 // the seed; a wrong passphrase, an edited header and a flipped byte are each
@@ -220,7 +220,6 @@ describe('envelope — interop and no Web Crypto', () => {
 // `r` is `SCRYPT_R` (8) and `p` is `SCRYPT_P` (1) exactly, and `N` is a power of
 // two from 2 to `SCRYPT_N_MAX`, each a whole number — held where an envelope is
 // parsed. A well-formed JSON built by hand reaches `parseFile` without a seal.
-const SCRYPT_N_MAX = (envModule as unknown as Record<string, unknown>).SCRYPT_N_MAX;
 
 function envJsonWith(over: Partial<ScryptParams>): string {
   return JSON.stringify({

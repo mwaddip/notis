@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps, type SubmitResult,
+  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps, type SubmitResult, type SignResult,
 } from '../src/wallet/submit';
 import { PendingLedger } from '../src/wallet/ledger';
 import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
@@ -1115,16 +1115,16 @@ describe('a signature is made for the key the flow built for', () => {
   it('a flow passes the key read at its start; a current() flipped between the build and the signature does not reach it', async () => {
     const A = PUB;
     const B = 'bb'.repeat(32);
-    const seen: Array<{ pubKeyHex: string | undefined }> = [];
+    const seen: Array<{ pubKeyHex: string }> = [];
     let reads = 0;
-    const trackedIdentity = {
+    const trackedIdentity: SubmitDeps['identity'] = {
       current: () => ({ pubKeyHex: reads++ === 0 ? A : B }),
-      sign: async (_bytes: Uint8Array, _t: string, p?: string) => {
+      sign: async (_bytes: Uint8Array, _t: string, p: string): Promise<SignResult> => {
         seen.push({ pubKeyHex: p });
         if (p === B) return { signature: SIG } as const;
         return { refused: 'key-changed' } as const;
       },
-    } as unknown as SubmitDeps['identity'];
+    };
     const ledger = new PendingLedger(A);
     const deps: SubmitDeps = {
       reads: readsFor(PARENT_AUTHOR, FULL_BOXES),

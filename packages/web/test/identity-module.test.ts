@@ -292,28 +292,18 @@ describe('identity module — signing interop with the node verifier', () => {
 // transaction was built for" — `sign(txBytes, txIdHex, pubKeyHex, hint?)`
 // answers `refused: key-changed` when the key is not the module's.
 describe('identity module — sign carries the key the flow was built for', () => {
-  const call = (
-    m: IdentityModule,
-    txBytes: Uint8Array,
-    txIdHex: string,
-    pubKeyHex: string,
-  ): Promise<unknown> =>
-    (m.sign as unknown as (b: Uint8Array, t: string, p: string) => Promise<unknown>)(
-      txBytes, txIdHex, pubKeyHex,
-    );
-
   it('unlocked as A, a sign naming B answers refused key-changed and signs nothing', async () => {
     const m = new IdentityModule();
     const id = await mint(m, 'pw');
     const B = 'ff'.repeat(32);
     expect(id.pubKeyHex).not.toBe(B);
-    const r = await call(m, new Uint8Array(), 'ab'.repeat(32), B);
+    const r = await m.sign(new Uint8Array(), 'ab'.repeat(32), B);
     expect(r).toEqual({ refused: 'key-changed' });
   });
 
   it('no identity + a sign answers locked whatever key is named', async () => {
     const m = new IdentityModule();
-    const r = await call(m, new Uint8Array(), 'ab'.repeat(32), 'cc'.repeat(32));
+    const r = await m.sign(new Uint8Array(), 'ab'.repeat(32), 'cc'.repeat(32));
     expect(r).toEqual({ locked: true });
   });
 });
