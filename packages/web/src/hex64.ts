@@ -9,11 +9,8 @@ import { isHex64Lower } from '@dagsocial/node-reads';
 /** Read an either-case 64-hex string lower-cased, or `null` for anything else.
  *  Takes a value — the field read from a path, from the stored layout, or
  *  from an event on the hosted page — and either answers it as the id the
- *  client uses or refuses it.
- *
- *  WEB_INTERFACE → The standalone thread → "The id is 64 hex characters,
- *  lower-cased on read", → The workspace → "the stored layout's `parse`
- *  reads a token lower-cased". */
+ *  client uses or refuses it (WEB_INTERFACE → The standalone thread,
+ *  → The workspace). */
 export function readHex64(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const lower = value.toLowerCase();

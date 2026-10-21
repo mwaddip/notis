@@ -8,11 +8,11 @@
 export const IDENTITY_KEY = 'notis.identity';
 
 /** The flag the export of the encrypted key file sets, in `storage.local`
- *  (WEB_INTERFACE → The profile window → "The backed up state"). */
+ *  (WEB_INTERFACE → The profile window). */
 export const BACKEDUP_KEY = 'notis.identity.backedup';
 
 /** The extension's binary sign preference — `'silent'` or `'ask'` — in
- *  `storage.local` (WEB_INTERFACE → The extension → "sign each rep action"). */
+ *  `storage.local` (WEB_INTERFACE → The extension). */
 export const POLICY_KEY = 'notis.signPolicy';
 
 /** The unlocked seed in hex, in `storage.session`
