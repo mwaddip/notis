@@ -1020,7 +1020,7 @@ describe('no cache: rows are slots and fill from the resolver alone', () => {
 // card shows for it → "The reader's own pending post is drawn once").
 // ---------------------------------------------------------------------------
 describe('the reader\'s own pending post is a card and never a slot', () => {
-  it.fails('intake composes it from the cache; with no submission card standing, the row is in feed.pending and drawn as a card', async () => {
+  it('intake composes it from the cache; with no submission card standing, the row is in feed.pending and drawn as a card', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -1068,7 +1068,7 @@ describe('the reader\'s own pending post is a card and never a slot', () => {
 // "The reader's own pending post is drawn once").
 // ---------------------------------------------------------------------------
 describe('after a reload the reader\'s own pending post stands in feed.pending as a card', () => {
-  it.fails('the web build: a pre-seeded ledger post entry and no submission card — the node\'s row stands in the feed\'s DOM, a card with the post\'s text', async () => {
+  it('the web build: a pre-seeded ledger post entry and no submission card — the node\'s row stands in the feed\'s DOM, a card with the post\'s text', async () => {
     // Pre-seed the pending ledger in localStorage, as the last session's
     // write would have left it. The fresh App's `new PendingLedger(ME)`
     // reads this entry; `state.submissions` starts empty.
@@ -1099,7 +1099,7 @@ describe('after a reload the reader\'s own pending post stands in feed.pending a
     expect(texts.some((t) => t.includes('reader-text'))).toBe(true);
   });
 
-  it.fails('the extension\'s light read: the cache holds the post and composes the row — the row stands in feed.pending as a card, no slot, no resolve', async () => {
+  it('the extension\'s light read: the cache holds the post and composes the row — the row stands in feed.pending as a card, no slot, no resolve', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');

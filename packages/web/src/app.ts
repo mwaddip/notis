@@ -20,7 +20,7 @@ import { buildUnlockRow, buildConfirmRow, buildLinkFallbackRow } from './view/ca
 import { personGlyph, sunGlyph, moonGlyph, gearGlyph, walletGlyph } from './view/glyphs';
 import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
-import { reconcileNewer, isLivePost, newPostsLine, olderPostsLine } from './model/feed-reconcile';
+import { reconcileNewer, isLivePost, newPostsLine, olderPostsLine, pendingWithoutStandingCards } from './model/feed-reconcile';
 import { withNodeWord } from './model/light';
 import { networkNumbers } from './model/network-numbers';
 import { flattenThread } from './model/thread';
@@ -2053,7 +2053,7 @@ export class App {
     const keptPosts = kept.slice(0, res.posts.length);
     const keptPending = kept.slice(res.posts.length);
     feed.posts = this.liveRows(keptPosts).map(this.keeper(feed.posts, since));
-    feed.pending = this.dedupeOwn(keptPending.filter(isLivePost));
+    feed.pending = pendingWithoutStandingCards(keptPending.filter(isLivePost), this.standingCardIds());
     feed.next = res.next;
     feed.loaded = true;
     feed.loading = false;
@@ -2140,7 +2140,7 @@ export class App {
       );
       if (gen !== this.readerGen) return;
       this.indexRows(rows);
-      feed.pending = this.dedupeOwn(pending.filter(isLivePost));
+      feed.pending = pendingWithoutStandingCards(pending.filter(isLivePost), this.standingCardIds());
       feed.posts = landRefresh(feed.posts, r);
       if (r.next !== undefined) feed.next = r.next; // reset only on the replace branch
       feed.unboundCount = 0;
@@ -5392,16 +5392,13 @@ export class App {
     return 1;
   }
 
-  private ownPostIds(): Set<string> {
+  /** The post ids of the submission cards standing in the page — the input to
+   *  the pure feed-pending rule (WEB_INTERFACE → What the feed reads, and what
+   *  a card shows for it → "The reader's own pending post is drawn once"). */
+  private standingCardIds(): Set<string> {
     const s = new Set<string>();
-    for (const e of this.ledger.all()) if (e.kind === 'post') s.add(e.postId);
     for (const sub of this.state.submissions) if (sub.postId !== null) s.add(sub.postId);
     return s;
-  }
-
-  private dedupeOwn<T extends { id: string }>(rows: T[]): T[] {
-    const own = this.ownPostIds();
-    return rows.filter((r) => !own.has(r.id));
   }
 
   private clearSettledFeed(): void {
