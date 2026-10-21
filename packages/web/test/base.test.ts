@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NodeClient } from '../src/api/client';
+import { trimBase } from '../src/base';
 import { jsonResponse } from './honest-page';
 
 // The rule the client builds URLs by: a base that ends with `/` and one that
@@ -41,5 +42,23 @@ describe('a base and its trailing-slash twin build the same URL', () => {
     const c = new NodeClient(() => 'http://a//');
     await c.feed({ limit: 30 });
     expect(calls[0]).toBe('http://a//posts?limit=30');
+  });
+});
+
+describe('trimBase strips exactly one trailing `/`', () => {
+  it("`'http://a/'` → `'http://a'`", () => {
+    expect(trimBase('http://a/')).toBe('http://a');
+  });
+
+  it("`'http://a'` → `'http://a'`", () => {
+    expect(trimBase('http://a')).toBe('http://a');
+  });
+
+  it("`'http://a//'` keeps a `/` — one stripped, not every trailing", () => {
+    expect(trimBase('http://a//')).toBe('http://a/');
+  });
+
+  it("`''` → `''`", () => {
+    expect(trimBase('')).toBe('');
   });
 });

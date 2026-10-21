@@ -2,6 +2,7 @@ import { resolvePosts, type ResolveEnd, type BoundPost } from '../model/post-res
 import type { PostResolver } from '../model/state';
 import type { PostCheck } from '@dagsocial/nipopow-client';
 import { POST_BATCH_READ_BYTES, readCappedJson } from '@dagsocial/node-reads';
+import { trimBase } from '../base';
 
 // The extension's resolver (WEB_INTERFACE → The extension → "The resolve"):
 // `createPostResolver` wraps the pure `resolvePosts` with a real `fetch`,
@@ -25,13 +26,6 @@ export interface PostResolverDeps {
    *  `setTimeout` over the real clock; a caller driving the clock passes
    *  one that fires under the same clock. */
   until?: (at: number) => Promise<void>;
-}
-
-/** Strip one trailing `/` from a base, as `NodeClient.url` does, so
- *  `<base>/posts/batch` builds the same URL whichever form the caller
- *  passed in. */
-function trimBase(base: string): string {
-  return base.replace(/\/$/, '');
 }
 
 /** Trim bases, then drop duplicates — `https://a/` and `https://a` are one

@@ -3,6 +3,7 @@ import {
   WRITE_ANSWER_READ_BYTES, REQUEST_TIMEOUT_MS,
 } from '@dagsocial/node-reads';
 import { type Rejection, normalizeRejection } from './write';
+import { trimBase } from '../base';
 
 // The faucet client — WEB_INTERFACE → The faucet step. One POST to the faucet's
 // own service (NODE_INTERFACE → Faucet), beside the write client so the read
@@ -74,7 +75,7 @@ export class FaucetClient {
   ): Promise<T | Rejection> {
     let res: Response;
     try {
-      res = await fetch(this.base().replace(/\/$/, '') + path, {
+      res = await fetch(trimBase(this.base()) + path, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ pubkey }),

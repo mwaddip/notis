@@ -12,6 +12,7 @@ import {
   readCappedJson, isHex64Lower, isRecord, isAuthorName,
   WRITE_ANSWER_READ_BYTES, REQUEST_TIMEOUT_MS,
 } from '@dagsocial/node-reads';
+import { trimBase } from '../base';
 
 /** `POST /posts` 2xx — the node's own postId is authoritative, never derived here. */
 export interface PostSubmitResult {
@@ -216,7 +217,7 @@ export class WriteClient {
   ): Promise<T | Rejection> {
     let res: Response;
     try {
-      res = await fetch(this.origin().replace(/\/$/, '') + path, {
+      res = await fetch(trimBase(this.origin()) + path, {
         method,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
