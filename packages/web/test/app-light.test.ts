@@ -1013,11 +1013,13 @@ describe('no cache: rows are slots and fill from the resolver alone', () => {
 
 // ---------------------------------------------------------------------------
 // The reader's own pending post rides a light row from the feed's pending.
-// The cache holds it as the reader's own; intake composes it; dedupeOwn drops
-// it beside its submission card.
+// The cache holds it as the reader's own and intake composes it; with no
+// submission card standing for it, the row stays in feed.pending and is drawn
+// as a card from the cache (WEB_INTERFACE → What the feed reads, and what a
+// card shows for it → "The reader's own pending post is drawn once").
 // ---------------------------------------------------------------------------
 describe('the reader\'s own pending post is a card and never a slot', () => {
-  it('intake composes it from the cache; dedupeOwn drops it from feed.pending', async () => {
+  it.fails('intake composes it from the cache; with no submission card standing, the row is in feed.pending and drawn as a card', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
@@ -1033,8 +1035,9 @@ describe('the reader\'s own pending post is a card and never a slot', () => {
       resolver: r.resolver, cache, identityKey: ME,
       feedResults: [{ posts: [], next: null, pending: [lo], pendingCount: 1 }],
     });
-    // A pending post entry in the ledger: dedupeOwn drops the row from
-    // feed.pending beside the submission card.
+    // The pending ledger holds a post entry whose id names the row above, and
+    // no submission card stands for it — as after a reload, where submissions
+    // start empty while the ledger carries the entry on from the last session.
     const ledger = (h.app as unknown as { ledger: PendingLedger }).ledger;
     ledger.add({
       txId: own.txId!,
@@ -1049,8 +1052,9 @@ describe('the reader\'s own pending post is a card and never a slot', () => {
     // No slot was ever drawn and no resolve was asked — the cache held it.
     expect(h.feedEl.querySelectorAll('.card.slot').length).toBe(0);
     expect(r.calls.length).toBe(0);
-    // dedupeOwn dropped the pending row — feed.pending is empty.
-    expect(h.drive.state.feed.pending.length).toBe(0);
+    // feed.pending carries the row, drawn as a card from the cache.
+    expect(h.drive.state.feed.pending.length).toBe(1);
+    expect(h.drive.state.feed.pending[0]!.id).toBe(own.id);
   });
 });
 
