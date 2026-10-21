@@ -23,10 +23,13 @@ Write-Host "==> Building workspace"
 & pnpm build
 
 # --- 1. App tree (robocopy; 0-7 are success, >=8 is failure) -----------------
+# scripts/package-excludes.txt is the one exclude list, shared with
+# build-deb.sh and build-tarball.sh; rsync matches a bare name against files
+# and directories alike, so robocopy takes it in both /XD and /XF.
 Write-Host "==> Staging app tree"
-& robocopy $RepoRoot "$Stage\app" /E /NFL /NDL /NJH /NJS /NP `
-  /XD .git .github .claude node_modules docs prompts tmp `
-  /XF *.db *.db-wal *.db-shm *.deb *.tar.gz CLAUDE.md SETTINGS.md *.key *.pem *.der ".env" | Out-Null
+$Excludes = @(Get-Content (Join-Path $PSScriptRoot '..\package-excludes.txt') |
+  Where-Object { $_ -ne '' -and -not $_.StartsWith('#') })
+& robocopy $RepoRoot "$Stage\app" /E /NFL /NDL /NJH /NJS /NP /XD $Excludes /XF $Excludes | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 $global:LASTEXITCODE = 0
 
