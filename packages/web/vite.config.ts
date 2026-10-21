@@ -33,10 +33,14 @@ if (FAUCET_ORIGIN && !process.env['VITE_FAUCET_BASE']) {
 }
 
 // Defaults so no %VITE_…% literal survives in the built shell
-// (WEB_INTERFACE → The client is served from the node's own origin).
+// (WEB_INTERFACE → The client is served from the node's own origin →
+// "The deployment is six tags in the shell's head, and nothing in the
+// bundle's bytes").
 if (!process.env['VITE_WEB_BASE']) process.env['VITE_WEB_BASE'] = '/';
 if (!process.env['VITE_API_BASE']) process.env['VITE_API_BASE'] = '';
 if (!process.env['VITE_FAUCET_BASE']) process.env['VITE_FAUCET_BASE'] = '';
+if (!process.env['VITE_NODES']) process.env['VITE_NODES'] = '[]';
+if (!process.env['VITE_PUBLIC']) process.env['VITE_PUBLIC'] = '';
 if (!process.env['VITE_PUBLIC_ORIGIN']) process.env['VITE_PUBLIC_ORIGIN'] = '';
 if (!process.env['VITE_NETWORK']) process.env['VITE_NETWORK'] = '';
 

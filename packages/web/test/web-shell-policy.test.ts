@@ -124,20 +124,20 @@ function pluginHandler(): TransformHandler {
 }
 
 describe('web build — the shell the build writes', () => {
-  it.fails('holds no %VITE_ placeholder when every VITE_ variable is unset', async () => {
+  it('holds no %VITE_ placeholder when every VITE_ variable is unset', async () => {
     const shell = await buildWithRealConfig(VITE_CONFIG);
     // Control: the shell was emitted and names the title tag we expect.
     expect(shell).toContain('<title>Notis</title>');
     expect(shell).not.toMatch(/%VITE_[A-Z_]+%/);
   });
 
-  it.fails('writes notis-nodes as the empty JSON array when VITE_NODES is unset', async () => {
+  it('writes notis-nodes as the empty JSON array when VITE_NODES is unset', async () => {
     const shell = await buildWithRealConfig(VITE_CONFIG);
     expect(shell).toContain('<title>Notis</title>');
     expect(shell).toMatch(/<meta name="notis-nodes" content=['"]\[\]['"]/);
   });
 
-  it.fails('writes notis-public empty when VITE_PUBLIC is unset', async () => {
+  it('writes notis-public empty when VITE_PUBLIC is unset', async () => {
     const shell = await buildWithRealConfig(VITE_CONFIG);
     expect(shell).toContain('<title>Notis</title>');
     expect(shell).toMatch(/<meta name="notis-public" content=""/);
