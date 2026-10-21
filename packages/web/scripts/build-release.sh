@@ -71,11 +71,25 @@ policy_count=$(grep -Fc 'http-equiv="Content-Security-Policy"' "$SHELL_FILE" || 
   || { echo "FAIL: $SHELL_FILE carries $policy_count Content-Security-Policy metas, expected 1"; exit 1; }
 grep -Fq "$EXPECTED_META" "$SHELL_FILE" \
   || { echo "FAIL: $SHELL_FILE policy meta content differs from the module's string"; echo "  expected: $EXPECTED_META"; exit 1; }
-charset_pos=$(grep -b -o '<meta charset="utf-8">' "$SHELL_FILE" | head -n 1 | cut -d: -f1)
-policy_pos=$(grep -b -o 'http-equiv="Content-Security-Policy"' "$SHELL_FILE" | head -n 1 | cut -d: -f1)
-base_pos=$(grep -b -o '<base ' "$SHELL_FILE" | head -n 1 | cut -d: -f1)
-if [ -z "$charset_pos" ] || [ -z "$policy_pos" ] || [ -z "$base_pos" ]; then
+# indexOf returns -1 for an absent anchor, so each arm of the placement
+# check reaches its own FAIL line — a grep | head | cut pipeline would
+# trip errexit under `set -euo pipefail` the moment grep found nothing,
+# leaving the "missing one of …" arm unreachable. The here-string form
+# `<<<` appends a newline, so read returns 0 (its EOF-without-newline
+# arm returns 1 and would trip errexit even on a filled read).
+POSITIONS=$(node --input-type=module -e "
+import { readFileSync } from 'node:fs';
+const html = readFileSync(process.argv[1], 'utf8');
+process.stdout.write(
+  html.indexOf('<meta charset=\"utf-8\">') + ' ' +
+  html.indexOf('http-equiv=\"Content-Security-Policy\"') + ' ' +
+  html.indexOf('<base ')
+);
+" "$SHELL_FILE")
+read -r charset_pos policy_pos base_pos <<< "$POSITIONS"
+if [ "$charset_pos" = "-1" ] || [ "$policy_pos" = "-1" ] || [ "$base_pos" = "-1" ]; then
   echo "FAIL: $SHELL_FILE missing one of <meta charset=…>, policy meta, or <base>"
+  echo "  charset at $charset_pos, policy at $policy_pos, base at $base_pos"
   exit 1
 fi
 if [ "$policy_pos" -le "$charset_pos" ] || [ "$policy_pos" -ge "$base_pos" ]; then
