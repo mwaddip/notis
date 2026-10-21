@@ -1,6 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { computeTxId, decodeTx, computeContentHash, bytesToHex, hexToBytes, generateKeyPair } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
+import { isHex64Lower } from '@dagsocial/node-reads';
 import { seal, open, parseFile, IdentityError, type Envelope } from '../identity/envelope';
 import {
   isMessage, isSignRecord, REFUSED_UNKNOWN,
@@ -9,6 +10,7 @@ import {
 import { summarise, classifyLedger } from './policy';
 import { K_LINKS, K_OPEN_PREFIX, readLinksPref, type LinksPref } from './links';
 import { IDENTITY_KEY, BACKEDUP_KEY, POLICY_KEY, SEED_KEY } from './storage-keys';
+import { readHex64 } from '../hex64';
 
 // The extension's identity service — WEB_INTERFACE → The extension. It holds
 // the envelope in `storage.local` and the unlocked seed in `storage.session`,
@@ -25,9 +27,6 @@ import { IDENTITY_KEY, BACKEDUP_KEY, POLICY_KEY, SEED_KEY } from './storage-keys
 
 const K_DRAFT = 'notis.draft';
 const K_SIGN_PREFIX = 'notis.sign.';
-
-const HEX64 = /^[0-9a-f]{64}$/;
-const HEX64_ANYCASE = /^[0-9a-fA-F]{64}$/;
 
 /** The build's per-install shape — WEB_INTERFACE → The extension. `publicBase`
  *  is the shell's `notis-public`, empty for a build with no bridge, checked
@@ -172,7 +171,7 @@ async function discardDraft(api: typeof chrome): Promise<'ok'> {
 async function create(api: typeof chrome, passphrase: string): Promise<{ pubKeyHex: string } | { error: string }> {
   const draftGet = await api.storage.session.get(K_DRAFT);
   const d = draftGet[K_DRAFT] as { pubKeyHex?: unknown; seedHex?: unknown } | undefined;
-  if (!d || typeof d.pubKeyHex !== 'string' || typeof d.seedHex !== 'string' || !HEX64.test(d.pubKeyHex) || !HEX64.test(d.seedHex)) {
+  if (!d || !isHex64Lower(d.pubKeyHex) || !isHex64Lower(d.seedHex)) {
     return { error: 'no drafted key to create.' };
   }
   const seed = hexToBytes(d.seedHex);
@@ -304,8 +303,7 @@ function checkBridgeSender(
   if (typeof sender.tab?.id !== 'number') return null;
   const url = typeof sender.url === 'string' ? sender.url : '';
   if (!url.startsWith(config.publicBase + 'p/')) return null;
-  if (typeof id !== 'string' || !HEX64_ANYCASE.test(id)) return null;
-  return id.toLowerCase();
+  return readHex64(id);
 }
 
 async function arrived(api: typeof chrome, config: BackgroundConfig, rawId: string, sender: chrome.runtime.MessageSender): Promise<'ok' | { error: string }> {
@@ -562,7 +560,7 @@ async function readIdentitySeed(api: typeof chrome, envPubKeyHex: string): Promi
  *  its public key is not the envelope's (WEB_INTERFACE → "The contexts, and
  *  what each may hold"). */
 function identitySeed(raw: unknown, envPubKeyHex: string): Uint8Array | null {
-  if (typeof raw !== 'string' || !HEX64.test(raw)) return null;
+  if (!isHex64Lower(raw)) return null;
   const seed = hexToBytes(raw);
   const pub = bytesToHex(ed25519.getPublicKey(seed));
   return pub === envPubKeyHex ? seed : null;

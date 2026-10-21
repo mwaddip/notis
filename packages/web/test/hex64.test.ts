@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { decideMode } from '../src/mode';
 import { parse, serialise } from '../src/model/arrangement';
+import { readHex64 } from '../src/hex64';
 
 // WEB_INTERFACE → Reading a node's answer, → The standalone thread, → The
 // workspace: an id from a node is 64 lowercase hex; the id in a page's path
@@ -61,5 +62,44 @@ describe('parse reads stored tokens either-case and lower-cases them', () => {
     const lower = 'a'.repeat(64);
     const ws = parse('@author:' + upper + ',@posts:' + upper);
     expect(serialise(ws)).toBe('@author:' + lower + ',@posts:' + lower);
+  });
+});
+
+describe('readHex64 answers the lower-cased id or null', () => {
+  it('a lowercase 64-hex passes through unchanged', () => {
+    const id = 'a'.repeat(64);
+    expect(readHex64(id)).toBe(id);
+  });
+
+  it('an upper-case 64-hex answers the lower-cased id', () => {
+    expect(readHex64('A'.repeat(64))).toBe('a'.repeat(64));
+  });
+
+  it('a mixed-case 64-hex answers the lower-cased id', () => {
+    const mixed = 'AbCdEf'.repeat(10) + 'Ab00';
+    expect(readHex64(mixed)).toBe(mixed.toLowerCase());
+  });
+
+  it('a 63-character string answers null', () => {
+    expect(readHex64('a'.repeat(63))).toBeNull();
+  });
+
+  it('a 65-character string answers null', () => {
+    expect(readHex64('a'.repeat(65))).toBeNull();
+  });
+
+  it('a 64-character string with a non-hex character answers null', () => {
+    expect(readHex64('g' + 'a'.repeat(63))).toBeNull();
+  });
+
+  it('the empty string answers null', () => {
+    expect(readHex64('')).toBeNull();
+  });
+
+  it('a non-string value answers null', () => {
+    expect(readHex64(null)).toBeNull();
+    expect(readHex64(undefined)).toBeNull();
+    expect(readHex64(42)).toBeNull();
+    expect(readHex64({})).toBeNull();
   });
 });

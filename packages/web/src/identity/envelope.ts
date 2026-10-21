@@ -3,6 +3,7 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { scryptAsync } from '@noble/hashes/scrypt.js';
 import { randomBytes } from '@noble/hashes/utils.js';
 import { bytesToHex, hexToBytes } from '@dagsocial/types';
+import { isHex64Lower } from '@dagsocial/node-reads';
 
 // The identity envelope — WEB_INTERFACE → The identity module. The stored value
 // and the exported file are one shape, so importing an encrypted file is storing
@@ -34,7 +35,6 @@ export const SCRYPT_N_MAX = 262_144;
 const PKCS8_PREFIX_HEX = '302e020100300506032b657004220420';
 
 const HEX = /^(?:[0-9a-f]{2})+$/;
-const HEX64 = /^[0-9a-f]{64}$/;
 
 /** A refusal a human reads — WEB_INTERFACE → The identity module: each failure
  *  names what is wrong. */
@@ -110,7 +110,7 @@ export async function seal(
   params: ScryptParams = DEFAULT_PARAMS,
 ): Promise<Envelope> {
   if (seed.length !== 32) throw new IdentityError('a seed to seal must be 32 bytes.');
-  if (!HEX64.test(pubKeyHex)) throw new IdentityError('a public key to seal under must be 64 hex characters.');
+  if (!isHex64Lower(pubKeyHex)) throw new IdentityError('a public key to seal under must be 64 hex characters.');
   const salt = randomBytes(16);
   const nonce = randomBytes(12);
   const key = await deriveKey(passphrase, salt, params);
@@ -161,7 +161,7 @@ export function parseFile(text: string): ParsedFile {
     throw new IdentityError('that is not an identity file.');
   }
   const o = parsed as Record<string, unknown>;
-  if (typeof o.pubKeyHex !== 'string' || !HEX64.test(o.pubKeyHex)) {
+  if (!isHex64Lower(o.pubKeyHex)) {
     throw new IdentityError('the file has no valid public key.');
   }
   const pubKeyHex = o.pubKeyHex;

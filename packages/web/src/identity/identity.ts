@@ -3,6 +3,7 @@ import { generateKeyPair, bytesToHex, hexToBytes } from '@dagsocial/types';
 import { readStore, writeStore, removeStore } from '../prefs';
 import { seal, open, parseFile, IdentityError, type Envelope, type ParsedFile } from './envelope';
 import { IDENTITY_KEY, BACKEDUP_KEY } from '../extension/storage-keys';
+import { isHex64Lower } from '@dagsocial/node-reads';
 import type { SignResult } from '../wallet/submit';
 
 // The identity machinery — WEB_INTERFACE → The identity module. One identity at a
@@ -22,7 +23,6 @@ export interface Identity {
   pubKeyHex: string; // 64 hex — the Ed25519 public key
 }
 
-const HEX64 = /^[0-9a-f]{64}$/;
 
 export class IdentityModule {
   // The seed sits in JS memory only while unlocked; it is never a return value,
@@ -152,7 +152,7 @@ export class IdentityModule {
     if (this.pubKeyHex === null) return { locked: true };
     if (pubKeyHex !== this.pubKeyHex) return { refused: 'key-changed' };
     if (this.seed === null) return { locked: true };
-    if (!HEX64.test(txIdHex)) return { refused: 'a transaction id to sign must be 64 hex characters.' };
+    if (!isHex64Lower(txIdHex)) return { refused: 'a transaction id to sign must be 64 hex characters.' };
     return { signature: bytesToHex(ed25519.sign(hexToBytes(txIdHex), this.seed)) };
   }
 

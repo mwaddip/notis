@@ -30,6 +30,7 @@ import type {
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
+import { isHex64Lower } from '@dagsocial/node-reads';
 import type { SpendableBox, ChangeRef } from './types';
 
 // The pure builders — WEB_INTERFACE → The wallet. Each takes the spendable view,
@@ -102,12 +103,10 @@ export class InvalidKey extends Error {
   }
 }
 
-const KEY_HEX = /^[0-9a-f]{64}$/;
-
 /** Decode a foreign key, refusing with InvalidKey rather than hexToBytes'
  *  bare throw (TYPES_INTERFACE → Export table). */
 function keyBytes(hex: string, which: string): Uint8Array {
-  if (!KEY_HEX.test(hex)) throw new InvalidKey(which);
+  if (!isHex64Lower(hex)) throw new InvalidKey(which);
   return hexToBytes(hex);
 }
 

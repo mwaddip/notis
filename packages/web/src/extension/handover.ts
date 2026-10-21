@@ -1,5 +1,6 @@
 import type { Tabs } from '../tabs';
 import { K_OPEN_PREFIX } from './links';
+import { isHex64Lower } from '@dagsocial/node-reads';
 
 // The page's half of the extension handover — WEB_INTERFACE → The extension → "Links into the extension".
 // The holder of the workspace lock asks the background for waiting threads at two moments: when
@@ -7,8 +8,6 @@ import { K_OPEN_PREFIX } from './links';
 // `notis.open.` key appearing in `storage.session` while it holds. The background reads and removes
 // every pending record in one step and answers their ids, which reach every registered `onOpen`
 // listener in order (WEB_INTERFACE → The extension → "Both messages end in one act, landing the thread in the workspace").
-
-const HEX64_LOWER = /^[0-9a-f]{64}$/;
 
 /** Wrap a `Tabs` with the extension-side handover. `holds`, `heldElsewhere`, `announce`, `offer`
  *  delegate untouched; `onOpen(cb)` registers `cb` with the inner tabs — for a channel delivery — and
@@ -23,8 +22,7 @@ export function wrapTabs(inner: Tabs, api: typeof chrome): Tabs {
   const deliver = (raw: unknown): void => {
     if (!Array.isArray(raw)) return;
     for (const v of raw) {
-      if (typeof v !== 'string') continue;
-      if (!HEX64_LOWER.test(v)) continue;
+      if (!isHex64Lower(v)) continue;
       for (const cb of listeners) cb(v);
     }
   };

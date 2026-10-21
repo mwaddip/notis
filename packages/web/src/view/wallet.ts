@@ -1,5 +1,6 @@
 import { el, shortHex, endForm, setText } from '../dom';
 import { prefs } from '../prefs';
+import { readHex64 } from '../hex64';
 import { unlockForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { isValidUsernameBytes } from '@dagsocial/types';
@@ -550,9 +551,9 @@ function sendForm(handlers: WalletHandlers, read: () => WalletCtx, confirm: (bui
     }
     // Recipient: a bare 64 hex is a key; else an @handle (one leading @ stripped) validated as a username.
     const raw = toInput.value.trim();
-    const asKey = raw.toLowerCase();
+    const asKey = readHex64(raw);
     let to: SendRecipient;
-    if (/^[0-9a-f]{64}$/.test(asKey)) {
+    if (asKey !== null) {
       to = { key: asKey };
     } else {
       const naked = raw.startsWith('@') ? raw.slice(1) : raw;

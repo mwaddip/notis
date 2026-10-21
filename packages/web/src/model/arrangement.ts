@@ -1,20 +1,21 @@
 import { newWorkspace, newColumn, type Workspace } from './workspace';
+import { readHex64 } from '../hex64';
 
 // The workspace as text: `#r1,r2|r5` — comma stacks windows in a column, `|`
 // starts the next column. Readable, diffable, and the persistence format —
 // `serialise` and `parse` are inverses (WEB_INTERFACE → The workspace).
 
-const HEX64 = /^[0-9a-f]{64}$/i;
 const WINDOW_IDS = new Set<string>(['@profile', '@settings', '@wallet']);
 // `@author:<64hex>` and `@posts:<64hex>` — the two membership windows
 // (WEB_INTERFACE → The author window). The `:` and `@` cannot collide with a
-// 64-hex post id.
+// 64-hex post id. The 64-hex sits inside a larger pattern — the leading
+// `@author:` or `@posts:` — so the regex stays as a regex.
 const AT_SUBJECT = /^@(author|posts):([0-9a-f]{64})$/i;
 
 /** A token is a real window id — a 64-hex post id, a known @-window, or an
  *  `@author:`/`@posts:` window naming a 64-hex key. */
 export function isWindowId(k: string): boolean {
-  return WINDOW_IDS.has(k) || HEX64.test(k) || AT_SUBJECT.test(k);
+  return WINDOW_IDS.has(k) || readHex64(k) !== null || AT_SUBJECT.test(k);
 }
 
 /** The window id for an author's window and its posts window. */

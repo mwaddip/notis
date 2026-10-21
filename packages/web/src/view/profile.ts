@@ -1,5 +1,6 @@
 import { el, shortHex, endForm, setText } from '../dom';
 import { prefs } from '../prefs';
+import { readHex64 } from '../hex64';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { markHandle } from './name-handle';
@@ -463,8 +464,8 @@ function inviteForm(params: InviteParams, onSubmit: (inviteeKey: string, bond: b
   form.append(keyInput, bondInput, submit, refusal, copy);
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const key = keyInput.value.trim().toLowerCase();
-    if (!/^[0-9a-f]{64}$/.test(key)) {
+    const key = readHex64(keyInput.value.trim());
+    if (key === null) {
       refusal.textContent = 'that is not a 64-character key.';
       refusal.hidden = false;
       return;

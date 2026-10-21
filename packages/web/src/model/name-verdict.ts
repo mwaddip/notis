@@ -11,6 +11,7 @@
 // Their shape is `tipVerdict`'s: pure, total by itself, no exception thrown.
 
 import type { NameResult, NameStatus } from '@dagsocial/nipopow-client';
+import { isHex64Lower } from '@dagsocial/node-reads';
 
 // The table decides every NameStatus — its type holds the union whole — and a
 // status outside it at run time reads as no check.
@@ -28,10 +29,6 @@ const CLAY: Readonly<Record<NameStatus, boolean>> = {
 // Usernames), and no hex digit — so neither a key nor a well-formed name holds
 // it (TYPES_INTERFACE → Content limits).
 const PAIR_SEPARATOR = '@';
-
-// A key a send can go to — 32 bytes as lowercase hex, the owner the tool reads
-// off a proven box.
-const KEY_HEX = /^[0-9a-f]{64}$/;
 
 /** The key a check's result is held under — a label is a key and the name a row
  *  carries beside it (WEB_INTERFACE → The extension → "The verified names").
@@ -65,7 +62,7 @@ export function recipientVerdict(
 ): { key: string; name: string } | { refusal: string } {
   switch (result.status) {
     case 'proven':
-      if (typeof result.owner === 'string' && KEY_HEX.test(result.owner) && typeof result.name === 'string') {
+      if (isHex64Lower(result.owner) && typeof result.name === 'string') {
         return { key: result.owner, name: result.name };
       }
       break;
