@@ -101,3 +101,56 @@ describe('createTabs().offer — no document', () => {
     }
   });
 });
+
+describe('createTabs() — BroadcastChannel delivery is 64 lowercase hex', () => {
+  // The ids crossing the `notis` BroadcastChannel are what another tab of
+  // this client announced; the strict rule — 64 lowercase hex
+  // (NODE_INTERFACE → HTTP API → "Hex is lowercase") — reads them.
+
+  // Each case runs createTabs with no `navigator.locks` so `claim()` returns
+  // immediately with `holding = true`, since happy-dom's lock manager is a
+  // real one and a workspace lock a case claimed holds for the suite.
+  async function heldTabs(): Promise<{ tabs: ReturnType<typeof createTabs>; restore: () => void }> {
+    const origDesc = Object.getOwnPropertyDescriptor(window, 'navigator');
+    Object.defineProperty(window, 'navigator', { configurable: true, value: {} });
+    const tabs = createTabs();
+    await tabs.claim();
+    return {
+      tabs,
+      restore: () => {
+        if (origDesc) Object.defineProperty(window, 'navigator', origDesc);
+      },
+    };
+  }
+
+  it('a lower-case id announced on `notis` reaches a holder (control)', async () => {
+    const { tabs, restore } = await heldTabs();
+    const seen: string[] = [];
+    tabs.onOpen((id) => seen.push(id));
+    const other = new BroadcastChannel('notis');
+    try {
+      const id = 'a'.repeat(64);
+      other.postMessage({ id });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(seen).toEqual([id]);
+    } finally {
+      other.close();
+      restore();
+    }
+  });
+
+  it('an upper-case id reaches no listener', async () => {
+    const { tabs, restore } = await heldTabs();
+    const seen: string[] = [];
+    tabs.onOpen((id) => seen.push(id));
+    const other = new BroadcastChannel('notis');
+    try {
+      other.postMessage({ id: 'A'.repeat(64) });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(seen).toEqual([]);
+    } finally {
+      other.close();
+      restore();
+    }
+  });
+});

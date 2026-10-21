@@ -245,6 +245,24 @@ describe('background — sign checks the key is the envelope\'s', () => {
     expect(c.windows.created).toEqual([]);
   });
 
+  it('an upper-case `notis.seed` in storage.session reads locked; the lower-case form is the identity`s seed', async () => {
+    const c = await bootstrappedChrome();
+    const envSeedHex = c.storage.session.get('notis.seed') as string;
+    // Control: the lower-case seed the background wrote reads unlocked.
+    const snap0 = await c.send({ kind: 'state' }) as { locked: boolean };
+    expect(snap0.locked).toBe(false);
+    // The strict rule: a seed in storage.session is 64 lowercase hex
+    // (NODE_INTERFACE → HTTP API → "Hex is lowercase"). An upper-case form
+    // whose bytes are the identity's is not counted as the identity's seed.
+    c.storage.session.set('notis.seed', envSeedHex.toUpperCase());
+    const snap = await c.send({ kind: 'state' }) as { locked: boolean };
+    expect(snap.locked).toBe(true);
+    // Restored: state reads unlocked again.
+    c.storage.session.set('notis.seed', envSeedHex);
+    const snap2 = await c.send({ kind: 'state' }) as { locked: boolean };
+    expect(snap2.locked).toBe(false);
+  });
+
   it('a seed of another key in storage.session beside the envelope: state locked, a silent sign answers locked, control signs', async () => {
     const c = await bootstrappedChrome();
     const envKey = await pubKey(c);

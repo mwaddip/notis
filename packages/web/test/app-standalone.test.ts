@@ -284,6 +284,38 @@ describe('standalone title and re-root', () => {
 
     expect(drive.state.workspace.columns[0]!.wins[0]).toBe(P1);
   });
+
+  it('a popstate whose state.id is upper-case does not re-root; the lower-case form does', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const app = new App(fakeApi());
+    const drive = app as unknown as {
+      start(a: HTMLElement, b: HTMLElement, c: HTMLElement, m: { kind: 'standalone'; id: string; base: string }): void;
+      openThread(id: string, origin: { from: 'pane'; ci: number }): void;
+      state: { workspace: { columns: Array<{ wins: string[] }> } };
+    };
+    drive.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+
+    drive.openThread(R1, { from: 'pane', ci: 0 });
+    await flush();
+    // Control: a lower-case id re-roots the standalone to P1.
+    window.dispatchEvent(new PopStateEvent('popstate', { state: { id: P1 } }));
+    await flush();
+    expect(drive.state.workspace.columns[0]!.wins[0]).toBe(P1);
+
+    // Re-root to R1 again so the next assertion has a target to NOT change.
+    drive.openThread(R1, { from: 'pane', ci: 0 });
+    await flush();
+    expect(drive.state.workspace.columns[0]!.wins[0]).toBe(R1);
+
+    // The strict rule: the id in history.state the handler reads is 64
+    // lowercase hex (NODE_INTERFACE → HTTP API → "Hex is lowercase"). An
+    // upper-case form does not re-root.
+    window.dispatchEvent(new PopStateEvent('popstate', { state: { id: P1.toUpperCase() } }));
+    await flush();
+    expect(drive.state.workspace.columns[0]!.wins[0]).toBe(R1);
+  });
 });
 
 describe('linkUrl from the App', () => {
