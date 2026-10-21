@@ -62,13 +62,6 @@ export interface Envelope {
   ciphertext: string; // the 32-byte seed ‖ the 16-byte tag, hex
 }
 
-/** The clear identity-file shape — a file shape only (WEB_INTERFACE → The
- *  identity module, the Import row). */
-export interface ClearFile {
-  pubKeyHex: string;
-  privKeyBase64: string;
-}
-
 /** What parseFile hands back: the kind, the public key, and — already validated —
  *  the seed for a clear file or the envelope for an encrypted one. */
 export type ParsedFile =

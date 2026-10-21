@@ -137,19 +137,6 @@ export interface PubKeyAnswer {
   pubKeyHex: string;
 }
 
-/** The answer shape per message kind. `state` also answers `null` — that is a
- *  peer alternative to `AppSnapshot`, so callers unwrap `AppSnapshot | null`. */
-export type Answer<K extends MessageKind> =
-  K extends 'state' ? (AppSnapshot | null)
-  : K extends 'draft' | 'create' | 'importFile' ? PubKeyAnswer
-  : K extends 'inspectFile' ? { kind: 'clear' | 'encrypted'; pubKeyHex: string }
-  : K extends 'exportFile' ? { text: string }
-  : K extends 'sign' ? SignAnswer
-  : K extends 'takeOpen' ? { ids: string[] }
-  : K extends 'approve' ? ('ok' | { locked: true } | ErrorAnswer)
-  : K extends 'discardDraft' | 'unlock' | 'lock' | 'forget' | 'policy' | 'links' | 'arrived' | 'offered' | 'ack' | 'decline' ? 'ok'
-  : never;
-
 /** A `Message` guard the dispatcher uses to close over the input. `unknown`
  *  arrives from `runtime.onMessage`, so every field the guard reads is a
  *  probe — a shape that lies about its `kind` is refused as unknown. */
