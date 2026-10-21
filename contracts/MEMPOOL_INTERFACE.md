@@ -163,12 +163,18 @@ switch and strands the node on the lighter chain. `TxTooLargeError` is dropped a
 `MempoolFullError` already is. A transaction that rode in a block cannot exceed the bound — validation
 refuses those — so the path should never trip it, and it is defended anyway.
 
+**The conflict gate runs before the capacity gate.** An arrival spending a box a pooled entry spends is refused
+(`PendingSpendConflictError`, 409) before it can displace anything: a full credit class would otherwise evict its
+cheapest resident for an arrival that is then refused — or, where that resident is the conflicting entry itself,
+replace it, which this pool never does (→ No replacement semantics). The relay reaches the gate with such an
+arrival, since it validates against the confirmed set alone (→ getBoxWithPending).
+
 **One SQLite transaction.** The eviction a full credit class makes, the entry's row and its input and output rows
 commit together or not at all (`ARCHITECTURE → "Single-transaction atomic writes"`); inside a caller's transaction —
 the reorg's re-insertion — it runs as a savepoint of that one.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The one transaction leads `store/mempool.ts`'s `insertUtxoTx`, which evicts and
-> inserts as separate statements.
+> ⚠ **AHEAD OF CODE (2026-10-21).** The gate order and the one transaction lead `store/mempool.ts`'s `insertUtxoTx`,
+> which runs the capacity gate — evicting — before the conflict gate, and evicts and inserts as separate statements.
 
 - `expiresAtHeight` is the block height at which the entry becomes invalid.
 - `costEstimate` is the cost gate's marginal cost, written as the row's `cost_estimate` (→ The cost gate); a caller
