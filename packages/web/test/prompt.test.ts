@@ -231,7 +231,7 @@ describe('the prompt page — Esc', () => {
     c.api.runtime.sendMessage = (async (m: { kind: string }) => {
       sent.push(m.kind);
       if (m.kind !== 'approve') return undefined;
-      return approvals.shift() ?? { error: 'locked' };
+      return approvals.shift() ?? { locked: true };
     }) as unknown as typeof chrome.runtime.sendMessage;
     vi.stubGlobal('chrome', c.api);
     const close = vi.fn();
@@ -303,10 +303,30 @@ describe('the prompt page — Esc', () => {
     expect(p.close).not.toHaveBeenCalled();
   });
 
+  // WEB_INTERFACE → The extension → "`sign`, in the background, in order",
+  // step 8: the prompt page mounts its unlock form on `{ locked }` alone and
+  // closes on any other answer — the record answered, gone or declined.
+
+  it('approve answering { error } (no open prompt for that id) closes the window and shows no unlock form', async () => {
+    const p = await openPrompt([Promise.resolve({ error: 'no open prompt for that id' })]);
+    p.sign().click();
+    await flush();
+    expect(p.main.querySelector('.unlock-in-prompt')).toBeNull();
+    expect(p.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('approve answering { locked: true } mounts the unlock form, window stays open', async () => {
+    const p = await openPrompt([Promise.resolve({ locked: true })]);
+    p.sign().click();
+    await flush();
+    expect(p.main.querySelector('.unlock-in-prompt')).not.toBeNull();
+    expect(p.close).not.toHaveBeenCalled();
+  });
+
   it('while a signature is under way Esc declines nothing, in the unlock form as on the pair', async () => {
     let signed!: (answer: unknown) => void;
     const held = new Promise<unknown>((r) => { signed = r; });
-    const p = await openPrompt([Promise.resolve({ error: 'locked' }), held]);
+    const p = await openPrompt([Promise.resolve({ locked: true }), held]);
     const box = await toUnlock(p);
     box.querySelector<HTMLInputElement>('input[type="password"]')!.value = 'pw';
     box.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));

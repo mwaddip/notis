@@ -56,7 +56,7 @@ describe('identity module — create, export, import', () => {
     expect(imported.pubKeyHex).toBe(id.pubKeyHex);
     // Import leaves it unlocked, so it can sign — the seed came across.
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: false });
-    const r = await b.sign(new Uint8Array(), 'ab'.repeat(32));
+    const r = await b.sign(new Uint8Array(), 'ab'.repeat(32), b.current()?.pubKeyHex ?? '0'.repeat(64));
     expect(r).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
   });
 
@@ -68,7 +68,7 @@ describe('identity module — create, export, import', () => {
     const id = await m.importFile(clear, 'chosen passphrase');
     expect(id.pubKeyHex).toBe(pubKeyHex);
     expect(m.current()).toEqual({ pubKeyHex, locked: false });
-    const r = await m.sign(new Uint8Array(), 'cd'.repeat(32));
+    const r = await m.sign(new Uint8Array(), 'cd'.repeat(32), m.current()?.pubKeyHex ?? '0'.repeat(64));
     expect(r).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
 
     // Storage never holds the clear shape — it is sealed on import.
@@ -124,7 +124,7 @@ describe('identity module — create, export, import', () => {
     // No seed loaded is the same shape as locked in the SignResult vocabulary —
     // the in-page module never answers `declined` (WEB_INTERFACE → The identity
     // module).
-    expect(await m.sign(new Uint8Array(), 'ab'.repeat(32))).toEqual({ locked: true });
+    expect(await m.sign(new Uint8Array(), 'ab'.repeat(32), m.current()?.pubKeyHex ?? '0'.repeat(64))).toEqual({ locked: true });
     await expect(m.exportFile('file')).rejects.toThrow(/no unlocked identity/);
   });
 });
@@ -135,15 +135,15 @@ describe('identity module — locked at rest, unlocked on demand', () => {
 
     const b = new IdentityModule(); // reads the stored envelope
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: true });
-    expect(await b.sign(new Uint8Array(), 'ab'.repeat(32))).toEqual({ locked: true });
+    expect(await b.sign(new Uint8Array(), 'ab'.repeat(32), b.current()?.pubKeyHex ?? '0'.repeat(64))).toEqual({ locked: true });
 
     await b.unlock('the passphrase');
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: false });
-    expect(await b.sign(new Uint8Array(), 'ab'.repeat(32))).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
+    expect(await b.sign(new Uint8Array(), 'ab'.repeat(32), b.current()?.pubKeyHex ?? '0'.repeat(64))).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
 
     b.lock();
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: true });
-    expect(await b.sign(new Uint8Array(), 'ab'.repeat(32))).toEqual({ locked: true });
+    expect(await b.sign(new Uint8Array(), 'ab'.repeat(32), b.current()?.pubKeyHex ?? '0'.repeat(64))).toEqual({ locked: true });
   });
 
   it('unlock refuses a wrong passphrase and stays locked', async () => {
@@ -225,6 +225,23 @@ describe('identity module — persistence and storage guards', () => {
     expect(m.current()).toBeNull();
     expect(localStorage.getItem(IDENTITY_KEY)).toBe(clear); // left in place, overwritten only by the next create or import
   });
+
+  // WEB_INTERFACE → The identity module → "An envelope's scrypt cost is bounded"
+  // — a stored envelope naming an N outside the bound reads as no identity, as a
+  // clear value does, and is left in place; the next create or import overwrites it.
+  it('a stored envelope naming N = 2^19 reads as no identity and is left in place', () => {
+    const outside = JSON.stringify({
+      version: 1,
+      pubKeyHex: 'ab'.repeat(32),
+      kdf: { name: 'scrypt', salt: 'aa'.repeat(16), N: 2 ** 19, r: 8, p: 1 },
+      cipher: { name: 'chacha20-poly1305', nonce: 'bb'.repeat(12) },
+      ciphertext: 'cc'.repeat(48),
+    });
+    localStorage.setItem(IDENTITY_KEY, outside);
+    const m = new IdentityModule();
+    expect(m.current()).toBeNull();
+    expect(localStorage.getItem(IDENTITY_KEY)).toBe(outside);
+  });
 });
 
 describe('identity module — signing interop with the node verifier', () => {
@@ -232,7 +249,7 @@ describe('identity module — signing interop with the node verifier', () => {
     const m = new IdentityModule();
     const { pubKeyHex } = await mint(m, 'pw');
     const txIdHex = '9a'.repeat(32);
-    const r = await m.sign(new Uint8Array(), txIdHex);
+    const r = await m.sign(new Uint8Array(), txIdHex, m.current()?.pubKeyHex ?? '0'.repeat(64));
     expect(r).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
     if (!('signature' in r)) return;
     const sigHex = r.signature;
@@ -250,9 +267,9 @@ describe('identity module — signing interop with the node verifier', () => {
     const m = new IdentityModule();
     await mint(m, 'pw');
     for (const bad of ['', 'abc', 'ab'.repeat(31), 'ab'.repeat(33), 'zz'.repeat(32), 'AB'.repeat(32), `${'ab'.repeat(32)} `]) {
-      expect(await m.sign(new Uint8Array(), bad), bad).toEqual({ refused: 'a transaction id to sign must be 64 hex characters.' });
+      expect(await m.sign(new Uint8Array(), bad, m.current()?.pubKeyHex ?? '0'.repeat(64)), bad).toEqual({ refused: 'a transaction id to sign must be 64 hex characters.' });
     }
-    expect(await m.sign(new Uint8Array(), 'ab'.repeat(32))).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
+    expect(await m.sign(new Uint8Array(), 'ab'.repeat(32), m.current()?.pubKeyHex ?? '0'.repeat(64))).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
   });
 
   it('the in-page module never answers `declined` — that is the extension proxy\'s arm', async () => {
@@ -260,14 +277,34 @@ describe('identity module — signing interop with the node verifier', () => {
     // no-identity, bad-input. None answers `declined`.
     const m = new IdentityModule();
     const results: unknown[] = [];
-    results.push(await m.sign(new Uint8Array(), 'ab'.repeat(32))); // no identity → locked
+    results.push(await m.sign(new Uint8Array(), 'ab'.repeat(32), m.current()?.pubKeyHex ?? '0'.repeat(64))); // no identity → locked
     await mint(m, 'pw');
-    results.push(await m.sign(new Uint8Array(), 'ab'.repeat(32))); // unlocked → signature
+    results.push(await m.sign(new Uint8Array(), 'ab'.repeat(32), m.current()?.pubKeyHex ?? '0'.repeat(64))); // unlocked → signature
     m.lock();
-    results.push(await m.sign(new Uint8Array(), 'ab'.repeat(32))); // locked
+    results.push(await m.sign(new Uint8Array(), 'ab'.repeat(32), m.current()?.pubKeyHex ?? '0'.repeat(64))); // locked
     await m.unlock('pw');
-    results.push(await m.sign(new Uint8Array(), 'not-hex')); // refused
+    results.push(await m.sign(new Uint8Array(), 'not-hex', m.current()?.pubKeyHex ?? '0'.repeat(64))); // refused
     for (const r of results) expect(r as Record<string, unknown>).not.toHaveProperty('declined');
+  });
+});
+
+// WEB_INTERFACE → The identity module → "A signature is made for the key the
+// transaction was built for" — `sign(txBytes, txIdHex, pubKeyHex, hint?)`
+// answers `refused: key-changed` when the key is not the module's.
+describe('identity module — sign carries the key the flow was built for', () => {
+  it('unlocked as A, a sign naming B answers refused key-changed and signs nothing', async () => {
+    const m = new IdentityModule();
+    const id = await mint(m, 'pw');
+    const B = 'ff'.repeat(32);
+    expect(id.pubKeyHex).not.toBe(B);
+    const r = await m.sign(new Uint8Array(), 'ab'.repeat(32), B);
+    expect(r).toEqual({ refused: 'key-changed' });
+  });
+
+  it('no identity + a sign answers locked whatever key is named', async () => {
+    const m = new IdentityModule();
+    const r = await m.sign(new Uint8Array(), 'ab'.repeat(32), 'cc'.repeat(32));
+    expect(r).toEqual({ locked: true });
   });
 });
 
@@ -286,7 +323,7 @@ describe('identity module — the draft split', () => {
     const id = await m.create('pw');
     expect(id.pubKeyHex).toBe(d.pubKeyHex);
     expect(m.current()).toEqual({ pubKeyHex: d.pubKeyHex, locked: false });
-    expect(await m.sign(new Uint8Array(), 'ab'.repeat(32))).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
+    expect(await m.sign(new Uint8Array(), 'ab'.repeat(32), m.current()?.pubKeyHex ?? '0'.repeat(64))).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
   });
 
   it('a second draft replaces the first', async () => {

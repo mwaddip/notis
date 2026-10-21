@@ -258,11 +258,18 @@ server that signs, no call home.
   and nothing else. **It may be killed between any two events, so it keeps no state in globals** and
   reloads what it needs from storage on every call. The envelope and the backed-up flag live in
   `storage.local` under `notis.identity` and `notis.identity.backedup`, the envelope the shape → The
-  identity module states; a clear value there reads as no identity. **The unlocked seed lives in
+  identity module states; a clear value there, or an envelope outside the scrypt bound (→ The identity module →
+  "An envelope's scrypt cost is bounded"), reads as no identity. **The unlocked seed lives in
   `storage.session`** under `notis.seed` — memory-only, never written to disk, cleared when the browser
   closes, and it survives the worker being killed, which is what makes the design workable. `lock`
-  deletes it; closing the browser is a lock; **the lock state is per browser, not per tab.** A drafted key
-  lives in `storage.session` under `notis.draft` between `draft` and `create`. Never in a worker global.
+  deletes it; closing the browser is a lock; **the lock state is per browser, not per tab.** **A seed is the
+  identity's only when its public key is the envelope's `pubKeyHex`**: the envelope and the seed sit in two storage
+  areas, written one after the other and from more than one page, so a seed of another key can stand beside the
+  envelope. The identity is unlocked only where the seed is the envelope's — `state`'s `locked` answers that — and
+  nothing signs with any other seed (→ "`sign`, in the background, in order"), and `exportFile` seals no other: a
+  seed of another key there is no unlocked identity to export, never a file naming the envelope's key over another
+  key's seed. A drafted key lives in `storage.session` under `notis.draft` between `draft` and `create`. Never in a
+  worker global.
 - **The prompt window** is a small extension page, `prompt.html`, the background opens when a signature
   needs a human — one at a time — as a popup the size and place of a wallet's: `windows.create({ type:
   'popup', width: 360, height: 420, focused: true, left, top })`, `left` and `top` placing it at the top-right
@@ -642,7 +649,11 @@ node's word; a like or a reply to a post that is neither is refused by the netwo
 **The post cache.** The extension keeps the posts it has checked — its local post DAG — in IndexedDB at the page's own
 origin, behind one module. **The database is named for the chain**: `notis.posts.<chain>` (→ "The chain's name"), so a
 chain reset opens an empty one on every network, pinned or not; the last name is kept in `localStorage` under
-`notis.posts.chain`, and opens the cache before the first tip run returns and where none does. **An entry** is keyed
+`notis.posts.chain`, and opens the cache before the first tip run returns and where none does. **One chain's database
+at a time**: once a chain's database opens, every other `notis.posts.*` database the browser lists
+(`indexedDB.databases()`) is deleted, so what a reset or a chain a node once named left behind goes with the next
+open, and the cache holds one chain's posts within `POST_CACHE_BYTES`. The module's own connection closes on
+`versionchange`, so a delete another of the extension's pages asks for is never blocked by it. **An entry** is keyed
 by post id and holds the transaction's bytes; the row as the node last gave it — text, name, counts, block time; the
 author and the parent as the transaction states them; when it was last seen; its size in bytes; and whether it is the
 reader's own — indexed by parent, by author and by last seen. **Only `bound` rows enter**, at the answer that checked
@@ -679,8 +690,9 @@ inherits the prompt with nothing to add.
 the background reloading its state from storage on every one: `state` (the proxy's snapshot, with the
 policy), `draft`, `discardDraft`, `create { passphrase }`, `inspectFile { text }`, `importFile { text,
 passphrase }`, `exportFile { password }` (the envelope text; the page makes the download), `unlock {
-passphrase }`, `lock`, `forget`, `policy { karma }`, `links { opens }`, `sign { txBytes, txIdHex, hint }` — `hint` is `{ content? }`, and
-the post flow alone passes it — `ack { id }`;
+passphrase }`, `lock`, `forget`, `policy { karma }`, `links { opens }`, `sign { txBytes, txIdHex, pubKeyHex, hint }` —
+`pubKeyHex` the key the flow built the transaction for (→ The identity module → "A signature is made for the key the
+transaction was built for"), `hint` `{ content? }`, which the post flow alone passes — `ack { id }`;
 from the App's page only, `takeOpen`, and from the prompt page only, `approve { id }` and `decline { id }`, each
 checked by the sender's URL; and from the
 bridge only, checked by the sender — this extension's id, a tab, and a URL opening with `<notis-public>p/` —
@@ -690,30 +702,48 @@ origin: the bridge runs in a web page's process, so a
 message that says it comes from the bridge is a claim, and nothing the background does for a page — a signature
 above all — is reachable from there. Change
 notification is not a message: the page listens to `storage.onChanged` — `local` for the envelope's
-presence, the backed-up flag, the policy and the links preference, `session` for the seed's presence, which
-*is* `locked`, and for a thread waiting to be opened (→ "Links into the extension", below).
+presence, the backed-up flag, the policy and the links preference, `session` for the seed, on whose change the page
+reads `state` again for `locked`, and for a thread waiting to be opened (→ "Links into the extension", below).
 
-**`sign`, in the background, in order.** `txBytes` is `encodeTx` of the unsigned transaction; `hint` is
-`{ content? }`, a post's body, shown only when it verifies.
+**Every message is answered.** A failure inside the background — a storage call, a window the browser does not
+open — answers `{ error }` with the failure's words; no message is left without its answer. On the page, **a `sign`
+that ends without a `SignAnswer` is `{ refused: <reason> }`** — answered `{ error }`, its words the reason, or a
+message the browser rejects because no answer came, *the extension did not answer* — so it reaches the flow as
+`notSigned` (→ The wallet): nothing was spent and the node never saw it, and it is never the flight's transport
+failure.
+
+**`sign`, in the background, in order.** `txBytes` is `encodeTx` of the unsigned transaction; `pubKeyHex` the key the
+page built it for; `hint` is `{ content? }`, a post's body, shown only when it verifies.
 
 1. `decodeTx(txBytes)`, the canonical decoder — a failure is `refused: undecodable`.
 2. `computeTxId(tx)` must equal `txIdHex`, else `refused: id-mismatch`. The page's id is a claim; the
    background's is the truth, and the signature is over the truth.
 3. `tx.signatures` must be empty, else `refused: already-signed`.
-4. The ledger, from the outputs.
-5. Karma under *don't ask*: the seed present → `{ signature }` at once, 128 hex; absent → `{ locked }`.
-6. Otherwise **the prompt**: the request `{ id, pubKeyHex, txIdHex, txBytes, summary, hint }` is written to
-   `storage.session` under `notis.sign.<id>`, the prompt page opens on that id, and the page is answered
-   `{ pending: id }` — the proxy then waits on `storage.session.onChanged` for the record's `result`, and
-   `pending` never reaches the wallet. **A worker killed while the human reads the prompt loses
-   nothing.**
-7. `approve` reloads the record and the seed, signs over `txIdHex`, writes `result: { signature }` and
-   removes the window; `decline`, Esc, or the window's close writes `result: { declined }`. A seed absent
-   at approve time — locked from another tab meanwhile — is the unlock form inside the prompt, then the
-   approval: a prompted flow never dead-ends on a lock.
-8. **One prompt at a time**: a second `sign` needing one while a record has no result is
-   `refused: busy`. On start, every record without a result is declined — a window that vanished with
-   the browser. A record is removed on the page's `ack`.
+4. **The key**: no envelope → `{ locked }`; `pubKeyHex` must equal the envelope's, else `refused: key-changed`.
+   The page's key is a claim like its id: it can refuse, and the summary and the signature are never made for it.
+5. The ledger, from the outputs.
+6. Karma under *don't ask*: the seed the identity's (→ "The contexts, and what each may hold") → `{ signature }` at
+   once, 128 hex; otherwise `{ locked }`.
+7. Otherwise **the prompt, one at a time**. A record without a result whose window is gone, or that names none, is
+   declined — a window that vanished with the browser, or a worker that died between writing a record and its
+   window; a record without a result whose window is open answers `refused: busy`. Otherwise the request
+   `{ id, pubKeyHex, txIdHex, txBytes, summary, hint }` — `pubKeyHex` the envelope's — is written to
+   `storage.session` under `notis.sign.<id>`, the prompt page opens on that id, the window's id is written into the
+   record, and the page is answered `{ pending: id }` — the proxy then waits on `storage.session.onChanged` for the
+   record's `result`, and `pending` never reaches the wallet. **A worker killed while the human reads the prompt
+   loses nothing.** A window the browser does not open removes its record and answers `{ error }`.
+8. `approve` reloads the record, the envelope and the seed. **The envelope's key must be the record's**, else the
+   record is declined, the window removed and `{ error }` answered — no unlock makes another key the record's. A seed
+   that is not the identity's — locked from another tab meanwhile — answers `{ locked }`: the unlock form inside the
+   prompt, then the approval, so a prompted flow never dead-ends on a lock. Otherwise it signs over `txIdHex`,
+   writes `result: { signature }` and removes the window. `decline`, Esc, or the window's close writes
+   `result: { declined }`. **The prompt page mounts its unlock form on `{ locked }` alone** and closes on any other
+   answer — the record answered, gone or declined.
+9. **Every read and write of a prompt record runs under one Web Lock, `notis.prompt`** (`navigator.locks`): the
+   prompt's check and open, `approve`, `decline`, a window's close, `ack`, and the sweep on start that declines
+   every record without a result — so two `sign`s cannot both pass the check before either writes, and a window
+   closed before its id reaches the record is declined once it does. The lock is the browser's: nothing in a worker
+   global holds it, and a worker that dies releases it. A record is removed on the page's `ack`.
 
 **The summary the prompt shows is derived from the transaction.** Its kind — thread or reply from
 `tx.post` and its parent refs, like from `likeTarget`, withdraw from `postWithdraw`, vouch, unvouch,
@@ -1303,12 +1333,21 @@ the exported file is the same envelope — one codec, and importing an encrypted
 | Operation | Algorithm | Notes |
 |-----------|-----------|-------|
 | Key generation | `generateKeyPair()` from `@dagsocial/types`, over `@noble/curves` | the seed is the DER's last 32 bytes; the RFC 8410 wrapper `302e020100300506032b657004220420` is a constant the codec re-adds |
-| Seal | scrypt (`@noble/hashes`) → a 32-byte key; ChaCha20-Poly1305 (`@noble/ciphers`) over the seed with `pubKeyHex` and `version` as associated data | a fresh salt and nonce per seal; a derived key is used once, which is what makes a random 12-byte nonce safe. The parameters travel in the envelope, so `N` can rise with no version bump |
+| Seal | scrypt (`@noble/hashes`) → a 32-byte key; ChaCha20-Poly1305 (`@noble/ciphers`) over the seed with `pubKeyHex` and `version` as associated data | a fresh salt and nonce per seal; a derived key is used once, which is what makes a random 12-byte nonce safe. The parameters travel in the envelope, so `N` can rise with no version bump, up to the bound below |
 | Open | scrypt with the envelope's own parameters; the tag verified; the public key recomputed from the seed **must equal** `pubKeyHex` | a wrong passphrase, an edited header and a flipped byte are each refused with a reason |
 | Import | an envelope, stored verbatim after one successful open; **or** a clear key file `{ pubKeyHex, privKeyBase64 }` — validated as before (48 bytes, the prefix, the recomputed key) and sealed under a passphrase the reader sets | the clear shape is a **file shape only** — a clear value found in storage reads as no identity and is left in place; this client writes no clear file |
 | Export | a **fresh** seal under a password the reader types, downloaded as `notis-identity-<prefix>.json` | needs the seed, so a locked identity unlocks first |
-| Signing | `ed25519.sign` from `@noble/curves` over the 32 transaction-id bytes, behind `sign(txBytes, txIdHex): Promise<SignResult>` | 64 raw bytes, hex in JSON, keyed by the hex public key; **answers `locked` while locked** (→ The wallet) |
+| Signing | `ed25519.sign` from `@noble/curves` over the 32 transaction-id bytes, behind `sign(txBytes, txIdHex, pubKeyHex, hint?): Promise<SignResult>` | 64 raw bytes, hex in JSON, keyed by the hex public key; **answers `locked` while locked** (→ The wallet) |
 | Post ID | the node's `postId` from the `POST /posts` response | never derived client-side — the node is authoritative and the value is in the reply |
+
+**An envelope's scrypt cost is bounded.** `r` is `SCRYPT_R` (8) and `p` is `SCRYPT_P` (1) exactly, and `N` is a power
+of two from 2 to `SCRYPT_N_MAX` (2¹⁸) — four times the seal's own `SCRYPT_N` (2¹⁶), the room left for the seal's cost
+to rise (`CONSTANTS → Client defaults`). Each is a whole number, held where an envelope is parsed — the file an import
+reads and the value storage holds alike: an imported file outside the bound is refused with the reason, and a stored
+value outside it reads as no identity, as a clear value does, and is left in place. So no unlock derives a key at a
+cost above `SCRYPT_N_MAX`'s, whatever an envelope names — 256 MiB and 0.72 s on the i9, against the seal's 64 MiB and
+185 ms (measured 2026-10-20). A large `p` beside a small `N` stays under scrypt's own 1 GiB memory limit: `p` = 2¹⁶
+took 3.2 s, and the limit admits sixteen times that.
 
 **No Web Crypto, still.** scrypt and ChaCha20 are pure TS in the `@noble` family `@dagsocial/types` builds on, and the
 randomness is `getRandomValues`, which no secure context gates. Both primitives are in Node's own
@@ -1325,12 +1364,18 @@ check and the signature is a race the flight answers as `notSigned` (→ The wal
 unlock form in the composer's foot, `like` in a row under the card's meta row, downward and in response
 to the press (`HOUSE_STYLE → Motion`), and success continues the flight.
 
-**`sign` is asynchronous, and there are two implementations of one seam.** `sign(txBytes, txIdHex, hint?)`
-answers a `SignResult` — `{ signature }`, `{ locked }`, `{ declined }` or `{ refused: reason }` (→ The
+**`sign` is asynchronous, and there are two implementations of one seam.** `sign(txBytes, txIdHex, pubKeyHex,
+hint?)` answers a `SignResult` — `{ signature }`, `{ locked }`, `{ declined }` or `{ refused: reason }` (→ The
 wallet). The in-page module, the web build's, signs from the seed in its memory and never answers
 `declined`; the extension's proxy forwards to the background, whose seed lives for the browser, not the
 tab, and whose prompt can decline (→ The extension). A drafted key in the extension lives in the
 background's session store between `draft` and `create`.
+
+**A signature is made for the key the transaction was built for.** `pubKeyHex` is the key the flow read from
+`current()` when it began, and built the transaction's inputs and change for; **a key that is not the identity's is
+`refused: key-changed`**, in both modules, and nothing is signed — an identity created or imported between the build
+and the signature, in this page or another. The key is the page's claim: it can refuse a signature, and
+neither module signs with it or computes anything for it.
 
 **`sign` is the only path to the seed.** `current()` returns the public key and the lock state and
 nothing else, and no DTO carries the seed. The module's surface:
@@ -1341,7 +1386,7 @@ create(passphrase): Promise<Identity> — seals and stores the draft      discar
 inspectFile(text): Promise<{ kind: 'clear' | 'encrypted', pubKeyHex }>
 importFile(text, passphrase): Promise<Identity>  exportFile(password): Promise<string>
 unlock(passphrase): Promise<void>                lock(): Promise<void>   forget(): Promise<void>
-sign(txBytes, txIdHex, hint?): Promise<SignResult>   backedUp(): boolean   onChange(listener): void
+sign(txBytes, txIdHex, pubKeyHex, hint?): Promise<SignResult>   backedUp(): boolean   onChange(listener): void
 policy?(): 'silent' | 'ask'   setPolicy?(p): Promise<void>   — the extension's proxy only (→ The extension)
 ```
 
@@ -1459,13 +1504,14 @@ and re-reads the spendable view, and the reader sees the rejection.
 **A flow can end before the node ever sees it: `notSigned`.** Beside `ok` and `rejection`, every submit
 flow answers `{ ok: false, notSigned: 'locked' | 'declined' | 'refused', reason }` when the signature did
 not come — the key locked between the pre-check and the signature, the prompt declined (→ The
-extension), or the background refused. It means *nothing was spent and the node never saw this*, and it
+extension), or the signature refused. It means *nothing was spent and the node never saw this*, and it
 is answered without a stage: **the composer's collapse into the hollow card happens after the
 signature, not before it.** The post flow calls `onSigned` between the signature and the POST, and the
 composer path collapses there; so on `notSigned` **the composer is still open with its text** —
 `locked` mounts the unlock form in its foot, `declined` re-enables it with one foot line, *post not sent.*,
-`refused` re-enables it with the reason — *post not sent: <reason>.*, and *one approval at a time.* for a
-second prompt. That is the
+`refused` re-enables it with the reason — *post not sent: <reason>.*, *one approval at a time.* for a
+second prompt, and *post not sent: another key is loaded now.* for `key-changed` (→ The identity module → "A
+signature is made for the key the transaction was built for"). That is the
 fourth ending beside the three above — landed, expired, rejected: the text is still there, and the reader
 made no mistake. The other writes keep their optimistic step and undo it — the like's overlay, the
 withdraw's transient flight, the vouch mark, an invite's, a claim's or a burn's row flight — with the

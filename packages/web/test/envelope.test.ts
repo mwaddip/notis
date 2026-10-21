@@ -11,6 +11,7 @@ import {
   SCRYPT_N,
   SCRYPT_R,
   SCRYPT_P,
+  SCRYPT_N_MAX,
   type Envelope,
   type ScryptParams,
 } from '../src/identity/envelope';
@@ -212,5 +213,68 @@ describe('envelope — interop and no Web Crypto', () => {
     expect(env.kdf.N).toBe(SCRYPT_N);
     expect(bytesToHex(await open(env, 'production cost'))).toBe(bytesToHex(seed));
     console.log(`scrypt seal at N=${SCRYPT_N} r=${SCRYPT_R} p=${SCRYPT_P}: ${Math.round(ms)}ms`);
+  });
+});
+
+// WEB_INTERFACE → The identity module → "An envelope's scrypt cost is bounded":
+// `r` is `SCRYPT_R` (8) and `p` is `SCRYPT_P` (1) exactly, and `N` is a power of
+// two from 2 to `SCRYPT_N_MAX`, each a whole number — held where an envelope is
+// parsed. A well-formed JSON built by hand reaches `parseFile` without a seal.
+
+function envJsonWith(over: Partial<ScryptParams>): string {
+  return JSON.stringify({
+    version: ENVELOPE_VERSION,
+    pubKeyHex: 'ab'.repeat(32),
+    kdf: { name: 'scrypt', salt: 'aa'.repeat(16), N: 65536, r: 8, p: 1, ...over },
+    cipher: { name: 'chacha20-poly1305', nonce: 'bb'.repeat(12) },
+    ciphertext: 'cc'.repeat(48),
+  });
+}
+
+describe('envelope — the parse bound on scrypt cost', () => {
+  it('a kdf naming N = 2^19 is refused', () => {
+    expect(() => parseFile(envJsonWith({ N: 2 ** 19 }))).toThrow(/not one this client opens/);
+  });
+  it('a kdf naming r = 16 is refused', () => {
+    expect(() => parseFile(envJsonWith({ r: 16 }))).toThrow(/not one this client opens/);
+  });
+  it('a kdf naming p = 2 is refused', () => {
+    expect(() => parseFile(envJsonWith({ p: 2 }))).toThrow(/not one this client opens/);
+  });
+  it('a kdf naming N = 3 · 2^14 (not a power of two) is refused', () => {
+    expect(() => parseFile(envJsonWith({ N: 3 * 2 ** 14 }))).toThrow(/not one this client opens/);
+  });
+  it('a kdf naming N = 1 (below the floor of two) is refused', () => {
+    expect(() => parseFile(envJsonWith({ N: 1 }))).toThrow(/not one this client opens/);
+  });
+  it('a kdf naming N = 65536.5 (not a whole number) is refused', () => {
+    expect(() => parseFile(envJsonWith({ N: 65536.5 }))).toThrow(/not one this client opens/);
+  });
+  it('a control: a kdf naming N = 2^18, r = 8, p = 1 parses', () => {
+    const parsed = parseFile(envJsonWith({ N: 2 ** 18 }));
+    expect(parsed.kind).toBe('encrypted');
+    if (parsed.kind !== 'encrypted') throw new Error('unreachable');
+    expect(parsed.envelope.kdf).toEqual({ name: 'scrypt', salt: 'aa'.repeat(16), N: 2 ** 18, r: 8, p: 1 });
+  });
+  it('a control: a kdf naming N = 2^14, r = 8, p = 1 parses', () => {
+    const parsed = parseFile(envJsonWith({ N: 2 ** 14 }));
+    expect(parsed.kind).toBe('encrypted');
+    if (parsed.kind !== 'encrypted') throw new Error('unreachable');
+    expect(parsed.envelope.kdf).toEqual({ name: 'scrypt', salt: 'aa'.repeat(16), N: 2 ** 14, r: 8, p: 1 });
+  });
+});
+
+describe('envelope — the four constants pin at the register\'s values', () => {
+  it('SCRYPT_N is 65_536 (CONSTANTS → Client defaults)', () => {
+    expect(SCRYPT_N).toBe(65_536);
+  });
+  it('SCRYPT_R is 8 (CONSTANTS → Client defaults)', () => {
+    expect(SCRYPT_R).toBe(8);
+  });
+  it('SCRYPT_P is 1 (CONSTANTS → Client defaults)', () => {
+    expect(SCRYPT_P).toBe(1);
+  });
+  it('SCRYPT_N_MAX is 262_144 (CONSTANTS → Client defaults)', () => {
+    expect(SCRYPT_N_MAX).toBe(262_144);
   });
 });

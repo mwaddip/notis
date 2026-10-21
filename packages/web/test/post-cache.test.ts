@@ -351,6 +351,58 @@ describe('post-cache — the running total is kept in a meta record', () => {
   });
 });
 
+// WEB_INTERFACE → The extension → "The post cache": "One chain's database at a
+// time". Once a chain's database opens, every other `notis.posts.*` database the
+// factory lists is deleted; a database named otherwise is left alone. The
+// module's own connection closes on `versionchange`, so a delete another
+// connection asks for is never blocked by it.
+describe('post-cache — one chain\'s database at a time', () => {
+  it('opening on `b` after `a` leaves `notis.posts.b` listed, drops `notis.posts.a`, and a non-matching name is untouched', async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('a');
+    const r = row('seed');
+    await cache.put({ id: r.id, txBytes: new Uint8Array([1, 2, 3]), row: r, author: r.author, parent: null, own: false });
+    // A database the cache does not own, under a name whose prefix differs: it
+    // must still be listed after the switch.
+    await new Promise<void>((resolve, reject) => {
+      const req = idb.open('other.unrelated', 1);
+      req.onsuccess = (): void => { req.result.close(); resolve(); };
+      req.onerror = (): void => reject(req.error);
+    });
+    await cache.open('b');
+    const names = (await idb.databases()).map((d) => d.name).sort();
+    expect(names).toContain('notis.posts.b');
+    expect(names).not.toContain('notis.posts.a');
+    expect(names).toContain('other.unrelated');
+  });
+
+  it('a second cache over one factory opens `b` while the first holds `a`: the first\'s database is dropped from `databases()`, and the first\'s later `put` and `getMany` settle without a throw', async () => {
+    const idb = new IDBFactory();
+    const lsA = fakeLs();
+    const lsB = fakeLs();
+    const c = clock();
+    const first = createPostCache({ indexedDB: idb, localStorage: lsA, now: c.tick });
+    const second = createPostCache({ indexedDB: idb, localStorage: lsB, now: c.tick });
+    await first.open('a');
+    const r = row('seed');
+    await first.put({ id: r.id, txBytes: new Uint8Array([1, 2, 3]), row: r, author: r.author, parent: null, own: false });
+    await second.open('b');
+    // The second cache's open deleted `notis.posts.a` on the shared factory —
+    // the first's connection closed on `versionchange` so the delete did not
+    // wait for it.
+    const names = (await idb.databases()).map((d) => d.name).sort();
+    expect(names).not.toContain('notis.posts.a');
+    expect(names).toContain('notis.posts.b');
+    // The first cache's later calls settle: no throw, nothing stored.
+    const r2 = row('after');
+    await expect(first.put({ id: r2.id, txBytes: new Uint8Array([4]), row: r2, author: r2.author, parent: null, own: false })).resolves.toBeUndefined();
+    await expect(first.getMany([r2.id])).resolves.toBeInstanceOf(Map);
+  });
+});
+
 /** Walk the entries store and sum each row's declared `size`. */
 async function sumStoredSizes(idb: IDBFactory, chain: string): Promise<number> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -427,7 +479,7 @@ describe('post-cache — withdraw', () => {
 });
 
 describe('post-cache — the chain', () => {
-  it('open under another chain reads nothing of the first (Review Focus 5), and reopening the first finds its entries; notis.posts.chain holds the last name', async () => {
+  it('open under another chain reads nothing of the first, reopening the first finds it empty, and notis.posts.chain holds the last name', async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -440,16 +492,20 @@ describe('post-cache — the chain', () => {
 
     await cache.open('B');
     expect(ls.map.get('notis.posts.chain')).toBe('B');
+    expect(rememberedChain(ls)).toBe('B');
     // B's database is empty of A's rows.
     expect(await cache.thread(a.id)).toBeNull();
     const b = row('b');
     await cache.put({ id: b.id, txBytes: new Uint8Array([2]), row: b, author: b.author, parent: null, own: false });
 
-    // Reopen A — its rows are still there.
+    // Reopen A — one chain's database at a time (WEB_INTERFACE → The
+    // extension → "The post cache"): A's database was deleted when B
+    // opened, so neither a's row nor b's is held on A.
     await cache.open('A');
-    expect(await cache.thread(a.id)).not.toBeNull();
-    expect(await cache.thread(b.id)).toBeNull();
     expect(ls.map.get('notis.posts.chain')).toBe('A');
+    expect(rememberedChain(ls)).toBe('A');
+    expect(await cache.thread(a.id)).toBeNull();
+    expect(await cache.thread(b.id)).toBeNull();
   });
 });
 

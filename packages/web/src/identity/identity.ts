@@ -147,12 +147,17 @@ export class IdentityModule {
    *  seed (WEB_INTERFACE → "sign is the only path to the seed"). The App checks
    *  locked before a flight starts, so `locked` here is a race the wallet ends in
    *  the notSigned arm rather than a stuck state (WEB_INTERFACE → The wallet).
-   *  A transaction id is exactly 64 lowercase hex; anything else comes back as
-   *  `refused` rather than signed over garbage. The in-page module never answers
-   *  `declined` — that is the extension proxy's arm (WEB_INTERFACE → The identity
-   *  module). `txBytes` is ignored here; the extension's background needs it,
-   *  since it re-derives the id it signs over. */
-  async sign(_txBytes: Uint8Array, txIdHex: string, _hint?: { content?: string }): Promise<SignResult> {
+   *  `pubKeyHex` is the key the flow read from `current()` when it began; a key
+   *  that is not the module's answers `refused: key-changed`, and nothing is
+   *  signed (WEB_INTERFACE → "A signature is made for the key the transaction
+   *  was built for"). A transaction id is exactly 64 lowercase hex; anything
+   *  else comes back as `refused` rather than signed over garbage. The in-page
+   *  module never answers `declined` — that is the extension proxy's arm
+   *  (WEB_INTERFACE → The identity module). `txBytes` is ignored here; the
+   *  extension's background needs it, since it re-derives the id it signs over. */
+  async sign(_txBytes: Uint8Array, txIdHex: string, pubKeyHex: string, _hint?: { content?: string }): Promise<SignResult> {
+    if (this.pubKeyHex === null) return { locked: true };
+    if (pubKeyHex !== this.pubKeyHex) return { refused: 'key-changed' };
     if (this.seed === null) return { locked: true };
     if (!HEX64.test(txIdHex)) return { refused: 'a transaction id to sign must be 64 hex characters.' };
     return { signature: bytesToHex(ed25519.sign(hexToBytes(txIdHex), this.seed)) };

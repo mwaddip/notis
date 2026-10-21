@@ -141,8 +141,11 @@ async function approve(button: HTMLButtonElement): Promise<void> {
   button.textContent = 'working…';
   button.disabled = true;
   const answer = await chrome.runtime.sendMessage({ kind: 'approve', id });
-  if (answer && typeof answer === 'object' && 'error' in answer) {
-    // The seed is gone — mount the unlock form. Once unlocked, retry approve.
+  // WEB_INTERFACE → The extension → "`sign`, in the background, in order",
+  // step 8: the prompt page mounts its unlock form on `{ locked: true }` alone
+  // and closes on any other answer — the record answered, with no record for
+  // that id, or declined.
+  if (answer && typeof answer === 'object' && 'locked' in answer && (answer as { locked?: unknown }).locked === true) {
     armed = false;
     button.textContent = 'sign';
     button.disabled = false;
@@ -151,9 +154,8 @@ async function approve(button: HTMLButtonElement): Promise<void> {
     showUnlockThenApprove(record, button);
     return;
   }
-  // The background's `windows.remove` swallows a failure; close ourselves too
-  // so a stuck popup does not linger (WEB_INTERFACE → The extension → "`sign`,
-  // in the background, in order").
+  // Any other answer closes the window — 'ok' because the background removes
+  // it, { error } because there is nothing to approve for that id.
   window.close();
 }
 

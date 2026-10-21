@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps, type SubmitResult,
+  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps, type SubmitResult, type SignResult,
 } from '../src/wallet/submit';
 import { PendingLedger } from '../src/wallet/ledger';
 import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
@@ -90,7 +90,7 @@ const vouchRow = (over: Partial<VouchesVoucherResult['vouches'][number]> = {}): 
 let signHints: Array<{ content?: string } | undefined>;
 const identity = {
   current: () => ({ pubKeyHex: PUB }),
-  sign: async (_bytes: Uint8Array, txId: string, hint?: { content?: string }) => {
+  sign: async (_bytes: Uint8Array, txId: string, _pubKeyHex: string, hint?: { content?: string }) => {
     signCalls.push(txId);
     signHints.push(hint);
     return { signature: SIG } as const;
@@ -1105,4 +1105,95 @@ describe('the reservation expiry, every flow', () => {
       expect(ledger.size, kind).toBe(0);
     });
   });
+});
+
+// WEB_INTERFACE → The identity module → "A signature is made for the key the
+// transaction was built for" — a flow passes the key it read from current() at
+// its start, built the transaction for and ran its reads under; a signature
+// made for any other key is a `refused: key-changed`, and no node ever sees it.
+describe('a signature is made for the key the flow built for', () => {
+  it('a flow passes the key read at its start; a current() flipped between the build and the signature does not reach it', async () => {
+    const A = PUB;
+    const B = 'bb'.repeat(32);
+    const seen: Array<{ pubKeyHex: string }> = [];
+    let reads = 0;
+    const trackedIdentity: SubmitDeps['identity'] = {
+      current: () => ({ pubKeyHex: reads++ === 0 ? A : B }),
+      sign: async (_bytes: Uint8Array, _t: string, p: string): Promise<SignResult> => {
+        seen.push({ pubKeyHex: p });
+        if (p === B) return { signature: SIG } as const;
+        return { refused: 'key-changed' } as const;
+      },
+    };
+    const ledger = new PendingLedger(A);
+    const deps: SubmitDeps = {
+      reads: readsFor(PARENT_AUTHOR, FULL_BOXES),
+      write: write(), ledger, identity: trackedIdentity, network: null,
+    };
+    const res = await submitLikeFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'key-changed' });
+    expect(seen).toEqual([{ pubKeyHex: A }]);
+  });
+});
+
+// The helper `readsFor` is just the test file's own `reads` under a non-colliding
+// name — the describe above does not shadow it the way an inline binding would.
+function readsFor(
+  confirmedAuthor: string | null,
+  boxes: KarmaBoxRow[],
+): Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> {
+  return reads(confirmedAuthor, boxes);
+}
+
+// ---------------------------------------------------------------------------
+// WEB_INTERFACE → The extension → "Every message is answered" and → The
+// wallet → "A flow can end before the node ever sees it: `notSigned`". A
+// submitPostFlow driven through the real `ExtensionProxy` over the fake
+// `chrome` with the background installed in it reads `{ ok: false,
+// notSigned: 'refused' }` for a prompt that never opens, its reason the
+// background's own words, and for a `runtime.sendMessage` the browser
+// rejects it reads *the extension did not answer*.
+// ---------------------------------------------------------------------------
+
+import { install as installBackground } from '../src/extension/background';
+import { bootstrapProxy } from '../src/extension/proxy';
+import { fakeChrome, fakeLockManager } from './fake-chrome';
+
+describe('submitPostFlow over the extension proxy and background', () => {
+  async function identityOverProxy(c: ReturnType<typeof fakeChrome>, karma: 'silent' | 'ask' = 'ask'): Promise<SubmitDeps['identity']> {
+    installBackground(c.api, { publicBase: '' }, { locks: fakeLockManager() });
+    // The proxy reads through `runtime.sendMessage`; route it to the
+    // installed listener as the real extension's runtime does.
+    const origin = c.origin + 'index.html';
+    c.api.runtime.sendMessage = ((m: unknown) => c.send(m, { id: c.api.runtime.id, url: origin })) as typeof chrome.runtime.sendMessage;
+    await c.send({ kind: 'draft' });
+    await c.send({ kind: 'create', passphrase: 'pw' });
+    await c.send({ kind: 'policy', karma });
+    const proxy = await bootstrapProxy(c.api, { publicBase: '' });
+    return proxy;
+  }
+
+  it('a post whose prompt window does not open: notSigned refused, its reason the background\'s words, not a throw', async () => {
+    const c = fakeChrome();
+    const identity = await identityOverProxy(c, 'ask');
+    c.windows.throwNextCreate(new Error('the approval window did not open.'));
+    const ledger = new PendingLedger((identity.current() as { pubKeyHex: string }).pubKeyHex);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toMatchObject({ ok: false, notSigned: 'refused', reason: expect.stringContaining('approval window') });
+  }, 3000);
+
+  it('a runtime.sendMessage that rejects for sign: notSigned refused, reason "the extension did not answer"', async () => {
+    const c = fakeChrome();
+    const identity = await identityOverProxy(c, 'ask');
+    // Override sign's path so runtime.sendMessage rejects.
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      if ((m as { kind: string }).kind === 'sign') throw new Error('the browser dropped the message');
+      return undefined;
+    }) as typeof chrome.runtime.sendMessage;
+    const ledger = new PendingLedger((identity.current() as { pubKeyHex: string }).pubKeyHex);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the extension did not answer' });
+  }, 3000);
 });
