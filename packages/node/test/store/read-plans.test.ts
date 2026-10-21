@@ -54,7 +54,7 @@ describe('each pending read\'s prepared statement runs through indexes', () => {
     db.closeDb();
   });
 
-  it.fails('runs through indexes, not through a mempool scan or json_each', async () => {
+  it('runs through indexes, not through a mempool scan or json_each', async () => {
     const mem = await import('../../src/store/mempool.js');
     const { computeTxId } = await import('@dagsocial/types');
     const { materializeOutput } = await import('@dagsocial/consensus');

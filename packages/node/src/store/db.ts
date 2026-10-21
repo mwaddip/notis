@@ -136,8 +136,6 @@ const MIGRATIONS = [
     vouch_target TEXT,
     tx_fee INTEGER,
     tx_bytes INTEGER,
-    tx_inputs TEXT,
-    tx_output_ids TEXT,
     tx_id TEXT,
     max_valid_height INTEGER,
     username_lower TEXT,
@@ -147,6 +145,23 @@ const MIGRATIONS = [
     withdraw_post TEXT,
     cost_estimate INTEGER
   )`,
+
+  // MEMPOOL_INTERFACE → Schema: an entry's inputs, and the ids of the boxes
+  // it would create, as rows keyed by box id. The one spender per box the
+  // pool holds is `mempool_inputs`'s own primary key; `mempool_outputs`'s key
+  // follows the same shape for the pending view. `ON DELETE CASCADE` reaches
+  // both tables from every path that leaves an entry — confirmation, expiry,
+  // eviction, removal — because `initDb` turns foreign keys on.
+  `CREATE TABLE IF NOT EXISTS mempool_inputs (
+    box_id      TEXT PRIMARY KEY,
+    entry_rowid INTEGER NOT NULL REFERENCES mempool(rowid) ON DELETE CASCADE
+  ) WITHOUT ROWID`,
+  `CREATE TABLE IF NOT EXISTS mempool_outputs (
+    box_id      TEXT PRIMARY KEY,
+    entry_rowid INTEGER NOT NULL REFERENCES mempool(rowid) ON DELETE CASCADE
+  ) WITHOUT ROWID`,
+  `CREATE INDEX IF NOT EXISTS idx_mempool_inputs_entry  ON mempool_inputs(entry_rowid)`,
+  `CREATE INDEX IF NOT EXISTS idx_mempool_outputs_entry ON mempool_outputs(entry_rowid)`,
 
   // Usernames — NODE_INTERFACE → Username records
   `CREATE TABLE IF NOT EXISTS usernames (
@@ -359,12 +374,9 @@ function migrateBlockTopology(database: Database.Database): void {
 
 /**
  * The columns a pooled transaction's own fields are lifted into at insert —
- * `tx_inputs`, the box ids it spends; `tx_output_ids`, the ids of the boxes it
- * creates; and `tx_id`, its own `TxId`. The first two are the pending view the
- * admission path resolves against: confirmed set ∪ pending outputs − pending
- * inputs. The third is how an applied block finds the row it confirmed. Same
- * principle as the like/invite/vouch gate columns above — the queries stay
- * plain SQL over every row rather than a decode-scan of the first N.
+ * `tx_id`, its own `TxId`, is how an applied block finds the row it confirmed.
+ * Same principle as the like/invite/vouch gate columns above — the queries
+ * stay plain SQL over every row rather than a decode-scan of the first N.
  *
  * **The base `CREATE TABLE` is what a fresh database gets; the ALTER pass is
  * what reaches an existing one.** Both are needed and neither is redundant: a
@@ -376,19 +388,14 @@ function migrateBlockTopology(database: Database.Database): void {
  * other still gains the one it lacks — and so the pass is a no-op on a fresh
  * database whose base table already declared them.
  *
- * Rows written before a column existed hold NULL, and `json_each` reads NULL as
- * zero rows rather than raising — such an entry matches no conflict query, and
- * serves no pending output. A NULL `tx_id` matches no cleanup either, which
- * leaves the row to expire; the alternative is decoding every legacy blob at
- * startup to backfill an id for a pool that drains within
- * `MEMPOOL_EXPIRY_BLOCKS` anyway.
+ * A NULL `tx_id` matches no cleanup, which leaves the row to expire; the
+ * alternative is decoding every legacy blob at startup to backfill an id for
+ * a pool that drains within `MEMPOOL_EXPIRY_BLOCKS` anyway.
  */
 function migrateMempoolTxColumns(database: Database.Database): void {
   const cols = database.prepare("PRAGMA table_info('mempool')").all() as Array<{ name: string }>;
   const has = (name: string): boolean => cols.some(c => c.name === name);
 
-  if (!has('tx_inputs')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_inputs TEXT`);
-  if (!has('tx_output_ids')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_output_ids TEXT`);
   if (!has('tx_id')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_id TEXT`);
   // The pool's class and its price. `tx_fee` NULL means karma-side — nothing it
   // could bid — and a number means credit-side, zero included
@@ -432,11 +439,6 @@ function migrateMempoolTxColumns(database: Database.Database): void {
  * after the mempool migrations so they land on whichever CREATE TABLE ran last.
  * A database predating the gate columns fails loudly here at startup rather
  * than silently at the first insert — pre-stable, DB reset acceptable.
- *
- * `idx_mempool_tx_inputs` covers a membership test, not a lookup: a B-tree over
- * the JSON text cannot resolve `json_each(...) WHERE value = ?`. It earns its
- * place as the covering index the scan reads, which is also what confines the
- * scan to rows that carry inputs at all.
  *
  * `idx_mempool_tx_id` is a lookup, and it is the one carrying a measured cost.
  * Block application removes each confirmed transaction through it; matching by
@@ -496,10 +498,6 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(vouch_voucher) WHERE vouch_voucher IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_expires
       ON mempool(expires_at_height);
-    CREATE INDEX IF NOT EXISTS idx_mempool_tx_inputs
-      ON mempool(tx_inputs) WHERE tx_inputs IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_mempool_tx_output_ids
-      ON mempool(tx_output_ids) WHERE tx_output_ids IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_tx_id
       ON mempool(tx_id) WHERE tx_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_fee_rate

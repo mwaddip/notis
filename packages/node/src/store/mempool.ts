@@ -492,7 +492,9 @@ export function insertUtxoTx(
 
   // Before the conflict gate: the size bound is a property of the transaction
   // alone, so it needs no pool state and settles the verdict without running
-  // one query per input.
+  // one query per input. The bound sits above every transaction `db.transaction`
+  // (MEMPOOL_INTERFACE → insertUtxoTx → "Reorg re-insertion must not let this
+  // throw escape").
   const encoded = encodeTx(tx);
   if (encoded.length > MAX_TX_BYTES) throw new TxTooLargeError(encoded.length);
 
@@ -501,53 +503,73 @@ export function insertUtxoTx(
   // Validity ceiling); insertUtxoTx does not test it.
   const ceiling = ceilingOf(tx);
 
-  // The class and the price, before the capacity gate that spends them. The
-  // byte cost is what this entry would occupy in a block, not the bare encoding
-  // — the budget is the resource being rationed.
-  const fee = bidOf(tx);
-  const bytes = entryByteCost(encoded);
-  assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes);
-
   const inputs = tx.inputs ?? [];
-  const conflict = hasPendingSpend(inputs);
-  if (conflict !== null) throw new PendingSpendConflictError(conflict);
-
   const txId = computeTxId(tx);
+  const outputIds = outputBoxIds(tx, txId);
   const meta = gateMetadata(tx);
-  const result = db.prepare(
-    `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
-                          like_target, like_liker, invite_inviter, invite_invitee,
-                          vouch_voucher, vouch_target,
-                          tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
-                          max_valid_height,
-                          username_lower, username_claimant,
-                          karma_owner, karma_spend,
-                          withdraw_post,
-                          cost_estimate)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    Buffer.from(encoded),
-    expiresAtHeight,
-    meta.likeTarget,
-    meta.likeLiker,
-    meta.inviteInviter,
-    meta.inviteInvitee,
-    meta.vouchVoucher,
-    meta.vouchTarget,
-    JSON.stringify(inputs),
-    JSON.stringify(outputBoxIds(tx, txId)),
-    txId,
-    fee === null ? null : fee,
-    bytes,
-    ceiling,
-    meta.usernameLower,
-    meta.usernameClaimant,
-    meta.karmaOwner,
-    meta.karmaSpend,
-    meta.withdrawPost,
-    costEstimate,
-  );
-  return Number(result.lastInsertRowid);
+
+  // One SQLite transaction: the conflict gate (before the capacity gate),
+  // the eviction a full credit class makes, and the entry's row plus its
+  // input and output rows commit together or not at all
+  // (MEMPOOL_INTERFACE → insertUtxoTx → "The conflict gate runs before the
+  // capacity gate.", → "One SQLite transaction.").
+  return db.transaction(() => {
+    const conflict = hasPendingSpend(inputs);
+    if (conflict !== null) throw new PendingSpendConflictError(conflict);
+
+    // The class and the price, before the capacity gate that spends them. The
+    // byte cost is what this entry would occupy in a block, not the bare
+    // encoding — the budget is the resource being rationed.
+    const fee = bidOf(tx);
+    const bytes = entryByteCost(encoded);
+    assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes);
+
+    const result = db.prepare(
+      `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
+                            like_target, like_liker, invite_inviter, invite_invitee,
+                            vouch_voucher, vouch_target,
+                            tx_id, tx_fee, tx_bytes,
+                            max_valid_height,
+                            username_lower, username_claimant,
+                            karma_owner, karma_spend,
+                            withdraw_post,
+                            cost_estimate)
+       VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      Buffer.from(encoded),
+      expiresAtHeight,
+      meta.likeTarget,
+      meta.likeLiker,
+      meta.inviteInviter,
+      meta.inviteInvitee,
+      meta.vouchVoucher,
+      meta.vouchTarget,
+      txId,
+      fee === null ? null : fee,
+      bytes,
+      ceiling,
+      meta.usernameLower,
+      meta.usernameClaimant,
+      meta.karmaOwner,
+      meta.karmaSpend,
+      meta.withdrawPost,
+      costEstimate,
+    );
+    const entryRowid = Number(result.lastInsertRowid);
+
+    // One row per input, one row per output id — the pending view's tables
+    // (MEMPOOL_INTERFACE → Schema).
+    const insertInput = db.prepare(
+      'INSERT INTO mempool_inputs (box_id, entry_rowid) VALUES (?, ?)',
+    );
+    for (const boxId of inputs) insertInput.run(boxId, entryRowid);
+    const insertOutput = db.prepare(
+      'INSERT INTO mempool_outputs (box_id, entry_rowid) VALUES (?, ?)',
+    );
+    for (const boxId of outputIds) insertOutput.run(boxId, entryRowid);
+
+    return entryRowid;
+  })();
 }
 
 /**
@@ -651,18 +673,15 @@ export function pendingKarmaSpend(ownerId: string): bigint {
  * is. Returned rather than a boolean so the refusal can name the box that
  * collided instead of only reporting that one did.
  *
- * `tx_inputs IS NOT NULL` is what the partial index covers, and it is the whole
- * filter needed: a row written before the column existed reads as zero
- * `json_each` rows.
+ * A point read on `mempool_inputs` per id, the first hit returned
+ * (MEMPOOL_INTERFACE → Schema → "An entry's inputs and outputs are rows
+ * keyed by box id").
  */
 export function hasPendingSpend(boxIds: string[]): string | null {
   if (boxIds.length === 0) return null;
   const db = getDb();
   const stmt = db.prepare(
-    `SELECT 1 FROM mempool
-      WHERE tx_inputs IS NOT NULL
-        AND EXISTS (SELECT 1 FROM json_each(mempool.tx_inputs) WHERE value = ?)
-      LIMIT 1`,
+    `SELECT 1 FROM mempool_inputs WHERE box_id = ? LIMIT 1`,
   );
   for (const id of boxIds) {
     if (stmt.get(id) !== undefined) return id;
@@ -673,18 +692,17 @@ export function hasPendingSpend(boxIds: string[]): string | null {
 /**
  * The box a pooled transaction would create under `boxId`, or `null`.
  *
- * One targeted decode, not a scan: the index finds the single row whose output
- * ids contain `boxId`, and only that entry is decoded. The ids were computed at
- * insert by the same `materializeOutput` the block path uses, so the box
- * returned here is the box application will write.
+ * `mempool_outputs` names the entry whose bytes answer this one box; the
+ * decoded transaction's `materializeOutput` returns the box application
+ * will write (MEMPOOL_INTERFACE → Schema; → getBoxWithPending).
  */
 export function findPendingOutput(boxId: string): AnyBox | null {
   const db = getDb();
   const row = db.prepare(
-    `SELECT utxo_tx_bytes FROM mempool
-      WHERE tx_output_ids IS NOT NULL
-        AND EXISTS (SELECT 1 FROM json_each(mempool.tx_output_ids) WHERE value = ?)
-      LIMIT 1`,
+    `SELECT mempool.utxo_tx_bytes AS utxo_tx_bytes
+       FROM mempool_outputs
+       JOIN mempool ON mempool.rowid = mempool_outputs.entry_rowid
+      WHERE mempool_outputs.box_id = ?`,
   ).get(boxId) as { utxo_tx_bytes: Buffer } | undefined;
   if (!row) return null;
 
@@ -757,11 +775,11 @@ export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
   // what the invariant leaves bounded: a spend reads two inputs and emits one
   // karma output at most, so each decode adds one or none and takes one off.
   const rows = db.prepare(
-    `SELECT utxo_tx_bytes, tx_inputs
+    `SELECT utxo_tx_bytes
        FROM mempool
       WHERE karma_owner = ?
         AND utxo_tx_bytes IS NOT NULL`,
-  ).all(ownerId) as Array<{ utxo_tx_bytes: Buffer; tx_inputs: string | null }>;
+  ).all(ownerId) as Array<{ utxo_tx_bytes: Buffer }>;
 
   // Pass one: gather every pooled karma output the owner signs for. Reading
   // ahead of the subtraction keeps the answer order-free — a chain's child
@@ -786,14 +804,18 @@ export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
     }
   }
 
-  // Pass two: remove every box the owner's pooled rows spend. Each of the
-  // owner's unmarked karma boxes a pooled transaction spends is removed
-  // whether its row stood ahead of or behind the one that would have added
-  // its predecessor.
-  for (const row of rows) {
-    if (row.tx_inputs === null) continue;
-    for (const spent of JSON.parse(row.tx_inputs) as string[]) kept.delete(spent);
-  }
+  // Pass two: remove every box the owner's pooled rows spend. The spends are
+  // read from `mempool_inputs` joined on the entry's `karma_owner`
+  // (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending). The gather and the
+  // subtract run as separate passes, so the answer is the same whatever order
+  // SQLite returns the rows in.
+  const spent = db.prepare(
+    `SELECT mempool_inputs.box_id AS box_id
+       FROM mempool_inputs
+       JOIN mempool ON mempool.rowid = mempool_inputs.entry_rowid
+      WHERE mempool.karma_owner = ?`,
+  ).all(ownerId) as Array<{ box_id: string }>;
+  for (const row of spent) kept.delete(row.box_id);
 
   return [...kept];
 }
