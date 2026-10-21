@@ -1725,6 +1725,13 @@ describe('verifyBlockChainLink', () => {
     expect(verifyBlockChainLink(next, prev)).toBe(true);
   });
 
+  it.fails('links a block to the header it names', () => {
+    const prev = makeBlock(1, GENESIS_PREV);
+    const next = makeBlock(2, mustHash(prev.header));
+    // @ts-expect-error the signature takes a previous block here
+    expect(verifyBlockChainLink(next, prev.header)).toBe(true);
+  });
+
   it('rejects mismatched prevBlockHash', () => {
     const prev = makeBlock(1, GENESIS_PREV);
     const next = makeBlock(2, WRONG_HASH);
