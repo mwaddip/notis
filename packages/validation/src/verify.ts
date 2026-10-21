@@ -1157,22 +1157,22 @@ export function level(header: BlockHeader, anchorBits: number): number | null {
 }
 
 // ---------------------------------------------------------------------------
-// verifyBlockChainLink
+// verifyBlockChainLink — VALIDATION_INTERFACE → verifyBlockChainLink
 // ---------------------------------------------------------------------------
 
 export function verifyBlockChainLink(
   block: OrderingBlock,
-  prevBlock: OrderingBlock,
+  prevHeader: BlockHeader,
 ): boolean {
-  if (!isObject(block) || !isObject(prevBlock)) return false;
+  if (!isObject(block) || !isObject(prevHeader)) return false;
   if (!isObject(block.header)) return false;
-  // `prevBlock.header` reaches `encodeHeader` through the hash; `block.header`
-  // is only read from, so it needs no encodability guard.
-  const prevHash = blockHash(prevBlock.header);
+  // `prevHeader` reaches `encodeHeader` through the hash; `block.header` is
+  // only read from, so it needs no encodability guard.
+  const prevHash = blockHash(prevHeader);
   if (prevHash === null) return false;
   return (
     block.header.prevBlockHash === prevHash &&
-    block.header.height === prevBlock.header.height + 1
+    block.header.height === prevHeader.height + 1
   );
 }
 

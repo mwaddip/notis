@@ -1722,13 +1722,6 @@ describe('verifyBlockChainLink', () => {
     const prev = makeBlock(1, GENESIS_PREV);
     const prevHash = mustHash(prev.header);
     const next = makeBlock(2, prevHash);
-    expect(verifyBlockChainLink(next, prev)).toBe(true);
-  });
-
-  it.fails('links a block to the header it names', () => {
-    const prev = makeBlock(1, GENESIS_PREV);
-    const next = makeBlock(2, mustHash(prev.header));
-    // @ts-expect-error the signature takes a previous block here
     expect(verifyBlockChainLink(next, prev.header)).toBe(true);
   });
 
@@ -1740,7 +1733,7 @@ describe('verifyBlockChainLink', () => {
     expect(verifyHeaderFieldDomains(prev.header)).toEqual({ valid: true });
     expect(verifyHeaderFieldDomains(next.header)).toEqual({ valid: true });
     expect(mustHash(prev.header)).not.toBe(WRONG_HASH);
-    expect(verifyBlockChainLink(next, prev)).toBe(false);
+    expect(verifyBlockChainLink(next, prev.header)).toBe(false);
   });
 
   it('rejects non-sequential height', () => {
@@ -1749,7 +1742,7 @@ describe('verifyBlockChainLink', () => {
     const next = makeBlock(3, prevHash);
     // Same guard: the hash link is correct, so only the height can be rejecting.
     expect(next.header.prevBlockHash).toBe(mustHash(prev.header));
-    expect(verifyBlockChainLink(next, prev)).toBe(false);
+    expect(verifyBlockChainLink(next, prev.header)).toBe(false);
   });
 });
 
@@ -2159,10 +2152,10 @@ describe('no-panic on malformed input (M-5)', () => {
 
   it('verifyBlockChainLink survives every malformed argument', () => {
     for (const bad of MALFORMED) {
-      expect(() => verifyBlockChainLink(bad as any, goodBlock)).not.toThrow();
+      expect(() => verifyBlockChainLink(bad as any, goodBlock.header)).not.toThrow();
       expect(() => verifyBlockChainLink(goodBlock, bad as any)).not.toThrow();
       expect(() =>
-        verifyBlockChainLink(goodBlock, { ...goodBlock, header: makeHeader({ validatorId: bad as any }) }),
+        verifyBlockChainLink(goodBlock, makeHeader({ validatorId: bad as any })),
       ).not.toThrow();
     }
   });
@@ -2239,7 +2232,7 @@ describe('no-panic on malformed input (M-5)', () => {
     // Wider than the digest — `orderingPowTarget` answers `null` rather than
     // a target no digest can be compared against.
     expect(verifyOrderingBlockPoW(makeHeader({ powTargetBits: 1_000_000 }))).toBe(false);
-    expect(verifyBlockChainLink(null as any, goodBlock)).toBe(false);
+    expect(verifyBlockChainLink(null as any, goodBlock.header)).toBe(false);
     expect(verifyBlockChainLink(goodBlock, null as any)).toBe(false);
   });
 
