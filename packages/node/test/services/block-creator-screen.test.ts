@@ -624,4 +624,107 @@ describe('block creator vs a screened body', () => {
     expect(rowids).toContain(wdRow);
     expect(warns.filter((w) => w.includes('body-rejected'))).toHaveLength(0);
   });
+
+  it('a reply to a post selected earlier in the fill lands beside its parent in the template, through the selected set', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+    const records = await importRecords();
+
+    const author = makeTestIdentity();
+    records.putIdentityRecord(author.userId, memberRecord());
+    const authorKarma = makeKarmaBox(POST_PRICE_THREAD + 100n, author.userId, 0, 60);
+    utxo.insertBox(authorKarma);
+    const { tx: parentTx, postId: parentPostId } = threadPostTx(author, authorKarma, 'parent in-fill');
+    const parentTxId = computeTxId(parentTx);
+
+    const replier = makeTestIdentity();
+    records.putIdentityRecord(replier.userId, memberRecord());
+    const replierKarma = makeKarmaBox(POST_PRICE_REPLY + 100n, replier.userId, 0, 61);
+    utxo.insertBox(replierKarma);
+    const { tx: replyTx } = replyPostTx(replier, author.userId, replierKarma, parentPostId, 'reply in-fill');
+    const replyTxId = computeTxId(replyTx);
+
+    await activateProverOverStore();
+
+    const mempool = await importMempool();
+    // Post FIRST (rowid order), reply after — the karma class draws in FIFO,
+    // so the fill meets the parent before the reply (MEMPOOL_INTERFACE →
+    // Ordering).
+    mempool.insertUtxoTx(parentTx, 1000);
+    mempool.insertUtxoTx(replyTx, 1000);
+    expect(mempool.getPendingEntries(10)).toHaveLength(2);
+
+    const warns: string[] = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { warns.push(a.map(String).join(' ')); });
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    warnSpy.mockRestore();
+
+    const tpl = bc.getCurrentTemplate();
+    expect(tpl).not.toBeNull();
+    const ids = userTxIds(tpl!);
+    expect(ids).toContain(parentTxId);
+    expect(ids).toContain(replyTxId);
+    expect(warns.filter((w) => w.includes('body-rejected'))).toHaveLength(0);
+  });
+
+  it('a refill meeting a credit child ahead of its parent still skips the child, which stays pooled', async () => {
+    // The first speculation comes in under the selection's estimates
+    // (MINING_INTERFACE → Template and submit → "An estimate misses both
+    // ways"), so the creator refills; the fill clears the dependency sets
+    // beside the selection, so a child whose parent is only pooled is
+    // skipped on the refill as it was on the first fill.
+    let callCount = 0;
+    vi.doMock('../../src/services/block-apply.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/services/block-apply.js')>();
+      return {
+        ...actual,
+        computePostBlockStateRoot: (
+          ...args: Parameters<typeof actual.computePostBlockStateRoot>
+        ) => {
+          callCount++;
+          const real = actual.computePostBlockStateRoot(...args);
+          if (callCount === 1 && real.kind === 'computed') return { ...real, cost: 1 };
+          return real;
+        },
+      };
+    });
+
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+
+    const attacker = makeTestIdentity();
+    const attackerBox = makeCreditBox(100_000n, attacker.userId, 0, 90);
+    utxo.insertBox(attackerBox);
+
+    const parent = creditTransferFrom(attacker, [{ id: attackerBox.id!, value: 100_000n }], 0n);
+    const parentTxId = computeTxId(parent);
+    const parentChange = materializeOutput(parent.outputs[0] as AnyBox, parentTxId, 0);
+    const child = creditTransferFrom(attacker, [{ id: parentChange.id!, value: 100_000n }], 50_000n);
+    const childTxId = computeTxId(child);
+
+    await activateProverOverStore();
+
+    const mempool = await importMempool();
+    const parentRow = mempool.insertUtxoTx(parent, 1000);
+    const childRow = mempool.insertUtxoTx(child, 1000);
+    expect(mempool.getPendingEntries(100)).toHaveLength(2);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    const tpl = bc.getCurrentTemplate();
+    expect(tpl).not.toBeNull();
+    const ids = userTxIds(tpl!);
+    expect(ids).toContain(parentTxId);
+    expect(ids).not.toContain(childTxId);
+
+    const rowids = mempool.getPendingEntries(100).map((e) => e.rowid);
+    expect(rowids).toContain(childRow);
+    void parentRow;
+  });
 });
