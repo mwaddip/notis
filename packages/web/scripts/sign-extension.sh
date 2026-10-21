@@ -37,7 +37,6 @@ CALLER_PWD="$(pwd -P)"
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 UPDATE_MJS="$REPO_ROOT/packages/web/extension/update-manifest.mjs"
 MANIFEST_CONTENT_MJS="$REPO_ROOT/packages/web/extension/manifest-content.mjs"
-BUILD_EXT_SH="$REPO_ROOT/packages/web/scripts/build-extension.sh"
 
 # Resolve a possibly-relative caller-supplied path against the caller's own
 # CWD, before `cd "$REPO_ROOT"` moves the shell.
@@ -49,15 +48,6 @@ resolve_path() {
 }
 
 cd "$REPO_ROOT"
-
-# The exact web-ext version this script signs under. `web-ext sign` runs
-# `npx` with the AMO API credentials in its environment, so pinning the
-# exact version is the guarantee they reach a release the operator meant.
-# The derived major must match build-extension.sh's WEBEXT_MAJOR, whose
-# `web-ext lint` carries no secret and stays on the major
-# (WEB_INTERFACE → "The build check that keeps the web bundle honest").
-WEBEXT_EXACT=10.6.0
-WEBEXT_MAJOR=${WEBEXT_EXACT%%.*}
 
 usage() {
   cat <<'EOF' >&2
@@ -80,14 +70,6 @@ require_tools() {
   for tool in "$@"; do
     command -v "$tool" >/dev/null 2>&1 || fail "required tool not found: $tool"
   done
-}
-
-# Refuse when the pinned web-ext major drifts from build-extension.sh's.
-check_webext_major() {
-  local built
-  built=$(grep -E '^WEBEXT_MAJOR=' "$BUILD_EXT_SH" | head -1 | sed 's/^WEBEXT_MAJOR=//')
-  [ "$built" = "$WEBEXT_MAJOR" ] \
-    || fail "WEBEXT_MAJOR=$WEBEXT_MAJOR differs from $BUILD_EXT_SH ($built)"
 }
 
 # One scratch dir, one EXIT trap.
@@ -155,8 +137,7 @@ do_submit() {
     exit 2
   fi
 
-  require_tools git gh node pnpm npx unzip zip diff sha256sum
-  check_webext_major
+  require_tools git gh node pnpm unzip zip diff sha256sum
 
   # Revision: v<ver> resolves (or --rev); package.json at it says <ver>.
   local revision
@@ -254,6 +235,22 @@ do_submit() {
   id=$(printf '%s' "$gecko" | sed -n '1p')
   update_url=$(printf '%s' "$gecko" | sed -n '3p')
 
+  # The web-ext this submission runs is the one the clean build in
+  # $archive_root installed, pinned by the tag's own lockfile — not a package
+  # resolved as the script runs
+  # (WEB_INTERFACE → The client is served from the node's own origin → "The
+  # Firefox build ships signed as well"). A tag older than this change
+  # installs no web-ext as a dev dependency; refuse here, before the keys
+  # file is read, so an older release's zip never meets a key.
+  local webext_pkg="$archive_root/packages/web/node_modules/web-ext/package.json"
+  [ -f "$webext_pkg" ] \
+    || fail "the clean build from $revision installed no web-ext — name it in packages/web/package.json first"
+  local webext_bin="$archive_root/packages/web/node_modules/.bin/web-ext"
+  [ -x "$webext_bin" ] \
+    || fail "the clean build from $revision installed web-ext without its bin at $webext_bin"
+  local webext_ver
+  webext_ver=$(read_manifest_version "$webext_pkg")
+
   # Keys file — mode, keys defined non-empty; each failure its own refusal.
   local keys_file="${NOTIS_AMO_ENV:-$HOME/.config/dagsocial/amo.env}"
   keys_file=$(resolve_path "$keys_file")
@@ -288,6 +285,7 @@ built per packages/web/extension/REVIEWERS.md."
     file_count=$(find "$zip_contents" -type f | wc -l)
     archive_size=$(stat -c %s "$archive")
     echo "revision:     $revision"
+    echo "web-ext:      $webext_ver (from $webext_bin)"
     echo "file count:   $file_count"
     echo "archive size: $archive_size bytes"
     echo "add-on id:    $id"
@@ -316,12 +314,13 @@ built per packages/web/extension/REVIEWERS.md."
   fi
 
   mkdir -p "$SCRATCH/signed"
-  echo "==> web-ext@${WEBEXT_EXACT} sign (unlisted)"
+  echo "==> web-ext@${webext_ver} sign (unlisted) — from $webext_bin"
   (
+    export NO_UPDATE_NOTIFIER=1
     # shellcheck disable=SC1090
     . "$keys_file"
     export WEB_EXT_API_KEY WEB_EXT_API_SECRET
-    npx --yes -p "web-ext@${WEBEXT_EXACT}" web-ext sign \
+    "$webext_bin" sign \
       --channel unlisted \
       --source-dir "$zip_contents" \
       --upload-source-code "$archive" \
