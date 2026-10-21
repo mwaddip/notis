@@ -35,6 +35,11 @@ cd "$REPO_ROOT"
 
 VERSION=$(node -p "require('./package.json').version")
 STAGE=$(mktemp -d)
+# WEB_INTERFACE → The client is served from the node's own origin →
+# "A zip holds one build" — both staging directories go however the script
+# ends, never leaving a half-written build behind.
+cleanup() { rm -rf "$STAGE" "${SCRATCH:-}"; }
+trap cleanup EXIT
 
 # One variable pins the linter's major — web-ext@10 is the release measured
 # against the emitted manifests.
@@ -66,8 +71,9 @@ export VITE_PUBLIC=${VITE_PUBLIC-https://notis.fun/web/}
 export VITE_NETWORK=${VITE_NETWORK-testnet}
 export VITE_IDENTITY=extension
 
-# Staging: a fresh temp dir every build — the 216-2 append trap is impossible
-# by construction (WEB_INTERFACE → The extension).
+# Staging: a fresh temp dir every build, so the zip is assembled against
+# nothing left over (WEB_INTERFACE → The client is served from the node's
+# own origin → "A zip holds one build").
 CHROME_DIR="${STAGE}/chrome"
 FIREFOX_DIR="${STAGE}/firefox"
 mkdir -p "$CHROME_DIR" "$FIREFOX_DIR"
@@ -281,16 +287,19 @@ npx --yes -p "web-ext@${WEBEXT_MAJOR}" web-ext lint --source-dir "$FIREFOX_DIR" 
 echo "==> Build checks passed"
 
 # ---------------------------------------------------------------------------
-# Zip. `zip -r -X` — no extended attributes.
+# Zip. `zip -r -X` — no extended attributes. Each zip moves to the
+# repository's root with `mv -f`, so a zip of that name standing there is
+# replaced — never added to (WEB_INTERFACE → The client is served from the
+# node's own origin → "A zip holds one build").
 # ---------------------------------------------------------------------------
 cd "$STAGE"
 CHROME_ZIP="notis-extension-${VERSION}-chrome.zip"
 FIREFOX_ZIP="notis-extension-${VERSION}-firefox.zip"
 (cd chrome && zip -r -X "$STAGE/$CHROME_ZIP" .)
 (cd firefox && zip -r -X "$STAGE/$FIREFOX_ZIP" .)
-mv "$STAGE/$CHROME_ZIP" "$STAGE/$FIREFOX_ZIP" "$REPO_ROOT/"
+mv -f "$STAGE/$CHROME_ZIP" "$REPO_ROOT/$CHROME_ZIP"
+mv -f "$STAGE/$FIREFOX_ZIP" "$REPO_ROOT/$FIREFOX_ZIP"
 cd "$REPO_ROOT"
-rm -rf "$STAGE" "$SCRATCH"
 
 echo "==> Done: $CHROME_ZIP and $FIREFOX_ZIP"
 for z in "$CHROME_ZIP" "$FIREFOX_ZIP"; do
