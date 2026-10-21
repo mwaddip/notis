@@ -21,6 +21,7 @@ import {
   pendingVouchTargets,
   pendingWithdrawTargets,
 } from '../src/wallet/ledger';
+import { pendingWithoutStandingCards } from '../src/model/feed-reconcile';
 import type { PendingEntry } from '../src/wallet/types';
 import type { PostJson, PostResult, WithdrawnJson, CreditsResult } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
@@ -292,10 +293,13 @@ describe('reconcile', () => {
 });
 
 describe('dedupe and the pending-like overlay', () => {
-  it('drops the node pending rows the ledger holds as posts, keeping the rest', () => {
+  it('a row a submission card names is dropped; a row only the ledger holds is kept (WEB_INTERFACE → What the feed reads, and what a card shows for it → "The reader\'s own pending post is drawn once")', () => {
     const nodePending = [{ id: 'p1' }, { id: 'p9' }, { id: 'target1' }];
-    // Only the post entry's postId ('p1') is dropped; a like's target is not a post row.
-    expect(dedupePending(nodePending, [postEntry, likeEntry]).map((r) => r.id)).toEqual(['p9', 'target1']);
+    // A submission card standing in the page names 'p1'; 'p9' and 'target1'
+    // are only in the pending ledger (postEntry.postId is 'p1'; likeEntry's
+    // target is not a post row), and the function reads cardIds alone.
+    const cardIds = new Set<string>(['p1']);
+    expect(pendingWithoutStandingCards(nodePending, cardIds).map((r) => r.id)).toEqual(['p9', 'target1']);
   });
 
   it('the overlay names only the like targets', () => {
