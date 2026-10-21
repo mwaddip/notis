@@ -84,7 +84,7 @@ describe('the six list reads carry light under a resolver and none without it', 
     expect(h.fake.feedCalls.length).toBeGreaterThanOrEqual(6);
   });
 
-  it.fails('the extension build: light on all six reads', async () => {
+  it('the extension build: light on all six reads', async () => {
     const r = testResolver();
     const { cache } = makeCache();
     await cache.open('C');
