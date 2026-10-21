@@ -16,7 +16,6 @@ import {
   reconcileCreditGrant,
   pendingUsernameEntry,
   pendingSendEntries,
-  dedupePending,
   pendingLikeTargets,
   pendingVouchTargets,
   pendingWithdrawTargets,
@@ -427,7 +426,12 @@ describe('the faucet grant entry', () => {
   });
 
   it('is neither a dedupe target nor a like-overlay target', () => {
-    expect(dedupePending([{ id: KEY }], [grantEntry]).map((r) => r.id)).toEqual([KEY]);
+    // The feed's pending rule reads the postIds of standing submission cards
+    // alone; a grant entry is not a submission card, so a row whose id matches
+    // the grant's key passes through under an empty `cardIds`
+    // (WEB_INTERFACE → What the feed reads, and what a card shows for it →
+    // "The reader's own pending post is drawn once").
+    expect(pendingWithoutStandingCards([{ id: KEY }], new Set<string>()).map((r) => r.id)).toEqual([KEY]);
     expect(pendingLikeTargets([grantEntry]).size).toBe(0);
   });
 });
