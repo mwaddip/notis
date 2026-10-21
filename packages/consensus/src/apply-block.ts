@@ -28,6 +28,7 @@ import type { BlockPost, BlockWithdrawal } from './block-posts.js';
 import { computeBlockReward, countKarmaActors, isCreditSideTx, type EmbeddedTx } from './coinbase-split.js';
 import { collectPostBodyKarma, commitDecayClocks, deriveKarmaDecay, karmaOwed } from './decay.js';
 import type { DecayDeps } from './decay.js';
+import type { DecayCfg } from '@dagsocial/types';
 import { BlockOverlay } from './overlay.js';
 import type { BlockMutation } from './overlay.js';
 import { bondOutputOf, checkSettlement, contributeToBody, emptyBody, lapseLegOf, settlementDepsWith } from './settlement.js';
@@ -111,6 +112,137 @@ export function newTxApplyAcc(): TxApplyAcc {
     appliedTxs: [],
     appliedTxBytes: [],
   };
+}
+
+/**
+ * One body entry's prelude: bytes present, decoded, envelope and output-shape checked (the
+ * settlement's shape or a user transaction's), id proof, outputs materialized under the declared
+ * id. The reason strings are the stated ones (CONSENSUS_INTERFACE → Applying a block).
+ */
+export function decodeBodyEntry(
+  block: OrderingBlock,
+  index: number,
+  isSettlement: boolean,
+  height: number,
+  ctx: ApplyContext,
+): { ok: true; item: QueuedTx } | { ok: false; reason: string } {
+  const txId = block.utxoTxTree.utxoTxIds[index]!;
+  const txBytes = block.utxoTxTree.utxoTxs[index];
+
+  if (!txBytes) {
+    return {
+      ok: false,
+      reason: `Rejected block height=${height}: embedded UTXO tx ${txId} carries no body`,
+    };
+  }
+
+  let tx: UtxoTransaction;
+  try {
+    tx = decodeTx(txBytes);
+  } catch (err) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ${txId} did not ` +
+        `decode: ${String(err)}`,
+    };
+  }
+
+  // Both gates run before `computeTxId` hashes the decoded value, and
+  // together they are what makes that hash total: the envelope types every
+  // field `txIdBytes` reads directly, the output check the fields it
+  // reaches through `canonicalBoxBytes`' throwing writers (NODE_INTERFACE →
+  // "The output domain check"). Unchecked, an out-of-domain output field
+  // becomes an exception absorbed by the funnel's totality handler instead of
+  // the stated rejection below.
+  //
+  // ⚠ **The settlement gets the schema that admits the three protocol
+  // boxes.** It creates the emission, treasury and pool successors, which a
+  // user transaction may not — the same closed key set (the four required
+  // fields plus `likeTarget`, `post` and `postWithdraw`) and the
+  // same field types, over a wider set of box types.
+  const envelopeCheck = checkTxEnvelope(tx, height, ctx.protocolVersionSchedule);
+  if (!envelopeCheck.valid) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ${txId} has a ` +
+        `malformed envelope: ${envelopeCheck.error}`,
+    };
+  }
+
+  const outputCheck = isSettlement
+    ? checkSettlementOutputShape(tx.outputs)
+    : checkOutputShape(tx.outputs);
+  if (!outputCheck.valid) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ${txId} has an ` +
+        `out-of-domain output: ${outputCheck.error}`,
+    };
+  }
+
+  const decodedTxId = computeTxId(tx);
+  if (decodedTxId !== txId) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ${txId} declares an ` +
+        `id its bytes do not produce (${decodedTxId})`,
+    };
+  }
+
+  // `txId` here is the block's declared id, already checked byte-for-byte
+  // against `computeTxId(tx)` above — so it is the real creating transaction,
+  // not a re-derivation. Position in `tx.outputs` is the `index`.
+  const outputs = tx.outputs.map((box, idx) => materializeOutput(box as AnyBox, txId, idx));
+  return { ok: true, item: { txId, tx, outputs } };
+}
+
+/**
+ * The over-signed reason for one transaction, or `null`. A map key no input requires refuses its
+ * transaction, so a map with more entries than inputs is refused before any signature is checked
+ * (CONSENSUS_INTERFACE → Applying a block → "No transaction may carry more signatures than
+ * inputs, and that is checked first").
+ */
+export function overSignedReason(
+  tx: UtxoTransaction,
+  txId: string,
+  height: number,
+): string | null {
+  if (Object.keys(tx.signatures).length > tx.inputs.length) {
+    return (
+      `Rejected block height=${height}: embedded UTXO tx ${txId} ` +
+      `carries more signatures than inputs`
+    );
+  }
+  return null;
+}
+
+/**
+ * The pre-body owed capture: `postBodyKarma` and `owed` for every identity the body touches, from
+ * the view as it stands before the block writes (CONSENSUS_INTERFACE → Applying a block →
+ * "The owed-decay capture reads the record of every identity the body touches"). The caller
+ * derives decay plans from the returned `postBodyKarma`.
+ */
+export function capturePreBodyOwed(
+  view: Pick<StateView, 'getBox' | 'getKarmaBoxes' | 'getIdentityRecord'>,
+  queue: Array<{ txId: string; inputs: string[]; outputs: AnyBox[] }>,
+  height: number,
+  decayCfg: DecayCfg,
+): {
+  postBodyKarma: ReturnType<typeof collectPostBodyKarma>;
+  preBodyOwed: Map<string, bigint>;
+} {
+  const postBodyKarma = collectPostBodyKarma(view, queue);
+  const preBodyOwed = new Map<string, bigint>();
+  for (const { owner } of postBodyKarma.values()) {
+    const face = view.getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n);
+    const record = view.getIdentityRecord(owner);
+    preBodyOwed.set(bytesToHex(owner), karmaOwed(face, record, height, decayCfg));
+  }
+  return { postBodyKarma, preBodyOwed };
 }
 
 /**
@@ -475,81 +607,20 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // phase, and one that reaches it anyway is refused below as carrying no
   // settlement; identifying the settlement by position rather than by what it
   // spends is what lets a node find it with no UTXO set at all.
+  //
+  // ⛔ **The settlement never enters the queue.** `validateTx` governs user
+  // transactions: no signer authorizes a settlement and no transition row
+  // admits the pool, the emission box or a fee box as an input, so putting it
+  // through that gate would reject every valid block. Its own rule is
+  // `checkSettlement`, at §11a, after the body it is derived from has applied.
   const lastIndex = block.utxoTxTree.utxoTxIds.length - 1;
-  let settlement: { txId: string; tx: UtxoTransaction; outputs: AnyBox[] } | null = null;
+  let settlement: QueuedTx | null = null;
   for (let i = 0; i < block.utxoTxTree.utxoTxIds.length; i++) {
-    const txId = block.utxoTxTree.utxoTxIds[i]!;
-    const txBytes = block.utxoTxTree.utxoTxs[i];
     const isSettlement = i === lastIndex;
-
-    if (!txBytes) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} carries no body`,
-      );
-    }
-
-    let tx: UtxoTransaction;
-    try {
-      tx = decodeTx(txBytes);
-    } catch (err) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} did not ` +
-        `decode: ${String(err)}`,
-      );
-    }
-
-    // Both gates run before `computeTxId` hashes the decoded value, and
-    // together they are what makes that hash total: the envelope types every
-    // field `txIdBytes` reads directly, the output check the fields it
-    // reaches through `canonicalBoxBytes`' throwing writers (NODE_INTERFACE →
-    // "The output domain check"). Unchecked, an out-of-domain output field
-    // becomes an exception absorbed by the funnel's totality handler instead of
-    // the stated rejection below.
-    //
-    // ⚠ **The settlement gets the schema that admits the three protocol
-    // boxes.** It creates the emission, treasury and pool successors, which a
-    // user transaction may not — the same closed key set (the four required
-    // fields plus `likeTarget`, `post` and `postWithdraw`) and the
-    // same field types, over a wider set of box types.
-    const envelopeCheck = checkTxEnvelope(tx, height, ctx.protocolVersionSchedule);
-    if (!envelopeCheck.valid) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} has a ` +
-        `malformed envelope: ${envelopeCheck.error}`,
-      );
-    }
-
-    const outputCheck = isSettlement
-      ? checkSettlementOutputShape(tx.outputs)
-      : checkOutputShape(tx.outputs);
-    if (!outputCheck.valid) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} has an ` +
-        `out-of-domain output: ${outputCheck.error}`,
-      );
-    }
-
-    const decodedTxId = computeTxId(tx);
-    if (decodedTxId !== txId) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} declares an ` +
-        `id its bytes do not produce (${decodedTxId})`,
-      );
-    }
-
-    // `txId` here is the block's declared id, already checked byte-for-byte
-    // against `computeTxId(tx)` above — so it is the real creating transaction,
-    // not a re-derivation. Position in `tx.outputs` is the `index`.
-    const outputs = tx.outputs.map((box, index) =>
-      materializeOutput(box as AnyBox, txId, index),
-    );
-    // ⛔ **The settlement never enters the queue.** `validateTx` governs user
-    // transactions: no signer authorizes a settlement and no transition row
-    // admits the pool, the emission box or a fee box as an input, so putting it
-    // through that gate would reject every valid block. Its own rule is
-    // `checkSettlement`, at §11a, after the body it is derived from has applied.
-    if (isSettlement) settlement = { txId, tx, outputs };
-    else queue.push({ txId, tx, outputs });
+    const decoded = decodeBodyEntry(block, i, isSettlement, height, ctx);
+    if (!decoded.ok) return reject(decoded.reason);
+    if (isSettlement) settlement = decoded.item;
+    else queue.push(decoded.item);
   }
   if (settlement === null) {
     return reject(
@@ -561,12 +632,9 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // queue before the batch runs, so the batch checks at most one entry per input
   // (CONSENSUS_INTERFACE → Applying a block → "No transaction may carry more
   // signatures than inputs, and that is checked first").
-  const overSigned = queue.find(({ tx }) => Object.keys(tx.signatures).length > tx.inputs.length);
-  if (overSigned !== undefined) {
-    return reject(
-      `Rejected block height=${height}: embedded UTXO tx ${overSigned.txId} ` +
-      `carries more signatures than inputs`,
-    );
+  for (const q of queue) {
+    const reason = overSignedReason(q.tx, q.txId, height);
+    if (reason !== null) return reject(reason);
   }
 
   // The batch's entry count, and its cost checked before the batch runs, so a
@@ -619,26 +687,17 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // post-body projection derives from decoded transactions + the pre-body
   // UTXO set — both available before the apply loop. The settlement consumes
   // the projected boxes, which are the ones that exist after the body applies.
-  const postBodyKarma = collectPostBodyKarma(
+  // `owed` is captured in the same step and shared with `screenBody`
+  // (CONSENSUS_INTERFACE → Applying a block → "The owed-decay capture reads
+  // the record of every identity the body touches").
+  const { postBodyKarma, preBodyOwed } = capturePreBodyOwed(
     state,
     queue.map((q) => ({ txId: q.txId, inputs: q.tx.inputs, outputs: q.outputs })),
+    height,
+    ctx.decayCfg,
   );
   const decayDeps = decayDepsOver(state);
   const decayPlans = deriveKarmaDecay(decayDeps, postBodyKarma, height, ctx.decayCfg);
-  // NODE_INTERFACE → Karma transition rules → "Engine inputs the rule needs":
-  // `owed` for every identity the body touches, from the view as it stands
-  // before the block writes. The sum reads the owner's live karma boxes once,
-  // and the record once; `postBodyKarma`'s keys are the touched set in sorted
-  // owner-hex order, so the capture's reads follow that order. An owner the
-  // body leaves with no karma box is read as every other is
-  // (CONSENSUS_INTERFACE → Applying a block → "The owed-decay capture reads
-  // the record of every identity the body touches").
-  const preBodyOwed = new Map<string, bigint>();
-  for (const { owner } of postBodyKarma.values()) {
-    const face = state.getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n);
-    const record = state.getIdentityRecord(owner);
-    preBodyOwed.set(bytesToHex(owner), karmaOwed(face, record, height, ctx.decayCfg));
-  }
   const utxoDeps = utxoDepsOver(state, ctx, verified, preBodyOwed, height);
   // Escrows and release candidates: captured before the apply loop so the
   // body's own mutations do not appear in the settlement's input list on one
