@@ -412,8 +412,8 @@ schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COS
 
 1. Extract `likeTarget` from the tx; reject if absent or not 64-hex
 2. Verify the target post exists and is live (not withdrawn; a placeholder is live — `isLivePost`)
-3. Verify not already liked: like-record `(liker, targetPostId)` absent AND
-   `hasPendingLike` over the mempool gate metadata
+3. Verify not already liked: like-record `(liker, targetPostId)` absent; a pending like of the pair is
+   admission's gate (`MEMPOOL_INTERFACE → Correctness gates`), refused in the same words
 4. `validateTx` — the engine enforces the biconditional like shape **both ways** (§validateTx
    step 7): karma inputs one owner, at most one karma output same owner (omitted when the change
    would be zero), plus exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose
@@ -453,7 +453,7 @@ gateway DoS for the price of one extra signature.
 |--------|------|---------|----------|--------|
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/invites` | `{ tx: UtxoTransaction }` — inviter-signed create tx naming the invitee's public key | `{ status: "pending", txId, expiresAtHeight, bondBoxId }` | 400 if insufficient karma, 400 if that key is already an account, 400 if the inviter is neither a root nor a member with an invite available |
+| `POST` | `/invites` | `{ tx: UtxoTransaction }` — inviter-signed create tx naming the invitee's public key | `{ status: "pending", txId, expiresAtHeight, bondBoxId }` | 400 if insufficient karma, 400 if that key is already an account, 400 if the inviter is neither a root nor a member with an invite available, 400 `Every invite this member has is already pending` when its pending bonds take every invite it has; 409 `A pending invite already names this key` |
 
 **There is one step, and no secret in it** (`ARCHITECTURE` → Invite System). The
 invitee shares their public key out of band; the inviter submits one transaction,
@@ -476,7 +476,9 @@ and the block's settlement grants the invitee the bond's value from the pool.
    ⛔ **This service-layer check is a courtesy, exactly as the vouch balance gate
    is:** a record-existence query cannot see a **sibling transaction in the same
    block** naming the same key. The consensus rule *"no other bond in this block
-   names this key"* (§Legal box transitions) is what closes the duplicate grant
+   names this key"* (§Legal box transitions) is what closes the duplicate grant.
+   Admission's gates (`MEMPOOL_INTERFACE → Correctness gates`) then refuse a bond whose invitee a
+   pending bond names, and a member's bond its pending bonds leave no invite for
 3. Build the transaction: karma box → karma box (`balance − bond`) + **`BondBox`
    only**
 4. `insertUtxoTx(tx, expiresAtHeight)`; return the one box id
@@ -501,9 +503,10 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 
 **Members vouch, without a cap.** `castVouch` refuses with a named `400`, ahead of the engine and
 changing no verdict: a voucher who is not a member (`ARCHITECTURE → Membership`); a target that
-holds no `IdentityRecord`; a self-vouch; a live vouch for the same `(voucher, target)` pair — in
-the UTXO set, or pending in this node's pool (`hasPendingVouch(voucherId, targetId)`, the
-pair-scoped mirror). Each is a consensus rule of the cast arm (→ Vouch transition rules); the
+holds no `IdentityRecord`; a self-vouch; a live vouch for the same `(voucher, target)` pair in
+the UTXO set. Admission refuses, in the same `400`, a cast whose pair a pending entry already
+carries (`hasPendingVouch(voucherId, targetId)`, the pair-scoped mirror — `MEMPOOL_INTERFACE →
+Correctness gates`). Each is a consensus rule of the cast arm (→ Vouch transition rules); the
 escrow gate — no cast while an unspent escrow names the voucher — is also the arm's, mirrored
 here the same way. There is no one-vouch-at-a-time rule and no voucher-scoped pending check: a
 member holds as many live vouches as they have karma to stake.
@@ -533,7 +536,7 @@ invites, vouches, credits, withdraw).
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) | 400 if the payload is absent or names a post other than `:id`, the post is unconfirmed or confirmed at or above the block the withdrawal is judged for (`tip + 1` at admission, → validateTx), the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+| `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) | 400 if the payload is absent or names a post other than `:id`, the post is unconfirmed or confirmed at or above the block the withdrawal is judged for (`tip + 1` at admission, → validateTx), the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 `A withdrawal of this post is already pending`, and on a pending-spend conflict; 503 if the pool is full |
 
 **Withdraw flow:**
 
@@ -655,7 +658,7 @@ every other route's.
 |--------|------|---------|----------|--------|
 | `GET` | `/backers` | — | `{ supply, staked, accrual, unreleased, accrualEndsAtBlock }` — the profile's `backerSupply`, the pool box's `staked`, `accrual` and `value` as decimal strings, and `creditFixedRateBlocks` as a plain number | 404 `no backer pool` on a network whose table is empty |
 | `GET` | `/backers/:userId` | `:userId` a key or an `@handle` (→ Identity parameters) | `{ owner, boxId, weight, accrued }` — the identity's live stake; `accrued = ⌊weight × accrual / supply⌋` against the current pool box, a decimal string | 404 `no backer pool` on a network whose table is empty, ahead of the parameter; else 400 malformed; 404 `unknown handle`; 404 `no stake` |
-| `POST` | `/backers/unstake` | `{ tx: UtxoTransaction }` — one stake in, the marker and at most one successor out | `{ status: "pending", txId, expiresAtHeight }` (200) | 400 with the refusal named — `unstake weight not conserved`, `unstake below minimum`, `unstake marker names another owner`, `stake successor names another owner`, or `validateTx`'s reason; 409 pending-spend conflict; 503 pool full |
+| `POST` | `/backers/unstake` | `{ tx: UtxoTransaction }` — one stake in, the marker and at most one successor out | `{ status: "pending", txId, expiresAtHeight }` (200) | 400 with the refusal named — `unstake outputs must be one backer_unstake marker and at most one backer_stake successor` for a transaction of any other shape, `unstake weight not conserved`, `unstake below minimum`, `unstake marker names another owner`, `stake successor names another owner`, or `validateTx`'s reason; 409 pending-spend conflict; 503 pool full |
 
 `/status` carries nothing of the pool; a client reads `/backers`. The refusals mirror the arm's rules for a
 legible 400, as the username routes mirror theirs.
@@ -1168,9 +1171,9 @@ nowhere else.
 
 **Re-insertion screens the ceiling and not the floor.** A reverted transaction whose input is immature
 or locked at the new tip (`validateTx` step 3 — the spend-timing floor) is re-inserted all the same and
-sits in the pool until the creator's rebuild evicts it: one wasted build per reorg over such an entry
-(`MINING_INTERFACE → Template and submit`, the rejected-body loop's bound), no fork, no stall. A reorg
-onto a shorter, heavier branch lowers the tip by up to `maxReorgDepth` blocks, so the case is ordinary,
+sits in the pool until the screen of a body carrying it evicts it: one rejected speculation and one screen per
+reorg over such entries (`MINING_INTERFACE → Template and submit`, the rejected-body loop's bound), no fork, no
+stall. A reorg onto a shorter, heavier branch lowers the tip by up to `maxReorgDepth` blocks, so the case is ordinary,
 and it is bounded rather than screened.
 
 ⚠ **A new height cap owes a ceiling arm.** Any rule inside `checkTransitions` that bounds
@@ -3065,17 +3068,19 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     mempool UTXO transactions, so they flow through step 7 like any other tx; dedup is
     the like-record's existence, enforced at apply; there is no epoch.)*
 7. UTXO entries → `utxoTxIds` in pool order (posts and likes included — no sidecar diversion).
-    Pool order is dependency order for a chain — a child is admitted only while its predecessor is
-    confirmed or pooled (`MEMPOOL_INTERFACE → getBoxWithPending`) — and the byte-budget trim pops
-    from the end, so the body satisfies the ordering rule the applier enforces (→ Block finalization)
+    The fill skips an entry that depends on what its body does not hold (`MEMPOOL_INTERFACE →
+    Block Creator Integration`), so every input resolves in the confirmed set or to an earlier
+    transaction of the body, and the byte-budget trim pops from the end, so the body satisfies the
+    ordering rule the applier enforces (→ Block finalization)
 8. *(Retired with sub-blocks — folded into step 7.)*
 12. Always produce a block, whatever its coinbase comes to. An empty block below
     the emission terminus carries that height's emission; above it
     (`MINING_INTERFACE → Emission Schedule`) an empty block's income is zero, so it
     carries **no coinbase outputs at all** — no output may hold `value === 0`.
     ⚠ **One exception, and only one: a body its own mutation
-    phase rejects.** See step 15b — the creator evicts every row the body
-    carried and builds again from what remains, until it holds a template or a
+    phase rejects.** See step 15b — the creator evicts the rows of the
+    transactions the body's screen refuses (every row, where it refuses none) and builds again from
+    what remains, until it holds a template or a
     body carrying no row is rejected (`MINING_INTERFACE → Template and submit`).
     Mining over a body the node itself will not apply wastes PoW on a block
     that cannot be accepted anywhere.
@@ -3088,9 +3093,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     rules`); a height-1 template carries the anchor's bits
 15b. Compute `stateRoot` — the **post-block** digest (see "Post-block
     stateRoot" below). Never the creator's current (pre-block) digest. A
-    `body-rejected` speculation evicts the body's rows (step 13) and returns to
-    step 1; a rejected body that carried no row is terminal, and the build ends
-    holding no template (`MINING_INTERFACE → Template and submit`).
+    `body-rejected` speculation evicts the rows of the transactions the body's screen refuses — the
+    body's rows (step 13), where it refuses none — and returns to step 1; a rejected body that
+    carried no row is terminal, and the build ends holding no template (`MINING_INTERFACE → Template and submit`).
 16. Build block template (powNonce=0, empty signature). Its `utxoTxRoot` is `computeUtxoTxRoot(tree)`
     over the finished body — every transaction's id, then every transaction's bytes, the settlement
     last in each (`TYPES_INTERFACE → Ordering block`)
@@ -3144,22 +3149,19 @@ window's `S` — and `submitMinedBlock` answers the verdict the item returns, ha
    the journal's `appliedUtxoTxs` and every per-transaction collection list the body's
    order, and there is no second order to reconcile.
 
-   **A produced body satisfies it by construction.** Submission validates against the
-   pending view (`MEMPOOL_INTERFACE → getBoxWithPending`), so a child enters the pool
-   only while its predecessor is confirmed or already pooled and takes the later
-   rowid; the fill reads the pool in rowid order and the byte-budget trim pops from
-   the end (→ Block creation); reorg re-insertion returns reverted transactions
-   lowest height first, each block's in its applied order (→ Block Journal). No
-   produced body lists a consumer ahead of its producer. A body the mutation phase
-   refuses anyway — a child whose predecessor left the pool by expiry or eviction —
-   is evicted and the fill repeats (`MINING_INTERFACE → Template and submit`).
+   **A produced body satisfies it by construction.** The fill skips an entry an input
+   of which is neither in the confirmed set nor an output of an entry it already
+   selected (`MEMPOOL_INTERFACE → Block Creator Integration`), and the byte-budget trim
+   pops from the end (→ Block creation). No produced body lists a consumer ahead of its
+   producer; a child whose predecessor left the pool by expiry or eviction is skipped
+   by every fill and leaves by its own expiry.
 5. Remove confirmed entries from mempool (`removeEntry` for each confirmed rowid).
    ⚠ **This runs even when the block was rejected**, and that is deliberate,
    not an oversight: whatever made the body invalid is still pooled, so
    leaving it would rebuild the same rejected block every interval and stall
    the chain — expiry cannot save it, since `purgeExpired` keys on a height
    that stops advancing when production stops. Step 15b's `body rejected`
-   outcome applies the same eviction for the same reason.
+   outcome evicts for the same reason — the rows its screen refuses.
 6. Reset pending counter and template
 
 ### Mining modes
@@ -3207,7 +3209,7 @@ union so no caller can conflate them):
 |---|---|---|
 | computed | the post-block digest and the proof's | mine over them |
 | **over budget** | the body's cost is over `MAX_BLOCK_COST` — `applyBlock`'s own refusal saying so, or `checkBlockCost`'s | **trim the selection and build again** (`MINING_INTERFACE → Template and submit → "Packing to the budget"`); nothing is evicted |
-| **body rejected** | the mutation phase rejected this body | **produce nothing, and evict the included mempool entries** |
+| **body rejected** | the mutation phase rejected this body | **produce nothing, evict the entries its screen refuses — every included entry, where it refuses none — and build again** |
 
 **A node applies and produces over its prover, and has no other way to** — the rules read the tree and nothing else
 (→ AVL+ State Root). Production creates the prover at startup, before the genesis seed. A producer that finds none
@@ -3217,8 +3219,7 @@ either way, never a block without a root check and never a header carrying `EMPT
 
 **Body rejected is fatal to production, and the eviction is not optional.**
 Mining over a body this node's own mutation phase refuses produces a block
-nothing will accept — the pre-fix code warned "the block cannot be produced"
-and then mined it anyway. Producing nothing while *leaving the entries pooled*
+nothing will accept. Producing nothing while *leaving the entries pooled*
 is worse still: the creator rebuilds the identical body every interval, and
 `MEMPOOL_EXPIRY_BLOCKS` can never rescue it because expiry keys on a chain
 height that stops advancing the moment the node stops producing — a permanent
@@ -3228,10 +3229,11 @@ reason. An unexpected throw during speculation counts as **body rejected**: the 
 funnel's totality doctrine treats the same throw as a block rejection, so a body
 that crashes speculation is one no node will apply.
 
-Residual, recorded rather than hidden: entries that rode into the same body
-are evicted with the offending one. Transaction-level drop-and-retry — evict
-only the culprit and rebuild — needs the mutation phase to report *which*
-transaction failed, and is not built.
+**The eviction takes what the body's own transactions refuse.** The creator screens the rejected body
+(`CONSENSUS_INTERFACE → Screening a body`) and evicts the rows of the transactions the screen refuses, each
+judged against the state the ones before it leave; one screen finds every such transaction, so a build's work
+does not grow with their number. A body the screen refuses nothing of — the settlement, the signature batch or a
+throw refused it — is evicted whole and logged as internal (`MINING_INTERFACE → Template and submit`).
 
 **External mining.** The template's `stateRoot` is computed at template-build
 time and the block is submitted later. This stays sound because any block that
@@ -3934,10 +3936,12 @@ one write feeds both, so the two cannot disagree.
 | `getBoxWithPending(boxId)` | `(string) => AnyBox \| null` | The pending view — confirmed ∪ pending outputs − pending inputs; submission's `getBox`, never block application's (MEMPOOL_INTERFACE → getBoxWithPending; → Block finalization) |
 | `purgeExpired(currentHeight)` | `(number) => number` | Remove entries past expiry, returns count |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
-| `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — unbounded (M-8) |
+| `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — the count admission holds a member's bonds to (MEMPOOL_INTERFACE → Correctness gates) |
+| `hasPendingInvitee(inviteeId)` | `(string) => boolean` | SQL EXISTS over `invite_invitee` — one pending bond per invitee |
 | `hasPendingVouch(voucherId, targetId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — the pending mirror of one live vouch per `(voucher, target)` pair (§Vouches) |
 | `hasPendingClaim(nameLower)` | `(string) => boolean` | SQL EXISTS over `username_lower` — the pending mirror of one live name per canonical form (→ Username transition rules) |
 | `hasPendingClaimBy(claimantId)` | `(string) => boolean` | SQL EXISTS over `username_claimant` — the pending mirror of one name per identity |
+| `hasPendingWithdraw(postId)` | `(string) => boolean` | SQL EXISTS over `withdraw_post` — one pending withdrawal per post |
 | `removeEntry(rowid)` | `(number) => void` | Remove confirmed entry by rowid |
 | `setMempoolCap(n)` | `(number) => void` | Set the pool bound; `index.ts` calls it once at startup with `config.maxMempoolEntries` (`MEMPOOL_INTERFACE → setMempoolCap`) |
 
@@ -4832,7 +4836,12 @@ the handler.
 dependencies and the words its refusal opens with, and gets the transaction's id and its expiry back. A post is pooled
 with its pending row in one store transaction (→ Post transactions), so `POST /posts` and the gossip relay, which
 carries posts, run the three around that transaction themselves. `admitTx` stays the seam above the store that the
-reorg path does not take (`MEMPOOL_INTERFACE → Fee floor`).
+reorg path does not take (`MEMPOOL_INTERFACE → Fee floor`), and **it runs the pool's correctness gates**
+(`MEMPOOL_INTERFACE → Correctness gates`), so a refusal a pending entry answers is the same on every route and on the
+relay.
+
+> ⚠ **AHEAD OF CODE (2026-10-21).** The gates in `admitTx` lead `services/admit-tx.ts`, which runs none, and
+> `routes/backers.ts`, whose `/backers/unstake` admits a transaction of any shape.
 
 Queries serve the DAG tip. There is no validated watermark and nothing gates a
 read behind one.
@@ -5511,8 +5520,9 @@ not fail the API request.
 ### Relay handlers (mempool-based)
 
 - **`onTx(tx, content, fromPeerId)`**: validates (read-only, `validateTx`) → inserts into
-  mempool via `admitTx`; for a post transaction the packet's body — already verified against
-  `tx.post.contentHash` by net's topic validator — is stored as the pending row in the same
+  mempool via `admitTx`, whose correctness gates refuse as every route's do; for a post
+  transaction the packet's body — already verified against `tx.post.contentHash` by net's topic
+  validator — is stored as the pending row in the same
   store transaction as the admission (Post transactions → the packet is the unit), and
   `emitPostReceived(postId, fromPeerId, via: 'packet')` fires. **It answers whether it admitted
   the transaction**, and net forwards it then and only then (NET_INTERFACE → Forwarding Rule): every

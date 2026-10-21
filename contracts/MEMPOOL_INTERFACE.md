@@ -94,10 +94,12 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 | `like_target` | `likeTarget` set (the like tx field, not a box) | `likeTarget` (hex) |
 | `like_liker` | `likeTarget` set AND `tx.signatures` has exactly one key | that key (hex). **Any other key count → NULL** — an unpaired row matches no `hasPendingLike` query. First-key-wins was rejected: a spare signature could pin a victim's `(liker, target)` pair and DoS their like at the gateway |
 | `invite_inviter` | a `bond` output | `inviterId` (hex) — **the bond is what names an inviter**, one transaction per invite |
+| `invite_invitee` | a `bond` output | `inviteePublicKey` (hex) — `hasPendingInvitee` keys on it |
 | `vouch_voucher` | a `vouch` output | `voucherId` (hex) |
 | `vouch_target` | a `vouch` output | `targetId` (hex) — `hasPendingVouch` keys on the pair |
 | `username_lower` | a `username` output — a claim | the name's canonical form, the byte-wise ASCII lowercase (`TYPES_INTERFACE` → Content limits) |
 | `username_claimant` | a `username` output — a claim | its `owner` (hex) |
+| `withdraw_post` | `postWithdraw` set | `postWithdraw.postId` (hex) — `hasPendingWithdraw` keys on it |
 | `karma_owner` | a `karma` output, or an output of type `karma_price`, `like_accrual`, `bond` or `vouch` — a karma transaction, whether or not it spends (`NODE_INTERFACE` → Karma transition rules) — AND `tx.signatures` has exactly one key | that key (hex) — the karma inputs' owner, the one key `validateTx` admits in a karma transaction's map. **Any other key count → NULL**, as `like_liker`. A consolidation, a claim and a withdrawal write it too: each moves the owner's own box, and the reads by owner find the row by it (→ getOwnKarmaBoxIdsWithPending; → The fill budget is bytes → "An entry whose owner owes decay adds the squaring") |
 | `karma_spend` | an output of type `karma_price`, `like_accrual`, `bond` or `vouch` AND exactly one signature key | the summed value of those outputs — the transaction's spend; NULL for a karma transaction that spends nothing |
 
@@ -153,9 +155,11 @@ neither a row's class nor its rate, so the fill's order stands (→ Ordering).
 ```
 hasPendingLike(targetPostId: string, likerId: string): boolean
 countPendingInvites(inviterId: string): number
+hasPendingInvitee(inviteeId: string): boolean
 hasPendingVouch(voucherId: string, targetId: string): boolean
 hasPendingClaim(nameLower: string): boolean
 hasPendingClaimBy(claimantId: string): boolean
+hasPendingWithdraw(postId: string): boolean
 pendingKarmaSpend(ownerId: string): bigint
 ```
 
@@ -167,6 +171,22 @@ other pending casts are no reason to refuse one. `hasPendingClaim` mirrors one l
 form and `hasPendingClaimBy` one name per identity (`NODE_INTERFACE` → Username transition rules). **A
 burn needs no gate of its own**: it spends the name box, and a second spend of that box is the
 pending-spend conflict every transaction meets.
+
+**Admission runs the gates, on every path.** `admitTx` refuses, before the pool, a transaction a pending entry already
+answers: a like whose `(liker, target)` one carries; a claim whose canonical name or claimant one carries; a vouch whose
+pair one carries; a bond whose invitee one names (`hasPendingInvitee`) — the invitee is an account once the first
+lands, so the second could never apply; a bond by a member whose pending bonds already take every invite its record
+leaves it, `countPendingInvites(inviter) ≥ ⌊memberVouches / D(N)⌋ − invitesUsed` (`ARCHITECTURE → The invite budget`;
+a root's are not counted), because two invites by one member in one block read the record as the first left it
+(`NODE_INTERFACE → Bond transition rules`); and a withdrawal of a post one already withdraws (`hasPendingWithdraw`).
+The gossip relay and every write route meet them alike, each refusal its route's named answer (`NODE_INTERFACE → HTTP
+API`). The reorg path, which reaches the store directly, meets none: a transaction a reverted block carried was valid
+beside that block's others, and the creator's screen answers for it beside the pool's (`MINING_INTERFACE → Template
+and submit`).
+
+> ⚠ **AHEAD OF CODE (2026-10-21).** The gates in admission lead `admit-tx.ts`, which runs none — `services/likes.ts`,
+> `services/vouch.ts` and `routes/usernames.ts` run theirs ahead of it, and the relay none — and `store/mempool.ts` and
+> `store/db.ts`, which have no `hasPendingInvitee`, no `hasPendingWithdraw`, no `invite_invitee` and no `withdraw_post`.
 
 **`pendingKarmaSpend` is an input of `validateTx`, not a gate a path can skip.** It answers the `SUM` of
 `karma_spend` over the rows whose `karma_owner` is the owner — what the pool's karma transactions have
@@ -210,9 +230,9 @@ box**: for a box a pooled entry spends the view throws `PendingSpendConflictErro
 up in the pool from one spent on chain (`WEB_INTERFACE → The wallet`, the pending ledger's 409); `null` is the
 answer for a box that exists nowhere. **Submission's `getBox`, and nothing else's.** The HTTP routes validate against
 it, so a transaction spending the change of one still in the pool is admitted — and a child therefore
-enters the pool only while its predecessor is confirmed or already pooled, taking the later rowid,
-which is the order the fill preserves and the ordering rule at apply requires (`NODE_INTERFACE →
-Block finalization`). The relay path validates against the confirmed set alone (`getBox`), which is
+enters the pool only while its predecessor is confirmed or already pooled, and the fill selects it only
+after its predecessor (→ Block Creator Integration), the order the ordering rule at apply requires
+(`NODE_INTERFACE → Block finalization`). The relay path validates against the confirmed set alone (`getBox`), which is
 stricter and orders the same way. ⛔ **Never block application's.** Apply resolves inputs against the
 confirmed set (`NODE_INTERFACE → Block finalization`); a block's inputs decided by one node's unshared
 pool would be a fork.
@@ -364,7 +384,7 @@ leaves the bound unchanged.
 |-------|------------|------------|
 | **Pending** | `insertUtxoTx` | Carried by a body this node built → `removeEntry` (finalized or rejected); confirmed by an applied block → `removeUtxoTxEntry`; or `purgeExpired` |
 | **Confirmed** | Block finalization (`removeEntry`), or an applied block's cleanup (`removeUtxoTxEntry`) | Gone from mempool; state now in ledger |
-| **Evicted** | A body this node built was rejected — at speculation or at finalize (`removeEntry` per rowid) | Gone from mempool; state never applied |
+| **Evicted** | A body this node built was rejected — at speculation, the rows its screen refuses (every row, where it refuses none); at finalize, every row it carried (`removeEntry` per rowid) | Gone from mempool; state never applied |
 | **Expired** | `purgeExpired` during block assembly | Gone from mempool; state never applied |
 
 ### Expiry
@@ -408,16 +428,28 @@ pending entries:
    (`protocolVersionAt(schedule, height)`, `ARCHITECTURE → Protocol Versioning`). A skipped entry
    stays pooled and leaves by expiry (→ What takes an entry out of the pool, 2) — never evicted for
    its version, never included. Without the skip, the first block of a new era would carry every
-   pre-boundary entry, the mutation phase would reject the body, and the rebuild would evict the
-   era's valid entries with them
+   pre-boundary entry into a body the mutation phase rejects. **The fill skips, the same way, an entry
+   that depends on what the body it builds does not hold**: an input that is neither in the confirmed
+   set nor an output of an entry already selected; a like's target or a reply's parent that is neither
+   a confirmed post nor the post of an entry already selected; a withdrawal's post that is not
+   confirmed. Such an entry stays pooled for a block that carries what it waits on, and one whose
+   dependency never comes leaves by expiry; a child the fill meets ahead of its parent waits a block.
+   Admission reads the pool's pending state for an input and for a reply's parent, only a reorg
+   returns a like's target or a withdrawal's post to the pool, and the owner's pending spend only
+   lowers what admission allowed — so a transaction a body's screen refuses is never one that waits
+   (`MINING_INTERFACE → Template and submit`)
 3. Every entry is a `utxo_tx` → `utxoTxIds` / `utxoTxs`
 4. Tracks `confirmedRowids` — **every** row the template carries
 5. After block finalization: `removeEntry(rowid)` for each tracked rowid. **A
-   body the mutation phase rejects is evicted the same way**, and the creator
-   fills again from what remains (`MINING_INTERFACE → Template and submit`);
-   a rejected body that carried no row ends the build. Rows a *peer's* block
+   body the mutation phase rejects loses, the same way, the rows of the transactions its screen
+   refuses** — every row it carried, where the screen refuses none — and the creator fills again from
+   what remains (`MINING_INTERFACE → Template and submit`); a rejected body that carried no row ends
+   the build. Rows a *peer's* block
    confirms are reached by that block's application (`removeUtxoTxEntry` /
    `removeUtxoTxEntry`), not by this step
+
+> ⚠ **AHEAD OF CODE (2026-10-21).** The dependency skip leads `block-creator.ts`'s fill, which selects in class order
+> whatever an entry depends on.
 
 ### The fill budget is bytes; `getPendingEntries` is a count
 
@@ -552,7 +584,8 @@ like every other transaction.
 
 Inbound relay handlers insert into the mempool rather than applying state:
 
-- **`onTx(tx)`**: `validateTx` (read-only) → `insertUtxoTx(tx, expiresAtHeight)`.
+- **`onTx(tx)`**: `validateTx` (read-only) → `admitTx`, its correctness gates (→ Correctness gates) as every
+  route's → `insertUtxoTx(tx, expiresAtHeight)`.
   There is no sub-block relay handler — a post arrives as a transaction through
   `onTx` (`NODE_INTERFACE` → Relay handlers). It answers whether it admitted the
   transaction, and net forwards an admitted one and no other (`NET_INTERFACE` →
@@ -586,8 +619,9 @@ authorization, transitions and conservation must not be assumed of anything a bl
    the block build purges past it before selecting.
 3. **The cap.** The credit class evicts its lowest fee-rate row; the karma class rejects at the cap
    and never evicts (→ Size cap).
-4. **A rejected body.** When the mutation phase refuses the body, the build evicts exactly the rows
-   that body included and reassembles (MINING_INTERFACE → Template and submit). **This is what
+4. **A rejected body.** When the mutation phase refuses the body, the build evicts the rows of the
+   transactions the body's screen refuses — every row the body included, where the screen refuses none —
+   and reassembles (MINING_INTERFACE → Template and submit). **This is what
    removes an entry that has gone invalid while its inputs are still live** — a liveness test cannot
    see that class, and nothing else looks for it.
 
