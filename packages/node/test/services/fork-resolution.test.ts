@@ -587,6 +587,56 @@ describe('a stored header that cannot be hashed', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests — a stored tip whose body will not read (NODE_INTERFACE → Ordering
+// blocks → "Who reads the `block_hash` column, and who deliberately does
+// not"). `applyBlockBody`'s chain-link read is `getHeaderAt`, so a tip whose
+// `utxotx_tree_bytes` cannot decode leaves the apply path alone.
+// ---------------------------------------------------------------------------
+
+describe('a stored tip whose body will not read', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.resetModules();
+  });
+
+  it.fails('applyOrderingBlock reads the previous header alone', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    await activateProverOverStore();
+
+    const miner = makeTestIdentity();
+    const block1 = await makeApplicableBlock({ miner, height: 1 });
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as unknown as { applyOrderingBlock: (b: OrderingBlock) => boolean };
+    expect(applyOrderingBlock(block1)).toBe(true);
+
+    // The next block is built BEFORE the row is corrupted: `makeApplicableBlock`
+    // reads the tip through `getOrderingBlock`, which the body corruption
+    // refuses (`UnreadableStoredBlockError`).
+    const block2 = await makeApplicableBlock({ miner, height: 2 });
+
+    // Ten continuation bytes with no terminator — past the VLQ safe-integer
+    // range, so `decodeUtxoTxTree` raises `ReaderError` and
+    // `getOrderingBlock` wraps it (`UnreadableStoredBlockError`).
+    db.getDb()
+      .prepare('UPDATE ordering_blocks SET utxotx_tree_bytes = ? WHERE height = 1')
+      .run(Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]));
+
+    const ordering = await importOrdering();
+    const corruptState = await importCorruptState();
+    expect(() => ordering.getOrderingBlock(1)).toThrow(corruptState.UnreadableStoredBlockError);
+
+    expect(applyOrderingBlock(block2)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests — revertBlock
 // ---------------------------------------------------------------------------
 

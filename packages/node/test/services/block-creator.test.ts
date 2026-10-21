@@ -5,7 +5,8 @@ import {
   signTransaction,
   solveHeaderPow,
   makePostTx, seedPostTx, fillerTx, fillerInputBox, coinbaseOf,
-  seedEmissionBox, makeApplicableBlock, liveProver, seedBoxes, applyBlockThroughIntake, wireIntakeForTests} from '../helpers.js';
+  seedEmissionBox, makeApplicableBlock, liveProver, seedBoxes, applyBlockThroughIntake, wireIntakeForTests,
+  activateProverOverStore} from '../helpers.js';
 import type { AvlProverHandle } from '../../src/state/avl-prover.js';
 import type { StateRootSpeculation } from '../../src/services/block-apply.js';
 import {
@@ -1306,5 +1307,56 @@ describe('block-creator', () => {
       expect(getCurrentHeight()).toBe(3);
       setClock(null);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A stored tip whose body will not read (NODE_INTERFACE → Ordering blocks →
+// "Who reads the `block_hash` column, and who deliberately does not"). The
+// template reads the tip through `getHeaderAt`, so a row whose
+// `utxotx_tree_bytes` cannot decode leaves the template path alone.
+// ---------------------------------------------------------------------------
+
+describe('a stored tip whose body will not read', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.resetModules();
+  });
+
+  it.fails('the template reads the previous header alone', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    await activateProverOverStore();
+
+    const miner = makeTestIdentity();
+    const block1 = await makeApplicableBlock({ miner, height: 1 });
+    const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
+    expect(applyOrderingBlock(block1)).toBe(true);
+
+    // Ten continuation bytes with no terminator — past the VLQ safe-integer
+    // range, so `decodeUtxoTxTree` raises `ReaderError` and
+    // `getOrderingBlock` wraps it (`UnreadableStoredBlockError`).
+    db.getDb()
+      .prepare('UPDATE ordering_blocks SET utxotx_tree_bytes = ? WHERE height = 1')
+      .run(Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]));
+
+    const ordering = await importOrdering();
+    const { UnreadableStoredBlockError } = await import('../../src/services/corrupt-state.js');
+    expect(() => ordering.getOrderingBlock(1)).toThrow(UnreadableStoredBlockError);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const tpl = bc.getCurrentTemplate();
+    const expectedPrev = blockHash(block1.header);
+    expect(tpl).not.toBeNull();
+    expect(tpl!.header.prevBlockHash).toBe(expectedPrev);
   });
 });
