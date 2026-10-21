@@ -95,9 +95,8 @@ PORT=3000
 ADMIN_PORT=3001
 ADMIN_BIND_ADDRESS=127.0.0.1
 DB_PATH=/var/lib/dagsocial/dagsocial.db
-# NETWORK_TYPE is the name config.ts reads. This said NETWORK_MODE until
-# 2026-08-11, which nothing read — invisible only because the code default is
-# also testnet, so any other value was silently ignored.
+# NETWORK_TYPE selects the consensus profile: mainnet, testnet or devnet. An
+# unrecognised value stops the node at startup.
 NETWORK_TYPE=testnet
 LISTEN_ADDRS=/ip4/0.0.0.0/tcp/9733
 # The web client's index.html; set, GET /shell/:id answers that shell with a
