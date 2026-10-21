@@ -1912,9 +1912,8 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
       } else {
         console.log(`[vt] 19b phase 1: C synced at ${hCsync} ≥ ${cSyncMin} (A=${(await currentHeight(NODE))})`);
         // Phase 2 — stop C, restart on the same store, cut off from A. New
-        // listen port so A's cached address for C is stale (packages/net/src/
-        // peerdb.ts stores the old address); MAX_PEERS=0 and empty
-        // BOOTSTRAP_PEERS block C's outbound; the three assertions read
+        // listen port so A's cached address for C is stale; MAX_PEERS=0 and
+        // empty BOOTSTRAP_PEERS block C's outbound; the three assertions read
         // peers_connected=0 to prove it.
         await stopChild('c');
         console.log(`[vt] 19b phase 2: restarting C isolated (BOOTSTRAP_PEERS='', MAX_PEERS=0, p2p=${C_P2P_PORT_ISOLATED})`);
@@ -2325,9 +2324,9 @@ async function raiseWindow(cx, label) {
 }
 
 // Poll `/blocks/current` until the tip reaches `target`, or the bound trips.
-// The bound is 12 min — at 3.4 blocks/min (packages/web/CLAUDE.md → The proof,
-// 7g), K + 1 = 21 blocks is ~6 min, so twelve is comfortably above expectation.
-// A trip returns { reached: false, last }, with `last` being the last read.
+// The bound is 12 min — at 3.4 blocks/min, K + 1 = 21 blocks is ~6 min, so
+// twelve is comfortably above expectation. A trip returns
+// { reached: false, last }, with `last` being the last read.
 async function waitForNodeTip(target, ms = 12 * 60 * 1000, pollMs = 10000) {
   const t0 = Date.now();
   let last = null;

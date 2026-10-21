@@ -239,9 +239,9 @@ do_submit() {
   # $archive_root installed, pinned by the tag's own lockfile — not a package
   # resolved as the script runs
   # (WEB_INTERFACE → The client is served from the node's own origin → "The
-  # Firefox build ships signed as well"). A tag older than this change
-  # installs no web-ext as a dev dependency; refuse here, before the keys
-  # file is read, so an older release's zip never meets a key.
+  # Firefox build ships signed as well"). A tag whose `packages/web/package.json`
+  # does not name `web-ext` as a dev dependency installs none; refuse here,
+  # before the keys file is read, so a tag with no web-ext never meets a key.
   local webext_pkg="$archive_root/packages/web/node_modules/web-ext/package.json"
   [ -f "$webext_pkg" ] \
     || fail "the clean build from $revision installed no web-ext — name it in packages/web/package.json first"

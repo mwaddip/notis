@@ -72,11 +72,10 @@ policy_count=$(grep -Fc 'http-equiv="Content-Security-Policy"' "$SHELL_FILE" || 
 grep -Fq "$EXPECTED_META" "$SHELL_FILE" \
   || { echo "FAIL: $SHELL_FILE policy meta content differs from the module's string"; echo "  expected: $EXPECTED_META"; exit 1; }
 # indexOf returns -1 for an absent anchor, so each arm of the placement
-# check reaches its own FAIL line — a grep | head | cut pipeline would
-# trip errexit under `set -euo pipefail` the moment grep found nothing,
-# leaving the "missing one of …" arm unreachable. The here-string form
-# `<<<` appends a newline, so read returns 0 (its EOF-without-newline
-# arm returns 1 and would trip errexit even on a filled read).
+# check reaches its own FAIL line and names which anchors are missing.
+# The here-string form `<<<` appends a newline, so read returns 0 (its
+# EOF-without-newline arm returns 1 and would trip errexit even on a
+# filled read).
 POSITIONS=$(node --input-type=module -e "
 import { readFileSync } from 'node:fs';
 const html = readFileSync(process.argv[1], 'utf8');
