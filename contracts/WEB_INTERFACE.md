@@ -163,8 +163,10 @@ tag's `git archive` has the same contents, the build a reviewer at Mozilla repea
 once**, so the script lands the signed file in the repository's root before any check of it can refuse: a refusal
 leaves `notis-extension-<ver>-firefox.unverified.xpi` there and names it, and the copy goes only once the verified
 file is proven landed. **`web-ext` is the web package's own dev dependency**, at one exact version, its whole tree
-pinned by the workspace's lockfile and installed with the package: the signing step and the build's lint run that
-install and fetch nothing as they run, because the signing process holds the credentials. They are the publisher's
+pinned by the workspace's lockfile and installed with the package, because the signing process holds the
+credentials: the build's lint runs that install and needs no network, and the signing step runs the one the clean
+build from the tag's archive installed; neither resolves a package as it runs, and each runs with `web-ext`'s update
+check off (`NO_UPDATE_NOTIFIER`). The credentials are the publisher's
 own, kept in a file outside the repository that the signing step alone reads, and live in no tracked file. **An
 installed copy updates itself:** the manifest's `update_url` names
 `https://raw.githubusercontent.com/mwaddip/notis/updates/firefox/updates.json` — the file `firefox/updates.json`
@@ -178,8 +180,8 @@ build's own `manifest.json` and restates none of them. The version is the reposi
 seen is spent: a re-publish is the next release.
 
 > ⚠ **AHEAD OF CODE (2026-10-21).** The dev dependency leads `packages/web/package.json`, which names no `web-ext`,
-> and `sign-extension.sh` and `build-extension.sh`, which fetch it through `npx` — the signing step at an exact
-> version whose dependencies resolve as it runs, the lint at a major.
+> and `sign-extension.sh` and `build-extension.sh`, which fetch it through `npx` with its update check on — the
+> signing step at an exact version whose dependencies resolve as it runs, the lint at a major.
 
 **The deployment is six tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
 opens its head with
