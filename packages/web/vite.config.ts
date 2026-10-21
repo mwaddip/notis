@@ -8,8 +8,7 @@ import { webSecurityPolicyPlugin } from './scripts/content-security-policy.mjs';
 // nginx or another front does the same, or the client is pointed at a node on
 // any origin — the node answers every origin (NODE_INTERFACE → Cross-origin requests).
 //
-// A dev node listens on 3000 (packages/node/scripts/dev.mjs → httpPort). Set
-// NOTIS_NODE to point the proxy elsewhere.
+// A dev node listens on 3000. Set NOTIS_NODE to point the proxy elsewhere.
 const NODE_ORIGIN = process.env['NOTIS_NODE'] ?? 'http://localhost:3000';
 
 // The faucet is a separate service, not on the node's API prefix

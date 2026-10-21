@@ -2688,10 +2688,10 @@ export class App {
   }
 
   private changeIdTint(m: IdTint): void {
-    // The tint is :root's data-idtint and custom properties (src/prefs.ts
-    // applyIdTint); the seg's own click moves the four words' pressed state in
-    // place (WEB_INTERFACE → The settings window → "The identity tint shows
-    // what it sets"), so no region re-render is owed.
+    // The tint is :root's data-idtint and custom properties, applied by
+    // `applyIdTint`; the seg's own click moves the four words' pressed
+    // state in place (WEB_INTERFACE → The settings window → "The identity
+    // tint shows what it sets"), so no region re-render is owed.
     setIdTint(m);
   }
 

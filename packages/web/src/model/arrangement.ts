@@ -8,8 +8,7 @@ import { readHex64 } from '../hex64';
 const WINDOW_IDS = new Set<string>(['@profile', '@settings', '@wallet']);
 // `@author:<64hex>` and `@posts:<64hex>` — the two membership windows
 // (WEB_INTERFACE → The author window). The `:` and `@` cannot collide with a
-// 64-hex post id. The 64-hex sits inside a larger pattern — the leading
-// `@author:` or `@posts:` — so the regex stays as a regex.
+// 64-hex post id.
 const AT_SUBJECT = /^@(author|posts):([0-9a-f]{64})$/i;
 
 /** A token is a real window id — a 64-hex post id, a known @-window, or an

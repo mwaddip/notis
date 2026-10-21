@@ -11,7 +11,7 @@ import type { WindowBody } from '../model/state';
 // handler, not `.win` since the samples are thread bars, the shape the tint
 // applies to); node; sign each rep action (extension only); a Notis link opens
 // (extension only, in a build whose `notis-public` is not empty). The tint is
-// :root's attribute and custom properties (src/prefs.ts applyIdTint), so a
+// :root's attribute and custom properties, applied by `applyIdTint`, so a
 // press moves the samples with no re-render. No `faucet` row: the faucet's base
 // is the build's value (WEB_INTERFACE → The settings window → "No `faucet` row
 // and no `arrangement` row"). The window renders the same with and without an
@@ -97,8 +97,8 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
     const words = ID_TINTS.map((v) => {
       const btn = el('button', 'word', v);
       btn.addEventListener('click', () => {
-        // The tint follows :root's data-idtint and custom properties
-        // (src/prefs.ts applyIdTint), so the press moves the four words'
+        // The tint follows :root's data-idtint and custom properties,
+        // applied by `applyIdTint`, so the press moves the four words'
         // pressed state in place and rebuilds nothing — the pressed word
         // keeps the keyboard's focus (WEB_INTERFACE → The settings window →
         // "The identity tint shows what it sets").

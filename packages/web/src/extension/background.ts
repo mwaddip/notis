@@ -45,7 +45,7 @@ export interface LockManager {
 
 /** `install` reads the lock manager from here — a required argument. The
  *  browser's module-load install hands the adapter over `navigator.locks`; a
- *  Node test hands `fakeLockManager()` from `test/fake-chrome.ts`. */
+ *  Node test hands `fakeLockManager()`. */
 export interface InstallOptions {
   locks: LockManager;
 }
