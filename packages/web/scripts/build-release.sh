@@ -148,9 +148,9 @@ fi
 echo "==> Build checks passed"
 
 # ---------------------------------------------------------------------------
-# Stage and zip. The zip is assembled inside $STAGE and moved to the
-# repository's root with `mv -f`, so a zip of that name standing there is
-# replaced — never added to.
+# Stage and zip. The zip is assembled inside $STAGE and lands in the
+# repository's root through `mv -f`, so a zip of that name standing there
+# is replaced — never added to.
 # WEB_INTERFACE → The client is served from the node's own origin →
 # "A zip holds one build".
 # ---------------------------------------------------------------------------

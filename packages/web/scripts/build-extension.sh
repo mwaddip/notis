@@ -78,7 +78,7 @@ CHROME_DIR="${STAGE}/chrome"
 FIREFOX_DIR="${STAGE}/firefox"
 mkdir -p "$CHROME_DIR" "$FIREFOX_DIR"
 
-# Three Vite builds share output into a scratch — pages first, background
+# Three Vite builds share output into a staging dir — pages first, background
 # lib next, then the bridge lib when a public base is set. The bridge is one
 # classic IIFE file with no `import`, so both browsers inject it at
 # `document_start` as they are (WEB_INTERFACE → The extension → "The manifest").
