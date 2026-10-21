@@ -346,12 +346,23 @@ for, `testnet` · `devnet` · `mainnet`, empty on the web: the extension's tip v
 profile from it and **never from a node's `/status`**, and empty (or a name no profile answers to) is a build
 with no verifier; the `og:image` content — the picture's absolute URL, `<origin><base>og.png`. The build writes
 them from `VITE_WEB_BASE`, `VITE_API_BASE`, `VITE_FAUCET_BASE`, `VITE_NODES`, `VITE_PUBLIC`, `VITE_NETWORK` and
-`VITE_PUBLIC_ORIGIN` — `/`, empty, empty, `[]`, empty, empty and empty under `pnpm dev`, where the dev server
-proxies the bare API paths — and the client reads them from the DOM at load (`readBase`, `readMeta`,
+`VITE_PUBLIC_ORIGIN` — `/`, empty, empty, `[]`, empty, empty and empty for any left unset, under `pnpm dev` (where
+the dev server proxies the bare API paths) and in a plain `vite build` alike — and the client reads them from the DOM at load (`readBase`, `readMeta`,
 `readNodesMeta`, `readPublicMeta` and `readNetworkMeta` in `src/prefs.ts`). Vite's `base` is `./` for a build,
 so every reference in the built shell is relative and the `<base>` alone decides where the files resolve;
 `public/fonts/fonts.css` names its files beside itself for the same reason. A host with another layout
 edits the seven values in `web/index.html` after unzipping.
+
+**The web build's shell carries its own security policy** (`WEB_INTERFACE → The client is served from the node's own
+origin → "The web build's shell carries its own security policy"`): `scripts/content-security-policy.mjs` holds the
+policy string once and the vite plugin that writes it as a `<meta http-equiv="Content-Security-Policy">` right after
+the shell's charset, in `vite build` alone — the dev server's styles arrive inline, and the extension's configs carry
+no such plugin, since its pages run under the browser's extension policy. `build-release.sh` reads the string from the
+module and refuses a shell without exactly that one meta between the charset and `<base>`. A meta cannot forbid
+framing, so `deploy/nginx.example.conf` sends `Content-Security-Policy: frame-ancestors 'none'` on the client's
+locations; an `add_header` in a location replaces the ones it would inherit, so a host's other headers are restated
+there. Each release script builds its zips in a fresh stage removed however the run ends, and `mv -f`s each into the
+repo root — a zip there is replaced, never added to.
 
 ```bash
 bash packages/web/scripts/build-release.sh   # notis.fun's values → notis-web-<ver>.zip in the repo root
@@ -521,8 +532,9 @@ copied in, the checks run (no inline `<script>`, `<base href="/">`, the metas at
 one content-script match equal to the pattern the same module derives — and neither file nor key under an empty
 `VITE_PUBLIC` — Firefox's `browser_specific_settings` deep-equal to the object the script states literally, none in
 Chrome's manifest, both manifests' `optional_host_permissions` equal to the pattern the module derives from the
-faucet base and absent under an empty one, every reference relative, `web-ext@10 lint --self-hosted` clean on the
-Firefox stage — without the flag the `update_url` is a lint error; its two warnings are the static inline mark's
+faucet base and absent under an empty one, every reference relative, the package's own `web-ext` (a dev dependency
+at one exact version, run as `NO_UPDATE_NOTIFIER=1 ./node_modules/.bin/web-ext`, so the build needs no network) linting
+the Firefox stage clean with `--self-hosted` — without the flag the `update_url` is a lint error; its two warnings are the static inline mark's
 two `innerHTML`), and the two zips are made from a fresh stage — their contents are reproducible file for file,
 the zips themselves differ by their entries' timestamps. `test/emit-manifests.test.ts` spawns the emitter and reads
 both manifests, so the gate sees them too. The Chrome manifest's `key` is the tracked RSA public key in the
@@ -539,8 +551,9 @@ for the Node tests.
 workflow has attached the zips, `scripts/sign-extension.sh` publishes the Firefox one. `submit <ver>` takes the
 release's own `notis-extension-<ver>-firefox.zip`, rebuilds it from `git archive v<ver>` by the two commands
 `extension/REVIEWERS.md` names (build-time variables unset), refuses unless the contents are equal file for file,
-and sends them with the source archive to addons.mozilla.org's unlisted channel through `web-ext sign`, pinned at an
-exact version because that process holds the credentials; `--dry-run` runs everything short of the submission, and
+and sends them with the source archive to addons.mozilla.org's unlisted channel through `web-ext sign` — the `web-ext`
+the clean build's own install carries, pinned by the tag's lockfile, with the update check off, because that process
+holds the credentials; a tag whose web package names no `web-ext` is refused before the keys file is read; `--dry-run` runs everything short of the submission, and
 only there are `--rev` and `--zip` accepted. **A version is signed once**: the moment a signed file comes back,
 `submit` copies it to `notis-extension-<ver>-firefox.unverified.xpi` in the repo root, before any check of it can
 refuse, and removes that copy only after `cmp` proves the verified file landed; a refusal keeps it and names it, and

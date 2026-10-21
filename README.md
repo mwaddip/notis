@@ -406,6 +406,10 @@ network the build is for (empty on the web — the hosted client carries no veri
 absolute URL (`<origin><base>og.png`). A host with another layout edits those seven values and nothing else: every reference in the bundle is relative to the base. A reader can still point their own
 browser at another node from the settings window; the faucet is the build's value alone.
 
+**The shell carries its own security policy** — a Content-Security-Policy meta the build writes, so every host
+that serves the bundle serves it. A meta cannot forbid framing, so the one header a host adds is
+`Content-Security-Policy: frame-ancestors 'none'` on the client's locations; the vhost excerpt sends it.
+
 Serve `web/` as static files with no SPA fallback — a path that is not a file is a 404. The one path
 the client owns beyond its files is a post's standalone page, `<base>p/<post id>`, which opens that
 thread alone. Two ways to serve it:
@@ -419,7 +423,8 @@ thread alone. Two ways to serve it:
 
 `packages/web/deploy/nginx.example.conf` is the vhost excerpt with both variants, the API and
 faucet proxies included. Building by hand, the same four values are written by `VITE_PUBLIC_ORIGIN`,
-`VITE_WEB_BASE`, `VITE_API_BASE` and `VITE_FAUCET_BASE` at `npx vite build` in `packages/web`. In development none
+`VITE_WEB_BASE`, `VITE_API_BASE` and `VITE_FAUCET_BASE` at `npx vite build` in `packages/web`; the other three —
+`VITE_NODES`, `VITE_PUBLIC` and `VITE_NETWORK` — are `[]`, empty and empty unless set. In development none
 of this is needed: `pnpm --filter @dagsocial/web dev` proxies the API and serves the shell for
 `/p/<id>` on its own (`NOTIS_NODE` and `NOTIS_FAUCET` point the proxy at a node and a faucet).
 
