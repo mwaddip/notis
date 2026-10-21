@@ -112,8 +112,6 @@ bare. vite alone refuses only a *named* import from one; a namespace or a defaul
 fails at run time, and so would a new dependency that reached for one. The plugin applies to builds alone: vitest runs
 the test tree through the same `vite.config.ts`, and a mirror test imports Node's `crypto` on purpose.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The fourth build leads `vite.bridge.config.ts`, which carries no plugin.
-
 ⚠ **A test running under Node proves none of this** — under Node the real `crypto` and `Buffer` are present. **The
 binding check runs the built bundle in a browser** and recomputes, against live data, a value the node independently
 produced: the proof that the bundle's hashing is the node's.
@@ -141,9 +139,6 @@ workflow's linux job runs. Never an installer. `<ver>` is the repository's versi
 artifacts carry. **A zip holds one build**: each script assembles its zips in a directory of its own, made empty for
 that run and removed however the run ends, and moves each finished zip into the repository's root over any zip of
 that name — never adding to one that stands there.
-
-> ⚠ **AHEAD OF CODE (2026-10-21).** One build a zip leads `build-release.sh`, which zips into the zip standing in the
-> repository's root, and both scripts, which leave their directories behind when a step fails.
 
 **The extension ships beside it, twice.** Each release also carries **`notis-extension-<ver>-chrome.zip`**
 and **`notis-extension-<ver>-firefox.zip`** — the same client built as an extension page (→ The
@@ -179,10 +174,6 @@ build's own `manifest.json` and restates none of them. The version is the reposi
 (`ARCHITECTURE → Deploy gate → "The release version counts resets and milestones"`), and a number Mozilla has
 seen is spent: a re-publish is the next release.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The dev dependency leads `packages/web/package.json`, which names no `web-ext`,
-> and `sign-extension.sh` and `build-extension.sh`, which fetch it through `npx` with its update check on — the
-> signing step at an exact version whose dependencies resolve as it runs, the lint at a major.
-
 **The deployment is six tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
 opens its head with
 
@@ -213,9 +204,6 @@ stripped, is the value the client uses — `notis-api` the default the stored `n
 read takes the element's attribute through the URL constructor, never `document.baseURI`. A foreign origin in
 `notis-api` behaves exactly as one in the `node` preference does: the node answers any origin. A foreign origin in
 `notis-faucet` works only where the browser grants the host — the extension (→ The faucet step).
-
-> ⚠ **AHEAD OF CODE (2026-10-21).** The unset `VITE_NODES` and `VITE_PUBLIC` lead `vite.config.ts`, which defaults
-> the other five alone, so a plain build writes `%VITE_NODES%` and `%VITE_PUBLIC%` into the shell.
 
 **The three later tags.** `notis-nodes` is a JSON array of API bases — the build's **seed list**, one per
 network, the extension build's way of naming a node without a hosted page (→ The extension); anything
@@ -263,10 +251,6 @@ whole list"). `build-release.sh` checks the shell holds the policy the build wri
 framing**, so `frame-ancestors 'none'` is the one header a host adds: `nginx.example.conf` sends
 `Content-Security-Policy: frame-ancestors 'none'` on the client's two locations, and `README.txt` names it. The
 example routes `/web/p/<id>` to `GET /shell/:id` for an id of 64 lowercase hex alone, the ids the node answers.
-
-> ⚠ **AHEAD OF CODE (2026-10-21).** The policy leads `vite.config.ts` and `build-release.sh`, whose shell carries
-> none, and `deploy/nginx.example.conf` and `deploy/README.txt`, which send and name no header and route an id of
-> either case to the node.
 
 ⚠ **A `<base>` element resolves every relative URL in the document, fragments included.** A same-document
 fragment reference — `<use href="#id">`, `<a href="#id">` — becomes a reference to `<base>#id`, another
@@ -992,9 +976,6 @@ one.
   in the page names is not drawn — the card stands for it until a `↻` reads the node's row; a row the pending ledger
   holds with no card standing for it, as after a reload, is drawn as the node gives it.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The row with no card leads `app.ts`, whose `dedupeOwn` drops every row the
-> ledger holds as a post, so after a reload the reader's own pending root is in no card until it lands.
-
 ## The workspace
 
 **The workspace is a strip of columns, and a column is a stack of windows.** `workspace := column+`,
@@ -1248,8 +1229,8 @@ a lock held or waited for answers held.
   ends here too, that tab having released the lock when it navigated.
 
 **Without Web Locks** every workspace tab writes, as a browser without the API cannot know about another
-tab, and the way in always switches in place. **Nothing crosses the channel but a post id**, and only a
-64-hex one is acted on; the `notis:open` event carries the same and no more.
+tab, and the way in always switches in place. **Nothing crosses the channel but a post id**, and only one of 64
+lowercase hex — the ids the client itself writes — is acted on; the `notis:open` event carries the same and no more.
 
 ## Links
 
@@ -1917,9 +1898,6 @@ node's message lowercased — and the form or the word returns (`HOUSE_STYLE →
 and the header (→ The identity display) and nothing else. An expiry reads *no block took this by height N.* with
 `try again`, which rebuilds from the current view with the same name; the entry is removed and the box returns
 to the view.
-
-> ⚠ **AHEAD OF CODE (2026-10-21).** `M` leads `view/profile.ts` and `app.ts`, which write the field's `maxLength`
-> and the three sentences with the number 24.
 
 ### The identity display *(membership actions)*
 
