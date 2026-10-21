@@ -4840,9 +4840,6 @@ reorg path does not take (`MEMPOOL_INTERFACE → Fee floor`), and **it runs the 
 (`MEMPOOL_INTERFACE → Correctness gates`), so a refusal a pending entry answers is the same on every route and on the
 relay.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The gates in `admitTx` lead `services/admit-tx.ts`, which runs none, and
-> `routes/backers.ts`, whose `/backers/unstake` admits a transaction of any shape.
-
 Queries serve the DAG tip. There is no validated watermark and nothing gates a
 read behind one.
 

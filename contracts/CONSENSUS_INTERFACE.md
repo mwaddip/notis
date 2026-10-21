@@ -131,9 +131,6 @@ the withdrawals it finds, its owed capture, its loop and its withdrawal arm, cal
 other; the screen differs only in checking each signature alone. A body `applyBlock` accepts is one `screenBody` refuses nothing of.
 Deterministic, and a throw is not a verdict, as `applyBlock`'s.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** `screenBody` leads `apply-block.ts`, which runs its transaction loop and its
-> withdrawal arm inline and stops at the first refusal.
-
 ## ApplyContext
 
 **The network profile's numbers the rules read, and nothing else:** `protocolVersionSchedule` · `vouchCooldownBlocks`

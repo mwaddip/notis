@@ -184,10 +184,6 @@ API`). The reorg path, which reaches the store directly, meets none: a transacti
 beside that block's others, and the creator's screen answers for it beside the pool's (`MINING_INTERFACE → Template
 and submit`).
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The gates in admission lead `admit-tx.ts`, which runs none — `services/likes.ts`,
-> `services/vouch.ts` and `routes/usernames.ts` run theirs ahead of it, and the relay none — and `store/mempool.ts` and
-> `store/db.ts`, which have no `hasPendingInvitee`, no `hasPendingWithdraw`, no `invite_invitee` and no `withdraw_post`.
-
 **`pendingKarmaSpend` is an input of `validateTx`, not a gate a path can skip.** It answers the `SUM` of
 `karma_spend` over the rows whose `karma_owner` is the owner — what the pool's karma transactions have
 already spent of that owner's karma, `0n` where it holds none. Admission's `held` is the confirmed karma
@@ -447,9 +443,6 @@ pending entries:
    the build. Rows a *peer's* block
    confirms are reached by that block's application (`removeUtxoTxEntry` /
    `removeUtxoTxEntry`), not by this step
-
-> ⚠ **AHEAD OF CODE (2026-10-21).** The dependency skip leads `block-creator.ts`'s fill, which selects in class order
-> whatever an entry depends on.
 
 ### The fill budget is bytes; `getPendingEntries` is a count
 
