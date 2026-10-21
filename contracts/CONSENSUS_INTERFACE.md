@@ -106,6 +106,31 @@ node's funnel answers as it answers every unexpected throw (`NODE_INTERFACE → 
 history decides unless the phase fixed that history. Two runs over the same view and the same block answer the same result,
 byte for byte; a difference is a fork.
 
+## Screening a body
+
+```ts
+screenBody(view: StateView, block: OrderingBlock, ctx: ApplyContext): BodyScreen
+BodyScreen = { refused: { index: number; reason: string }[] }
+```
+
+**`screenBody` answers which of a body's user transactions apply, each against the state the ones before it leave.**
+It is the producer's question about a body `applyBlock` refused (`MINING_INTERFACE → Template and submit`), and it
+runs `applyBlock`'s own phases over one overlay of `view`: the block's posts and their topology rows, the pre-body
+captures, the user transactions in committed order and the withdrawals. **Where `applyBlock` would refuse the block
+for one transaction, `screenBody` refuses that transaction alone** — its position in `utxoTxIds` and the reason
+`applyBlock` would give — and nothing of it applies; the transactions after it are judged without it. **Each signature
+is checked alone**, `verifyEd25519` over its transaction's id (`VALIDATION_INTERFACE → Acceptance criterion`): a batch
+that fails names no transaction. **A pass that refuses a transaction runs again over the ones it kept**, because the
+posts and the captures are read from the whole body before its transactions apply, and a refused transaction's post
+and inputs no longer belong among them; the passes end at one that refuses nothing, and `refused` lists every
+transaction any pass refused, in body order. The settlement, last, is never screened, and neither are the grants, the
+counters, the membership pass, the decay clocks or the block's cost.
+
+**One implementation.** The phases are the code `applyBlock` runs — its decoding of one entry, the posts it lays and
+the withdrawals it finds, its owed capture, its loop and its withdrawal arm, called by both — and neither copies the
+other; the screen differs only in checking each signature alone. A body `applyBlock` accepts is one `screenBody` refuses nothing of.
+Deterministic, and a throw is not a verdict, as `applyBlock`'s.
+
 ## ApplyContext
 
 **The network profile's numbers the rules read, and nothing else:** `protocolVersionSchedule` · `vouchCooldownBlocks`

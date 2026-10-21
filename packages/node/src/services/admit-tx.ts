@@ -2,10 +2,24 @@ import { checkBlockCost } from '@dagsocial/consensus';
 import type { UtxoResult } from '@dagsocial/consensus';
 import { encodeTx, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { bidOf, entryByteCost, insertUtxoTx } from '../store/mempool.js';
+import {
+  bidOf,
+  countPendingInvites,
+  entryByteCost,
+  gateMetadata,
+  hasPendingClaim,
+  hasPendingClaimBy,
+  hasPendingInvitee,
+  hasPendingLike,
+  hasPendingVouch,
+  hasPendingWithdraw,
+  insertUtxoTx,
+} from '../store/mempool.js';
+import { getIdentityRecord, getNetworkRecord } from '../store/index.js';
 import { config } from '../config.js';
 import { ClientError } from './client-error.js';
 import { costAlone, marginalCost } from './cost-estimate.js';
+import { availableInvites } from './invites-available.js';
 
 /**
  * Thrown when a credit transaction's fee rate is beneath this node's floor.
@@ -102,6 +116,47 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
   // "Storage rent is a transition requiring no signature").
   if (Object.keys(tx.signatures).length === 0) {
     throw new RentRefusedError();
+  }
+
+  // MEMPOOL_INTERFACE → Correctness gates — "Admission runs the gates, on
+  // every path". A gate is one indexed query, so it leads the fee floor and
+  // the cost gate; a refusal here is the same words and status every write
+  // route and the gossip relay answer.
+  const meta = gateMetadata(tx);
+  if (meta.likeTarget !== null && meta.likeLiker !== null
+      && hasPendingLike(meta.likeTarget, meta.likeLiker)) {
+    throw new ClientError('Already liked this post', 400);
+  }
+  if (meta.usernameLower !== null && hasPendingClaim(meta.usernameLower)) {
+    throw new ClientError('A pending claim for this name exists', 409);
+  }
+  if (meta.usernameClaimant !== null && hasPendingClaimBy(meta.usernameClaimant)) {
+    throw new ClientError('This identity already has a pending claim', 409);
+  }
+  if (meta.vouchVoucher !== null && meta.vouchTarget !== null
+      && hasPendingVouch(meta.vouchVoucher, meta.vouchTarget)) {
+    throw new ClientError('A vouch for this pair is already pending', 400);
+  }
+  if (meta.inviteInvitee !== null && hasPendingInvitee(meta.inviteInvitee)) {
+    throw new ClientError('A pending invite already names this key', 409);
+  }
+  if (meta.inviteInviter !== null) {
+    // A member's pending bonds are capped at `⌊memberVouches / D(N)⌋ −
+    // invitesUsed`, because two invites by one member in one block read the
+    // record as the first left it (ARCHITECTURE → The invite budget). A root
+    // is uncapped; a non-member and a key with no record are `validateTx`'s
+    // refusal, named by the invite service for the diagnosis.
+    const inviterBytes = new Uint8Array(Buffer.from(meta.inviteInviter, 'hex'));
+    const record = getIdentityRecord(inviterBytes);
+    const nr = getNetworkRecord();
+    const available = availableInvites(record, nr.memberCount, config.membershipBarMultiplier);
+    if (typeof available === 'number'
+        && countPendingInvites(meta.inviteInviter) >= available) {
+      throw new ClientError('Every invite this member has is already pending', 400);
+    }
+  }
+  if (meta.withdrawPost !== null && hasPendingWithdraw(meta.withdrawPost)) {
+    throw new ClientError('A withdrawal of this post is already pending', 409);
   }
 
   const floor = config.minFeeRatePerByte;

@@ -24,10 +24,11 @@ import { verifyEd25519Batch } from '@dagsocial/validation';
 import type { Ed25519BatchEntry } from '@dagsocial/validation';
 import { blockCost } from './block-cost.js';
 import { postsOf, withdrawalsOf } from './block-posts.js';
-import type { BlockPost } from './block-posts.js';
+import type { BlockPost, BlockWithdrawal } from './block-posts.js';
 import { computeBlockReward, countKarmaActors, isCreditSideTx, type EmbeddedTx } from './coinbase-split.js';
 import { collectPostBodyKarma, commitDecayClocks, deriveKarmaDecay, karmaOwed } from './decay.js';
 import type { DecayDeps } from './decay.js';
+import type { DecayCfg } from '@dagsocial/types';
 import { BlockOverlay } from './overlay.js';
 import type { BlockMutation } from './overlay.js';
 import { bondOutputOf, checkSettlement, contributeToBody, emptyBody, lapseLegOf, settlementDepsWith } from './settlement.js';
@@ -72,6 +73,448 @@ export interface BlockEffects {
  * "This refusal says what it is"); every other refusal carries none.
  */
 export type ApplyResult = { ok: true; effects: BlockEffects } | { ok: false; reason: string; overBudget?: true };
+
+/** A decoded body entry at its position in the body — the shape the loop iterates (CONSENSUS_INTERFACE → Applying a block). */
+export interface QueuedTx {
+  txId: string;
+  tx: UtxoTransaction;
+  outputs: AnyBox[];
+}
+
+/**
+ * The lists and maps the per-transaction loop fills — the settlement reads from them, the counters
+ * and the membership pass read from them, and `applyBlock` allocates them beside the loop
+ * (CONSENSUS_INTERFACE → Applying a block). The one invitee per block gate reads
+ * `invitedThisBlock` as it goes, so the loop both reads and writes it.
+ */
+export interface TxApplyAcc {
+  invitedThisBlock: Map<string, Uint8Array>;
+  likesPerAuthor: Map<string, number>;
+  memberLikesPerAuthor: Map<string, number>;
+  membershipTouched: Set<string>;
+  preBlockRecords: Map<string, IdentityRecord | null>;
+  perTxOutputs: Map<string, AnyBox[]>;
+  rentTxIds: Set<string>;
+  appliedTxs: EmbeddedTx[];
+  appliedTxBytes: Array<{ txId: string; txBytes: Uint8Array }>;
+}
+
+/** Empty maps and sets a fresh pass of the loop builds up. */
+export function newTxApplyAcc(): TxApplyAcc {
+  return {
+    invitedThisBlock: new Map(),
+    likesPerAuthor: new Map(),
+    memberLikesPerAuthor: new Map(),
+    membershipTouched: new Set(),
+    preBlockRecords: new Map(),
+    perTxOutputs: new Map(),
+    rentTxIds: new Set(),
+    appliedTxs: [],
+    appliedTxBytes: [],
+  };
+}
+
+/**
+ * One body entry's prelude: bytes present, decoded, envelope and output-shape checked (the
+ * settlement's shape or a user transaction's), id proof, outputs materialized under the declared
+ * id. The reason strings are the stated ones (CONSENSUS_INTERFACE → Applying a block).
+ */
+export function decodeBodyEntry(
+  block: OrderingBlock,
+  index: number,
+  isSettlement: boolean,
+  height: number,
+  ctx: ApplyContext,
+): { ok: true; item: QueuedTx } | { ok: false; reason: string } {
+  const txId = block.utxoTxTree.utxoTxIds[index]!;
+  const txBytes = block.utxoTxTree.utxoTxs[index];
+
+  if (!txBytes) {
+    return {
+      ok: false,
+      reason: `Rejected block height=${height}: embedded UTXO tx ${txId} carries no body`,
+    };
+  }
+
+  let tx: UtxoTransaction;
+  try {
+    tx = decodeTx(txBytes);
+  } catch (err) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ${txId} did not ` +
+        `decode: ${String(err)}`,
+    };
+  }
+
+  // Both gates run before `computeTxId` hashes the decoded value, and
+  // together they are what makes that hash total: the envelope types every
+  // field `txIdBytes` reads directly, the output check the fields it
+  // reaches through `canonicalBoxBytes`' throwing writers (NODE_INTERFACE →
+  // "The output domain check"). Unchecked, an out-of-domain output field
+  // becomes an exception absorbed by the funnel's totality handler instead of
+  // the stated rejection below.
+  //
+  // ⚠ **The settlement gets the schema that admits the three protocol
+  // boxes.** It creates the emission, treasury and pool successors, which a
+  // user transaction may not — the same closed key set (the four required
+  // fields plus `likeTarget`, `post` and `postWithdraw`) and the
+  // same field types, over a wider set of box types.
+  const envelopeCheck = checkTxEnvelope(tx, height, ctx.protocolVersionSchedule);
+  if (!envelopeCheck.valid) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ${txId} has a ` +
+        `malformed envelope: ${envelopeCheck.error}`,
+    };
+  }
+
+  const outputCheck = isSettlement
+    ? checkSettlementOutputShape(tx.outputs)
+    : checkOutputShape(tx.outputs);
+  if (!outputCheck.valid) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ${txId} has an ` +
+        `out-of-domain output: ${outputCheck.error}`,
+    };
+  }
+
+  const decodedTxId = computeTxId(tx);
+  if (decodedTxId !== txId) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ${txId} declares an ` +
+        `id its bytes do not produce (${decodedTxId})`,
+    };
+  }
+
+  // `txId` here is the block's declared id, already checked byte-for-byte
+  // against `computeTxId(tx)` above — so it is the real creating transaction,
+  // not a re-derivation. Position in `tx.outputs` is the `index`.
+  const outputs = tx.outputs.map((box, idx) => materializeOutput(box as AnyBox, txId, idx));
+  return { ok: true, item: { txId, tx, outputs } };
+}
+
+/**
+ * The over-signed reason for one transaction, or `null`. A map key no input requires refuses its
+ * transaction, so a map with more entries than inputs is refused before any signature is checked
+ * (CONSENSUS_INTERFACE → Applying a block → "No transaction may carry more signatures than
+ * inputs, and that is checked first").
+ */
+export function overSignedReason(
+  tx: UtxoTransaction,
+  txId: string,
+  height: number,
+): string | null {
+  if (Object.keys(tx.signatures).length > tx.inputs.length) {
+    return (
+      `Rejected block height=${height}: embedded UTXO tx ${txId} ` +
+      `carries more signatures than inputs`
+    );
+  }
+  return null;
+}
+
+/**
+ * The pre-body owed capture: `postBodyKarma` and `owed` for every identity the body touches, from
+ * the view as it stands before the block writes (CONSENSUS_INTERFACE → Applying a block →
+ * "The owed-decay capture reads the record of every identity the body touches"). The caller
+ * derives decay plans from the returned `postBodyKarma`.
+ */
+export function capturePreBodyOwed(
+  view: Pick<StateView, 'getBox' | 'getKarmaBoxes' | 'getIdentityRecord'>,
+  queue: Array<{ txId: string; inputs: string[]; outputs: AnyBox[] }>,
+  height: number,
+  decayCfg: DecayCfg,
+): {
+  postBodyKarma: ReturnType<typeof collectPostBodyKarma>;
+  preBodyOwed: Map<string, bigint>;
+} {
+  const postBodyKarma = collectPostBodyKarma(view, queue);
+  const preBodyOwed = new Map<string, bigint>();
+  for (const { owner } of postBodyKarma.values()) {
+    const face = view.getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n);
+    const record = view.getIdentityRecord(owner);
+    preBodyOwed.set(bytesToHex(owner), karmaOwed(face, record, height, decayCfg));
+  }
+  return { postBodyKarma, preBodyOwed };
+}
+
+/**
+ * The loop body for one queued transaction (CONSENSUS_INTERFACE → Applying a block): inputs resolve
+ * through the overlay, `validateTx` runs against the engine deps, the like checks (confirmed target,
+ * live standing, no duplicate record), the one-invitee-per-block check, `applyTx`, the activity
+ * bump, the like record, the username claim or burn. Mutates the overlay and the accumulator on
+ * success; every refusal happens before any mutation and answers `{ ok: false, reason }` with the
+ * stated string.
+ */
+export function applyQueuedTx(
+  state: BlockOverlay,
+  utxoDeps: UtxoEngineDeps,
+  item: QueuedTx,
+  height: number,
+  acc: TxApplyAcc,
+): { ok: true } | { ok: false; reason: string } {
+  const unresolvedInput = item.tx.inputs.find((id) => state.getBox(id) === null);
+  if (unresolvedInput !== undefined) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ${item.txId} ` +
+        `has an unresolved input ${unresolvedInput}`,
+    };
+  }
+
+  // Every input resolves — full re-validation. A tx that lists the same
+  // input twice is refused by validateTx step 1 (duplicate input ids),
+  // before any liveness read.
+  const revalidated = validateTx(utxoDeps, item.tx, height);
+  if (!revalidated.valid) {
+    return {
+      ok: false,
+      reason:
+        `Rejected block height=${height}: embedded UTXO tx ` +
+        `${item.txId} failed re-validation: ${revalidated.error}`,
+    };
+  }
+
+  // Like apply rules (NODE_INTERFACE → Per-block like settlement):
+  // re-checked at apply — consensus, not gateway courtesy — and BEFORE
+  // applyTx, so a failing like never mutates state. Any failure rejects
+  // the whole block, like any other invalid embedded tx.
+  let likeToRecord: {
+    targetPostId: string;
+    likerId: Uint8Array;
+    authorHex: string;
+  } | null = null;
+  if (item.tx.likeTarget !== undefined) {
+    const targetPostId = item.tx.likeTarget;
+    // Confirmed ⟺ the view answers an author (NODE_INTERFACE → Block
+    // Topology → "Block application reads the record, through the tree
+    // view"), and that author — never dag_posts.author — is who the like
+    // credits: placeholder rows carry a zeroed author, and a like on a
+    // confirmed but content-less post must credit the recorded author.
+    const author = state.getTopologyAuthor(targetPostId);
+    if (author === null) {
+      return {
+        ok: false,
+        reason:
+          `Rejected block height=${height}: like tx ${item.txId} targets ` +
+          `unconfirmed post ${targetPostId}`,
+      };
+    }
+    const authorHex = bytesToHex(author);
+    // NODE_INTERFACE → Karma transition rules: a like targets a live post
+    // only — a placeholder is live (credits the view's recorded author).
+    // A withdrawn post, or an unknown one, rejects.
+    if (state.getPostStanding(targetPostId) !== 'live') {
+      return {
+        ok: false,
+        reason:
+          `Rejected block height=${height}: like tx ${item.txId} targets ` +
+          `withdrawn or unknown post ${targetPostId}`,
+      };
+    }
+    // The liker is the karma inputs' owner, read from the input boxes —
+    // never from the signature map. The gateway's one-signature rule is
+    // gateway policy; a validator can embed a spare-signature like tx
+    // directly, and it must still apply with the liker the owner state
+    // names. validateTx above pinned every input to one karma owner, so
+    // the first input names it.
+    const likerId = (state.getBox(item.tx.inputs[0]!) as KarmaBox).owner;
+    // One like per account per post, structurally: the key exists or it
+    // does not. Applied likes earlier in this block already inserted
+    // their record, so an intra-block duplicate fails here too.
+    if (state.hasLikeRecord(targetPostId, likerId)) {
+      return {
+        ok: false,
+        reason:
+          `Rejected block height=${height}: like tx ${item.txId} ` +
+          `duplicates an existing like-record for ${targetPostId}`,
+      };
+    }
+    likeToRecord = { targetPostId, likerId, authorHex };
+  }
+
+  // ⛔ **THE UNVOUCH NEEDS NO ARM HERE.** The stake moves into a
+  // `VouchEscrowBox` the voucher's own transaction outputs, so `applyTx`
+  // inserts it like any other output, and it is a box mutation like every
+  // other. ✅ **The obligation is committed state**, in the
+  // UTXO set and therefore in the `stateRoot`, so nothing has to remember it
+  // (ARCHITECTURE → Vouch boxes).
+
+  // ⛔ **One invitee per block.** The bond IS the request, so a second bond
+  // naming a key an earlier transaction in this block already named would
+  // draw a second grant from the pool for one key. Refused before `applyTx`,
+  // so a rejected block has mutated nothing on this transaction's account.
+  const bondOut = bondOutputOf(item.outputs);
+  if (bondOut !== null) {
+    const inviteeHex = bytesToHex(bondOut.inviteePublicKey);
+    if (acc.invitedThisBlock.has(inviteeHex)) {
+      return {
+        ok: false,
+        reason:
+          `Rejected block height=${height}: invite tx ${item.txId} names ` +
+          `${inviteeHex}, which another bond in this block already names`,
+      };
+    }
+    acc.invitedThisBlock.set(inviteeHex, bondOut.inviterId);
+  }
+
+  // Before `applyTx` consumes them. Every input is present (tested at the
+  // top of this iteration) and reading the first is sound because
+  // `validateTx` has just passed (NODE_INTERFACE → `validateTx` step 3).
+  const firstInput = item.tx.inputs[0];
+  const firstInputBox = firstInput !== undefined ? state.getBox(firstInput)! : null;
+
+  // Capture a username input before applyTx consumes it — the burn's
+  // deleteUsername needs the name from the box.
+  let capturedUsernameInput: AnyBox | null = null;
+  for (const inputId of item.tx.inputs) {
+    const b = state.getBox(inputId);
+    if (b && b.boxType === 'username') { capturedUsernameInput = b; break; }
+  }
+  if (firstInputBox !== null) {
+    acc.appliedTxs.push({ tx: item.tx, inputBoxes: [firstInputBox] });
+  }
+
+  // Rent recognition by shape: an unsigned credit-side tx that passed
+  // authorization is a rent collection (NODE_INTERFACE → Storage rent is a
+  // transition requiring no signature). The biconditional is
+  // structural — authorization refuses unsigned non-eligible credit.
+  if (isCreditSideTx(item.tx) && Object.keys(item.tx.signatures).length === 0) {
+    acc.rentTxIds.add(item.txId);
+  }
+
+  acc.perTxOutputs.set(item.txId, item.outputs);
+
+  // Track vouch targets for the membership pass. Capture the pre-block
+  // record BEFORE applyTx modifies it — both inputs (consumed) and outputs
+  // (created), so the pass sees the true pre-block value.
+  for (const inputId of item.tx.inputs) {
+    const inputBox = state.getBox(inputId);
+    if (inputBox && inputBox.boxType === 'vouch') {
+      const targetHex = bytesToHex((inputBox as VouchBox).targetId);
+      acc.membershipTouched.add(targetHex);
+      if (!acc.preBlockRecords.has(targetHex)) {
+        acc.preBlockRecords.set(targetHex, state.getIdentityRecord((inputBox as VouchBox).targetId));
+      }
+    }
+  }
+  for (const out of item.outputs) {
+    if (out.boxType === 'vouch') {
+      const targetHex = bytesToHex((out as VouchBox).targetId);
+      acc.membershipTouched.add(targetHex);
+      if (!acc.preBlockRecords.has(targetHex)) {
+        acc.preBlockRecords.set(targetHex, state.getIdentityRecord((out as VouchBox).targetId));
+      }
+    }
+  }
+
+  applyTx(utxoDeps, item.tx, item.outputs, height);
+
+  // Posting is the activity (NODE_INTERFACE → Populating the record). The
+  // post arm pins the author to the karma inputs' owner, so firstInputBox
+  // is the author. The write lands after applyTx's box writes, so reverse
+  // replay restores it first.
+  if (item.tx.post !== undefined) {
+    advanceActivityClock(state, (firstInputBox as KarmaBox).owner, height);
+  }
+
+  if (likeToRecord !== null) {
+    // The like record (CONSENSUS_INTERFACE → BlockEffects), plus the
+    // in-memory accrual §11b settles.
+    state.insertLikeRecord(likeToRecord.targetPostId, likeToRecord.likerId);
+    acc.likesPerAuthor.set(
+      likeToRecord.authorHex,
+      (acc.likesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
+    );
+    // ARCHITECTURE → Membership: memberLikes bumped iff member(liker).
+    const likerRecord = state.getIdentityRecord(likeToRecord.likerId);
+    if (likerRecord && isMember(likerRecord)) {
+      acc.memberLikesPerAuthor.set(
+        likeToRecord.authorHex,
+        (acc.memberLikesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
+      );
+    }
+  }
+
+  // NODE_INTERFACE → Username transition rules.
+  // Claim: a username output → putUsername.
+  const usernameOut = item.outputs.find(o => o.boxType === 'username');
+  if (usernameOut) {
+    const u = usernameOut as UsernameBox;
+    const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
+    state.putUsername({
+      nameLower: canonical,
+      name: USERNAME_DECODER.decode(u.name),
+      owner: bytesToHex(u.owner),
+      boxId: usernameOut.id!,
+      claimedAtBlock: height,
+    });
+  }
+  // Burn: a username input → deleteUsername. The box is read before applyTx
+  // consumed it (capturedUsernameInput, captured above).
+  if (capturedUsernameInput) {
+    const u = capturedUsernameInput as UsernameBox;
+    const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
+    state.deleteUsername(canonical);
+  }
+
+  // The transaction itself rides the effects, for the node to return to its
+  // pool when a reorg reverts the block (NODE_INTERFACE → Block Journal).
+  acc.appliedTxBytes.push({ txId: item.txId, txBytes: encodeTx(item.tx) });
+
+  return { ok: true };
+}
+
+/**
+ * The withdrawal arm's body for one entry (CONSENSUS_INTERFACE → Applying a block): the recorded
+ * post height is in an earlier block, the standing is `live`, the id is not already withdrawn in
+ * this block. Writes to the overlay and the set on success; every refusal happens before any
+ * mutation.
+ */
+export function applyBlockWithdrawal(
+  state: BlockOverlay,
+  bw: BlockWithdrawal,
+  height: number,
+  withdrawnThisBlock: Set<string>,
+): { ok: true } | { ok: false; reason: string } {
+  const { postWithdraw } = bw;
+  const postId = postWithdraw.postId;
+
+  const postHeight = state.getTopologyHeight(postId);
+  if (postHeight === null || postHeight >= height) {
+    return {
+      ok: false,
+      reason:
+        `Block ${height}: postWithdraw ${postId} is not confirmed ` +
+        `in an earlier block (recorded height ${postHeight})`,
+    };
+  }
+
+  if (state.getPostStanding(postId) !== 'live') {
+    return {
+      ok: false,
+      reason: `Block ${height}: postWithdraw ${postId} targets an already-withdrawn or unknown post`,
+    };
+  }
+  if (withdrawnThisBlock.has(postId)) {
+    return {
+      ok: false,
+      reason: `Block ${height}: duplicate postWithdraw for ${postId} in the same block`,
+    };
+  }
+  withdrawnThisBlock.add(postId);
+
+  state.withdrawPost(postId);
+  return { ok: true };
+}
 
 /**
  * The block's state transition — the mutation phase, whole (CONSENSUS_INTERFACE
@@ -157,11 +600,6 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // bytes beside it is a transaction the block claims and does not carry.
   // Stated as a property rather than as a list, so a guard added here later
   // inherits the verdict.
-  interface QueuedTx {
-    txId: string;
-    tx: UtxoTransaction;
-    outputs: AnyBox[];
-  }
   const queue: QueuedTx[] = [];
   // ⛔ **The LAST entry is the settlement, and that is the whole of how it is
   // identified** (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
@@ -169,81 +607,20 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // phase, and one that reaches it anyway is refused below as carrying no
   // settlement; identifying the settlement by position rather than by what it
   // spends is what lets a node find it with no UTXO set at all.
+  //
+  // ⛔ **The settlement never enters the queue.** `validateTx` governs user
+  // transactions: no signer authorizes a settlement and no transition row
+  // admits the pool, the emission box or a fee box as an input, so putting it
+  // through that gate would reject every valid block. Its own rule is
+  // `checkSettlement`, at §11a, after the body it is derived from has applied.
   const lastIndex = block.utxoTxTree.utxoTxIds.length - 1;
-  let settlement: { txId: string; tx: UtxoTransaction; outputs: AnyBox[] } | null = null;
+  let settlement: QueuedTx | null = null;
   for (let i = 0; i < block.utxoTxTree.utxoTxIds.length; i++) {
-    const txId = block.utxoTxTree.utxoTxIds[i]!;
-    const txBytes = block.utxoTxTree.utxoTxs[i];
     const isSettlement = i === lastIndex;
-
-    if (!txBytes) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} carries no body`,
-      );
-    }
-
-    let tx: UtxoTransaction;
-    try {
-      tx = decodeTx(txBytes);
-    } catch (err) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} did not ` +
-        `decode: ${String(err)}`,
-      );
-    }
-
-    // Both gates run before `computeTxId` hashes the decoded value, and
-    // together they are what makes that hash total: the envelope types every
-    // field `txIdBytes` reads directly, the output check the fields it
-    // reaches through `canonicalBoxBytes`' throwing writers (NODE_INTERFACE →
-    // "The output domain check"). Unchecked, an out-of-domain output field
-    // becomes an exception absorbed by the funnel's totality handler instead of
-    // the stated rejection below.
-    //
-    // ⚠ **The settlement gets the schema that admits the three protocol
-    // boxes.** It creates the emission, treasury and pool successors, which a
-    // user transaction may not — the same closed key set (the four required
-    // fields plus `likeTarget`, `post` and `postWithdraw`) and the
-    // same field types, over a wider set of box types.
-    const envelopeCheck = checkTxEnvelope(tx, height, ctx.protocolVersionSchedule);
-    if (!envelopeCheck.valid) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} has a ` +
-        `malformed envelope: ${envelopeCheck.error}`,
-      );
-    }
-
-    const outputCheck = isSettlement
-      ? checkSettlementOutputShape(tx.outputs)
-      : checkOutputShape(tx.outputs);
-    if (!outputCheck.valid) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} has an ` +
-        `out-of-domain output: ${outputCheck.error}`,
-      );
-    }
-
-    const decodedTxId = computeTxId(tx);
-    if (decodedTxId !== txId) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${txId} declares an ` +
-        `id its bytes do not produce (${decodedTxId})`,
-      );
-    }
-
-    // `txId` here is the block's declared id, already checked byte-for-byte
-    // against `computeTxId(tx)` above — so it is the real creating transaction,
-    // not a re-derivation. Position in `tx.outputs` is the `index`.
-    const outputs = tx.outputs.map((box, index) =>
-      materializeOutput(box as AnyBox, txId, index),
-    );
-    // ⛔ **The settlement never enters the queue.** `validateTx` governs user
-    // transactions: no signer authorizes a settlement and no transition row
-    // admits the pool, the emission box or a fee box as an input, so putting it
-    // through that gate would reject every valid block. Its own rule is
-    // `checkSettlement`, at §11a, after the body it is derived from has applied.
-    if (isSettlement) settlement = { txId, tx, outputs };
-    else queue.push({ txId, tx, outputs });
+    const decoded = decodeBodyEntry(block, i, isSettlement, height, ctx);
+    if (!decoded.ok) return reject(decoded.reason);
+    if (isSettlement) settlement = decoded.item;
+    else queue.push(decoded.item);
   }
   if (settlement === null) {
     return reject(
@@ -255,12 +632,9 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // queue before the batch runs, so the batch checks at most one entry per input
   // (CONSENSUS_INTERFACE → Applying a block → "No transaction may carry more
   // signatures than inputs, and that is checked first").
-  const overSigned = queue.find(({ tx }) => Object.keys(tx.signatures).length > tx.inputs.length);
-  if (overSigned !== undefined) {
-    return reject(
-      `Rejected block height=${height}: embedded UTXO tx ${overSigned.txId} ` +
-      `carries more signatures than inputs`,
-    );
+  for (const q of queue) {
+    const reason = overSignedReason(q.tx, q.txId, height);
+    if (reason !== null) return reject(reason);
   }
 
   // The batch's entry count, and its cost checked before the batch runs, so a
@@ -290,52 +664,22 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     return reject(`Rejected block height=${height}: a signature in the body does not verify`);
   }
 
-  // Per-block like accrual: in-memory, this invocation only — the
-  // end-of-phase settlement (§11b) reads both maps. Local by design, so every
-  // run of the phase, the producer's speculative one included, accrues and
-  // settles identically.
-  const likesPerAuthor = new Map<string, number>(); // author hex → likes this block
-  const memberLikesPerAuthor = new Map<string, number>(); // author hex → member-likes this block
-  // Identities the membership pass evaluates — every vouch target whose box was
-  // cast or consumed, every author whose memberLikes rose. Captured during the
-  // apply loop; the pass runs after the like counters.
-  const membershipTouched = new Set<string>();
-  // Pre-block records for touched identities — the first write's `replaced`.
-  const preBlockRecords = new Map<string, IdentityRecord | null>();
-
-  // What the settlement is derived from, accumulated as each transaction is
-  // applied (MINING_INTERFACE → Coinbase Application). Gathered here rather than
-  // ahead of the loop because this is the only place an input is guaranteed to
-  // resolve: a transaction may spend a box an earlier transaction in this same
-  // block creates, and until the loop has applied that one, the state this
-  // phase reads through does not hold the output.
-  //
-  // Apply order is committed order (NODE_INTERFACE → Block finalization), so
-  // `perTxOutputs`, `appliedTxs` and every per-transaction list are in the
-  // body's order — the order the settlement's fee-box inputs must follow.
-  //
-  // `appliedTxs` carries each transaction with its FIRST input box, which is
-  // all `actorOf` reads, and reading it is sound only because `validateTx` has
-  // passed by the time it is recorded — step 3's boxType pin is what makes the
-  // first input speak for the transaction rather than being the producer's
-  // choice.
-  const perTxOutputs = new Map<string, AnyBox[]>();
-  const rentTxIds = new Set<string>();
-  const appliedTxs: EmbeddedTx[] = [];
-  const appliedTxBytes: Array<{ txId: string; txBytes: Uint8Array }> = [];
-
-  // ⛔ **Two inviters naming the same key in one block must not both grant**
-  // (NODE_INTERFACE → Legal box transitions). The eligibility test each invite
-  // passed is `IdentityRecord` existence, and the grant that writes that record
-  // is the settlement's — which runs after every transaction here — so a
-  // record-existence test cannot see a sibling transaction in the same block.
-  // Without this the second bond draws a second grant from the pool for one
-  // key, sized by whatever bond the second inviter chose.
-  //
-  // Keyed on the invitee hex; the value is the bond's `inviterId`, which the
-  // grant step reads to decide the conferral
-  // (NODE_INTERFACE → "A root's grant confers membership").
-  const invitedThisBlock = new Map<string, Uint8Array>();
+  // The lists and maps the per-transaction loop fills, allocated beside the loop
+  // (CONSENSUS_INTERFACE → Applying a block). Local by design, so every run of
+  // the phase, the producer's speculative one included, accrues and settles
+  // identically. `appliedTxs` carries each transaction with its FIRST input
+  // box, which is all `actorOf` reads, and reading it is sound only because
+  // `validateTx` has passed by the time it is recorded — step 3's boxType pin
+  // is what makes the first input speak for the transaction rather than being
+  // the producer's choice. ⛔ **Two inviters naming the same key in one block
+  // must not both grant** (NODE_INTERFACE → Legal box transitions): the
+  // eligibility test each invite passed is `IdentityRecord` existence, and the
+  // grant that writes that record is the settlement's — which runs after every
+  // transaction here — so a record-existence test cannot see a sibling
+  // transaction in the same block. Without this the second bond draws a second
+  // grant from the pool for one key, sized by whatever bond the second inviter
+  // chose.
+  const acc = newTxApplyAcc();
 
   // §9b. Pre-body captures: decay and escrows.
   //
@@ -343,26 +687,17 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // post-body projection derives from decoded transactions + the pre-body
   // UTXO set — both available before the apply loop. The settlement consumes
   // the projected boxes, which are the ones that exist after the body applies.
-  const postBodyKarma = collectPostBodyKarma(
+  // `owed` is captured in the same step and shared with `screenBody`
+  // (CONSENSUS_INTERFACE → Applying a block → "The owed-decay capture reads
+  // the record of every identity the body touches").
+  const { postBodyKarma, preBodyOwed } = capturePreBodyOwed(
     state,
     queue.map((q) => ({ txId: q.txId, inputs: q.tx.inputs, outputs: q.outputs })),
+    height,
+    ctx.decayCfg,
   );
   const decayDeps = decayDepsOver(state);
   const decayPlans = deriveKarmaDecay(decayDeps, postBodyKarma, height, ctx.decayCfg);
-  // NODE_INTERFACE → Karma transition rules → "Engine inputs the rule needs":
-  // `owed` for every identity the body touches, from the view as it stands
-  // before the block writes. The sum reads the owner's live karma boxes once,
-  // and the record once; `postBodyKarma`'s keys are the touched set in sorted
-  // owner-hex order, so the capture's reads follow that order. An owner the
-  // body leaves with no karma box is read as every other is
-  // (CONSENSUS_INTERFACE → Applying a block → "The owed-decay capture reads
-  // the record of every identity the body touches").
-  const preBodyOwed = new Map<string, bigint>();
-  for (const { owner } of postBodyKarma.values()) {
-    const face = state.getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n);
-    const record = state.getIdentityRecord(owner);
-    preBodyOwed.set(bytesToHex(owner), karmaOwed(face, record, height, ctx.decayCfg));
-  }
   const utxoDeps = utxoDepsOver(state, ctx, verified, preBodyOwed, height);
   // Escrows and release candidates: captured before the apply loop so the
   // body's own mutations do not appear in the settlement's input list on one
@@ -381,235 +716,21 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   const lapsedVouches = lapseLegOf(lapsedCapture, spentByBody);
   const capturedBackerPool = state.getBackerPoolBox();
 
-  // One pass, in committed order (NODE_INTERFACE → Block finalization).
+  // One pass, in committed order (NODE_INTERFACE → Block finalization). The
+  // body stops at the first refusal — a producer that wants to drop the
+  // offender and keep the rest asks `screenBody` separately
+  // (CONSENSUS_INTERFACE → Screening a body).
   for (const item of queue) {
-    const unresolvedInput = item.tx.inputs.find((id) => state.getBox(id) === null);
-    if (unresolvedInput !== undefined) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ${item.txId} ` +
-        `has an unresolved input ${unresolvedInput}`,
-      );
-    }
-
-    // Every input resolves — full re-validation. A tx that lists the same
-    // input twice is refused by validateTx step 1 (duplicate input ids),
-    // before any liveness read.
-    const revalidated = validateTx(utxoDeps, item.tx, height);
-    if (!revalidated.valid) {
-      return reject(
-        `Rejected block height=${height}: embedded UTXO tx ` +
-        `${item.txId} failed re-validation: ${revalidated.error}`,
-      );
-    }
-
-    // Like apply rules (NODE_INTERFACE → Per-block like settlement):
-    // re-checked at apply — consensus, not gateway courtesy — and BEFORE
-    // applyTx, so a failing like never mutates state. Any failure rejects
-    // the whole block, like any other invalid embedded tx.
-    let likeToRecord: {
-      targetPostId: string;
-      likerId: Uint8Array;
-      authorHex: string;
-    } | null = null;
-    if (item.tx.likeTarget !== undefined) {
-      const targetPostId = item.tx.likeTarget;
-      // Confirmed ⟺ the view answers an author (NODE_INTERFACE → Block
-      // Topology → "Block application reads the record, through the tree
-      // view"), and that author — never dag_posts.author — is who the like
-      // credits: placeholder rows carry a zeroed author, and a like on a
-      // confirmed but content-less post must credit the recorded author.
-      const author = state.getTopologyAuthor(targetPostId);
-      if (author === null) {
-        return reject(
-          `Rejected block height=${height}: like tx ${item.txId} targets ` +
-          `unconfirmed post ${targetPostId}`,
-        );
-      }
-      const authorHex = bytesToHex(author);
-      // NODE_INTERFACE → Karma transition rules: a like targets a live post
-      // only — a placeholder is live (credits the view's recorded author).
-      // A withdrawn post, or an unknown one, rejects.
-      if (state.getPostStanding(targetPostId) !== 'live') {
-        return reject(
-          `Rejected block height=${height}: like tx ${item.txId} targets ` +
-          `withdrawn or unknown post ${targetPostId}`,
-        );
-      }
-      // The liker is the karma inputs' owner, read from the input boxes —
-      // never from the signature map. The gateway's one-signature rule is
-      // gateway policy; a validator can embed a spare-signature like tx
-      // directly, and it must still apply with the liker the owner state
-      // names. validateTx above pinned every input to one karma owner, so
-      // the first input names it.
-      const likerId = (state.getBox(item.tx.inputs[0]!) as KarmaBox).owner;
-      // One like per account per post, structurally: the key exists or it
-      // does not. Applied likes earlier in this block already inserted
-      // their record, so an intra-block duplicate fails here too.
-      if (state.hasLikeRecord(targetPostId, likerId)) {
-        return reject(
-          `Rejected block height=${height}: like tx ${item.txId} ` +
-          `duplicates an existing like-record for ${targetPostId}`,
-        );
-      }
-      likeToRecord = { targetPostId, likerId, authorHex };
-    }
-
-    // ⛔ **THE UNVOUCH NEEDS NO ARM HERE.** The stake moves into a
-    // `VouchEscrowBox` the voucher's own transaction outputs, so `applyTx`
-    // inserts it like any other output, and it is a box mutation like every
-    // other. ✅ **The obligation is committed state**, in the
-    // UTXO set and therefore in the `stateRoot`, so nothing has to remember it
-    // (ARCHITECTURE → Vouch boxes).
-
-    // ⛔ **One invitee per block.** The bond IS the request, so a second bond
-    // naming a key an earlier transaction in this block already named would
-    // draw a second grant from the pool for one key. Refused before `applyTx`,
-    // so a rejected block has mutated nothing on this transaction's account.
-    const bondOut = bondOutputOf(item.outputs);
-    if (bondOut !== null) {
-      const inviteeHex = bytesToHex(bondOut.inviteePublicKey);
-      if (invitedThisBlock.has(inviteeHex)) {
-        return reject(
-          `Rejected block height=${height}: invite tx ${item.txId} names ` +
-          `${inviteeHex}, which another bond in this block already names`,
-        );
-      }
-      invitedThisBlock.set(inviteeHex, bondOut.inviterId);
-    }
-
-    // Before `applyTx` consumes them. Every input is present (tested at the
-    // top of this iteration) and reading the first is sound because
-    // `validateTx` has just passed (NODE_INTERFACE → `validateTx` step 3).
-    const firstInput = item.tx.inputs[0];
-    const firstInputBox = firstInput !== undefined ? state.getBox(firstInput)! : null;
-
-    // Capture a username input before applyTx consumes it — the burn's
-    // deleteUsername needs the name from the box.
-    let capturedUsernameInput: AnyBox | null = null;
-    for (const inputId of item.tx.inputs) {
-      const b = state.getBox(inputId);
-      if (b && b.boxType === 'username') { capturedUsernameInput = b; break; }
-    }
-    if (firstInputBox !== null) {
-      appliedTxs.push({ tx: item.tx, inputBoxes: [firstInputBox] });
-    }
-
-    // Rent recognition by shape: an unsigned credit-side tx that passed
-    // authorization is a rent collection (NODE_INTERFACE → Storage rent is a
-    // transition requiring no signature). The biconditional is
-    // structural — authorization refuses unsigned non-eligible credit.
-    if (isCreditSideTx(item.tx) && Object.keys(item.tx.signatures).length === 0) {
-      rentTxIds.add(item.txId);
-    }
-
-    perTxOutputs.set(item.txId, item.outputs);
-
-    // Track vouch targets for the membership pass. Capture the pre-block
-    // record BEFORE applyTx modifies it — both inputs (consumed) and outputs
-    // (created), so the pass sees the true pre-block value.
-    for (const inputId of item.tx.inputs) {
-      const inputBox = state.getBox(inputId);
-      if (inputBox && inputBox.boxType === 'vouch') {
-        const targetHex = bytesToHex((inputBox as VouchBox).targetId);
-        membershipTouched.add(targetHex);
-        if (!preBlockRecords.has(targetHex)) {
-          preBlockRecords.set(targetHex, state.getIdentityRecord((inputBox as VouchBox).targetId));
-        }
-      }
-    }
-    for (const out of item.outputs) {
-      if (out.boxType === 'vouch') {
-        const targetHex = bytesToHex((out as VouchBox).targetId);
-        membershipTouched.add(targetHex);
-        if (!preBlockRecords.has(targetHex)) {
-          preBlockRecords.set(targetHex, state.getIdentityRecord((out as VouchBox).targetId));
-        }
-      }
-    }
-
-    applyTx(utxoDeps, item.tx, item.outputs, height);
-
-    // Posting is the activity (NODE_INTERFACE → Populating the record). The
-    // post arm pins the author to the karma inputs' owner, so firstInputBox
-    // is the author. The write lands after applyTx's box writes, so reverse
-    // replay restores it first.
-    if (item.tx.post !== undefined) {
-      advanceActivityClock(state, (firstInputBox as KarmaBox).owner, height);
-    }
-
-    if (likeToRecord !== null) {
-      // The like record (CONSENSUS_INTERFACE → BlockEffects), plus the
-      // in-memory accrual §11b settles.
-      state.insertLikeRecord(likeToRecord.targetPostId, likeToRecord.likerId);
-      likesPerAuthor.set(
-        likeToRecord.authorHex,
-        (likesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
-      );
-      // ARCHITECTURE → Membership: memberLikes bumped iff member(liker).
-      const likerRecord = state.getIdentityRecord(likeToRecord.likerId);
-      if (likerRecord && isMember(likerRecord)) {
-        memberLikesPerAuthor.set(
-          likeToRecord.authorHex,
-          (memberLikesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
-        );
-      }
-    }
-
-    // NODE_INTERFACE → Username transition rules.
-    // Claim: a username output → putUsername.
-    const usernameOut = item.outputs.find(o => o.boxType === 'username');
-    if (usernameOut) {
-      const u = usernameOut as UsernameBox;
-      const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
-      state.putUsername({
-        nameLower: canonical,
-        name: USERNAME_DECODER.decode(u.name),
-        owner: bytesToHex(u.owner),
-        boxId: usernameOut.id!,
-        claimedAtBlock: height,
-      });
-    }
-    // Burn: a username input → deleteUsername. The box is read before applyTx
-    // consumed it (capturedUsernameInput, captured above).
-    if (capturedUsernameInput) {
-      const u = capturedUsernameInput as UsernameBox;
-      const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
-      state.deleteUsername(canonical);
-    }
-
-    // The transaction itself rides the effects, for the node to return to its
-    // pool when a reorg reverts the block (NODE_INTERFACE → Block Journal).
-    appliedTxBytes.push({ txId: item.txId, txBytes: encodeTx(item.tx) });
+    const result = applyQueuedTx(state, utxoDeps, item, height, acc);
+    if (!result.ok) return reject(result.reason);
   }
 
   // 8b. Process withdrawal transactions from this block.
   const withdrawnThisBlock = new Set<string>();
   const blockWithdrawals = withdrawalsOf(block, (postId) => state.getTopologyAuthor(postId));
   for (const bw of blockWithdrawals) {
-    const { postWithdraw } = bw;
-    const postId = postWithdraw.postId;
-
-    const postHeight = state.getTopologyHeight(postId);
-    if (postHeight === null || postHeight >= height) {
-      return reject(
-        `Block ${height}: postWithdraw ${postId} is not confirmed ` +
-        `in an earlier block (recorded height ${postHeight})`,
-      );
-    }
-
-    if (state.getPostStanding(postId) !== 'live') {
-      return reject(
-        `Block ${height}: postWithdraw ${postId} targets an already-withdrawn or unknown post`,
-      );
-    }
-    if (withdrawnThisBlock.has(postId)) {
-      return reject(
-        `Block ${height}: duplicate postWithdraw for ${postId} in the same block`,
-      );
-    }
-    withdrawnThisBlock.add(postId);
-
-    state.withdrawPost(postId);
+    const result = applyBlockWithdrawal(state, bw, height, withdrawnThisBlock);
+    if (!result.ok) return reject(result.reason);
   }
 
   // 11a. The settlement transaction — the block's every protocol effect, in one
@@ -628,10 +749,10 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   const settlementBody = emptyBody();
   for (let i = 0; i < lastIndex; i++) {
     const txId = block.utxoTxTree.utxoTxIds[i]!;
-    const outputs = perTxOutputs.get(txId);
-    if (outputs) contributeToBody(settlementBody, outputs, rentTxIds.has(txId));
+    const outputs = acc.perTxOutputs.get(txId);
+    if (outputs) contributeToBody(settlementBody, outputs, acc.rentTxIds.has(txId));
   }
-  settlementBody.actors = countKarmaActors(appliedTxs, block.header.validatorId);
+  settlementBody.actors = countKarmaActors(acc.appliedTxs, block.header.validatorId);
 
   const emission = computeBlockReward(height, ctx);
   const settlementCheck = checkSettlement(
@@ -674,9 +795,9 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // evaluates them.
   for (const v of lapsedVouches) {
     const targetHex = bytesToHex(v.targetId);
-    membershipTouched.add(targetHex);
-    if (!preBlockRecords.has(targetHex)) {
-      preBlockRecords.set(targetHex, state.getIdentityRecord(v.targetId));
+    acc.membershipTouched.add(targetHex);
+    if (!acc.preBlockRecords.has(targetHex)) {
+      acc.preBlockRecords.set(targetHex, state.getIdentityRecord(v.targetId));
     }
   }
 
@@ -698,9 +819,9 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // it (NODE_INTERFACE → Bond transition rules) — and a root's invitee is
   // written a member from this block; a member's invitee is written a
   // resident.
-  for (const inviteeHex of [...invitedThisBlock.keys()].sort()) {
+  for (const inviteeHex of [...acc.invitedThisBlock.keys()].sort()) {
     const invitee = hexToBytes(inviteeHex);
-    const inviterId = invitedThisBlock.get(inviteeHex)!;
+    const inviterId = acc.invitedThisBlock.get(inviteeHex)!;
     const inviterRecord = state.getIdentityRecord(inviterId);
     if (!inviterRecord) {
       // The invite-create arm refuses a bond whose inviter holds no identity
@@ -719,8 +840,8 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     // no pre-block state, and the pass reads none": a legal invitee has no
     // record before this block, so the pre-image captured here is the
     // absence itself, never the record this write is about to create.
-    preBlockRecords.set(inviteeHex, null);
-    membershipTouched.add(inviteeHex);
+    acc.preBlockRecords.set(inviteeHex, null);
+    acc.membershipTouched.add(inviteeHex);
     state.putIdentityRecord(invitee, {
       lastActivityBlock: after?.lastActivityBlock ?? height,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
@@ -761,9 +882,9 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // ⚠ **The outstanding accrual is NOT written back**, because there is nothing
   // to write: the carry is a `LikeAccrualBox` the settlement just emitted, and
   // the box IS the carry (ARCHITECTURE → Likes).
-  for (const authorHex of [...likesPerAuthor.keys()].sort()) {
+  for (const authorHex of [...acc.likesPerAuthor.keys()].sort()) {
     const author = hexToBytes(authorHex);
-    const received = BigInt(likesPerAuthor.get(authorHex)!);
+    const received = BigInt(acc.likesPerAuthor.get(authorHex)!);
     // Re-read here, after every earlier write of the block, so none is lost; a
     // missing record means maximally stale ({0, 0}), never "skip this author".
     const after = state.getIdentityRecord(author);
@@ -777,7 +898,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       memberSinceBlock: after?.memberSinceBlock ?? 0,
       memberBar: after?.memberBar ?? 0,
       memberVouches: after?.memberVouches ?? 0,
-      memberLikes: (after?.memberLikes ?? 0n) + BigInt(memberLikesPerAuthor.get(authorHex) ?? 0),
+      memberLikes: (after?.memberLikes ?? 0n) + BigInt(acc.memberLikesPerAuthor.get(authorHex) ?? 0),
       invitesUsed: after?.invitesUsed ?? 0,
     });
   }
@@ -791,8 +912,8 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // root's invitee; this pass only counts it). N written once at the end.
   // No value moves.
   // Add authors whose memberLikes rose to the membership pass's touched set.
-  for (const authorHex of memberLikesPerAuthor.keys()) {
-    membershipTouched.add(authorHex);
+  for (const authorHex of acc.memberLikesPerAuthor.keys()) {
+    acc.membershipTouched.add(authorHex);
   }
 
   {
@@ -801,7 +922,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     const Y = memberLikesBar(N, ctx.membershipBarMultiplier);
 
     let newN = N;
-    for (const idHex of [...membershipTouched].sort()) {
+    for (const idHex of [...acc.membershipTouched].sort()) {
       const id = hexToBytes(idHex);
       // NODE_INTERFACE → "A record the block first wrote has no pre-block
       // state, and the pass reads none": `??` would treat a captured `null`
@@ -809,7 +930,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       // fall through to the post-grant record, reading a conferred member as
       // one that was already there. The existing captures (vouch targets)
       // are unaffected: a vouch target always holds a record.
-      const pre = preBlockRecords.has(idHex) ? preBlockRecords.get(idHex)! : state.getIdentityRecord(id);
+      const pre = acc.preBlockRecords.has(idHex) ? acc.preBlockRecords.get(idHex)! : state.getIdentityRecord(id);
       const current = state.getIdentityRecord(id);
       if (!current) continue;
 
@@ -858,7 +979,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       posts: blockPosts,
       likeRecords: state.likeRecords,
       withdrawals: state.withdrawals,
-      appliedTxs: appliedTxBytes,
+      appliedTxs: acc.appliedTxBytes,
       signatures,
     },
   };
@@ -910,7 +1031,7 @@ function verifiedSignaturesOf(
 }
 
 /** An entry of the verified set: the transaction id, the key and the signature, as hex. */
-function signatureEntryKey(txIdHex: string, keyHex: string, signature: Uint8Array): string {
+export function signatureEntryKey(txIdHex: string, keyHex: string, signature: Uint8Array): string {
   return `${txIdHex}:${keyHex}:${bytesToHex(signature)}`;
 }
 
@@ -924,7 +1045,7 @@ function signatureEntryKey(txIdHex: string, keyHex: string, signature: Uint8Arra
  * does a height other than the block's. A silent default would switch the
  * spend rule off for that owner (NODE_INTERFACE → Karma transition rules).
  */
-function utxoDepsOver(
+export function utxoDepsOver(
   state: BlockOverlay,
   ctx: ApplyContext,
   verified: ReadonlySet<string>,

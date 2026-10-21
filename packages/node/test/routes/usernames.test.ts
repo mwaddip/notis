@@ -7,7 +7,8 @@ import express from 'express';
 import http from 'http';
 import { generateKeyPairSync } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertBox, getBox as storeGetBox, getKarmaBoxes, getKarmaValue, getBoxProvenance, hasActiveVouchEscrow } from '../../src/store/utxo.js';
+import { insertBox, getBox as storeGetBox, getKarmaValue, getBoxProvenance, hasActiveVouchEscrow } from '../../src/store/utxo.js';
+import { getBoxWithPending, getOwnKarmaBoxIdsWithPending } from '../../src/store/mempool.js';
 import { getVouchBox } from '../../src/store/vouch-queries.js';
 import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
@@ -61,11 +62,15 @@ function seedUsernameBox(owner: Uint8Array, name: string): UsernameBox {
 function makeDeps(): UtxoEngineDeps {
   const db = getDb();
   return {
+    // The pending view, as the write-side admission wires it
+    // (NODE_INTERFACE → Service Layer Architecture → "One function admits").
     getBox: (id: string) => {
       const box = storeGetBox(id);
-      if (!box) return null;
-      const r = db.prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?').get(id) as { spent_at_block: number | null } | undefined;
-      return r && r.spent_at_block === null ? box : null;
+      if (box) {
+        const r = db.prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?').get(id) as { spent_at_block: number | null } | undefined;
+        if (r && r.spent_at_block === null) return box;
+      }
+      return getBoxWithPending(id);
     },
     insertBox,
     consumeBox: (id: string, atBlock: number) => {
@@ -74,7 +79,7 @@ function makeDeps(): UtxoEngineDeps {
     getKarmaOwed: admissionOwed({ staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS, decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS, decayAmount: KARMA_DECAY_AMOUNT, karmaMinimum: KARMA_MINIMUM }),
     getKarmaValue,
     getOwnKarmaBoxIds: (owner: Uint8Array) =>
-      getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
+      getOwnKarmaBoxIdsWithPending(Buffer.from(owner).toString('hex')),
     getIdentityRecord,
     hasActiveVouchEscrow,
     vouchCooldownBlocks: 2,

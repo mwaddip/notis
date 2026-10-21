@@ -31,12 +31,14 @@ import {
   getKarmaBoxes,
   insertBox,
   getBox as storeGetBox,
+  getBoxWithPending,
   getIdentityRecord as storeGetIdentityRecord,
   hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   getPendingEntries,
   getVouchBox as storeGetVouchBox,
   putIdentityRecord as storePutIdentityRecord,
   getNetworkRecord as storeGetNetworkRecord,
+  getOwnKarmaBoxIdsWithPending,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
 import { config } from '../../src/config.js';
@@ -117,27 +119,6 @@ function seedVouchEscrow(owner: Uint8Array, releaseAtBlock: number): void {
   );
 }
 
-/** An unsigned vouch tx — for rejections that fire before validateTx. */
-function vouchTxFor(
-  voucherId: Uint8Array,
-  targetId: Uint8Array,
-): UtxoTransaction {
-  return {
-    inputs: [],
-    outputs: [
-      {
-        boxType: 'vouch' as const,
-        value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 0,
-        voucherId,
-        targetId,
-      },
-    ],
-    signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -153,13 +134,17 @@ describe('vouch service', () => {
 
   function makeDeps(): UtxoEngineDeps {
     return {
+      // The pending view, as the write-side admission wires it
+      // (NODE_INTERFACE → Service Layer Architecture → "One function admits").
       getBox: (id: string): AnyBox | null => {
         const box = storeGetBox(id);
-        if (!box) return null;
-        const r = db
-          .prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?')
-          .get(id) as { spent_at_block: number | null } | undefined;
-        return r && r.spent_at_block === null ? box : null;
+        if (box) {
+          const r = db
+            .prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?')
+            .get(id) as { spent_at_block: number | null } | undefined;
+          if (r && r.spent_at_block === null) return box;
+        }
+        return getBoxWithPending(id);
       },
       getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => {
@@ -172,7 +157,7 @@ describe('vouch service', () => {
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       getOwnKarmaBoxIds: (owner: Uint8Array) =>
-        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
+        getOwnKarmaBoxIdsWithPending(Buffer.from(owner).toString('hex')),
       // ⛔ The real predicate, so a seeded `VouchEscrowBox` actually bars a
       // recast. A stub would leave the rule this suite fronts untested.
       hasActiveVouchEscrow: storeHasActiveVouchEscrow,
@@ -467,13 +452,28 @@ describe('vouch service', () => {
       expect(castVouch(deps, tx, 10).status).toBe('pending');
     });
 
-    it('rejects a second vouch for the same pair while the first is still pending', () => {
+    it('rejects a second vouch for the same pair while the first is still pending', async () => {
       const karma = createKarmaBox(voucherPubKey, 100n, 1);
 
       const firstTx = signedVouchTx(karma.id!, voucherPubKey, targetPubKey, 5);
       expect(castVouch(deps, firstTx, 5).status).toBe('pending');
 
-      const secondTx = vouchTxFor(voucherPubKey, targetPubKey);
+      // The second chains through the first's own-karma change — the pending
+      // view resolves it, admission's gate (MEMPOOL_INTERFACE → Correctness
+      // gates) refuses it on `(voucher, target)`.
+      const { materializeOutput } = await import('@dagsocial/consensus');
+      const { computeTxId } = await import('@dagsocial/types');
+      const change1 = materializeOutput(firstTx.outputs[0]!, computeTxId(firstTx), 0) as KarmaBox;
+      const secondTx: UtxoTransaction = {
+        inputs: [change1.id!],
+        outputs: [
+          { boxType: 'karma', value: change1.value - VOUCH_KARMA_AMOUNT, createdAtBlock: 6, owner: voucherPubKey } as CandidateOf<KarmaBox>,
+          { boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: 6, voucherId: voucherPubKey, targetId: targetPubKey } as CandidateOf<VouchBox>,
+        ],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(secondTx, voucherPrivKey, voucherPubKeyHex);
 
       expect(() => castVouch(deps, secondTx, 6)).toThrow('A vouch for this pair is already pending');
     });

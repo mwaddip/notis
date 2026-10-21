@@ -119,10 +119,13 @@ export {
   removeUtxoTxEntry,
   hasPendingLike,
   countPendingInvites,
+  hasPendingInvitee,
+  hasPendingWithdraw,
   hasPendingVouch,
   hasPendingClaim,
   hasPendingClaimBy,
   pendingKarmaSpend,
+  gateMetadata,
   hasPendingSpend,
   findPendingOutput,
   getBoxWithPending,
@@ -132,7 +135,7 @@ export {
   PendingSpendConflictError,
   TxTooLargeError,
 } from './mempool.js';
-export type { PoolEntry } from './mempool.js';
+export type { PoolEntry, GateMetadata } from './mempool.js';
 
 export {
   ensureSystemKarmaBox,

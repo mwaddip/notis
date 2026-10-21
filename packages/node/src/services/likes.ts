@@ -3,7 +3,6 @@ import {
   getPost,
   isLivePost,
   hasLikeRecord,
-  hasPendingLike,
 } from '../store/index.js';
 import { validateTx } from '@dagsocial/consensus';
 import { admitWriteTx } from './admit-tx.js';
@@ -61,11 +60,13 @@ export function castLike(
     throw new ClientError('Cannot like a withdrawn post');
   }
 
-  // ---- 3. Verify not already liked (DB + mempool) ----
+  // ---- 3. Verify not already liked at the confirmed state ----
   // The liker is the karma inputs' owner, which for a well-formed like tx is
   // the single signing key — enforced here so the mempool gate's single-key
   // derivation (`like_liker`) is exact for every entry this path inserts, and
   // so a spare signature cannot pin someone else's `(liker, target)` pair.
+  // The pending-like gate rides admission (MEMPOOL_INTERFACE → Correctness
+  // gates), the confirmed check stays here.
   const signerHexes = Object.keys(tx.signatures);
   if (signerHexes.length !== 1) {
     throw new ClientError(
@@ -74,9 +75,6 @@ export function castLike(
   }
   const likerHex = signerHexes[0]!;
   if (hasLikeRecord(likeTarget, Buffer.from(likerHex, 'hex'))) {
-    throw new ClientError('Already liked this post');
-  }
-  if (hasPendingLike(likeTarget, likerHex)) {
     throw new ClientError('Already liked this post');
   }
 

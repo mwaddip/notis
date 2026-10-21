@@ -4,7 +4,7 @@ import {
   seedProvenance,
   signTransaction,
   solveHeaderPow,
-  makePostTx, seedPostTx, fillerTx, coinbaseOf,
+  makePostTx, seedPostTx, fillerTx, fillerInputBox, coinbaseOf,
   seedEmissionBox, makeApplicableBlock, liveProver, seedBoxes, applyBlockThroughIntake, wireIntakeForTests} from '../helpers.js';
 import type { AvlProverHandle } from '../../src/state/avl-prover.js';
 import type { StateRootSpeculation } from '../../src/services/block-apply.js';
@@ -391,6 +391,12 @@ describe('block-creator', () => {
       // Two entries, alike but for the version. At height 1 the era is 2, so the
       // version-1 entry is foreign — admitted under an earlier era, met by the
       // fill past the boundary. The producer skips it rather than evicting it.
+      const utxo = await importUtxo();
+      // The fill's dependency skip reads each entry's input through `getBox`
+      // (MEMPOOL_INTERFACE → Block Creator Integration), so the filler's
+      // stand-in input is seeded confirmed.
+      utxo.insertBox(fillerInputBox('era-2'));
+      utxo.insertBox(fillerInputBox('era-1'));
       const eraTx = { ...fillerTx('era-2'), protocolVersion: 2 };
       const foreignTx = fillerTx('era-1'); // PROTOCOL_VERSION = 1
       const foreignRow = mempool.insertUtxoTx(foreignTx, 1000);
@@ -800,9 +806,15 @@ describe('block-creator', () => {
      */
     async function fillPool(count: number, tag: string): Promise<number[]> {
       const mempool = await importMempoolFresh();
+      const utxo = await importUtxo();
       const rowids: number[] = [];
       for (let i = 0; i < count; i++) {
-        rowids.push(mempool.insertUtxoTx(fillerTx(`${tag}_${i}`), 5000));
+        const label = `${tag}_${i}`;
+        // The fill's dependency skip reads each entry's input through `getBox`
+        // (MEMPOOL_INTERFACE → Block Creator Integration), so the filler's
+        // stand-in input is seeded confirmed before the pool receives the row.
+        utxo.insertBox(fillerInputBox(label));
+        rowids.push(mempool.insertUtxoTx(fillerTx(label), 5000));
       }
       return rowids;
     }
@@ -917,11 +929,31 @@ describe('block-creator', () => {
       // and admission runs one conflicting-spend query per input per insert —
       // over the ~150-input transactions a 2 MB body needs, building this
       // through `insertUtxoTx` costs minutes and measures the admission path.
-      const bigTx = (label: string): UtxoTransaction => ({
-        inputs: Array.from({ length: 148 }, (_, i) =>
-          createHash('blake2b512').update(`${label}/${i}`).digest()
-            .subarray(0, 32).toString('hex'),
-        ),
+      //
+      // The 148 input ids are the same across every entry — the fill's
+      // dependency skip reads each through `getBox` (MEMPOOL_INTERFACE →
+      // Block Creator Integration), so 148 confirmed boxes seeded once
+      // satisfy every bigTx without a double-spend check at admission.
+      const SHARED_INPUT_IDS: string[] = Array.from({ length: 148 }, (_, i) =>
+        createHash('blake2b512').update(`big-shared/${i}`).digest()
+          .subarray(0, 32).toString('hex'),
+      );
+      const utxo = await importUtxo();
+      for (let i = 0; i < SHARED_INPUT_IDS.length; i++) {
+        const inputTxId = createHash('blake2b512').update(`big-shared-tx/${i}`)
+          .digest().subarray(0, 32).toString('hex');
+        utxo.insertBox({
+          boxType: 'credit',
+          value: 1n,
+          createdAtBlock: 0,
+          owner: new Uint8Array(32),
+          id: SHARED_INPUT_IDS[i],
+          txId: inputTxId,
+          index: 0,
+        } as never);
+      }
+      const bigTx = (_label: string): UtxoTransaction => ({
+        inputs: SHARED_INPUT_IDS,
         outputs: [],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
@@ -1065,6 +1097,11 @@ describe('block-creator', () => {
       // The payer arrives FIRST, so arrival order cannot explain the outcome.
       const payer = await seedCreditSpend('payer', 10_000n, 9_000n);
       mempool.insertUtxoTx(payer, 5000);
+      // The fill's dependency skip reads each entry's input through `getBox`
+      // (MEMPOOL_INTERFACE → Block Creator Integration), so the filler's
+      // stand-in input is seeded confirmed.
+      const utxo = await importUtxo();
+      utxo.insertBox(fillerInputBox('karma_side'));
       mempool.insertUtxoTx(fillerTx('karma_side') as UtxoTransaction, 5000);
 
       // A budget that admits exactly one of the two. Both costs are measured

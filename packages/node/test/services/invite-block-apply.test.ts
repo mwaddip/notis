@@ -270,12 +270,14 @@ describe('the invite at block application', () => {
     }
 
     // Last, so the tree is built over the pool, the bond and every like box
-    // the blocks below spend. Still ahead of `startBlockCreator`, which is what
-    // the emission box this also seeds has to precede: the creator's first
-    // `rebuildTemplate` speculates over a body this store cannot apply without
-    // one, and a `body-rejected` speculation **evicts the included mempool
-    // entries** — so a seed arriving later would leave the creator building
-    // correct, empty blocks over a pool it had already thrown away.
+    // the blocks below spend. Still ahead of `startBlockCreator`, which is
+    // what the emission box this also seeds has to precede: the creator's
+    // first `rebuildTemplate` speculates over a body this store cannot apply
+    // without one, and a `body-rejected` speculation whose screen refuses no
+    // pooled transaction **evicts every row the body carried** (`MINING_INTERFACE
+    // → Template and submit`) — so a seed arriving later would leave the
+    // creator building correct, empty blocks over a pool it had already
+    // thrown away.
     await activateProverOverStore();
 
     return {

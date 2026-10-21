@@ -3,6 +3,7 @@ import { Router } from 'express';
 import type { BackerPoolBox, BackerStakeBox, UtxoTransaction } from '@dagsocial/types';
 import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
 import { admitWriteTx } from '../services/admit-tx.js';
+import { ClientError } from '../services/client-error.js';
 import { getNet } from '../services/net-instance.js';
 import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
@@ -82,6 +83,25 @@ export function createRouter(deps: BackerRouteDeps): Router {
       tx = checkRequestTx(body.tx, deps.getCurrentHeight() + 1, deps.protocolVersionSchedule);
     } catch (err) {
       respondError(res, err, 'POST /backers/unstake (tx decode)', 'message');
+      return;
+    }
+
+    // NODE_INTERFACE → Backers: a transaction of any other shape is refused
+    // here, before admission; `validateTx`'s unstake arm answers everything
+    // else about the shape.
+    const outs = tx.outputs ?? [];
+    const markers = outs.filter((o) => o.boxType === 'backer_unstake');
+    const successors = outs.filter((o) => o.boxType === 'backer_stake');
+    if (markers.length !== 1 || successors.length > 1
+        || outs.length !== markers.length + successors.length) {
+      respondError(
+        res,
+        new ClientError(
+          'unstake outputs must be one backer_unstake marker and at most one backer_stake successor',
+        ),
+        'POST /backers/unstake',
+        'message',
+      );
       return;
     }
 

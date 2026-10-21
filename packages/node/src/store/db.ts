@@ -131,6 +131,7 @@ const MIGRATIONS = [
     like_target TEXT,
     like_liker TEXT,
     invite_inviter TEXT,
+    invite_invitee TEXT,
     vouch_voucher TEXT,
     vouch_target TEXT,
     tx_fee INTEGER,
@@ -143,6 +144,7 @@ const MIGRATIONS = [
     username_claimant TEXT,
     karma_owner TEXT,
     karma_spend INTEGER,
+    withdraw_post TEXT,
     cost_estimate INTEGER
   )`,
 
@@ -406,6 +408,12 @@ function migrateMempoolTxColumns(database: Database.Database): void {
   // the pool drains within `MEMPOOL_EXPIRY_BLOCKS` regardless.
   if (!has('karma_owner')) database.exec(`ALTER TABLE mempool ADD COLUMN karma_owner TEXT`);
   if (!has('karma_spend')) database.exec(`ALTER TABLE mempool ADD COLUMN karma_spend INTEGER`);
+  // The pending-invite-by-invitee gate and the pending-withdrawal-by-post gate
+  // key on these (MEMPOOL_INTERFACE → Correctness gates). A row written before
+  // either existed holds NULL and the gate's `EXISTS` reads nothing from it;
+  // the pool drains within `MEMPOOL_EXPIRY_BLOCKS` regardless.
+  if (!has('invite_invitee')) database.exec(`ALTER TABLE mempool ADD COLUMN invite_invitee TEXT`);
+  if (!has('withdraw_post')) database.exec(`ALTER TABLE mempool ADD COLUMN withdraw_post TEXT`);
   // A row written before this existed holds NULL, as a row the gate did not
   // cost does (MEMPOOL_INTERFACE → The cost gate).
   if (!has('cost_estimate')) database.exec(`ALTER TABLE mempool ADD COLUMN cost_estimate INTEGER`);
@@ -502,6 +510,10 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(username_claimant) WHERE username_claimant IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_karma_owner
       ON mempool(karma_owner) WHERE karma_owner IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_invite_invitee
+      ON mempool(invite_invitee) WHERE invite_invitee IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_withdraw_post
+      ON mempool(withdraw_post) WHERE withdraw_post IS NOT NULL;
   `);
 }
 

@@ -16,6 +16,7 @@ import {
   decodeTx,
   encodeTx,
   computeTxId,
+  computePostId,
   computeUtxoTxRoot,
   utxoTxTreeByteLength,
   interlinkRoot,
@@ -54,6 +55,7 @@ import {
   decayLegMaxBytes,
   karmaOwed,
   materializeOutput,
+  screenBody,
   settlementMarginalBytes,
   treeStateView,
   TreeInconsistencyError,
@@ -82,6 +84,8 @@ import {
   getInterlinks,
   getKarmaValue,
   getIdentityRecord,
+  getBox,
+  getTopologyAuthor,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -670,6 +674,13 @@ export function createOrderingBlock(): OrderingBlock | null {
     let settlementSpent = seededSettlementSpent;
     let estimated = emptyCost;
     const invitedThisBlock = new Set<string>();
+    // The ids of the outputs of entries already selected in this fill, and
+    // the post ids of the entries whose `tx.post` is already selected — the
+    // dependency skip's "an entry already selected in this fill" set
+    // (MEMPOOL_INTERFACE → Block Creator Integration). `fill` clears them
+    // beside the selection.
+    const selectedOutputIds = new Set<string>();
+    const selectedPostIds = new Set<string>();
     const offerBudgetTo = (klass: 'karma' | 'credit', scale: number): void => {
       for (const entry of iteratePendingEntries({ klass })) {
         if (entry.entryType !== 'utxo_tx' || entry.utxoTxBytes === null) continue;
@@ -679,10 +690,34 @@ export function createOrderingBlock(): OrderingBlock | null {
         // skipped entry leaves by expiry (MEMPOOL_INTERFACE → Block Creator
         // Integration).
         if (tx.protocolVersion !== era) continue;
+        // The fill skips an entry whose input, like target, reply parent or
+        // withdrawn post the body under build does not hold (MEMPOOL_INTERFACE
+        // → Block Creator Integration). Confirmed state is the store's at the
+        // tip — the state the fill's view reads — and `selectedOutputIds` and
+        // `selectedPostIds` carry the outputs and the posts of entries
+        // already selected in this fill. A skipped entry stays pooled; one
+        // whose dependency never comes leaves by expiry.
+        let depMissing = false;
+        for (const inputId of tx.inputs) {
+          if (selectedOutputIds.has(inputId)) continue;
+          if (getBox(inputId) !== null) continue;
+          depMissing = true;
+          break;
+        }
+        if (depMissing) continue;
+        if (tx.likeTarget !== undefined) {
+          if (!selectedPostIds.has(tx.likeTarget) && getTopologyAuthor(tx.likeTarget) === null) continue;
+        }
+        if (tx.post !== undefined && tx.post.parentRefs.length > 0) {
+          const parent = tx.post.parentRefs[0]!;
+          if (!selectedPostIds.has(parent) && getTopologyAuthor(parent) === null) continue;
+        }
+        if (tx.postWithdraw !== undefined) {
+          if (getTopologyAuthor(tx.postWithdraw.postId) === null) continue;
+        }
         const txId = computeTxId(tx);
-        const bondOut = bondOutputOf(
-          tx.outputs.map((out, i) => materializeOutput(out, txId, i)),
-        );
+        const outputsWithIds = tx.outputs.map((out, i) => materializeOutput(out, txId, i));
+        const bondOut = bondOutputOf(outputsWithIds);
         if (bondOut !== null) {
           const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
           if (invitedThisBlock.has(inviteeHex)) continue;
@@ -716,6 +751,8 @@ export function createOrderingBlock(): OrderingBlock | null {
         settlementSpent += settlementBytes;
         estimated += scaled;
         selection.push({ txId, txBytes: entry.utxoTxBytes, rowid: entry.rowid, estimate, squaringBytes });
+        for (const output of outputsWithIds) selectedOutputIds.add(output.id!);
+        if (tx.post !== undefined) selectedPostIds.add(computePostId(txId, 0));
       }
     };
 
@@ -784,6 +821,8 @@ export function createOrderingBlock(): OrderingBlock | null {
       settlementSpent = seededSettlementSpent;
       estimated = emptyCost;
       invitedThisBlock.clear();
+      selectedOutputIds.clear();
+      selectedPostIds.clear();
       offerBudgetTo('karma', scale);
       offerBudgetTo('credit', scale);
       offerRent(scale);
@@ -1049,17 +1088,17 @@ export function createOrderingBlock(): OrderingBlock | null {
       return decline(`the body with no user transaction is over the budget: ${run.speculation.reason}`);
     }
 
-    // 19d. A body the mutation phase rejected is evicted and the build repeats
-    // from purgeExpired, until the body holds or no pool row remains to evict
-    // (MINING_INTERFACE → Template and submit). Reachable with unmutated code:
-    // a pooled tx whose validity reads third-party state (a bond settlement's
-    // threshold leg) goes stale in the pool while its inputs stay live. Evict
-    // what the body included — the same cleanup a refused mined block runs — or
-    // every later rebuild reassembles this exact body: purgeExpired cannot break
-    // that loop, because it keys on a chain height that stops advancing. A
-    // rejected body that carried no pool row is terminal: the chain state cannot
-    // back even the empty body, or a defect is throwing, and no repetition
-    // changes either.
+    // 19d. A body the mutation phase rejected loses the rows the screen
+    // refuses, where it refuses a pooled transaction; every row the body
+    // carried, where it refuses no pooled one — the settlement, the signature
+    // batch or a throw refused the body and the build must still move the
+    // chain (MINING_INTERFACE → Template and submit; MEMPOOL_INTERFACE →
+    // Block Creator Integration). The build repeats from `purgeExpired` until
+    // a template holds or a body carrying no pool row is rejected; every
+    // repetition removes at least one row, which is what bounds the loop. A
+    // rejected body that carried no pool row is terminal: the chain state
+    // cannot back even the empty body, or a defect is throwing, and no
+    // repetition changes either.
     const rowids = rowidsOf(selection.slice(0, run.length));
     if (run.speculation.kind === 'body-rejected') {
       if (rowids.size === 0) {
@@ -1071,15 +1110,32 @@ export function createOrderingBlock(): OrderingBlock | null {
         confirmedRowids = new Set();
         return null;
       }
-      // States the verdict, not the cause: `body-rejected` also carries the
-      // speculation's unclaimed throws, which that arm logs itself. Naming the
-      // mutation phase here would assert a diagnosis this frame does not have.
-      console.warn(
-        `Block at height ${newHeight}: speculation returned body-rejected; ` +
-        `evicting ${rowids.size} mempool entries and rebuilding`,
-      );
-      for (const rowid of rowids) {
-        removeEntry(rowid);
+      // Screen the rejected body over the fill's own pre-body view — the one
+      // `bodyOf` built against — and evict the row of every refused index
+      // that carries one. The screen writes nothing to the view
+      // (CONSENSUS_INTERFACE → Screening a body); `refused[i].index` is the
+      // position in `run.candidate.utxoTxTree.utxoTxIds`, which is
+      // `selection`'s index for the first `run.length` entries.
+      const screen = screenBody(view, run.candidate, applyContextFrom(nodeConfig));
+      const evicted = new Set<number>();
+      for (const { index } of screen.refused) {
+        if (index >= run.length) continue;
+        const rowid = selection[index]!.rowid;
+        if (rowid !== null) evicted.add(rowid);
+      }
+      if (evicted.size === 0) {
+        console.error(
+          `INTERNAL: Block at height ${newHeight}: speculation returned ` +
+          `body-rejected and the screen refused no pooled transaction; ` +
+          `evicting all ${rowids.size} mempool entries the body carried`,
+        );
+        for (const rowid of rowids) removeEntry(rowid);
+      } else {
+        console.warn(
+          `Block at height ${newHeight}: speculation returned body-rejected; ` +
+          `evicting ${evicted.size} mempool entries the body's screen refused`,
+        );
+        for (const rowid of evicted) removeEntry(rowid);
       }
       confirmedRowids = new Set();
       continue;

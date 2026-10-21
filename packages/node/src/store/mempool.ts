@@ -325,16 +325,18 @@ function assertCapacity(
   db.prepare('DELETE FROM mempool WHERE rowid = ?').run(cheapest.rowid);
 }
 
-interface GateMetadata {
+export interface GateMetadata {
   likeTarget: string | null;
   likeLiker: string | null;
   inviteInviter: string | null;
+  inviteInvitee: string | null;
   vouchVoucher: string | null;
   vouchTarget: string | null;
   usernameLower: string | null;
   usernameClaimant: string | null;
   karmaOwner: string | null;
   karmaSpend: bigint | null;
+  withdrawPost: string | null;
 }
 
 /**
@@ -344,6 +346,9 @@ interface GateMetadata {
  * kind wins for the output-derived columns — the gate columns are singular per
  * the contract, matching the services' own `outputs.find(...)` semantics.
  *
+ * MEMPOOL_INTERFACE → Correctness gates. Exported so admission reads the same
+ * fields the row carries — one derivation, read twice.
+ *
  * The like columns derive from the tx-level `likeTarget` field: a like is a
  * burn transaction, not a box. The liker is the karma inputs' owner — the
  * single signing key. The store cannot resolve input boxes, so the signature
@@ -352,18 +357,24 @@ interface GateMetadata {
  * unpaired row matches no `hasPendingLike` query, and a spare signature cannot
  * pin someone else's `(liker, target)` pair).
  */
-function gateMetadata(tx: UtxoTransaction): GateMetadata {
+export function gateMetadata(tx: UtxoTransaction): GateMetadata {
   const meta: GateMetadata = {
     likeTarget: null,
     likeLiker: null,
     inviteInviter: null,
+    inviteInvitee: null,
     vouchVoucher: null,
     vouchTarget: null,
     usernameLower: null,
     usernameClaimant: null,
     karmaOwner: null,
     karmaSpend: null,
+    withdrawPost: null,
   };
+
+  if (tx.postWithdraw !== undefined) {
+    meta.withdrawPost = tx.postWithdraw.postId;
+  }
 
   if (tx.likeTarget !== undefined) {
     meta.likeTarget = tx.likeTarget;
@@ -414,6 +425,7 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
     // an inviter with a pending invite — and only the box carrying it moved.
     if (output.boxType === 'bond' && meta.inviteInviter === null) {
       meta.inviteInviter = Buffer.from((output as BondBox).inviterId).toString('hex');
+      meta.inviteInvitee = Buffer.from((output as BondBox).inviteePublicKey).toString('hex');
     } else if (output.boxType === 'vouch' && meta.vouchVoucher === null) {
       meta.vouchVoucher = Buffer.from((output as VouchBox).voucherId).toString('hex');
       meta.vouchTarget = Buffer.from((output as VouchBox).targetId).toString('hex');
@@ -504,20 +516,22 @@ export function insertUtxoTx(
   const meta = gateMetadata(tx);
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
-                          like_target, like_liker, invite_inviter, vouch_voucher,
-                          vouch_target,
+                          like_target, like_liker, invite_inviter, invite_invitee,
+                          vouch_voucher, vouch_target,
                           tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
                           max_valid_height,
                           username_lower, username_claimant,
                           karma_owner, karma_spend,
+                          withdraw_post,
                           cost_estimate)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(encoded),
     expiresAtHeight,
     meta.likeTarget,
     meta.likeLiker,
     meta.inviteInviter,
+    meta.inviteInvitee,
     meta.vouchVoucher,
     meta.vouchTarget,
     JSON.stringify(inputs),
@@ -530,6 +544,7 @@ export function insertUtxoTx(
     meta.usernameClaimant,
     meta.karmaOwner,
     meta.karmaSpend,
+    meta.withdrawPost,
     costEstimate,
   );
   return Number(result.lastInsertRowid);
@@ -566,6 +581,26 @@ export function countPendingInvites(inviterId: string): number {
     `SELECT COUNT(*) AS n FROM mempool WHERE invite_inviter = ?`,
   ).get(inviterId) as { n: number };
   return row.n;
+}
+
+// MEMPOOL_INTERFACE → Correctness gates — the invitee is an account once the
+// first bond lands, so a second bond naming the same key can never apply.
+export function hasPendingInvitee(inviteeId: string): boolean {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT 1 FROM mempool WHERE invite_invitee = ? LIMIT 1`,
+  ).get(inviteeId);
+  return row !== undefined;
+}
+
+// MEMPOOL_INTERFACE → Correctness gates — a second withdrawal of a post one
+// pending row already withdraws.
+export function hasPendingWithdraw(postId: string): boolean {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT 1 FROM mempool WHERE withdraw_post = ? LIMIT 1`,
+  ).get(postId);
+  return row !== undefined;
 }
 
 export function hasPendingVouch(voucherId: string, targetId: string): boolean {

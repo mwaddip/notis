@@ -43,6 +43,8 @@ const GATE_INDEX_NAMES = [
   'idx_mempool_username_lower',
   'idx_mempool_username_claimant',
   'idx_mempool_karma_owner',
+  'idx_mempool_invite_invitee',
+  'idx_mempool_withdraw_post',
 ];
 
 // Pre-column mempool schema: literal SQL without the six ALTER columns and

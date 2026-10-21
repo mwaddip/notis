@@ -3,8 +3,9 @@ import {
   KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type { BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
-import { isMember, isRoot, materializeOutput, validateTx } from '@dagsocial/consensus';
+import { materializeOutput, validateTx } from '@dagsocial/consensus';
 import { admitWriteTx } from './admit-tx.js';
+import { availableInvites } from './invites-available.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { ClientError } from './client-error.js';
 
@@ -50,23 +51,24 @@ export function createInvite(
   }
 
   // ---- 0. The inviter is a root, or a member with an invite available ----
+  // The number both the gate (MEMPOOL_INTERFACE → Correctness gates) and this
+  // service read is `availableInvites`, one definition — a pure function the
+  // service hands its `deps` reads and admission the store's.
   const inviterRecord = deps.getIdentityRecord(karmaInput.owner);
-  if (!inviterRecord) {
+  const nr = deps.getNetworkRecord();
+  const available = availableInvites(inviterRecord, nr.memberCount, deps.membershipBarMultiplier);
+  if (available === 'no-record') {
     throw new ClientError('Inviter holds no identity record');
   }
-  if (!isRoot(inviterRecord)) {
-    if (!isMember(inviterRecord)) {
-      throw new ClientError('Only a root or a member may invite');
-    }
-    const nr = deps.getNetworkRecord();
+  if (available === 'none') {
+    throw new ClientError('Only a root or a member may invite');
+  }
+  if (typeof available === 'number' && available < 1) {
     const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
-    const available = Math.floor(inviterRecord.memberVouches / d) - inviterRecord.invitesUsed;
-    if (available < 1) {
-      throw new ClientError(
-        `No invites available (vouches: ${inviterRecord.memberVouches}, ` +
-        `D: ${d}, used: ${inviterRecord.invitesUsed})`,
-      );
-    }
+    throw new ClientError(
+      `No invites available (vouches: ${inviterRecord!.memberVouches}, ` +
+      `D: ${d}, used: ${inviterRecord!.invitesUsed})`,
+    );
   }
 
   // ---- 2. Verify outputs: exactly 1 bond, at most 1 karma, nothing else ----

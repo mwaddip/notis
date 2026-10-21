@@ -322,12 +322,18 @@ when one is produced are separate questions, and a rebuild mid-solve would void 
 in-flight work. **A block the node refuses does not touch it either** — a refusal moves no tip, so
 the template stands and a solve under way stays submittable (NODE_INTERFACE → Triggers).
 
-**A build whose body the mutation phase rejects is repeated, not abandoned.** The creator evicts
-every pool row the rejected body carried — the cleanup a rejected
-finalize runs — and fills again from what the pool still holds, until it holds a template or a body
-carrying **no pool row** is rejected. Every repetition strictly shrinks the pool, which is what bounds
-the loop. A rejected body that carried nothing is terminal: the chain state cannot back even the
-empty body, or a defect is throwing, and no repetition changes either — the creator logs it once
+**A build whose body the mutation phase rejects is repeated, not abandoned, and it evicts what the body's own
+transactions refuse.** The creator screens the rejected body (`CONSENSUS_INTERFACE → Screening a body`), evicts the
+pool row of every transaction the screen refuses — the cleanup a rejected finalize runs — and fills again from what the
+pool still holds, until it holds a template or a body carrying **no pool row** is rejected. A transaction the screen
+refuses fails against the state the body leaves before it: gone stale since its admission (a like of a post since
+withdrawn, a bond naming a key that has since become an account), or invalid beside a transaction ahead of it. It is
+never one that waits: the fill selects no entry that depends on what its body does not hold (`MEMPOOL_INTERFACE →
+Block Creator Integration`). **A rejected body the screen refuses no pooled transaction of is evicted whole** — the
+screen refused nothing, or only a rent transaction this node built, which carries no row — and the creator logs it as
+internal: no pooled transaction accounts for the refusal, and the build must still move the chain. Every repetition
+strictly shrinks the pool, which is what bounds the loop. A rejected body that carried nothing is terminal: the chain
+state cannot back even the empty body, or a defect is throwing, and no repetition changes either — the creator logs it once
 (`Not producing block at height N: …`) and holds no template until the tip moves. A settlement this
 chain cannot build at all (no emission box at a height that releases, no karma pool at a height that
 draws on it) is terminal on the first attempt for the same reason. The loop runs only inside a build

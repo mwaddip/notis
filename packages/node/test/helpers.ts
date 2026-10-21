@@ -291,11 +291,45 @@ function fixtureNonce(content: string): number {
  * capacity or FIFO test measure the conflict rule instead.
  */
 export function fillerTx(label: string): UtxoTransaction {
-  const id = createHash('blake2b512')
+  return { inputs: [fillerInputBoxId(label)], outputs: [], signatures: {}, protocolVersion: PROTOCOL_VERSION };
+}
+
+/**
+ * The id of the input box `fillerTx(label)` spends — the hash a label derives.
+ * The fill's dependency skip reads the input through `getBox`
+ * (MEMPOOL_INTERFACE → Block Creator Integration), so a test whose subject is
+ * the fill's selection seeds a confirmed box under this id with
+ * `fillerInputBox(label)` before offering the filler to the pool.
+ */
+export function fillerInputBoxId(label: string): string {
+  return createHash('blake2b512')
     .update(new TextEncoder().encode('dagsocial/test-filler/1'))
     .update(new TextEncoder().encode(label))
     .digest().subarray(0, 32).toString('hex');
-  return { inputs: [id], outputs: [], signatures: {}, protocolVersion: PROTOCOL_VERSION };
+}
+
+/**
+ * A confirmed credit box the fill's dependency skip finds for
+ * `fillerTx(label)` — the stand-in input for a filler whose subject is the
+ * mempool's bookkeeping. Its id is pre-set to `fillerInputBoxId(label)`;
+ * `store/utxo.insertBox` writes the row by that id without recomputing it.
+ * `txId` is label-derived so two fillers' boxes do not collide on the
+ * `utxo_boxes.(tx_id, output_index)` uniqueness.
+ */
+export function fillerInputBox(label: string): CreditBox {
+  const txId = createHash('blake2b512')
+    .update(new TextEncoder().encode('dagsocial/test-filler-input-tx/1'))
+    .update(new TextEncoder().encode(label))
+    .digest().subarray(0, 32).toString('hex');
+  return {
+    boxType: 'credit',
+    value: 1n,
+    createdAtBlock: 0,
+    owner: new Uint8Array(32),
+    id: fillerInputBoxId(label),
+    txId,
+    index: 0,
+  } as CreditBox;
 }
 
 /**
