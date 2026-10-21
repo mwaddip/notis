@@ -2,7 +2,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createPublicKey as nodeCreatePublicKey, verify as nodeVerify } from 'node:crypto';
 import { generateKeyPair, ED25519_SPKI_PREFIX } from '@dagsocial/types';
-import { IdentityModule, IDENTITY_KEY, type Identity } from '../src/identity/identity';
+import { IdentityModule, type Identity } from '../src/identity/identity';
+import { IDENTITY_KEY } from '../src/extension/storage-keys';
 
 // The identity module holds one key as an encrypted envelope, decrypts the seed on
 // demand, and never lets the seed cross its boundary (WEB_INTERFACE → The identity

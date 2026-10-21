@@ -2,6 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { generateKeyPair, bytesToHex, hexToBytes } from '@dagsocial/types';
 import { readStore, writeStore, removeStore } from '../prefs';
 import { seal, open, parseFile, IdentityError, type Envelope, type ParsedFile } from './envelope';
+import { IDENTITY_KEY, BACKEDUP_KEY } from '../extension/storage-keys';
 import type { SignResult } from '../wallet/submit';
 
 // The identity machinery — WEB_INTERFACE → The identity module. One identity at a
@@ -20,14 +21,6 @@ export { IdentityError } from './envelope';
 export interface Identity {
   pubKeyHex: string; // 64 hex — the Ed25519 public key
 }
-
-/** The localStorage key holding the one identity — WEB_INTERFACE → The identity module. */
-export const IDENTITY_KEY = 'notis.identity';
-
-/** The flag recording that the loaded key has been written to a file — unset by
- *  generate, set by import and by export, cleared by forget (WEB_INTERFACE → The
- *  profile window, the Create and Export operations). */
-const BACKEDUP_KEY = 'notis.identity.backedup';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 

@@ -3,6 +3,7 @@ import type { SignResult } from '../wallet/submit';
 import { bytesToHex } from '@dagsocial/types';
 import type { Message, AppSnapshot, SignAnswer, SignHint, SignRecord } from './protocol';
 import { K_LINKS, LINKS_DEFAULT, readLinksPref, type LinksPref } from './links';
+import { IDENTITY_KEY, BACKEDUP_KEY, POLICY_KEY, SEED_KEY } from './storage-keys';
 
 // The page-side identity — WEB_INTERFACE → The extension. It never holds a
 // seed; every operation is a message to the background, and change
@@ -11,10 +12,6 @@ import { K_LINKS, LINKS_DEFAULT, readLinksPref, type LinksPref } from './links';
 // constructs and kept fresh from storage events, so the render path stays
 // synchronous.
 
-const K_ENVELOPE = 'notis.identity';
-const K_BACKEDUP = 'notis.identity.backedup';
-const K_POLICY = 'notis.signPolicy';
-const K_SEED = 'notis.seed';
 const K_SIGN_PREFIX = 'notis.sign.';
 
 /** The build-time configuration the proxy carries — WEB_INTERFACE → The
@@ -251,8 +248,8 @@ export class ExtensionProxy implements AppIdentity {
       this.linksHeld = readLinksPref(changes[K_LINKS]!.newValue);
     }
     const relevant =
-      (area === 'local' && (K_ENVELOPE in changes || K_BACKEDUP in changes || K_POLICY in changes)) ||
-      (area === 'session' && K_SEED in changes);
+      (area === 'local' && (IDENTITY_KEY in changes || BACKEDUP_KEY in changes || POLICY_KEY in changes)) ||
+      (area === 'session' && SEED_KEY in changes);
     if (!relevant) return;
     await this.refreshSnapshot();
   }
