@@ -1193,6 +1193,75 @@ describe('in one session the submission card stands for the reader\'s own pendin
 });
 
 // ---------------------------------------------------------------------------
+// `changeNode` leaves `state.submissions` alone (only an identity change
+// clears it), so a submission card standing from the composer's own path
+// stands through a reading-node change, and the new node's first feed page
+// answers that id among `pending` — `takeFeedPage` reads
+// `pendingWithoutStandingCards` over `standingCardIds` and keeps the row off
+// the screen (WEB_INTERFACE → What the feed reads, and what a card shows for
+// it → "The reader's own pending post is drawn once").
+//
+// Entered through `changeNode` on the drive — the handler the settings node
+// field's `change` event fires through `handlers.setNode(input.value)` in
+// `view/settings.ts`, which is bound in `app.ts` as
+// `setNode: (origin) => void this.changeNode(origin)`.
+// ---------------------------------------------------------------------------
+describe('the submission card survives a reading-node change and stands for the new node\'s pending row', () => {
+  it('the composer posts a root; the reader commits a new node; the new node\'s first feed page answers that id in pending — the row is not drawn and one card with the post\'s text stands', async () => {
+    const idObj = lockableIdentity(ME, false);
+    const wr = recordingWrites(idObj);
+    const newPostId = hid('nodechange');
+    wr.nextPostId = newPostId;
+    const nodeRow = fullRow('nodechange', { id: newPostId, author: ME, status: 'pending', content: 'across the node change' });
+    const h = harness({
+      resolver: null, verifier: null, cache: null, identityKey: ME,
+      identity: idObj.identity,
+      writeClient: wr.client,
+      karma: karmaWithBox(ME),
+      feedResults: [
+        // The first feed read: empty, as the composer opens.
+        { posts: [], next: null, pending: [], pendingCount: 0 },
+        // The new node's first feed page carries the row among pending —
+        // `changeNode` calls `loadFeed`, which reads this entry.
+        { posts: [], next: null, pending: [nodeRow], pendingCount: 1 },
+      ],
+    });
+    const drive = h.drive as unknown as {
+      openComposer(p: string | null): void;
+      submitComposer(p: string | null, text: string): Promise<void>;
+      loadMembershipState(): Promise<void>;
+      changeNode(origin: string): Promise<void>;
+    };
+    await h.drive.loadFeed();
+    await drive.loadMembershipState();
+    await flush();
+    drive.openComposer(null);
+    await flush();
+    await drive.submitComposer(null, 'across the node change');
+    await flush();
+    // The submission card stands in state.submissions with its postId — a
+    // control over the composer's path.
+    const sub = h.drive.state.submissions.find((s) => s.postId === newPostId);
+    expect(sub).toBeDefined();
+    // The reading node changes — `changeNode` drops the feed's rows and reads
+    // the new node's feed. `state.submissions` is unchanged by the node
+    // change (only an identity change clears it).
+    await drive.changeNode('http://new-node');
+    await settle();
+    // The submission still stands — a control that the node change kept it.
+    expect(h.drive.state.submissions.find((s) => s.postId === newPostId)).toBeDefined();
+    // The row is not drawn in feed.pending — `takeFeedPage`'s filter dropped
+    // it because the submission card names its id.
+    expect(h.drive.state.feed.pending.length).toBe(0);
+    // One card with the post's text stands in the feed's DOM — the
+    // submission card.
+    const cards = Array.from(h.feedEl.querySelectorAll('.card'));
+    const text = cards.map((c) => c.textContent ?? '').filter((t) => t.includes('across the node change'));
+    expect(text.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A resolve that rejects closes its slots with no line.
 // ---------------------------------------------------------------------------
 describe('a resolve that rejects closes its slots with no line', () => {
