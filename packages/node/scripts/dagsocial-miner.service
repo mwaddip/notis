@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# The operator fills the Environment= lines (NODE_INTERFACE → The packaged node).
 Environment="NODE_URL=https://your-node.example.com/testnet/api"
 Environment="MINER_PCT=25"
 Environment="MINING_SECRET=CHANGE_ME"

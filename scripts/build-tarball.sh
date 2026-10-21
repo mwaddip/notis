@@ -49,6 +49,7 @@ done
 # 2. Bundle the official Node linux-x64 runtime
 # ---------------------------------------------------------------------------
 echo "==> Downloading Node $NODE_VER runtime"
+# The runtime is taken from nodejs.org as served, with no checksum (NODE_INTERFACE → The packaged node).
 curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-x64.tar.xz" | tar -xJ -C "$STAGE"
 cp "$STAGE/node-${NODE_VER}-linux-x64/bin/node" "$APP/bin/node"
 chmod +x "$APP/bin/node"

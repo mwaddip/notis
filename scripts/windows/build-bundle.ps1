@@ -45,6 +45,7 @@ if (-not (Test-Path "$Stage\app\packages\node\dist\index.js")) { throw "node dis
 # --- 3. Bundle the official Node win-x64 runtime -----------------------------
 Write-Host "==> Downloading Node $NodeVer win-x64"
 $Zip = Join-Path $Temp "node.zip"
+# The runtime is taken from nodejs.org as served, with no checksum (NODE_INTERFACE → The packaged node).
 Invoke-WebRequest -Uri "https://nodejs.org/dist/$NodeVer/node-$NodeVer-win-x64.zip" -OutFile $Zip
 Expand-Archive -Path $Zip -DestinationPath (Join-Path $Temp "nodert") -Force
 Copy-Item (Join-Path $Temp "nodert\node-$NodeVer-win-x64\node.exe") "$Stage\node\node.exe"

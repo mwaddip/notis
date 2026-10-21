@@ -6,6 +6,7 @@ After=network-online.target dagsocial-node.service
 Wants=network-online.target dagsocial-node.service
 
 [Service]
+# The service runs as root, unsandboxed (NODE_INTERFACE → The packaged node).
 Type=simple
 EnvironmentFile=/etc/dagsocial/faucet.env
 WorkingDirectory=/opt/dagsocial

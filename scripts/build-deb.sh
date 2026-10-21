@@ -87,6 +87,7 @@ cp "$REPO_ROOT/tools/faucet/scripts/dagsocial-faucet.service" \
 # ---------------------------------------------------------------------------
 # 6. Default environment file
 # ---------------------------------------------------------------------------
+# The env files ship at the build's default mode (NODE_INTERFACE → The packaged node).
 cat > "$STAGING/etc/dagsocial/node.env" <<'ENVEOF'
 # DAGsocial node environment — edit after install
 NODE_ROLE=server
@@ -170,6 +171,7 @@ set -e
 
 # Create data directory
 mkdir -p /var/lib/dagsocial
+# The store is root's (NODE_INTERFACE → The packaged node).
 chown -R root:root /var/lib/dagsocial
 
 # Enable and start the service if this is an install (not upgrade)
