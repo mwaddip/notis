@@ -261,7 +261,7 @@ describe('refuseNodeBuiltins — each build config refuses a namespace import of
     expect(message).toContain("'node:crypto'");
   });
 
-  it.fails('vite.bridge.config.ts refuses', async () => {
+  it('vite.bridge.config.ts refuses', async () => {
     const message = await buildNamespaceCryptoRejection(VITE_BRIDGE_CONFIG);
     expect(message).toContain('refuse-node-builtins');
     expect(message).toContain("'node:crypto'");
