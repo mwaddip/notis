@@ -1330,7 +1330,7 @@ describe('a stored tip whose body will not read', () => {
     vi.resetModules();
   });
 
-  it.fails('the template reads the previous header alone', async () => {
+  it('the template reads the previous header alone', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
