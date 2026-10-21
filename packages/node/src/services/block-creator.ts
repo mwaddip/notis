@@ -16,6 +16,7 @@ import {
   decodeTx,
   encodeTx,
   computeTxId,
+  computePostId,
   computeUtxoTxRoot,
   utxoTxTreeByteLength,
   interlinkRoot,
@@ -83,6 +84,8 @@ import {
   getInterlinks,
   getKarmaValue,
   getIdentityRecord,
+  getBox,
+  getTopologyAuthor,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -671,6 +674,13 @@ export function createOrderingBlock(): OrderingBlock | null {
     let settlementSpent = seededSettlementSpent;
     let estimated = emptyCost;
     const invitedThisBlock = new Set<string>();
+    // The ids of the outputs of entries already selected in this fill, and
+    // the post ids of the entries whose `tx.post` is already selected — the
+    // dependency skip's "an entry already selected in this fill" set
+    // (MEMPOOL_INTERFACE → Block Creator Integration). `fill` clears them
+    // beside the selection.
+    const selectedOutputIds = new Set<string>();
+    const selectedPostIds = new Set<string>();
     const offerBudgetTo = (klass: 'karma' | 'credit', scale: number): void => {
       for (const entry of iteratePendingEntries({ klass })) {
         if (entry.entryType !== 'utxo_tx' || entry.utxoTxBytes === null) continue;
@@ -680,10 +690,34 @@ export function createOrderingBlock(): OrderingBlock | null {
         // skipped entry leaves by expiry (MEMPOOL_INTERFACE → Block Creator
         // Integration).
         if (tx.protocolVersion !== era) continue;
+        // The fill skips an entry whose input, like target, reply parent or
+        // withdrawn post the body under build does not hold (MEMPOOL_INTERFACE
+        // → Block Creator Integration). Confirmed state is the store's at the
+        // tip — the state the fill's view reads — and `selectedOutputIds` and
+        // `selectedPostIds` carry the outputs and the posts of entries
+        // already selected in this fill. A skipped entry stays pooled; one
+        // whose dependency never comes leaves by expiry.
+        let depMissing = false;
+        for (const inputId of tx.inputs) {
+          if (selectedOutputIds.has(inputId)) continue;
+          if (getBox(inputId) !== null) continue;
+          depMissing = true;
+          break;
+        }
+        if (depMissing) continue;
+        if (tx.likeTarget !== undefined) {
+          if (!selectedPostIds.has(tx.likeTarget) && getTopologyAuthor(tx.likeTarget) === null) continue;
+        }
+        if (tx.post !== undefined && tx.post.parentRefs.length > 0) {
+          const parent = tx.post.parentRefs[0]!;
+          if (!selectedPostIds.has(parent) && getTopologyAuthor(parent) === null) continue;
+        }
+        if (tx.postWithdraw !== undefined) {
+          if (getTopologyAuthor(tx.postWithdraw.postId) === null) continue;
+        }
         const txId = computeTxId(tx);
-        const bondOut = bondOutputOf(
-          tx.outputs.map((out, i) => materializeOutput(out, txId, i)),
-        );
+        const outputsWithIds = tx.outputs.map((out, i) => materializeOutput(out, txId, i));
+        const bondOut = bondOutputOf(outputsWithIds);
         if (bondOut !== null) {
           const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
           if (invitedThisBlock.has(inviteeHex)) continue;
@@ -717,6 +751,8 @@ export function createOrderingBlock(): OrderingBlock | null {
         settlementSpent += settlementBytes;
         estimated += scaled;
         selection.push({ txId, txBytes: entry.utxoTxBytes, rowid: entry.rowid, estimate, squaringBytes });
+        for (const output of outputsWithIds) selectedOutputIds.add(output.id!);
+        if (tx.post !== undefined) selectedPostIds.add(computePostId(txId, 0));
       }
     };
 
@@ -785,6 +821,8 @@ export function createOrderingBlock(): OrderingBlock | null {
       settlementSpent = seededSettlementSpent;
       estimated = emptyCost;
       invitedThisBlock.clear();
+      selectedOutputIds.clear();
+      selectedPostIds.clear();
       offerBudgetTo('karma', scale);
       offerBudgetTo('credit', scale);
       offerRent(scale);

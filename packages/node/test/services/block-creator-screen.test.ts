@@ -296,7 +296,7 @@ describe('block creator vs a screened body', () => {
     vi.resetModules();
   });
 
-  it.fails('a credit child ahead of its parent stays pooled; the template carries the five honest and the parent, and the next template carries the child', async () => {
+  it('a credit child ahead of its parent stays pooled; the template carries the five honest and the parent, and the next template carries the child', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -520,7 +520,7 @@ describe('block creator vs a screened body', () => {
     expect(internals[0]).toContain('body-rejected');
   });
 
-  it.fails('a reply ahead of its parent stays pooled; the template carries the parent and not the reply', async () => {
+  it('a reply ahead of its parent stays pooled; the template carries the parent and not the reply', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -569,7 +569,7 @@ describe('block creator vs a screened body', () => {
     expect(warns.filter((w) => w.includes('body-rejected'))).toHaveLength(0);
   });
 
-  it.fails('a like and a withdrawal whose posts are unconfirmed stay pooled; the template holds neither and no body-rejected warning fires', async () => {
+  it('a like and a withdrawal whose posts are unconfirmed stay pooled; the template holds neither and no body-rejected warning fires', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
