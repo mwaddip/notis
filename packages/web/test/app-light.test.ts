@@ -1201,10 +1201,9 @@ describe('in one session the submission card stands for the reader\'s own pendin
 // the screen (WEB_INTERFACE → What the feed reads, and what a card shows for
 // it → "The reader's own pending post is drawn once").
 //
-// Entered through `changeNode` on the drive — the handler the settings node
-// field's `change` event fires through `handlers.setNode(input.value)` in
-// `view/settings.ts`, which is bound in `app.ts` as
-// `setNode: (origin) => void this.changeNode(origin)`.
+// Entered through `changeNode` on the drive — the handler the settings
+// node field's `change` event fires through `handlers.setNode(input.value)`,
+// which the App binds as `setNode: (origin) => void this.changeNode(origin)`.
 // ---------------------------------------------------------------------------
 describe('the submission card survives a reading-node change and stands for the new node\'s pending row', () => {
   it('the composer posts a root; the reader commits a new node; the new node\'s first feed page answers that id in pending — the row is not drawn and one card with the post\'s text stands', async () => {
@@ -1522,7 +1521,7 @@ describe('a report counts the posts that stand', () => {
     await settle();
     expect(h.drive.state.feed.olderReport).toBe('2 older posts');
     // `renderFeedInto` draws `olderReport` as a `.note` span inside the
-    // `.feed-foot` (src/view/feed.ts).
+    // `.feed-foot`.
     expect(h.feedEl.querySelector('.feed-foot .note')?.textContent).toBe('2 older posts');
     const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
     call!.end({ [la.id]: 'unserved' });
@@ -1577,8 +1576,8 @@ describe('a report counts the posts that stand', () => {
       state: AppState;
     }).state.workspace.columns[0]!;
     expect(column.report).toBe('2 new posts');
-    // `renderRegionElement` draws `column.report` as a `.report` node
-    // under the region (src/view/panes.ts, through `reportNode`).
+    // `renderRegionElement` draws `column.report` through `reportNode` as
+    // a `.report` node under the region.
     expect(h.panes.querySelector('.region .report')?.textContent).toBe('2 new posts');
     const call = r.calls.find((c) => c.ids.length === 2 && c.ids.includes(la.id));
     call!.end({ [la.id]: 'unserved' });
@@ -1616,8 +1615,8 @@ describe('a report counts the posts that stand', () => {
     call!.end({ [la.id]: 'unserved', [lb.id]: 'unserved' });
     await settle();
     expect(column.report).toBeNull();
-    // No `.report` node is drawn under the region
-    // (src/view/panes.ts: `if (column.report) regionEl.appendChild(reportNode(...))`).
+    // No `.report` node is drawn under the region — `renderRegionElement`
+    // appends the report node only when `column.report` is non-null.
     expect(h.panes.querySelector('.region .report')).toBeNull();
   });
 

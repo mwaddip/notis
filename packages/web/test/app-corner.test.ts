@@ -329,8 +329,7 @@ describe('the App status corner — a timer independent of the bounded poll', ()
   });
 
   it('the reset runs through the seed adoption path — onReadingNodeChanged is the shared method walkSeedList and changeNode both call', async () => {
-    // walkSeedList and changeNode share `onReadingNodeChanged` (grep:
-    // `this.onReadingNodeChanged()` in `src/app.ts` — two call sites). The
+    // `walkSeedList` and `changeNode` share `onReadingNodeChanged`. The
     // shared method carries the reset, so both paths see the same behaviour.
     vi.useFakeTimers();
     const h = harness();

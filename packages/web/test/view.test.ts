@@ -205,7 +205,7 @@ describe('the header at one column', () => {
     // The profile control is a person glyph, the wallet control a wallet, the
     // settings control a gear; each a .hdr-glyph button holding one svg, with
     // the label the word carries. happy-dom keeps createElementNS svgs
-    // queryable (test/mark.test.ts).
+    // queryable.
     const profile = appbar.querySelector<HTMLElement>('button[aria-label="open profile"]')!;
     const wallet = appbar.querySelector<HTMLElement>('button[aria-label="open wallet"]')!;
     const settings = appbar.querySelector<HTMLElement>('button[aria-label="open settings"]')!;

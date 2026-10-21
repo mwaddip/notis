@@ -1137,11 +1137,11 @@ describe('wallet — the send row while a handle is checked', () => {
 // ---------------------------------------------------------------------------
 // The verified-figures line beneath the balance (WEB_INTERFACE → The
 // extension → "The verified figures", → The wallet window → "The `balance`
-// row"). The pure model's rows are pinned in test/figures-line.test.ts; these
-// tests pin the row's plumbing: the hint element renders under the figure,
-// and under the full rule (row 4) the gold figure gains `.clay` alongside the
-// hint. HOUSE_STYLE → Gold and clay are not interchangeable — gold gives way
-// to clay only while the node's own proof of the balance fails.
+// row"). These tests pin the row's plumbing: the hint element renders under
+// the figure, and under the full rule (row 4) the gold figure gains `.clay`
+// alongside the hint. HOUSE_STYLE → Gold and clay are not interchangeable —
+// gold gives way to clay only while the node's own proof of the balance
+// fails.
 // ---------------------------------------------------------------------------
 
 const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n };
@@ -1496,8 +1496,8 @@ describe('wallet — the verified-figures line beneath an empty listing', () => 
 });
 
 describe('app.css — the verified-figures clay rules', () => {
-  // Read the stylesheet the same way test/style.test.ts does — lexical pins,
-  // no computed style (happy-dom has no CSSOM). One rule per line.
+  // The stylesheet is read as text, by lexical pins, since happy-dom has no
+  // CSSOM. One rule per line.
   it('.winbody .hint.clay reads clay from --clay', () => {
     expect(appCss).toMatch(/\.winbody \.hint\.clay\s*\{[^}]*color: var\(--clay\)/);
   });

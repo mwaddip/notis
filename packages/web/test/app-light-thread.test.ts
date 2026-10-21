@@ -65,7 +65,7 @@ describe('a cold thread reads light and fills from the resolver', () => {
     expect(h.fake.threadCalls[0]!.url).not.toContain('tx=1');
     // The subject and both descendants stand as slots at their depths —
     // the root carries no depth class, a reply `depth-1`, a nested reply
-    // `depth-2` (`src/view/card.ts`'s shellClasses).
+    // `depth-2` (`shellClasses`).
     const slots = h.panes.querySelectorAll<HTMLElement>('.card.slot');
     expect(slots.length).toBe(3);
     expect(slots[0]!.dataset['postId']).toBe(root.id);

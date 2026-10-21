@@ -169,8 +169,8 @@ beforeEach(() => {
 // -----------------------------------------------------------------------------
 describe('every username site reads USERNAME_MAX_BYTES', () => {
   it('with USERNAME_MAX_BYTES at 30: the field, the hint, the refusal and the App\'s rejection sentence all name 30', async () => {
-    // The profile window's claim form field, built as test/profile.test.ts
-    // builds it.
+    // The profile window's claim form field (WEB_INTERFACE → The username
+    // row).
     const field = rowField(render(handlers(), memberCtx()), 'username')!;
     const form = field.querySelector('form') as HTMLFormElement;
     const input = form.querySelector('input') as HTMLInputElement;
