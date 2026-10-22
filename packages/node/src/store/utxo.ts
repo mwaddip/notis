@@ -393,9 +393,10 @@ export function getBoxProvenance(boxId: string): { txId: string; index: number }
  */
 export function getGenesisProofBox(): GenesisProofBox | null {
   // NODE_INTERFACE → Store Interface → "A read the node runs per request or
-  // per block touches what it answers": `owner IS NULL` is the index's
-  // leading column, so the owner index answers this by its `(NULL,
-  // box_type)` prefix.
+  // per block touches what it answers": `owner` leads the owner index
+  // (`CREATE INDEX idx_utxo_boxes_owner_type_value ON utxo_boxes(owner,
+  // box_type, …)`), so this read's `owner IS NULL` lets the index answer it
+  // by its `(NULL, box_type)` prefix.
   const row = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE owner IS NULL AND box_type = 'genesis_proof' AND spent_at_block IS NULL
        ORDER BY id
@@ -422,9 +423,10 @@ export function getGenesisProofBox(): GenesisProofBox | null {
  * expires.
  */
 export function getEmissionBox(): EmissionBox | null {
-  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
-  // per block touches what it answers": `owner IS NULL` is the owner index's
-  // leading column.
+  // The owner index answers this read by its `(NULL, box_type)` prefix, as
+  // `getGenesisProofBox` states at full length (NODE_INTERFACE → Store
+  // Interface → "A read the node runs per request or per block touches what
+  // it answers").
   const row = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE owner IS NULL AND box_type = 'emission' AND spent_at_block IS NULL
        ORDER BY id
@@ -443,9 +445,10 @@ export function getEmissionBox(): EmissionBox | null {
  * never again after.
  */
 export function getTreasuryBox(): TreasuryBox | null {
-  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
-  // per block touches what it answers": `owner IS NULL` is the owner index's
-  // leading column.
+  // The owner index answers this read by its `(NULL, box_type)` prefix, as
+  // `getGenesisProofBox` states at full length (NODE_INTERFACE → Store
+  // Interface → "A read the node runs per request or per block touches what
+  // it answers").
   const row = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE owner IS NULL AND box_type = 'treasury' AND spent_at_block IS NULL
        ORDER BY id
@@ -467,9 +470,10 @@ export function getTreasuryBox(): TreasuryBox | null {
  * names no row.
  */
 export function getKarmaPoolBox(): KarmaPoolBox | null {
-  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
-  // per block touches what it answers": `owner IS NULL` is the owner index's
-  // leading column.
+  // The owner index answers this read by its `(NULL, box_type)` prefix, as
+  // `getGenesisProofBox` states at full length (NODE_INTERFACE → Store
+  // Interface → "A read the node runs per request or per block touches what
+  // it answers").
   const row = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE owner IS NULL AND box_type = 'karma_pool' AND spent_at_block IS NULL
        ORDER BY id
@@ -486,9 +490,10 @@ export function getKarmaPoolBox(): KarmaPoolBox | null {
  * no row.
  */
 export function getBackerPoolBox(): BackerPoolBox | null {
-  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
-  // per block touches what it answers": `owner IS NULL` is the owner index's
-  // leading column.
+  // The owner index answers this read by its `(NULL, box_type)` prefix, as
+  // `getGenesisProofBox` states at full length (NODE_INTERFACE → Store
+  // Interface → "A read the node runs per request or per block touches what
+  // it answers").
   const row = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE owner IS NULL AND box_type = 'backer_pool' AND spent_at_block IS NULL
        ORDER BY id

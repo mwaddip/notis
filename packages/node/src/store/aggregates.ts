@@ -6,12 +6,16 @@ import { KARMA_SUPPLY_TYPES } from '../karma-supply.js';
 //
 // Each karma or credit box carries an owner, so the three sums scan every
 // unspent box's entry in `idx_utxo_boxes_owner_type_value` — the type covers
-// the predicate and the value. The two post counts scan `dag_posts`' own
-// indexes: `idx_dag_posts_status_block` for the confirmed count and the
-// pending-status index for the pending count. The router reads the first four
-// — `postCount`, `usernameCount`, `totalKarma`, `liquidKarma` and
-// `totalCredits` with it — once per applied tip (NODE_INTERFACE → Status →
-// "Every figure but `pendingPosts` is read once per applied tip";
+// the predicate and the value. The two post counts read `dag_posts`' own
+// partial indexes: the confirmed count's plan on a fresh `initDb(':memory:')`
+// is `SCAN dag_posts USING COVERING INDEX idx_dag_posts_confirmed` — the
+// partial index on `(block_height, block_index) WHERE status = 'confirmed'`
+// is walked whole — and the pending count's is `SEARCH dag_posts USING
+// COVERING INDEX idx_dag_posts_pending (status=?)` — the partial index on
+// `(status) WHERE status = 'pending'` is probed by its key. The router reads
+// `postCount`, `usernameCount`, `totalKarma`, `liquidKarma` and `totalCredits`
+// once per applied tip, and `pendingPosts` on each request (NODE_INTERFACE →
+// Status → "Every figure but `pendingPosts` is read once per applied tip";
 // NODE_INTERFACE → Store Interface → "A read the node runs per request or
 // per block touches what it answers").
 // ---------------------------------------------------------------------------

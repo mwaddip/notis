@@ -509,8 +509,8 @@ describe('GET /blocks/:height/proof', () => {
 //
 // NODE_INTERFACE → Status → "Every figure but `pendingPosts` is read once per
 // applied tip": `postCount`, `usernameCount`, `totalKarma`, `liquidKarma` and
-// `totalCredits` are keyed on the applied tip's hash — an empty chain by its
-// height 0 — and `pendingPosts` is read on each request.
+// `totalCredits` are keyed on the tip's height and hash (`0:` on an empty
+// chain), and `pendingPosts` is read on each request.
 // ---------------------------------------------------------------------------
 
 describe('`/status` reads its aggregates once per applied tip', () => {
