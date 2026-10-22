@@ -490,11 +490,9 @@ export function insertUtxoTx(
 ): number {
   const db = getDb();
 
-  // Before the conflict gate: the size bound is a property of the transaction
-  // alone, so it needs no pool state and settles the verdict without running
-  // one query per input. The bound sits above every transaction `db.transaction`
-  // (MEMPOOL_INTERFACE → insertUtxoTx → "Reorg re-insertion must not let this
-  // throw escape").
+  // The size bound runs before the SQLite transaction opens — the measure is
+  // the transaction's own bytes, needs no pool state, and an oversize
+  // transaction opens no transaction at all.
   const encoded = encodeTx(tx);
   if (encoded.length > MAX_TX_BYTES) throw new TxTooLargeError(encoded.length);
 
