@@ -45,6 +45,13 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { config } from '../../src/config.js';
 import { admissionOwed } from '../../src/services/karma-admission.js';
+import { getCurrentHeight as storeGetCurrentHeight } from '../../src/store/ordering.js';
+import {
+  applyBlockThroughIntake,
+  liveProver,
+  makeApplicableBlock,
+} from '../helpers.js';
+import { encodeTx } from '@dagsocial/types';
 // A directory private to this run, so two runs of the suite on one machine
 // never write the same store file.
 let testDir: string;
@@ -924,5 +931,190 @@ describe('utxo routes — alias resolution', () => {
     const byKey = await aliasGet(`/credits/${HOLDER_HEX}`);
     expect((byHandle.data as any).userId).toBe((byKey.data as any).userId);
     expect((byHandle.data as any).userId).toBe(HOLDER_HEX);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+// before anything reads state."
+// NODE_INTERFACE → Service Layer Architecture → "A transaction the pool
+// already holds is answered as held."
+// ---------------------------------------------------------------------------
+describe('a resubmit is answered as held', () => {
+  let heldDir: string;
+  let heldSender: ReturnType<typeof generateKeyPair>;
+  let heldReceiver: ReturnType<typeof generateKeyPair>;
+  let heldBox: CreditBox;
+  let broadcastTx: ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } };
+
+  async function send(txJson: Record<string, unknown>): Promise<{ status: number; data: unknown }> {
+    const engineDeps = {
+      getBox: getBoxWithPending,
+      insertBox,
+      consumeBox,
+      getKarmaOwed: admissionOwed(DECAY_CFG),
+      getKarmaValue,
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      decayCfg: DECAY_CFG,
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
+      getIdentityRecord,
+      runInTransaction: (fn: () => void) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
+    };
+    const deps = {
+      getKarmaTotal,
+      getKarmaBoxesPage,
+      getIdentityRecord,
+      getCreditValue,
+      getCreditBoxesPage,
+      getBondBoxesPage,
+      getBoxesPageWithPending: () => ({ rows: [], next: null, count: 0 }),
+      getBoxTotalWithPending: () => 0n,
+      admissionHeld: () => 0n,
+      admissionOwed: () => 0n,
+      getCurrentHeight: storeGetCurrentHeight,
+      decayCfg: DECAY_CFG,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      getUsername: () => null,
+      getUsernameByOwner,
+      getUtxoEngineDeps: () => engineDeps,
+    };
+    return new Promise((resolve) => {
+      const app = express();
+      app.use(express.json());
+      app.use(createRouter(deps));
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const r = http.request(
+          {
+            hostname: 'localhost',
+            port: addr.port,
+            path: '/credits/transfer',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          },
+          (res) => {
+            let d = '';
+            res.on('data', (c) => (d += c));
+            res.on('end', () => {
+              server.close();
+              try { resolve({ status: res.statusCode ?? 0, data: JSON.parse(d) }); }
+              catch { resolve({ status: res.statusCode ?? 0, data: d }); }
+            });
+          },
+        );
+        r.write(JSON.stringify({ tx: txJson }));
+        r.end();
+      });
+    });
+  }
+
+  function buildTransfer(): { tx: UtxoTransaction; txJson: Record<string, unknown> } {
+    const amount = 50_000n;
+    const change = heldBox.value - amount;
+    const outputs: CandidateOf<CreditBox>[] = [{
+      boxType: 'credit',
+      value: amount,
+      createdAtBlock: 0,
+      owner: heldReceiver.publicKey,
+    }];
+    if (change > 0n) {
+      outputs.push({
+        boxType: 'credit',
+        value: change,
+        createdAtBlock: 0,
+        owner: heldSender.publicKey,
+      });
+    }
+    const tx: UtxoTransaction = {
+      inputs: [heldBox.id!],
+      outputs,
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    const senderHex = Buffer.from(heldSender.publicKey).toString('hex');
+    const priv = createPrivateKey({ key: Buffer.from(heldSender.secretKey), format: 'der', type: 'pkcs8' });
+    tx.signatures[senderHex] = new Uint8Array(sign(null, Buffer.from(computeTxId(tx), 'hex'), priv));
+    return { tx, txJson: txToJson(tx) };
+  }
+
+  beforeAll(async () => {
+    heldDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-held-utxo-'));
+    initDb(join(heldDir, 'store.sqlite'));
+    const { getDb } = await import('../../src/store/db.js');
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    heldSender = generateKeyPair();
+    heldReceiver = generateKeyPair();
+
+    heldBox = seedProvenance<CreditBox>({
+      boxType: 'credit',
+      value: 200_000n,
+      owner: heldSender.publicKey,
+      createdAtBlock: 0,
+    }, 1);
+    insertBox(heldBox);
+
+    broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve()) as unknown as typeof broadcastTx;
+    const netStub = {
+      penalizePeer: () => {},
+      chainMoved: () => {},
+      needHeaders: () => {},
+      broadcastOrderingBlock: async () => {},
+      broadcastTx,
+      getConnectedPeers: () => [],
+      tipApplied: () => {},
+      setKarmaMembers: () => {},
+      addKarmaMember: () => {},
+      removeKarmaMember: () => {},
+      requestPostBodies: async () => [],
+    };
+    setNet(netStub as unknown as Parameters<typeof setNet>[0]);
+
+    await liveProver();
+  });
+
+  afterAll(() => {
+    setNet(null as unknown as Parameters<typeof setNet>[0]);
+    closeDb();
+    rmSync(heldDir, { recursive: true, force: true });
+  });
+
+  it.fails('POST /credits/transfer', async () => {
+    const { tx, txJson } = buildTransfer();
+
+    const r1 = await send(txJson);
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const r2 = await send(txJson);
+    expect(r2.status).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+    expect((r2.data as Record<string, unknown>).expiresAtHeight)
+      .toBe((r1.data as Record<string, unknown>).expiresAtHeight);
+
+    const calls = broadcastTx.mock.calls;
+    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
 });

@@ -38,12 +38,18 @@ import type {
 } from '@dagsocial/types';
 
 import {
+  applyBlockThroughIntake,
+  liveProver,
+  makeApplicableBlock,
   rawPublicKey,
   seedProvenance,
   signTransaction,
   txToJson,
   type Stored,
 } from '../helpers.js';
+import { setNet } from '../../src/services/net-instance.js';
+import { encodeTx } from '@dagsocial/types';
+import { getCurrentHeight } from '../../src/store/ordering.js';
 import {
   initDb,
   closeDb,
@@ -745,5 +751,250 @@ describe('vouch routes — alias resolution', () => {
 
     const key = await aliasGet(`/?voucher=${HOLDER_HEX}`);
     expect(key.status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+// before anything reads state."
+// NODE_INTERFACE → Service Layer Architecture → "A transaction the pool
+// already holds is answered as held."
+// ---------------------------------------------------------------------------
+describe('a resubmit is answered as held', () => {
+  let heldDir: string;
+  let heldDb: Database.Database;
+  let heldVoucher: { pub: Uint8Array; hex: string; priv: KeyObject };
+  let heldTarget: { pub: Uint8Array; hex: string; priv: KeyObject };
+  let broadcastTx: ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } };
+
+  function makeKeys() {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const pub = rawPublicKey(publicKey);
+    return { pub, hex: Buffer.from(pub).toString('hex'), priv: privateKey };
+  }
+
+  function heldEngineDeps() {
+    return {
+      getBox: (id: string): AnyBox | null => {
+        const box = storeGetBox(id);
+        if (!box) return null;
+        const r = heldDb
+          .prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?')
+          .get(id) as { spent_at_block: number | null } | undefined;
+        return r && r.spent_at_block === null ? box : null;
+      },
+      insertBox: (box: AnyBox) => insertBox(box),
+      consumeBox: (id: string, atBlock: number) => consumeBox(id, atBlock),
+      getKarmaOwed: admissionOwed({
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      }),
+      getKarmaValue: (owner: Uint8Array): bigint =>
+        getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
+      getIdentityRecord,
+      hasActiveVouchEscrow,
+      vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
+      runInTransaction: (fn: () => void) => { (heldDb.transaction(fn) as () => void)(); },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner,
+    };
+  }
+
+  async function send(method: 'POST' | 'DELETE', path: string, body: unknown): Promise<{ status: number; data: unknown }> {
+    return new Promise((resolve) => {
+      const deps = {
+        ...heldEngineDeps(),
+        castVouch,
+        initiateUnvouch,
+        getCurrentHeight,
+      };
+      const app = express();
+      app.use(express.json());
+      app.use(createRouter(deps));
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const payload = Buffer.from(JSON.stringify(body));
+        const req = http.request(
+          {
+            hostname: 'localhost',
+            port: addr.port,
+            path,
+            method,
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': String(payload.length),
+            },
+          },
+          (res) => {
+            let d = '';
+            res.on('data', (c) => (d += c));
+            res.on('end', () => {
+              server.close();
+              try { resolve({ status: res.statusCode!, data: JSON.parse(d) }); }
+              catch { resolve({ status: res.statusCode!, data: d }); }
+            });
+          },
+        );
+        req.write(payload);
+        req.end();
+      });
+    });
+  }
+
+  beforeAll(async () => {
+    heldDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-held-vouches-'));
+    initDb(join(heldDir, 'store.sqlite'));
+    heldDb = getDb();
+    heldDb.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    heldVoucher = makeKeys();
+    heldTarget = makeKeys();
+    putIdentityRecord(heldVoucher.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    putIdentityRecord(heldTarget.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+
+    broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve()) as unknown as typeof broadcastTx;
+    const netStub = {
+      penalizePeer: () => {},
+      chainMoved: () => {},
+      needHeaders: () => {},
+      broadcastOrderingBlock: async () => {},
+      broadcastTx,
+      getConnectedPeers: () => [],
+      tipApplied: () => {},
+      setKarmaMembers: () => {},
+      addKarmaMember: () => {},
+      removeKarmaMember: () => {},
+      requestPostBodies: async () => [],
+    };
+    setNet(netStub as unknown as Parameters<typeof setNet>[0]);
+
+    await liveProver();
+  });
+
+  afterAll(() => {
+    setNet(null as unknown as Parameters<typeof setNet>[0]);
+    closeDb();
+    rmSync(heldDir, { recursive: true, force: true });
+  });
+
+  it.fails('POST /vouches', async () => {
+    const karmaBox = seedProvenance<KarmaBox>({
+      boxType: 'karma', value: VOUCH_MIN_BALANCE + VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0, owner: heldVoucher.pub,
+    }, 1, 10001);
+    insertBox(karmaBox);
+
+    const change: CandidateOf<KarmaBox> = {
+      boxType: 'karma',
+      value: karmaBox.value - VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
+      owner: heldVoucher.pub,
+    };
+    const vouchOut: CandidateOf<VouchBox> = {
+      boxType: 'vouch',
+      value: VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
+      voucherId: heldVoucher.pub,
+      targetId: heldTarget.pub,
+    };
+    const tx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [change, vouchOut],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, heldVoucher.priv, heldVoucher.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await send('POST', '/', { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const r2 = await send('POST', '/', { tx: txJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+    expect((r2.data as Record<string, unknown>).expiresAtHeight)
+      .toBe((r1.data as Record<string, unknown>).expiresAtHeight);
+
+    const calls = broadcastTx.mock.calls;
+    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(computeTxId(sentTx)).toBe(computeTxId(tx));
+  });
+
+  it.fails('DELETE /vouches/:targetId', async () => {
+    const unTarget = makeKeys();
+    const vouchBox = seedProvenance<VouchBox>({
+      boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: 0,
+      voucherId: heldVoucher.pub, targetId: unTarget.pub,
+    }, 1, 10002);
+    insertBox(vouchBox);
+
+    const tx: UtxoTransaction = {
+      inputs: [vouchBox.id!],
+      outputs: [{
+        boxType: 'vouch_escrow',
+        value: vouchBox.value,
+        createdAtBlock: 0,
+        owner: heldVoucher.pub,
+        releaseAtBlock: 2,
+      } as unknown as CandidateOf<VouchBox>],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, heldVoucher.priv, heldVoucher.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await send('DELETE', `/${Buffer.from(unTarget.pub).toString('hex')}`, { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: 2 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const r2 = await send('DELETE', `/${Buffer.from(unTarget.pub).toString('hex')}`, { tx: txJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+    expect((r2.data as Record<string, unknown>).karmaReturnsAtBlock)
+      .toBe((r1.data as Record<string, unknown>).karmaReturnsAtBlock);
+
+    const calls = broadcastTx.mock.calls;
+    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
 });

@@ -35,14 +35,15 @@ async function storeWithCredit() {
   return { sender, box };
 }
 
-/** `tx` through the relay handler: the lines it warned and errored, what it threw, and the pool after. */
+/** `tx` through the relay handler: the lines it warned, logged and errored, what it threw, and the pool after. */
 async function relay(tx: UtxoTransaction) {
   const { handleRelayedTx } = await import('../../src/services/handle-tx.js');
   const warned: string[] = [];
   const errored: string[] = [];
+  const logged: string[] = [];
   vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => { warned.push(args.map(String).join(' ')); });
   vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errored.push(args.map(String).join(' ')); });
-  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logged.push(args.map(String).join(' ')); });
   let thrown: unknown = null;
   try {
     handleRelayedTx(tx, undefined, 'peer-relay');
@@ -50,7 +51,7 @@ async function relay(tx: UtxoTransaction) {
     thrown = err;
   }
   const mempool = await import('../../src/store/mempool.js');
-  return { warned, errored, thrown, pooled: mempool.getPendingEntries(10).length };
+  return { warned, errored, logged, thrown, pooled: mempool.getPendingEntries(10).length };
 }
 
 describe('the relay handler takes a policy refusal as an answer', () => {
@@ -116,6 +117,32 @@ describe('the relay handler takes a policy refusal as an answer', () => {
     expect(run.warned.some((line) => line.startsWith('Relayed tx refused: A block carrying this transaction alone is over the budget'))).toBe(true);
     expect(run.errored).toEqual([]);
     expect(run.pooled).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state."
+  // NODE_INTERFACE → Relay handlers (mempool-based)
+  // ---------------------------------------------------------------------------
+  it.fails('a pooled transaction relayed again is answered as held, logs nothing, pool unchanged', async () => {
+    const { sender, box } = await storeWithCredit();
+    const tx = makeCreditTx(sender, [box], 1_000n);
+
+    // First admit: pool the transaction via admitTx directly.
+    const adm = await import('../../src/services/admit-tx.js');
+    const { MEMPOOL_EXPIRY_BLOCKS } = await import('@dagsocial/types');
+    const mempoolMod = await import('../../src/store/mempool.js');
+    const ord = await import('../../src/store/ordering.js');
+    adm.admitTx(tx, ord.getCurrentHeight() + 1 + MEMPOOL_EXPIRY_BLOCKS);
+    const poolBefore = mempoolMod.getPendingEntries(10).length;
+
+    const run = await relay(tx);
+
+    expect(run.thrown).toBeNull();
+    expect(run.warned).toEqual([]);
+    expect(run.logged).toEqual([]);
+    expect(run.errored).toEqual([]);
+    expect(run.pooled).toBe(poolBefore);
   });
 
   it('control: a throw from admission that is no refusal still reaches net', async () => {

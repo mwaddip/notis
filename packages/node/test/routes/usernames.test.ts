@@ -1,5 +1,5 @@
 // NODE_INTERFACE → Usernames — the four routes
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -25,10 +25,20 @@ import {
   KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type { KarmaBox, UsernameBox, UtxoTransaction } from '@dagsocial/types';
-import { rawPublicKey, seedProvenance, signTransaction, txToJson } from '../helpers.js';
+import {
+  applyBlockThroughIntake,
+  liveProver,
+  makeApplicableBlock,
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+  txToJson,
+} from '../helpers.js';
 import { config } from '../../src/config.js';
 import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES, PendingSpendConflictError } from '../../src/store/mempool.js';
 import { admissionOwed } from '../../src/services/karma-admission.js';
+import { setNet } from '../../src/services/net-instance.js';
+import { computeTxId, encodeTx } from '@dagsocial/types';
 
 // A directory private to this run, so two runs of the suite on one machine
 // never write the same store file.
@@ -626,5 +636,146 @@ describe('username routes', () => {
   it('GET /usernames?owner= — malformed value answers 400', async () => {
     const res = await get(app, '/usernames?owner=!!!');
     expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+// before anything reads state."
+// NODE_INTERFACE → Service Layer Architecture → "A transaction the pool
+// already holds is answered as held."
+// ---------------------------------------------------------------------------
+describe('a resubmit is answered as held', () => {
+  let heldDir: string;
+  let heldApp: express.Express;
+  let claimant: ReturnType<typeof makeKeys>;
+  let claimantKarma: KarmaBox;
+  let burner: ReturnType<typeof makeKeys>;
+  let burnerKarma: KarmaBox;
+  let burnerUsernameBox: UsernameBox;
+  let broadcastTx: ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } };
+
+  beforeAll(async () => {
+    heldDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-held-usernames-'));
+    initDb(join(heldDir, 'store.sqlite'));
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 0)').run();
+    setMempoolCap(DEFAULT_MAX_MEMPOOL_ENTRIES);
+
+    claimant = makeKeys();
+    claimantKarma = seedKarma(claimant.pub, 100n);
+    putIdentityRecord(claimant.pub, {
+      lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+
+    burner = makeKeys();
+    burnerKarma = seedKarma(burner.pub, 100n);
+    burnerUsernameBox = seedUsernameBox(burner.pub, 'HeldBurn');
+    putUsername({ nameLower: 'heldburn', name: 'HeldBurn', owner: burner.hex, boxId: burnerUsernameBox.id!, claimedAtBlock: 1 });
+    putIdentityRecord(burner.pub, {
+      lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+
+    const deps = makeDeps();
+    heldApp = express();
+    heldApp.use(express.json());
+    heldApp.use('/usernames', createRouter({
+      ...deps,
+      getCurrentHeight,
+      validateTx: (tx, h) => validateTx(deps, tx, h),
+      getUsername,
+      getUsernameByOwner,
+    }));
+
+    broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve()) as unknown as typeof broadcastTx;
+    const netStub = {
+      penalizePeer: () => {},
+      chainMoved: () => {},
+      needHeaders: () => {},
+      broadcastOrderingBlock: async () => {},
+      broadcastTx,
+      getConnectedPeers: () => [],
+      tipApplied: () => {},
+      setKarmaMembers: () => {},
+      addKarmaMember: () => {},
+      removeKarmaMember: () => {},
+      requestPostBodies: async () => [],
+    };
+    setNet(netStub as unknown as Parameters<typeof setNet>[0]);
+
+    await liveProver();
+  });
+
+  afterAll(() => {
+    setNet(null as unknown as Parameters<typeof setNet>[0]);
+    closeDb();
+    rmSync(heldDir, { recursive: true, force: true });
+  });
+
+  it.fails('POST /usernames', async () => {
+    const tx: UtxoTransaction = {
+      inputs: [claimantKarma.id!],
+      outputs: [
+        { boxType: 'karma', value: claimantKarma.value, createdAtBlock: 1, owner: claimant.pub } as any,
+        { boxType: 'username', value: 0n as 0n, createdAtBlock: 1, owner: claimant.pub, name: Buffer.from('HeldClaim', 'utf8') } as any,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, claimant.priv, claimant.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await post(heldApp, '/usernames', { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const r2 = await post(heldApp, '/usernames', { tx: txJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.body).toEqual(r1.body);
+    expect(r2.body.expiresAtHeight).toBe(r1.body.expiresAtHeight);
+
+    const calls = broadcastTx.mock.calls;
+    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(computeTxId(sentTx)).toBe(computeTxId(tx));
+  });
+
+  it.fails('POST /usernames/:name/burn', async () => {
+    const tx: UtxoTransaction = {
+      inputs: [burnerKarma.id!, burnerUsernameBox.id!],
+      outputs: [
+        { boxType: 'karma', value: burnerKarma.value - USERNAME_BURN_PRICE, createdAtBlock: 1, owner: burner.pub } as any,
+        { boxType: 'karma_price', value: USERNAME_BURN_PRICE, createdAtBlock: 1 } as any,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, burner.priv, burner.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await post(heldApp, '/usernames/HeldBurn/burn', { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: 2 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const r2 = await post(heldApp, '/usernames/HeldBurn/burn', { tx: txJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.body).toEqual(r1.body);
+    expect(r2.body.expiresAtHeight).toBe(r1.body.expiresAtHeight);
+
+    const calls = broadcastTx.mock.calls;
+    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
 });
