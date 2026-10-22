@@ -3489,9 +3489,6 @@ run once a handle.
 > 4.5 µs (an insert and the spend of half, 200 000 boxes). One test per read pins its plan, as for the
 > pages.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The `staged_blocks` and `refused_headers` height indexes lead
-> `store/db.ts`, which indexes neither table by height.
-
 **`dag_posts` columns:** `id`, `tx_id` (hex, NOT NULL — the creating transaction's id), `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
 `block_index`. There is no `raw_cbor`: a body is stored only after `verifyPostBody` accepted it
