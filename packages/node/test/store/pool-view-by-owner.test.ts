@@ -301,4 +301,26 @@ describe("an owner's boxes under the pool, read by owner", () => {
     }
     expect(seen2).toEqual(expected);
   });
+
+  // Rule 3 on the view: a chain of two karma spends and an income box
+  // beside — the chain tail is the only row the pending view answers for
+  // the own set (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending).
+  it('getOwnKarmaBoxIdsWithPending answers the chain tail, never the income box', () => {
+    const own = karmaBoxFx(100n, OWNER_A, 1);
+    const income = karmaBoxFx(50n, OWNER_A, 2, true);
+    utxo.insertBox(own);
+    utxo.insertBox(income);
+
+    const tx1 = karmaLikeTx(OWNER_A, own.id!, 100n - LIKE_KARMA_COST);
+    mempool.insertUtxoTx(tx1, 999);
+    const tx1Id = computeTxId(tx1);
+    const change1 = computeCandidateBoxId(tx1.outputs[0]!, tx1Id, 0);
+
+    const tx2 = karmaLikeTx(OWNER_A, change1, 100n - 2n * LIKE_KARMA_COST);
+    mempool.insertUtxoTx(tx2, 999);
+    const tx2Id = computeTxId(tx2);
+    const change2 = computeCandidateBoxId(tx2.outputs[0]!, tx2Id, 0);
+
+    expect(mempool.getOwnKarmaBoxIdsWithPending(toHex(OWNER_A))).toEqual([change2]);
+  });
 });

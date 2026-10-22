@@ -1,5 +1,6 @@
 import { getDb, prepared } from './db.js';
-import { getBox, getKarmaBoxes } from './utxo.js';
+import { getBox, rowToBox } from './utxo.js';
+import type { UtxoRow } from './utxo.js';
 import { deletePendingPost } from './posts.js';
 import type { BoxKey, Page, PageResult } from './index.js';
 import { ClientError } from '../services/client-error.js';
@@ -722,13 +723,17 @@ export function getBoxWithPending(boxId: string): AnyBox | null {
 // The pending view as `getBoxWithPending` sees it, asked by owner and type
 // (MEMPOOL_INTERFACE → getBoxesPageWithPending). The set is a pair of
 // fragments the page, its COUNT, its SUM and rule 3's unmarked karma read
-// share, so the whole-set rule is stated once.
+// share, so the whole-set rule is stated once. The exclusion of
+// `mempool_inputs` rows is a correlated `NOT EXISTS` on each half, so each
+// probe reads `SEARCH mempool_inputs USING PRIMARY KEY`.
 const CONFIRMED_PENDING_WHERE =
   `owner = ? AND box_type = ? AND spent_at_block IS NULL
-   AND id NOT IN (SELECT box_id FROM mempool_inputs)`;
+   AND NOT EXISTS (SELECT 1 FROM mempool_inputs
+                    WHERE mempool_inputs.box_id = utxo_boxes.id)`;
 const POOLED_PENDING_WHERE =
   `owner = ? AND box_type = ?
-   AND box_id NOT IN (SELECT box_id FROM mempool_inputs)`;
+   AND NOT EXISTS (SELECT 1 FROM mempool_inputs
+                    WHERE mempool_inputs.box_id = mempool_outputs.box_id)`;
 
 interface PendingPageRow { id: string; value: bigint; src: bigint }
 
@@ -806,9 +811,9 @@ export function getBoxesPageWithPending(
     // `safeIntegers` reads SQLite's `0 AS src` back as `0n`, so the half
     // discriminator stays in bigint everywhere.
     const box = r.src === 0n ? getBox(r.id) : findPendingOutput(r.id);
-    // The id came from the same set the page row is read against, so a
-    // null answer is a race only this process could have caused — the
-    // pool and the confirmed set are both local; fail loudly.
+    // The ids come from the same store as the row reads and run in one
+    // synchronous call; a missing box names an inconsistency in the
+    // store, and the read throws.
     if (!box) throw new Error(`pending view row missing: ${r.id}`);
     return box as KarmaBox | CreditBox;
   });
@@ -819,7 +824,7 @@ export function getBoxesPageWithPending(
     : null;
 
   // COUNT over the whole set, both halves added. Each sub-count reads one
-  // index range (its half's), and the `NOT IN` subquery probes
+  // index range (its half's), and the correlated `NOT EXISTS` probes
   // `mempool_inputs`'s primary key.
   const countRow = prepared(db, `SELECT
        (SELECT COUNT(*) FROM utxo_boxes WHERE ${CONFIRMED_PENDING_WHERE})
@@ -852,86 +857,44 @@ export function getBoxTotalWithPending(owner: Uint8Array, boxType: 'karma' | 'cr
  * Submission's answer to rule 3 of NODE_INTERFACE → Karma transition rules →
  * "An identity holds at most two karma boxes": the ids of the owner's unmarked
  * karma boxes under `getBoxWithPending`'s view
- * (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending).
+ * (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending → "It is the unmarked
+ * rows of the set `getBoxesPageWithPending` reads for karma").
  *
- * The pending view is the confirmed unmarked set, plus every unmarked karma
- * output of a pooled transaction the owner signed, less every box any pooled
- * transaction spends. The pooled rows are found by `karma_owner` — every
- * karma transaction's row carries it (`gateMetadata`'s karma arm) — and only
- * the matching rows are decoded, so the read is a few hashes rather than a
- * walk of the pool. The by-owner rows cover every input that could remove one
- * of the owner's unmarked karma boxes from the set: a karma box is spent only
- * by a karma transaction signed by its owner, and such a transaction carries
- * `karma_owner` through `gateMetadata` (TYPES_INTERFACE → KarmaBox;
- * NODE_INTERFACE → Karma transition rules → "All karma inputs must share one
- * owner"). The gather and the subtract run as two passes, so the answer is
- * the same whatever order SQLite returns the rows in. Admission wires this
- * as the engine's `getOwnKarmaBoxIds`; the relay's `getOwnKarmaBoxIds` reads
+ * Reads the same fragment pair the page, its `COUNT` and the `SUM` share
+ * (`CONFIRMED_PENDING_WHERE` and `POOLED_PENDING_WHERE`), with the box type
+ * pinned to `karma`. The confirmed half additionally filters out the income
+ * mark; a pooled karma output is unmarked by rule 2 of
+ * NODE_INTERFACE → Karma transition rules → "No karma output carries the
+ * mark", so the pool rows need no further filter. Admission wires this as
+ * the engine's `getOwnKarmaBoxIds`; the relay's `getOwnKarmaBoxIds` reads
  * the confirmed set alone.
  */
 export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
   const db = getDb();
   const ownerBuf = Buffer.from(ownerId, 'hex');
-  const ownerBytes = new Uint8Array(ownerBuf);
 
-  // Confirmed unmarked karma box ids. `getKarmaBoxes` holds every karma box
-  // the owner has — own and income — in `(value DESC, id)` order, and the
-  // owner's range is at most two rows (NODE_INTERFACE → Karma transition
-  // rules), so the filter and the set it feeds walk the owner's slice alone.
-  const kept = new Set<string>();
-  for (const box of getKarmaBoxes(ownerBytes)) {
-    if (box.income === true) continue;
-    if (box.id !== undefined) kept.add(box.id);
-  }
-
-  // The owner's pooled rows, found by the single-key index on `karma_owner`.
-  // One decode per row, and the owner's active transactions in the pool are
-  // what the invariant leaves bounded: a spend reads two inputs and emits one
-  // karma output at most, so each decode adds one or none and takes one off.
-  const rows = prepared(db, `SELECT utxo_tx_bytes
-       FROM mempool
-      WHERE karma_owner = ?
-        AND utxo_tx_bytes IS NOT NULL`).all(ownerId) as Array<{ utxo_tx_bytes: Buffer }>;
-
-  // Pass one: gather every pooled karma output the owner signs for. Reading
-  // ahead of the subtraction keeps the answer order-free — a chain's child
-  // row ahead of its parent in the index would otherwise remove a parent box
-  // the parent row has not yet added.
+  // The confirmed half's rows, reconstructed through `rowToBox` so the mark
+  // is decoded where every other karma reader decodes it. An owner holds at
+  // most two karma rows (NODE_INTERFACE → Karma transition rules → "An
+  // identity holds at most two karma boxes"), so the read is bounded.
+  const rows = prepared(db, `SELECT * FROM utxo_boxes
+       WHERE ${CONFIRMED_PENDING_WHERE}`, true)
+    .all(ownerBuf, 'karma') as UtxoRow[];
+  const confirmedIds: string[] = [];
   for (const row of rows) {
-    const tx = decodeTx(new Uint8Array(row.utxo_tx_bytes));
-    const txId = computeTxId(tx);
-    for (let i = 0; i < tx.outputs.length; i++) {
-      const candidate = tx.outputs[i]!;
-      if (candidate.boxType !== 'karma') continue;
-      // TYPES_INTERFACE → KarmaBox. The mark is the one difference between
-      // the two shapes; the engine's rule 2 refuses a marked karma output on
-      // a user transaction, so a pooled karma output is unmarked by rule —
-      // the check here is defensive and does not reach a tree the engine
-      // admitted (NODE_INTERFACE → Karma transition rules → "No karma output
-      // carries the mark").
-      if ((candidate as { income?: true }).income === true) continue;
-      if (bytesToHexOwner(candidate.owner) !== ownerId) continue;
-      const box = materializeOutput(candidate, txId, i);
-      if (box.id !== undefined) kept.add(box.id);
-    }
+    const box = rowToBox(row) as KarmaBox;
+    if (box.income === true) continue;
+    confirmedIds.push(box.id!);
   }
 
-  // Pass two: remove every box the owner's pooled rows spend. The spends are
-  // read from `mempool_inputs` joined on the entry's `karma_owner`
-  // (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending). The gather and the
-  // subtract run as separate passes, so the answer is the same whatever order
-  // SQLite returns the rows in.
-  const spent = prepared(db, `SELECT mempool_inputs.box_id AS box_id
-       FROM mempool_inputs
-       JOIN mempool ON mempool.rowid = mempool_inputs.entry_rowid
-      WHERE mempool.karma_owner = ?`).all(ownerId) as Array<{ box_id: string }>;
-  for (const row of spent) kept.delete(row.box_id);
+  // The pooled half. A pooled karma output is unmarked by rule 2 of
+  // NODE_INTERFACE → Karma transition rules → "No karma output carries the
+  // mark".
+  const pooled = prepared(db, `SELECT box_id AS id FROM mempool_outputs
+       WHERE ${POOLED_PENDING_WHERE}`)
+    .all(ownerBuf, 'karma') as Array<{ id: string }>;
 
-  return [...kept];
-}
-
-function bytesToHexOwner(owner: Uint8Array): string {
-  return Buffer.from(owner).toString('hex');
+  return [...confirmedIds, ...pooled.map((r) => r.id)];
 }
 
 /**

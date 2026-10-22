@@ -252,13 +252,11 @@ describe('each pending read\'s prepared statement runs through indexes', () => {
   // with no temp B-tree.
   const OWNER_BYTES = bytes(OWNER_HEX);
 
-  // `NOT IN (SELECT box_id FROM mempool_inputs)` shows as `USING INDEX
-  // sqlite_autoindex_mempool_inputs_1 FOR IN-OPERATOR`, SQLite's name for a
-  // SEARCH on a `WITHOUT ROWID` table's primary key — the primary key is
-  // the autoindex. A plain `SEARCH mempool_inputs` is `hasPendingSpend`'s
-  // shape, kept so `findPendingOutput`'s shape stays admissible.
-  const mempoolInputsIndexed =
-    /\bSEARCH\b[^|]*\bmempool_inputs\b|\bsqlite_autoindex_mempool_inputs_1\b/i;
+  // The pending-view reads express the exclusion as a correlated `NOT
+  // EXISTS (SELECT 1 FROM mempool_inputs WHERE box_id = ?)`, which SQLite
+  // plans as `SEARCH mempool_inputs USING PRIMARY KEY (box_id=?)` — the
+  // same shape `hasPendingSpend` and `findPendingOutput` already carry.
+  const mempoolInputsIndexed = /\bSEARCH\b[^|]*\bmempool_inputs\b/i;
 
   it('getBoxesPageWithPending without after — SEARCH on idx_mempool_outputs_owner, no SCAN', async () => {
     const { result, sqls, db } = await recordReadOn(dbFile, (mem) =>
