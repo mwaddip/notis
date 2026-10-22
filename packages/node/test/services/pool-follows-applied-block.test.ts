@@ -9,12 +9,17 @@ import {
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
   PROTOCOL_VERSION,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
   computeTxId,
   computePostId,
   computeBoxId,
   computeContentHash,
 } from '@dagsocial/types';
 import type { AnyBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import {
   applyBlockThroughIntake,
   liveProver,
@@ -27,6 +32,7 @@ import {
   wireIntakeForTests,
   type TestIdentity,
 } from '../helpers.js';
+import type { PostServiceDeps } from '../../src/services/post-service.js';
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as typeof import('../../src/store/mempool.js');
@@ -101,7 +107,24 @@ function buildReply(
   return tx;
 }
 
-/** The materialized karma change output of a thread/reply transaction. */
+/** A signed karma consolidation over `karmaInput` — one input, one same-owner
+ * same-value karma output. Non-post, non-price, so admitWriteTx admits it with
+ * the pending view's own-karma rule met (MEMPOOL_INTERFACE →
+ * getOwnKarmaBoxIdsWithPending). */
+function buildConsolidation(author: TestIdentity, karmaInput: KarmaBox): UtxoTransaction {
+  const tx: UtxoTransaction = {
+    inputs: [karmaInput.id!],
+    outputs: [
+      { boxType: 'karma', value: karmaInput.value, createdAtBlock: 0, owner: author.userId } as unknown as AnyBox,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  signTransaction(tx, author.privateKey, toHex(author.userId));
+  return tx;
+}
+
+/** The materialized karma output at index 0 of a thread, reply or consolidation. */
 function changeBox(tx: UtxoTransaction, author: TestIdentity): KarmaBox {
   const txId = computeTxId(tx);
   const o = tx.outputs[0] as KarmaBox;
@@ -114,6 +137,71 @@ function changeBox(tx: UtxoTransaction, author: TestIdentity): KarmaBox {
     index: 0,
   };
   return { ...materialized, id: computeBoxId(materialized) };
+}
+
+/** The engine deps every admission path reads over the real store — the
+ * shape `test/services/karma-spend-admission.test.ts` builds, resolved
+ * dynamically against the module graph `freshNode` just reset. */
+async function buildEngineDeps(): Promise<UtxoEngineDeps> {
+  const store = await import('../../src/store/index.js');
+  const karmaAdm = await import('../../src/services/karma-admission.js');
+  const dbMod = await import('../../src/store/db.js');
+  const { config } = await import('../../src/config.js');
+  const decayCfg = {
+    staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+    decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+    decayAmount: KARMA_DECAY_AMOUNT,
+    karmaMinimum: KARMA_MINIMUM,
+  };
+  return {
+    getBox: store.getBoxWithPending,
+    insertBox: store.insertBox,
+    consumeBox: store.consumeBox,
+    getKarmaValue: karmaAdm.admissionHeld,
+    getOwnKarmaBoxIds: karmaAdm.admissionGetOwnKarmaBoxIds,
+    getKarmaOwed: karmaAdm.admissionOwed(decayCfg),
+    getIdentityRecord: store.getIdentityRecord,
+    hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+    vouchCooldownBlocks: 2,
+    inviteBondMin: config.inviteBondMin,
+    inviteBondMax: config.inviteBondMax,
+    decayCfg,
+    storageRentPeriodBlocks: 40,
+    getBoxProvenance: () => null,
+    getTopologyAuthor: (postId: string) => store.getTopologyAuthorBytes(postId),
+    getPendingPostAuthor: store.getPendingPostAuthor,
+    runInTransaction: (fn: () => void) => (dbMod.getDb().transaction(fn) as () => void)(),
+    getVouchBox: store.getVouchBox,
+    getNetworkRecord: store.getNetworkRecord,
+    membershipBarMultiplier: 1,
+    putIdentityRecord: store.putIdentityRecord,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+    getUsername: () => null,
+    getUsernameByOwner: () => null,
+  };
+}
+
+/** The deps `routes/posts.ts` passes `createPost`, over the engine deps and
+ * the store's `getPost`/`insertPost` the way admission writes them. */
+async function buildPostDeps(engine: UtxoEngineDeps, getCurrentHeight: () => number): Promise<PostServiceDeps> {
+  const store = await import('../../src/store/index.js');
+  const verifier = await import('../../src/services/verifier.js');
+  const admit = await import('../../src/services/admit-tx.js');
+  const consensus = await import('@dagsocial/consensus');
+  return {
+    verifyPost: verifier.verifyPost,
+    getKarmaBoxes: store.getKarmaBoxes,
+    getIdentityRecord: engine.getIdentityRecord,
+    decayCfg: engine.decayCfg,
+    getPost: store.getPost,
+    insertPost: store.insertPost,
+    getCurrentHeight,
+    protocolVersionSchedule: engine.protocolVersionSchedule,
+    admitTx: admit.admitTx,
+    validateTx: (tx, h) => consensus.validateTx(engine, tx, h),
+    getBox: engine.getBox,
+    runInTransaction: engine.runInTransaction,
+  };
 }
 
 /** A fresh in-memory node with a live prover and the intake wired. */
@@ -141,6 +229,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
     const db = await importDb();
     db.closeDb();
     vi.restoreAllMocks();
+    vi.doUnmock('../../src/config.js');
   });
 
   it('a block applying a conflicting post removes the pooled entry and its pending row', async () => {
@@ -151,17 +240,17 @@ describe('every applied block lets the pool follow it, on every node', () => {
 
     const mem = await importMempool();
     const posts = await importPosts();
+    const engine = await buildEngineDeps();
+    const postDeps = await buildPostDeps(engine, () => 0);
+    const create = await import('../../src/services/post-service.js');
 
+    // The pool entry, the pending row and the parent refs are what createPost
+    // writes in one store transaction (NODE_INTERFACE → Post transactions →
+    // "The pending row is the mempool entry's DAG shadow").
     const Tpool = buildThread(A, X, 'contentious thread');
     const Tpool_id = computeTxId(Tpool);
     const Tpool_post = computePostId(Tpool_id, 0);
-    mem.insertUtxoTx(Tpool, 1000);
-    const db = (await importDb()).getDb();
-    db.prepare(
-      `INSERT INTO dag_posts
-        (id, tx_id, content_hash, content, author, parent_refs, protocol_version, type, status)
-       VALUES (?, ?, ?, ?, ?, '[]', 1, 'regular', 'pending')`,
-    ).run(Tpool_post, Tpool_id, Buffer.from(computeContentHash('contentious thread')).toString('hex'), 'contentious thread', Buffer.from(A.userId));
+    create.createPost(postDeps, Tpool, 'contentious thread');
 
     expect(mem.pendingKarmaSpend(toHex(A.userId))).toBe(POST_PRICE_THREAD);
     expect(posts.getPost(Tpool_post)).not.toBeNull();
@@ -181,8 +270,11 @@ describe('every applied block lets the pool follow it, on every node', () => {
     await seedBoxes([X]);
 
     const mem = await importMempool();
+    // The expiry boundary is this case's subject: the entry carries an
+    // `expiresAtHeight` the chain reaches in two blocks, which `insertUtxoTx`
+    // takes directly (MEMPOOL_INTERFACE → insertUtxoTx; → Expiry).
     const T = buildThread(A, X, 'T expiring');
-    mem.insertUtxoTx(T, 2); // expires at height 2
+    mem.insertUtxoTx(T, 2);
 
     const b1 = await makeApplicableBlock({ height: 1 });
     expect(await applyBlockThroughIntake(b1)).toBe(true);
@@ -206,17 +298,25 @@ describe('every applied block lets the pool follow it, on every node', () => {
     await seedBoxes([X]);
 
     const mem = await importMempool();
+    const engine = await buildEngineDeps();
+    const postDeps = await buildPostDeps(engine, () => 0);
+    const create = await import('../../src/services/post-service.js');
+    const admit = await import('../../src/services/admit-tx.js');
+    const consensus = await import('@dagsocial/consensus');
 
     const Troot = buildThread(A, X, 'root of a chain');
-    mem.insertUtxoTx(Troot, 1000);
+    create.createPost(postDeps, Troot, 'root of a chain');
     const Troot_change = changeBox(Troot, A);
 
-    const Tchild = buildThread(A, Troot_change, 'a child spending the change');
-    mem.insertUtxoTx(Tchild, 1000);
+    // Chained karma consolidations spending the predecessor's pending change —
+    // admitted against the pending view as a write route admits them
+    // (MEMPOOL_INTERFACE → getBoxWithPending; → getOwnKarmaBoxIdsWithPending).
+    const Tchild = buildConsolidation(A, Troot_change);
+    admit.admitWriteTx((t, h) => consensus.validateTx(engine, t, h), Tchild, 1, '');
     const Tchild_change = changeBox(Tchild, A);
 
-    const Tgrand = buildThread(A, Tchild_change, 'a grandchild spending the change');
-    mem.insertUtxoTx(Tgrand, 1000);
+    const Tgrand = buildConsolidation(A, Tchild_change);
+    admit.admitWriteTx((t, h) => consensus.validateTx(engine, t, h), Tgrand, 1, '');
 
     expect(mem.getPendingEntries(10)).toHaveLength(3);
 
@@ -240,29 +340,24 @@ describe('every applied block lets the pool follow it, on every node', () => {
     const mem = await importMempool();
     const posts = await importPosts();
     const db = (await importDb()).getDb();
+    const engine = await buildEngineDeps();
+    const postDeps = await buildPostDeps(engine, () => 0);
+    const create = await import('../../src/services/post-service.js');
 
     const P = buildThread(A, Xa, 'a parent in the pool');
     const P_id = computeTxId(P);
     const P_post = computePostId(P_id, 0);
-    mem.insertUtxoTx(P, 1000);
-    db.prepare(
-      `INSERT INTO dag_posts (id, tx_id, content_hash, content, author, parent_refs, protocol_version, type, status)
-       VALUES (?, ?, ?, ?, ?, '[]', 1, 'regular', 'pending')`,
-    ).run(P_post, P_id, Buffer.from(computeContentHash('a parent in the pool')).toString('hex'), 'a parent in the pool', Buffer.from(A.userId));
+    create.createPost(postDeps, P, 'a parent in the pool');
 
     const R = buildReply(B, Xb, 'a reply to the pending parent', P_post, A.userId);
     const R_id = computeTxId(R);
     const R_post = computePostId(R_id, 0);
-    mem.insertUtxoTx(R, 1000);
-    db.prepare(
-      `INSERT INTO dag_posts (id, tx_id, content_hash, content, author, parent_refs, protocol_version, type, status)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 'regular', 'pending')`,
-    ).run(R_post, R_id, Buffer.from(computeContentHash('a reply to the pending parent')).toString('hex'), 'a reply to the pending parent', Buffer.from(B.userId), JSON.stringify([P_post]));
-    db.prepare('INSERT INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)').run(R_post, P_post);
+    create.createPost(postDeps, R, 'a reply to the pending parent');
 
     expect(posts.getPost(P_post)).not.toBeNull();
     expect(posts.getPost(R_post)).not.toBeNull();
     expect(db.prepare('SELECT 1 FROM dag_parent_refs WHERE post_id = ?').get(R_post)).toBeDefined();
+    expect(mem.getPendingEntries(10)).toHaveLength(2);
 
     const Tblock = buildThread(A, Xa, 'the block\'s thread over Xa');
     const block = await makeApplicableBlock({ height: 1, utxoTxs: [Tblock] });
@@ -279,11 +374,18 @@ describe('every applied block lets the pool follow it, on every node', () => {
     await seedBoxes([X]);
 
     const mem = await importMempool();
+    const engine = await buildEngineDeps();
+    const postDeps = await buildPostDeps(engine, () => 0);
+    const create = await import('../../src/services/post-service.js');
+    const admit = await import('../../src/services/admit-tx.js');
+    const consensus = await import('@dagsocial/consensus');
+
     const T = buildThread(A, X, 'the one the block carries');
-    mem.insertUtxoTx(T, 1000);
+    create.createPost(postDeps, T, 'the one the block carries');
     const T_change = changeBox(T, A);
-    const Tdep = buildThread(A, T_change, 'the one that stays pooled');
-    mem.insertUtxoTx(Tdep, 1000);
+
+    const Tdep = buildConsolidation(A, T_change);
+    admit.admitWriteTx((t, h) => consensus.validateTx(engine, t, h), Tdep, 1, '');
 
     expect(mem.getPendingEntries(10)).toHaveLength(2);
 
@@ -365,9 +467,10 @@ describe('every applied block lets the pool follow it, on every node', () => {
     await seedBoxes([X]);
 
     const mem = await importMempool();
-    // A vouch cast carries a ceiling the rules give it
-    // (MEMPOOL_INTERFACE → Validity ceiling): with the vouch output's
-    // createdAtBlock = 10, the ceiling is 15.
+    // The ceiling boundary is this case's subject: a vouch cast carries a
+    // ceiling the rules give it (MEMPOOL_INTERFACE → Validity ceiling), and
+    // the entry rides `insertUtxoTx` with that ceiling. With the vouch
+    // output's createdAtBlock = 10, the ceiling is 15.
     const dummyKey = toHex(A.userId);
     const voucher = Buffer.from('ee'.repeat(32), 'hex');
     const target = Buffer.from('11'.repeat(32), 'hex');
