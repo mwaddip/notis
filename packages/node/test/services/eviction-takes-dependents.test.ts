@@ -262,7 +262,7 @@ describe('a build whose screen refuses a pooled transaction takes that transacti
     vi.resetModules();
   });
 
-  it.fails('a credit transfer whose input is in the pool\'s store but not in the tree carries its chained dependent out when the build\'s screen refuses it', async () => {
+  it('a credit transfer whose input is in the pool\'s store but not in the tree carries its chained dependent out when the build\'s screen refuses it', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -344,7 +344,7 @@ describe('a mined block the intake refuses sweeps the template rows\' pooled dep
     vi.resetModules();
   });
 
-  it.fails('a chained dependent admitted after the template is built leaves with the template row the intake refuses', async () => {
+  it('a chained dependent admitted after the template is built leaves with the template row the intake refuses', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
