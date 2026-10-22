@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import { computeCandidateBoxId } from '@dagsocial/types';
@@ -296,29 +298,51 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
     const calls: string[] = [];
     let heldRelease: (() => void) | null = null;
     const held = new Promise<void>((r) => { heldRelease = r; });
+    let heldEntered: (() => void) | null = null;
+    const heldReached = new Promise<void>((r) => { heldEntered = r; });
     client.status = async () => { calls.push('status'); return { blockHeight: 100, protocolVersion: ERA }; };
     client.karmaView = async () => ({ boxes: [{ boxId: K1, value: 1000n }], effective: 1000n });
     let firstHeld = false;
     client.submitInvite = async (tx) => {
       submitted.push(tx);
-      if (!firstHeld) { firstHeld = true; await held; }
+      if (!firstHeld) { firstHeld = true; heldEntered!(); await held; }
       return { expiresAtHeight: 821 };
     };
     const app = createApp(cfg, client);
-    const p1 = request(app).post('/faucet/karma').send({ pubkey: recipient }).set(from('2.2.2.1'))
-      .then((r) => r);
-    const p2 = request(app).post('/faucet/karma').send({ pubkey: other }).set(from('2.2.2.2'))
-      .then((r) => r);
-    // A control: 100 ms is long enough for both handlers to have run every
-    // step they can up to the point the service's queue holds the second one.
-    await new Promise((r) => setTimeout(r, 100));
-    expect(firstHeld).toBe(true);
-    const beforeRelease = calls.filter((c) => c === 'status').length;
-    heldRelease!();
-    const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1.status).toBe(202);
-    expect(r2.status).toBe(202);
-    expect(beforeRelease).toBe(1);
+    const server = createServer(app);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      let seen = 0;
+      const bothReceived = new Promise<void>((resolve) => {
+        const onReq = (): void => {
+          seen++;
+          if (seen >= 2) { server.off('request', onReq); resolve(); }
+        };
+        server.on('request', onReq);
+      });
+      const p1 = request(base).post('/faucet/karma').send({ pubkey: recipient }).set(from('2.2.2.1'))
+        .then((r) => r);
+      const p2 = request(base).post('/faucet/karma').send({ pubkey: other }).set(from('2.2.2.2'))
+        .then((r) => r);
+      await Promise.all([bothReceived, heldReached]);
+      // Two `setImmediate` turns: the first drains microtasks that fired on
+      // the second request's receive, so its handler reaches the queue's
+      // `await myTurn`; the second gives any `setImmediate`-scheduled work
+      // (http framing, body parsing) a chance to resume before the /status
+      // count is read, so a stray macrotask does not pass under it.
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(firstHeld).toBe(true);
+      const beforeRelease = calls.filter((c) => c === 'status').length;
+      heldRelease!();
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1.status).toBe(202);
+      expect(r2.status).toBe(202);
+      expect(beforeRelease).toBe(1);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   });
 
   // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
@@ -329,27 +353,47 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
     const calls: string[] = [];
     let heldRelease: (() => void) | null = null;
     const held = new Promise<void>((r) => { heldRelease = r; });
+    let heldEntered: (() => void) | null = null;
+    const heldReached = new Promise<void>((r) => { heldEntered = r; });
     client.status = async () => { calls.push('status'); return { blockHeight: 100, protocolVersion: ERA }; };
     client.creditView = async () => ({ boxes: [{ boxId: C1, value: 1000n }] });
     let firstHeld = false;
     client.submitTransfer = async (tx) => {
       submitted.push(tx);
-      if (!firstHeld) { firstHeld = true; await held; }
+      if (!firstHeld) { firstHeld = true; heldEntered!(); await held; }
       return { expiresAtHeight: 921 };
     };
     const app = createApp(cfg, client);
-    const p1 = request(app).post('/faucet/credits').send({ pubkey: recipient }).set(from('10.0.0.1'))
-      .then((r) => r);
-    const p2 = request(app).post('/faucet/credits').send({ pubkey: other }).set(from('10.0.0.2'))
-      .then((r) => r);
-    await new Promise((r) => setTimeout(r, 100));
-    expect(firstHeld).toBe(true);
-    const beforeRelease = calls.filter((c) => c === 'status').length;
-    heldRelease!();
-    const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1.status).toBe(202);
-    expect(r2.status).toBe(202);
-    expect(beforeRelease).toBe(1);
+    const server = createServer(app);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      let seen = 0;
+      const bothReceived = new Promise<void>((resolve) => {
+        const onReq = (): void => {
+          seen++;
+          if (seen >= 2) { server.off('request', onReq); resolve(); }
+        };
+        server.on('request', onReq);
+      });
+      const p1 = request(base).post('/faucet/credits').send({ pubkey: recipient }).set(from('10.0.0.1'))
+        .then((r) => r);
+      const p2 = request(base).post('/faucet/credits').send({ pubkey: other }).set(from('10.0.0.2'))
+        .then((r) => r);
+      await Promise.all([bothReceived, heldReached]);
+      // Two `setImmediate` turns on the same argument as the karma case above.
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(firstHeld).toBe(true);
+      const beforeRelease = calls.filter((c) => c === 'status').length;
+      heldRelease!();
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1.status).toBe(202);
+      expect(r2.status).toBe(202);
+      expect(beforeRelease).toBe(1);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   });
 
   // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
