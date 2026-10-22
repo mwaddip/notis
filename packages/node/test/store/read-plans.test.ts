@@ -1,6 +1,9 @@
 // MEMPOOL_INTERFACE → Schema → "An entry's inputs and outputs are rows keyed
 // by box id"; MEMPOOL_INTERFACE → getBoxWithPending → "Three point reads".
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type Database from 'better-sqlite3';
 
 async function importDbFresh() {
@@ -42,83 +45,143 @@ function recordPrepared<T>(
   }
 }
 
+/** EXPLAIN QUERY PLAN each recorded text, bind every `?` with an empty string. */
+function planOf(db: Database.Database, sql: string): string {
+  const placeholders = (sql.match(/\?/g) ?? []).length;
+  const binds = Array.from({ length: placeholders }, () => '');
+  const rows = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...binds) as Array<{ detail: string }>;
+  return rows.map((r) => r.detail).join(' | ');
+}
+
+const OWNER_HEX = 'cc'.repeat(32);
+const POOLED_INPUT = 'dd'.repeat(32);
+const ABSENT_ID = 'ff'.repeat(32);
+
+/** A karma transaction the pool holds: one signature, one karma output of its owner. */
+function karmaTx() {
+  return {
+    inputs: [POOLED_INPUT],
+    outputs: [
+      { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: bytes(OWNER_HEX) },
+    ],
+    signatures: { [OWNER_HEX]: new Uint8Array(64) },
+    protocolVersion: 1,
+  };
+}
+
+/**
+ * Set the pool up in `dbFile`, pool one karma transaction, and return the
+ * id of the one output it would create — read through consensus's
+ * `materializeOutput`, so the id crosses no `tx_output_ids` column.
+ */
+async function setUpPool(dbFile: string): Promise<string> {
+  vi.resetModules();
+  const dbMod = await importDbFresh();
+  dbMod.initDb(dbFile);
+  const mem = await import('../../src/store/mempool.js');
+  const { computeTxId } = await import('@dagsocial/types');
+  const { materializeOutput } = await import('@dagsocial/consensus');
+  const tx = karmaTx();
+  mem.insertUtxoTx(tx as never, 100);
+  const txId = computeTxId(tx as never);
+  const output = materializeOutput(tx.outputs[0] as never, txId, 0);
+  dbMod.closeDb();
+  return output.id!;
+}
+
+/**
+ * Record `fn`'s prepared statements on a handle freshly opened against
+ * `dbFile` — closing and reopening before each read makes the pin
+ * independent of a prepared-statement cache a later change may add. Later
+ * `n10d` pins follow this same shape.
+ */
+async function recordReadOn<T>(
+  dbFile: string,
+  fn: (mem: typeof import('../../src/store/mempool.js')) => T,
+): Promise<{ result: T; sqls: string[]; db: Database.Database }> {
+  vi.resetModules();
+  const dbMod = await importDbFresh();
+  dbMod.initDb(dbFile);
+  const mem = await import('../../src/store/mempool.js');
+  const db = dbMod.getDb();
+  const run = recordPrepared(db, () => fn(mem));
+  return { result: run.result, sqls: run.sqls, db };
+}
+
 describe('each pending read\'s prepared statement runs through indexes', () => {
+  let tmpDir: string;
+  let dbFile: string;
+  let pooledOutput: string;
+
   beforeEach(async () => {
-    vi.resetModules();
-    const db = await importDbFresh();
-    db.initDb(':memory:');
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'notis-read-plans-'));
+    dbFile = path.join(tmpDir, 'pool.db');
+    pooledOutput = await setUpPool(dbFile);
   });
 
   afterEach(async () => {
-    const db = await importDbFresh();
-    db.closeDb();
+    const dbMod = await importDbFresh();
+    dbMod.closeDb();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('runs through indexes, not through a mempool scan or json_each', async () => {
-    const mem = await import('../../src/store/mempool.js');
-    const { computeTxId } = await import('@dagsocial/types');
-    const { materializeOutput } = await import('@dagsocial/consensus');
-    const { getDb } = await importDbFresh();
-    const db = getDb();
-
-    const OWNER_HEX = 'cc'.repeat(32);
-    const POOLED_INPUT = 'dd'.repeat(32);
-    const UNPOOLED_INPUT = 'ee'.repeat(32);
-    const ABSENT_ID = 'ff'.repeat(32);
-
-    // A karma transaction the pool holds, so `karma_owner` carries the owner
-    // and `getOwnKarmaBoxIdsWithPending` has a row to find
-    // (MEMPOOL_INTERFACE → Gate metadata columns). One signature, one karma
-    // output of its own owner.
-    const karmaTx = {
-      inputs: [POOLED_INPUT],
-      outputs: [
-        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: bytes(OWNER_HEX) },
-      ],
-      signatures: { [OWNER_HEX]: new Uint8Array(64) },
-      protocolVersion: 1,
-    };
-    mem.insertUtxoTx(karmaTx as never, 100);
-
-    // The pooled output's id, as `materializeOutput` writes it at insert.
-    const pooledTxId = computeTxId(karmaTx as never);
-    const pooledOutput = materializeOutput(karmaTx.outputs[0] as never, pooledTxId, 0);
-
-    // Record every statement each of the four reads prepares on the live
-    // handle (MEMPOOL_INTERFACE → getBoxWithPending → "Three point reads";
-    // → getOwnKarmaBoxIdsWithPending).
-    const { sqls: s1 } = recordPrepared(db, () =>
-      mem.hasPendingSpend([POOLED_INPUT, UNPOOLED_INPUT]),
+  it('hasPendingSpend reads a SEARCH on mempool_inputs by box_id', async () => {
+    const { result, sqls, db } = await recordReadOn(dbFile, (mem) =>
+      mem.hasPendingSpend([POOLED_INPUT, ABSENT_ID]),
     );
-    const { sqls: s2 } = recordPrepared(db, () =>
-      mem.getBoxWithPending(pooledOutput.id!),
+
+    expect(result).toBe(POOLED_INPUT);
+    expect(sqls.length).toBeGreaterThan(0);
+
+    const plans = sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/json_each/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_inputs\b[^|]*\bbox_id\b/i.test(p))).toBe(true);
+  });
+
+  it('getBoxWithPending on a pooled output reads a SEARCH on mempool_outputs', async () => {
+    const { result, sqls, db } = await recordReadOn(dbFile, (mem) =>
+      mem.getBoxWithPending(pooledOutput),
     );
-    const { sqls: s3 } = recordPrepared(db, () =>
+
+    expect(result).not.toBeNull();
+    expect((result as { id?: string }).id).toBe(pooledOutput);
+    expect(sqls.length).toBeGreaterThan(0);
+
+    const plans = sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/json_each/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_outputs\b/i.test(p))).toBe(true);
+  });
+
+  it('getBoxWithPending on an absent id searches inputs and outputs, scans neither mempool nor json_each', async () => {
+    const { result, sqls, db } = await recordReadOn(dbFile, (mem) =>
       mem.getBoxWithPending(ABSENT_ID),
     );
-    const { sqls: s4 } = recordPrepared(db, () =>
+
+    expect(result).toBeNull();
+    expect(sqls.length).toBeGreaterThan(0);
+
+    const plans = sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/json_each/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_inputs\b/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_outputs\b/i.test(p))).toBe(true);
+  });
+
+  it('getOwnKarmaBoxIdsWithPending\'s spends read a SEARCH on mempool_inputs', async () => {
+    const { result, sqls, db } = await recordReadOn(dbFile, (mem) =>
       mem.getOwnKarmaBoxIdsWithPending(OWNER_HEX),
     );
-    const allSqls = [...s1, ...s2, ...s3, ...s4];
 
-    // Each recorded text's EXPLAIN QUERY PLAN. SQLite does not execute the
-    // statement, but each `?` still has to bind — empty strings suffice.
-    const plans = allSqls.map((sql) => {
-      const placeholders = (sql.match(/\?/g) ?? []).length;
-      const binds = Array.from({ length: placeholders }, () => '');
-      const rows = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...binds) as Array<{ detail: string }>;
-      return rows.map((r) => r.detail).join(' | ');
-    });
+    // The owner's pooled karma output is `pooledOutput`; nothing spends it,
+    // so it stays in the kept set.
+    expect(result).toContain(pooledOutput);
+    expect(sqls.length).toBeGreaterThan(0);
 
-    const scansMempool = plans.some((p) => /\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p));
-    const anyJsonEach = plans.some((p) => /json_each/i.test(p));
-    const spendSearchesInputs = plans.some((p) => /\bSEARCH\b[^|]*\bmempool_inputs\b/i.test(p));
-
-    // One compound assertion so the failure names which property stood.
-    expect({ scansMempool, anyJsonEach, spendSearchesInputs }).toEqual({
-      scansMempool: false,
-      anyJsonEach: false,
-      spendSearchesInputs: true,
-    });
+    const plans = sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/json_each/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_inputs\b/i.test(p))).toBe(true);
   });
 });

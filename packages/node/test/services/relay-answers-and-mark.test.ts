@@ -230,6 +230,42 @@ describe('the relay handler answers whether it admitted the transaction', () => 
     );
     expect(run.returned).toBe(false);
   });
+
+  it('a conflicting relayed arrival at a full credit class leaves the pool unchanged', async () => {
+    // MEMPOOL_INTERFACE → insertUtxoTx → "The conflict gate runs before the
+    // capacity gate.". The relay reaches the pool with the arrival (its
+    // validation reads only the confirmed set), the credit class is full,
+    // and the arrival outbids the cheapest resident — the conflict gate
+    // refuses before anything moves.
+    const { sender, box } = await storeWithCredit();
+    const mempool = await import('../../src/store/mempool.js');
+    mempool.setMempoolCap(2); // one credit slot
+
+    const resident = makeCreditTx(sender, [box], 1n);
+    mempool.insertUtxoTx(resident, 100);
+
+    const before = mempool.getPendingEntries(10);
+    expect(before).toHaveLength(1);
+    const residentRowid = before[0]!.rowid;
+
+    // Controls: credit class full with one resident.
+    const db = (await importDb()).getDb();
+    const row = db.prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL')
+      .get() as { n: number };
+    expect(row.n).toBe(1);
+
+    const arrival = makeCreditTx(sender, [box], 2n);
+    const run = await relay(arrival);
+
+    // Control: the arrival passed the relay's validation and reached the
+    // pool's insert — the handler's dropped-for-conflict log says so.
+    expect(run.warned.some((l) => l.includes('input spent by a pending entry'))).toBe(true);
+
+    expect(run.returned).toBe(false);
+    const after = mempool.getPendingEntries(10);
+    expect(after).toHaveLength(1);
+    expect(after[0]!.rowid).toBe(residentRowid);
+  });
 });
 
 describe("the relay's signature check answers from the transaction's own map", () => {

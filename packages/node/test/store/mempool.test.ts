@@ -1074,44 +1074,56 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     db.closeDb();
   });
 
-  it('a relayed conflict replaces nothing', async () => {
-    // One credit slot. The resident spends box X at the cheapest rate, so an
-    // arrival that outbids it is a replacement in the current code — the
-    // capacity gate evicts the resident before the conflict gate sees it.
+  it('a conflicting arrival replaces nothing', async () => {
+    // One credit slot. The resident spends box X at the cheapest rate; the
+    // arrival spends X too and bids above it. The conflict gate refuses the
+    // arrival before the capacity gate's eviction can see it, so nothing
+    // of the resident moves.
+    const { entryByteCost } = await import('../../src/store/mempool.js');
+    const { encodeTx } = await import('@dagsocial/types');
     const resident = seededCreditTx('cheap_resident_X', 1000n, 990n); // fee 10
     const mem = await importCappedWithBoxes(2, [resident.box]);
 
     mem.insertUtxoTx(resident.tx as any, 100);
-    const residentTxId = (await importDbFresh()).getDb()
-      .prepare('SELECT tx_id FROM mempool').get() as { tx_id: string };
+    const row = (await importDbFresh()).getDb()
+      .prepare('SELECT tx_id, tx_fee, tx_bytes FROM mempool').get() as
+      { tx_id: string; tx_fee: bigint | number; tx_bytes: number };
 
     const residentInput = (resident.tx as any).inputs[0] as string;
     const arrival = creditTxSpending(residentInput, 900n);
 
-    // Controls: class full, resident pooled, arrival outbids resident.
-    const row = (await importDbFresh()).getDb()
+    // Controls: class full; resident pooled on `residentInput`; and the
+    // arrival outbids the resident on the cross-multiplied rate
+    // `assertCapacity` itself compares — the arrival's `fee × resident
+    // bytes` above the resident's `fee × arrival bytes`, bytes read from
+    // the pooled row and from `entryByteCost(encodeTx(arrival))`.
+    const fullRow = (await importDbFresh()).getDb()
       .prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL').get() as { n: number };
-    expect(row.n).toBe(1);
+    expect(fullRow.n).toBe(1);
     expect(mem.hasPendingSpend([residentInput])).toBe(residentInput);
-    // The arrival's bid-per-byte beats the resident's. Cross-multiplied, as
-    // the eviction query itself compares (MEMPOOL_INTERFACE → Eviction).
-    const bidOfArrival = 900n;
-    const bidOfResident = 10n;
-    expect(bidOfArrival).toBeGreaterThan(bidOfResident);
+    const residentFee = BigInt(row.tx_fee as number);
+    const residentBytes = BigInt(row.tx_bytes);
+    const arrivalBytes = BigInt(entryByteCost(encodeTx(arrival as never)));
+    const arrivalFee = 900n;
+    expect(arrivalFee * residentBytes).toBeGreaterThan(residentFee * arrivalBytes);
 
-    // The action — the arrival reaches `insertUtxoTx` with the resident
-    // still pooled.
-    try { mem.insertUtxoTx(arrival as any, 100); } catch { /* conflict ok */ }
+    // The refusal is the conflict gate's and names the box.
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(
+      mem.PendingSpendConflictError,
+    );
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(residentInput);
 
     const residentStill = (await importDbFresh()).getDb()
-      .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(residentTxId.tx_id);
+      .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(row.tx_id);
     expect(residentStill).toBeDefined();
   });
 
-  it('a relayed conflict evicts no bystander', async () => {
-    // Two credit slots. The cheapest spends Y; a bystander spends X. An
-    // arrival spending X outbids the cheapest and reaches the conflict on X
-    // — in the current code, the capacity gate evicts the cheapest first.
+  it('a conflicting arrival evicts no bystander', async () => {
+    // Two credit slots. The cheapest spends Y; a bystander spends X. The
+    // arrival spending X outbids the cheapest, and the conflict on X runs
+    // before the capacity gate's eviction of Y.
+    const { entryByteCost } = await import('../../src/store/mempool.js');
+    const { encodeTx } = await import('@dagsocial/types');
     const cheapest = seededCreditTx('cheap_Y', 1000n, 990n); // fee 10
     const bystander = seededCreditTx('bystander_X', 1000n, 500n); // fee 500
     const mem = await importCappedWithBoxes(4, [cheapest.box, bystander.box]);
@@ -1121,22 +1133,33 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     const cheapestInput = (cheapest.tx as any).inputs[0] as string;
     const bystanderInput = (bystander.tx as any).inputs[0] as string;
 
-    const cheapestTxId = (await importDbFresh()).getDb()
-      .prepare('SELECT tx_id FROM mempool WHERE tx_fee = 10').get() as { tx_id: string };
+    const cheapestRow = (await importDbFresh()).getDb()
+      .prepare('SELECT tx_id, tx_fee, tx_bytes FROM mempool WHERE tx_fee = 10').get() as
+      { tx_id: string; tx_fee: bigint | number; tx_bytes: number };
 
     const arrival = creditTxSpending(bystanderInput, 900n);
 
-    // Controls: credit class full with the cheapest and the bystander.
-    const row = (await importDbFresh()).getDb()
+    // Controls: credit class full with cheapest and bystander, both pooled
+    // on their inputs; the arrival outbids the cheapest on the same
+    // cross-multiplied rate `assertCapacity` compares.
+    const fullRow = (await importDbFresh()).getDb()
       .prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL').get() as { n: number };
-    expect(row.n).toBe(2);
+    expect(fullRow.n).toBe(2);
     expect(mem.hasPendingSpend([cheapestInput])).toBe(cheapestInput);
     expect(mem.hasPendingSpend([bystanderInput])).toBe(bystanderInput);
+    const cheapestFee = BigInt(cheapestRow.tx_fee as number);
+    const cheapestBytes = BigInt(cheapestRow.tx_bytes);
+    const arrivalBytes = BigInt(entryByteCost(encodeTx(arrival as never)));
+    const arrivalFee = 900n;
+    expect(arrivalFee * cheapestBytes).toBeGreaterThan(cheapestFee * arrivalBytes);
 
-    try { mem.insertUtxoTx(arrival as any, 100); } catch { /* conflict ok */ }
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(
+      mem.PendingSpendConflictError,
+    );
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(bystanderInput);
 
     const cheapestStill = (await importDbFresh()).getDb()
-      .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(cheapestTxId.tx_id);
+      .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(cheapestRow.tx_id);
     expect(cheapestStill).toBeDefined();
   });
 
@@ -1224,35 +1247,39 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     // not at all (MEMPOOL_INTERFACE → insertUtxoTx → "One SQLite
     // transaction."). A trigger aborts the INSERT of the arrival's `tx_id`
     // after the eviction has run.
-    const { computeTxId } = await import('@dagsocial/types');
+    const { computeTxId, encodeTx } = await import('@dagsocial/types');
+    const { entryByteCost } = await import('../../src/store/mempool.js');
     const resident = seededCreditTx('cheap_resident_Z', 1000n, 990n); // fee 10
     const mem = await importCappedWithBoxes(2, [resident.box]);
 
     mem.insertUtxoTx(resident.tx as any, 100);
-    const residentTxId = (await importDbFresh()).getDb()
-      .prepare('SELECT tx_id FROM mempool').get() as { tx_id: string };
+    const db = (await importDbFresh()).getDb();
+    const residentRow = db.prepare('SELECT tx_id, tx_fee, tx_bytes FROM mempool')
+      .get() as { tx_id: string; tx_fee: bigint | number; tx_bytes: number };
 
     const arrival = creditTxSpending('ab'.repeat(32), 900n);
     const arrivalTxId = computeTxId(arrival as never);
-    const db = (await importDbFresh()).getDb();
     db.exec(
       `CREATE TRIGGER abort_arrival_insert BEFORE INSERT ON mempool
          WHEN NEW.tx_id = '${arrivalTxId}'
          BEGIN SELECT RAISE(ABORT, 'boom'); END`,
     );
 
-    // Controls: class full, resident pooled, arrival outbids resident.
-    const row = db.prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL')
+    // Controls: class full, resident pooled; arrival outbids resident on
+    // the same cross-multiplied rate.
+    const fullRow = db.prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL')
       .get() as { n: number };
-    expect(row.n).toBe(1);
-    const bidResident = 10n;
-    const bidArrival = 900n;
-    expect(bidArrival).toBeGreaterThan(bidResident);
+    expect(fullRow.n).toBe(1);
+    const residentFee = BigInt(residentRow.tx_fee as number);
+    const residentBytes = BigInt(residentRow.tx_bytes);
+    const arrivalBytes = BigInt(entryByteCost(encodeTx(arrival as never)));
+    const arrivalFee = 900n;
+    expect(arrivalFee * residentBytes).toBeGreaterThan(residentFee * arrivalBytes);
 
-    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow();
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(/boom/);
 
     const residentStill = db.prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1')
-      .get(residentTxId.tx_id);
+      .get(residentRow.tx_id);
     expect(residentStill).toBeDefined();
   });
 });
