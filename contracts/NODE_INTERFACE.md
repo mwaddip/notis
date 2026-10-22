@@ -812,13 +812,10 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 **Every figure but `pendingPosts` is read once per applied tip.** `postCount`, `usernameCount`, `totalKarma`,
 `liquidKarma` and `totalCredits` are aggregates — a count of every confirmed post and every name, a sum over every
 unspent box of a type — and only a block's apply or revert moves them. The node computes them at the first `/status`
-after the applied tip moves, keyed by the tip's hash — an empty chain's by its height 0 — and answers every later
-request at that tip from what it computed; `pendingPosts` is read on each request, over `dag_posts (status) WHERE status = 'pending'`, which the pool's
-cap bounds. The three sums measured 51 ms a read at 500 000 boxes half spent (2026-10-21), and no index answers a sum
+after the applied tip moves, keyed by the tip's height and its hash — an empty chain's by its height 0 alone — and
+answers every later request at that tip from what it computed; `pendingPosts` is read on each request, over
+`dag_posts (status) WHERE status = 'pending'`, which the pool's cap bounds. The three sums measured 51 ms a read at 500 000 boxes half spent (2026-10-21), and no index answers a sum
 over a whole type for less: the read is the type's every box.
-
-> ⚠ **AHEAD OF CODE (2026-10-21).** The once-per-tip read leads `routes/blocks.ts` and `server.ts`, which compute
-> every figure on every request.
 
 #### Three karma sets, and none derives from another
 
@@ -3391,16 +3388,15 @@ admission and the shadow run; where it is the store's answer to a rule's read, i
 | `closeDb()` | `() => void` | Graceful shutdown |
 
 **A statement is prepared once per database handle.** Each handle carries a cache of its prepared statements keyed
-by their text, and every store read and write — the `store/` modules, `state/avl-storage.ts`, the `/status` figures —
-takes its statement from it rather than compiling one per call: a compile costs 8.5 µs on a point read and 33 µs on
+by their text (`store/db.ts`'s `prepared`), and every store read and write — the `store/` modules, `/status`'s figures
+among them, `state/avl-storage.ts` and genesis seeding's reads — takes its statement from it rather than compiling one
+per call: a compile costs 8.5 µs on a point read and 33 µs on
 the karma page (measured 2026-10-21, better-sqlite3 11), paid on every call that prepares. **One cached statement
 serves every caller of its text, so each use sets the statement's integer mode** — `safeIntegers(true)` or
-`safeIntegers(false)` — and none inherits the last caller's. The cache belongs to the handle: `closeDb` drops it, and
-the next `initDb` starts empty. A statement whose text is built from its argument count — an `IN (?, …)` list — is
-prepared on its call and kept out of the cache.
-
-> ⚠ **AHEAD OF CODE (2026-10-21).** The statement cache leads every store module, `state/avl-storage.ts` and
-> `server.ts`, which call `prepare` on every read and write.
+`safeIntegers(false)` — and none inherits the last caller's. The cache is keyed by the handle, so the handle the next
+`initDb` opens starts with none; `closeDb` drops the closed handle's. Kept out of it: a statement whose text is built
+from its argument count — an `IN (?, …)` list — prepared on its call, and `initDb`'s own migration statements, which
+run once a handle.
 
 ### Posts DAG
 
@@ -3463,7 +3459,8 @@ prepared on its call and kept out of the cache.
 > **A read the node runs per request or per block touches what it answers.** The pages are one case;
 > the rest are point reads and bounded ranges, each on an index that serves its predicate: the pool's
 > pending view and conflict gate, on the entries' input and output tables (`MEMPOOL_INTERFACE →
-> Schema`); a vouch's escrow check at admission, on the escrow-owner index; the ownerless singletons —
+> Schema`); a vouch's escrow check and its live-pair check at admission, on the escrow-owner and the voucher
+> indexes; the ownerless singletons —
 > the emission, treasury, karma-pool, backer-pool and genesis-proof boxes — read with `owner IS NULL`,
 > so the owner index answers each by its `(NULL, box_type)` prefix (→ "`getGenesisProofBox` orders its
 > `LIMIT 1`"); the producer's rent selection, on `utxo_boxes (created_at_block) WHERE box_type =
@@ -3489,10 +3486,6 @@ prepared on its call and kept out of the cache.
 > it holds one entry: the voucher, escrow-owner and rent indexes take a box write from 4.0 µs to
 > 4.5 µs (an insert and the spend of half, 200 000 boxes). One test per read pins its plan, as for the
 > pages.
->
-> ⚠ **AHEAD OF CODE (2026-10-21).** The voucher, escrow-owner, rent, placeholder and `best_chain`
-> hash indexes lead `store/db.ts`, which has none of them; the singleton reads lead `store/utxo.ts`,
-> whose queries name no `owner IS NULL`.
 
 **`dag_posts` columns:** `id`, `tx_id` (hex, NOT NULL — the creating transaction's id), `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
@@ -4054,9 +4047,6 @@ recompute is the corrupt-header tripwire (`UnhashableStoredHeaderError` — a
 column read returns the insert-time hash over a header row that has since
 rotted), and `verifyBlockChainLink` recomputes internally in any case.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The header read leads `services/block-apply.ts` and
-> `services/block-creator.ts`, which read the previous block whole through `getOrderingBlock`.
-
 **The `interlinks` column is a cache of the header chain, never journaled.** `I(h)` is a function of
 the headers below `h` (`TYPES_INTERFACE` → Interlink vector), so the column can always be rebuilt from
 `header_bytes`. It is written by `createOrderingBlock` with the vector the funnel verified, and read by the
@@ -4145,9 +4135,6 @@ so a path's sum stays below 2³⁰⁹.
 entries by hash — each a probe of the index, where without it each reads the whole chain, and the prune runs every
 block (→ Store Interface → "A read the node runs per request or per block touches what it answers"). Unique, because
 a header stands at one height.
-
-> ⚠ **AHEAD OF CODE (2026-10-21).** `idx_best_chain_hash` leads `store/db.ts`, which indexes `best_chain` by height
-> alone.
 
 **A header row is written once.** A row is never updated: a switch rewrites `best_chain`, and a header leaves
 only by the mark's removal of its subtree or by the prune below the reach floor (Fork choice decides on verified

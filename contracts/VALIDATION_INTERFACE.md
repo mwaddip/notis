@@ -1254,9 +1254,6 @@ because the header is all it reads: a caller holding a stored tip reads its head
 (`NODE_INTERFACE → Ordering blocks`), never a body of up to `MAX_ORDERING_BLOCK_BYTES`. Pure
 chain-link check — does not verify PoW, signatures, or UTXO state transitions.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The header argument leads `src/verify.ts`, whose
-> `verifyBlockChainLink` takes the previous block.
-
 This is the sanctioned chain-link check: `applyOrderingBlock` calls it for
 every non-genesis block (the genesis case has no previous block to link to).
 

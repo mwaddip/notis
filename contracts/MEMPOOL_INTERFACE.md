@@ -67,9 +67,6 @@ output is that transaction again, which its inputs refuse first. **The rows leav
 confirmation, expiry, eviction, removal — by `ON DELETE CASCADE`, which holds because `initDb` turns foreign keys on;
 the `entry_rowid` indexes are what the cascade and a per-entry read find them by.
 
-> ⚠ **AHEAD OF CODE (2026-10-21).** The input and output tables lead `store/db.ts` and `store/mempool.ts`, which
-> keep an entry's inputs and output ids as JSON columns (`tx_inputs`, `tx_output_ids`) read through `json_each`.
-
 **`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
 no additional hash. It exists because cleanup has to find an entry *by transaction identity* when a
 peer's block confirms it, and a scan that recomputes the id per candidate is the cost measured under
@@ -172,9 +169,6 @@ arrival, since it validates against the confirmed set alone (→ getBoxWithPendi
 **One SQLite transaction.** The eviction a full credit class makes, the entry's row and its input and output rows
 commit together or not at all (`ARCHITECTURE → "Single-transaction atomic writes"`); inside a caller's transaction —
 the reorg's re-insertion — it runs as a savepoint of that one.
-
-> ⚠ **AHEAD OF CODE (2026-10-21).** The gate order and the one transaction lead `store/mempool.ts`'s `insertUtxoTx`,
-> which runs the capacity gate — evicting — before the conflict gate, and evicts and inserts as separate statements.
 
 - `expiresAtHeight` is the block height at which the entry becomes invalid.
 - `costEstimate` is the cost gate's marginal cost, written as the row's `cost_estimate` (→ The cost gate); a caller
