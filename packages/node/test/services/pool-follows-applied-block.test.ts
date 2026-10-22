@@ -50,6 +50,10 @@ async function importFork() {
   return (await import('../../src/services/fork-resolution.js')) as typeof import('../../src/services/fork-resolution.js');
 }
 
+async function importUtxo() {
+  return (await import('../../src/store/utxo.js')) as typeof import('../../src/store/utxo.js');
+}
+
 /** A signed thread post over `karmaInput`. */
 function buildThread(author: TestIdentity, karmaInput: KarmaBox, content: string): UtxoTransaction {
   const change = karmaInput.value - POST_PRICE_THREAD;
@@ -498,6 +502,77 @@ describe('every applied block lets the pool follow it, on every node', () => {
     const b16 = await makeApplicableBlock({ height: 16 });
     expect(await applyBlockThroughIntake(b16)).toBe(true);
     // The block at ceiling + 1 removes it.
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
+  });
+
+  it('a block whose settlement spends a pooled entry\'s box takes the entry', async () => {
+    // MEMPOOL_INTERFACE → What takes an entry out of the pool → "A block's
+    // spends" names "any box the block's mutations remove, the body's and the
+    // settlement's". vi.doMock compresses the stale threshold and the decay
+    // interval so a stale identity's post-body karma is squared in a
+    // reachable height (NODE_INTERFACE → Karma decay).
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>(
+        '../../src/config.js',
+      );
+      return {
+        ...actual,
+        config: Object.freeze({
+          ...actual.config,
+          karmaStaleThresholdBlocks: 3,
+          karmaDecayIntervalBlocks: 1,
+        }),
+      };
+    });
+    await freshNode();
+    const A = makeTestIdentity();
+    const X = makeKarmaBox(POST_PRICE_THREAD * 10n, A.userId, 0, 60);
+    await seedBoxes([X]);
+
+    const mem = await importMempool();
+    const utxo = await importUtxo();
+    const engine = await buildEngineDeps();
+    const postDeps = await buildPostDeps(engine, () => 0);
+    const create = await import('../../src/services/post-service.js');
+    const admit = await import('../../src/services/admit-tx.js');
+    const consensus = await import('@dagsocial/consensus');
+
+    // Tb pools a post of A, admitted while the identity is fresh (judged-for
+    // height 1, stale threshold 3). Tp pools a consolidation of Tb's pending
+    // change — the identity's karma box in the pending view — admitted the
+    // same way.
+    const Tb = buildThread(A, X, 'the body\'s thread over X');
+    create.createPost(postDeps, Tb, 'the body\'s thread over X');
+    const Tb_change = changeBox(Tb, A);
+
+    const Tp = buildConsolidation(A, Tb_change);
+    admit.admitWriteTx((t, h) => consensus.validateTx(engine, t, h), Tp, 1, '');
+
+    // Controls: Tb_change is A's in the pending view before the block, and
+    // Tp sits in the pool before the block.
+    expect(utxo.getBox(Tb_change.id!)).toBeNull();
+    expect(mem.findPendingOutput(Tb_change.id!)).not.toBeNull();
+    expect(mem.getPendingEntries(10)).toHaveLength(2);
+
+    // Empty blocks carry the chain past the stale threshold without touching A.
+    for (let h = 1; h <= 4; h++) {
+      const b = await makeApplicableBlock({ height: h });
+      expect(await applyBlockThroughIntake(b)).toBe(true);
+    }
+
+    // The block at height 5 carries Tb; the body spends X and emits
+    // Tb_change, the post-body karma projection for A names Tb_change, and
+    // decay squares A — the settlement consumes Tb_change and emits a
+    // decay-burn karma box (NODE_INTERFACE → Karma decay).
+    const block = await makeApplicableBlock({ height: 5, utxoTxs: [Tb] });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    // The block's effects remove Tb_change — the body creates it and the
+    // settlement consumes it, in that block, so the store answers it as
+    // spent after the apply.
+    expect(utxo.getBox(Tb_change.id!)).toBeNull();
+    expect(mem.findPendingOutput(Tb_change.id!)).toBeNull();
+    // Tp — the entry whose input the settlement spent — leaves with the block.
     expect(mem.getPendingEntries(10)).toHaveLength(0);
   });
 });
