@@ -120,6 +120,13 @@ describe('/karma/:userId membership fields', () => {
         getCreditValue,
         getCreditBoxesPage,
         getBondBoxesPage,
+        // NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending
+        // view, as admission spends from it": wired for typecheck; no case
+        // here exercises the flag.
+        getBoxesPageWithPending: () => ({ rows: [], next: null, count: 0 }),
+        getBoxTotalWithPending: () => 0n,
+        admissionHeld: () => 0n,
+        admissionOwed: () => 0n,
         getCurrentHeight: () => HEIGHT,
         decayCfg: DECAY_CFG,
         getNetworkRecord,

@@ -184,12 +184,21 @@ const MIGRATIONS = [
     box_id      TEXT PRIMARY KEY,
     entry_rowid INTEGER NOT NULL REFERENCES mempool(rowid) ON DELETE CASCADE
   ) WITHOUT ROWID`,
+  // MEMPOOL_INTERFACE → Schema → "An output row carries its box's owner,
+  // type and value": the three columns and `idx_mempool_outputs_owner` serve
+  // the view by owner (MEMPOOL_INTERFACE → getBoxesPageWithPending).
   `CREATE TABLE IF NOT EXISTS mempool_outputs (
     box_id      TEXT PRIMARY KEY,
-    entry_rowid INTEGER NOT NULL REFERENCES mempool(rowid) ON DELETE CASCADE
+    entry_rowid INTEGER NOT NULL REFERENCES mempool(rowid) ON DELETE CASCADE,
+    owner       BLOB,
+    box_type    TEXT NOT NULL,
+    value       INTEGER NOT NULL
   ) WITHOUT ROWID`,
   `CREATE INDEX IF NOT EXISTS idx_mempool_inputs_entry  ON mempool_inputs(entry_rowid)`,
   `CREATE INDEX IF NOT EXISTS idx_mempool_outputs_entry ON mempool_outputs(entry_rowid)`,
+  `CREATE INDEX IF NOT EXISTS idx_mempool_outputs_owner
+      ON mempool_outputs(owner, box_type, value DESC, box_id)
+      WHERE owner IS NOT NULL`,
 
   // Usernames — NODE_INTERFACE → Username records
   `CREATE TABLE IF NOT EXISTS usernames (

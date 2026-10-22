@@ -22,6 +22,9 @@ export interface NodeError {
   ok: false;
   status: number;
   body: string;
+  /** Present, and `true`, exactly on a transport failure the request's
+   *  deadline ended; absent on every other non-ok result. */
+  timedOut?: true;
 }
 export type NodeResult<T> = NodeResponse<T> | NodeError;
 
@@ -40,9 +43,18 @@ export async function fetchJson<T>(
   try {
     res = await httpFetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   } catch (e) {
-    return { ok: false, status: 0, body: e instanceof Error ? e.message : String(e) };
+    return transportFailure(e);
   }
   return readCappedJson<T>(res, cap);
+}
+
+// WEB_INTERFACE → Reading a node's answer → "A failure the deadline ended says
+// so": `AbortSignal.timeout` aborts with a `TimeoutError`, which is what the
+// request and the body stream reject with; that failure carries `timedOut`.
+function transportFailure(e: unknown): NodeError {
+  const body = e instanceof Error ? e.message : String(e);
+  const deadline = typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError';
+  return deadline ? { ok: false, status: 0, body, timedOut: true } : { ok: false, status: 0, body };
 }
 
 /**
@@ -55,7 +67,8 @@ export async function fetchJson<T>(
  * unparseable 2xx body is `{ ok: false, status, body: 'unparseable body: …' }`
  * — the text held by `capped`, controls as their escapes — and a parsed 2xx
  * is `{ ok: true, data }`. A mid-stream transport failure answers
- * `{ ok: false, status: 0, body: errorMessage }`, as a connect failure does.
+ * `{ ok: false, status: 0, body: errorMessage }`, as a connect failure does,
+ * and carries `timedOut: true` when the deadline ended it.
  */
 export async function readCappedJson<T>(
   res: Response,
@@ -65,7 +78,7 @@ export async function readCappedJson<T>(
   try {
     read = await readCappedText(res, cap);
   } catch (e) {
-    return { ok: false, status: 0, body: e instanceof Error ? e.message : String(e) };
+    return transportFailure(e);
   }
   if (!read.ok) return { ok: false, status: res.status, body: `body over ${cap} bytes` };
   if (!res.ok) return { ok: false, status: res.status, body: read.text };

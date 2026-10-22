@@ -1,10 +1,21 @@
+import { PAGE_LIMIT_MAX } from '@dagsocial/types';
+import {
+  fetchJson,
+  isRecord,
+  capped,
+  STATUS_READ_BYTES,
+  LISTING_PAGE_READ_BYTES,
+  WRITE_ANSWER_READ_BYTES,
+  REQUEST_TIMEOUT_MS,
+  isHex64Lower,
+  isNonNegSafeInt,
+  isBoxValue,
+  isSum,
+} from '@dagsocial/node-reads';
+import type { HttpFetch, NodeResult } from '@dagsocial/node-reads';
 import type { BoxRef } from './tx.js';
 
-/**
- * A node call that has not answered in this many ms is treated as unreachable,
- * so a hung node cannot stall a faucet request forever.
- */
-const REQUEST_TIMEOUT_MS = 10_000;
+export type { HttpFetch };
 
 /** One `/status` read: the tip, and the era a client signs (NODE_INTERFACE → Status). */
 export interface NodeStatus {
@@ -13,16 +24,36 @@ export interface NodeStatus {
 }
 
 /**
+ * NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+ * admission spends from it" — the karma listing's `pending=1` answer carries
+ * the owner's karma boxes and `effective`, the `remaining` admission judges a
+ * spend against at `tip + 1`.
+ */
+export interface KarmaView {
+  readonly boxes: BoxRef[];
+  readonly effective: bigint;
+}
+
+/**
+ * NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+ * admission spends from it" — the credit listing's `pending=1` answer carries
+ * the owner's credit boxes.
+ */
+export interface CreditView {
+  readonly boxes: BoxRef[];
+}
+
+/**
  * The node's HTTP surface, and the only file that knows its URL shape.
  *
- * ⚠ **Values cross as decimal strings** — `GET /karma/:userId` answers
- * `{ userId, total, boxes: [{ boxId, value }] }` with `value` a string, so every
+ * ⚠ **Values cross as decimal strings** — a listing answers `{ userId, total,
+ * boxes: [{ boxId, value }], effective }` with each value a string, so every
  * one is parsed to `bigint` here and nothing downstream sees the wire form.
  */
 export interface NodeClient {
   status(): Promise<NodeStatus>;
-  karmaBoxes(pubKeyHex: string): Promise<BoxRef[]>;
-  creditBoxes(pubKeyHex: string): Promise<BoxRef[]>;
+  karmaView(pubKeyHex: string): Promise<KarmaView>;
+  creditView(pubKeyHex: string): Promise<CreditView>;
   submitInvite(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }>;
   submitTransfer(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }>;
 }
@@ -32,11 +63,11 @@ interface WireBox {
   value: string;
   lockedUntilBlock?: number;
   // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"
-  income?: unknown;
+  income?: true;
 }
 
 export class HttpNodeClient implements NodeClient {
-  constructor(private readonly base: string) {}
+  constructor(private readonly base: string, private readonly httpFetch: HttpFetch) {}
 
   /**
    * The tip and the era, from one `/status` read.
@@ -48,43 +79,98 @@ export class HttpNodeClient implements NodeClient {
    * sign the wrong era.
    */
   async status(): Promise<NodeStatus> {
-    const res = await fetch(`${this.base}/status`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-    if (!res.ok) throw new NodeError(res.status, await failure(res));
-    const data = (await res.json()) as { blockHeight?: number; protocolVersion?: number };
-    if (typeof data.blockHeight !== 'number') throw new NodeError(502, 'node status carried no height');
-    if (typeof data.protocolVersion !== 'number') {
+    const r = await fetchJson<unknown>(this.httpFetch, `${this.base}/status`, STATUS_READ_BYTES);
+    const data = this.unpack(r, '/status');
+    if (!isRecord(data)) throw new NodeError(502, 'the /status answer is not an object');
+    const { blockHeight, protocolVersion } = data;
+    if (!isNonNegSafeInt(blockHeight)) throw new NodeError(502, 'node status carried no height');
+    if (!isNonNegSafeInt(protocolVersion)) {
       throw new NodeError(502, 'node status carried no protocol version');
     }
-    return { blockHeight: data.blockHeight, protocolVersion: data.protocolVersion };
-  }
-
-  async karmaBoxes(pubKeyHex: string): Promise<BoxRef[]> {
-    return (await this.boxes(`${this.base}/karma/${pubKeyHex}`))
-      .map(toKarmaRef);
+    return { blockHeight, protocolVersion };
   }
 
   /**
+   * NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+   * admission spends from it" — the first page under `pending=1`, read whole
+   * for `effective` and its boxes. A listing with no `boxes` array or no
+   * `effective` is not its route's answer.
+   */
+  async karmaView(pubKeyHex: string): Promise<KarmaView> {
+    const data = await this.listing(
+      `${this.base}/karma/${pubKeyHex}?pending=1&limit=${PAGE_LIMIT_MAX}`,
+    );
+    const raw = data['boxes'];
+    if (!Array.isArray(raw)) throw new NodeError(502, 'the karma listing carries no boxes array');
+    const effRaw = data['effective'];
+    if (!isSum(effRaw)) throw new NodeError(502, 'the karma listing carries no effective sum');
+    const wireBoxes = this.readBoxes(raw);
+    // NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+    // karma boxes" — one unmarked and one marked, so a karma listing holding
+    // more than one own box or more than one income box is not its route's.
+    let own = 0;
+    let income = 0;
+    for (const b of wireBoxes) {
+      if (b.income === true) income++;
+      else own++;
+    }
+    if (own > 1) throw new NodeError(502, `karma listing carries ${own} own boxes`);
+    if (income > 1) throw new NodeError(502, `karma listing carries ${income} income boxes`);
+    return { boxes: wireBoxes.map(toKarmaRef), effective: BigInt(effRaw) };
+  }
+
+  /**
+   * NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+   * admission spends from it" — the first page under `pending=1`, read whole
+   * for its boxes.
+   *
    * ⛔ **A box carrying `lockedUntilBlock` is skipped**, whatever its height.
    * The protocol locks a coinbase credit for `creditMinerRewardDelay` blocks,
    * and the faucet does not spend what the protocol intends to be locked. This
    * is the faucet's own restraint, not an anticipation of a refusal.
    */
-  async creditBoxes(pubKeyHex: string): Promise<BoxRef[]> {
-    return (await this.boxes(`${this.base}/credits/${pubKeyHex}`))
-      .filter((b) => b.lockedUntilBlock === undefined)
-      .map(toCreditRef);
+  async creditView(pubKeyHex: string): Promise<CreditView> {
+    const data = await this.listing(
+      `${this.base}/credits/${pubKeyHex}?pending=1&limit=${PAGE_LIMIT_MAX}`,
+    );
+    const raw = data['boxes'];
+    if (!Array.isArray(raw)) throw new NodeError(502, 'the credit listing carries no boxes array');
+    const wireBoxes = this.readBoxes(raw);
+    const boxes = wireBoxes.filter((b) => b.lockedUntilBlock === undefined).map(toCreditRef);
+    return { boxes };
+  }
+
+  private async listing(url: string): Promise<Record<string, unknown>> {
+    const r = await fetchJson<unknown>(this.httpFetch, url, LISTING_PAGE_READ_BYTES);
+    const data = this.unpack(r, 'listing');
+    if (!isRecord(data)) throw new NodeError(502, 'the listing answer is not an object');
+    return data;
   }
 
   /**
-   * NODE_INTERFACE → HTTP API: an identity with no unspent box answers the
-   * empty page — `boxes: []`, `boxCount 0`, `total "0"` — so the array
-   * passes through and the caller sees an empty set.
+   * WEB_INTERFACE → Reading a node's answer → "Every answer is rebuilt from
+   * its own fields" — each field is held to its type.
    */
-  private async boxes(url: string): Promise<WireBox[]> {
-    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-    if (!res.ok) throw new NodeError(res.status, await failure(res));
-    const data = (await res.json()) as { boxes?: WireBox[] };
-    return data.boxes ?? [];
+  private readBoxes(raw: unknown[]): WireBox[] {
+    const out: WireBox[] = [];
+    for (const b of raw) {
+      if (!isRecord(b)) throw new NodeError(502, 'a listing row is not an object');
+      if (!isHex64Lower(b['boxId'])) throw new NodeError(502, 'a listing row has no 64-hex box id');
+      if (!isBoxValue(b['value'])) throw new NodeError(502, 'a listing row has a box value out of its domain');
+      const lock = b['lockedUntilBlock'];
+      if (lock !== undefined && !isNonNegSafeInt(lock)) {
+        throw new NodeError(502, 'a listing row has a bad lockedUntilBlock');
+      }
+      const incomeMark = b['income'];
+      if (incomeMark !== undefined && incomeMark !== true) {
+        throw new NodeError(502, `karma box income mark is ${String(incomeMark)}, expected true or absent`);
+      }
+      const wire: WireBox = { boxId: b['boxId'] as string, value: b['value'] as string };
+      if (incomeMark === true) wire.income = true;
+      if (lock !== undefined) wire.lockedUntilBlock = lock as number;
+      out.push(wire);
+    }
+    return out;
   }
 
   /**
@@ -94,11 +180,7 @@ export class HttpNodeClient implements NodeClient {
    * — the posture `status()` already takes for a missing field.
    */
   async submitInvite(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }> {
-    const body = (await this.post(`${this.base}/invites`, { tx })) as { expiresAtHeight?: number };
-    if (typeof body.expiresAtHeight !== 'number') {
-      throw new NodeError(502, 'invite response carried no expiresAtHeight');
-    }
-    return { expiresAtHeight: body.expiresAtHeight };
+    return this.write(`${this.base}/invites`, { tx }, 'invite');
   }
 
   /**
@@ -108,22 +190,54 @@ export class HttpNodeClient implements NodeClient {
    * already takes.
    */
   async submitTransfer(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }> {
-    const body = (await this.post(`${this.base}/credits/transfer`, { tx })) as { expiresAtHeight?: number };
-    if (typeof body.expiresAtHeight !== 'number') {
-      throw new NodeError(502, 'transfer response carried no expiresAtHeight');
-    }
-    return { expiresAtHeight: body.expiresAtHeight };
+    return this.write(`${this.base}/credits/transfer`, { tx }, 'transfer');
   }
 
-  private async post(url: string, body: unknown): Promise<unknown> {
-    const res = await fetch(url, {
+  private async write(
+    url: string,
+    body: unknown,
+    what: 'invite' | 'transfer',
+  ): Promise<{ expiresAtHeight: number }> {
+    // The method, content type and body ride on the `init` fetchJson hands the
+    // wrapper, so the deadline and the timeout mark are node-reads' own
+    // (WEB_INTERFACE → Reading a node's answer).
+    const postFetch: HttpFetch = (u, init) => this.httpFetch(u, {
+      ...init,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!res.ok) throw new NodeError(res.status, await failure(res));
-    return res.json();
+    const r = await fetchJson<unknown>(postFetch, url, WRITE_ANSWER_READ_BYTES);
+    const data = this.unpack(r, `${what} response`);
+    if (!isRecord(data)) throw new NodeError(502, `${what} response is not an object`);
+    const h = data['expiresAtHeight'];
+    if (!isNonNegSafeInt(h)) throw new NodeError(502, `${what} response carried no expiresAtHeight`);
+    return { expiresAtHeight: h };
+  }
+
+  /**
+   * NODE_INTERFACE → Faucet → "Every other answer is the service's own or
+   * the node's, never one dressed as the other" — the status is decided where
+   * the node's answer is read: a node's 4xx with its own status and message,
+   * a node 5xx or an answer that is not its route's or a transport failure
+   * node-reads reports without `timedOut` as 502, and a failed read carrying
+   * `timedOut` as 504.
+   */
+  private unpack<T>(r: NodeResult<T>, routeName: string): T {
+    if (r.ok) return r.data;
+    // WEB_INTERFACE → Reading a node's answer → "A failure the deadline ended says so"
+    if (r.timedOut) {
+      throw new NodeError(504, `${routeName} did not answer within ${REQUEST_TIMEOUT_MS} ms`);
+    }
+    if (r.status === 0) {
+      throw new NodeError(502, `${routeName} transport failure: ${capped(r.body)}`);
+    }
+    if (r.status >= 400 && r.status < 500) {
+      throw new NodeError(r.status, decode4xxMessage(r.body));
+    }
+    // A node 5xx, an over-cap body or an unparseable 2xx — the answer is not
+    // its route's, so the service answers 502.
+    throw new NodeError(502, `${routeName}: ${capped(r.body)}`);
   }
 }
 
@@ -132,32 +246,33 @@ const toCreditRef = (b: WireBox): BoxRef => ({ boxId: b.boxId, value: BigInt(b.v
 /**
  * A karma box carries the mark that tells an owner's own box from their income
  * box. `income` is `true` on the income box and absent otherwise
- * (TYPES_INTERFACE → KarmaBox); any other value has no decoding and is refused
- * rather than coerced — the mark leads selection on the invite path, and a
- * silent coercion would reshape the selection without the node agreeing to it.
+ * (TYPES_INTERFACE → KarmaBox); the shape check in `readBoxes` has already
+ * refused anything else, so the ref build here reads two shapes only.
  */
-const toKarmaRef = (b: WireBox): BoxRef => {
-  if (b.income === true) return { boxId: b.boxId, value: BigInt(b.value), income: true };
-  if (b.income === undefined) return { boxId: b.boxId, value: BigInt(b.value) };
-  throw new NodeError(502, `karma box income mark is ${String(b.income)}, expected true or absent`);
-};
+const toKarmaRef = (b: WireBox): BoxRef =>
+  b.income === true
+    ? { boxId: b.boxId, value: BigInt(b.value), income: true }
+    : { boxId: b.boxId, value: BigInt(b.value) };
 
-const isJson = (res: Response): boolean =>
-  (res.headers.get('content-type') ?? '').includes('application/json');
-
-/** The node states an intentional rejection as `{ error }`; anything else is relayed as it came. */
-async function failure(res: Response): Promise<string> {
-  const text = await res.text().catch(() => '');
-  if (isJson(res)) {
-    try {
-      const body = JSON.parse(text) as { error?: unknown; reason?: unknown };
-      const stated = body.reason ?? body.error;
-      if (typeof stated === 'string') return stated;
-    } catch {
-      // Not the shape it declared; the raw body below says more than a guess.
+/**
+ * NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
+ * node's, never one dressed as the other" — a node 4xx is relayed with its
+ * message: `reason`, else `error` when it is a string, else the text through
+ * `capped`.
+ */
+function decode4xxMessage(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (isRecord(parsed)) {
+      const reason = parsed['reason'];
+      if (typeof reason === 'string') return reason;
+      const error = parsed['error'];
+      if (typeof error === 'string') return error;
     }
+  } catch {
+    // Body is not JSON; the capped text is the whole of what the node said.
   }
-  return text || `the node answered ${res.status}`;
+  return capped(body);
 }
 
 /** The node's verdict, relayed rather than reinterpreted. */

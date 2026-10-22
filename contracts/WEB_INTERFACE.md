@@ -853,7 +853,7 @@ profile answers to.
 ## Reading a node's answer
 
 **A node's answer is a claim of its route's shape, and a client takes nothing else.** Every client of the node's HTTP
-API — this one in both builds, and the light client — reads through one package, `@dagsocial/node-reads`, and holds
+API — this one in both builds, the light client and the faucet — reads through one package, `@dagsocial/node-reads`, and holds
 each answer to its route. **Every answer is rebuilt from its own fields**, each of its type: an id 64 lowercase hex
 (`NODE_INTERFACE → HTTP API → "Hex is lowercase"`), a height or a count a non-negative safe integer, a box value a
 decimal string in `[0, 2⁶³)` (`TYPES_INTERFACE → Box value domain`) and a sum a non-negative decimal string, a name
@@ -891,7 +891,11 @@ hold what the route serves (`CONSTANTS → Client reads`), the NiPoPoW proof rou
 — and a body longer than its cap is read no further and reads as a body that will not parse: no honest node sends one,
 so the node's answer failed, not the transport. **Every reader names its route's cap**; none reads a body whole. A
 request not answered within `REQUEST_TIMEOUT_MS` (`CONSTANTS → Client reads`) is ended and reads as a transport
-failure — for a write, the flight's ending for one (→ The wallet).
+failure — for a write, the flight's ending for one (→ The wallet). **A failure the deadline ended says so**: beside
+the transport failure's `status: 0` it carries `timedOut: true`, whether the deadline fell before the answer began or
+while its body was read, so a reader can tell a node that did not answer from one it could not reach. The faucet
+answers the first 504 and the second 502 (`NODE_INTERFACE → Faucet`); this client and the light client read both as
+a transport failure.
 
 ## Reading the feed and threads
 

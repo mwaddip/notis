@@ -19,8 +19,7 @@ describe('buildCreditTransferTx', () => {
   // conservation. A credit transition needs no output back to the input's
   // owner, so an exact spend emits one box rather than a zero-value second.
   it('omits the change output when the spend is exact', () => {
-    const { tx, changeValue } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 1n }], recipient, 512, ERA);
-    expect(changeValue).toBe(0n);
+    const { tx } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 1n }], recipient, 512, ERA);
     expect(outputsOf(tx)).toHaveLength(1);
   });
 

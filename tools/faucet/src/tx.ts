@@ -19,34 +19,15 @@ export interface BuiltTx {
   /** The wire body, ready for `JSON.stringify`. */
   readonly tx: Record<string, unknown>;
   readonly txId: string;
-  readonly changeValue: bigint;
-  /**
-   * The change output as the next transaction may spend it, or `null` when the
-   * transaction emits none.
-   *
-   * ⛔ **Derived from the output that was SIGNED**, never rebuilt from the
-   * amount and the owner. A second statement of the change box would carry its
-   * own id, and a transaction chained onto it would name an input block
-   * application never materializes.
-   */
-  readonly change: BoxRef | null;
   /**
    * The payment output — the box the transaction grants to the recipient — as
    * the next transaction may spend it, or `null` when the transaction emits
    * none of its own (an invite grants no output; the block's settlement does).
    *
-   * ⛔ **Derived from the output that was SIGNED**, on the same rule as
-   * `change`: rebuilding it from the amount and the owner would state the
-   * transaction twice.
+   * ⛔ **Derived from the output that was SIGNED**, never rebuilt from the
+   * amount and the owner: rebuilding it would state the transaction twice.
    */
   readonly payment: BoxRef | null;
-  /**
-   * The karma boxes this transaction names as inputs, with the mark the node
-   * answered. The pending chain reads them to tell what remains of the owner's
-   * confirmed view after a submission — `[]` on a credit transfer, which spends
-   * no karma box.
-   */
-  readonly karmaInputs: readonly BoxRef[];
 }
 
 export const HEX64 = /^[0-9a-f]{64}$/;
@@ -65,9 +46,7 @@ export const HEX64 = /^[0-9a-f]{64}$/;
 export function signAndRender(
   cfg: FaucetConfig,
   tx: UtxoTransaction,
-  changeIndex: number | null,
   paymentIndex: number | null = null,
-  karmaInputs: readonly BoxRef[] = [],
 ): BuiltTx {
   const txId = computeTxId(tx);
   const privKey = createPrivateKey({ key: cfg.secretKey, format: 'der', type: 'pkcs8' });
@@ -79,10 +58,9 @@ export function signAndRender(
   // `computeCandidateBoxId`, not `computeBoxId`: an output is a candidate and
   // carries no provenance, and this is the derivation block application applies
   // to it (TYPES_INTERFACE → BoxId).
-  const change = refFromIndex(tx, txId, changeIndex);
   const payment = refFromIndex(tx, txId, paymentIndex);
 
-  return { txId, changeValue: change?.value ?? 0n, change, payment, karmaInputs, tx: txToJson(signed) };
+  return { txId, payment, tx: txToJson(signed) };
 }
 
 function refFromIndex(tx: UtxoTransaction, txId: string, index: number | null): BoxRef | null {
@@ -161,12 +139,25 @@ export class InsufficientFundsError extends Error {
   }
 }
 
+/**
+ * A refusal of the request itself — a malformed key or the faucet's own key as
+ * the recipient — raised at build time and answered 400 (NODE_INTERFACE →
+ * Faucet → "Every other answer is the service's own or the node's, never one
+ * dressed as the other").
+ */
+export class BadRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BadRequestError';
+  }
+}
+
 /** The recipient of any faucet transaction: 32 bytes, and never the faucet's own key. */
 export function checkRecipient(cfg: FaucetConfig, hex: string, what: string): void {
   if (!HEX64.test(hex)) {
-    throw new Error(`${what} public key must be 64 lowercase hex characters`);
+    throw new BadRequestError(`${what} public key must be 64 lowercase hex characters`);
   }
   if (hex === cfg.publicKeyHex) {
-    throw new Error(`the faucet cannot address itself: ${what} is the faucet's own key`);
+    throw new BadRequestError(`the faucet cannot address itself: ${what} is the faucet's own key`);
   }
 }

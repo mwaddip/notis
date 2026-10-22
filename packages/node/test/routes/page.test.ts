@@ -3,8 +3,7 @@ import {
   parseViewer, isViewerError,
   parseLimit, isLimitError,
   parseAfter, isAfterError,
-  parseRoots, isRootsError,
-  parseLight, isLightError,
+  parseFlag, isFlagError,
   parseBatchIds, isBatchIdsError,
   formatKey,
 } from '../../src/routes/page.js';
@@ -87,22 +86,22 @@ describe('parseLimit', () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseRoots
+// parseFlag — roots
 // ---------------------------------------------------------------------------
 
-describe('parseRoots', () => {
+describe('parseFlag — roots', () => {
   it('returns false when roots is absent', () => {
-    expect(parseRoots({})).toBe(false);
+    expect(parseFlag({}, 'roots')).toBe(false);
   });
 
   it('returns true for roots=1', () => {
-    expect(parseRoots({ roots: '1' })).toBe(true);
+    expect(parseFlag({ roots: '1' }, 'roots')).toBe(true);
   });
 
   it('returns an error for any other value', () => {
-    const r = parseRoots({ roots: '0' });
-    expect(isRootsError(r)).toBe(true);
-    if (!isRootsError(r)) return;
+    const r = parseFlag({ roots: '0' }, 'roots');
+    expect(isFlagError(r)).toBe(true);
+    if (!isFlagError(r)) return;
     expect(r.error).toBe('roots must be 1');
   });
 });
@@ -248,34 +247,34 @@ describe('parseAfter (id)', () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// parseLight — NODE_INTERFACE → Posts → "A light row is a post's id and the
-// node's word"
+// parseFlag — light (NODE_INTERFACE → Posts → "A light row is a post's id
+// and the node's word")
 // ---------------------------------------------------------------------------
 
-describe('parseLight', () => {
+describe('parseFlag — light', () => {
   it('returns false when absent', () => {
-    expect(parseLight({})).toBe(false);
+    expect(parseFlag({}, 'light')).toBe(false);
   });
 
   it('returns true for light=1', () => {
-    expect(parseLight({ light: '1' })).toBe(true);
+    expect(parseFlag({ light: '1' }, 'light')).toBe(true);
   });
 
   it('rejects light=0', () => {
-    const r = parseLight({ light: '0' });
-    expect(isLightError(r)).toBe(true);
-    if (!isLightError(r)) return;
+    const r = parseFlag({ light: '0' }, 'light');
+    expect(isFlagError(r)).toBe(true);
+    if (!isFlagError(r)) return;
     expect(r.error).toBe('light must be 1');
   });
 
   it('rejects empty', () => {
-    const r = parseLight({ light: '' });
-    expect(isLightError(r)).toBe(true);
+    const r = parseFlag({ light: '' }, 'light');
+    expect(isFlagError(r)).toBe(true);
   });
 
   it('rejects light=2', () => {
-    const r = parseLight({ light: '2' });
-    expect(isLightError(r)).toBe(true);
+    const r = parseFlag({ light: '2' }, 'light');
+    expect(isFlagError(r)).toBe(true);
   });
 });
 

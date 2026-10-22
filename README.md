@@ -365,10 +365,10 @@ environment is not merely discouraged, it has no effect.
 
 `tools/faucet` is the service that invites on testnet and devnet. It holds an ordinary Ed25519 key
 and does what any member can do: `POST /faucet/karma` invites a key with a bond, `POST /faucet/credits`
-sends credits, both rate-limited per IP. No consensus rule names it, and the node serves no faucet
-route of its own. It reads `NODE_URL`, `NETWORK_TYPE`, `FAUCET_KEY_PATH`, `FAUCET_PUBLIC_KEY`,
-`FAUCET_BOND_AMOUNT`, `FAUCET_CREDIT_AMOUNT`, `PORT` and `RATE_LIMIT_PER_HOUR`; the `.deb` installs it
-as `dagsocial-faucet`, stopped until its key is in place.
+sends credits, both rate-limited per address, an IPv6 caller by its /64. No consensus rule names it,
+and the node serves no faucet route of its own. It reads `NODE_URL`, `NETWORK_TYPE`,
+`FAUCET_KEY_PATH`, `FAUCET_PUBLIC_KEY`, `FAUCET_BOND_AMOUNT`, `FAUCET_CREDIT_AMOUNT`, `PORT` and
+`RATE_LIMIT_PER_HOUR`; the `.deb` installs it as `dagsocial-faucet`, stopped until its key is in place.
 
 ### Web client
 

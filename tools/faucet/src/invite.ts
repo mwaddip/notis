@@ -1,4 +1,3 @@
-import { KARMA_MINIMUM } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
 import { InsufficientFundsError, checkRecipient, signAndRender } from './tx.js';
@@ -11,8 +10,15 @@ import type { BoxRef, BuiltTx } from './tx.js';
  * value to its `inviteePublicKey`, one bond one grant, so this transaction is
  * the whole of what the faucet sends (ARCHITECTURE → Invite System).
  *
- * The karma change output is emitted iff `changeValue > 0n` — an exact spend
- * produces the bond alone (TYPES_INTERFACE → Box value domain).
+ * The karma change output is emitted iff the selected inputs' sum exceeds the
+ * bond — an exact spend produces the bond alone (TYPES_INTERFACE → Box value
+ * domain).
+ *
+ * ⛔ **The drained verdict is the server's**, read from the karma listing's
+ * `effective` (NODE_INTERFACE → Faucet → "Every other answer is the service's
+ * own or the node's, never one dressed as the other."); the builder only
+ * refuses when the owner's two karma boxes cannot cover the bond at all
+ * (→ Karma transition rules → "An identity holds at most two karma boxes").
  */
 export function buildInviteTx(
   cfg: FaucetConfig,
@@ -22,17 +28,6 @@ export function buildInviteTx(
   protocolVersion: number,
 ): BuiltTx {
   checkRecipient(cfg, inviteeHex, 'invitee');
-
-  const total = boxes.reduce((sum, b) => sum + b.value, 0n);
-  // An invite is a karma spend of its bond that must leave `KARMA_MINIMUM` of the
-  // inviter's karma standing, so the faucet is drained below bond + floor
-  // (NODE_INTERFACE → Karma transition rules → "Only a post spends the floor").
-  if (total < cfg.bondAmount + KARMA_MINIMUM) {
-    throw new InsufficientFundsError(
-      `insufficient karma: an invite needs the bond ${cfg.bondAmount} and the ${KARMA_MINIMUM} ` +
-        `karma floor beside it, the faucet holds ${total}`,
-    );
-  }
 
   const selected = selectKarmaInputs(boxes, cfg.bondAmount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
@@ -65,7 +60,7 @@ export function buildInviteTx(
     protocolVersion,
   };
 
-  return signAndRender(cfg, tx, changeValue > 0n ? 0 : null, null, selected);
+  return signAndRender(cfg, tx);
 }
 
 /**

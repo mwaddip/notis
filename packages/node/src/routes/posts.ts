@@ -11,9 +11,7 @@ import type { PostKey } from '../store/index.js';
 import {
   parseLimit, isLimitError,
   parseAfter, isAfterError,
-  parseRoots, isRootsError,
-  parseTx, isTxError,
-  parseLight, isLightError,
+  parseFlag, isFlagError,
   parseBatchIds, isBatchIdsError,
   parseViewer, isViewerError,
   resolveIdentityParam, isResolveError,
@@ -100,10 +98,10 @@ export function createRouter(deps: PostsDeps): Router {
     if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
     const after = parseAfter(req.query as Record<string, unknown>, 'post');
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
-    const tx = parseTx(req.query as Record<string, unknown>);
-    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
-    const light = parseLight(req.query as Record<string, unknown>);
-    if (isLightError(light)) { res.status(400).json({ error: light.error }); return; }
+    const tx = parseFlag(req.query as Record<string, unknown>, 'tx');
+    if (isFlagError(tx)) { res.status(400).json({ error: tx.error }); return; }
+    const light = parseFlag(req.query as Record<string, unknown>, 'light');
+    if (isFlagError(light)) { res.status(400).json({ error: light.error }); return; }
     // NODE_INTERFACE → Posts → "`light` and `tx` do not combine"
     if (tx && light) { res.status(400).json({ error: 'tx and light cannot both be 1' }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
@@ -149,8 +147,8 @@ export function createRouter(deps: PostsDeps): Router {
       res.status(400).json({ error: 'id must be 64 lowercase hex characters' });
       return;
     }
-    const tx = parseTx(req.query as Record<string, unknown>);
-    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
+    const tx = parseFlag(req.query as Record<string, unknown>, 'tx');
+    if (isFlagError(tx)) { res.status(400).json({ error: tx.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });
@@ -176,12 +174,12 @@ export function createRouter(deps: PostsDeps): Router {
     if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
     const after = parseAfter(req.query as Record<string, unknown>, 'post');
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
-    const roots = parseRoots(req.query as Record<string, unknown>);
-    if (isRootsError(roots)) { res.status(400).json({ error: roots.error }); return; }
-    const tx = parseTx(req.query as Record<string, unknown>);
-    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
-    const light = parseLight(req.query as Record<string, unknown>);
-    if (isLightError(light)) { res.status(400).json({ error: light.error }); return; }
+    const roots = parseFlag(req.query as Record<string, unknown>, 'roots');
+    if (isFlagError(roots)) { res.status(400).json({ error: roots.error }); return; }
+    const tx = parseFlag(req.query as Record<string, unknown>, 'tx');
+    if (isFlagError(tx)) { res.status(400).json({ error: tx.error }); return; }
+    const light = parseFlag(req.query as Record<string, unknown>, 'light');
+    if (isFlagError(light)) { res.status(400).json({ error: light.error }); return; }
     // NODE_INTERFACE → Posts → "`light` and `tx` do not combine"
     if (tx && light) { res.status(400).json({ error: 'tx and light cannot both be 1' }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
@@ -222,8 +220,8 @@ export function createRouter(deps: PostsDeps): Router {
   router.post('/batch', (req, res) => {
     const ids = parseBatchIds(req.body);
     if (isBatchIdsError(ids)) { res.status(400).json({ error: ids.error }); return; }
-    const tx = parseTx(req.query as Record<string, unknown>);
-    if (isTxError(tx)) { res.status(400).json({ error: tx.error }); return; }
+    const tx = parseFlag(req.query as Record<string, unknown>, 'tx');
+    if (isFlagError(tx)) { res.status(400).json({ error: tx.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
       res.status(viewer.status ?? 400).json({ error: viewer.error });

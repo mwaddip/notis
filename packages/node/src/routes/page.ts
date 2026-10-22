@@ -142,39 +142,21 @@ export function isViewerError(v: Uint8Array | null | { error: string; status?: n
   return v !== null && typeof v === 'object' && 'error' in v && !(v instanceof Uint8Array);
 }
 
-// NODE_INTERFACE → Posts
-export function parseRoots(query: Record<string, unknown>): boolean | { error: string } {
-  const raw = query['roots'] as string | undefined;
+// One rule for every flag parameter that takes `1`: absent → `false`,
+// `'1'` → `true`, anything else → `{ error: '<name> must be 1' }`
+// (NODE_INTERFACE → Posts, NODE_INTERFACE → UTXO queries → "`pending=1`
+// answers the pending view, as admission spends from it").
+export function parseFlag(
+  query: Record<string, unknown>,
+  name: string,
+): boolean | { error: string } {
+  const raw = query[name] as string | undefined;
   if (raw === undefined) return false;
   if (raw === '1') return true;
-  return { error: 'roots must be 1' };
+  return { error: `${name} must be 1` };
 }
 
-export function isRootsError(v: boolean | { error: string }): v is { error: string } {
-  return typeof v === 'object' && 'error' in v;
-}
-
-// NODE_INTERFACE → Posts → "The creating transaction rides a post row"
-export function parseTx(query: Record<string, unknown>): boolean | { error: string } {
-  const raw = query['tx'] as string | undefined;
-  if (raw === undefined) return false;
-  if (raw === '1') return true;
-  return { error: 'tx must be 1' };
-}
-
-export function isTxError(v: boolean | { error: string }): v is { error: string } {
-  return typeof v === 'object' && 'error' in v;
-}
-
-// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word"
-export function parseLight(query: Record<string, unknown>): boolean | { error: string } {
-  const raw = query['light'] as string | undefined;
-  if (raw === undefined) return false;
-  if (raw === '1') return true;
-  return { error: 'light must be 1' };
-}
-
-export function isLightError(v: boolean | { error: string }): v is { error: string } {
+export function isFlagError(v: boolean | { error: string }): v is { error: string } {
   return typeof v === 'object' && 'error' in v;
 }
 
