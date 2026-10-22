@@ -568,6 +568,81 @@ describe('the listings under pending=1', () => {
   });
 
   // -------------------------------------------------------------------------
+  // The height admission reads is `tip + 1`, not `tip` (NODE_INTERFACE →
+  // Karma transition rules → "Engine inputs the rule needs"). An owner
+  // whose next height crosses a decay interval has
+  // `owed(tip + 1) > owed(tip)`, so `E` under the flag reads lower than it
+  // would at `tip`; a bond that leaves exactly `KARMA_MINIMUM` of that
+  // lower `E` is still admitted, because admission judges by the same
+  // `tip + 1`.
+  // -------------------------------------------------------------------------
+
+  it('the pending listing\'s effective reads owed at the next height', async () => {
+    const owner = newIdentity();
+    putIdentityRecord(owner.pub, staleRootRecord());
+    const seedKarmaValue = 1000n;
+    const seeded = seedKarma(owner.pub, seedKarmaValue);
+
+    // Pin a tip whose next height is a decay-interval multiple of
+    // `(tip + 1 - lastActivityBlock)`: `(tip - 0) % interval ≠ 0` and
+    // `(tip + 1 - 0) % interval = 0`, so periods counted at `tip + 1`
+    // exceed periods at `tip` by one (TYPES_INTERFACE → Identity record
+    // and karma valuation).
+    const interval = nodeConfig.karmaDecayIntervalBlocks;
+    const base = nodeConfig.karmaStaleThresholdBlocks + 1;
+    const tipForNewInterval = base + ((interval - 1 - (base % interval)) % interval);
+    pinTipAt(tipForNewInterval);
+    expect((tipForNewInterval + 1 - 0) % interval).toBe(0);
+    expect((tipForNewInterval - 0) % interval).not.toBe(0);
+
+    const firstBond = nodeConfig.inviteBondMin;
+    const invitee1 = newIdentity().pub;
+    const first = buildInvite(owner, seeded, firstBond, invitee1);
+    const firstPost = await send(baseUrl, '/invites', 'POST', { tx: txToJson(first) });
+    expect(firstPost.status, JSON.stringify(firstPost.data)).toBe(201);
+    const firstTxId = computeTxId(first);
+    const firstChangeId = computeCandidateBoxId(first.outputs[0]!, firstTxId, 0);
+    const firstChangeValue = seedKarmaValue - firstBond;
+
+    // Read `E` under the flag — admission's `remaining` at `tip + 1`.
+    const flagged = await send(baseUrl, `/karma/${owner.pubHex}?pending=1`, 'GET');
+    expect(flagged.status).toBe(200);
+    const E = BigInt((flagged.data as Record<string, unknown>).effective as string);
+
+    // The unflagged effective at `tip` — the record's clock pair stays
+    // where it was, so a step in `owed` between `tip` and `tip + 1` shows
+    // through a step in `effective` between `height = tip` (the unflagged
+    // reader) and `height = tip + 1`.
+    const unflaggedAtTip = await send(baseUrl, `/karma/${owner.pubHex}`, 'GET');
+    const effAtTip = BigInt((unflaggedAtTip.data as Record<string, unknown>).effective as string);
+
+    pinTipAt(tipForNewInterval + 1);
+    const unflaggedAtTipPlus1 = await send(baseUrl, `/karma/${owner.pubHex}`, 'GET');
+    const effAtTipPlus1 = BigInt((unflaggedAtTipPlus1.data as Record<string, unknown>).effective as string);
+    // Control: `owed(tip + 1) > owed(tip)` — the lower effective at
+    // `height = tip + 1` names the step.
+    expect(effAtTipPlus1).toBeLessThan(effAtTip);
+    // And `E` under the flag reads `owed` at the higher step.
+    const total = BigInt((flagged.data as Record<string, unknown>).total as string);
+    expect(total - E).toBe(seedKarmaValue - effAtTipPlus1);
+
+    // A second invite whose bond leaves exactly `KARMA_MINIMUM` of `E` is
+    // admitted. Admission judges at `tip + 1 = tipForNewInterval + 2`,
+    // in the same decay period as `tip + 1 = tipForNewInterval + 1`,
+    // so `owed` is unchanged.
+    const secondBond = E - KARMA_MINIMUM;
+    const invitee2 = newIdentity().pub;
+    const second = buildInvite(
+      owner,
+      { ...seeded, id: firstChangeId, value: firstChangeValue } as KarmaBox,
+      secondBond,
+      invitee2,
+    );
+    const secondPost = await send(baseUrl, '/invites', 'POST', { tx: txToJson(second) });
+    expect(secondPost.status, JSON.stringify(secondPost.data)).toBe(201);
+  });
+
+  // -------------------------------------------------------------------------
   // The clamp: owed exceeds held once decay catches up with the pool. The
   // route answers `effective: "0"` (NODE_INTERFACE → UTXO queries →
   // "`pending=1` answers the pending view, as admission spends from it").
