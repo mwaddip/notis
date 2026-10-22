@@ -197,9 +197,6 @@ default (package)         S8  P9  E3  C5  I9  A7  L7
   the dependency count, which is the argument for the package existing in this form at all.
 ```
 
-> ⚠ **AHEAD OF CODE (2026-10-22).** The profile leads `tools/faucet`, which models its own pooled invites in memory,
-> so a restart refuses its requests until the next block.
-
 ⛔ **THE RISK IS IN THE BUILDERS AND THE KEY, NOWHERE ELSE.** A wrong `txId`, a wrong bond value or a
 wrong recipient signs something the network accepts and cannot take back. The rate limiter and the
 server are ordinary code guarding play money on a network that gets wiped — **review attention spent

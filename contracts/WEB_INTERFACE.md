@@ -897,10 +897,6 @@ while its body was read, so a reader can tell a node that did not answer from on
 answers the first 504 and the second 502 (`NODE_INTERFACE → Faucet`); this client and the light client read both as
 a transport failure.
 
-> ⚠ **AHEAD OF CODE (2026-10-22).** The mark leads `@dagsocial/node-reads`, whose failed read carries `status: 0` for
-> every transport failure and nothing that tells the deadline's from another; the faucet's line leads `tools/faucet`,
-> which reads its node with its own `fetch`.
-
 ## Reading the feed and threads
 
 | Client action | Endpoint | Query |

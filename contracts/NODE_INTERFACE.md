@@ -604,9 +604,6 @@ flag. **The view is the answering node's pool, and its word**: no proof covers a
 spends more than once a block chains its spends on this view instead of modelling the pool itself; the
 faucet builds on nothing else (→ Faucet).
 
-> ⚠ **AHEAD OF CODE (2026-10-22).** The flag leads `routes/utxo.ts`, whose two listings read the confirmed set
-> alone and take no `pending` parameter, and the store, which has no read of the pending view by owner.
-
 **`/karma/:userId` answers standing, and the client evaluates nothing.** `memberSinceBlock`,
 `memberBar`, `memberVouches` and `invitesUsed` are the record's plain numbers, `memberLikes` its
 second counter as a decimal string (`0` and `"0"` where no record exists); `member` is the derived
@@ -760,11 +757,6 @@ reads of the node's answers are `@dagsocial/node-reads`' — each under its rout
 limit is keyed on the caller's address, an IPv6 caller's by its /64** — the smallest prefix a network
 routes to one subscriber, so a caller cycling the addresses inside it holds one allowance — and an IPv4
 address, or one mapped into IPv6, whole.
-
-> ⚠ **AHEAD OF CODE (2026-10-22).** The edge and the build lead `tools/faucet`, which models its own pooled
-> invites in memory (`PendingChain`) and drops the model on any failure, builds credit grants from the confirmed
-> set, runs requests side by side, judges a drained invite by face value, relays the node's 5xx and answers a
-> failed or timed-out node call 400, reads its node with its own `fetch`, and keys its limit on the whole address.
 
 A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
 that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;
@@ -3532,16 +3524,15 @@ run once a handle.
 > | the rent selection, `limit` 64 | each template | 109 ms | 0.17 ms |
 > | `getPlaceholdersAt` | each applied block | 12 ms | 0.009 ms |
 > | `pruneHeadersBelow` | each block | 33 ms | 0.05 ms |
+> | the pending view by owner (`pending=1`): the page at `limit` 100 / its `COUNT` / the `SUM` | per request | 4.18 / 1.90 / 1.96 ms | 3.62 / 1.63 / 1.66 ms |
 >
-> — at 500 000 boxes half spent, 200 000 posts and 60 000 heights. An index costs each write of a row
+> — at 500 000 boxes half spent, 200 000 posts and 60 000 heights; the pending view's row at an owner of
+> 5 000 credit boxes and a pool of 10 000 entries, 100 of them paying the owner (measured 2026-10-22), its
+> confirmed half on the owner index in both columns, so its columns are the pool's half scanned and on
+> `idx_mempool_outputs_owner`. An index costs each write of a row
 > it holds one entry: the voucher, escrow-owner and rent indexes take a box write from 4.0 µs to
 > 4.5 µs (an insert and the spend of half, 200 000 boxes). One test per read pins its plan, as for the
 > pages.
-
-> ⚠ **AHEAD OF CODE (2026-10-22).** The pending view by owner leads `store/mempool.ts`, which has no
-> `getBoxesPageWithPending` or `getBoxTotalWithPending`, and `store/db.ts`, whose `mempool_outputs` carries no owner
-> and no owner index; the view's page and its sums take their measured row in the table above, and their plan pins,
-> with the code.
 
 **`dag_posts` columns:** `id`, `tx_id` (hex, NOT NULL — the creating transaction's id), `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,

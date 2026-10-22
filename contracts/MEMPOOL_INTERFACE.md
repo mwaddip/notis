@@ -76,9 +76,6 @@ the `entry_rowid` indexes are what the cascade and a per-entry read find them by
 pending view asked by owner is a range of the owner index, and decodes the entries of the rows a page answers and no
 other (→ getBoxesPageWithPending).
 
-> ⚠ **AHEAD OF CODE (2026-10-22).** The three columns and the owner index lead `store/db.ts`, whose `mempool_outputs`
-> holds `box_id` and `entry_rowid` alone, and `insertUtxoTx`, which writes those two.
-
 **`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
 no additional hash. It exists because cleanup has to find an entry *by transaction identity* when a
 peer's block confirms it, and a scan that recomputes the id per candidate is the cost measured under
@@ -317,9 +314,6 @@ returns, with the id block application will give it. It is the listings' `pendin
 (NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as admission spends from it"), the view a
 client builds on — **never a rule's input and never block application's**, for the reason `getBoxWithPending` is not
 (→ getBoxWithPending).
-
-> ⚠ **AHEAD OF CODE (2026-10-22).** The read leads `store/mempool.ts`, which answers the pending view by box alone;
-> its `getOwnKarmaBoxIdsWithPending` decodes the owner's pooled rows found by `karma_owner`.
 
 ### getPendingEntries
 
