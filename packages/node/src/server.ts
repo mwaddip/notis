@@ -22,6 +22,7 @@ import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite } from './services/invites.js';
 import { executePostWithdraw } from './services/post-withdraw.js';
 import { admissionHeld, admissionOwed, admissionGetOwnKarmaBoxIds } from './services/karma-admission.js';
+import { getBoxesPageWithPending, getBoxTotalWithPending } from './store/mempool.js';
 import { readFileSync } from 'fs';
 import { isLivePost, type StoredPost } from './store/posts.js';
 import { getDb } from './store/db.js';
@@ -440,6 +441,16 @@ export function createApp(config: Config): express.Express {
       getCreditValue: store.getCreditValue,
       getCreditBoxesPage: store.getCreditBoxesPage,
       getBondBoxesPage: store.getBondBoxesPage,
+      // NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending
+      // view, as admission spends from it": the pool's view and admission's
+      // `held` / `owed` readers reach the listings here, so the flag's
+      // `effective` on `/karma` is the number admission judges a spend
+      // against at `tip + 1` (NODE_INTERFACE → Karma transition rules →
+      // "Engine inputs the rule needs").
+      getBoxesPageWithPending,
+      getBoxTotalWithPending,
+      admissionHeld,
+      admissionOwed: admissionOwed(decayConfig()),
       getCurrentHeight: store.getCurrentHeight,
       getUtxoEngineDeps: () => utxoEngineDeps,
       decayCfg: decayConfig(),

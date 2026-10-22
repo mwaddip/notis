@@ -16,7 +16,7 @@ import type { Page, PageResult, BoxKey } from '../store/index.js';
 import { getNet } from '../services/net-instance.js';
 import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
-import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey, resolveIdentityParam, isResolveError } from './page.js';
+import { parseLimit, isLimitError, parseAfter, isAfterError, parseFlag, isFlagError, formatKey, resolveIdentityParam, isResolveError } from './page.js';
 import type { UsernameLookup } from './page.js';
 import { nameFor } from '../services/name-cache.js';
 
@@ -31,6 +31,20 @@ export interface UtxoDeps {
   getCreditValue(owner: Uint8Array): bigint;
   getCreditBoxesPage(owner: Uint8Array, page: Page<BoxKey>): PageResult<CreditBox, BoxKey>;
   getBondBoxesPage(inviterId: Uint8Array, page: Page<string>): PageResult<BondBox, string>;
+  // NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view,
+  // as admission spends from it": the pool's view, asked by owner and type
+  // (NODE_INTERFACE → Store Interface → Mempool).
+  getBoxesPageWithPending(
+    owner: Uint8Array,
+    boxType: 'karma' | 'credit',
+    page: Page<BoxKey>,
+  ): PageResult<KarmaBox | CreditBox, BoxKey>;
+  getBoxTotalWithPending(owner: Uint8Array, boxType: 'karma' | 'credit'): bigint;
+  // Admission's `held` and `owed` readers (NODE_INTERFACE → Karma transition
+  // rules → "Engine inputs the rule needs"): the two numbers the flag's
+  // `effective` on `/karma` reads at `tip + 1`.
+  admissionHeld(owner: Uint8Array): bigint;
+  admissionOwed(owner: Uint8Array, height: number): bigint;
   getCurrentHeight(): number;
   getUtxoEngineDeps(): UtxoEngineDeps;
   decayCfg: DecayCfg;
@@ -65,15 +79,36 @@ export function createRouter(deps: UtxoDeps): Router {
     if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
     const after = parseAfter(req.query as Record<string, unknown>, 'box');
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
+    // NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending
+    // view, as admission spends from it": the five fields range the pool's
+    // view under the flag, every other field reads as without it.
+    const pending = parseFlag(req.query as Record<string, unknown>, 'pending');
+    if (isFlagError(pending)) { res.status(400).json({ error: pending.error }); return; }
 
-    const pageResult = deps.getKarmaBoxesPage(userIdBytes, {
-      limit, after: after as BoxKey | undefined,
-    });
-
-    const total = deps.getKarmaTotal(userIdBytes);
     const record = deps.getIdentityRecord(userIdBytes);
     const height = deps.getCurrentHeight();
-    const eff = effectiveKarma(total, record, height, deps.decayCfg);
+
+    let total: bigint;
+    let eff: bigint;
+    let pageResult: PageResult<KarmaBox | CreditBox, BoxKey>;
+    if (pending) {
+      pageResult = deps.getBoxesPageWithPending(userIdBytes, 'karma', {
+        limit, after: after as BoxKey | undefined,
+      });
+      total = deps.getBoxTotalWithPending(userIdBytes, 'karma');
+      // NODE_INTERFACE → Karma transition rules → "A karma spend is covered
+      // by effective karma, over the block's body as a whole": `remaining`
+      // is `held − owed` at `tip + 1`, clamped at `0`.
+      const held = deps.admissionHeld(userIdBytes);
+      const owed = deps.admissionOwed(userIdBytes, height + 1);
+      eff = held > owed ? held - owed : 0n;
+    } else {
+      pageResult = deps.getKarmaBoxesPage(userIdBytes, {
+        limit, after: after as BoxKey | undefined,
+      });
+      total = deps.getKarmaTotal(userIdBytes);
+      eff = effectiveKarma(total, record, height, deps.decayCfg);
+    }
 
     const memberFlag = record !== null && isMember(record);
     let invitesAvailable: number | null = 0;
@@ -87,6 +122,7 @@ export function createRouter(deps: UtxoDeps): Router {
       }
     }
 
+    const karmaRows = pageResult.rows as KarmaBox[];
     res.json({
       userId: Buffer.from(userIdBytes).toString('hex'),
       total: total.toString(),
@@ -94,8 +130,10 @@ export function createRouter(deps: UtxoDeps): Router {
       // NODE_INTERFACE → UTXO queries, the `/karma/:userId` row of the API
       // table: a box carries `income: true` when it is the owner's income
       // box and no such key when it is their own (TYPES_INTERFACE →
-      // KarmaBox).
-      boxes: pageResult.rows.map(b => ({
+      // KarmaBox). A pooled karma output carries no `income` key by rule
+      // 2 of NODE_INTERFACE → Karma transition rules → "No karma output
+      // carries the mark".
+      boxes: karmaRows.map(b => ({
         boxId: b.id!,
         value: b.value.toString(),
         ...(b.income === true ? { income: true } : {}),
@@ -126,16 +164,31 @@ export function createRouter(deps: UtxoDeps): Router {
     if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
     const after = parseAfter(req.query as Record<string, unknown>, 'box');
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
+    // NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending
+    // view, as admission spends from it": the four fields range the pool's
+    // view under the flag; every other field reads as without it.
+    const pending = parseFlag(req.query as Record<string, unknown>, 'pending');
+    if (isFlagError(pending)) { res.status(400).json({ error: pending.error }); return; }
 
-    const total = deps.getCreditValue(userIdBytes);
-    const pageResult = deps.getCreditBoxesPage(userIdBytes, {
-      limit, after: after as BoxKey | undefined,
-    });
+    let total: bigint;
+    let pageResult: PageResult<KarmaBox | CreditBox, BoxKey>;
+    if (pending) {
+      total = deps.getBoxTotalWithPending(userIdBytes, 'credit');
+      pageResult = deps.getBoxesPageWithPending(userIdBytes, 'credit', {
+        limit, after: after as BoxKey | undefined,
+      });
+    } else {
+      total = deps.getCreditValue(userIdBytes);
+      pageResult = deps.getCreditBoxesPage(userIdBytes, {
+        limit, after: after as BoxKey | undefined,
+      });
+    }
 
+    const creditRows = pageResult.rows as CreditBox[];
     res.json({
       userId: Buffer.from(userIdBytes).toString('hex'),
       total: total.toString(),
-      boxes: pageResult.rows.map(b => ({
+      boxes: creditRows.map(b => ({
         boxId: b.id!,
         value: b.value.toString(),
         ...(b.lockedUntilBlock !== undefined ? { lockedUntilBlock: b.lockedUntilBlock } : {}),

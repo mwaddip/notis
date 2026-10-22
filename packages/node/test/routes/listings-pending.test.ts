@@ -21,7 +21,6 @@ import {
   encodeUtxoTxTree,
   generateKeyPair,
   hash32,
-  INVITE_BOND_MIN,
   KARMA_MINIMUM,
   MAX_BLOCK_BODY_BYTES,
   PROTOCOL_VERSION,
@@ -191,8 +190,10 @@ describe('the listings under pending=1', () => {
     // the running node's `staleThresholdBlocks` and `decayIntervalBlocks`
     // (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule
     // needs"), and the two numbers decide what owed decay reads at
-    // `tip + 1`.
-    pinTipAt(nodeConfig.karmaStaleThresholdBlocks);
+    // `tip + 1`. One past the threshold so an owner with
+    // `lastActivityBlock = 0` is stale under both `tip` and `tip + 1`
+    // (TYPES_INTERFACE → Identity record and karma valuation).
+    pinTipAt(nodeConfig.karmaStaleThresholdBlocks + 1);
   });
 
   afterAll(() => {
@@ -359,7 +360,7 @@ describe('the listings under pending=1', () => {
   // without the flag, the sender's confirmed box the transfer spends.
   // -------------------------------------------------------------------------
 
-  it.fails('a credit transfer: the sender lists the change under pending=1, the payment lands with the recipient, the confirmed listing is unmoved', async () => {
+  it('a credit transfer: the sender lists the change under pending=1, the payment lands with the recipient, the confirmed listing is unmoved', async () => {
     const alice = newIdentity();
     const bob = newIdentity();
     const seeded = seedCredit(alice.pub, 1_000_000n);
@@ -408,7 +409,7 @@ describe('the listings under pending=1', () => {
   // (`getBoxWithPending` resolves the input over the pending view).
   // -------------------------------------------------------------------------
 
-  it.fails('a second transfer built on the first\'s pooled change is admitted, and the sender\'s pending listing holds the second\'s change alone', async () => {
+  it('a second transfer built on the first\'s pooled change is admitted, and the sender\'s pending listing holds the second\'s change alone', async () => {
     const alice = newIdentity();
     const bob = newIdentity();
     const carol = newIdentity();
@@ -444,7 +445,7 @@ describe('the listings under pending=1', () => {
   // output carries the mark").
   // -------------------------------------------------------------------------
 
-  it.fails('a pooled invite: the sender\'s karma listing holds the change (no `income` key) beside the income box (its mark kept); only the flag-ranged fields differ from the unflagged answer', async () => {
+  it('a pooled invite: the sender\'s karma listing holds the change (no `income` key) beside the income box (its mark kept); only the flag-ranged fields differ from the unflagged answer', async () => {
     const inviter = newIdentity();
     putIdentityRecord(inviter.pub, freshRootRecord());
 
@@ -487,13 +488,15 @@ describe('the listings under pending=1', () => {
   // by effective karma, over the block's body as a whole").
   // -------------------------------------------------------------------------
 
-  it.fails('effective under pending=1 is admission\'s remaining: a second invite whose bond leaves KARMA_MINIMUM of E standing is admitted; a fresh identity\'s invite leaving KARMA_MINIMUM − 1 is refused', async () => {
+  it('effective under pending=1 is admission\'s remaining: a second invite whose bond leaves KARMA_MINIMUM of E standing is admitted; a fresh identity\'s invite leaving KARMA_MINIMUM − 1 is refused', async () => {
     // The owner holds enough karma to clear the floor past decay at the
     // pinned tip (NODE_INTERFACE → Karma transition rules → "Only a post
     // spends the floor"); the first bond leaves `admissionHeld` below
-    // `getKarmaTotal`.
-    const seedKarmaValue = 1200n;
-    const firstBond = INVITE_BOND_MIN; // 100n on testnet
+    // `getKarmaTotal`. The bonds pass the running range
+    // (`[nodeConfig.inviteBondMin, nodeConfig.inviteBondMax]`), and the
+    // boundary pair sits strictly inside it.
+    const seedKarmaValue = 1000n;
+    const firstBond = nodeConfig.inviteBondMin;
 
     const admittedInviter = newIdentity();
     putIdentityRecord(admittedInviter.pub, staleRootRecord());
@@ -570,7 +573,7 @@ describe('the listings under pending=1', () => {
   // "`pending=1` answers the pending view, as admission spends from it").
   // -------------------------------------------------------------------------
 
-  it.fails('effective is "0" when owed exceeds held through decay catching up with a pooled spend', async () => {
+  it('effective is "0" when owed exceeds held through decay catching up with a pooled spend', async () => {
     // The pool runs while the owner is fresh: `lastActivityBlock` at the
     // seeded tip puts them inside the stale window, so the invite admits
     // (NODE_INTERFACE → Karma transition rules → "A karma spend is
@@ -601,7 +604,7 @@ describe('the listings under pending=1', () => {
   // row once, `value DESC, id`.
   // -------------------------------------------------------------------------
 
-  it.fails('paging through /credits?pending=1 at limit=1 walks every row once in value DESC order; boxCount is the whole set on every page', async () => {
+  it('paging through /credits?pending=1 at limit=1 walks every row once in value DESC order; boxCount is the whole set on every page', async () => {
     const owner = newIdentity();
     const sender = newIdentity();
 
@@ -650,7 +653,7 @@ describe('the listings under pending=1', () => {
   // parameter is one string").
   // -------------------------------------------------------------------------
 
-  it.fails('/karma and /credits refuse a pending that is not 1 with a 400', async () => {
+  it('/karma and /credits refuse a pending that is not 1 with a 400', async () => {
     const anyone = newIdentity();
 
     for (const kind of ['karma', 'credits']) {

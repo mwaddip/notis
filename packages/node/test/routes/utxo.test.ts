@@ -74,6 +74,13 @@ async function request(
       getCreditValue,
       getCreditBoxesPage,
       getBondBoxesPage,
+      // NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending
+      // view, as admission spends from it": wired for typecheck; no case
+      // in this file exercises the flag.
+      getBoxesPageWithPending: () => ({ rows: [], next: null, count: 0 }),
+      getBoxTotalWithPending: () => 0n,
+      admissionHeld: () => 0n,
+      admissionOwed: () => 0n,
       getCurrentHeight: () => height,
       decayCfg: DECAY_CFG,
       getNetworkRecord: () => ({ memberCount: 1 }),
@@ -833,6 +840,13 @@ describe('utxo routes — alias resolution', () => {
         getCreditValue: () => 0n,
         getCreditBoxesPage: () => ({ rows: [], next: null, count: 0 }),
         getBondBoxesPage: () => ({ rows: [], next: null, count: 0 }),
+        // NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending
+        // view, as admission spends from it": wired for typecheck; no case
+        // here exercises the flag.
+        getBoxesPageWithPending: () => ({ rows: [], next: null, count: 0 }),
+        getBoxTotalWithPending: () => 0n,
+        admissionHeld: () => 0n,
+        admissionOwed: () => 0n,
         getCurrentHeight: () => 100,
         decayCfg: DECAY_CFG,
         getNetworkRecord: () => ({ memberCount: 1 }),
