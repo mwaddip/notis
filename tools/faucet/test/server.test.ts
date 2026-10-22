@@ -234,3 +234,192 @@ describe('the era the faucet signs', () => {
     expect(submitted[1]!.protocolVersion).toBe(2);
   });
 });
+
+// NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+// one request at a time per endpoint." The views below are the stub's answer
+// to each listing read, with its order of calls recorded; a request builds on
+// the view that answered its own read.
+describe('builds on the view it reads, one request at a time per endpoint', () => {
+  const K2 = '77'.repeat(32);
+  const K3 = '88'.repeat(32);
+  const C2 = '99'.repeat(32);
+
+  // NODE_INTERFACE → Faucet → "The service keeps no record of its own
+  // submissions": a request refused by the node leaves no trace, and the
+  // request after it builds on the view the stub answers at its read.
+  it.fails('a refusal between two grants leaves the request after it reading the view it reads', async () => {
+    const views: readonly { readonly boxId: string; readonly value: bigint }[][] = [
+      [{ boxId: K1, value: 1000n }],
+      [{ boxId: K2, value: 900n }],
+      [{ boxId: K3, value: 800n }],
+    ];
+    let karmaReads = 0;
+    client.karmaBoxes = async () => views[karmaReads++]!;
+    let refuseOnce = false;
+    client.submitInvite = async (tx) => {
+      if (refuseOnce) { refuseOnce = false; throw new NodeError(400, 'no'); }
+      submitted.push(tx);
+      return { expiresAtHeight: 821 };
+    };
+    const app = createApp(cfg, client);
+    await request(app).post('/faucet/karma').send({ pubkey: recipient }).set(from('1.1.1.1'));
+    refuseOnce = true;
+    await request(app).post('/faucet/karma').send({ pubkey: other }).set(from('1.1.1.2'));
+    await request(app).post('/faucet/karma').send({ pubkey: other }).set(from('1.1.1.3'));
+    // The request after the refused one builds on the view answering its own read.
+    expect(submitted.at(-1)!.inputs).toEqual([K3]);
+  });
+
+  // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+  // one request at a time per endpoint" — the endpoint's next request waits for
+  // the previous submission's answer; two karma calls arriving together are
+  // served in arrival order, so only the first has read /status while its
+  // submission is held.
+  it.fails('two karma requests arrive together, the second reads /status after the first submits', async () => {
+    const calls: string[] = [];
+    let heldRelease: (() => void) | null = null;
+    const held = new Promise<void>((r) => { heldRelease = r; });
+    client.status = async () => { calls.push('status'); return { blockHeight: 100, protocolVersion: ERA }; };
+    client.karmaBoxes = async () => [{ boxId: K1, value: 1000n }];
+    let firstHeld = false;
+    client.submitInvite = async (tx) => {
+      submitted.push(tx);
+      if (!firstHeld) { firstHeld = true; await held; }
+      return { expiresAtHeight: 821 };
+    };
+    const app = createApp(cfg, client);
+    const p1 = request(app).post('/faucet/karma').send({ pubkey: recipient }).set(from('2.2.2.1'))
+      .then((r) => r);
+    const p2 = request(app).post('/faucet/karma').send({ pubkey: other }).set(from('2.2.2.2'))
+      .then((r) => r);
+    // A control: 100 ms is long enough for both handlers to have run every
+    // step they can up to the point the service's queue holds the second one.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(firstHeld).toBe(true);
+    const beforeRelease = calls.filter((c) => c === 'status').length;
+    heldRelease!();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.status).toBe(202);
+    expect(r2.status).toBe(202);
+    expect(beforeRelease).toBe(1);
+  });
+
+  // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+  // one request at a time per endpoint." — the two endpoints spend different
+  // ledgers and wait for each other in nothing, so a karma request held at the
+  // node runs beside a credit request that answers to its end.
+  it('a karma request held at the node does not block the credit endpoint', async () => {
+    let heldRelease: (() => void) | null = null;
+    const held = new Promise<void>((r) => { heldRelease = r; });
+    const originalSubmitInvite = client.submitInvite;
+    client.submitInvite = async (tx) => {
+      await held;
+      return originalSubmitInvite(tx);
+    };
+    const app = createApp(cfg, client);
+    const karmaPending = request(app).post('/faucet/karma').send({ pubkey: recipient }).set(from('3.3.3.1'))
+      .then((r) => r);
+    const credit = await request(app).post('/faucet/credits').send({ pubkey: recipient }).set(from('3.3.3.2'));
+    expect(credit.status).toBe(202);
+    heldRelease!();
+    const karma = await karmaPending;
+    expect(karma.status).toBe(202);
+  });
+
+  // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+  // one request at a time per endpoint" — a second credit call reads the view
+  // the stub answers after the first's submission, and uses that view's boxes.
+  it('two credit requests in one block, the second reads the view that answers after the first submits', async () => {
+    const views: readonly { readonly boxId: string; readonly value: bigint }[][] = [
+      [{ boxId: C1, value: 1000n }],
+      [{ boxId: C2, value: 500n }],
+    ];
+    let creditReads = 0;
+    client.creditBoxes = async () => views[creditReads++]!;
+    const app = createApp(cfg, client);
+    const r1 = await request(app).post('/faucet/credits').send({ pubkey: recipient }).set(from('4.4.4.1'));
+    const r2 = await request(app).post('/faucet/credits').send({ pubkey: other }).set(from('4.4.4.2'));
+    expect(r1.status).toBe(202);
+    expect(r2.status).toBe(202);
+    expect(submitted[0]!.inputs).toEqual([C1]);
+    expect(submitted[1]!.inputs).toEqual([C2]);
+  });
+
+  // NODE_INTERFACE → Faucet → "The service keeps no record of its own
+  // submissions": a restarted service reads what the node holds, so a fresh
+  // app over the same stub builds on the stub's current view.
+  it('a fresh app over the same stub builds on the view the stub answers', async () => {
+    client.karmaBoxes = async () => [{ boxId: K2, value: 900n }];
+    const first = createApp(cfg, client);
+    const r1 = await request(first).post('/faucet/karma').send({ pubkey: recipient }).set(from('5.5.5.1'));
+    expect(r1.status).toBe(202);
+    const fresh = createApp(cfg, client);
+    const r2 = await request(fresh).post('/faucet/karma').send({ pubkey: other }).set(from('5.5.5.2'));
+    expect(r2.status).toBe(202);
+    expect(submitted[0]!.inputs).toEqual([K2]);
+    expect(submitted[1]!.inputs).toEqual([K2]);
+  });
+
+  // NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
+  // node's, never one dressed as the other." — for an invite, 503 is one whose
+  // `effective` under `pending=1`, less the bond, stands below `KARMA_MINIMUM`.
+  it.fails('drained by effective: boxes cover the bond and the floor by face, effective falls below', async () => {
+    const stub: NodeClient = {
+      ...client,
+      karmaBoxes: (async () => ({
+        boxes: [{ boxId: K1, value: 1000n }],
+        effective: cfg.bondAmount + 10n - 1n,
+      })) as unknown as NodeClient['karmaBoxes'],
+    };
+    const res = await request(createApp(cfg, stub))
+      .post('/faucet/karma').send({ pubkey: recipient }).set(from('6.6.6.1'));
+    expect(submitted).toHaveLength(0);
+    expect(res.status).toBe(503);
+  });
+
+  // NODE_INTERFACE → Faucet: at exactly `bond + KARMA_MINIMUM` of effective
+  // the invite leaves the floor standing, so the request is admitted.
+  it.fails('at bond plus KARMA_MINIMUM of effective the request is admitted', async () => {
+    const stub: NodeClient = {
+      ...client,
+      karmaBoxes: (async () => ({
+        boxes: [{ boxId: K1, value: 1000n }],
+        effective: cfg.bondAmount + 10n,
+      })) as unknown as NodeClient['karmaBoxes'],
+    };
+    const res = await request(createApp(cfg, stub))
+      .post('/faucet/karma').send({ pubkey: recipient }).set(from('6.6.6.2'));
+    expect(res.status).toBe(202);
+  });
+
+  // NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
+  // node's, never one dressed as the other." — for a credit grant, 503 is one
+  // whose first page of the pending view cannot cover it.
+  it('drained credits: a credit view whose unlocked boxes cannot cover the grant', async () => {
+    const credits = { ...cfg, creditAmount: 1000n };
+    client.creditBoxes = async () => [{ boxId: C1, value: 100n }];
+    const res = await request(createApp(credits, client))
+      .post('/faucet/credits').send({ pubkey: recipient }).set(from('7.7.7.1'));
+    expect(submitted).toHaveLength(0);
+    expect(res.status).toBe(503);
+  });
+
+  // NODE_INTERFACE → Faucet → "Its rate limit is keyed on the caller's
+  // address, an IPv6 caller's by its /64" — two spellings of one /64 share
+  // one allowance; a separate /64 has its own; an IPv4 and its mapped form
+  // share one.
+  it.fails('the IPv6 /64 is the key, with mapped IPv4 and bare IPv4 sharing one', async () => {
+    const limited = { ...cfg, rateLimitPerHour: 1 };
+    const app = createApp(limited, client);
+    expect((await request(app).post('/faucet/karma').send({ pubkey: recipient })
+      .set(from('2001:db8:1:2::1'))).status).toBe(202);
+    expect((await request(app).post('/faucet/karma').send({ pubkey: recipient })
+      .set(from('2001:0db8:0001:0002:ffff::7'))).status).toBe(429);
+    expect((await request(app).post('/faucet/karma').send({ pubkey: recipient })
+      .set(from('2001:db8:1:3::1'))).status).toBe(202);
+    expect((await request(app).post('/faucet/karma').send({ pubkey: recipient })
+      .set(from('::ffff:9.9.9.9'))).status).toBe(202);
+    expect((await request(app).post('/faucet/karma').send({ pubkey: recipient })
+      .set(from('9.9.9.9'))).status).toBe(429);
+  });
+});

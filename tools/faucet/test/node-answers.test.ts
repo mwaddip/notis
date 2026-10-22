@@ -176,6 +176,71 @@ describe('a failed node answers 502, a node that did not answer 504', () => {
 });
 
 // NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
+// node's, never one dressed as the other" — an answer missing a field held to
+// its type is not its route's. The write routes answer success so the
+// listing check is what the service's verdict reflects.
+describe('a listing missing a field held to its type answers 502', () => {
+  const okInvite = () => json(201, { status: 'pending', txId: 'cc'.repeat(32), expiresAtHeight: 821 });
+  const okTransfer = () => json(200, { status: 'pending', txId: 'ee'.repeat(32), expiresAtHeight: 921 });
+
+  it.fails('karma listing with no boxes answers 502', async () => {
+    const app = appWith(router({
+      '/status': () => okStatus(),
+      '/karma': () => json(200, { userId: pubHex, total: '0', boxCount: 0 }),
+      '/invites': okInvite,
+    }));
+    const res = await request(app).post('/faucet/karma').send({ pubkey: recipient });
+    expect(res.status).toBe(502);
+  });
+
+  it.fails('karma listing with no effective answers 502', async () => {
+    const app = appWith(router({
+      '/status': () => okStatus(),
+      '/karma': () => json(200, {
+        userId: pubHex,
+        total: '1000',
+        boxes: [{ boxId: K1, value: '1000' }],
+        boxCount: 1,
+      }),
+      '/invites': okInvite,
+    }));
+    const res = await request(app).post('/faucet/karma').send({ pubkey: recipient });
+    expect(res.status).toBe(502);
+  });
+
+  it.fails('credit listing with no boxes answers 502', async () => {
+    const app = appWith(router({
+      '/status': () => okStatus(),
+      '/credits': () => json(200, { userId: pubHex, total: '0', boxCount: 0 }),
+      '/credits/transfer': okTransfer,
+    }));
+    const res = await request(app).post('/faucet/credits').send({ pubkey: recipient });
+    expect(res.status).toBe(502);
+  });
+
+  // NODE_INTERFACE → Status: `blockHeight` is a non-negative safe integer.
+  it('/status with blockHeight -1 answers 502', async () => {
+    const app = appWith(router({
+      '/status': () => json(200, { networkType: 'testnet', blockHeight: -1, protocolVersion: 1, postCount: 0 }),
+      '/karma': () => okKarma(),
+      '/invites': okInvite,
+    }));
+    const res = await request(app).post('/faucet/karma').send({ pubkey: recipient });
+    expect(res.status).toBe(502);
+  });
+
+  it('/status with protocolVersion 1.5 answers 502', async () => {
+    const app = appWith(router({
+      '/status': () => json(200, { networkType: 'testnet', blockHeight: 100, protocolVersion: 1.5, postCount: 0 }),
+      '/karma': () => okKarma(),
+      '/invites': okInvite,
+    }));
+    const res = await request(app).post('/faucet/karma').send({ pubkey: recipient });
+    expect(res.status).toBe(502);
+  });
+});
+
+// NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
 // node's, never one dressed as the other" — a refusal of the node's is relayed
 // with the node's status and message.
 describe('the node 4xx is relayed with its status and message', () => {
