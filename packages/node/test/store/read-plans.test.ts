@@ -535,7 +535,7 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
     expect(bestChainDeletes.every((p) => /\bidx_best_chain_hash\b/i.test(p))).toBe(true);
   });
 
-  it.fails('pruneHeadersBelow\'s staged_blocks delete — no SCAN staged_blocks, SEARCH on idx_staged_blocks_height', async () => {
+  it('pruneHeadersBelow\'s staged_blocks delete — no SCAN staged_blocks, SEARCH on idx_staged_blocks_height', async () => {
     vi.resetModules();
     const dbMod = await importDbFresh();
     dbMod.initDb(dbFile);
@@ -564,7 +564,7 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
     expect(plans.every((p) => /\bSEARCH\b[^|]*\bidx_staged_blocks_height\b/i.test(p))).toBe(true);
   });
 
-  it.fails('purgeRefusedHeaders — no SCAN refused_headers, SEARCH on idx_refused_headers_height', async () => {
+  it('purgeRefusedHeaders — no SCAN refused_headers, SEARCH on idx_refused_headers_height', async () => {
     vi.resetModules();
     const dbMod = await importDbFresh();
     dbMod.initDb(dbFile);

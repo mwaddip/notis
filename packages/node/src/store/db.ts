@@ -253,6 +253,9 @@ const MIGRATIONS = [
     height      INTEGER NOT NULL,
     refused_at  INTEGER NOT NULL
   )`,
+  // The per-block purge deletes by height (NODE_INTERFACE → Store Interface →
+  // "A read the node runs per request or per block touches what it answers").
+  `CREATE INDEX IF NOT EXISTS idx_refused_headers_height ON refused_headers(height)`,
 
   // NODE_INTERFACE → Header tree.
   `CREATE TABLE IF NOT EXISTS block_headers (
@@ -279,6 +282,9 @@ const MIGRATIONS = [
     block_bytes BLOB NOT NULL,
     from_peer   TEXT NOT NULL
   )`,
+  // The per-block prune deletes by height (NODE_INTERFACE → Store Interface →
+  // "A read the node runs per request or per block touches what it answers").
+  `CREATE INDEX IF NOT EXISTS idx_staged_blocks_height ON staged_blocks(height)`,
 ];
 
 // NODE_INTERFACE → AVL+ State Root → "AVL storage shares nodes across versions; a row is a node's lifetime"
