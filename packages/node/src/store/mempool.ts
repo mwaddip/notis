@@ -1158,6 +1158,34 @@ export function removeUnconfirmed(rowids: readonly number[]): number {
   })();
 }
 
+// MEMPOOL_INTERFACE → followAppliedBlock. The pool's part of every applied
+// block, inside its write: each applied transaction leaves by tx_id, then,
+// through removeUnconfirmed, every entry a spent box takes with it (one bound
+// value on mempool_inputs' primary key) and every entry past its expiry or its
+// ceiling. Confirmation runs first, so an applied transaction is never read as
+// a spend of its own inputs.
+export function followAppliedBlock(
+  height: number,
+  appliedTxIds: readonly string[],
+  spentBoxIds: readonly string[],
+): number {
+  const db = getDb();
+  return db.transaction(() => {
+    for (const txId of appliedTxIds) removeUtxoTxEntry(txId);
+    let unconfirmed = 0;
+    if (spentBoxIds.length > 0) {
+      const rows = prepared(
+        db,
+        `SELECT DISTINCT entry_rowid FROM mempool_inputs
+           WHERE box_id IN (SELECT value FROM json_each(?))`,
+      ).all(JSON.stringify(spentBoxIds)) as Array<{ entry_rowid: number }>;
+      unconfirmed += removeUnconfirmed(rows.map((r) => r.entry_rowid));
+    }
+    unconfirmed += purgeExpired(height);
+    return unconfirmed;
+  })();
+}
+
 // MEMPOOL_INTERFACE → purgeExpired. followAppliedBlock's expiry half: every
 // entry past its expiry or its ceiling leaves through removeUnconfirmed, its
 // dependents with it. Each predicate is one indexed range —

@@ -910,6 +910,19 @@ describe('the pool-follow reads explained', () => {
     expect(plans.some((p) => /idx_mempool_ceiling/i.test(p))).toBe(true);
   });
 
+  it("followAppliedBlock's spent-box read is a SEARCH on mempool_inputs' primary key", async () => {
+    vi.resetModules();
+    const dbMod = await importDbFresh();
+    dbMod.initDb(dbFile);
+    const mem = await import('../../src/store/mempool.js');
+    const db = dbMod.getDb();
+    const run = recordPrepared(db, () => mem.followAppliedBlock(1, [], ['01'.repeat(32), '02'.repeat(32)]));
+    expect(run.sqls.length).toBeGreaterThan(0);
+    const plans = run.sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool_inputs\b/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_inputs\b[^|]*\bPRIMARY KEY\b[^|]*\bbox_id\b/i.test(p))).toBe(true);
+  });
+
   it("removeUnconfirmed's closure reads idx_mempool_outputs_entry, mempool_inputs' key, idx_dag_parent_refs_parent and idx_mempool_tx_id, no SCAN of a pool or DAG table", async () => {
     vi.resetModules();
     const dbMod = await importDbFresh();

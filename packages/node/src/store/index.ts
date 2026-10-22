@@ -114,6 +114,7 @@ export {
   insertUtxoTx,
   getPendingEntries,
   iteratePendingEntries,
+  followAppliedBlock,
   purgeExpired,
   removeEntry,
   removeUnconfirmed,
