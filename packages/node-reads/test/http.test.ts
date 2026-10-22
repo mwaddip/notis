@@ -21,8 +21,6 @@ async function listen(handler: Parameters<typeof createServer>[1]): Promise<stri
 
 // The deadline is the runtime's own: the request runs under a short signal of
 // the test's in place of the one it is handed.
-const markOf = (r: object): unknown => (r as { timedOut?: unknown }).timedOut;
-
 const underShortDeadline: HttpFetch = (url) =>
   fetch(url, { signal: AbortSignal.timeout(100) });
 
@@ -66,7 +64,7 @@ describe('a failed read the deadline ended', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.status).toBe(0);
-    expect(markOf(r)).toBe(true);
+    expect(r.timedOut).toBe(true);
   };
   const deadlineMidBody = async (): Promise<void> => {
     const url = await listen((_req, res) => {
@@ -78,7 +76,7 @@ describe('a failed read the deadline ended', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.status).toBe(0);
-    expect(markOf(r)).toBe(true);
+    expect(r.timedOut).toBe(true);
   };
 
   it('is marked when the deadline falls before any answer', deadlineBeforeAnswer);
