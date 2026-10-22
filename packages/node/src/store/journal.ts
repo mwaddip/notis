@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import { encode, decode } from 'cbor-x';
 import type { AnyBox, IdentityRecord, UserId } from '@dagsocial/types';
 import type { NetworkRecord } from './identity-records.js';
@@ -93,9 +93,7 @@ function toBuffer(data: unknown): Buffer {
 
 export function insertBlockJournal(journal: BlockJournal): void {
   const db = getDb();
-  db.prepare(
-    `INSERT OR REPLACE INTO block_journal (block_height, journal_cbor) VALUES (?, ?)`,
-  ).run(journal.blockHeight, toBuffer(journal));
+  prepared(db, `INSERT OR REPLACE INTO block_journal (block_height, journal_cbor) VALUES (?, ?)`).run(journal.blockHeight, toBuffer(journal));
 }
 
 // Note for consumers: CBOR round-trips the bigint and byte fields, but the
@@ -108,9 +106,7 @@ export function insertBlockJournal(journal: BlockJournal): void {
 // corruption, as `UnreadableStoredBlockError` carries whole.
 export function getBlockJournal(height: number): BlockJournal | null {
   const db = getDb();
-  const row = db.prepare(
-    'SELECT journal_cbor FROM block_journal WHERE block_height = ?',
-  ).get(height) as { journal_cbor: Buffer } | undefined;
+  const row = prepared(db, 'SELECT journal_cbor FROM block_journal WHERE block_height = ?').get(height) as { journal_cbor: Buffer } | undefined;
   if (!row) return null;
   try {
     return decode(row.journal_cbor) as BlockJournal;
@@ -120,11 +116,11 @@ export function getBlockJournal(height: number): BlockJournal | null {
 }
 
 export function deleteBlockJournal(height: number): void {
-  getDb().prepare('DELETE FROM block_journal WHERE block_height = ?').run(height);
+  prepared(getDb(), 'DELETE FROM block_journal WHERE block_height = ?').run(height);
 }
 
 export function purgeOldJournals(belowHeight: number): void {
-  getDb().prepare('DELETE FROM block_journal WHERE block_height < ?').run(belowHeight);
+  prepared(getDb(), 'DELETE FROM block_journal WHERE block_height < ?').run(belowHeight);
 }
 
 /**
@@ -135,8 +131,7 @@ export function purgeOldJournals(belowHeight: number): void {
  * separate index.
  */
 export function getLowestJournalHeight(): number | null {
-  const row = getDb()
-    .prepare('SELECT MIN(block_height) AS h FROM block_journal')
+  const row = prepared(getDb(), 'SELECT MIN(block_height) AS h FROM block_journal')
     .get() as { h: number | null };
   return row.h;
 }

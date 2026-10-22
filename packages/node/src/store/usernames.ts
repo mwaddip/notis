@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import type { UserId } from '@dagsocial/types';
 import type { UsernameRow } from '@dagsocial/consensus';
 
@@ -13,9 +13,7 @@ export interface HolderRecord {
 
 export function getUsername(nameLower: string): UsernameRow | null {
   const db = getDb();
-  const row = db.prepare(
-    'SELECT name_lower, name, owner, box_id, claimed_at_block FROM usernames WHERE name_lower = ?',
-  ).get(nameLower) as { name_lower: string; name: string; owner: string; box_id: string; claimed_at_block: number } | undefined;
+  const row = prepared(db, 'SELECT name_lower, name, owner, box_id, claimed_at_block FROM usernames WHERE name_lower = ?').get(nameLower) as { name_lower: string; name: string; owner: string; box_id: string; claimed_at_block: number } | undefined;
   if (!row) return null;
   return {
     nameLower: row.name_lower,
@@ -29,9 +27,7 @@ export function getUsername(nameLower: string): UsernameRow | null {
 export function getUsernameByOwner(owner: UserId | string): UsernameRow | null {
   const db = getDb();
   const ownerHex = typeof owner === 'string' ? owner : Buffer.from(owner).toString('hex');
-  const row = db.prepare(
-    'SELECT name_lower, name, owner, box_id, claimed_at_block FROM usernames WHERE owner = ?',
-  ).get(ownerHex) as { name_lower: string; name: string; owner: string; box_id: string; claimed_at_block: number } | undefined;
+  const row = prepared(db, 'SELECT name_lower, name, owner, box_id, claimed_at_block FROM usernames WHERE owner = ?').get(ownerHex) as { name_lower: string; name: string; owner: string; box_id: string; claimed_at_block: number } | undefined;
   if (!row) return null;
   return {
     nameLower: row.name_lower,
@@ -49,19 +45,17 @@ export function getUsernameByOwner(owner: UserId | string): UsernameRow | null {
  * (NODE_INTERFACE → Block Journal).
  */
 export function putUsername(row: UsernameRow): void {
-  getDb().prepare(
-    `INSERT OR REPLACE INTO usernames (name_lower, name, owner, box_id, claimed_at_block)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(row.nameLower, row.name, row.owner, row.boxId, row.claimedAtBlock);
+  prepared(getDb(), `INSERT OR REPLACE INTO usernames (name_lower, name, owner, box_id, claimed_at_block)
+     VALUES (?, ?, ?, ?, ?)`).run(row.nameLower, row.name, row.owner, row.boxId, row.claimedAtBlock);
 }
 
 /** The burn's write: the row goes, and with it both records. A plain write, as `putUsername` is. */
 export function deleteUsername(nameLower: string): void {
-  getDb().prepare('DELETE FROM usernames WHERE name_lower = ?').run(nameLower);
+  prepared(getDb(), 'DELETE FROM usernames WHERE name_lower = ?').run(nameLower);
 }
 
 export function countUsernames(): number {
   const db = getDb();
-  const row = db.prepare('SELECT COUNT(*) AS n FROM usernames').get() as { n: number };
+  const row = prepared(db, 'SELECT COUNT(*) AS n FROM usernames').get() as { n: number };
   return row.n;
 }

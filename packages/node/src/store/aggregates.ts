@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import { KARMA_SUPPLY_TYPES } from '../karma-supply.js';
 
 // ---------------------------------------------------------------------------
@@ -19,8 +19,7 @@ import { KARMA_SUPPLY_TYPES } from '../karma-supply.js';
 /** `postCount` — the count of confirmed posts. */
 export function countConfirmedPosts(): number {
   return (
-    getDb()
-      .prepare("SELECT COUNT(*) AS c FROM dag_posts WHERE status = 'confirmed'")
+    prepared(getDb(), "SELECT COUNT(*) AS c FROM dag_posts WHERE status = 'confirmed'")
       .get() as { c: number }
   ).c;
 }
@@ -35,13 +34,9 @@ export function countConfirmedPosts(): number {
  * derives from another").
  */
 export function getTotalKarma(): bigint {
-  const row = getDb()
-    .prepare(
-      `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
+  const row = prepared(getDb(), `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
         WHERE box_type IN (${KARMA_SUPPLY_TYPES.map(() => '?').join(', ')})
-          AND spent_at_block IS NULL`,
-    )
-    .safeIntegers()
+          AND spent_at_block IS NULL`, true)
     .get(...KARMA_SUPPLY_TYPES) as { s: bigint };
   return row.s;
 }
@@ -51,11 +46,7 @@ export function getTotalKarma(): bigint {
  * `karma` box. The escrowed four are excluded by construction.
  */
 export function getLiquidKarma(): bigint {
-  const row = getDb()
-    .prepare(
-      "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'karma' AND spent_at_block IS NULL",
-    )
-    .safeIntegers()
+  const row = prepared(getDb(), "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'karma' AND spent_at_block IS NULL", true)
     .get() as { s: bigint };
   return row.s;
 }
@@ -78,11 +69,7 @@ export function getLiquidKarma(): bigint {
  * through the coinbase, as a `credit` box.
  */
 export function getTotalCredits(): bigint {
-  const row = getDb()
-    .prepare(
-      "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'credit' AND spent_at_block IS NULL",
-    )
-    .safeIntegers()
+  const row = prepared(getDb(), "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'credit' AND spent_at_block IS NULL", true)
     .get() as { s: bigint };
   return row.s;
 }
@@ -90,8 +77,7 @@ export function getTotalCredits(): bigint {
 /** `pendingPosts` — the count of pending posts, read on every request. */
 export function countPendingPosts(): number {
   return (
-    getDb()
-      .prepare("SELECT COUNT(*) AS c FROM dag_posts WHERE status = 'pending'")
+    prepared(getDb(), "SELECT COUNT(*) AS c FROM dag_posts WHERE status = 'pending'")
       .get() as { c: number }
   ).c;
 }

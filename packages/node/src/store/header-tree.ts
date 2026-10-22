@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import {
   decodeHeader,
   decodeInterlinks,
@@ -96,11 +96,9 @@ function rowToHeaderRow(row: Row): HeaderRow {
  */
 export function insertHeader(row: HeaderRow): void {
   const db = getDb();
-  db.prepare(
-    `INSERT OR IGNORE INTO block_headers
+  prepared(db, `INSERT OR IGNORE INTO block_headers
        (hash, height, prev_hash, header_bytes, interlinks, chain_work, path_t_a)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+     VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
     row.hash,
     row.height,
     row.prevHash,
@@ -114,14 +112,14 @@ export function insertHeader(row: HeaderRow): void {
 /** NODE_INTERFACE → Header tree: point read on `hash`. */
 export function getHeaderRow(hash: string): HeaderRow | null {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM block_headers WHERE hash = ?').get(hash) as Row | undefined;
+  const row = prepared(db, 'SELECT * FROM block_headers WHERE hash = ?').get(hash) as Row | undefined;
   return row ? rowToHeaderRow(row) : null;
 }
 
 /** NODE_INTERFACE → Header tree: the top `best_chain` entry's row; `null` before the first header. */
 export function getBestTip(): HeaderRow | null {
   const db = getDb();
-  const top = db.prepare('SELECT hash FROM best_chain ORDER BY height DESC LIMIT 1').get() as
+  const top = prepared(db, 'SELECT hash FROM best_chain ORDER BY height DESC LIMIT 1').get() as
     | { hash: string }
     | undefined;
   if (!top) return null;
@@ -131,7 +129,7 @@ export function getBestTip(): HeaderRow | null {
 /** NODE_INTERFACE → Header tree: point read on `best_chain`. */
 export function getBestHashAt(height: number): string | null {
   const db = getDb();
-  const row = db.prepare('SELECT hash FROM best_chain WHERE height = ?').get(height) as
+  const row = prepared(db, 'SELECT hash FROM best_chain WHERE height = ?').get(height) as
     | { hash: string }
     | undefined;
   return row ? row.hash : null;
@@ -150,15 +148,14 @@ export function rewriteBestChain(forkHeight: number, hashes: readonly string[]):
     // hash is not one of `hashes`. Deleted from `staged_blocks` first so the
     // next step may free the index row.
     const kept = new Set(hashes);
-    const leaving = db
-      .prepare('SELECT hash FROM best_chain WHERE height > ?')
+    const leaving = prepared(db, 'SELECT hash FROM best_chain WHERE height > ?')
       .all(forkHeight) as Array<{ hash: string }>;
-    const unstageOne = db.prepare('DELETE FROM staged_blocks WHERE hash = ?');
+    const unstageOne = prepared(db, 'DELETE FROM staged_blocks WHERE hash = ?');
     for (const row of leaving) {
       if (!kept.has(row.hash)) unstageOne.run(row.hash);
     }
-    db.prepare('DELETE FROM best_chain WHERE height > ?').run(forkHeight);
-    const ins = db.prepare('INSERT INTO best_chain (height, hash) VALUES (?, ?)');
+    prepared(db, 'DELETE FROM best_chain WHERE height > ?').run(forkHeight);
+    const ins = prepared(db, 'INSERT INTO best_chain (height, hash) VALUES (?, ?)');
     for (let i = 0; i < hashes.length; i++) {
       ins.run(forkHeight + 1 + i, hashes[i]);
     }
@@ -175,8 +172,7 @@ export function rewriteBestChain(forkHeight: number, hashes: readonly string[]):
  */
 export function headersHeavierThan(work: bigint): HeaderRow[] {
   const db = getDb();
-  const rows = db
-    .prepare('SELECT * FROM block_headers WHERE chain_work > ? ORDER BY chain_work DESC')
+  const rows = prepared(db, 'SELECT * FROM block_headers WHERE chain_work > ? ORDER BY chain_work DESC')
     .all(workToBlob(work)) as Row[];
   return rows.map(rowToHeaderRow);
 }
@@ -187,7 +183,7 @@ export function headersHeavierThan(work: bigint): HeaderRow[] {
  */
 export function hasStagedBlock(hash: string): boolean {
   const db = getDb();
-  const row = db.prepare('SELECT 1 AS one FROM staged_blocks WHERE hash = ?').get(hash) as
+  const row = prepared(db, 'SELECT 1 AS one FROM staged_blocks WHERE hash = ?').get(hash) as
     | { one: number }
     | undefined;
   return row !== undefined;
@@ -209,15 +205,9 @@ export function removeHeaderSubtree(hash: string): void {
         SELECT bh.hash FROM block_headers bh JOIN sub ON bh.prev_hash = sub.hash
       )
     `;
-    db.prepare(
-      `${subtree} DELETE FROM best_chain WHERE hash IN (SELECT hash FROM sub)`,
-    ).run(hash);
-    db.prepare(
-      `${subtree} DELETE FROM staged_blocks WHERE hash IN (SELECT hash FROM sub)`,
-    ).run(hash);
-    db.prepare(
-      `${subtree} DELETE FROM block_headers WHERE hash IN (SELECT hash FROM sub)`,
-    ).run(hash);
+    prepared(db, `${subtree} DELETE FROM best_chain WHERE hash IN (SELECT hash FROM sub)`).run(hash);
+    prepared(db, `${subtree} DELETE FROM staged_blocks WHERE hash IN (SELECT hash FROM sub)`).run(hash);
+    prepared(db, `${subtree} DELETE FROM block_headers WHERE hash IN (SELECT hash FROM sub)`).run(hash);
   })();
 }
 
@@ -230,14 +220,10 @@ export function removeHeaderSubtree(hash: string): void {
 export function pruneHeadersBelow(height: number): void {
   const db = getDb();
   db.transaction(() => {
-    db.prepare(
-      `DELETE FROM staged_blocks
-       WHERE height < ? AND hash NOT IN (SELECT hash FROM best_chain)`,
-    ).run(height);
-    db.prepare(
-      `DELETE FROM block_headers
-       WHERE height < ? AND hash NOT IN (SELECT hash FROM best_chain)`,
-    ).run(height);
+    prepared(db, `DELETE FROM staged_blocks
+       WHERE height < ? AND hash NOT IN (SELECT hash FROM best_chain)`).run(height);
+    prepared(db, `DELETE FROM block_headers
+       WHERE height < ? AND hash NOT IN (SELECT hash FROM best_chain)`).run(height);
   })();
 }
 
@@ -254,10 +240,8 @@ export function stageBlock(
   fromPeer: string,
 ): void {
   const db = getDb();
-  db.prepare(
-    `INSERT OR IGNORE INTO staged_blocks (hash, height, block_bytes, from_peer)
-     VALUES (?, ?, ?, ?)`,
-  ).run(hash, height, Buffer.from(bytes), fromPeer);
+  prepared(db, `INSERT OR IGNORE INTO staged_blocks (hash, height, block_bytes, from_peer)
+     VALUES (?, ?, ?, ?)`).run(hash, height, Buffer.from(bytes), fromPeer);
 }
 
 /**
@@ -270,8 +254,7 @@ export function getStagedBlock(
   hash: string,
 ): { block: OrderingBlock; fromPeer: string } | null {
   const db = getDb();
-  const row = db
-    .prepare('SELECT height, block_bytes, from_peer FROM staged_blocks WHERE hash = ?')
+  const row = prepared(db, 'SELECT height, block_bytes, from_peer FROM staged_blocks WHERE hash = ?')
     .get(hash) as { height: number; block_bytes: Buffer; from_peer: string } | undefined;
   if (!row) return null;
   let block: OrderingBlock;
@@ -291,6 +274,6 @@ export function getStagedBlock(
  */
 export function unstageBlock(hash: string): void {
   const db = getDb();
-  db.prepare('DELETE FROM staged_blocks WHERE hash = ?').run(hash);
+  prepared(db, 'DELETE FROM staged_blocks WHERE hash = ?').run(hash);
 }
 

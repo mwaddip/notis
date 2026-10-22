@@ -55,7 +55,7 @@ describe('prepared statements', () => {
     vi.resetModules();
   });
 
-  it.fails('a store read run twice on one handle compiles its statement once', async () => {
+  it('a store read run twice on one handle compiles its statement once', async () => {
     const { initDb, getDb } = await importDbFresh();
     const { getBox } = await import('../../src/store/utxo.js');
     initDb(':memory:');
@@ -66,5 +66,37 @@ describe('prepared statements', () => {
     expect(getBox(box.id!)?.id).toBe(box.id);
 
     expect(sqls.filter((s) => s.includes(BOX_TEXT))).toHaveLength(1);
+  });
+
+  it('one text answers in the mode each caller sets', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { prepared } = await import('../../src/store/db.js');
+    initDb(':memory:');
+    const db = getDb();
+    const text = 'SELECT 9007199254740993 AS n';
+
+    expect(typeof (prepared(db, text, true).get() as { n: unknown }).n).toBe('bigint');
+    expect(typeof (prepared(db, text, false).get() as { n: unknown }).n).toBe('number');
+    expect(typeof (prepared(db, text, true).get() as { n: unknown }).n).toBe('bigint');
+    expect(prepared(db, text)).toBe(prepared(db, text, true));
+  });
+
+  it('a new handle compiles anew', async () => {
+    const { initDb, getDb, closeDb } = await importDbFresh();
+    const { getBox } = await import('../../src/store/utxo.js');
+    initDb(':memory:');
+    const first = await seedBox();
+    const firstSqls = record(getDb());
+    expect(getBox(first.id!)?.id).toBe(first.id);
+    expect(firstSqls.filter((s) => s.includes(BOX_TEXT))).toHaveLength(1);
+
+    closeDb();
+    initDb(':memory:');
+    const second = await seedBox();
+    const secondSqls = record(getDb());
+
+    expect(getBox(first.id!)).toBeNull();
+    expect(getBox(second.id!)?.id).toBe(second.id);
+    expect(secondSqls.filter((s) => s.includes(BOX_TEXT))).toHaveLength(1);
   });
 });

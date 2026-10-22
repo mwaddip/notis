@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import { getBox, getKarmaBoxes } from './utxo.js';
 import { deletePendingPost } from './posts.js';
 import { ClientError } from '../services/client-error.js';
@@ -242,9 +242,7 @@ function classCaps(): { credit: number; karma: number } {
  */
 function classCount(db: ReturnType<typeof getDb>, poolClass: PoolClass): number {
   const test = poolClass === 'credit' ? 'IS NOT NULL' : 'IS NULL';
-  const row = db.prepare(
-    `SELECT COUNT(*) AS n FROM mempool WHERE tx_fee ${test}`,
-  ).get() as { n: number };
+  const row = prepared(db, `SELECT COUNT(*) AS n FROM mempool WHERE tx_fee ${test}`).get() as { n: number };
   return row.n;
 }
 
@@ -274,12 +272,10 @@ function cheapestCreditEntry(
   db: ReturnType<typeof getDb>,
 ): { rowid: number; fee: bigint; bytes: number } | null {
   // MEMPOOL_INTERFACE → Eviction, inside the credit class only
-  const row = db.prepare(
-    `SELECT rowid, tx_fee, tx_bytes FROM mempool
+  const row = prepared(db, `SELECT rowid, tx_fee, tx_bytes FROM mempool
       WHERE entry_type = 'utxo_tx' AND tx_fee IS NOT NULL AND tx_bytes > 0
       ORDER BY CAST(tx_fee AS REAL) / tx_bytes ASC, rowid ASC
-      LIMIT 1`,
-  ).safeIntegers().get() as { rowid: bigint; tx_fee: bigint; tx_bytes: bigint } | undefined;
+      LIMIT 1`, true).get() as { rowid: bigint; tx_fee: bigint; tx_bytes: bigint } | undefined;
   if (!row) return null;
   return { rowid: Number(row.rowid), fee: row.tx_fee, bytes: Number(row.tx_bytes) };
 }
@@ -322,7 +318,7 @@ function assertCapacity(
   const resident = cheapest.fee * BigInt(bytes);
   if (arriving <= resident) throw new MempoolFullError(caps.credit, 'credit');
 
-  db.prepare('DELETE FROM mempool WHERE rowid = ?').run(cheapest.rowid);
+  prepared(db, 'DELETE FROM mempool WHERE rowid = ?').run(cheapest.rowid);
 }
 
 export interface GateMetadata {
@@ -522,8 +518,7 @@ export function insertUtxoTx(
     const bytes = entryByteCost(encoded);
     assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes);
 
-    const result = db.prepare(
-      `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
+    const result = prepared(db, `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
                             like_target, like_liker, invite_inviter, invite_invitee,
                             vouch_voucher, vouch_target,
                             tx_id, tx_fee, tx_bytes,
@@ -532,8 +527,7 @@ export function insertUtxoTx(
                             karma_owner, karma_spend,
                             withdraw_post,
                             cost_estimate)
-       VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
+       VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       Buffer.from(encoded),
       expiresAtHeight,
       meta.likeTarget,
@@ -557,13 +551,9 @@ export function insertUtxoTx(
 
     // One row per input, one row per output id — the pending view's tables
     // (MEMPOOL_INTERFACE → Schema).
-    const insertInput = db.prepare(
-      'INSERT INTO mempool_inputs (box_id, entry_rowid) VALUES (?, ?)',
-    );
+    const insertInput = prepared(db, 'INSERT INTO mempool_inputs (box_id, entry_rowid) VALUES (?, ?)');
     for (const boxId of inputs) insertInput.run(boxId, entryRowid);
-    const insertOutput = db.prepare(
-      'INSERT INTO mempool_outputs (box_id, entry_rowid) VALUES (?, ?)',
-    );
+    const insertOutput = prepared(db, 'INSERT INTO mempool_outputs (box_id, entry_rowid) VALUES (?, ?)');
     for (const boxId of outputIds) insertOutput.run(boxId, entryRowid);
 
     return entryRowid;
@@ -575,7 +565,7 @@ export function insertUtxoTx(
  * (MEMPOOL_INTERFACE → The cost gate).
  */
 export function setCostEstimate(rowid: number, costEstimate: number): void {
-  getDb().prepare('UPDATE mempool SET cost_estimate = ? WHERE rowid = ?').run(costEstimate, rowid);
+  prepared(getDb(), 'UPDATE mempool SET cost_estimate = ? WHERE rowid = ?').run(costEstimate, rowid);
 }
 
 // ---------------------------------------------------------------------------
@@ -589,17 +579,13 @@ export function setCostEstimate(rowid: number, costEstimate: number): void {
 
 export function hasPendingLike(targetPostId: string, likerId: string): boolean {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT 1 FROM mempool WHERE like_target = ? AND like_liker = ? LIMIT 1`,
-  ).get(targetPostId, likerId);
+  const row = prepared(db, `SELECT 1 FROM mempool WHERE like_target = ? AND like_liker = ? LIMIT 1`).get(targetPostId, likerId);
   return row !== undefined;
 }
 
 export function countPendingInvites(inviterId: string): number {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT COUNT(*) AS n FROM mempool WHERE invite_inviter = ?`,
-  ).get(inviterId) as { n: number };
+  const row = prepared(db, `SELECT COUNT(*) AS n FROM mempool WHERE invite_inviter = ?`).get(inviterId) as { n: number };
   return row.n;
 }
 
@@ -607,9 +593,7 @@ export function countPendingInvites(inviterId: string): number {
 // first bond lands, so a second bond naming the same key can never apply.
 export function hasPendingInvitee(inviteeId: string): boolean {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT 1 FROM mempool WHERE invite_invitee = ? LIMIT 1`,
-  ).get(inviteeId);
+  const row = prepared(db, `SELECT 1 FROM mempool WHERE invite_invitee = ? LIMIT 1`).get(inviteeId);
   return row !== undefined;
 }
 
@@ -617,34 +601,26 @@ export function hasPendingInvitee(inviteeId: string): boolean {
 // pending row already withdraws.
 export function hasPendingWithdraw(postId: string): boolean {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT 1 FROM mempool WHERE withdraw_post = ? LIMIT 1`,
-  ).get(postId);
+  const row = prepared(db, `SELECT 1 FROM mempool WHERE withdraw_post = ? LIMIT 1`).get(postId);
   return row !== undefined;
 }
 
 export function hasPendingVouch(voucherId: string, targetId: string): boolean {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT 1 FROM mempool WHERE vouch_voucher = ? AND vouch_target = ? LIMIT 1`,
-  ).get(voucherId, targetId);
+  const row = prepared(db, `SELECT 1 FROM mempool WHERE vouch_voucher = ? AND vouch_target = ? LIMIT 1`).get(voucherId, targetId);
   return row !== undefined;
 }
 
 // MEMPOOL_INTERFACE → Correctness gates
 export function hasPendingClaim(nameLower: string): boolean {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT 1 FROM mempool WHERE username_lower = ? LIMIT 1`,
-  ).get(nameLower);
+  const row = prepared(db, `SELECT 1 FROM mempool WHERE username_lower = ? LIMIT 1`).get(nameLower);
   return row !== undefined;
 }
 
 export function hasPendingClaimBy(claimantId: string): boolean {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT 1 FROM mempool WHERE username_claimant = ? LIMIT 1`,
-  ).get(claimantId);
+  const row = prepared(db, `SELECT 1 FROM mempool WHERE username_claimant = ? LIMIT 1`).get(claimantId);
   return row !== undefined;
 }
 
@@ -660,9 +636,7 @@ export function hasPendingClaimBy(claimantId: string): boolean {
  */
 export function pendingKarmaSpend(ownerId: string): bigint {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT COALESCE(SUM(karma_spend), 0) AS total FROM mempool WHERE karma_owner = ?`,
-  ).safeIntegers().get(ownerId) as { total: bigint };
+  const row = prepared(db, `SELECT COALESCE(SUM(karma_spend), 0) AS total FROM mempool WHERE karma_owner = ?`, true).get(ownerId) as { total: bigint };
   return row.total;
 }
 
@@ -678,9 +652,7 @@ export function pendingKarmaSpend(ownerId: string): bigint {
 export function hasPendingSpend(boxIds: string[]): string | null {
   if (boxIds.length === 0) return null;
   const db = getDb();
-  const stmt = db.prepare(
-    `SELECT 1 FROM mempool_inputs WHERE box_id = ? LIMIT 1`,
-  );
+  const stmt = prepared(db, `SELECT 1 FROM mempool_inputs WHERE box_id = ? LIMIT 1`);
   for (const id of boxIds) {
     if (stmt.get(id) !== undefined) return id;
   }
@@ -696,12 +668,10 @@ export function hasPendingSpend(boxIds: string[]): string | null {
  */
 export function findPendingOutput(boxId: string): AnyBox | null {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT mempool.utxo_tx_bytes AS utxo_tx_bytes
+  const row = prepared(db, `SELECT mempool.utxo_tx_bytes AS utxo_tx_bytes
        FROM mempool_outputs
        JOIN mempool ON mempool.rowid = mempool_outputs.entry_rowid
-      WHERE mempool_outputs.box_id = ?`,
-  ).get(boxId) as { utxo_tx_bytes: Buffer } | undefined;
+      WHERE mempool_outputs.box_id = ?`).get(boxId) as { utxo_tx_bytes: Buffer } | undefined;
   if (!row) return null;
 
   const tx = decodeTx(new Uint8Array(row.utxo_tx_bytes));
@@ -772,12 +742,10 @@ export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
   // One decode per row, and the owner's active transactions in the pool are
   // what the invariant leaves bounded: a spend reads two inputs and emits one
   // karma output at most, so each decode adds one or none and takes one off.
-  const rows = db.prepare(
-    `SELECT utxo_tx_bytes
+  const rows = prepared(db, `SELECT utxo_tx_bytes
        FROM mempool
       WHERE karma_owner = ?
-        AND utxo_tx_bytes IS NOT NULL`,
-  ).all(ownerId) as Array<{ utxo_tx_bytes: Buffer }>;
+        AND utxo_tx_bytes IS NOT NULL`).all(ownerId) as Array<{ utxo_tx_bytes: Buffer }>;
 
   // Pass one: gather every pooled karma output the owner signs for. Reading
   // ahead of the subtraction keeps the answer order-free — a chain's child
@@ -807,12 +775,10 @@ export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
   // (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending). The gather and the
   // subtract run as separate passes, so the answer is the same whatever order
   // SQLite returns the rows in.
-  const spent = db.prepare(
-    `SELECT mempool_inputs.box_id AS box_id
+  const spent = prepared(db, `SELECT mempool_inputs.box_id AS box_id
        FROM mempool_inputs
        JOIN mempool ON mempool.rowid = mempool_inputs.entry_rowid
-      WHERE mempool.karma_owner = ?`,
-  ).all(ownerId) as Array<{ box_id: string }>;
+      WHERE mempool.karma_owner = ?`).all(ownerId) as Array<{ box_id: string }>;
   for (const row of spent) kept.delete(row.box_id);
 
   return [...kept];
@@ -829,11 +795,8 @@ function bytesToHexOwner(owner: Uint8Array): string {
  * transaction rides a post row").
  */
 export function getPendingUtxoTxBytesByTxId(txId: string): Uint8Array | null {
-  const row = getDb()
-    .prepare(
-      `SELECT utxo_tx_bytes FROM mempool
-        WHERE entry_type = 'utxo_tx' AND tx_id = ?`,
-    )
+  const row = prepared(getDb(), `SELECT utxo_tx_bytes FROM mempool
+        WHERE entry_type = 'utxo_tx' AND tx_id = ?`)
     .get(txId) as { utxo_tx_bytes: Buffer | null } | undefined;
   if (!row || !row.utxo_tx_bytes) return null;
   return new Uint8Array(row.utxo_tx_bytes);
@@ -855,13 +818,11 @@ const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_bytes,
  */
 export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
   const db = getDb();
-  const rows = db.prepare(
-    `SELECT ${ENTRY_COLUMNS}
+  const rows = prepared(db, `SELECT ${ENTRY_COLUMNS}
      FROM mempool
      WHERE rowid > ?
      ORDER BY rowid ASC
-     LIMIT ?`,
-  ).all(afterRowid, limit) as MempoolRow[];
+     LIMIT ?`).all(afterRowid, limit) as MempoolRow[];
   return rows.map(rowToEntry);
 }
 
@@ -888,12 +849,10 @@ function* iterateKarmaFifo(): Generator<PoolEntry> {
   const db = getDb();
   let afterRowid = 0;
   for (;;) {
-    const rows = db.prepare(
-      `SELECT ${ENTRY_COLUMNS} FROM mempool
+    const rows = prepared(db, `SELECT ${ENTRY_COLUMNS} FROM mempool
         WHERE tx_fee IS NULL AND rowid > ?
         ORDER BY rowid ASC
-        LIMIT ?`,
-    ).all(afterRowid, PENDING_PAGE_SIZE) as MempoolRow[];
+        LIMIT ?`).all(afterRowid, PENDING_PAGE_SIZE) as MempoolRow[];
     if (rows.length === 0) return;
     for (const row of rows) yield rowToEntry(row);
     if (rows.length < PENDING_PAGE_SIZE) return;
@@ -934,11 +893,9 @@ function* iterateCreditByRate(): Generator<PoolEntry> {
   // query without the `+`, and 2.65 ms with no index at all (2026-08-15, a
   // 10,000-row pool of which 5,000 are credit). Removing it costs half a
   // millisecond per block and nothing will fail.
-  const ordered = db.prepare(
-    `SELECT rowid FROM mempool
+  const ordered = prepared(db, `SELECT rowid FROM mempool
       WHERE entry_type = 'utxo_tx' AND tx_fee IS NOT NULL AND tx_bytes > 0
-      ORDER BY +CAST(tx_fee AS REAL) / tx_bytes DESC, rowid ASC`,
-  ).all() as Array<{ rowid: number }>;
+      ORDER BY +CAST(tx_fee AS REAL) / tx_bytes DESC, rowid ASC`).all() as Array<{ rowid: number }>;
 
   for (let i = 0; i < ordered.length; i += PENDING_PAGE_SIZE) {
     const page = ordered.slice(i, i + PENDING_PAGE_SIZE).map((r) => r.rowid);
@@ -1008,7 +965,7 @@ export function* iteratePendingEntries(
  */
 export function removeUtxoTxEntry(txId: string): number {
   const db = getDb();
-  return db.prepare('DELETE FROM mempool WHERE tx_id = ?').run(txId).changes;
+  return prepared(db, 'DELETE FROM mempool WHERE tx_id = ?').run(txId).changes;
 }
 
 export function purgeExpired(currentHeight: number): number {
@@ -1019,18 +976,14 @@ export function purgeExpired(currentHeight: number): number {
     // NODE_INTERFACE → Post transactions — the pending-row rule: an unconfirmed
     // post entry's DAG row dies with its pool row. Both expiry and ceiling
     // reclaim go through this cleanup.
-    const expiring = db.prepare(
-      `SELECT tx_id FROM mempool
+    const expiring = prepared(db, `SELECT tx_id FROM mempool
         WHERE (expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?))
-          AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL`,
-    ).all(currentHeight, currentHeight) as Array<{ tx_id: string }>;
+          AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL`).all(currentHeight, currentHeight) as Array<{ tx_id: string }>;
     for (const { tx_id } of expiring) {
       deletePendingPost(computePostId(tx_id, 0));
     }
     // MEMPOOL_INTERFACE → Validity ceiling — reclaim while pooled.
-    const result = db.prepare(
-      'DELETE FROM mempool WHERE expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?)',
-    ).run(currentHeight, currentHeight);
+    const result = prepared(db, 'DELETE FROM mempool WHERE expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?)').run(currentHeight, currentHeight);
     return result.changes;
   })();
 }
@@ -1041,13 +994,11 @@ export function removeEntry(rowid: number): void {
   // mutation (ARCHITECTURE → "Single-transaction atomic writes").
   db.transaction(() => {
     // NODE_INTERFACE → Post transactions — the pending-row rule.
-    const row = db.prepare(
-      "SELECT tx_id FROM mempool WHERE rowid = ? AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL",
-    ).get(rowid) as { tx_id: string } | undefined;
+    const row = prepared(db, "SELECT tx_id FROM mempool WHERE rowid = ? AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL").get(rowid) as { tx_id: string } | undefined;
     if (row) {
       deletePendingPost(computePostId(row.tx_id, 0));
     }
-    db.prepare('DELETE FROM mempool WHERE rowid = ?').run(rowid);
+    prepared(db, 'DELETE FROM mempool WHERE rowid = ?').run(rowid);
   })();
 }
 

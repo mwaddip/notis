@@ -3,6 +3,34 @@ import { emitDbOpenStarted, emitDbOpenComplete } from '../journal.js';
 
 let db: Database.Database | null = null;
 
+const statementCaches = new WeakMap<Database.Database, Map<string, Database.Statement>>();
+
+/**
+ * The statement for `sql` on `handle`, compiled on its first use there and kept
+ * for every use after (NODE_INTERFACE → Database lifecycle → "A statement is
+ * prepared once per database handle"). One statement serves every caller of its
+ * text, so each use sets its integer mode: `safeIntegers` is `true` for a caller
+ * that reads `bigint`s and `false` for one that reads numbers. A text built from
+ * its argument count is prepared with `handle.prepare` and kept out.
+ */
+export function prepared(
+  handle: Database.Database,
+  sql: string,
+  safeIntegers = false,
+): Database.Statement {
+  let cache = statementCaches.get(handle);
+  if (!cache) {
+    cache = new Map();
+    statementCaches.set(handle, cache);
+  }
+  let stmt = cache.get(sql);
+  if (!stmt) {
+    stmt = handle.prepare(sql);
+    cache.set(sql, stmt);
+  }
+  return stmt.safeIntegers(safeIntegers);
+}
+
 const MIGRATIONS = [
   // Posts DAG
   `CREATE TABLE IF NOT EXISTS dag_posts (
@@ -597,6 +625,7 @@ export function isCurrentDb(candidate: Database.Database): boolean {
 
 export function closeDb(): void {
   if (db) {
+    statementCaches.delete(db);
     db.close();
     db = null;
   }

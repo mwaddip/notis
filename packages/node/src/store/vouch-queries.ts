@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import { rowToBox } from './utxo.js';
 import type { UtxoRow } from './utxo.js';
 import type { VouchBox } from '@dagsocial/types';
@@ -13,15 +13,11 @@ function pubkeyToHex(pk: Uint8Array): string {
  * `StateView` read (CONSENSUS_INTERFACE → StateView).
  */
 export function getVouchBoxes(voucherId: Uint8Array, targetId: Uint8Array): VouchBox[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
+  const rows = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE box_type = 'vouch' AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.voucherId') = ?
          AND json_extract(extra_data, '$.targetId') = ?
-       ORDER BY id`,
-    )
-    .safeIntegers()
+       ORDER BY id`, true)
     .all(pubkeyToHex(voucherId), pubkeyToHex(targetId)) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as VouchBox);
 }
@@ -42,8 +38,7 @@ const VOUCH_TARGET_WHERE =
 // getVouchesForTargetPage's own count, which delegates here so
 // VOUCH_TARGET_WHERE's count is computed in one place.
 export function getVouchCountForTarget(targetId: Uint8Array): number {
-  const row = getDb()
-    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}`)
+  const row = prepared(getDb(), `SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}`)
     .get(pubkeyToHex(targetId)) as { cnt: number };
   return row.cnt;
 }
@@ -59,11 +54,7 @@ export function getVouchesForTargetPage(
   if (page.after) params.push(page.after);
   params.push(page.limit + 1);
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}${afterClause} ORDER BY id LIMIT ?`,
-    )
-    .safeIntegers()
+  const rows = prepared(db, `SELECT * FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}${afterClause} ORDER BY id LIMIT ?`, true)
     .all(...params) as UtxoRow[];
 
   const hasMore = rows.length > page.limit;
@@ -83,18 +74,14 @@ export function getVouchesForTargetPage(
  */
 export function getLapsedVouches(limit: number): VouchBox[] {
   const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT u.* FROM utxo_boxes u
+  const rows = prepared(db, `SELECT u.* FROM utxo_boxes u
        JOIN identity_records ir
          ON ir.identity_id = unhex(json_extract(u.extra_data, '$.voucherId'))
        WHERE u.box_type = 'vouch'
          AND u.spent_at_block IS NULL
          AND NOT (ir.member_since_block > 0 AND ir.member_vouches >= ir.member_bar)
        ORDER BY u.id
-       LIMIT ?`,
-    )
-    .safeIntegers()
+       LIMIT ?`, true)
     .all(limit) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as VouchBox);
 }
@@ -112,11 +99,7 @@ export function getVouchesForVoucherPage(
   if (page.after) params.push(page.after);
   params.push(page.limit + 1);
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes WHERE ${VOUCH_VOUCHER_WHERE}${afterClause} ORDER BY id LIMIT ?`,
-    )
-    .safeIntegers()
+  const rows = prepared(db, `SELECT * FROM utxo_boxes WHERE ${VOUCH_VOUCHER_WHERE}${afterClause} ORDER BY id LIMIT ?`, true)
     .all(...params) as UtxoRow[];
 
   const hasMore = rows.length > page.limit;
@@ -125,8 +108,7 @@ export function getVouchesForVoucherPage(
   const last = resultRows[resultRows.length - 1];
   const next: string | null = hasMore && last ? last.id : null;
 
-  const countRow = db
-    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_VOUCHER_WHERE}`)
+  const countRow = prepared(db, `SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_VOUCHER_WHERE}`)
     .get(hex) as { cnt: number };
 
   return { rows: vouches, next, count: countRow.cnt };

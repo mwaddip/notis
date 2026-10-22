@@ -2,6 +2,7 @@ import type { VersionedAVLStorage, BatchAVLProver, AvlTreeConfig, LoadNode } fro
 import { lazyRoot, serializeNode, deserializeNode, label, newInternal } from '@dagsocial/avltree';
 import type { AvlNode } from '@dagsocial/avltree';
 import type Database from 'better-sqlite3';
+import { prepared } from '../store/db.js';
 import {
   DuplicateStateVersionError,
   InconsistentAvlNodeRowsError,
@@ -65,21 +66,11 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
     const removed = prover.removedNodes();
     this.lastRemoved = removed.length;
 
-    const orphan = this.db.prepare(
-      'UPDATE avl_tree_nodes SET orphaned_at_height = ? WHERE label = ? AND orphaned_at_height IS NULL',
-    );
-    const hasLiveRow = this.db.prepare(
-      'SELECT 1 FROM avl_tree_nodes WHERE label = ? AND orphaned_at_height IS NULL LIMIT 1',
-    );
-    const insertNode = this.db.prepare(
-      'INSERT INTO avl_tree_nodes (label, node_data, first_seen_height, orphaned_at_height) VALUES (?, ?, ?, NULL)',
-    );
-    const insertVersion = this.db.prepare(
-      'INSERT INTO avl_tree_versions (version, height) VALUES (?, ?)',
-    );
-    const hasVersionAtHeight = this.db.prepare(
-      'SELECT 1 FROM avl_tree_versions WHERE height = ? LIMIT 1',
-    );
+    const orphan = prepared(this.db, 'UPDATE avl_tree_nodes SET orphaned_at_height = ? WHERE label = ? AND orphaned_at_height IS NULL');
+    const hasLiveRow = prepared(this.db, 'SELECT 1 FROM avl_tree_nodes WHERE label = ? AND orphaned_at_height IS NULL LIMIT 1');
+    const insertNode = prepared(this.db, 'INSERT INTO avl_tree_nodes (label, node_data, first_seen_height, orphaned_at_height) VALUES (?, ?, ?, NULL)');
+    const insertVersion = prepared(this.db, 'INSERT INTO avl_tree_versions (version, height) VALUES (?, ?)');
+    const hasVersionAtHeight = prepared(this.db, 'SELECT 1 FROM avl_tree_versions WHERE height = ? LIMIT 1');
 
     this.db.transaction(() => {
       // NODE_INTERFACE → AVL+ State Root: one row per height.
@@ -172,14 +163,14 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
     return new Uint8Array(rows[0]!.node_data);
   }
 
-  /** Compiled once per storage; the one statement rollback and the loader read. */
+  /** The one statement rollback and the loader read. */
   private get aliveRowStmt(): Database.Statement {
-    return (this._aliveRowStmt ??= this.db.prepare(
+    return prepared(
+      this.db,
       'SELECT node_data FROM avl_tree_nodes WHERE label = ? ' +
       'AND first_seen_height <= ? AND (orphaned_at_height IS NULL OR orphaned_at_height > ?)',
-    ));
+    );
   }
-  private _aliveRowStmt: Database.Statement | null = null;
 
   /**
    * The version digest at exactly `height`, or `null` where the store lists
@@ -189,8 +180,7 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
    * holds a version of, and nothing else of the window.
    */
   versionAtHeight(height: number): Uint8Array | null {
-    const row = this.db
-      .prepare('SELECT version FROM avl_tree_versions WHERE height = ?')
+    const row = prepared(this.db, 'SELECT version FROM avl_tree_versions WHERE height = ?')
       .get(height) as { version: Buffer } | undefined;
     return row ? new Uint8Array(row.version) : null;
   }
@@ -228,15 +218,13 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
   }
 
   version(): Uint8Array | null {
-    const row = this.db
-      .prepare('SELECT version FROM avl_tree_versions ORDER BY height DESC LIMIT 1')
+    const row = prepared(this.db, 'SELECT version FROM avl_tree_versions ORDER BY height DESC LIMIT 1')
       .get() as { version: Buffer } | undefined;
     return row ? new Uint8Array(row.version) : null;
   }
 
   rollbackVersions(): Uint8Array[] {
-    const rows = this.db
-      .prepare('SELECT version FROM avl_tree_versions ORDER BY height ASC')
+    const rows = prepared(this.db, 'SELECT version FROM avl_tree_versions ORDER BY height ASC')
       .all() as Array<{ version: Buffer }>;
     return rows.map(r => new Uint8Array(r.version));
   }
@@ -246,16 +234,14 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
    * Returns the version with the highest height <= maxHeight, or null if none.
    */
   versionAtOrBeforeHeight(maxHeight: number): Uint8Array | null {
-    const row = this.db
-      .prepare('SELECT version FROM avl_tree_versions WHERE height <= ? ORDER BY height DESC LIMIT 1')
+    const row = prepared(this.db, 'SELECT version FROM avl_tree_versions WHERE height <= ? ORDER BY height DESC LIMIT 1')
       .get(maxHeight) as { version: Buffer } | undefined;
     return row ? new Uint8Array(row.version) : null;
   }
 
   /** Return the block height for a stored version, or null if not found. */
   versionHeight(version: Uint8Array): number | null {
-    const row = this.db
-      .prepare('SELECT height FROM avl_tree_versions WHERE version = ?')
+    const row = prepared(this.db, 'SELECT height FROM avl_tree_versions WHERE version = ?')
       .get(version) as { height: number } | undefined;
     return row ? row.height : null;
   }
@@ -270,11 +256,9 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
    */
   deleteVersionAtHeight(height: number): void {
     this.db.transaction(() => {
-      this.db.prepare('DELETE FROM avl_tree_nodes WHERE first_seen_height = ?').run(height);
-      this.db.prepare(
-        'UPDATE avl_tree_nodes SET orphaned_at_height = NULL WHERE orphaned_at_height = ?',
-      ).run(height);
-      this.db.prepare('DELETE FROM avl_tree_versions WHERE height = ?').run(height);
+      prepared(this.db, 'DELETE FROM avl_tree_nodes WHERE first_seen_height = ?').run(height);
+      prepared(this.db, 'UPDATE avl_tree_nodes SET orphaned_at_height = NULL WHERE orphaned_at_height = ?').run(height);
+      prepared(this.db, 'DELETE FROM avl_tree_versions WHERE height = ?').run(height);
     })();
   }
 
@@ -285,10 +269,8 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
    */
   pruneVersionsBefore(cutoffHeight: number): void {
     this.db.transaction(() => {
-      this.db.prepare(
-        'DELETE FROM avl_tree_nodes WHERE orphaned_at_height IS NOT NULL AND orphaned_at_height <= ?',
-      ).run(cutoffHeight);
-      this.db.prepare('DELETE FROM avl_tree_versions WHERE height < ?').run(cutoffHeight);
+      prepared(this.db, 'DELETE FROM avl_tree_nodes WHERE orphaned_at_height IS NOT NULL AND orphaned_at_height <= ?').run(cutoffHeight);
+      prepared(this.db, 'DELETE FROM avl_tree_versions WHERE height < ?').run(cutoffHeight);
     })();
   }
 
