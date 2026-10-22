@@ -301,6 +301,7 @@ function assertCapacity(
   poolClass: PoolClass,
   fee: bigint | null,
   bytes: number,
+  arrivalInputs: readonly string[],
 ): void {
   const caps = classCaps();
 
@@ -322,7 +323,19 @@ function assertCapacity(
   const resident = cheapest.fee * BigInt(bytes);
   if (arriving <= resident) throw new MempoolFullError(caps.credit, 'credit');
 
-  prepared(db, 'DELETE FROM mempool WHERE rowid = ?').run(cheapest.rowid);
+  // The cheapest resident's closure, read once beside the delete that
+  // follows — never a second walk. An arrival whose input is in the closure's
+  // output set is refused: admitting it would pool an entry whose input no
+  // longer exists once the resident and its dependents leave. The displaced
+  // resident takes its dependents through `removeUnconfirmed`'s own path
+  // (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
+  const closure = readClosureInner(db, [cheapest.rowid]);
+  for (const inputId of arrivalInputs) {
+    if (closure.outputBoxIds.has(inputId)) {
+      throw new MempoolFullError(caps.credit, 'credit');
+    }
+  }
+  deleteFromClosureInner(db, closure);
 }
 
 export interface GateMetadata {
@@ -524,7 +537,7 @@ export function insertUtxoTx(
     // encoding — the budget is the resource being rationed.
     const fee = bidOf(tx);
     const bytes = entryByteCost(encoded);
-    assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes);
+    assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes, inputs);
 
     const result = prepared(db, `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
                             like_target, like_liker, invite_inviter, invite_invitee,

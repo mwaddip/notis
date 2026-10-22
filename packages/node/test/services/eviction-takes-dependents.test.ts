@@ -148,7 +148,7 @@ describe('a credit-class displacement takes the cheapest resident\'s dependents'
     vi.resetModules();
   });
 
-  it.fails('a credit entry chained on the cheapest resident\'s change leaves with that resident when a higher bid displaces it', async () => {
+  it('a credit entry chained on the cheapest resident\'s change leaves with that resident when a higher bid displaces it', async () => {
     const spender = makeTestIdentity();
     const boxC = makeCreditBox(10_000_000n, spender.userId, 0, 1);
     const boxA = makeCreditBox(10_000_000n, spender.userId, 0, 2);
@@ -205,7 +205,7 @@ describe('an arrival that depends on the cheapest resident\'s closure is refused
     vi.resetModules();
   });
 
-  it.fails('a credit transfer whose input is an output of the cheapest resident\'s chained dependent throws MempoolFullError and leaves both pooled', async () => {
+  it('a credit transfer whose input is an output of the cheapest resident\'s chained dependent throws MempoolFullError and leaves both pooled', async () => {
     const spender = makeTestIdentity();
     const boxC = makeCreditBox(10_000_000n, spender.userId, 0, 1);
     const utxo = await importUtxo();
