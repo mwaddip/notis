@@ -1,4 +1,5 @@
 import express from 'express';
+import { isIPv4, isIPv6 } from 'node:net';
 import { KARMA_MINIMUM } from '@dagsocial/types';
 import { buildInviteTx } from './invite.js';
 import { buildCreditTransferTx } from './transfer.js';
@@ -39,7 +40,7 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   let karmaTail: Promise<unknown> = Promise.resolve();
   let creditTail: Promise<unknown> = Promise.resolve();
 
-  const ip = (req: express.Request): string => req.ip ?? 'unknown';
+  const ip = (req: express.Request): string => rateLimitKey(req.ip ?? 'unknown');
 
   /** The requested key, or `null` once the request has been answered. */
   const requested = (req: express.Request, res: express.Response): string | null => {
@@ -81,6 +82,48 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   });
 
   return app;
+}
+
+const MAPPED_IPV4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i;
+
+/**
+ * NODE_INTERFACE → Faucet → "Its rate limit is keyed on the caller's address,
+ * an IPv6 caller's by its /64" — the smallest prefix a network routes to one
+ * subscriber. An IPv4 address, or one mapped into IPv6, keys as the IPv4
+ * address; an IPv6 address keys as its first four 16-bit groups, written one
+ * way whatever compressed form arrives. A malformed address keys as itself.
+ */
+export function rateLimitKey(address: string): string {
+  const mapped = MAPPED_IPV4.exec(address);
+  if (mapped) return mapped[1]!;
+  if (isIPv4(address)) return address;
+  if (!isIPv6(address)) return address;
+  try {
+    return canonicalIPv6Prefix64(address);
+  } catch {
+    return address;
+  }
+}
+
+function canonicalIPv6Prefix64(address: string): string {
+  const parts = address.split('::');
+  const head = parts[0] === '' ? [] : parts[0]!.split(':');
+  const tail = parts.length === 1
+    ? []
+    : parts[1] === ''
+      ? []
+      : parts[1]!.split(':');
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0) throw new Error('ipv6 too long');
+  const groups = [...head, ...Array<string>(missing).fill('0'), ...tail];
+  if (groups.length !== 8) throw new Error('ipv6 group count');
+  // Normalize each group to lowercase hex with no leading zeros.
+  const first4 = groups.slice(0, 4).map((g) => {
+    const n = Number.parseInt(g || '0', 16);
+    if (!Number.isInteger(n) || n < 0 || n > 0xffff) throw new Error('ipv6 group range');
+    return n.toString(16);
+  });
+  return first4.join(':');
 }
 
 /**

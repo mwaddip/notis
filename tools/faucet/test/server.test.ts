@@ -419,7 +419,7 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
   // address, an IPv6 caller's by its /64" — two spellings of one /64 share
   // one allowance; a separate /64 has its own; an IPv4 and its mapped form
   // share one.
-  it.fails('the IPv6 /64 is the key, with mapped IPv4 and bare IPv4 sharing one', async () => {
+  it('the IPv6 /64 is the key, with mapped IPv4 and bare IPv4 sharing one', async () => {
     const limited = { ...cfg, rateLimitPerHour: 1 };
     const app = createApp(limited, client);
     expect((await request(app).post('/faucet/karma').send({ pubkey: recipient })
