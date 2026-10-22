@@ -1,5 +1,5 @@
 import { uid } from '../helpers.js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
@@ -499,6 +499,195 @@ describe('GET /blocks/:height/proof', () => {
     for (const height of ['7abc', '7e3', '7.0', '+7', '0x7']) {
       const res = await requestBytes(`/blocks/${height}/proof`);
       expect(res.status, height).toBe(400);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `/status`'s five aggregates read once per applied tip
+//
+// NODE_INTERFACE → Status → "Every figure but `pendingPosts` is read once per
+// applied tip": `postCount`, `usernameCount`, `totalKarma`, `liquidKarma` and
+// `totalCredits` are keyed on the applied tip's hash — an empty chain by its
+// height 0 — and `pendingPosts` is read on each request.
+// ---------------------------------------------------------------------------
+
+describe('`/status` reads its aggregates once per applied tip', () => {
+  let perTipTmpDir: string;
+
+  async function startApp(): Promise<{ server: http.Server; port: number }> {
+    const { createApp } = await import('../../src/server.js');
+    const { makeTestConfig } = await import('../helpers.js');
+    const app = createApp(makeTestConfig({
+      port: 0,
+      dbPath: join(perTipTmpDir, 'store.sqlite'),
+      nodeRole: 'server',
+    }));
+    const server = app.listen(0);
+    const addr = server.address() as { port: number };
+    return { server, port: addr.port };
+  }
+
+  function fetchStatus(port: number): Promise<Record<string, unknown>> {
+    return new Promise((resolve) => {
+      http.get({ hostname: '127.0.0.1', port, path: '/status' }, (res) => {
+        let d = '';
+        res.on('data', (c) => (d += c));
+        res.on('end', () => resolve(JSON.parse(d) as Record<string, unknown>));
+      });
+    });
+  }
+
+  // A credit box written straight to the store: a row no block committed, so
+  // the tip is unchanged while `totalCredits` would move if read.
+  function writeCredit(id: string, value: bigint): void {
+    getDb().prepare(
+      `INSERT INTO utxo_boxes
+         (id, box_type, value, created_at_block, spent_at_block, owner, tx_id, output_index)
+       VALUES (?, 'credit', ?, 0, NULL, NULL, ?, 0)`,
+    ).run(id, value, `tx-${id}`);
+  }
+
+  // A confirmed post row written straight to the store: the row no block
+  // committed, so the tip is unchanged while `postCount` would move if read.
+  function writeConfirmedPost(id: string): void {
+    getDb().prepare(
+      `INSERT INTO dag_posts
+         (id, tx_id, content_hash, content, author, parent_refs, protocol_version,
+          status, block_height, block_index)
+       VALUES (?, ?, ?, 'x', ?, '[]', 1, 'confirmed', 1, 0)`,
+    ).run(id, `tx-post-${id}`, '00'.repeat(32), Buffer.from(uid(`author-${id}`)));
+  }
+
+  // A pending post row written straight to the store, with no block applied.
+  function writePendingPost(id: string): void {
+    getDb().prepare(
+      `INSERT INTO dag_posts
+         (id, tx_id, content_hash, content, author, parent_refs, protocol_version,
+          status)
+       VALUES (?, ?, ?, 'x', ?, '[]', 1, 'pending')`,
+    ).run(id, `tx-post-${id}`, '00'.repeat(32), Buffer.from(uid(`author-${id}`)));
+  }
+
+  beforeEach(() => {
+    perTipTmpDir = mkdtempSync(join(tmpdir(), 'dagsocial-status-per-tip-'));
+    initDb(join(perTipTmpDir, 'store.sqlite'));
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+  });
+
+  afterEach(() => {
+    closeDb();
+    rmSync(perTipTmpDir, { recursive: true, force: true });
+  });
+
+  it.fails('two reads at one applied tip answer one reading of `postCount` and `totalCredits`', async () => {
+    const { server, port } = await startApp();
+    try {
+      const first = await fetchStatus(port);
+      // The tip is unchanged between the two reads.
+      const tipBefore = getCurrentHeight();
+      // Credit box and confirmed post written STRAIGHT TO THE STORE: no block
+      // committed them, so the tip did not move.
+      writeCredit('box-after-first', 123n);
+      writeConfirmedPost('aa'.repeat(32));
+      const tipAfter = getCurrentHeight();
+      expect(tipAfter).toBe(tipBefore);
+      // The store holds the new rows — read them back.
+      expect(
+        (getDb().prepare("SELECT COUNT(*) AS c FROM utxo_boxes WHERE box_type = 'credit' AND spent_at_block IS NULL").get() as { c: number }).c,
+      ).toBe(1);
+      expect(
+        (getDb().prepare("SELECT COUNT(*) AS c FROM dag_posts WHERE status = 'confirmed'").get() as { c: number }).c,
+      ).toBe(1);
+
+      const second = await fetchStatus(port);
+      expect(second.totalCredits).toBe(first.totalCredits);
+      expect(second.postCount).toBe(first.postCount);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('a new applied tip is a new key — the aggregates read the store at that tip', async () => {
+    const { server, port } = await startApp();
+    try {
+      const first = await fetchStatus(port);
+      expect(first.blockHeight).toBe(0);
+
+      // Write boxes and posts BEFORE applying the block, so a second read's
+      // aggregates would still match the first if the key were the height
+      // alone on an empty chain — a block applied at height 1 is a different
+      // key.
+      writeCredit('box-pre-tip', 50n);
+      writeConfirmedPost('bb'.repeat(32));
+
+      createOrderingBlock(makeBlock(1), []);
+      expect(getCurrentHeight()).toBe(1);
+
+      const second = await fetchStatus(port);
+      expect(second.blockHeight).toBe(1);
+      expect(second.totalCredits).toBe('50');
+      expect(second.postCount).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('`pendingPosts` moves on each read, while the other figures hold', async () => {
+    const { server, port } = await startApp();
+    try {
+      const first = await fetchStatus(port);
+      expect(first.pendingPosts).toBe(0);
+
+      // A pending row written with no block applied — the pool's view of the
+      // posts table. `pendingPosts` moves one up on the next read; the other
+      // figures hold because a pending row is in neither the confirmed set
+      // nor the ledger.
+      writePendingPost('cc'.repeat(32));
+
+      const second = await fetchStatus(port);
+      expect(second.pendingPosts).toBe(1);
+      expect(second.totalCredits).toBe(first.totalCredits);
+      expect(second.postCount).toBe(first.postCount);
+      expect(second.totalKarma).toBe(first.totalKarma);
+      expect(second.liquidKarma).toBe(first.liquidKarma);
+      expect(second.usernameCount).toBe(first.usernameCount);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('a different block at the same height is a new key — the aggregates read the store at that tip', async () => {
+    const { server, port } = await startApp();
+    try {
+      // Apply block A at height 1 and read /status so the aggregates are
+      // keyed on A's hash.
+      createOrderingBlock(makeBlock(1), []);
+      const hashA = getOrderingBlockHash(1);
+      const first = await fetchStatus(port);
+      expect(first.blockHeight).toBe(1);
+
+      // Write a credit box and a confirmed post the first reading did not see.
+      writeCredit('box-switch', 99n);
+      writeConfirmedPost('dd'.repeat(32));
+
+      // Replace height 1 with a different block at the same height — the
+      // store's revert and apply. The height is unchanged, the hash is not.
+      const { deleteOrderingBlock } = await import('../../src/store/ordering.js');
+      deleteOrderingBlock(1);
+      const blockB = makeBlock(1);
+      blockB.header.powNonce = 1;
+      createOrderingBlock(blockB, []);
+      const hashB = getOrderingBlockHash(1);
+      expect(hashB).not.toBe(hashA);
+      expect(getCurrentHeight()).toBe(1);
+
+      const second = await fetchStatus(port);
+      expect(second.blockHeight).toBe(1);
+      expect(second.totalCredits).toBe('99');
+      expect(second.postCount).toBe(1);
+    } finally {
+      server.close();
     }
   });
 });
