@@ -190,12 +190,15 @@ default (package)         S8  P9  E3  C5  I9  A7  L7
   The only component in this repo that HOLDS A SECRET KEY and signs with it, which is
   the whole of the P9. It takes public HTTP input on one side and a node's responses on
   the other, so both are hostile. Endurance is deliberately low: it is stateless by
-  design, a restart costs at most one rejected submission, and anything that would make
-  a crash expensive is the wrong change. I9 because the standing temptation is
-  architectural — a grant ledger, a local transaction encoder, a durable pending view
-  — and each is the obvious instinct and each is wrong. A7 guards the dependency count,
-  which is the argument for the package existing in this form at all.
+  design, a restart costs nothing — it builds on the node's pending view — and anything
+  that would make a crash expensive is the wrong change. I9 because the standing
+  temptation is architectural — a grant ledger, a local transaction encoder, a model of
+  its own pooled spends — and each is the obvious instinct and each is wrong. A7 guards
+  the dependency count, which is the argument for the package existing in this form at all.
 ```
+
+> ⚠ **AHEAD OF CODE (2026-10-22).** The profile leads `tools/faucet`, which models its own pooled invites in memory,
+> so a restart refuses its requests until the next block.
 
 ⛔ **THE RISK IS IN THE BUILDERS AND THE KEY, NOWHERE ELSE.** A wrong `txId`, a wrong bond value or a
 wrong recipient signs something the network accepts and cannot take back. The rate limiter and the

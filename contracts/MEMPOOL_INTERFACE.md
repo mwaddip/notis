@@ -47,10 +47,15 @@ CREATE TABLE mempool_inputs (
 ) WITHOUT ROWID;
 CREATE TABLE mempool_outputs (
     box_id      TEXT PRIMARY KEY,
-    entry_rowid INTEGER NOT NULL REFERENCES mempool(rowid) ON DELETE CASCADE
+    entry_rowid INTEGER NOT NULL REFERENCES mempool(rowid) ON DELETE CASCADE,
+    owner       BLOB,              -- the box's owner, 32 bytes; NULL for a type that has none
+    box_type    TEXT NOT NULL,     -- the box's type, as utxo_boxes names it
+    value       INTEGER NOT NULL   -- the box's value
 ) WITHOUT ROWID;
 CREATE INDEX idx_mempool_inputs_entry  ON mempool_inputs(entry_rowid);
 CREATE INDEX idx_mempool_outputs_entry ON mempool_outputs(entry_rowid);
+CREATE INDEX idx_mempool_outputs_owner ON mempool_outputs(owner, box_type, value DESC, box_id)
+    WHERE owner IS NOT NULL;
 ```
 
 The SQLite `rowid` is the canonical identifier for entries.
@@ -66,6 +71,13 @@ the engine refuses a transaction that spends no input (`NODE_INTERFACE → valid
 output is that transaction again, which its inputs refuse first. **The rows leave with their entry on every path** —
 confirmation, expiry, eviction, removal — by `ON DELETE CASCADE`, which holds because `initDb` turns foreign keys on;
 the `entry_rowid` indexes are what the cascade and a per-entry read find them by.
+
+**An output row carries its box's owner, type and value**, written from the box `materializeOutput` returns, so the
+pending view asked by owner is a range of the owner index, and decodes the entries of the rows a page answers and no
+other (→ getBoxesPageWithPending).
+
+> ⚠ **AHEAD OF CODE (2026-10-22).** The three columns and the owner index lead `store/db.ts`, whose `mempool_outputs`
+> holds `box_id` and `entry_rowid` alone, and `insertUtxoTx`, which writes those two.
 
 **`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
 no additional hash. It exists because cleanup has to find an entry *by transaction identity* when a
@@ -282,9 +294,32 @@ holds at most two karma boxes"` — and nothing else's. An owner with a pooled k
 spend's change, and none where it returned no change; an owner with nothing pooled holds their
 confirmed own box. So a transaction that chains on a pooled spend names its change, and one that names
 the income box alone is admitted exactly where the pool's entries ahead of it leave the owner no own
-box. The pooled rows are found by `karma_owner`, never by a scan, and the boxes they spend by those rows' `mempool_inputs`
-rows. The relay answers the same rule over
+box. **It is the unmarked rows of the set `getBoxesPageWithPending` reads for karma**, over that read's one statement
+of the set — a pooled karma output is unmarked by rule 2, so the marked row is the confirmed income box alone — and
+decodes no entry. The relay answers the same rule over
 the confirmed set, as it resolves inputs.
+
+### getBoxesPageWithPending
+
+```
+getBoxesPageWithPending(owner: Uint8Array, boxType: 'karma' | 'credit', page: Page<BoxKey>):
+  { rows: (KarmaBox | CreditBox)[], next: BoxKey | null, count: number }
+getBoxTotalWithPending(owner: Uint8Array, boxType: 'karma' | 'credit'): bigint
+```
+
+`getBoxWithPending`'s view, asked by owner and type: the owner's confirmed boxes of the type that no `mempool_inputs`
+row names, and the `mempool_outputs` rows of the type to the owner that no `mempool_inputs` row names — so a pooled
+output a later pooled entry spends is out, and the end of a chain of pooled spends is in. One page in
+`value DESC, id` strictly after `after`, by the page contract (`NODE_INTERFACE → Store Interface`), the two halves
+merged in that order; `count` and the total over the whole set. **The set is stated once**, a fragment the page, the
+`COUNT`, the `SUM` and `getOwnKarmaBoxIdsWithPending` share. A pooled row is returned as the box `materializeOutput`
+returns, with the id block application will give it. It is the listings' `pending=1`
+(NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as admission spends from it"), the view a
+client builds on — **never a rule's input and never block application's**, for the reason `getBoxWithPending` is not
+(→ getBoxWithPending).
+
+> ⚠ **AHEAD OF CODE (2026-10-22).** The read leads `store/mempool.ts`, which answers the pending view by box alone;
+> its `getOwnKarmaBoxIdsWithPending` decodes the owner's pooled rows found by `karma_owner`.
 
 ### getPendingEntries
 

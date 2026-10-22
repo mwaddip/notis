@@ -451,8 +451,6 @@ gateway DoS for the price of one extra signature.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| Method | Path | Request | Response | Errors |
-|--------|------|---------|----------|--------|
 | `POST` | `/invites` | `{ tx: UtxoTransaction }` — inviter-signed create tx naming the invitee's public key | `{ status: "pending", txId, expiresAtHeight, bondBoxId }` | 400 if insufficient karma, 400 if that key is already an account, 400 if the inviter is neither a root nor a member with an invite available, 400 `Every invite this member has is already pending` when its pending bonds take every invite it has; 409 `A pending invite already names this key` |
 
 **There is one step, and no secret in it** (`ARCHITECTURE` → Invite System). The
@@ -566,8 +564,8 @@ invites, vouches, credits, withdraw).
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value, income? }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, memberSinceBlock, memberBar, memberVouches, memberLikes, invitesUsed, invitedAtBlock, member, invitesAvailable, height }` — a box carries `income: true` when it is the owner's income box and no such key when it is their own (`TYPES_INTERFACE → KarmaBox`); `total` the face sum over every unspent karma box, own and income (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks, `lifetimeLikesReceived` and `memberLikes` (decimal strings, the record's counters — `"0"` where none) and the membership fields from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page"). `invitedAtBlock` is the record's invite height as stored, `0` = never invited (→ Identity Records), so a client evaluates `root` exactly as the node does | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
-| `GET` | `/credits/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }], boxCount, next }` — `total` over every unspent credit box (`getCreditValue`), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from; an identity with no unspent credit box answers the empty page — `boxes: []`, `boxCount 0`, `total "0"`, `next null` | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
+| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>&pending=1` | `{ userId: hex, total, effective, boxes: [{ boxId, value, income? }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, memberSinceBlock, memberBar, memberVouches, memberLikes, invitesUsed, invitedAtBlock, member, invitesAvailable, height }` — a box carries `income: true` when it is the owner's income box and no such key when it is their own (`TYPES_INTERFACE → KarmaBox`); `total` the face sum over every unspent karma box, own and income (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from; under `pending=1` the five range over the pending view (→ "`pending=1` answers the pending view, as admission spends from it"). **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks, `lifetimeLikesReceived` and `memberLikes` (decimal strings, the record's counters — `"0"` where none) and the membership fields from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page"). `invitedAtBlock` is the record's invite height as stored, `0` = never invited (→ Identity Records), so a client evaluates `root` exactly as the node does | 400 if `userId` is not 64 chars, a present `limit`/`after` does not parse, or a present `pending` is not `1` |
+| `GET` | `/credits/:userId?limit=50&after=<value>:<boxId>&pending=1` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }], boxCount, next }` — `total` over every unspent credit box (`getCreditValue`), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from; under `pending=1` the four range over the pending view (→ "`pending=1` answers the pending view, as admission spends from it"); an identity with no unspent credit box answers the empty page — `boxes: []`, `boxCount 0`, `total "0"`, `next null` | 400 if `userId` is not 64 chars, a present `limit`/`after` does not parse, or a present `pending` is not `1` |
 | `GET` | `/invites/:userId?limit=50&after=<boxId>` | `{ bonds: [{ id, value, inviterId, inviterName, inviteePublicKey, inviteeName, createdAtBlock }], bondCount, next }` — the inviter's **unspent** bonds, each with its box's `createdAtBlock` (the bond's settle height) and each name the holder's username as typed or `null` (→ Usernames → "A list row carries its names"), one page ascending box id strictly after `after`, `bondCount` over the whole set, `next` the key to continue from; a bond IS the open invite, so a settled one is not listed and there is no second list | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse; an inviter holding no live bond answers `{ bonds: [], bondCount: 0, next: null }` |
 
 Multi-box UTXO model — an identity can hold any number of credit boxes, and two karma boxes at most: its
@@ -588,8 +586,26 @@ consensus valuation, which is the mirror class. The three plain numbers beside t
 `lastActivityBlock` and `lastDecayBlock`, the owner's identity-record clocks (`0` where no record
 exists), and `height`, the chain height at the time of the response — are that valuation's inputs,
 served so a client can show when the next period falls. Of `effective`, a post may spend all and
-any other spend what stands above `KARMA_MINIMUM` (→ Karma transition rules); the pool's pending
-spends are not in the number.
+any other spend what stands above `KARMA_MINIMUM` (→ Karma transition rules); without `pending=1` the
+pool's pending spends are not in the number.
+
+**`pending=1` answers the pending view, as admission spends from it.** On either route, `boxes`,
+`boxCount`, `next` and `total` then range over the owner's boxes of the route's kind as
+`getBoxWithPending` sees them (`MEMPOOL_INTERFACE → getBoxWithPending`): the confirmed boxes no pooled
+transaction spends, and the outputs of that kind pooled transactions create to the owner that no pooled
+transaction spends — in the same order, paged the same way, a pooled output under the id block application
+will give it. A pooled karma output carries no `income` mark (→ Karma transition rules → "No karma
+output carries the mark") and a pooled credit output no `lockedUntilBlock`. On `/karma`, `effective` is the
+`remaining` admission judges a spend against at `tip + 1` — `held` less `owed`, each read as admission reads it
+(→ Karma transition rules → "Engine inputs the rule needs"; → "A karma spend is covered by effective karma, over
+the block's body as a whole"), `"0"` where `owed` exceeds `held` — and every other field reads as without the
+flag. **The view is the answering node's pool, and its word**: no proof covers a pooled box
+(→ The block proof), and another node's pool can differ until gossip carries an entry to it. A client that
+spends more than once a block chains its spends on this view instead of modelling the pool itself; the
+faucet builds on nothing else (→ Faucet).
+
+> ⚠ **AHEAD OF CODE (2026-10-22).** The flag leads `routes/utxo.ts`, whose two listings read the confirmed set
+> alone and take no `pending` parameter, and the store, which has no read of the pending view by owner.
 
 **`/karma/:userId` answers standing, and the client evaluates nothing.** `memberSinceBlock`,
 `memberBar`, `memberVouches` and `invitesUsed` are the record's plain numbers, `memberLikes` its
@@ -714,14 +730,41 @@ origin could spend each visitor's allowance on a key of its choosing (→ Cross-
 **The service's edge, for any client that calls it.** `POST <faucet>/karma { pubkey }` answers
 `202 { txId, status: "pending", expiresAtHeight }` once the invite is in the node's pool —
 `expiresAtHeight` the node's own mempool expiry for that invite (→ Invites), relayed so a client can
-bound its wait rather than guess a bound; `400 { error }` relays the node's refusal (a key that already
-holds a record — the once-per-identity rule) or names a malformed key; `429 { error }` is the service's
-own rate limit; `503 { error }` is a drained faucet — for an invite, one whose karma does not cover its bond
-and the `KARMA_MINIMUM` an invite leaves standing (→ Karma transition rules). `POST <faucet>/credits { pubkey }` answers
+bound its wait rather than guess a bound. `POST <faucet>/credits { pubkey }` answers
 `202 { txId, status, expiresAtHeight, boxId }` and repeats — `expiresAtHeight` the node's expiry for the
 transfer, relayed from `POST /credits/transfer`'s answer (→ Credits) for the reason the invite's is, and
 `boxId` the granted `credit` box's id, `computeCandidateBoxId` over the payment output at index 0
 (`TYPES_INTERFACE → BoxId`), so a client can recognise the grant among boxes the key already holds.
+**Every other answer is the service's own or the node's, never one dressed as the other.** `400 { error }`
+names a malformed body or key, or the faucet's own key; **a refusal of the node's is relayed with the
+node's status and message** — a key that already holds a record (the once-per-identity rule) its 400, a key
+a pooled invite already names its 409 (`MEMPOOL_INTERFACE → Correctness gates`), so a second request for one
+key is refused by the node and never by a list the service keeps; `429 { error }` is the service's own rate
+limit; `503 { error }` is a drained faucet and nothing else — for an invite, one whose `effective` under
+`pending=1`, less the bond, stands below the `KARMA_MINIMUM` an invite leaves standing (→ Karma transition
+rules → "Only a post spends the floor"), and for a credit grant, one whose first page of the pending view
+cannot cover it; `502 { error }` is a node that failed — a 5xx of the node's, its 503 for a full pool among
+them, an answer that is not its route's, a connection that failed — and `504 { error }` a node that did not
+answer within `REQUEST_TIMEOUT_MS` (`CONSTANTS → Client reads`); `500 { error }` is a fault of the
+service's own.
+
+**The service builds on the node's pending view, one request at a time per endpoint.** A request reads
+`/status`, then the faucet identity's listing of the ledger it spends under `pending=1` — `/karma` for an
+invite, `/credits` for a grant, its first page at `PAGE_LIMIT_MAX`, largest first (→ UTXO queries) — and builds, signs and
+submits; the endpoint's next request waits for that submission's answer, in arrival order. The two
+endpoints spend different ledgers and wait for each other in nothing. **The service keeps no record of
+its own submissions**: one the node pooled is in the view the next request reads, one the node refused
+never entered it, one the node drops leaves it, and a restarted service reads what the node holds. Its
+reads of the node's answers are `@dagsocial/node-reads`' — each under its route's cap and
+`REQUEST_TIMEOUT_MS`, each field held to its type (`WEB_INTERFACE → Reading a node's answer`). **Its rate
+limit is keyed on the caller's address, an IPv6 caller's by its /64** — the smallest prefix a network
+routes to one subscriber, so a caller cycling the addresses inside it holds one allowance — and an IPv4
+address, or one mapped into IPv6, whole.
+
+> ⚠ **AHEAD OF CODE (2026-10-22).** The edge and the build lead `tools/faucet`, which models its own pooled
+> invites in memory (`PendingChain`) and drops the model on any failure, builds credit grants from the confirmed
+> set, runs requests side by side, judges a drained invite by face value, relays the node's 5xx and answers a
+> failed or timed-out node call 400, reads its node with its own `fetch`, and keys its limit on the whole address.
 
 A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
 that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;
@@ -3443,12 +3486,18 @@ run once a handle.
 > mix directions (`value DESC, id`), so with `after` they are two ranges of
 > `utxo_boxes (owner, box_type, value DESC, id) WHERE spent_at_block IS NULL` — the equal-value
 > tail and the lesser values — concatenated in list order, **at most `2 · (limit + 1)` entries**;
+> their pending view (`pending=1`) is that read twice, merged in list order — over the owner's
+> confirmed entries, and the same two ranges of `mempool_outputs (owner, box_type, value DESC, box_id)`
+> — each entry probed on `mempool_inputs`' key, so past its answered entries it touches one more for
+> each of the owner's boxes a pooled entry spends, which the pool's cap bounds (`MEMPOOL_INTERFACE →
+> getBoxesPageWithPending`);
 > the bond, vouch and escrow pages range by `id` on the partial expression indexes keyed by the
 > bond's `inviterId`, the vouch's `targetId`, the vouch's `voucherId` and the escrow's `owner`
 > (`json_extract(extra_data, …)`); the pending window of
 > `queryPostsPage` and its count read `dag_posts (status) WHERE status = 'pending'` — `limit` entries
 > of the pending index in `rowid` order, never a scan of the table. The `SUM` and `COUNT`
-> behind a view are scans of the owner's entries in the index its page reads. `getSubtreePage` and
+> behind a view are scans of the owner's entries in the index its page reads — the pending view's,
+> in both of its indexes, each entry probed as its page's are. `getSubtreePage` and
 > `getDescendantCount` are the stated exceptions: the CTE enumerates the subtree on
 > `dag_parent_refs (parent_id)`, so each is O(subtree) — the count is one walk per row it is read
 > for, proportional to the replies under that row, and never a join back to `dag_posts` after the
@@ -3458,8 +3507,8 @@ run once a handle.
 >
 > **A read the node runs per request or per block touches what it answers.** The pages are one case;
 > the rest are point reads and bounded ranges, each on an index that serves its predicate: the pool's
-> pending view and conflict gate, on the entries' input and output tables (`MEMPOOL_INTERFACE →
-> Schema`); a vouch's escrow check and its live-pair check at admission, on the escrow-owner and the
+> pending view and conflict gate, on the entries' input and output tables, the view by owner on the
+> output table's owner index (`MEMPOOL_INTERFACE → Schema`); a vouch's escrow check and its live-pair check at admission, on the escrow-owner and the
 > voucher indexes; the ownerless singletons — the emission, treasury, karma-pool, backer-pool and
 > genesis-proof boxes — read with `owner IS NULL`, so the owner index answers each by its `(NULL,
 > box_type)` prefix (→ "`getGenesisProofBox` orders its `LIMIT 1`"); the producer's rent selection, on
@@ -3488,6 +3537,11 @@ run once a handle.
 > it holds one entry: the voucher, escrow-owner and rent indexes take a box write from 4.0 µs to
 > 4.5 µs (an insert and the spend of half, 200 000 boxes). One test per read pins its plan, as for the
 > pages.
+
+> ⚠ **AHEAD OF CODE (2026-10-22).** The pending view by owner leads `store/mempool.ts`, which has no
+> `getBoxesPageWithPending` or `getBoxTotalWithPending`, and `store/db.ts`, whose `mempool_outputs` carries no owner
+> and no owner index; the view's page and its sums take their measured row in the table above, and their plan pins,
+> with the code.
 
 **`dag_posts` columns:** `id`, `tx_id` (hex, NOT NULL — the creating transaction's id), `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
@@ -3991,6 +4045,8 @@ one write feeds both, so the two cannot disagree.
 | `insertUtxoTx(tx, expiresAtHeight)` | `(UtxoTransaction, number) => number` | Queue UTXO tx, returns rowid |
 | `getPendingEntries(limit)` | `(number) => PoolEntry[]` | FIFO-ordered pending entries |
 | `getBoxWithPending(boxId)` | `(string) => AnyBox \| null` | The pending view — confirmed ∪ pending outputs − pending inputs, three point reads on the pool's input and output tables and the confirmed set; submission's `getBox`, never block application's (MEMPOOL_INTERFACE → getBoxWithPending; → Block finalization) |
+| `getBoxesPageWithPending(owner, boxType, page)` | `(Uint8Array, 'karma' \| 'credit', Page<BoxKey>) => { rows: (KarmaBox \| CreditBox)[], next: BoxKey \| null, count: number }` | The same view asked by owner, one page in `value DESC, id` strictly after `after`: the owner's confirmed boxes of that type no pooled entry spends, beside the pooled outputs of that type to the owner no pooled entry spends — the listings' `pending=1` (→ UTXO queries; MEMPOOL_INTERFACE → getBoxesPageWithPending) |
+| `getBoxTotalWithPending(owner, boxType)` | `(Uint8Array, 'karma' \| 'credit') => bigint` | `COALESCE(SUM(value), 0)` over the set the page reads — `total` under `pending=1` |
 | `purgeExpired(currentHeight)` | `(number) => number` | Remove entries past expiry, returns count |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — the count admission holds a member's bonds to (MEMPOOL_INTERFACE → Correctness gates) |
