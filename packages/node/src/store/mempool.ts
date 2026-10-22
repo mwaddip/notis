@@ -1097,11 +1097,10 @@ export function removeUtxoTxEntry(txId: string): number {
  * json_each → idx_mempool_outputs_entry → mempool_inputs' primary key for the
  * output half, idx_dag_parent_refs_parent → dag_posts' primary key →
  * idx_mempool_tx_id for the parent-ref half. The output box ids a closure
- * entry writes ride beside the rowids, so a caller holds the predicate
- * `every input of an arrival is somewhere in this closure's outputs` as one
- * in-memory lookup.
+ * entry writes ride beside the rowids, so the refusal of an arrival any of
+ * whose inputs is among this closure's outputs is one in-memory lookup.
  */
-export interface UnconfirmedClosure {
+interface UnconfirmedClosure {
   rowids: Set<number>;
   txIdOf: Map<number, string | null>;
   outputBoxIds: Set<string>;
@@ -1196,17 +1195,6 @@ function deleteFromClosureInner(
     'DELETE FROM mempool WHERE rowid IN (SELECT value FROM json_each(?))',
   ).run(JSON.stringify(ids));
   return result.changes;
-}
-
-/**
- * The read half of `removeUnconfirmed`, exposed beside it so a caller can
- * answer whether an arrival depends on a resident's closure before the
- * resident leaves — never a second walk (MEMPOOL_INTERFACE → Eviction, inside
- * the credit class only; → removeUnconfirmed).
- */
-export function readUnconfirmedClosure(rowids: readonly number[]): UnconfirmedClosure {
-  const db = getDb();
-  return readClosureInner(db, rowids);
 }
 
 // MEMPOOL_INTERFACE → removeUnconfirmed. One SQLite transaction (a savepoint
