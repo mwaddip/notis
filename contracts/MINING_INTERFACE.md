@@ -324,8 +324,8 @@ the template stands and a solve under way stays submittable (NODE_INTERFACE → 
 
 **A build whose body the mutation phase rejects is repeated, not abandoned, and it evicts what the body's own
 transactions refuse.** The creator screens the rejected body (`CONSENSUS_INTERFACE → Screening a body`), evicts the
-pool row of every transaction the screen refuses — the cleanup a rejected finalize runs — and fills again from what the
-pool still holds, until it holds a template or a body carrying **no pool row** is rejected. A transaction the screen
+pool row of every transaction the screen refuses, with its dependents (`MEMPOOL_INTERFACE → removeUnconfirmed`) — the
+cleanup a rejected finalize runs — and fills again from what the pool still holds, until it holds a template or a body carrying **no pool row** is rejected. A transaction the screen
 refuses fails against the state the body leaves before it: gone stale since its admission (a like of a post since
 withdrawn, a bond naming a key that has since become an account), or invalid beside a transaction ahead of it. It is
 never one that waits: the fill selects no entry that depends on what its body does not hold (`MEMPOOL_INTERFACE →
@@ -338,6 +338,9 @@ state cannot back even the empty body, or a defect is throwing, and no repetitio
 chain cannot build at all (no emission box at a height that releases, no karma pool at a height that
 draws on it) is terminal on the first attempt for the same reason. The loop runs only inside a build
 that holds no template, so the stability rule below is untouched.
+
+> ⚠ **AHEAD OF CODE (2026-10-22).** The refused rows' dependents lead `services/block-creator.ts`, whose eviction
+> (`removeEntry` per rowid) removes each refused row alone.
 
 **A body's size is never the cause.** The fill measures the assembled tree against the body budget
 and the rebuilt settlement against `MAX_SETTLEMENT_BYTES` before the template exists
