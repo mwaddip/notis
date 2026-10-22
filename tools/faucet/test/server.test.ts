@@ -322,6 +322,37 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
   });
 
   // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+  // one request at a time per endpoint." — the credit endpoint holds its own
+  // tail, so two credit calls arriving together serve in arrival order: the
+  // second has not read /status while the first's submission is held.
+  it('two credit requests at once, the second reads after the first submits', async () => {
+    const calls: string[] = [];
+    let heldRelease: (() => void) | null = null;
+    const held = new Promise<void>((r) => { heldRelease = r; });
+    client.status = async () => { calls.push('status'); return { blockHeight: 100, protocolVersion: ERA }; };
+    client.creditView = async () => ({ boxes: [{ boxId: C1, value: 1000n }] });
+    let firstHeld = false;
+    client.submitTransfer = async (tx) => {
+      submitted.push(tx);
+      if (!firstHeld) { firstHeld = true; await held; }
+      return { expiresAtHeight: 921 };
+    };
+    const app = createApp(cfg, client);
+    const p1 = request(app).post('/faucet/credits').send({ pubkey: recipient }).set(from('10.0.0.1'))
+      .then((r) => r);
+    const p2 = request(app).post('/faucet/credits').send({ pubkey: other }).set(from('10.0.0.2'))
+      .then((r) => r);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(firstHeld).toBe(true);
+    const beforeRelease = calls.filter((c) => c === 'status').length;
+    heldRelease!();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.status).toBe(202);
+    expect(r2.status).toBe(202);
+    expect(beforeRelease).toBe(1);
+  });
+
+  // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
   // one request at a time per endpoint." — the two endpoints spend different
   // ledgers and wait for each other in nothing, so a karma request held at the
   // node runs beside a credit request that answers to its end.
