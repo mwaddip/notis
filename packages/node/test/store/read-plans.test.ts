@@ -534,6 +534,64 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
     expect(bestChainDeletes.every((p) => !/\bSCAN\s+(?:TABLE\s+)?best_chain\b/i.test(p))).toBe(true);
     expect(bestChainDeletes.every((p) => /\bidx_best_chain_hash\b/i.test(p))).toBe(true);
   });
+
+  it.fails('pruneHeadersBelow\'s staged_blocks delete — no SCAN staged_blocks, SEARCH on idx_staged_blocks_height', async () => {
+    vi.resetModules();
+    const dbMod = await importDbFresh();
+    dbMod.initDb(dbFile);
+    const seed = dbMod.getDb();
+    const stage = seed.prepare(
+      `INSERT INTO staged_blocks (hash, height, block_bytes, from_peer) VALUES (?, ?, ?, 'p1')`,
+    );
+    stage.run('c1'.repeat(32), 5, Buffer.alloc(0));
+    stage.run('c2'.repeat(32), 100, Buffer.alloc(0));
+    dbMod.closeDb();
+
+    const prune = await recordStoreRead(
+      dbFile,
+      async () => ({ ht: await import('../../src/store/header-tree.js') }),
+      ({ ht }) => ht.pruneHeadersBelow(100),
+    );
+    const left = (prune.db.prepare('SELECT hash FROM staged_blocks').all() as Array<{ hash: string }>).map(
+      (r) => r.hash,
+    );
+    expect(left).toEqual(['c2'.repeat(32)]);
+    const deletes = prune.sqls.filter((s) => /DELETE FROM staged_blocks/i.test(s));
+    expect(deletes.length).toBe(1);
+
+    const plans = deletes.map((s) => planOf(prune.db, s));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?staged_blocks\b/i.test(p))).toBe(true);
+    expect(plans.every((p) => /\bSEARCH\b[^|]*\bidx_staged_blocks_height\b/i.test(p))).toBe(true);
+  });
+
+  it.fails('purgeRefusedHeaders — no SCAN refused_headers, SEARCH on idx_refused_headers_height', async () => {
+    vi.resetModules();
+    const dbMod = await importDbFresh();
+    dbMod.initDb(dbFile);
+    const seed = dbMod.getDb();
+    const refuse = seed.prepare(
+      'INSERT INTO refused_headers (hash, height, refused_at) VALUES (?, ?, 0)',
+    );
+    refuse.run('d1'.repeat(32), 5);
+    refuse.run('d2'.repeat(32), 100);
+    dbMod.closeDb();
+
+    const purge = await recordStoreRead(
+      dbFile,
+      async () => ({ rh: await import('../../src/store/refused-headers.js') }),
+      ({ rh }) => rh.purgeRefusedHeaders(100),
+    );
+    const left = (purge.db.prepare('SELECT hash FROM refused_headers').all() as Array<{ hash: string }>).map(
+      (r) => r.hash,
+    );
+    expect(left).toEqual(['d2'.repeat(32)]);
+    const deletes = purge.sqls.filter((s) => /DELETE FROM refused_headers/i.test(s));
+    expect(deletes.length).toBe(1);
+
+    const plans = deletes.map((s) => planOf(purge.db, s));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?refused_headers\b/i.test(p))).toBe(true);
+    expect(plans.every((p) => /\bSEARCH\b[^|]*\bidx_refused_headers_height\b/i.test(p))).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
