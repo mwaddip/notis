@@ -8,11 +8,11 @@ import {
 
 describe('buildInviteTx', () => {
   it('spends enough boxes and leaves the remainder as change', () => {
-    const { tx, changeValue } = buildInviteTx(cfg, [
+    const { tx } = buildInviteTx(cfg, [
       own(B1, 200n), income(B2, 100n),
     ], invitee, 512, ERA);
     expect(tx.inputs).toEqual([B1, B2]);
-    expect(changeValue).toBe(50n);
+    expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: '50' });
   });
 
   it('creates exactly one karma output and one bond output, in that order', () => {
@@ -24,20 +24,17 @@ describe('buildInviteTx', () => {
   });
 
   // TYPES_INTERFACE → Box value domain: a karma output carries value ≥ 1.
-  it('an exact spend builds the bond alone and change is null', () => {
-    const { tx, changeValue, change } = buildInviteTx(cfg, [
+  it('an exact spend builds the bond alone and no change output', () => {
+    const { tx } = buildInviteTx(cfg, [
       own(B1, 250n), income(B2, KARMA_MINIMUM),
     ], invitee, 512, ERA);
     expect(tx.inputs).toEqual([B1]);
-    expect(changeValue).toBe(0n);
-    expect(change).toBeNull();
     expect(outputsOf(tx)).toHaveLength(1);
     expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'bond', value: '250' });
   });
 
   it('a non-exact spend builds change at index 0 and the bond at index 1', () => {
-    const { tx, change } = buildInviteTx(cfg, [{ boxId: B1, value: 400n }], invitee, 512, ERA);
-    expect(change).not.toBeNull();
+    const { tx } = buildInviteTx(cfg, [{ boxId: B1, value: 400n }], invitee, 512, ERA);
     expect(outputsOf(tx)).toHaveLength(2);
     expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: '150' });
     expect(outputsOf(tx)[1]).toMatchObject({ boxType: 'bond', value: '250' });
@@ -125,10 +122,9 @@ describe('buildInviteTx', () => {
 
   // NODE_INTERFACE → Karma transition rules → "Only a post spends the floor".
   it('builds at exactly the bond plus KARMA_MINIMUM', () => {
-    const { tx, changeValue } = buildInviteTx(
+    const { tx } = buildInviteTx(
       cfg, [{ boxId: B1, value: 250n + KARMA_MINIMUM }], invitee, 512, ERA,
     );
-    expect(changeValue).toBe(KARMA_MINIMUM);
     expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: String(KARMA_MINIMUM) });
   });
 
@@ -137,10 +133,9 @@ describe('buildInviteTx', () => {
   // against the view's effective; the builder admits any pair that covers the
   // bond, and the change rides whatever remains.
   it('builds under the bond plus KARMA_MINIMUM when the pair covers the bond', () => {
-    const { tx, changeValue } = buildInviteTx(
+    const { tx } = buildInviteTx(
       cfg, [{ boxId: B1, value: 250n + KARMA_MINIMUM - 1n }], invitee, 512, ERA,
     );
-    expect(changeValue).toBe(KARMA_MINIMUM - 1n);
     expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: String(KARMA_MINIMUM - 1n) });
   });
 
@@ -148,9 +143,7 @@ describe('buildInviteTx', () => {
   // one request at a time per endpoint." — at exactly the bond the pair covers
   // it, and selectKarmaInputs picks the own box; the output is the bond alone.
   it('builds at exactly the bond with no change box', () => {
-    const { tx, changeValue, change } = buildInviteTx(cfg, [{ boxId: B1, value: 250n }], invitee, 512, ERA);
-    expect(changeValue).toBe(0n);
-    expect(change).toBeNull();
+    const { tx } = buildInviteTx(cfg, [{ boxId: B1, value: 250n }], invitee, 512, ERA);
     expect(outputsOf(tx)).toHaveLength(1);
     expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'bond', value: '250' });
   });
@@ -172,34 +165,39 @@ describe('buildInviteTx', () => {
   // is left to the owner. Chosen so the income box is larger than the own box:
   // a value-biased selection would pick the income box over the own one.
   it('own 300 and income 500, bond 250 — the invite names the own box alone', () => {
-    const { tx, changeValue } = buildInviteTx(cfg, [
+    const { tx } = buildInviteTx(cfg, [
       own(OWN_ID, 300n), income(INCOME_ID, 500n),
     ], invitee, 512, ERA);
     expect(tx.inputs).toEqual([OWN_ID]);
-    expect(changeValue).toBe(50n);
+    expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: '50' });
   });
 
   // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes":
   // the own box is short, so the invite names the own box and the income box.
   it('own 100 and income 500 — the invite names both and returns the sum less the bond as change', () => {
-    const { tx, changeValue } = buildInviteTx(cfg, [
+    const { tx } = buildInviteTx(cfg, [
       own(OWN_ID, 100n), income(INCOME_ID, 500n),
     ], invitee, 512, ERA);
     expect(tx.inputs).toEqual([OWN_ID, INCOME_ID]);
-    expect(changeValue).toBe(100n + 500n - cfg.bondAmount);
+    expect(outputsOf(tx)[0]).toMatchObject({
+      boxType: 'karma',
+      value: String(100n + 500n - cfg.bondAmount),
+    });
   });
 
   // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes":
   // an owner holding no own box spends the income box alone, and the change is
   // the owner's new own box (unmarked).
   it('the income box alone — the invite names it, and the change is unmarked', () => {
-    const { tx, changeValue } = buildInviteTx(cfg, [
+    const { tx } = buildInviteTx(cfg, [
       income(INCOME_ID, 500n),
     ], invitee, 512, ERA);
     expect(tx.inputs).toEqual([INCOME_ID]);
-    expect(changeValue).toBe(500n - cfg.bondAmount);
     const outputs = outputsOf(tx);
-    expect(outputs[0]).toMatchObject({ boxType: 'karma' });
+    expect(outputs[0]).toMatchObject({
+      boxType: 'karma',
+      value: String(500n - cfg.bondAmount),
+    });
     expect('income' in (outputs[0] ?? {})).toBe(false);
   });
 

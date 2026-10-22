@@ -59,8 +59,5 @@ export function buildCreditTransferTx(
   // The payment is `outputs[0]`; change (when present) is `outputs[1]`. Its id
   // rides on `BuiltTx.payment`, derived by `signAndRender` from the same output
   // the signature covers (TYPES_INTERFACE → BoxId).
-  //
-  // A credit transfer spends no karma box, so `karmaInputs` is empty — the
-  // pending chain's karma view is untouched by a credit submission.
-  return signAndRender(cfg, tx, changeValue > 0n ? 1 : null, 0, []);
+  return signAndRender(cfg, tx, 0);
 }

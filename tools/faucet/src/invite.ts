@@ -60,7 +60,7 @@ export function buildInviteTx(
     protocolVersion,
   };
 
-  return signAndRender(cfg, tx, changeValue > 0n ? 0 : null, null, selected);
+  return signAndRender(cfg, tx);
 }
 
 /**
