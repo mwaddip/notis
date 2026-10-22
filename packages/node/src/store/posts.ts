@@ -237,11 +237,16 @@ export function unconfirmPost(postId: string): void {
     .run(postId);
 }
 
+// NODE_INTERFACE → Store Interface → Posts DAG: a pending row's parent refs
+// leave with the pending row and nothing else — a confirmed post's row and
+// its parent refs stand under this call.
 export function deletePendingPost(postId: string): void {
   const db = getDb();
   db.transaction(() => {
-    prepared(db, 'DELETE FROM dag_parent_refs WHERE post_id = ?').run(postId);
-    prepared(db, "DELETE FROM dag_posts WHERE id = ? AND status = 'pending'").run(postId);
+    const changes = prepared(db, "DELETE FROM dag_posts WHERE id = ? AND status = 'pending'").run(postId).changes;
+    if (changes > 0) {
+      prepared(db, 'DELETE FROM dag_parent_refs WHERE post_id = ?').run(postId);
+    }
   })();
 }
 

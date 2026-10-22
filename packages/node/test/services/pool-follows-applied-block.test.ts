@@ -343,7 +343,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
 
   // 8. deletePendingPost on a confirmed post leaves its row and its parent
   //    refs.
-  it.fails('deletePendingPost leaves a confirmed reply row and its parent refs', async () => {
+  it('deletePendingPost leaves a confirmed reply row and its parent refs', async () => {
     await freshNode();
     const A = makeTestIdentity();
     const B = makeTestIdentity();
