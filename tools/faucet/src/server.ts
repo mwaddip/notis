@@ -1,7 +1,6 @@
 import express from 'express';
 import { buildInviteTx } from './invite.js';
 import { buildCreditTransferTx } from './transfer.js';
-import { PendingChain } from './pending.js';
 import { RateLimiter } from './rate-limit.js';
 import { NodeError } from './node-client.js';
 import { BadRequestError, InsufficientFundsError, HEX64 } from './tx.js';
@@ -27,9 +26,17 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   app.set('trust proxy', 'loopback');
   app.use(express.json());
 
-  const chain = new PendingChain();
   const karmaLimit = new RateLimiter(cfg.rateLimitPerHour);
   const creditLimit = new RateLimiter(cfg.rateLimitPerHour);
+
+  // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+  // one request at a time per endpoint." Each endpoint holds a tail; a
+  // request's work waits for the previous one's answer before reading /status.
+  // The two endpoints spend different ledgers and wait for each other in
+  // nothing. A refusal before the node is reached (a malformed key, the rate
+  // limit) does not enter the line.
+  let karmaTail: Promise<unknown> = Promise.resolve();
+  let creditTail: Promise<unknown> = Promise.resolve();
 
   const ip = (req: express.Request): string => req.ip ?? 'unknown';
 
@@ -53,43 +60,17 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   app.post('/faucet/karma', async (req, res) => {
     const pubkey = requested(req, res);
     if (pubkey === null || limited(karmaLimit, req, res)) return;
-    try {
-      const { blockHeight, protocolVersion } = await client.status();
-      const built = buildInviteTx(
-        cfg, chain.view(await client.karmaBoxes(cfg.publicKeyHex)), pubkey, blockHeight, protocolVersion,
-      );
-      const { expiresAtHeight } = await client.submitInvite(built.tx);
-      chain.advance(built);
-      res.status(202).json({ txId: built.txId, status: 'pending', expiresAtHeight });
-    } catch (err) {
-      // Whatever went wrong, the tip is no longer known to be what the node
-      // holds. The cost of dropping it is one reselection.
-      chain.reset();
-      relay(res, err);
-    }
+    const myTurn = karmaTail.then(() => handleKarma(cfg, client, res, pubkey));
+    karmaTail = myTurn.catch(() => undefined);
+    await myTurn;
   });
 
   app.post('/faucet/credits', async (req, res) => {
     const pubkey = requested(req, res);
     if (pubkey === null || limited(creditLimit, req, res)) return;
-    try {
-      const { blockHeight, protocolVersion } = await client.status();
-      const built = buildCreditTransferTx(
-        cfg, await client.creditBoxes(cfg.publicKeyHex), pubkey, blockHeight, protocolVersion,
-      );
-      // `buildCreditTransferTx` emits the payment at index 0 unconditionally,
-      // so `built.payment` is non-null here (transfer.ts).
-      if (built.payment === null) throw new Error('transfer built no payment output');
-      const { expiresAtHeight } = await client.submitTransfer(built.tx);
-      res.status(202).json({
-        txId: built.txId,
-        status: 'pending',
-        expiresAtHeight,
-        boxId: built.payment.boxId,
-      });
-    } catch (err) {
-      relay(res, err);
-    }
+    const myTurn = creditTail.then(() => handleCredit(cfg, client, res, pubkey));
+    creditTail = myTurn.catch(() => undefined);
+    await myTurn;
   });
 
   // A malformed JSON body reaches here from `express.json()`; without this it
@@ -99,6 +80,48 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   });
 
   return app;
+}
+
+async function handleKarma(
+  cfg: FaucetConfig,
+  client: NodeClient,
+  res: express.Response,
+  pubkey: string,
+): Promise<void> {
+  try {
+    const { blockHeight, protocolVersion } = await client.status();
+    const view = await client.karmaView(cfg.publicKeyHex);
+    const built = buildInviteTx(cfg, view.boxes, pubkey, blockHeight, protocolVersion);
+    const { expiresAtHeight } = await client.submitInvite(built.tx);
+    res.status(202).json({ txId: built.txId, status: 'pending', expiresAtHeight });
+  } catch (err) {
+    relay(res, err);
+  }
+}
+
+async function handleCredit(
+  cfg: FaucetConfig,
+  client: NodeClient,
+  res: express.Response,
+  pubkey: string,
+): Promise<void> {
+  try {
+    const { blockHeight, protocolVersion } = await client.status();
+    const view = await client.creditView(cfg.publicKeyHex);
+    const built = buildCreditTransferTx(cfg, view.boxes, pubkey, blockHeight, protocolVersion);
+    // `buildCreditTransferTx` emits the payment at index 0 unconditionally,
+    // so `built.payment` is non-null here (transfer.ts).
+    if (built.payment === null) throw new Error('transfer built no payment output');
+    const { expiresAtHeight } = await client.submitTransfer(built.tx);
+    res.status(202).json({
+      txId: built.txId,
+      status: 'pending',
+      expiresAtHeight,
+      boxId: built.payment.boxId,
+    });
+  } catch (err) {
+    relay(res, err);
+  }
 }
 
 /**

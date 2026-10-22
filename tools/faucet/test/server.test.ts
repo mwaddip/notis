@@ -17,8 +17,8 @@ beforeEach(() => {
   submitted = [];
   client = {
     status: async () => ({ blockHeight: 100, protocolVersion: ERA }),
-    karmaBoxes: async () => [{ boxId: K1, value: 1000n }],
-    creditBoxes: async () => [{ boxId: C1, value: 1000n }],
+    karmaView: async () => ({ boxes: [{ boxId: K1, value: 1000n }], effective: 1000n }),
+    creditView: async () => ({ boxes: [{ boxId: C1, value: 1000n }] }),
     submitInvite: async (tx) => { submitted.push(tx); return { expiresAtHeight: 821 }; },
     submitTransfer: async (tx) => { submitted.push(tx); return { expiresAtHeight: 921 }; },
   };
@@ -67,7 +67,7 @@ describe('POST /faucet/karma', () => {
   // stands below `KARMA_MINIMUM` (→ Karma transition rules → "Only a post
   // spends the floor").
   it('answers 503 when the view effective, less the bond, falls below the floor', async () => {
-    client.karmaBoxes = async () => [{ boxId: K1, value: 10n }];
+    client.karmaView = async () => ({ boxes: [{ boxId: K1, value: 10n }], effective: 10n });
     const res = await request(createApp(cfg, client))
       .post('/faucet/karma').send({ pubkey: recipient });
     expect(res.status).toBe(503);
@@ -77,7 +77,7 @@ describe('POST /faucet/karma', () => {
   // NODE_INTERFACE → Faucet: at exactly the bond, the view's effective less
   // the bond is zero, below the floor an invite leaves standing.
   it('answers 503 at exactly the bond, with no floor beside it', async () => {
-    client.karmaBoxes = async () => [{ boxId: K1, value: cfg.bondAmount }];
+    client.karmaView = async () => ({ boxes: [{ boxId: K1, value: cfg.bondAmount }], effective: cfg.bondAmount });
     const res = await request(createApp(cfg, client))
       .post('/faucet/karma').send({ pubkey: recipient });
     expect(res.status).toBe(503);
@@ -115,7 +115,7 @@ describe('POST /faucet/karma', () => {
   // one request at a time per endpoint." — each call reads the view and
   // submits against it, so a shared stub answering the same view each read
   // yields two submissions with the same inputs.
-  it.fails('builds each karma call on the view it reads', async () => {
+  it('builds each karma call on the view it reads', async () => {
     const app = createApp(cfg, client);
     await request(app).post('/faucet/karma').send({ pubkey: recipient }).set(from('9.9.9.9'));
     await request(app).post('/faucet/karma').send({ pubkey: other }).set(from('9.9.9.8'));
@@ -261,14 +261,17 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
   // NODE_INTERFACE → Faucet → "The service keeps no record of its own
   // submissions": a request refused by the node leaves no trace, and the
   // request after it builds on the view the stub answers at its read.
-  it.fails('a refusal between two grants leaves the request after it reading the view it reads', async () => {
+  it('a refusal between two grants leaves the request after it reading the view it reads', async () => {
     const views: readonly { readonly boxId: string; readonly value: bigint }[][] = [
       [{ boxId: K1, value: 1000n }],
       [{ boxId: K2, value: 900n }],
       [{ boxId: K3, value: 800n }],
     ];
     let karmaReads = 0;
-    client.karmaBoxes = async () => views[karmaReads++]!;
+    client.karmaView = async () => {
+      const boxes = views[karmaReads++]!;
+      return { boxes, effective: boxes.reduce((s, b) => s + b.value, 0n) };
+    };
     let refuseOnce = false;
     client.submitInvite = async (tx) => {
       if (refuseOnce) { refuseOnce = false; throw new NodeError(400, 'no'); }
@@ -289,12 +292,12 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
   // the previous submission's answer; two karma calls arriving together are
   // served in arrival order, so only the first has read /status while its
   // submission is held.
-  it.fails('two karma requests arrive together, the second reads /status after the first submits', async () => {
+  it('two karma requests arrive together, the second reads /status after the first submits', async () => {
     const calls: string[] = [];
     let heldRelease: (() => void) | null = null;
     const held = new Promise<void>((r) => { heldRelease = r; });
     client.status = async () => { calls.push('status'); return { blockHeight: 100, protocolVersion: ERA }; };
-    client.karmaBoxes = async () => [{ boxId: K1, value: 1000n }];
+    client.karmaView = async () => ({ boxes: [{ boxId: K1, value: 1000n }], effective: 1000n });
     let firstHeld = false;
     client.submitInvite = async (tx) => {
       submitted.push(tx);
@@ -349,7 +352,7 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
       [{ boxId: C2, value: 500n }],
     ];
     let creditReads = 0;
-    client.creditBoxes = async () => views[creditReads++]!;
+    client.creditView = async () => ({ boxes: views[creditReads++]! });
     const app = createApp(cfg, client);
     const r1 = await request(app).post('/faucet/credits').send({ pubkey: recipient }).set(from('4.4.4.1'));
     const r2 = await request(app).post('/faucet/credits').send({ pubkey: other }).set(from('4.4.4.2'));
@@ -363,7 +366,7 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
   // submissions": a restarted service reads what the node holds, so a fresh
   // app over the same stub builds on the stub's current view.
   it('a fresh app over the same stub builds on the view the stub answers', async () => {
-    client.karmaBoxes = async () => [{ boxId: K2, value: 900n }];
+    client.karmaView = async () => ({ boxes: [{ boxId: K2, value: 900n }], effective: 900n });
     const first = createApp(cfg, client);
     const r1 = await request(first).post('/faucet/karma').send({ pubkey: recipient }).set(from('5.5.5.1'));
     expect(r1.status).toBe(202);
@@ -378,14 +381,11 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
   // node's, never one dressed as the other." — for an invite, 503 is one whose
   // `effective` under `pending=1`, less the bond, stands below `KARMA_MINIMUM`.
   it.fails('drained by effective: boxes cover the bond and the floor by face, effective falls below', async () => {
-    const stub: NodeClient = {
-      ...client,
-      karmaBoxes: (async () => ({
-        boxes: [{ boxId: K1, value: 1000n }],
-        effective: cfg.bondAmount + 10n - 1n,
-      })) as unknown as NodeClient['karmaBoxes'],
-    };
-    const res = await request(createApp(cfg, stub))
+    client.karmaView = async () => ({
+      boxes: [{ boxId: K1, value: 1000n }],
+      effective: cfg.bondAmount + 10n - 1n,
+    });
+    const res = await request(createApp(cfg, client))
       .post('/faucet/karma').send({ pubkey: recipient }).set(from('6.6.6.1'));
     expect(submitted).toHaveLength(0);
     expect(res.status).toBe(503);
@@ -393,15 +393,12 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
 
   // NODE_INTERFACE → Faucet: at exactly `bond + KARMA_MINIMUM` of effective
   // the invite leaves the floor standing, so the request is admitted.
-  it.fails('at bond plus KARMA_MINIMUM of effective the request is admitted', async () => {
-    const stub: NodeClient = {
-      ...client,
-      karmaBoxes: (async () => ({
-        boxes: [{ boxId: K1, value: 1000n }],
-        effective: cfg.bondAmount + 10n,
-      })) as unknown as NodeClient['karmaBoxes'],
-    };
-    const res = await request(createApp(cfg, stub))
+  it('at bond plus KARMA_MINIMUM of effective the request is admitted', async () => {
+    client.karmaView = async () => ({
+      boxes: [{ boxId: K1, value: 1000n }],
+      effective: cfg.bondAmount + 10n,
+    });
+    const res = await request(createApp(cfg, client))
       .post('/faucet/karma').send({ pubkey: recipient }).set(from('6.6.6.2'));
     expect(res.status).toBe(202);
   });
@@ -411,7 +408,7 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
   // whose first page of the pending view cannot cover it.
   it('drained credits: a credit view whose unlocked boxes cannot cover the grant', async () => {
     const credits = { ...cfg, creditAmount: 1000n };
-    client.creditBoxes = async () => [{ boxId: C1, value: 100n }];
+    client.creditView = async () => ({ boxes: [{ boxId: C1, value: 100n }] });
     const res = await request(createApp(credits, client))
       .post('/faucet/credits').send({ pubkey: recipient }).set(from('7.7.7.1'));
     expect(submitted).toHaveLength(0);

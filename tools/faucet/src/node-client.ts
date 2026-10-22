@@ -1,3 +1,4 @@
+import { PAGE_LIMIT_MAX } from '@dagsocial/types';
 import {
   fetchJson,
   isRecord,
@@ -9,6 +10,7 @@ import {
   isHex64Lower,
   isNonNegSafeInt,
   isBoxValue,
+  isSum,
 } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeResult } from '@dagsocial/node-reads';
 import type { BoxRef } from './tx.js';
@@ -22,16 +24,36 @@ export interface NodeStatus {
 }
 
 /**
+ * NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+ * admission spends from it" — the karma listing's `pending=1` answer carries
+ * the owner's karma boxes and `effective`, the `remaining` admission judges a
+ * spend against at `tip + 1`.
+ */
+export interface KarmaView {
+  readonly boxes: BoxRef[];
+  readonly effective: bigint;
+}
+
+/**
+ * NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+ * admission spends from it" — the credit listing's `pending=1` answer carries
+ * the owner's credit boxes.
+ */
+export interface CreditView {
+  readonly boxes: BoxRef[];
+}
+
+/**
  * The node's HTTP surface, and the only file that knows its URL shape.
  *
- * ⚠ **Values cross as decimal strings** — `GET /karma/:userId` answers
- * `{ userId, total, boxes: [{ boxId, value }] }` with `value` a string, so every
+ * ⚠ **Values cross as decimal strings** — a listing answers `{ userId, total,
+ * boxes: [{ boxId, value }], effective }` with each value a string, so every
  * one is parsed to `bigint` here and nothing downstream sees the wire form.
  */
 export interface NodeClient {
   status(): Promise<NodeStatus>;
-  karmaBoxes(pubKeyHex: string): Promise<BoxRef[]>;
-  creditBoxes(pubKeyHex: string): Promise<BoxRef[]>;
+  karmaView(pubKeyHex: string): Promise<KarmaView>;
+  creditView(pubKeyHex: string): Promise<CreditView>;
   submitInvite(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }>;
   submitTransfer(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }>;
 }
@@ -68,49 +90,70 @@ export class HttpNodeClient implements NodeClient {
     return { blockHeight, protocolVersion };
   }
 
-  async karmaBoxes(pubKeyHex: string): Promise<BoxRef[]> {
-    const boxes = await this.boxes(`${this.base}/karma/${pubKeyHex}`);
+  /**
+   * NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+   * admission spends from it" — the first page under `pending=1`, read whole
+   * for `effective` and its boxes. A listing with no `boxes` array or no
+   * `effective` is not its route's answer.
+   */
+  async karmaView(pubKeyHex: string): Promise<KarmaView> {
+    const data = await this.listing(
+      `${this.base}/karma/${pubKeyHex}?pending=1&limit=${PAGE_LIMIT_MAX}`,
+    );
+    const raw = data['boxes'];
+    if (!Array.isArray(raw)) throw new NodeError(502, 'the karma listing carries no boxes array');
+    const effRaw = data['effective'];
+    if (!isSum(effRaw)) throw new NodeError(502, 'the karma listing carries no effective sum');
+    const wireBoxes = this.readBoxes(raw);
     // NODE_INTERFACE → Karma transition rules → "An identity holds at most two
     // karma boxes" — one unmarked and one marked, so a karma listing holding
     // more than one own box or more than one income box is not its route's.
     let own = 0;
     let income = 0;
-    for (const b of boxes) {
+    for (const b of wireBoxes) {
       if (b.income === true) income++;
       else own++;
     }
     if (own > 1) throw new NodeError(502, `karma listing carries ${own} own boxes`);
     if (income > 1) throw new NodeError(502, `karma listing carries ${income} income boxes`);
-    return boxes.map(toKarmaRef);
+    return { boxes: wireBoxes.map(toKarmaRef), effective: BigInt(effRaw) };
   }
 
   /**
+   * NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+   * admission spends from it" — the first page under `pending=1`, read whole
+   * for its boxes.
+   *
    * ⛔ **A box carrying `lockedUntilBlock` is skipped**, whatever its height.
    * The protocol locks a coinbase credit for `creditMinerRewardDelay` blocks,
    * and the faucet does not spend what the protocol intends to be locked. This
    * is the faucet's own restraint, not an anticipation of a refusal.
    */
-  async creditBoxes(pubKeyHex: string): Promise<BoxRef[]> {
-    const boxes = await this.boxes(`${this.base}/credits/${pubKeyHex}`);
-    return boxes.filter((b) => b.lockedUntilBlock === undefined).map(toCreditRef);
+  async creditView(pubKeyHex: string): Promise<CreditView> {
+    const data = await this.listing(
+      `${this.base}/credits/${pubKeyHex}?pending=1&limit=${PAGE_LIMIT_MAX}`,
+    );
+    const raw = data['boxes'];
+    if (!Array.isArray(raw)) throw new NodeError(502, 'the credit listing carries no boxes array');
+    const wireBoxes = this.readBoxes(raw);
+    const boxes = wireBoxes.filter((b) => b.lockedUntilBlock === undefined).map(toCreditRef);
+    return { boxes };
   }
 
-  /**
-   * NODE_INTERFACE → HTTP API: an identity with no unspent box answers the
-   * empty page — `boxes: []`, `boxCount 0`, `total "0"` — so the array
-   * passes through and the caller sees an empty set.
-   */
-  private async boxes(url: string): Promise<WireBox[]> {
+  private async listing(url: string): Promise<Record<string, unknown>> {
     const r = await fetchJson<unknown>(this.httpFetch, url, LISTING_PAGE_READ_BYTES);
     const data = this.unpack(r, 'listing');
     if (!isRecord(data)) throw new NodeError(502, 'the listing answer is not an object');
-    const raw = data['boxes'];
-    if (raw === undefined) return [];
-    if (!Array.isArray(raw)) throw new NodeError(502, 'the listing boxes field is not an array');
+    return data;
+  }
+
+  /**
+   * WEB_INTERFACE → Reading a node's answer → "Every answer is rebuilt from
+   * its own fields" — each field is held to its type.
+   */
+  private readBoxes(raw: unknown[]): WireBox[] {
     const out: WireBox[] = [];
     for (const b of raw) {
-      // WEB_INTERFACE → Reading a node's answer → "Every answer is rebuilt from
-      // its own fields": each field is held to its type.
       if (!isRecord(b)) throw new NodeError(502, 'a listing row is not an object');
       if (!isHex64Lower(b['boxId'])) throw new NodeError(502, 'a listing row has no 64-hex box id');
       if (!isBoxValue(b['value'])) throw new NodeError(502, 'a listing row has a box value out of its domain');
@@ -174,7 +217,7 @@ export class HttpNodeClient implements NodeClient {
 
   /**
    * NODE_INTERFACE → Faucet → "Every other answer is the service's own or
-   * the node's, never one dressed as the other" — the status decided where
+   * the node's, never one dressed as the other" — the status is decided where
    * the node's answer is read: a node's 4xx with its own status and message,
    * a node 5xx or an answer that is not its route's or a transport failure
    * node-reads reports without `timedOut` as 502, and a failed read carrying
@@ -203,8 +246,8 @@ const toCreditRef = (b: WireBox): BoxRef => ({ boxId: b.boxId, value: BigInt(b.v
 /**
  * A karma box carries the mark that tells an owner's own box from their income
  * box. `income` is `true` on the income box and absent otherwise
- * (TYPES_INTERFACE → KarmaBox); the shape check in `boxes` has already refused
- * anything else, so the ref build here reads two shapes only.
+ * (TYPES_INTERFACE → KarmaBox); the shape check in `readBoxes` has already
+ * refused anything else, so the ref build here reads two shapes only.
  */
 const toKarmaRef = (b: WireBox): BoxRef =>
   b.income === true

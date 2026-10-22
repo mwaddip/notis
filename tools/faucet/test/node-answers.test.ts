@@ -29,7 +29,7 @@ const okStatus = (): Response =>
   json(200, { networkType: 'testnet', blockHeight: 100, protocolVersion: 1, postCount: 0 });
 
 const okKarma = (): Response =>
-  json(200, { boxes: [{ boxId: K1, value: '1000' }] });
+  json(200, { boxes: [{ boxId: K1, value: '1000' }], effective: '1000' });
 
 const okCredits = (): Response =>
   json(200, { boxes: [{ boxId: C1, value: '1000' }] });
@@ -183,7 +183,7 @@ describe('a listing missing a field held to its type answers 502', () => {
   const okInvite = () => json(201, { status: 'pending', txId: 'cc'.repeat(32), expiresAtHeight: 821 });
   const okTransfer = () => json(200, { status: 'pending', txId: 'ee'.repeat(32), expiresAtHeight: 921 });
 
-  it.fails('karma listing with no boxes answers 502', async () => {
+  it('karma listing with no boxes answers 502', async () => {
     const app = appWith(router({
       '/status': () => okStatus(),
       '/karma': () => json(200, { userId: pubHex, total: '0', boxCount: 0 }),
@@ -193,7 +193,7 @@ describe('a listing missing a field held to its type answers 502', () => {
     expect(res.status).toBe(502);
   });
 
-  it.fails('karma listing with no effective answers 502', async () => {
+  it('karma listing with no effective answers 502', async () => {
     const app = appWith(router({
       '/status': () => okStatus(),
       '/karma': () => json(200, {
@@ -208,7 +208,7 @@ describe('a listing missing a field held to its type answers 502', () => {
     expect(res.status).toBe(502);
   });
 
-  it.fails('credit listing with no boxes answers 502', async () => {
+  it('credit listing with no boxes answers 502', async () => {
     const app = appWith(router({
       '/status': () => okStatus(),
       '/credits': () => json(200, { userId: pubHex, total: '0', boxCount: 0 }),

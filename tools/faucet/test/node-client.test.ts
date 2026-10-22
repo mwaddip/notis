@@ -22,17 +22,24 @@ const clientWith = (
 describe('HttpNodeClient box queries', () => {
   const key = 'aa'.repeat(32);
 
-  // NODE_INTERFACE → HTTP API: an identity with no unspent box answers the
-  // empty page, and the caller sees an empty set.
-  it('an empty page yields an empty array', async () => {
-    const { client } = clientWith(json(200, { userId: key, total: '0', boxes: [], boxCount: 0 }));
-    expect(await client.karmaBoxes(key)).toEqual([]);
+  // NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+  // admission spends from it" — an identity with no unspent karma box answers
+  // the empty page: `boxes: []`, `effective: "0"`.
+  it('an empty karma page yields an empty set and zero effective', async () => {
+    const { client } = clientWith(json(200, {
+      userId: key, total: '0', boxes: [], boxCount: 0, effective: '0',
+    }));
+    expect(await client.karmaView(key)).toEqual({ boxes: [], effective: 0n });
   });
 
-  it('parses box values to bigint', async () => {
-    const { client } = clientWith(json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '750' }] }));
-    const boxes = await client.karmaBoxes(key);
-    expect(boxes).toEqual([{ boxId: 'bb'.repeat(32), value: 750n }]);
+  it('parses karma box values and effective to bigint', async () => {
+    const { client } = clientWith(json(200, {
+      boxes: [{ boxId: 'bb'.repeat(32), value: '750' }],
+      effective: '750',
+    }));
+    const view = await client.karmaView(key);
+    expect(view.boxes).toEqual([{ boxId: 'bb'.repeat(32), value: 750n }]);
+    expect(view.effective).toBe(750n);
   });
 
   // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes":
@@ -44,35 +51,70 @@ describe('HttpNodeClient box queries', () => {
         { boxId: 'aa'.repeat(32), value: '100' },
         { boxId: 'bb'.repeat(32), value: '500', income: true },
       ],
+      effective: '600',
     }));
-    const boxes = await client.karmaBoxes(key);
-    expect(boxes).toHaveLength(2);
-    expect(boxes[0]!.boxId).toBe('aa'.repeat(32));
-    expect('income' in boxes[0]!).toBe(false);
-    expect(boxes[1]).toEqual({ boxId: 'bb'.repeat(32), value: 500n, income: true });
+    const view = await client.karmaView(key);
+    expect(view.boxes).toHaveLength(2);
+    expect(view.boxes[0]!.boxId).toBe('aa'.repeat(32));
+    expect('income' in view.boxes[0]!).toBe(false);
+    expect(view.boxes[1]).toEqual({ boxId: 'bb'.repeat(32), value: 500n, income: true });
   });
 
   // NODE_INTERFACE → HTTP API: `income: true` on the owner's income box and no
   // such key otherwise — any other value for `income` has no decoding.
   it('refuses an income value that is not strictly true', async () => {
-    const { client } = clientWith(json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: false }] }));
-    await expect(client.karmaBoxes(key)).rejects.toThrow(/income/i);
+    const { client } = clientWith(json(200, {
+      boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: false }],
+      effective: '500',
+    }));
+    await expect(client.karmaView(key)).rejects.toThrow(/income/i);
   });
 
   it('refuses a non-true, non-false value for income', async () => {
-    const { client } = clientWith(json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: 'yes' }] }));
-    await expect(client.karmaBoxes(key)).rejects.toThrow(/income/i);
+    const { client } = clientWith(json(200, {
+      boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: 'yes' }],
+      effective: '500',
+    }));
+    await expect(client.karmaView(key)).rejects.toThrow(/income/i);
   });
 
   it('a 404 is a failure, not an empty set', async () => {
     const { client } = clientWith(json(404, { error: 'not found' }));
-    await expect(client.karmaBoxes(key)).rejects.toThrow(NodeError);
+    await expect(client.karmaView(key)).rejects.toThrow(NodeError);
   });
 
   // A proxy serving nothing at NODE_URL carries no JSON body.
   it('a non-JSON 404 is a failure', async () => {
     const { client } = clientWith(plain(404, 'Not Found'));
-    await expect(client.karmaBoxes(key)).rejects.toThrow(NodeError);
+    await expect(client.karmaView(key)).rejects.toThrow(NodeError);
+  });
+
+  // NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+  // admission spends from it" — the credit listing's `pending=1` first page.
+  it('an empty credit page yields an empty box set', async () => {
+    const { client } = clientWith(json(200, { userId: key, total: '0', boxes: [], boxCount: 0 }));
+    expect(await client.creditView(key)).toEqual({ boxes: [] });
+  });
+
+  // NODE_INTERFACE → UTXO queries — the client asks `pending=1&limit=100`.
+  it('reads the karma listing with pending=1 and the page limit', async () => {
+    const { client, fetchMock } = clientWith(json(200, {
+      boxes: [], effective: '0',
+    }));
+    await client.karmaView(key);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain('pending=1');
+    expect(url).toContain('limit=100');
+  });
+
+  it('reads the credit listing with pending=1 and the page limit', async () => {
+    const { client, fetchMock } = clientWith(json(200, { boxes: [] }));
+    await client.creditView(key);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain('pending=1');
+    expect(url).toContain('limit=100');
   });
 });
 
