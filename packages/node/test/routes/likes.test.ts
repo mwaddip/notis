@@ -1,8 +1,12 @@
 import {
+  applyBlockThroughIntake,
+  liveProver,
+  makeApplicableBlock,
   seedProvenance,
   signTransaction,
   txToJson, fixturePostId, fixtureTxId} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { setNet } from '../../src/services/net-instance.js';
 import express from 'express';
 import http from 'http';
 import { createPrivateKey, type KeyObject } from 'crypto';
@@ -14,6 +18,8 @@ import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/ide
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import { castLike } from '../../src/services/likes.js';
 import {
+  computeTxId,
+  encodeTx,
   generateKeyPair,
   LIKE_KARMA_COST,
   PROTOCOL_VERSION,
@@ -391,4 +397,214 @@ describe('likes routes', () => {
     const res = await request('/remove', 'POST', { tx: {} });
     expect(res.status).toBe(404);
   });
+});
+
+// ---------------------------------------------------------------------------
+// MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+// before anything reads state."
+// NODE_INTERFACE → Service Layer Architecture → "A transaction the pool
+// already holds is answered as held."
+// ---------------------------------------------------------------------------
+describe('a resubmit is answered as held', () => {
+  let heldDir: string;
+  let heldAuthor: Uint8Array;
+  let heldPostId: string;
+  let heldLikerKp: ReturnType<typeof generateKeyPair>;
+  let heldLikerId: Uint8Array;
+  let heldLikerPriv: KeyObject;
+  let heldLikerHex: string;
+  let heldKarmaBox: KarmaBox;
+  let broadcastTx: ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } };
+
+  function heldDeps(): LikesDeps {
+    const db = getDb();
+    return {
+      getBox: (id: string): AnyBox | null => {
+        const box = storeGetBox(id);
+        if (!box) return null;
+        const r = db
+          .prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?')
+          .get(id) as { spent_at_block: number | null } | undefined;
+        return r && r.spent_at_block === null ? box : null;
+      },
+      getIdentityRecord: storeGetIdentityRecord,
+      insertBox: (box: AnyBox) => { insertBox(box); },
+      consumeBox: (id: string, atBlock: number) => {
+        db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
+      },
+      getKarmaOwed: admissionOwed({
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      }),
+      getKarmaValue: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getTopologyAuthor: () => heldAuthor,
+      getPendingPostAuthor: () => null,
+      runInTransaction: (fn: () => void) => {
+        (db.transaction(fn) as () => void)();
+      },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
+      castLike,
+      getCurrentHeight,
+    };
+  }
+
+  async function send(txJson: Record<string, unknown>): Promise<{ status: number; data: unknown }> {
+    return new Promise((resolve) => {
+      const app = express();
+      app.use(express.json());
+      app.use('/likes', createRouter(heldDeps()));
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const r = http.request(
+          {
+            hostname: 'localhost',
+            port: addr.port,
+            path: '/likes/',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          },
+          (res) => {
+            let d = '';
+            res.on('data', (c) => (d += c));
+            res.on('end', () => {
+              server.close();
+              try { resolve({ status: res.statusCode ?? 0, data: JSON.parse(d) }); }
+              catch { resolve({ status: res.statusCode ?? 0, data: d }); }
+            });
+          },
+        );
+        r.write(JSON.stringify({ tx: txJson }));
+        r.end();
+      });
+    });
+  }
+
+  beforeAll(async () => {
+    heldDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-held-likes-'));
+    initDb(join(heldDir, 'store.sqlite'));
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    heldAuthor = new Uint8Array(32).fill(0x5a);
+    const commit: PostCommit = {
+      contentHash: computeContentHash('held-arm target post'),
+      author: heldAuthor,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    heldPostId = fixturePostId(commit);
+    insertPost(heldPostId, fixtureTxId(commit), commit, 'held-arm target post');
+
+    heldLikerKp = generateKeyPair();
+    heldLikerId = heldLikerKp.publicKey;
+    heldLikerPriv = createPrivateKey({
+      key: Buffer.from(heldLikerKp.secretKey),
+      format: 'der',
+      type: 'pkcs8',
+    });
+    heldLikerHex = Buffer.from(heldLikerId).toString('hex');
+
+    heldKarmaBox = seedProvenance<KarmaBox>({
+      boxType: 'karma' as const,
+      value: 100n,
+      createdAtBlock: 0,
+      owner: heldLikerId,
+    }, 1);
+    insertBox(heldKarmaBox);
+
+    broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve()) as unknown as typeof broadcastTx;
+    const netStub = {
+      penalizePeer: () => {},
+      chainMoved: () => {},
+      needHeaders: () => {},
+      broadcastOrderingBlock: async () => {},
+      broadcastTx,
+      getConnectedPeers: () => [],
+      tipApplied: () => {},
+      setKarmaMembers: () => {},
+      addKarmaMember: () => {},
+      removeKarmaMember: () => {},
+      requestPostBodies: async () => [],
+    };
+    setNet(netStub as unknown as Parameters<typeof setNet>[0]);
+
+    await liveProver();
+  });
+
+  afterAll(() => {
+    setNet(null as unknown as Parameters<typeof setNet>[0]);
+    closeDb();
+    rmSync(heldDir, { recursive: true, force: true });
+  });
+
+  it.fails('POST /likes', async () => {
+    const { tx, txJson } = buildHeldLikeTx();
+
+    const r1 = await send(txJson);
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const r2 = await send(txJson);
+    expect(r2.status).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+    expect((r2.data as Record<string, unknown>).expiresAtHeight)
+      .toBe((r1.data as Record<string, unknown>).expiresAtHeight);
+
+    const calls = broadcastTx.mock.calls;
+    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(computeTxId(sentTx)).toBe(computeTxId(tx));
+  });
+
+  function buildHeldLikeTx(): { tx: UtxoTransaction; txJson: Record<string, unknown> } {
+    const tx: UtxoTransaction = {
+      inputs: [heldKarmaBox.id!],
+      outputs: [
+        {
+          boxType: 'karma',
+          value: heldKarmaBox.value - LIKE_KARMA_COST,
+          createdAtBlock: 0,
+          owner: heldLikerId,
+        } as KarmaBox,
+        {
+          boxType: 'like_accrual',
+          value: LIKE_KARMA_COST,
+          createdAtBlock: 0,
+          author: heldAuthor,
+        } as unknown as KarmaBox,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      likeTarget: heldPostId,
+    };
+    signTransaction(tx, heldLikerPriv, heldLikerHex);
+    return { tx, txJson: txToJson(tx) };
+  }
 });
