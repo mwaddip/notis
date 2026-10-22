@@ -54,7 +54,10 @@ pnpm install --prod --frozen-lockfile 2>&1 | tail -5
 # The rsync above copies the working tree, so a dist/ present here is one the
 # build produced; this loop is what turns a missing one into a failed package
 # rather than a daemon that will not start.
-for pkg in types validation wire nipopow consensus net node; do
+# The seven protocol packages the node loads, plus `avltree` (the node) and
+# `node-reads` (the faucet) — the two shipped processes load every one of
+# these at start, so a missing dist is a release that will not start.
+for pkg in types validation wire nipopow consensus net node avltree node-reads; do
   if [ -d "$APP_DIR/packages/$pkg/dist" ]; then
     echo "  ✓ packages/$pkg"
   else
@@ -128,13 +131,13 @@ FAUCET_PUBLIC_KEY=
 
 # The invite bond, and therefore the karma grant — they are equal. Must sit
 # inside the network's [inviteBondMin, inviteBondMax].
-FAUCET_BOND_AMOUNT=250
+FAUCET_BOND_AMOUNT=1000
 # Credits per /faucet/credits call, in base units (1 credit = 10^8).
 FAUCET_CREDIT_AMOUNT=10000000000
 
 # Beside the node's 3000, not colliding with it.
 PORT=3100
-# Requests per IP per hour, per endpoint.
+# Requests per address per hour, per endpoint. An IPv6 caller is keyed by its /64.
 RATE_LIMIT_PER_HOUR=5
 ENVEOF
 

@@ -54,9 +54,8 @@ a list of field names, so it cannot drift from the node's `BINARY_BOX_FIELDS`.
 key that already holds an `IdentityRecord`, so a repeat request is refused by the node and this service
 relays the refusal. ⚠ **"Track who we funded" is the obvious instinct and it is wrong** — the answer
 already exists on-chain, and a local table would be a second source of truth about it that can only
-disagree. There is no database here and none may be added. The in-memory `PendingChain` is not an
-exception: it holds one unconfirmed change box, it is never persisted, and a restart falls back to the
-node's confirmed view.
+disagree. The service holds no record of its submissions and builds on the node's `pending=1` listings.
+A restart reads what the node holds.
 
 ## Component-session rules (Design by Contract)
 - **Contracts lead, code follows.** Implement against `NODE_INTERFACE`; flag contract gaps to main.
