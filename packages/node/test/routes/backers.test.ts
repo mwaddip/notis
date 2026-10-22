@@ -1,8 +1,18 @@
 // NODE_INTERFACE → Backers — the three routes
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
+import { setNet } from '../../src/services/net-instance.js';
+import {
+  applyBlockThroughIntake,
+  liveProver,
+  makeApplicableBlock,
+} from '../helpers.js';
+import { computeTxId, encodeTx } from '@dagsocial/types';
 import {
   insertBox, getBox as storeGetBox, getKarmaBoxes, getKarmaValue,
   getBoxProvenance, hasActiveVouchEscrow, getBackerPoolBox, getBackerStakeBox,
@@ -234,6 +244,12 @@ describe('backer routes', () => {
       expect(r.body.error).toContain('unstake transaction');
     });
 
+    // -------------------------------------------------------------------------
+    // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+    // before anything reads state."
+    // NODE_INTERFACE → Service Layer Architecture → "A transaction the pool
+    // already holds is answered as held."
+    // -------------------------------------------------------------------------
     it('a conflicting spend answers 409 naming the box', async () => {
       const boxId = 'ab'.repeat(32);
       const deps = makeDeps();
@@ -264,5 +280,102 @@ describe('backer routes', () => {
       expect(r.body.error).toContain(boxId);
       expect(r.body.error).toMatch(/already spent by a pending/i);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+// before anything reads state."
+// NODE_INTERFACE → Service Layer Architecture → "A transaction the pool
+// already holds is answered as held."
+// ---------------------------------------------------------------------------
+describe('a resubmit is answered as held', () => {
+  let heldDir: string;
+  let heldApp: express.Express;
+  let heldHolder: ReturnType<typeof makeKeys>;
+  let heldStake: BackerStakeBox;
+  let broadcastTx: ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } };
+
+  beforeAll(async () => {
+    heldDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-held-backers-'));
+    initDb(join(heldDir, 'store.sqlite'));
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    setMempoolCap(DEFAULT_MAX_MEMPOOL_ENTRIES);
+
+    heldHolder = makeKeys();
+    heldStake = seedStake(heldHolder.pub, 100n);
+    seedPool(100n, 0n, 100n);
+
+    const deps = makeDeps();
+    heldApp = express();
+    heldApp.use(express.json());
+    heldApp.use(
+      '/backers',
+      createRouter({
+        ...deps,
+        getCurrentHeight,
+        validateTx: (tx, h) => validateTx(deps, tx, h),
+        getBackerPoolBox,
+        getBackerStakeBox,
+        backerSupply: 100n,
+        creditFixedRateBlocks: 1_000_000,
+      }),
+    );
+
+    broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve()) as unknown as typeof broadcastTx;
+    const netStub = {
+      penalizePeer: () => {},
+      chainMoved: () => {},
+      needHeaders: () => {},
+      broadcastOrderingBlock: async () => {},
+      broadcastTx,
+      getConnectedPeers: () => [],
+      tipApplied: () => {},
+      setKarmaMembers: () => {},
+      addKarmaMember: () => {},
+      removeKarmaMember: () => {},
+      requestPostBodies: async () => [],
+    };
+    setNet(netStub as unknown as Parameters<typeof setNet>[0]);
+
+    await liveProver();
+  });
+
+  afterAll(() => {
+    setNet(null as unknown as Parameters<typeof setNet>[0]);
+    closeDb();
+    rmSync(heldDir, { recursive: true, force: true });
+  });
+
+  it.fails('POST /backers/unstake', async () => {
+    const tx: UtxoTransaction = {
+      inputs: [heldStake.id!],
+      outputs: [
+        { boxType: 'backer_stake', value: 0n, createdAtBlock: 1, owner: heldHolder.pub, weight: 60n } as any,
+        { boxType: 'backer_unstake', value: 0n, createdAtBlock: 1, owner: heldHolder.pub, weight: 40n } as any,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, heldHolder.priv, heldHolder.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await postReq(heldApp, '/backers/unstake', { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const r2 = await postReq(heldApp, '/backers/unstake', { tx: txJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.body).toEqual(r1.body);
+    expect(r2.body.expiresAtHeight).toBe(r1.body.expiresAtHeight);
+
+    const calls = broadcastTx.mock.calls;
+    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
 });
