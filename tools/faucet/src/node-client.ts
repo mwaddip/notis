@@ -6,6 +6,12 @@ import type { BoxRef } from './tx.js';
  */
 const REQUEST_TIMEOUT_MS = 10_000;
 
+/**
+ * The fetch the client calls, passed in by its caller. The seam a test needs
+ * is passed by the test; a service build passes the runtime's `fetch`.
+ */
+export type HttpFetch = (url: string, init?: RequestInit) => Promise<Response>;
+
 /** One `/status` read: the tip, and the era a client signs (NODE_INTERFACE → Status). */
 export interface NodeStatus {
   readonly blockHeight: number;
@@ -36,7 +42,7 @@ interface WireBox {
 }
 
 export class HttpNodeClient implements NodeClient {
-  constructor(private readonly base: string) {}
+  constructor(private readonly base: string, private readonly httpFetch: HttpFetch) {}
 
   /**
    * The tip and the era, from one `/status` read.
@@ -48,7 +54,7 @@ export class HttpNodeClient implements NodeClient {
    * sign the wrong era.
    */
   async status(): Promise<NodeStatus> {
-    const res = await fetch(`${this.base}/status`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    const res = await this.httpFetch(`${this.base}/status`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (!res.ok) throw new NodeError(res.status, await failure(res));
     const data = (await res.json()) as { blockHeight?: number; protocolVersion?: number };
     if (typeof data.blockHeight !== 'number') throw new NodeError(502, 'node status carried no height');
@@ -81,7 +87,7 @@ export class HttpNodeClient implements NodeClient {
    * passes through and the caller sees an empty set.
    */
   private async boxes(url: string): Promise<WireBox[]> {
-    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    const res = await this.httpFetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (!res.ok) throw new NodeError(res.status, await failure(res));
     const data = (await res.json()) as { boxes?: WireBox[] };
     return data.boxes ?? [];
@@ -116,7 +122,7 @@ export class HttpNodeClient implements NodeClient {
   }
 
   private async post(url: string, body: unknown): Promise<unknown> {
-    const res = await fetch(url, {
+    const res = await this.httpFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

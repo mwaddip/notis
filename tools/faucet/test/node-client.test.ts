@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { HttpNodeClient, NodeError } from '../src/node-client.js';
+import type { HttpFetch } from '../src/node-client.js';
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -10,25 +11,26 @@ const json = (status: number, body: unknown): Response =>
 const plain = (status: number, text: string): Response =>
   new Response(text, { status });
 
-afterEach(() => { vi.restoreAllMocks(); });
+const clientWith = (
+  resp: Response,
+): { client: HttpNodeClient; fetchMock: ReturnType<typeof vi.fn> } => {
+  const fetchMock = vi.fn().mockResolvedValue(resp);
+  const client = new HttpNodeClient('http://localhost:3000', fetchMock as unknown as HttpFetch);
+  return { client, fetchMock };
+};
 
 describe('HttpNodeClient box queries', () => {
-  const client = new HttpNodeClient('http://localhost:3000');
   const key = 'aa'.repeat(32);
 
   // NODE_INTERFACE → HTTP API: an identity with no unspent box answers the
   // empty page, and the caller sees an empty set.
   it('an empty page yields an empty array', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(200, { userId: key, total: '0', boxes: [], boxCount: 0 }),
-    );
+    const { client } = clientWith(json(200, { userId: key, total: '0', boxes: [], boxCount: 0 }));
     expect(await client.karmaBoxes(key)).toEqual([]);
   });
 
   it('parses box values to bigint', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '750' }] }),
-    );
+    const { client } = clientWith(json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '750' }] }));
     const boxes = await client.karmaBoxes(key);
     expect(boxes).toEqual([{ boxId: 'bb'.repeat(32), value: 750n }]);
   });
@@ -37,14 +39,12 @@ describe('HttpNodeClient box queries', () => {
   // the node answers at most one marked and one unmarked karma box. The marked
   // box carries `income: true`; the unmarked box carries no `income` key.
   it('reads a marked and an unmarked box to one own and one income', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(200, {
-        boxes: [
-          { boxId: 'aa'.repeat(32), value: '100' },
-          { boxId: 'bb'.repeat(32), value: '500', income: true },
-        ],
-      }),
-    );
+    const { client } = clientWith(json(200, {
+      boxes: [
+        { boxId: 'aa'.repeat(32), value: '100' },
+        { boxId: 'bb'.repeat(32), value: '500', income: true },
+      ],
+    }));
     const boxes = await client.karmaBoxes(key);
     expect(boxes).toHaveLength(2);
     expect(boxes[0]!.boxId).toBe('aa'.repeat(32));
@@ -55,42 +55,32 @@ describe('HttpNodeClient box queries', () => {
   // NODE_INTERFACE → HTTP API: `income: true` on the owner's income box and no
   // such key otherwise — any other value for `income` has no decoding.
   it('refuses an income value that is not strictly true', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: false }] }),
-    );
+    const { client } = clientWith(json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: false }] }));
     await expect(client.karmaBoxes(key)).rejects.toThrow(/income/i);
   });
 
   it('refuses a non-true, non-false value for income', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: 'yes' }] }),
-    );
+    const { client } = clientWith(json(200, { boxes: [{ boxId: 'bb'.repeat(32), value: '500', income: 'yes' }] }));
     await expect(client.karmaBoxes(key)).rejects.toThrow(/income/i);
   });
 
   it('a 404 is a failure, not an empty set', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(404, { error: 'not found' }),
-    );
+    const { client } = clientWith(json(404, { error: 'not found' }));
     await expect(client.karmaBoxes(key)).rejects.toThrow(NodeError);
   });
 
   // A proxy serving nothing at NODE_URL carries no JSON body.
   it('a non-JSON 404 is a failure', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      plain(404, 'Not Found'),
-    );
+    const { client } = clientWith(plain(404, 'Not Found'));
     await expect(client.karmaBoxes(key)).rejects.toThrow(NodeError);
   });
 });
 
 describe('HttpNodeClient status', () => {
-  const client = new HttpNodeClient('http://localhost:3000');
-
   // NODE_INTERFACE → Status: /status carries the tip and the era, and the client
   // reads both from the one fetch.
   it('reads the tip and the era from one fetch', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    const { client, fetchMock } = clientWith(
       json(200, { networkType: 'testnet', blockHeight: 512, protocolVersion: 3, postCount: 0 }),
     );
     expect(await client.status()).toEqual({ blockHeight: 512, protocolVersion: 3 });
@@ -100,24 +90,23 @@ describe('HttpNodeClient status', () => {
   // WEB_INTERFACE → Invariants: the client signs the era the node reports, so a
   // status carrying no era is refused — never signed under a default of 1.
   it('refuses a status with no protocolVersion, rather than defaulting to 1', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json(200, { blockHeight: 512 }));
+    const { client } = clientWith(json(200, { blockHeight: 512 }));
     await expect(client.status()).rejects.toThrow(/protocol version/i);
   });
 
   it('refuses a status with no height', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json(200, { protocolVersion: 1 }));
+    const { client } = clientWith(json(200, { protocolVersion: 1 }));
     await expect(client.status()).rejects.toThrow(NodeError);
   });
 
   it('a non-ok status is a failure', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json(502, { error: 'bad gateway' }));
+    const { client } = clientWith(json(502, { error: 'bad gateway' }));
     await expect(client.status()).rejects.toThrow(NodeError);
   });
 
   // A hung node must not stall the faucet, so every call carries a timeout signal.
   it('attaches a timeout signal to the request', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(200, { blockHeight: 512, protocolVersion: 3 }));
+    const { client, fetchMock } = clientWith(json(200, { blockHeight: 512, protocolVersion: 3 }));
     await client.status();
     const init = fetchMock.mock.calls[0]![1] as RequestInit | undefined;
     expect(init?.signal).toBeInstanceOf(AbortSignal);
@@ -125,63 +114,49 @@ describe('HttpNodeClient status', () => {
 });
 
 describe('HttpNodeClient submitInvite', () => {
-  const client = new HttpNodeClient('http://localhost:3000');
   const tx = { inputs: [], outputs: [] };
 
   // NODE_INTERFACE → Invites: the 201 body carries expiresAtHeight, relayed
   // so a caller can bound its wait rather than guess one.
   it('returns expiresAtHeight from the 201 body', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(201, {
-        status: 'pending', txId: 'cc'.repeat(32), expiresAtHeight: 821, bondBoxId: 'dd'.repeat(32),
-      }),
-    );
+    const { client } = clientWith(json(201, {
+      status: 'pending', txId: 'cc'.repeat(32), expiresAtHeight: 821, bondBoxId: 'dd'.repeat(32),
+    }));
     await expect(client.submitInvite(tx)).resolves.toEqual({ expiresAtHeight: 821 });
   });
 
   // NODE_INTERFACE → Faucet: a 2xx with no numeric expiresAtHeight is refused
   // rather than relayed as an unbounded grant.
   it('refuses a 201 with no expiresAtHeight', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(201, { status: 'pending', txId: 'cc'.repeat(32) }),
-    );
+    const { client } = clientWith(json(201, { status: 'pending', txId: 'cc'.repeat(32) }));
     await expect(client.submitInvite(tx)).rejects.toThrow(NodeError);
   });
 
   it('a non-ok response is still a NodeError', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(400, { error: 'An invite may not name an existing account' }),
-    );
+    const { client } = clientWith(json(400, { error: 'An invite may not name an existing account' }));
     await expect(client.submitInvite(tx)).rejects.toThrow(NodeError);
   });
 });
 
 describe('HttpNodeClient submitTransfer', () => {
-  const client = new HttpNodeClient('http://localhost:3000');
   const tx = { inputs: [], outputs: [] };
 
   // NODE_INTERFACE → Credits: the 2xx body carries expiresAtHeight, relayed so
   // a caller can bound its wait — the same rule as submitInvite's.
   it('returns expiresAtHeight from the 200 body', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(200, { status: 'pending', txId: 'ee'.repeat(32), expiresAtHeight: 921 }),
-    );
+    const { client } = clientWith(json(200, { status: 'pending', txId: 'ee'.repeat(32), expiresAtHeight: 921 }));
     await expect(client.submitTransfer(tx)).resolves.toEqual({ expiresAtHeight: 921 });
   });
 
   // NODE_INTERFACE → Faucet: a 2xx with no numeric expiresAtHeight is refused
   // rather than relayed as an unbounded grant.
   it('refuses a 200 with no expiresAtHeight', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(200, { status: 'pending', txId: 'ee'.repeat(32) }),
-    );
+    const { client } = clientWith(json(200, { status: 'pending', txId: 'ee'.repeat(32) }));
     await expect(client.submitTransfer(tx)).rejects.toThrow(NodeError);
   });
 
   it('a non-ok response is still a NodeError', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      json(400, { error: 'Invalid credit transfer: signature verification failed' }),
-    );
+    const { client } = clientWith(json(400, { error: 'Invalid credit transfer: signature verification failed' }));
     await expect(client.submitTransfer(tx)).rejects.toThrow(NodeError);
   });
 });
