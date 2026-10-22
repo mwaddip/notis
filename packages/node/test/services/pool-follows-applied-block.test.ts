@@ -178,7 +178,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
     expect(mem.pendingKarmaSpend(toHex(A.userId))).toBe(0n);
   });
 
-  // 3. Expiry on a server node — expiry and ceiling.
+  // 3. Expiry on a server node — expiry and ceiling pinned at the boundary.
   it.fails('a block at expiresAtHeight keeps the entry, the next block removes it', async () => {
     await freshNode();
     const A = makeTestIdentity();
@@ -187,20 +187,21 @@ describe('every applied block lets the pool follow it, on every node', () => {
 
     const mem = await importMempool();
     const T = buildThread(A, X, 'T expiring');
-    const T_id = computeTxId(T);
     mem.insertUtxoTx(T, 2); // expires at height 2
 
-    // Height 1 block, no T carried.
     const b1 = await makeApplicableBlock({ height: 1 });
     expect(await applyBlockThroughIntake(b1)).toBe(true);
-    // Still pooled: expires_at_height (2) is not < 2.
-    expect(mem.getPendingEntries(10).some((e) => (e as any).rowid !== undefined)).toBe(true);
+    expect(mem.getPendingEntries(10)).toHaveLength(1);
 
     const b2 = await makeApplicableBlock({ height: 2 });
     expect(await applyBlockThroughIntake(b2)).toBe(true);
-    // Removed: expires_at_height (2) < currentHeight after apply.
+    // The block at expiresAtHeight keeps the entry (2 < 2 is false).
+    expect(mem.getPendingEntries(10)).toHaveLength(1);
+
+    const b3 = await makeApplicableBlock({ height: 3 });
+    expect(await applyBlockThroughIntake(b3)).toBe(true);
+    // The block at expiresAtHeight + 1 removes it.
     expect(mem.getPendingEntries(10)).toHaveLength(0);
-    void T_id;
   });
 
   // 4. A conflict's dependents — T1, T1' on T1's change, T1'' on T1''s change,
