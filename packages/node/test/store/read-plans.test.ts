@@ -521,9 +521,8 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
 
     // Only statements that touch `best_chain` or `staged_blocks` or
     // `block_headers` and name `IN (SELECT hash FROM best_chain)` or
-    // `IN (SELECT hash FROM sub)` carry the plans the index serves. The two
-    // prune statements and the subtree's `DELETE FROM best_chain` are the
-    // three the brief names.
+    // `IN (SELECT hash FROM sub)` carry the plans the index serves — the
+    // prune's two statements and the mark's `best_chain` delete.
     const prunePlans = prune.sqls.map((s) => planOf(prune.db, s));
     expect(prunePlans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?best_chain\b/i.test(p))).toBe(true);
     expect(prunePlans.some((p) => /\bidx_best_chain_hash\b/i.test(p))).toBe(true);
@@ -679,55 +678,31 @@ describe('/status\'s sums stay on the owner index', () => {
     const dbMod = await importDbFresh();
     dbMod.initDb(dbFile);
     const db = dbMod.getDb();
-    const { createRouter, KARMA_SUPPLY_TYPES } = await import('../../src/routes/blocks.js');
-    const { getOrderingBlock, getOrderingBlockHash, getCurrentHeight } = await import('../../src/store/ordering.js');
-    const { getBlockProof } = await import('../../src/store/block-proofs.js');
+    const utxo = await import('../../src/store/utxo.js');
+    const { createApp } = await import('../../src/server.js');
+    const { makeTestConfig } = await import('../helpers.js');
 
-    const deps = {
-      getOrderingBlock, getOrderingBlockHash, getCurrentHeight,
-      getPostCount: () => 0,
-      getPendingPostCount: () => 0,
-      getTotalKarma: () => {
-        const row = db
-          .prepare(
-            `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
-              WHERE box_type IN (${KARMA_SUPPLY_TYPES.map(() => '?').join(', ')})
-                AND spent_at_block IS NULL`,
-          )
-          .safeIntegers()
-          .get(...KARMA_SUPPLY_TYPES) as { s: bigint };
-        return row.s;
-      },
-      getLiquidKarma: () => {
-        const row = db
-          .prepare(
-            "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'karma' AND spent_at_block IS NULL",
-          )
-          .safeIntegers()
-          .get() as { s: bigint };
-        return row.s;
-      },
-      getTotalCredits: () => {
-        const row = db
-          .prepare(
-            "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'credit' AND spent_at_block IS NULL",
-          )
-          .safeIntegers()
-          .get() as { s: bigint };
-        return row.s;
-      },
-      networkType: 'devnet',
-      inviteProbationBlocks: 0,
-      vouchCooldownBlocks: 2,
-      inviteBondMin: 1n,
-      inviteBondMax: 10n,
-      getNetworkRecord: () => ({ memberCount: 1 }),
-      membershipBarMultiplier: 1,
-      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-      countUsernames: () => 0,
-      getBlockProof,
-    };
+    // The seeded supply the three sums answer.
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const owner = bytes('77'.repeat(32));
+    const creditValue = 123n;
+    const credit = { boxType: 'credit' as const, value: creditValue, createdAtBlock: 0, owner };
+    const FIXTURE_TX_DOMAIN = new TextEncoder().encode('dagsocial/test-fixture-tx/1');
+    const txIdHex = createHash('blake2b512')
+      .update(FIXTURE_TX_DOMAIN)
+      .update(canonicalBoxBytes({ ...credit } as never))
+      .update(u32BE(1))
+      .update(u32BE(0))
+      .digest()
+      .subarray(0, 32)
+      .toString('hex');
+    const creditWithProv = { ...credit, txId: txIdHex, index: 0 };
+    const creditId = computeBoxId(creditWithProv as never);
+    utxo.insertBox({ ...creditWithProv, id: creditId } as never);
 
+    // The recorder is installed on the handle `createApp` reads through
+    // `getDb()`, before the app is built, so every prepare the real wiring
+    // runs — the three sums `/status` answers among them — is caught.
     const sqlsSeen: string[] = [];
     const original = db.prepare.bind(db) as (sql: string) => ReturnType<Database.Database['prepare']>;
     Object.defineProperty(db, 'prepare', {
@@ -739,25 +714,24 @@ describe('/status\'s sums stay on the owner index', () => {
       },
     });
 
-    const app = express();
-    app.use(express.json());
-    app.use(createRouter(deps));
+    const app = createApp(makeTestConfig({ port: 0, dbPath: dbFile, nodeRole: 'server' }));
     const server = app.listen(0);
     const addr = server.address() as { port: number };
     try {
-      await new Promise<void>((resolve) => {
+      const body = await new Promise<{ status: number; data: Record<string, unknown> }>((resolve) => {
         http.get({ hostname: '127.0.0.1', port: addr.port, path: '/status' }, (res) => {
-          res.on('data', () => {});
-          res.on('end', () => resolve());
+          let d = '';
+          res.on('data', (c) => (d += c));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, data: JSON.parse(d) as Record<string, unknown> }));
         });
       });
+      expect(body.status).toBe(200);
+      expect(body.data['totalCredits']).toBe(creditValue.toString());
 
-      // The /status route prepares three SUMs over `utxo_boxes` — the three
-      // the brief names (`SELECT COALESCE(SUM(value), 0) …`). Each explains
-      // to the owner index.
       const sumSqls = sqlsSeen.filter((s) =>
         /SELECT\s+COALESCE\s*\(\s*SUM\s*\(\s*value\s*\)/i.test(s) && /utxo_boxes/i.test(s),
       );
+      // The three sums `/status` answers (`SELECT COALESCE(SUM(value), 0) …`).
       expect(sumSqls.length).toBe(3);
 
       Object.defineProperty(db, 'prepare', { configurable: true, writable: true, value: original });
