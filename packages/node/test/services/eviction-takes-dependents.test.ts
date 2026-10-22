@@ -243,6 +243,59 @@ describe('an arrival that depends on the cheapest resident\'s closure is refused
     expect(txIds).toContain(Cid);
     expect(txIds).toContain(CprimeId);
   });
+
+  it('a credit transfer whose input is the cheapest resident\'s own change throws MempoolFullError and leaves the resident pooled', async () => {
+    const spender = makeTestIdentity();
+    const boxC = makeCreditBox(10_000_000n, spender.userId, 0, 1);
+    const utxo = await importUtxo();
+    utxo.insertBox(boxC);
+
+    const engine = await buildEngineDeps();
+    const admit = await importAdmit();
+    const consensus = await import('@dagsocial/consensus');
+    const validate = (t: UtxoTransaction, h: number) => consensus.validateTx(engine, t, h);
+
+    // The resident `C` outputs two credit boxes to its owner and a fee: its
+    // dependent `C'` spends the first, the arrival spends the second.
+    const half = (boxC.value - 10n) / 2n;
+    const C: UtxoTransaction = {
+      inputs: [boxC.id!],
+      outputs: [
+        { boxType: 'credit', value: half, createdAtBlock: 0, owner: spender.userId } as CreditBox,
+        { boxType: 'credit', value: boxC.value - 10n - half, createdAtBlock: 0, owner: spender.userId } as CreditBox,
+        { boxType: 'fee', value: 10n, createdAtBlock: 0 } as FeeBox,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(C, spender.privateKey, hex(spender.userId));
+    const Cid = computeTxId(C);
+    admit.admitWriteTx(validate, C, 1, '');
+
+    const Cprime = creditTransfer(spender, changeOf(C), 20n);
+    const CprimeId = computeTxId(Cprime);
+    admit.admitWriteTx(validate, Cprime, 1, '');
+
+    const mem = await importMempool();
+    expect(mem.getPendingEntries(10)).toHaveLength(2);
+
+    // Arrival chained on `C`'s second credit output, which `C'` does not
+    // spend: a box only `C` holds in the pending view, so the arrival depends
+    // on what would leave with `C` and must not displace it.
+    const secondChange = materializeOutput(C.outputs[1] as AnyBox, Cid, 1) as CreditBox;
+    const A2 = creditTransfer(spender, secondChange, 500n);
+
+    expect(() => admit.admitWriteTx(validate, A2, 1, '')).toThrow(mem.MempoolFullError);
+
+    const held = mem.getPendingEntries(10);
+    expect(held).toHaveLength(2);
+    const db = (await importDb()).getDb();
+    const txIds = held.map(
+      (e) => (db.prepare('SELECT tx_id FROM mempool WHERE rowid = ?').get(e.rowid) as { tx_id: string }).tx_id,
+    );
+    expect(txIds).toContain(Cid);
+    expect(txIds).toContain(CprimeId);
+  });
 });
 
 describe('a build whose screen refuses a pooled transaction takes that transaction\'s pooled dependent', () => {
