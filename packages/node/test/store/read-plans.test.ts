@@ -71,8 +71,8 @@ function karmaTx() {
 
 /**
  * Set the pool up in `dbFile`, pool one karma transaction, and return the
- * id of the one output it would create — read through consensus's
- * `materializeOutput`, so the id crosses no `tx_output_ids` column.
+ * id of the one output it would create — `materializeOutput`'s id, the
+ * derivation the insert uses.
  */
 async function setUpPool(dbFile: string): Promise<string> {
   vi.resetModules();
@@ -91,9 +91,9 @@ async function setUpPool(dbFile: string): Promise<string> {
 
 /**
  * Record `fn`'s prepared statements on a handle freshly opened against
- * `dbFile` — closing and reopening before each read makes the pin
- * independent of a prepared-statement cache a later change may add. Later
- * `n10d` pins follow this same shape.
+ * `dbFile`. Each read is recorded on a handle opened for it, so a
+ * statement compiled earlier on another handle cannot hide that read's
+ * statement from the recorder.
  */
 async function recordReadOn<T>(
   dbFile: string,
