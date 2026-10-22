@@ -81,8 +81,8 @@ describe('a failed read the deadline ended', () => {
     expect(markOf(r)).toBe(true);
   };
 
-  it.fails('is marked when the deadline falls before any answer', deadlineBeforeAnswer);
-  it.fails('is marked when the deadline falls while the body is read', deadlineMidBody);
+  it('is marked when the deadline falls before any answer', deadlineBeforeAnswer);
+  it('is marked when the deadline falls while the body is read', deadlineMidBody);
 
   it('carries no mark on a refused connection', async () => {
     const url = await listen((_req, res) => res.end('{}'));

@@ -28,13 +28,14 @@ An invite-only decentralized social network on a **dual-ledger** design: a **Pos
 Node ≥ 22.
 
 ## This package (`@dagsocial/node-reads`)
-**What every client of the node's HTTP API reads through** — the web client in both its builds and the light client
-(`@dagsocial/nipopow-client`), one implementation of each rule:
+**What every client of the node's HTTP API reads through** — the web client in both its builds, the light client
+(`@dagsocial/nipopow-client`) and the faucet (`@dagsocial/faucet`), one implementation of each rule:
 
 - **The capped reader** (`src/http.ts`): `fetchJson(fetch, url, cap)` asks under `REQUEST_TIMEOUT_MS`, and
   `readCappedJson(res, cap)` reads a body as a stream, cancels it once more than the cap has arrived and answers as a
   body that will not parse does; a transport failure, a timeout, a body cut off, an unparseable body and a non-2xx are
-  each a non-ok `NodeResult`, never a throw. `capped` is how a node's string is shown to a person — every C0 control,
+  each a non-ok `NodeResult`, never a throw; a failed read the deadline ended carries `timedOut: true` beside its
+  `status: 0`, and no other failed read carries the field. `capped` is how a node's string is shown to a person — every C0 control,
   DEL and C1 control as its `\u` escape, cut at 120 characters with `…`, never inside a surrogate pair or an escape —
   and the reader applies it to an unparseable body. `isRecord` is the one object check.
 - **The caps** (`src/caps.ts`): each route's byte cap and `LEDGER_READ_MAX`, the values `CONSTANTS → Client reads`
