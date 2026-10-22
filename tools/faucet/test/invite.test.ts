@@ -136,7 +136,7 @@ describe('buildInviteTx', () => {
   // one request at a time per endpoint." — the floor is a server-side check
   // against the view's effective; the builder admits any pair that covers the
   // bond, and the change rides whatever remains.
-  it.fails('builds under the bond plus KARMA_MINIMUM when the pair covers the bond', () => {
+  it('builds under the bond plus KARMA_MINIMUM when the pair covers the bond', () => {
     const { tx, changeValue } = buildInviteTx(
       cfg, [{ boxId: B1, value: 250n + KARMA_MINIMUM - 1n }], invitee, 512, ERA,
     );
@@ -147,7 +147,7 @@ describe('buildInviteTx', () => {
   // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
   // one request at a time per endpoint." — at exactly the bond the pair covers
   // it, and selectKarmaInputs picks the own box; the output is the bond alone.
-  it.fails('builds at exactly the bond with no change box', () => {
+  it('builds at exactly the bond with no change box', () => {
     const { tx, changeValue, change } = buildInviteTx(cfg, [{ boxId: B1, value: 250n }], invitee, 512, ERA);
     expect(changeValue).toBe(0n);
     expect(change).toBeNull();

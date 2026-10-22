@@ -380,7 +380,7 @@ describe('builds on the view it reads, one request at a time per endpoint', () =
   // NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
   // node's, never one dressed as the other." — for an invite, 503 is one whose
   // `effective` under `pending=1`, less the bond, stands below `KARMA_MINIMUM`.
-  it.fails('drained by effective: boxes cover the bond and the floor by face, effective falls below', async () => {
+  it('drained by effective: boxes cover the bond and the floor by face, effective falls below', async () => {
     client.karmaView = async () => ({
       boxes: [{ boxId: K1, value: 1000n }],
       effective: cfg.bondAmount + 10n - 1n,

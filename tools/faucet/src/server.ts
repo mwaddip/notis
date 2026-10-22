@@ -1,4 +1,5 @@
 import express from 'express';
+import { KARMA_MINIMUM } from '@dagsocial/types';
 import { buildInviteTx } from './invite.js';
 import { buildCreditTransferTx } from './transfer.js';
 import { RateLimiter } from './rate-limit.js';
@@ -82,6 +83,12 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   return app;
 }
 
+/**
+ * NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
+ * node's, never one dressed as the other." — for an invite, 503 is one whose
+ * `effective` under `pending=1`, less the bond, stands below `KARMA_MINIMUM`
+ * (→ Karma transition rules → "Only a post spends the floor").
+ */
 async function handleKarma(
   cfg: FaucetConfig,
   client: NodeClient,
@@ -91,6 +98,12 @@ async function handleKarma(
   try {
     const { blockHeight, protocolVersion } = await client.status();
     const view = await client.karmaView(cfg.publicKeyHex);
+    if (view.effective - cfg.bondAmount < KARMA_MINIMUM) {
+      res.status(503).json({
+        error: `insufficient karma: the view's effective ${view.effective}, less the bond ${cfg.bondAmount}, falls below ${KARMA_MINIMUM}`,
+      });
+      return;
+    }
     const built = buildInviteTx(cfg, view.boxes, pubkey, blockHeight, protocolVersion);
     const { expiresAtHeight } = await client.submitInvite(built.tx);
     res.status(202).json({ txId: built.txId, status: 'pending', expiresAtHeight });

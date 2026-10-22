@@ -24,6 +24,10 @@ export function buildCreditTransferTx(
 ): BuiltTx {
   checkRecipient(cfg, toHex, 'recipient');
 
+  // NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
+  // node's, never one dressed as the other." — for a credit grant, 503 is one
+  // whose first page of the pending view cannot cover it; the throw rides
+  // `relay` to that status.
   const total = boxes.reduce((sum, b) => sum + b.value, 0n);
   if (total < cfg.creditAmount) {
     throw new InsufficientFundsError(
