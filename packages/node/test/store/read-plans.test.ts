@@ -878,3 +878,68 @@ describe('/status\'s sums stay on the owner index', () => {
     }
   });
 });
+
+// MEMPOOL_INTERFACE → purgeExpired, → removeUnconfirmed, → followAppliedBlock —
+// each read on an index, no SCAN of a pool or DAG table.
+describe('the pool-follow reads explained', () => {
+  let tmpDir: string;
+  let dbFile: string;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'notis-pool-follow-plans-'));
+    dbFile = path.join(tmpDir, 'pool.db');
+  });
+
+  afterEach(async () => {
+    const dbMod = await importDbFresh();
+    dbMod.closeDb();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('purgeExpired reads idx_mempool_expires and idx_mempool_ceiling, no SCAN mempool', async () => {
+    vi.resetModules();
+    const dbMod = await importDbFresh();
+    dbMod.initDb(dbFile);
+    const mem = await import('../../src/store/mempool.js');
+    const db = dbMod.getDb();
+    const run = recordPrepared(db, () => mem.purgeExpired(0));
+    expect(run.sqls.length).toBeGreaterThan(0);
+    const plans = run.sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p))).toBe(true);
+    expect(plans.some((p) => /idx_mempool_expires/i.test(p))).toBe(true);
+    expect(plans.some((p) => /idx_mempool_ceiling/i.test(p))).toBe(true);
+  });
+
+  it("removeUnconfirmed's closure reads idx_mempool_outputs_entry, mempool_inputs' key, idx_dag_parent_refs_parent and idx_mempool_tx_id, no SCAN of a pool or DAG table", async () => {
+    vi.resetModules();
+    const dbMod = await importDbFresh();
+    dbMod.initDb(dbFile);
+    const mem = await import('../../src/store/mempool.js');
+    const db = dbMod.getDb();
+    // One pooled karma transaction, so the closure walk has an entry whose
+    // outputs and tx_id the recorder sees.
+    const OWNER_LOCAL = 'cc'.repeat(32);
+    const POOLED_LOCAL = 'dd'.repeat(32);
+    const tx = {
+      inputs: [POOLED_LOCAL],
+      outputs: [
+        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: bytes(OWNER_LOCAL) },
+      ],
+      signatures: { [OWNER_LOCAL]: new Uint8Array(64) },
+      protocolVersion: 1,
+    };
+    const rowid = mem.insertUtxoTx(tx as never, 100);
+    const run = recordPrepared(db, () => mem.removeUnconfirmed([rowid]));
+    expect(run.sqls.length).toBeGreaterThan(0);
+    const plans = run.sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool_outputs\b/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool_inputs\b/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?dag_parent_refs\b/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?dag_posts\b/i.test(p))).toBe(true);
+    expect(plans.some((p) => /idx_mempool_outputs_entry/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_inputs\b/i.test(p))).toBe(true);
+    expect(plans.some((p) => /idx_dag_parent_refs_parent/i.test(p))).toBe(true);
+    expect(plans.some((p) => /idx_mempool_tx_id/i.test(p))).toBe(true);
+  });
+});
