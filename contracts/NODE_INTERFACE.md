@@ -3459,16 +3459,18 @@ run once a handle.
 > **A read the node runs per request or per block touches what it answers.** The pages are one case;
 > the rest are point reads and bounded ranges, each on an index that serves its predicate: the pool's
 > pending view and conflict gate, on the entries' input and output tables (`MEMPOOL_INTERFACE →
-> Schema`); a vouch's escrow check and its live-pair check at admission, on the escrow-owner and the voucher
-> indexes; the ownerless singletons —
-> the emission, treasury, karma-pool, backer-pool and genesis-proof boxes — read with `owner IS NULL`,
-> so the owner index answers each by its `(NULL, box_type)` prefix (→ "`getGenesisProofBox` orders its
-> `LIMIT 1`"); the producer's rent selection, on `utxo_boxes (created_at_block) WHERE box_type =
-> 'credit' AND spent_at_block IS NULL`; a block's placeholders, on the placeholder index; and the
-> header prune's and the mark's probes of `best_chain`, on its `hash` index (→ Header tree). **The
-> stated exceptions:** the two subtree reads above; `/status`'s aggregates, read once per applied tip
-> (→ Status); the reads that run once a process — genesis seeding, the tree's bootstrap
-> (`getUnspentBoxes`, `getAllIdentityRecords`) and the puller's start (`getMissingBodies`); the
+> Schema`); a vouch's escrow check and its live-pair check at admission, on the escrow-owner and the
+> voucher indexes; the ownerless singletons — the emission, treasury, karma-pool, backer-pool and
+> genesis-proof boxes — read with `owner IS NULL`, so the owner index answers each by its `(NULL,
+> box_type)` prefix (→ "`getGenesisProofBox` orders its `LIMIT 1`"); the producer's rent selection, on
+> `utxo_boxes (created_at_block) WHERE box_type = 'credit' AND spent_at_block IS NULL`; a block's
+> placeholders, on the placeholder index; the header prune's and the mark's probes of `best_chain`, on
+> its `hash` index; and the prune's deletes of `staged_blocks` and `refused_headers` below a height,
+> on their `height` indexes (→ Header tree; → Refused headers). **The stated exceptions:** the two
+> subtree reads above; `/status`'s aggregates, read once per applied tip (→ Status); the reads that
+> run once a process — genesis seeding, the tree's bootstrap (`getUnspentBoxes`,
+> `getAllIdentityRecords`), the puller's start (`getMissingBodies`) and the peer table's load; the
+> proof retention's sizing pass, at most `PROOF_RETENTION_BLOCKS` rows (→ The block proof); the
 > store's answers to `StateView`, which the shadow run alone reads; and the pool's reads its cap
 > bounds (the class count, the expiry purge, the fee-rate order — `MEMPOOL_INTERFACE → Eviction`).
 > Measured 2026-10-21, each read as a scan and on its index:
@@ -3486,6 +3488,9 @@ run once a handle.
 > it holds one entry: the voucher, escrow-owner and rent indexes take a box write from 4.0 µs to
 > 4.5 µs (an insert and the spend of half, 200 000 boxes). One test per read pins its plan, as for the
 > pages.
+
+> ⚠ **AHEAD OF CODE (2026-10-21).** The `staged_blocks` and `refused_headers` height indexes lead
+> `store/db.ts`, which indexes neither table by height.
 
 **`dag_posts` columns:** `id`, `tx_id` (hex, NOT NULL — the creating transaction's id), `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
@@ -4067,6 +4072,7 @@ CREATE TABLE refused_headers (
     height      INTEGER NOT NULL,   -- its height
     refused_at  INTEGER NOT NULL    -- our tip height when it was refused
 );
+CREATE INDEX idx_refused_headers_height ON refused_headers(height);
 ```
 
 | Function | Signature |
@@ -4124,6 +4130,7 @@ CREATE TABLE staged_blocks (
     block_bytes BLOB NOT NULL,         -- encodeOrderingBlock
     from_peer   TEXT NOT NULL          -- the peer that delivered it, the one a body-stage refusal penalises
 );
+CREATE INDEX idx_staged_blocks_height ON staged_blocks(height);
 ```
 
 **`chain_work` is fixed-width so the column orders**, and its index reads the heaviest rows first. Forty bytes, big-endian: a header's height is a safe
