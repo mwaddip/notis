@@ -499,7 +499,7 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 | `DELETE` | `/vouches/:targetId` | `initiateUnvouch` | Signed UTXO tx (VouchBox to none) → `200 { status: 'pending', txId, expiresAtHeight, karmaReturnsAtBlock }` — the escrow's `releaseAtBlock`, relayed; 400 where `:targetId` is not the target of the VouchBox the transaction spends |
 | `GET` | `/vouches?target=X&limit=50&after=<boxId>` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, voucherName, targetId, targetName }], count, next }` — one page of the identity's vouchers, each name the holder's username as typed or `null` (→ Usernames → "A list row carries its names"), ascending box id, strictly after `after`; `count` over the whole set, `next` the key to continue from (HTTP API → "Every list a view returns is a page") |
 | `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesForVoucherPage` | `{ vouches: [{ boxId, value, voucherId, voucherName, targetId, targetName, createdAtBlock }], count, next }` — one page of the identity's live vouches, the names as on the target arm, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
-| `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchCooldownsPage` | `{ cooldowns: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
+| `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchEscrowsForPage` | `{ cooldowns: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
 
 **Members vouch, without a cap.** `castVouch` refuses with a named `400`, ahead of the engine and
 changing no verdict: a voucher who is not a member (`ARCHITECTURE → Membership`); a target that
@@ -808,6 +808,14 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 > divisor of every member's invite budget, served so a client shows them rather than reproducing
 > `icbrt` and the profile's multiplier.
 >
+
+**Every figure but `pendingPosts` is read once per applied tip.** `postCount`, `usernameCount`, `totalKarma`,
+`liquidKarma` and `totalCredits` are aggregates — a count of every confirmed post and every name, a sum over every
+unspent box of a type — and only a block's apply or revert moves them. The node computes them at the first `/status`
+after the applied tip moves, keyed by the tip's height and its hash — an empty chain's by its height 0 alone — and
+answers every later request at that tip from what it computed; `pendingPosts` is read on each request, over
+`dag_posts (status) WHERE status = 'pending'`, which the pool's cap bounds. The three sums measured 51 ms a read at 500 000 boxes half spent (2026-10-21), and no index answers a sum
+over a whole type for less: the read is the type's every box.
 
 #### Three karma sets, and none derives from another
 
@@ -3379,6 +3387,17 @@ admission and the shadow run; where it is the store's answer to a rule's read, i
 | `getDb()` | `() => Database` | Return better-sqlite3 handle, throw if not initialized |
 | `closeDb()` | `() => void` | Graceful shutdown |
 
+**A statement is prepared once per database handle.** Each handle carries a cache of its prepared statements keyed
+by their text (`store/db.ts`'s `prepared`), and every store read and write — the `store/` modules, `/status`'s figures
+among them, `state/avl-storage.ts` and genesis seeding's reads — takes its statement from it rather than compiling one
+per call: a compile costs 8.5 µs on a point read and 33 µs on
+the karma page (measured 2026-10-21, better-sqlite3 11), paid on every call that prepares. **One cached statement
+serves every caller of its text, so each use sets the statement's integer mode** — `safeIntegers(true)` or
+`safeIntegers(false)` — and none inherits the last caller's. The cache is keyed by the handle, so the handle the next
+`initDb` opens starts with none; `closeDb` drops the closed handle's. Kept out of it: a statement whose text is built
+from its argument count — an `IN (?, …)` list — prepared on its call, and `initDb`'s own migration statements, which
+run once a handle.
+
 ### Posts DAG
 
 | Function | Signature |
@@ -3386,7 +3405,8 @@ admission and the shadow run; where it is the store's answer to a rule's read, i
 | `insertPost(postId, txId, commit, content)` | `(PostId, TxId, PostCommit, string \| null) => void` — `txId` the creating transaction's, written to `tx_id` by all three writers (the submit route, a relayed packet, block application); status = pending when admitted with its packet, the body present; `null` when block application inserts a placeholder from the commit; the id comes from the creating transaction |
 | `setPostBody(postId, content)` | `(string, string) => boolean` — fills a placeholder's body after the caller verified it against the row's `content_hash` (`verifyPostBody`); `false` if no row or the body is already held (no-op) |
 | `getPost(id)` | `(string) => StoredPost \| null` — "Resolution order for a post id" |
-| `getMissingBodies()` | `() => { id, contentHash }[]` — every placeholder row (`content IS NULL`, not withdrawn), newest first (`block_height` desc, `block_index` desc); what the body puller takes up at start ("Backfill after sync") |
+| `getMissingBodies()` | `() => { id, contentHash }[]` — every placeholder row (`content IS NULL`, not withdrawn), newest first (`block_height` desc, `block_index` desc); what the body puller takes up at start ("Backfill after sync"). Over `dag_posts (block_height, block_index) WHERE content IS NULL AND withdrawn_at_height IS NULL`, the index that holds the placeholders alone |
+| `getPlaceholdersAt(height)` | `(number) => { id, contentHash }[]` — the placeholder rows a block at `height` confirmed, read for every applied block to join the puller's schedule ("Backfill after sync"); a range of the same placeholder index, never a scan of the table |
 | `queryPostsPage({ author?, roots?, limit, after? })` | `({ author?: Uint8Array, roots?: boolean } & Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, pending: StoredPost[], pendingCount: number }` — `rows` one page of the committed rows (placeholders and withdrawn rows included), newest first in committed order, strictly after `after`; `pending` the live pending rows, the author's when `author` is given, newest arrival first (`rowid` descending), cut to `limit`; `pendingCount` over all of them; with `roots`, `rows`, `pending` and `pendingCount` are over rows with no parent (`parentRefs: []`) alone, the keyset walking that set |
 | `confirmPost(postId, blockHeight, blockIndex)` | `(string, number, number) => void` — height and committed position |
 | `unconfirmPost(postId)` | `(string) => void` — for fork rollbacks; clears height and position, keeps the body |
@@ -3423,17 +3443,51 @@ admission and the shadow run; where it is the store's answer to a rule's read, i
 > mix directions (`value DESC, id`), so with `after` they are two ranges of
 > `utxo_boxes (owner, box_type, value DESC, id) WHERE spent_at_block IS NULL` — the equal-value
 > tail and the lesser values — concatenated in list order, **at most `2 · (limit + 1)` entries**;
-> the bond and vouch pages range by `id` on the partial expression indexes keyed by the bond's
-> `inviterId` and the vouch's `targetId` (`json_extract(extra_data, …)`); the pending window of
+> the bond, vouch and escrow pages range by `id` on the partial expression indexes keyed by the
+> bond's `inviterId`, the vouch's `targetId`, the vouch's `voucherId` and the escrow's `owner`
+> (`json_extract(extra_data, …)`); the pending window of
 > `queryPostsPage` and its count read `dag_posts (status) WHERE status = 'pending'` — `limit` entries
 > of the pending index in `rowid` order, never a scan of the table. The `SUM` and `COUNT`
-> behind a view are scans of the owner's entries in the owner index. `getSubtreePage` and
+> behind a view are scans of the owner's entries in the index its page reads. `getSubtreePage` and
 > `getDescendantCount` are the stated exceptions: the CTE enumerates the subtree on
 > `dag_parent_refs (parent_id)`, so each is O(subtree) — the count is one walk per row it is read
 > for, proportional to the replies under that row, and never a join back to `dag_posts` after the
 > walk, the form that scans the table once per row. Nothing else
 > in the repo measures cost (`ARCHITECTURE → Design Principles`), so one test per read pins its
 > plan to its index and its range.
+>
+> **A read the node runs per request or per block touches what it answers.** The pages are one case;
+> the rest are point reads and bounded ranges, each on an index that serves its predicate: the pool's
+> pending view and conflict gate, on the entries' input and output tables (`MEMPOOL_INTERFACE →
+> Schema`); a vouch's escrow check and its live-pair check at admission, on the escrow-owner and the
+> voucher indexes; the ownerless singletons — the emission, treasury, karma-pool, backer-pool and
+> genesis-proof boxes — read with `owner IS NULL`, so the owner index answers each by its `(NULL,
+> box_type)` prefix (→ "`getGenesisProofBox` orders its `LIMIT 1`"); the producer's rent selection, on
+> `utxo_boxes (created_at_block) WHERE box_type = 'credit' AND spent_at_block IS NULL`; a block's
+> placeholders, on the placeholder index; the header prune's and the mark's probes of `best_chain`, on
+> its `hash` index; and the prune's deletes of `staged_blocks` and `refused_headers` below a height,
+> on their `height` indexes (→ Header tree; → Refused headers). **The stated exceptions:** the two
+> subtree reads above; `/status`'s aggregates, read once per applied tip (→ Status); the reads that
+> run once a process — genesis seeding, the tree's bootstrap (`getUnspentBoxes`,
+> `getAllIdentityRecords`), the puller's start (`getMissingBodies`) and the peer table's load; the
+> proof retention's sizing pass, at most `PROOF_RETENTION_BLOCKS` rows (→ The block proof); the
+> store's answers to `StateView`, which the shadow run alone reads; and the pool's reads its cap
+> bounds (the class count, the expiry purge, the fee-rate order — `MEMPOOL_INTERFACE → Eviction`).
+> Measured 2026-10-21, each read as a scan and on its index:
+>
+> | Read | Runs | As a scan | On its index |
+> |---|---|---|---|
+> | the voucher's vouch page / the escrow page | per request | 397 / 371 ms | 0.04 ms |
+> | `hasActiveVouchEscrow` | each vouch's admission | 13 ms | 0.008 ms |
+> | an ownerless singleton (`GET /backers`) | per request | 13 ms | 0.014 ms |
+> | the rent selection, `limit` 64 | each template | 109 ms | 0.17 ms |
+> | `getPlaceholdersAt` | each applied block | 12 ms | 0.009 ms |
+> | `pruneHeadersBelow` | each block | 33 ms | 0.05 ms |
+>
+> — at 500 000 boxes half spent, 200 000 posts and 60 000 heights. An index costs each write of a row
+> it holds one entry: the voucher, escrow-owner and rent indexes take a box write from 4.0 µs to
+> 4.5 µs (an insert and the spend of half, 200 000 boxes). One test per read pins its plan, as for the
+> pages.
 
 **`dag_posts` columns:** `id`, `tx_id` (hex, NOT NULL — the creating transaction's id), `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
@@ -3488,18 +3542,20 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 | `getKarmaOwners()` | `() => string[]` — every identity holding a live karma box, as hex, in no stated order: what net's relay-gate set is seeded from at startup and re-seeded from once a reorg commits (→ Post transactions); a set, so no order reaches anything |
 | `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing: full boxes, keyed on `id` |
 | `getBackerStakeBox(owner)` | `(UserId) => BackerStakeBox \| null` — the identity's live stake, at most one (→ Backer transition rules) |
-| `getBackerPoolBox()` | `() => BackerPoolBox \| null` — the one live pool box, `ORDER BY id LIMIT 1` like the emission, treasury and karma-pool reads; null on a network whose table is empty. The store's answer to the settlement's backer-leg read (§The settlement transaction), for the API and the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
+| `getBackerPoolBox()` | `() => BackerPoolBox \| null` — the one live pool box, `owner IS NULL … ORDER BY id LIMIT 1` like the emission, treasury and karma-pool reads, so the owner index answers it (→ "A read the node runs per request or per block touches what it answers"); null on a network whose table is empty. `GET /backers` reads it on every request. The store's answer to the settlement's backer-leg read (§The settlement transaction), for the API and the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
 | `getKarmaBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: KarmaBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getKarmaBoxes` reads, `ORDER BY value DESC, id` strictly after `after` (two index ranges — `value = ? AND id > ?`, then `value < ?` — concatenated in that order), over the same `KARMA_UNSPENT_WHERE` fragment; never a consensus input — every balance check reads the whole set through `getKarmaBoxes` / `getKarmaValue` |
 | `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box: admission reads it for the karma spend rule — `held` is this sum less the pool's pending spends (→ Karma transition rules) — and the services for their courtesy checks; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else"). It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE`. The predicate is the `KARMA_UNSPENT_WHERE` fragment that `getKarmaTotal`, the `COUNT` and the page share — the set is named once; the sum is computed here, in process |
 | `getKarmaTotal(owner)` | `(Uint8Array) => bigint` — the view's total: `COALESCE(SUM(value), 0)` over `KARMA_UNSPENT_WHERE`, an index scan of the owner's unspent entries; `/karma/:userId`'s `total`. Never a consensus input, and equal to `getKarmaValue` on every owner (a test pins it) |
 | `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC, id` — a total order, so element `[0]` is a deterministic read; there is deliberately **no single-box credit accessor** (an unordered `LIMIT 1` names an arbitrary row — M-12's class) |
 | `getCreditBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: CreditBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getCreditBoxes` reads, the same order and clause, over the `CREDIT_UNSPENT_WHERE` fragment |
 | `getCreditValue(owner)` | `(Uint8Array) => bigint` — summed value of every unspent credit box: `COALESCE(SUM(value), 0)` over `CREDIT_UNSPENT_WHERE`, the fragment `getCreditBoxes` and the page share; a view read (`/credits/:userId`'s `total`), not a consensus input |
+| `getRentEligibleCreditBoxes(height, period, limit)` | `(number, number, number) => { box: CreditBox, txId, index }[]` — the producer's rent selection: unspent credit boxes created before `height − period`, oldest first (`created_at_block` ascending), at most `limit`, read for every template (→ Storage rent is a transition requiring no signature). A range of `utxo_boxes (created_at_block) WHERE box_type = 'credit' AND spent_at_block IS NULL`: `limit` entries, never the credit set |
 | `getBondFor(inviteePublicKey)` | `(UserId) => BondBox \| null` — the bond naming this key; the settlement path resolves through this |
 | `getBondsInvitedAt(maxInvitedAt, limit)` | `(number, number) => BondBox[]` — bonds whose invitee's record carries `invitedAtBlock` **at or before** `maxInvitedAt`, **ascending `(invitedAtBlock, box id)`**, capped at `limit` — the settlement's carry-forward bond leg. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
 | `getBondBoxesPage(inviterId, page)` | `(UserId, Page<string>) => { rows: BondBox[], next: string \| null, count: number }` — the inviter's **unspent** bonds (`spent_at_block IS NULL`), ascending `id` strictly after `after` (`id > ?`); `count` over the whole set |
 | `getVouchesForTargetPage(targetId, page)` | `(UserId, Page<string>) => { rows: VouchBox[], next: string \| null, count: number }` — the identity's unspent vouch boxes (`store/vouch-queries.ts`), ascending `id` strictly after `after`, the rows selected in the page statement; `count` over the whole set, read through `getVouchCountForTarget` |
 | `getVouchCountForTarget(targetId)` | `(UserId) => number` — the unspent vouch boxes whose target is the identity, `COUNT(*)` over `VOUCH_TARGET_WHERE` on `idx_utxo_boxes_vouch_target`; feeds the page's `count` |
+| `getVouchesForVoucherPage(voucherId, page)` | `(UserId, Page<string>) => { rows: VouchBox[], next: string \| null, count: number }` — the identity's own unspent vouch boxes, ascending `id` strictly after `after`; `count` over the whole set. Over `utxo_boxes (json_extract(extra_data, '$.voucherId'), id) WHERE box_type = 'vouch' AND spent_at_block IS NULL`, the target index's twin |
 | `getVouchBoxes(voucherId, targetId)` | `(UserId, UserId) => VouchBox[]` — every live vouch box for the pair, ascending `id`; `getVouchBox` answers the first — the `StateView` read, used for existence (`CONSENSUS_INTERFACE → StateView`) |
 | `getLikeAccrualBoxes(author)` | `(UserId) => LikeAccrualBox[]` — every live `like_accrual` box naming the author, ascending `id`: the carry box and the block's markers alike, told apart by the settlement's carry lookup, which composes over this read (`CONSENSUS_INTERFACE → StateView`) |
 | `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns, and nothing else — the journal and net's karma membership follow the block's effects (→ Block Journal, → Post transactions) |
@@ -3894,8 +3950,9 @@ effects like any other box's (→ Block Journal); no bespoke side-records exist.
 
 | Function | Signature |
 |----------|-----------|
-| `hasActiveVouchEscrow(voucherId)` | `(UserId) => boolean` — true while any unspent `vouch_escrow` box names the voucher as `owner`. The pool's admission reads it for the cast gate (§Vouch transition rules); the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
-| `getVouchEscrowsFor(voucherId)` | `(UserId) => VouchEscrowBox[]` — the API's cooldown listing (`GET /vouches?voucher=X&cooldowns=1`) |
+| `hasActiveVouchEscrow(voucherId)` | `(UserId) => boolean` — true while any unspent `vouch_escrow` box names the voucher as `owner`, one probe of the escrow-owner index `utxo_boxes (json_extract(extra_data, '$.owner'), id) WHERE box_type = 'vouch_escrow' AND spent_at_block IS NULL`. The pool's admission reads it for the cast gate (§Vouch transition rules); the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
+| `getVouchEscrowsFor(voucherId)` | `(UserId) => VouchEscrowBox[]` — every unspent escrow naming the voucher as `owner`, ascending box id, on the escrow-owner index. The store's answer to the `StateView` read, for the shadow run (`CONSENSUS_INTERFACE → StateView`) |
+| `getVouchEscrowsForPage(voucherId, page)` | `(UserId, Page<string>) => { rows: VouchEscrowBox[], next: string \| null, count: number }` — the API's cooldown page (`GET /vouches?voucher=X&cooldowns=1`): the same set, ascending `id` strictly after `after`, on the escrow-owner index; `count` over the whole set |
 | `getVouchEscrowsReleasableAt(height, limit)` | `(number, number) => VouchEscrowBox[]` — every unspent `vouch_escrow` with `releaseAtBlock <= height`, **ascending `(releaseAtBlock, box id)`**, capped at `limit`. The store's answer to the settlement's escrow-leg read (§The settlement transaction), for the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
 | `getLapsedVouches(limit)` | `(number) => VouchBox[]` — the unspent `vouch` boxes whose `voucherId`'s identity record fails `member(voucher)`, **ascending box id**, at most `limit`. The store's answer to the settlement's lapse-leg read, in its own order — the shadow run compares it with the tree's as a set; the rules read the tree's, voucher by voucher (§The settlement transaction) |
 
@@ -3933,7 +3990,7 @@ one write feeds both, so the two cannot disagree.
 |----------|-----------|-------------|
 | `insertUtxoTx(tx, expiresAtHeight)` | `(UtxoTransaction, number) => number` | Queue UTXO tx, returns rowid |
 | `getPendingEntries(limit)` | `(number) => PoolEntry[]` | FIFO-ordered pending entries |
-| `getBoxWithPending(boxId)` | `(string) => AnyBox \| null` | The pending view — confirmed ∪ pending outputs − pending inputs; submission's `getBox`, never block application's (MEMPOOL_INTERFACE → getBoxWithPending; → Block finalization) |
+| `getBoxWithPending(boxId)` | `(string) => AnyBox \| null` | The pending view — confirmed ∪ pending outputs − pending inputs, three point reads on the pool's input and output tables and the confirmed set; submission's `getBox`, never block application's (MEMPOOL_INTERFACE → getBoxWithPending; → Block finalization) |
 | `purgeExpired(currentHeight)` | `(number) => number` | Remove entries past expiry, returns count |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — the count admission holds a member's bonds to (MEMPOOL_INTERFACE → Correctness gates) |
@@ -3972,7 +4029,7 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 | Function | Signature |
 |----------|-----------|
 | `createOrderingBlock(block, interlinks)` | `(OrderingBlock, string[]) => void` — `interlinks` is the vector the header committed to, stored `encodeInterlinks`'d in the `interlinks` column |
-| `getOrderingBlock(height)` | `(number) => OrderingBlock \| null` |
+| `getOrderingBlock(height)` | `(number) => OrderingBlock \| null` — the whole row decoded, body included: `GET /blocks/:height`'s read. A reader that needs a header reads `getHeaderAt` |
 | `getCurrentHeight()` | `() => number` |
 | `getOrderingBlockHash(height)` | `(number) => string \| null` — the stored `block_hash` column, no row decode |
 | `getHeightByBlockHash(hash)` | `(string) => number \| null` — indexed point lookup on the same column |
@@ -3985,11 +4042,12 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 check — serving (`GET /blocks/current`), and the pipeline's comparison of the applied chain with the best chain
 (Fork choice decides on verified headers → "The switch."): each
 wants the insert-time hash and none needs the row decoded. The apply path's
-chain-link check and the block creator's previous-block hash **recompute from
-the decoded header instead, and must keep doing so**: the recompute is the
-corrupt-header tripwire (`UnhashableStoredHeaderError` — a column read returns
-the insert-time hash over a header row that has since rotted), and
-`verifyBlockChainLink` recomputes internally in any case.
+chain-link check and the block creator's previous-block hash read the previous
+header through `getHeaderAt` — `header_bytes` alone, never the body — and
+**recompute from the decoded header instead, and must keep doing so**: the
+recompute is the corrupt-header tripwire (`UnhashableStoredHeaderError` — a
+column read returns the insert-time hash over a header row that has since
+rotted), and `verifyBlockChainLink` recomputes internally in any case.
 
 **The `interlinks` column is a cache of the header chain, never journaled.** `I(h)` is a function of
 the headers below `h` (`TYPES_INTERFACE` → Interlink vector), so the column can always be rebuilt from
@@ -4011,6 +4069,7 @@ CREATE TABLE refused_headers (
     height      INTEGER NOT NULL,   -- its height
     refused_at  INTEGER NOT NULL    -- our tip height when it was refused
 );
+CREATE INDEX idx_refused_headers_height ON refused_headers(height);
 ```
 
 | Function | Signature |
@@ -4060,6 +4119,7 @@ CREATE TABLE best_chain (
     height  INTEGER PRIMARY KEY,
     hash    TEXT NOT NULL              -- a block_headers row
 );
+CREATE UNIQUE INDEX idx_best_chain_hash ON best_chain(hash);
 
 CREATE TABLE staged_blocks (
     hash        TEXT PRIMARY KEY,      -- the header hash: a best_chain entry, or the applied tip's child in hand
@@ -4067,11 +4127,18 @@ CREATE TABLE staged_blocks (
     block_bytes BLOB NOT NULL,         -- encodeOrderingBlock
     from_peer   TEXT NOT NULL          -- the peer that delivered it, the one a body-stage refusal penalises
 );
+CREATE INDEX idx_staged_blocks_height ON staged_blocks(height);
 ```
 
 **`chain_work` is fixed-width so the column orders**, and its index reads the heaviest rows first. Forty bytes, big-endian: a header's height is a safe
 integer (below 2⁵³) and one header's work is at most 2²⁵⁶ (`VALIDATION_INTERFACE → blockWork / cumulativeWork`),
 so a path's sum stays below 2³⁰⁹.
+
+**`best_chain` is read by hash as well as by height**, and `idx_best_chain_hash` serves it: the prune keeps the rows a
+`best_chain` entry names (`hash NOT IN (SELECT hash FROM best_chain)`), and the mark's removal deletes a subtree's
+entries by hash — each a probe of the index, where without it each reads the whole chain, and the prune runs every
+block (→ Store Interface → "A read the node runs per request or per block touches what it answers"). Unique, because
+a header stands at one height.
 
 **A header row is written once.** A row is never updated: a switch rewrites `best_chain`, and a header leaves
 only by the mark's removal of its subtree or by the prune below the reach floor (Fork choice decides on verified
@@ -4909,8 +4976,10 @@ is what keeps a refusal from leaving a `-wal` beside a store the operator is abo
 **`getGenesisProofBox` orders its `LIMIT 1`.** Exactly one proof box is reachable — `OUTPUT_SHAPE`
 excludes `genesis_proof` so no transaction mints one, and `assertEmptyBeforeGenesis` refuses to seed
 over an existing one — but that is an argument about the rest of the tree, and an unordered
-`LIMIT 1` names no row if it ever expires. **No index on `box_type`**: the function has two callers
-and runs once per process, and an index there would tax every `insertBox` on the apply path.
+`LIMIT 1` names no row if it ever expires. **No index on `box_type`**: an index there would tax every
+`insertBox` on the apply path, and the read needs none — like every ownerless singleton it names `owner IS NULL`, and
+the owner index answers it by its `(NULL, box_type)` prefix (→ Store Interface → "A read the node runs per request or
+per block touches what it answers").
 
 ### Fork choice decides on verified headers
 

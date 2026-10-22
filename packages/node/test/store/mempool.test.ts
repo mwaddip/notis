@@ -443,10 +443,20 @@ describe('mempool store', () => {
       const { insertUtxoTx, countPendingInvites } =
         await importMempoolFresh();
 
+      // Two invites by `INVITER_A` naming distinct invitees — a repeat
+      // invite transaction would carry one tx id (`validateTx` refuses it
+      // for having no inputs; `mempool_outputs` is keyed on its outputs'
+      // ids), so a one-inviter-two-invites fixture names two keys.
+      const invite = (inviter: string, invitee: number) => {
+        const tx = inviteTx(inviter);
+        (tx.outputs[0] as { inviteePublicKey: Uint8Array }).inviteePublicKey =
+          new Uint8Array(32).fill(invitee);
+        return tx;
+      };
       for (let i = 0; i < 1000; i++) insertUtxoTx(txWithInput(`filler_${i}`) as any, 100);
-      insertUtxoTx(inviteTx(INVITER_A) as any, 100);
-      insertUtxoTx(inviteTx(INVITER_A) as any, 100);
-      insertUtxoTx(inviteTx(INVITER_B) as any, 100);
+      insertUtxoTx(invite(INVITER_A, 0x11) as any, 100);
+      insertUtxoTx(invite(INVITER_A, 0x12) as any, 100);
+      insertUtxoTx(invite(INVITER_B, 0x13) as any, 100);
 
       expect(countPendingInvites(INVITER_A)).toBe(2);
       expect(countPendingInvites(INVITER_B)).toBe(1);
@@ -579,20 +589,6 @@ describe('mempool store', () => {
       expect(mem.hasPendingSpend([BOX_A])).toBe(BOX_A);
       expect(mem.hasPendingSpend([BOX_B])).toBeNull();
       expect(mem.hasPendingSpend([])).toBeNull();
-    });
-
-    it('an entry written before the column existed blocks nothing', async () => {
-      // Rows predating `migrateMempoolTxInputs` hold NULL, and `json_each` reads
-      // NULL as zero rows rather than raising — so a pre-migration entry matches
-      // no conflict query. Asserted rather than assumed.
-      const mem = await importMempoolFresh();
-      const { getDb } = await importDbFresh();
-
-      mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000);
-      getDb().prepare('UPDATE mempool SET tx_inputs = NULL').run();
-
-      expect(mem.hasPendingSpend([BOX_A])).toBeNull();
-      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000)).not.toThrow();
     });
 
   });
@@ -1039,6 +1035,252 @@ describe('mempool store', () => {
       expect(() => mem.insertUtxoTx(at as any, 1000)).not.toThrow();
       expect(mem.getPendingEntries(10)).toHaveLength(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The conflict gate before the capacity gate, in one transaction
+// (MEMPOOL_INTERFACE → insertUtxoTx → "The conflict gate runs before the
+// capacity gate.", → "One SQLite transaction.").
+// ---------------------------------------------------------------------------
+
+describe('insertUtxoTx — the conflict gate before the capacity gate, in one transaction', () => {
+  async function importCappedWithBoxes(cap: number, boxes: Record<string, unknown>[]) {
+    vi.resetModules();
+    const dbMod = await import('../../src/store/db.js');
+    dbMod.initDb(':memory:');
+    const utxo = await import('../../src/store/utxo.js');
+    for (const box of boxes) utxo.insertBox(box as never);
+    const mem = await import('../../src/store/mempool.js');
+    mem.setMempoolCap(cap);
+    return mem as any;
+  }
+
+  /** A credit-side transaction spending `inputId` that bids `fee`. */
+  function creditTxSpending(inputId: string, fee: bigint): any {
+    return {
+      inputs: [inputId],
+      outputs: [
+        { boxType: 'credit', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) },
+        ...(fee > 0n ? [{ boxType: 'fee', value: fee, createdAtBlock: 0 }] : []),
+      ],
+      signatures: {},
+      protocolVersion: 1,
+    };
+  }
+
+  afterEach(async () => {
+    const db = await importDbFresh();
+    db.closeDb();
+  });
+
+  it('a conflicting arrival replaces nothing', async () => {
+    // One credit slot. The resident spends box X at the cheapest rate; the
+    // arrival spends X too and bids above it. The conflict gate refuses the
+    // arrival before the capacity gate's eviction can see it, so nothing
+    // of the resident moves.
+    const { entryByteCost } = await import('../../src/store/mempool.js');
+    const { encodeTx } = await import('@dagsocial/types');
+    const resident = seededCreditTx('cheap_resident_X', 1000n, 990n); // fee 10
+    const mem = await importCappedWithBoxes(2, [resident.box]);
+
+    mem.insertUtxoTx(resident.tx as any, 100);
+    const row = (await importDbFresh()).getDb()
+      .prepare('SELECT tx_id, tx_fee, tx_bytes FROM mempool').get() as
+      { tx_id: string; tx_fee: bigint | number; tx_bytes: number };
+
+    const residentInput = (resident.tx as any).inputs[0] as string;
+    const arrival = creditTxSpending(residentInput, 900n);
+
+    // Controls: class full; resident pooled on `residentInput`; and the
+    // arrival outbids the resident on the cross-multiplied rate
+    // `assertCapacity` itself compares — the arrival's `fee × resident
+    // bytes` above the resident's `fee × arrival bytes`, bytes read from
+    // the pooled row and from `entryByteCost(encodeTx(arrival))`.
+    const fullRow = (await importDbFresh()).getDb()
+      .prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL').get() as { n: number };
+    expect(fullRow.n).toBe(1);
+    expect(mem.hasPendingSpend([residentInput])).toBe(residentInput);
+    const residentFee = BigInt(row.tx_fee as number);
+    const residentBytes = BigInt(row.tx_bytes);
+    const arrivalBytes = BigInt(entryByteCost(encodeTx(arrival as never)));
+    const arrivalFee = 900n;
+    expect(arrivalFee * residentBytes).toBeGreaterThan(residentFee * arrivalBytes);
+
+    // The refusal is the conflict gate's and names the box.
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(
+      mem.PendingSpendConflictError,
+    );
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(residentInput);
+
+    const residentStill = (await importDbFresh()).getDb()
+      .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(row.tx_id);
+    expect(residentStill).toBeDefined();
+  });
+
+  it('a conflicting arrival evicts no bystander', async () => {
+    // Two credit slots. The cheapest spends Y; a bystander spends X. The
+    // arrival spending X outbids the cheapest, and the conflict on X runs
+    // before the capacity gate's eviction of Y.
+    const { entryByteCost } = await import('../../src/store/mempool.js');
+    const { encodeTx } = await import('@dagsocial/types');
+    const cheapest = seededCreditTx('cheap_Y', 1000n, 990n); // fee 10
+    const bystander = seededCreditTx('bystander_X', 1000n, 500n); // fee 500
+    const mem = await importCappedWithBoxes(4, [cheapest.box, bystander.box]);
+
+    mem.insertUtxoTx(cheapest.tx as any, 100);
+    mem.insertUtxoTx(bystander.tx as any, 100);
+    const cheapestInput = (cheapest.tx as any).inputs[0] as string;
+    const bystanderInput = (bystander.tx as any).inputs[0] as string;
+
+    const cheapestRow = (await importDbFresh()).getDb()
+      .prepare('SELECT tx_id, tx_fee, tx_bytes FROM mempool WHERE tx_fee = 10').get() as
+      { tx_id: string; tx_fee: bigint | number; tx_bytes: number };
+
+    const arrival = creditTxSpending(bystanderInput, 900n);
+
+    // Controls: credit class full with cheapest and bystander, both pooled
+    // on their inputs; the arrival outbids the cheapest on the same
+    // cross-multiplied rate `assertCapacity` compares.
+    const fullRow = (await importDbFresh()).getDb()
+      .prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL').get() as { n: number };
+    expect(fullRow.n).toBe(2);
+    expect(mem.hasPendingSpend([cheapestInput])).toBe(cheapestInput);
+    expect(mem.hasPendingSpend([bystanderInput])).toBe(bystanderInput);
+    const cheapestFee = BigInt(cheapestRow.tx_fee as number);
+    const cheapestBytes = BigInt(cheapestRow.tx_bytes);
+    const arrivalBytes = BigInt(entryByteCost(encodeTx(arrival as never)));
+    const arrivalFee = 900n;
+    expect(arrivalFee * cheapestBytes).toBeGreaterThan(cheapestFee * arrivalBytes);
+
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(
+      mem.PendingSpendConflictError,
+    );
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(bystanderInput);
+
+    const cheapestStill = (await importDbFresh()).getDb()
+      .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(cheapestRow.tx_id);
+    expect(cheapestStill).toBeDefined();
+  });
+
+  // MEMPOOL_INTERFACE → Schema → "The rows leave with their entry on every
+  // path". The four exits are the capacity gate's eviction,
+  // `removeUtxoTxEntry` (an applied block's cleanup from a peer),
+  // `purgeExpired` (height past the ceiling) and `removeEntry` (a block
+  // this node mined). Each leaves `mempool_inputs` and `mempool_outputs`
+  // with no row naming the entry, and a new transaction spending the
+  // input is admitted after it.
+  async function freshPool(cap: number) {
+    vi.resetModules();
+    const dbMod = await import('../../src/store/db.js');
+    dbMod.initDb(':memory:');
+    const mem = await import('../../src/store/mempool.js');
+    mem.setMempoolCap(cap);
+    const utxo = await import('../../src/store/utxo.js');
+    return { mem, utxo, db: dbMod.getDb() };
+  }
+
+  async function assertRowsGone(
+    db: Database.Database,
+    rowid: number,
+    inputId: string,
+    mem: typeof import('../../src/store/mempool.js'),
+  ) {
+    const ins = db.prepare('SELECT 1 FROM mempool_inputs WHERE entry_rowid = ? LIMIT 1').get(rowid);
+    const outs = db.prepare('SELECT 1 FROM mempool_outputs WHERE entry_rowid = ? LIMIT 1').get(rowid);
+    expect(ins).toBeUndefined();
+    expect(outs).toBeUndefined();
+    // A new transaction spending the same input is admitted — the input
+    // is free again as the pool sees it.
+    expect(() => mem.insertUtxoTx({
+      inputs: [inputId], outputs: [], signatures: {}, protocolVersion: 1,
+    } as any, 100)).not.toThrow();
+  }
+
+  it('eviction by the capacity gate takes the entry\'s input and output rows with it', async () => {
+    const { mem, utxo, db } = await freshPool(2);
+    const resident = seededCreditTx('exit_evict', 1000n, 990n); // fee 10
+    utxo.insertBox(resident.box as never);
+    const rowid = mem.insertUtxoTx(resident.tx as any, 100);
+    const inputId = (resident.tx as any).inputs[0] as string;
+
+    const arrival = seededCreditTx('exit_evict_arrival', 1500n, 600n); // fee 900
+    utxo.insertBox(arrival.box as never);
+    mem.insertUtxoTx(arrival.tx as any, 100);
+
+    await assertRowsGone(db, rowid, inputId, mem);
+  });
+
+  it('removeUtxoTxEntry takes the entry\'s input and output rows with it', async () => {
+    const { mem, db } = await freshPool(10);
+    const rowid = mem.insertUtxoTx(txWithInput('exit_removeTx') as any, 100);
+    const row = db.prepare('SELECT tx_id FROM mempool WHERE rowid = ?').get(rowid) as { tx_id: string };
+    const inputId = db.prepare('SELECT box_id FROM mempool_inputs WHERE entry_rowid = ?').get(rowid) as { box_id: string };
+
+    mem.removeUtxoTxEntry(row.tx_id);
+
+    await assertRowsGone(db, rowid, inputId.box_id, mem);
+  });
+
+  it('purgeExpired takes the entry\'s input and output rows with it', async () => {
+    const { mem, db } = await freshPool(10);
+    const rowid = mem.insertUtxoTx(txWithInput('exit_purge') as any, 10);
+    const inputId = db.prepare('SELECT box_id FROM mempool_inputs WHERE entry_rowid = ?').get(rowid) as { box_id: string };
+
+    mem.purgeExpired(50);
+
+    await assertRowsGone(db, rowid, inputId.box_id, mem);
+  });
+
+  it('removeEntry takes the entry\'s input and output rows with it', async () => {
+    const { mem, db } = await freshPool(10);
+    const rowid = mem.insertUtxoTx(txWithInput('exit_remove') as any, 100);
+    const inputId = db.prepare('SELECT box_id FROM mempool_inputs WHERE entry_rowid = ?').get(rowid) as { box_id: string };
+
+    mem.removeEntry(rowid);
+
+    await assertRowsGone(db, rowid, inputId.box_id, mem);
+  });
+
+  it('an insert that fails after its eviction leaves the pool as it was', async () => {
+    // The capacity gate's eviction and the row's INSERT commit together or
+    // not at all (MEMPOOL_INTERFACE → insertUtxoTx → "One SQLite
+    // transaction."). A trigger aborts the INSERT of the arrival's `tx_id`
+    // after the eviction has run.
+    const { computeTxId, encodeTx } = await import('@dagsocial/types');
+    const { entryByteCost } = await import('../../src/store/mempool.js');
+    const resident = seededCreditTx('cheap_resident_Z', 1000n, 990n); // fee 10
+    const mem = await importCappedWithBoxes(2, [resident.box]);
+
+    mem.insertUtxoTx(resident.tx as any, 100);
+    const db = (await importDbFresh()).getDb();
+    const residentRow = db.prepare('SELECT tx_id, tx_fee, tx_bytes FROM mempool')
+      .get() as { tx_id: string; tx_fee: bigint | number; tx_bytes: number };
+
+    const arrival = creditTxSpending('ab'.repeat(32), 900n);
+    const arrivalTxId = computeTxId(arrival as never);
+    db.exec(
+      `CREATE TRIGGER abort_arrival_insert BEFORE INSERT ON mempool
+         WHEN NEW.tx_id = '${arrivalTxId}'
+         BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+    );
+
+    // Controls: class full, resident pooled; arrival outbids resident on
+    // the same cross-multiplied rate.
+    const fullRow = db.prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL')
+      .get() as { n: number };
+    expect(fullRow.n).toBe(1);
+    const residentFee = BigInt(residentRow.tx_fee as number);
+    const residentBytes = BigInt(residentRow.tx_bytes);
+    const arrivalBytes = BigInt(entryByteCost(encodeTx(arrival as never)));
+    const arrivalFee = 900n;
+    expect(arrivalFee * residentBytes).toBeGreaterThan(residentFee * arrivalBytes);
+
+    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(/boom/);
+
+    const residentStill = db.prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1')
+      .get(residentRow.tx_id);
+    expect(residentStill).toBeDefined();
   });
 });
 

@@ -27,21 +27,45 @@ CREATE TABLE mempool (
     expires_at_height INTEGER NOT NULL, -- Block height after which entry is purged
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     like_target TEXT, like_liker TEXT,          -- gate metadata (below)
-    invite_inviter TEXT,                        -- gate metadata (below)
+    invite_inviter TEXT, invite_invitee TEXT,   -- gate metadata (below)
     vouch_voucher TEXT, vouch_target TEXT,      -- gate metadata (below)
     tx_fee INTEGER, tx_bytes INTEGER,           -- fee-class metadata (§Eviction)
     max_valid_height INTEGER,                   -- utxo_tx only: validity ceiling, NULL = none (§Validity ceiling)
-    tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
     tx_id TEXT,                                 -- the entry's own TxId (confirmed-entry cleanup)
     username_lower TEXT, username_claimant TEXT, -- claim-gate metadata (below)
     karma_owner TEXT, karma_spend INTEGER,      -- spend-gate metadata (below)
+    withdraw_post TEXT,                         -- gate metadata (below)
     cost_estimate INTEGER                       -- the cost gate's marginal cost (§The cost gate); NULL uncosted
 );
 
 CREATE INDEX IF NOT EXISTS idx_mempool_tx_id ON mempool(tx_id) WHERE tx_id IS NOT NULL;
+
+-- An entry's inputs, and the ids of the boxes it would create: one row a box.
+CREATE TABLE mempool_inputs (
+    box_id      TEXT PRIMARY KEY,
+    entry_rowid INTEGER NOT NULL REFERENCES mempool(rowid) ON DELETE CASCADE
+) WITHOUT ROWID;
+CREATE TABLE mempool_outputs (
+    box_id      TEXT PRIMARY KEY,
+    entry_rowid INTEGER NOT NULL REFERENCES mempool(rowid) ON DELETE CASCADE
+) WITHOUT ROWID;
+CREATE INDEX idx_mempool_inputs_entry  ON mempool_inputs(entry_rowid);
+CREATE INDEX idx_mempool_outputs_entry ON mempool_outputs(entry_rowid);
 ```
 
 The SQLite `rowid` is the canonical identifier for entries.
+
+**An entry's inputs and outputs are rows keyed by box id**, written by `insertUtxoTx` in the transaction that writes
+the entry; the output ids come from `materializeOutput`, the call block application makes. The pending view and the
+conflict gate are point reads on them (→ getBoxWithPending). SQLite indexes no member of a JSON array, so a box id kept
+in a column of the entry's own row is found only by reading every row: 311 inputs checked that way measured 644 ms
+at a pool of 10 000, and 0.15 ms against `mempool_inputs` (2026-10-21). **One pending spender per box is the input
+table's key**: the conflict gate refuses a second spender before the insert, with its 409 naming the box, and the key
+holds the rule on any path that reaches the insert. An output id is a function of its transaction and position, and
+the engine refuses a transaction that spends no input (`NODE_INTERFACE → validateTx`), so a second entry naming a pooled
+output is that transaction again, which its inputs refuse first. **The rows leave with their entry on every path** —
+confirmation, expiry, eviction, removal — by `ON DELETE CASCADE`, which holds because `initDb` turns foreign keys on;
+the `entry_rowid` indexes are what the cascade and a per-entry read find them by.
 
 **`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
 no additional hash. It exists because cleanup has to find an entry *by transaction identity* when a
@@ -136,6 +160,16 @@ switch and strands the node on the lighter chain. `TxTooLargeError` is dropped a
 `MempoolFullError` already is. A transaction that rode in a block cannot exceed the bound — validation
 refuses those — so the path should never trip it, and it is defended anyway.
 
+**The conflict gate runs before the capacity gate.** An arrival spending a box a pooled entry spends is refused
+(`PendingSpendConflictError`, 409) before it can displace anything: a full credit class would otherwise evict its
+cheapest resident for an arrival that is then refused — or, where that resident is the conflicting entry itself,
+replace it, which this pool never does (→ No replacement semantics). The relay reaches the gate with such an
+arrival, since it validates against the confirmed set alone (→ getBoxWithPending).
+
+**One SQLite transaction.** The eviction a full credit class makes, the entry's row and its input and output rows
+commit together or not at all (`ARCHITECTURE → "Single-transaction atomic writes"`); inside a caller's transaction —
+the reorg's re-insertion — it runs as a savepoint of that one.
+
 - `expiresAtHeight` is the block height at which the entry becomes invalid.
 - `costEstimate` is the cost gate's marginal cost, written as the row's `cost_estimate` (→ The cost gate); a caller
   that did not cost the transaction — a reorg's re-insertion — passes none, and the row carries NULL.
@@ -224,7 +258,9 @@ confirmed or pending. ⛔ **The subtraction answers as the pending-spend conflic
 box**: for a box a pooled entry spends the view throws `PendingSpendConflictError` (409) where
 `validateTx` reads the input, so every write route's 409 is reachable and a client can tell a box tied
 up in the pool from one spent on chain (`WEB_INTERFACE → The wallet`, the pending ledger's 409); `null` is the
-answer for a box that exists nowhere. **Submission's `getBox`, and nothing else's.** The HTTP routes validate against
+answer for a box that exists nowhere. **Three point reads**, in that order: the box's `mempool_inputs` row, present
+being the conflict; the confirmed set; the box's `mempool_outputs` row, with the bytes of the entry it names, decoded
+for that one box (→ Schema). **Submission's `getBox`, and nothing else's.** The HTTP routes validate against
 it, so a transaction spending the change of one still in the pool is admitted — and a child therefore
 enters the pool only while its predecessor is confirmed or already pooled, and the fill selects it only
 after its predecessor (→ Block Creator Integration), the order the ordering rule at apply requires
@@ -246,7 +282,8 @@ holds at most two karma boxes"` — and nothing else's. An owner with a pooled k
 spend's change, and none where it returned no change; an owner with nothing pooled holds their
 confirmed own box. So a transaction that chains on a pooled spend names its change, and one that names
 the income box alone is admitted exactly where the pool's entries ahead of it leave the owner no own
-box. The pooled rows are found by `karma_owner`, never by a scan. The relay answers the same rule over
+box. The pooled rows are found by `karma_owner`, never by a scan, and the boxes they spend by those rows' `mempool_inputs`
+rows. The relay answers the same rule over
 the confirmed set, as it resolves inputs.
 
 ### getPendingEntries
@@ -777,7 +814,9 @@ structure. The block creator decodes entries when assembling blocks.
 ### No separate tables
 
 A single table with a type discriminator rather than one table per entry type.
-This gives unified FIFO ordering and simpler expiry.
+This gives unified FIFO ordering and simpler expiry. `mempool_inputs` and `mempool_outputs` are not entry
+tables: they hold no entry, only the box ids of the entries the one table holds, which the entry's own row
+cannot index (→ Schema).
 
 ---
 

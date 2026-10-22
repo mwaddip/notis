@@ -78,7 +78,7 @@ import {
   setCostEstimate,
 } from '../store/mempool.js';
 import {
-  getOrderingBlock,
+  getHeaderAt,
   getCurrentHeight,
   getRentEligibleCreditBoxes,
   getInterlinks,
@@ -916,10 +916,12 @@ export function createOrderingBlock(): OrderingBlock | null {
     //     produced either way, because the chain advancing is not conditional on
     //     income.
 
-    // 16. Previous block hash. `prevBlock` is our own stored tip: `currentHeight`
-    // is `MAX(height)` over the same table, so on a non-empty chain the row is
-    // there by construction, and its header passed the apply gate on the way in.
-    // Either failure means the store is no longer what this node wrote.
+    // 16. Previous block hash. `prevHeader` is our own stored tip's header —
+    // the row's header alone through `getHeaderAt`, never the body
+    // (NODE_INTERFACE → Ordering blocks). `currentHeight` is `MAX(height)` over
+    // the same table, so on a non-empty chain the row is there by
+    // construction, and its header passed the apply gate on the way in. Either
+    // failure means the store is no longer what this node wrote.
     //
     // Both go to the boundary rather than declining to produce. Declining is the
     // producer's mirror of blaming an arriving block for our own store — and the
@@ -927,12 +929,12 @@ export function createOrderingBlock(): OrderingBlock | null {
     // no template, produces nothing, and is handed no second attempt: a node that
     // never produces while staying up is indistinguishable from an idle miner —
     // the same silence, from the other end of the same fault.
-    const prevBlock = currentHeight > 0 ? getOrderingBlock(currentHeight) : null;
-    if (currentHeight > 0 && !prevBlock) {
+    const prevHeader = currentHeight > 0 ? getHeaderAt(currentHeight) : null;
+    if (currentHeight > 0 && !prevHeader) {
       failStopIfCorruptChain(new MissingStoredBlockError('createOrderingBlock', currentHeight));
     }
-    const prevBlockHash = prevBlock
-      ? blockHash(prevBlock.header)
+    const prevBlockHash = prevHeader
+      ? blockHash(prevHeader)
       : GENESIS_PREV_BLOCK_HASH;
     if (prevBlockHash === null) {
       failStopIfCorruptChain(
@@ -943,7 +945,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     // 14. MINING_INTERFACE → Difficulty Schedule
     const powTargetBits = currentHeight === 0
       ? config.orderingBlockPowTargetBits
-      : scheduledTargetBits(prevBlock!.header);
+      : scheduledTargetBits(prevHeader!);
 
     // 19. The header template (powNonce=0). `utxoTxRoot` is the Merkle root of
     // the body it heads, and `stateRoot` and `adProofsRoot` are placeholders,
@@ -954,7 +956,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     // interlinkRoot: the root the header commits to (TYPES_INTERFACE → Interlink
     // vector). A null level or missing vector on our own tip → the boundary.
     let templateInterlinks: string[];
-    if (prevBlock) {
+    if (prevHeader) {
       const storedInterlinks = getInterlinks(currentHeight);
       if (storedInterlinks === null) {
         failStopIfCorruptChain(
@@ -962,13 +964,13 @@ export function createOrderingBlock(): OrderingBlock | null {
         );
       }
       // VALIDATION_INTERFACE → level: null is no level, not a fail-stop
-      const prevLevel = level(prevBlock.header, config.orderingBlockPowTargetBits);
+      const prevLevel = level(prevHeader, config.orderingBlockPowTargetBits);
       templateInterlinks = updateInterlinks(storedInterlinks!, prevBlockHash!, prevLevel);
     } else {
       templateInterlinks = [];
     }
     // MINING_INTERFACE → Header timestamp rules, producer side
-    const createdAt = Math.max(nowMs(), (prevBlock?.header.createdAt ?? 0) + 1);
+    const createdAt = Math.max(nowMs(), (prevHeader?.createdAt ?? 0) + 1);
     const candidateOf = (tree: UtxoTxTree): OrderingBlock => ({
       header: {
         protocolVersion: era,

@@ -1,4 +1,4 @@
-import { getDb } from '../store/db.js';
+import { getDb, prepared } from '../store/db.js';
 import {
   ensureSystemKarmaBox,
   ensureFaucetCreditBox,
@@ -81,15 +81,13 @@ export function assertGenesisRoot(): void {
  * `BEGIN IMMEDIATE` as the claim it acts on.
  */
 export function isGenesisCommitted(): boolean {
-  const row = getDb()
-    .prepare('SELECT 1 AS present FROM system_config WHERE key = ?')
+  const row = prepared(getDb(), 'SELECT 1 AS present FROM system_config WHERE key = ?')
     .get(GENESIS_COMMITTED_KEY) as { present: number } | undefined;
   return row !== undefined;
 }
 
 function markGenesisCommitted(): void {
-  getDb()
-    .prepare('INSERT INTO system_config (key, value) VALUES (?, ?)')
+  prepared(getDb(), 'INSERT INTO system_config (key, value) VALUES (?, ?)')
     .run(GENESIS_COMMITTED_KEY, Buffer.from([1]));
 }
 

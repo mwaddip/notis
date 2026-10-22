@@ -1243,14 +1243,16 @@ from a decoder or an HTTP body and the compiler has never seen it.
 ### verifyBlockChainLink
 
 ```
-verifyBlockChainLink(block: OrderingBlock, prevBlock: OrderingBlock): boolean
+verifyBlockChainLink(block: OrderingBlock, prevHeader: BlockHeader): boolean
 ```
 
-Returns `true` iff `block.header.prevBlockHash === blockHash(prevBlock.header)`
-and `block.header.height === prevBlock.header.height + 1`. The previous block's
+Returns `true` iff `block.header.prevBlockHash === blockHash(prevHeader)`
+and `block.header.height === prevHeader.height + 1`. The previous block's
 hash is **recomputed from its header**, never read off the block — a block
-carries no `hash` field. Pure chain-link check — does not verify PoW,
-signatures, or UTXO state transitions.
+carries no `hash` field. **It takes the previous header, not the previous block**,
+because the header is all it reads: a caller holding a stored tip reads its header alone
+(`NODE_INTERFACE → Ordering blocks`), never a body of up to `MAX_ORDERING_BLOCK_BYTES`. Pure
+chain-link check — does not verify PoW, signatures, or UTXO state transitions.
 
 This is the sanctioned chain-link check: `applyOrderingBlock` calls it for
 every non-genesis block (the genesis case has no previous block to link to).

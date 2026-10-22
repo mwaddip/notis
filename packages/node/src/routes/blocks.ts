@@ -5,17 +5,6 @@ import { postIdsOf } from '@dagsocial/consensus';
 import type { NetworkRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------
-// The karma supply set
-// ---------------------------------------------------------------------------
-
-/**
- * The box types whose value counts as karma that exists — what `getTotalKarma`
- * sums. Defined in `karma-supply.ts`, which states the rule; re-exported here
- * because `GET /status` is the reader this route serves.
- */
-export { KARMA_SUPPLY_TYPES } from '../karma-supply.js';
-
-// ---------------------------------------------------------------------------
 // Dependency types
 // ---------------------------------------------------------------------------
 
@@ -110,6 +99,27 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
 export function createRouter(deps: BlocksDeps): Router {
   const router = Router();
 
+  // NODE_INTERFACE → Status → "Every figure but `pendingPosts` is read once
+  // per applied tip". `postCount`, `usernameCount`, `totalKarma`, `liquidKarma`
+  // and `totalCredits` are keyed on the tip's height and the hash the store
+  // answers at it — an empty chain reads `0:` because height 0 holds no row —
+  // and a request whose key differs from the held one recomputes all five.
+  // The two fields together, so no two tips share a key whatever the store
+  // answers. The holder belongs to this router instance, so each app holds
+  // its own.
+  let heldKey: string | null = null;
+  let heldPostCount = 0;
+  let heldUsernameCount = 0;
+  let heldTotalKarma = 0n;
+  let heldLiquidKarma = 0n;
+  let heldTotalCredits = 0n;
+
+  function tipKey(): string {
+    const height = deps.getCurrentHeight();
+    const hash = height === 0 ? '' : (deps.getOrderingBlockHash(height) ?? '');
+    return `${height}:${hash}`;
+  }
+
   // GET /blocks/current — must be defined BEFORE /blocks/:height
   router.get('/blocks/current', (_req, res) => {
     const height = deps.getCurrentHeight();
@@ -165,6 +175,15 @@ export function createRouter(deps: BlocksDeps): Router {
   // GET /status — aggregated node status
   router.get('/status', (_req, res) => {
     const blockHeight = deps.getCurrentHeight();
+    const key = tipKey();
+    if (key !== heldKey) {
+      heldPostCount = deps.getPostCount();
+      heldUsernameCount = deps.countUsernames();
+      heldTotalKarma = deps.getTotalKarma();
+      heldLiquidKarma = deps.getLiquidKarma();
+      heldTotalCredits = deps.getTotalCredits();
+      heldKey = key;
+    }
     res.json({
       networkType: deps.networkType,
       blockHeight,
@@ -172,12 +191,12 @@ export function createRouter(deps: BlocksDeps): Router {
       // because a client reproduces it rather than holding a constant
       // (NODE_INTERFACE → Status).
       protocolVersion: protocolVersionAt(deps.protocolVersionSchedule, blockHeight + 1),
-      postCount: deps.getPostCount(),
+      postCount: heldPostCount,
       pendingPosts: deps.getPendingPostCount(),
-      usernameCount: deps.countUsernames(),
-      totalKarma: deps.getTotalKarma().toString(),
-      liquidKarma: deps.getLiquidKarma().toString(),
-      totalCredits: deps.getTotalCredits().toString(),
+      usernameCount: heldUsernameCount,
+      totalKarma: heldTotalKarma.toString(),
+      liquidKarma: heldLiquidKarma.toString(),
+      totalCredits: heldTotalCredits.toString(),
       // A plain number, unlike the two decimal strings above — it is not a
       // bigint server-side (`Config.inviteProbationBlocks`).
       inviteProbationBlocks: deps.inviteProbationBlocks,

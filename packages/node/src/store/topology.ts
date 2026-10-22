@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 
 /**
  * Record a post's parent references and author at the block height where it was
@@ -13,10 +13,8 @@ export function insertBlockTopology(
   author: string,
   blockHeight: number,
 ): void {
-  getDb().prepare(
-    `INSERT OR IGNORE INTO block_topology (post_id, parent_refs, author, block_height)
-     VALUES (?, ?, ?, ?)`,
-  ).run(postId, JSON.stringify(parentRefs), author, blockHeight);
+  prepared(getDb(), `INSERT OR IGNORE INTO block_topology (post_id, parent_refs, author, block_height)
+     VALUES (?, ?, ?, ?)`).run(postId, JSON.stringify(parentRefs), author, blockHeight);
 }
 
 /**
@@ -27,8 +25,7 @@ export function insertBlockTopology(
  * content.
  */
 export function getTopologyAuthor(postId: string): string | null {
-  const row = getDb()
-    .prepare('SELECT author FROM block_topology WHERE post_id = ?')
+  const row = prepared(getDb(), 'SELECT author FROM block_topology WHERE post_id = ?')
     .get(postId) as { author: string } | undefined;
   return row ? row.author : null;
 }
@@ -53,8 +50,7 @@ export function getTopologyAuthorBytes(postId: string): Uint8Array | null {
  * transactions).
  */
 export function getTopologyHeight(postId: string): number | null {
-  const row = getDb()
-    .prepare('SELECT block_height FROM block_topology WHERE post_id = ?')
+  const row = prepared(getDb(), 'SELECT block_height FROM block_topology WHERE post_id = ?')
     .get(postId) as { block_height: number } | undefined;
   return row ? row.block_height : null;
 }
@@ -64,8 +60,6 @@ export function getTopologyHeight(postId: string): number | null {
  * Called during fork resolution to roll back topology from reverted blocks.
  */
 export function rollbackBlockTopology(blockHeight: number): void {
-  getDb().prepare(
-    `DELETE FROM block_topology WHERE block_height = ?`,
-  ).run(blockHeight);
+  prepared(getDb(), `DELETE FROM block_topology WHERE block_height = ?`).run(blockHeight);
 }
 

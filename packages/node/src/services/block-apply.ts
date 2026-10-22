@@ -33,7 +33,7 @@ import {
   isLivePost,
   getCurrentHeight,
   createOrderingBlock as storeCreateOrderingBlock,
-  getOrderingBlock,
+  getHeaderAt,
   removeUtxoTxEntry,
   insertBlockTopology,
   getTopologyAuthorBytes,
@@ -97,7 +97,7 @@ import {
   interlinkRoot,
   updateInterlinks,
 } from '@dagsocial/types';
-import type { AnyBox, OrderingBlock } from '@dagsocial/types';
+import type { AnyBox, BlockHeader, OrderingBlock } from '@dagsocial/types';
 
 /**
  * Signals "this block is invalid" from inside the transaction that wraps block
@@ -382,9 +382,11 @@ function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; index
   const currentHeight = getCurrentHeight();
 
   // 1. Chain-link check + interlink root + genesis pin
-  // (NODE_INTERFACE → Ordering block apply-time authorization)
+  // (NODE_INTERFACE → Ordering block apply-time authorization). The store read
+  // is `getHeaderAt` — the row's header alone, never the body
+  // (NODE_INTERFACE → Ordering blocks).
   let expectedInterlinks: string[];
-  let prevBlock: OrderingBlock | null = null;
+  let prevHeader: BlockHeader | null = null;
   if (currentHeight === 0) {
     // Genesis: prevBlockHash must be all zeros
     if (block.header.prevBlockHash !== GENESIS_PREV_BLOCK_HASH) {
@@ -417,20 +419,20 @@ function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; index
     // every block after it (NODE_INTERFACE → Ordering block apply-time
     // authorization; NODE_INTERFACE → Ordering blocks, the corrupt-header
     // tripwire).
-    prevBlock = getOrderingBlock(currentHeight);
-    if (!prevBlock) {
+    prevHeader = getHeaderAt(currentHeight);
+    if (!prevHeader) {
       throw new MissingStoredBlockError('applyOrderingBlock', currentHeight);
     }
-    const prevHash = validation.blockHash(prevBlock.header);
+    const prevHash = validation.blockHash(prevHeader);
     if (prevHash === null) {
       throw new UnhashableStoredHeaderError('applyOrderingBlock', currentHeight);
     }
-    if (!validation.verifyBlockChainLink(block, prevBlock)) {
+    if (!validation.verifyBlockChainLink(block, prevHeader)) {
       console.warn(`Rejected block height=${block.header.height}: chain link check failed`);
       return null;
     }
     // MINING_INTERFACE → Header timestamp rules, order rule
-    if (!validation.verifyCreatedAtOrder(block.header, prevBlock.header)) {
+    if (!validation.verifyCreatedAtOrder(block.header, prevHeader)) {
       console.warn(`Rejected block height=${block.header.height}: createdAt not above the parent's`);
       return null;
     }
@@ -444,7 +446,7 @@ function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; index
       throw new UnhashableStoredHeaderError('applyOrderingBlock/interlinks', currentHeight);
     }
     // VALIDATION_INTERFACE → level: null is no level, not a fail-stop
-    const prevLevel = validation.level(prevBlock.header, config.orderingBlockPowTargetBits);
+    const prevLevel = validation.level(prevHeader, config.orderingBlockPowTargetBits);
     expectedInterlinks = updateInterlinks(storedInterlinks, prevHash, prevLevel);
   }
   if (block.header.interlinkRoot !== interlinkRoot(expectedInterlinks)) {
@@ -466,7 +468,7 @@ function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; index
   // header mines a near-free block that satisfies its own claim.
   const scheduledTarget = currentHeight === 0
     ? config.orderingBlockPowTargetBits
-    : scheduledTargetBits(prevBlock!.header);
+    : scheduledTargetBits(prevHeader!);
   if (block.header.powTargetBits !== scheduledTarget) {
     console.warn(
       `Rejected block height=${block.header.height}: powTargetBits ` +

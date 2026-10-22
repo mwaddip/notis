@@ -1,12 +1,11 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import { getOrderingBlockHash } from './ordering.js';
 
 /**
  * Idempotent insert — a second refusal of the same block is a no-op.
  */
 export function insertRefusedHeader(hash: string, height: number, refusedAt: number): void {
-  getDb()
-    .prepare('INSERT OR IGNORE INTO refused_headers (hash, height, refused_at) VALUES (?, ?, ?)')
+  prepared(getDb(), 'INSERT OR IGNORE INTO refused_headers (hash, height, refused_at) VALUES (?, ?, ?)')
     .run(hash, height, refusedAt);
 }
 
@@ -44,7 +43,6 @@ export function headerStanding(hash: string, height: number): 'held' | 'refused'
  * the same bound: `height − maxReorgDepth` (NODE_INTERFACE → Refused headers).
  */
 export function purgeRefusedHeaders(belowHeight: number): void {
-  getDb()
-    .prepare('DELETE FROM refused_headers WHERE height < ?')
+  prepared(getDb(), 'DELETE FROM refused_headers WHERE height < ?')
     .run(belowHeight);
 }

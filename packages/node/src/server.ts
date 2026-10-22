@@ -5,7 +5,7 @@ import { createRouter as inviteRoutes } from './routes/invites.js';
 import { withdrawRoutes } from './routes/withdraw.js';
 import { createRouter as utxoRoutes } from './routes/utxo.js';
 import { createRouter as vouchRoutes } from './routes/vouches.js';
-import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks.js';
+import { createRouter as blockRoutes } from './routes/blocks.js';
 import { createRouter as miningRoutes } from './routes/mining.js';
 import { createRouter as nipopowRoutes } from './routes/nipopow.js';
 import { createRouter as usernameRoutes } from './routes/usernames.js';
@@ -473,79 +473,17 @@ export function createApp(config: Config): express.Express {
 
   // Blocks + Status — mounts at /, routes include /blocks/current, /blocks/:height,
   // /blocks/:height/proof, /status
-  const db = getDb();
   app.use(
     '/',
     blockRoutes({
       getOrderingBlock: guardStoreRead(store.getOrderingBlock),
       getOrderingBlockHash: store.getOrderingBlockHash,
       getCurrentHeight: store.getCurrentHeight,
-      getPostCount: () =>
-        (
-          db
-            .prepare(
-              "SELECT COUNT(*) AS c FROM dag_posts WHERE status = 'confirmed'",
-            )
-            .get() as { c: number }
-        ).c,
-      getPendingPostCount: () =>
-        (
-          db
-            .prepare(
-              "SELECT COUNT(*) AS c FROM dag_posts WHERE status = 'pending'",
-            )
-            .get() as { c: number }
-        ).c,
-      // Karma in existence, escrow included: karma held in a bond, a vouch
-      // escrow or a like accrual is held, not destroyed. The types come from
-      // `KARMA_SUPPLY_TYPES`, which answers that question and only that one —
-      // it is independent of the transition set the engine's karma arm admits
-      // as outputs, and a karma-bearing type is added to each separately
-      // (NODE_INTERFACE → "Three karma sets, and none derives from another").
-      getTotalKarma: () => {
-        const row = db
-          .prepare(
-            `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
-              WHERE box_type IN (${KARMA_SUPPLY_TYPES.map(() => '?').join(', ')})
-                AND spent_at_block IS NULL`,
-          )
-          .safeIntegers()
-          .get(...KARMA_SUPPLY_TYPES) as { s: bigint };
-        return row.s;
-      },
-      // Karma its owner can spend now — the escrowed four are excluded by
-      // construction.
-      getLiquidKarma: () => {
-        const row = db
-          .prepare(
-            "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'karma' AND spent_at_block IS NULL",
-          )
-          .safeIntegers()
-          .get() as { s: bigint };
-        return row.s;
-      },
-      // Credits in circulation. ⛔ **`emission` and `treasury` are deliberately
-      // not summed here.** The emission box holds what has never been released
-      // and the treasury holds what is out of circulation with no rule to
-      // release it (ARCHITECTURE → Treasury), so counting either would report a
-      // supply larger than anyone can hold. Keyed on `credit` by name rather
-      // than by excluding them, so a later credit-bearing box type is a
-      // deliberate addition here.
-      //
-      // ⛔ **`fee` is credit-bearing and is still not summed**, because the sum
-      // could only ever be zero: block application consumes a fee box in the
-      // block that created it (MINING_INTERFACE → Coinbase Application), so no
-      // fee box is unspent at any height a caller can observe. Its value
-      // reaches this total through the coinbase, as a `credit` box.
-      getTotalCredits: () => {
-        const row = db
-          .prepare(
-            "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'credit' AND spent_at_block IS NULL",
-          )
-          .safeIntegers()
-          .get() as { s: bigint };
-        return row.s;
-      },
+      getPostCount: store.countConfirmedPosts,
+      getPendingPostCount: store.countPendingPosts,
+      getTotalKarma: store.getTotalKarma,
+      getLiquidKarma: store.getLiquidKarma,
+      getTotalCredits: store.getTotalCredits,
       networkType: config.networkType,
       inviteProbationBlocks: config.inviteProbationBlocks,
       vouchCooldownBlocks: config.vouchCooldownBlocks,

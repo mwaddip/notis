@@ -295,8 +295,9 @@ export function reorg(forkHeight: number, newHashes: readonly string[]): void {
   // A post rides its own transaction, so re-inserting the transactions
   // re-inserts the posts. `journal.confirmedPostIds` is the un-confirm half
   // of the rollback and not a mempool key (NODE_INTERFACE → Block Journal).
-  // Ascending order re-pools a predecessor before its dependent, so the fill
-  // preserves the ordering rule at apply (NODE_INTERFACE → Block finalization).
+  // The fill's dependency skip holds the ordering rule at apply — an entry
+  // whose input is neither confirmed nor an output of an entry already
+  // selected waits a block (MEMPOOL_INTERFACE → Block Creator Integration).
   const newTipHeight = forkHeight + newHashes.length;
   const mempoolExpiry = newTipHeight + MEMPOOL_EXPIRY_BLOCKS;
   for (const journal of [...revertedJournals].reverse()) {

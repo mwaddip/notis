@@ -254,29 +254,27 @@ describe('a stored header that cannot be hashed', () => {
       validatorSignature: new Uint8Array(64),
     });
 
-    // `createdAt: -1` is outside `vlqU`'s domain, and the field nothing checked
-    // before Phase 1f. The only way in is the store: `createOrderingBlock` is
-    // what apply calls *after* the gate that would have refused this header.
+    // `createdAt: -1` is outside `vlqU`'s domain, and
+    // `verifyHeaderFieldDomains` refuses it (VALIDATION_INTERFACE →
+    // verifyHeaderFieldDomains). The only way in is a row written to the store
+    // directly: `createOrderingBlock` is what apply calls *after* the gate
+    // that would have refused this header.
     //
-    // ⚠ **Phase 3b changed where this surfaces, and the change is structural.**
-    // Under cbor the corruption round-tripped, so the header came back out of
-    // the store intact and failed later, at `blockHash` — which is what
-    // `UnhashableStoredHeaderError` was built to report. Under the positional
-    // format `-1` writes `VLQ_SENTINEL`, so the row is still *written* but can
-    // never be *read*: `readVlqU` refuses ten bytes past `MAX_SAFE_INTEGER`.
+    // The positional writer is total and sentinels `-1` as `VLQ_SENTINEL`, so
+    // the row is written and cannot be read: `readVlqU` refuses ten bytes past
+    // `MAX_SAFE_INTEGER`.
     //
     // The consequence is bigger than this fixture. Every value `readVlqU`,
-    // `readHexN` and `readBytesN` can produce is already inside
-    // `verifyHeaderFieldDomains` — safe non-negative integers, lowercase hex of
-    // the exact width, exactly 32 bytes — so **a stored header that decodes is
-    // always hashable**, and `blockHash` cannot answer `null` on this path. The
-    // decode boundary subsumes the domain check, which is the "serializer is the
-    // validator" property holding for the header.
+    // `readHexN` and `readBytesN` produce is inside `verifyHeaderFieldDomains`
+    // — safe non-negative integers, lowercase hex of the exact width, exactly
+    // 32 bytes — so **a stored header that decodes is always hashable**, and
+    // `blockHash` cannot answer `null` on this path. The decode boundary
+    // subsumes the domain check, the "serializer is the validator" property
+    // holding for the header.
     //
-    // That leaves `UnhashableStoredHeaderError` unreachable from the store. It
-    // stays because the argument above is a claim about the rest of the tree
-    // rather than a property of this function, and these tests pin the behaviour
-    // the claim would have to survive.
+    // `UnhashableStoredHeaderError` stays because that argument is about the
+    // rest of the tree rather than a property of this function, and these
+    // cases pin the behaviour it would have to survive.
     // A prover over the store, so apply reaches the chain-link read: a node
     // with none refuses every block before it (NODE_INTERFACE → Post-block
     // stateRoot → "A node applies and produces over its prover, and has no
@@ -394,33 +392,30 @@ describe('a stored header that cannot be hashed', () => {
     expect(blockHash(past.header)).toBeNull();
   });
 
-  // **WHERE PHASE 3b MOVED THIS FAIL-STOP, AND WHERE IT NOW LIVES.**
+  // The apply path's store read is `getHeaderAt` (NODE_INTERFACE → Ordering
+  // blocks → "Who reads the `block_hash` column, and who deliberately does
+  // not"), and a row whose `header_bytes` do not decode raises
+  // `UnreadableStoredBlockError` at that site — a `CorruptChainStateError` the
+  // funnel's existing arm re-throws and the boundary fail-stops on.
   //
-  // Before: a stored header outside the domain came back out of the store
-  // intact, `blockHash` answered `null`, and the apply path raised
-  // `UnhashableStoredHeaderError` — typed, naming its site and height, and
-  // re-thrown through `applyOrderingBlock`'s totality catch so that local
-  // corruption could not be filed as a network problem.
+  // What it must NOT throw is a bare `ReaderError`, which is not in the
+  // funnel's re-throw allowlist: the totality catch would absorb it into
+  // `return false`, `reorg` would report its generic "block at height N
+  // rejected", and `index.ts` would log that as `Fork resolution error` and
+  // carry on. The case below asserts the wrapped error, which is the
+  // difference between a corrupt store announcing itself and a corrupt store
+  // reading as an ordinary rejection.
   //
-  // Under the positional format the header does not decode at all, so the store
-  // read throws before `blockHash` is ever reached. What it must NOT throw is a
-  // bare `ReaderError`, which is **not** in the funnel's re-throw allowlist: the
-  // totality catch would absorb it into `return false`, `reorg` would report its
-  // generic "block at height N rejected", and `index.ts` would log that as
-  // `Fork resolution error` and carry on. The two cases below assert the wrapped
-  // error, which is the difference between a corrupt store announcing itself and
-  // a corrupt store reading as an ordinary rejection.
-  //
-  // **The fix is in the store, not in the catch.** At the catch, `err
-  // instanceof ReaderError` is equally true for `decodeTx` over the block's own
-  // `utxoTxs` — bytes the *producer* chose. Inside `getOrderingBlock` the
-  // provenance is not inferred, it is structural: `ordering_blocks` has exactly
-  // one INSERT, in `block-apply` downstream of the structure gate, and what it
-  // stores is our own re-encoding of the decoded block rather than any bytes a
-  // peer sent. A row that will not decode is therefore our corruption or our
-  // bug, never a peer's input — so it leaves as `UnreadableStoredBlockError`,
-  // a `CorruptChainStateError`, which the funnel's existing arm already carries
-  // and the boundary already fail-stops on. No new escape from the catch.
+  // **The store names the fault, not the catch.** At the catch, `err
+  // instanceof ReaderError` is equally true for `decodeTx` over the block's
+  // own `utxoTxs` — bytes the *producer* chose. Inside the store the
+  // provenance is not inferred, it is structural: `ordering_blocks` has
+  // exactly one INSERT, in `block-apply` downstream of the structure gate, and
+  // what it stores is our own re-encoding of the decoded block rather than any
+  // bytes a peer sent. A row that will not decode is therefore our corruption
+  // or our bug, never a peer's input — so it leaves as
+  // `UnreadableStoredBlockError`, which the funnel's existing arm already
+  // carries and the boundary already fail-stops on.
   //
   // The load-bearing difference is **reach**: the store frame names the fault
   // so every reader raises one class, and every outer frame — both
@@ -429,9 +424,9 @@ describe('a stored header that cannot be hashed', () => {
   // argument, not the halt").
   //
   // Reachability, stated so the severity is not overread: a header can only
-  // reach the store outside the domain if it bypassed `verifyHeaderFieldDomains`
-  // (Phase 1f), which apply runs. So the trigger is a corrupt or hand-edited
-  // database, or a downgrade — which is precisely the population
+  // reach the store outside `verifyHeaderFieldDomains`
+  // (VALIDATION_INTERFACE → verifyHeaderFieldDomains), which apply runs, by a
+  // corrupt or hand-edited database, or a downgrade — the population
   // `failStopIfCorruptChain` exists for.
 
   it('applyOrderingBlock surfaces the unreadable store row instead of swallowing it', async () => {
@@ -446,7 +441,7 @@ describe('a stored header that cannot be hashed', () => {
     // against.
     const caught = thrownBy(() => applyOrderingBlock(buildBlock(2, 1)));
     expect(caught).toBeInstanceOf(corruptState.UnreadableStoredBlockError);
-    expect((caught as { site: string }).site).toBe('getOrderingBlock');
+    expect((caught as { site: string }).site).toBe('getHeaderAt');
     expect((caught as { height: number }).height).toBe(1);
   });
 
@@ -583,6 +578,56 @@ describe('a stored header that cannot be hashed', () => {
       warnings.some((w) => w.includes('did not decode')),
       `no decode warning; got ${JSON.stringify(warnings)}`,
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — a stored tip whose body will not read (NODE_INTERFACE → Ordering
+// blocks → "Who reads the `block_hash` column, and who deliberately does
+// not"). `applyBlockBody`'s chain-link read is `getHeaderAt`, so a tip whose
+// `utxotx_tree_bytes` cannot decode leaves the apply path alone.
+// ---------------------------------------------------------------------------
+
+describe('a stored tip whose body will not read', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.resetModules();
+  });
+
+  it('applyOrderingBlock reads the previous header alone', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    await activateProverOverStore();
+
+    const miner = makeTestIdentity();
+    const block1 = await makeApplicableBlock({ miner, height: 1 });
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as unknown as { applyOrderingBlock: (b: OrderingBlock) => boolean };
+    expect(applyOrderingBlock(block1)).toBe(true);
+
+    // The next block is built BEFORE the row is corrupted: `makeApplicableBlock`
+    // reads the tip through `getOrderingBlock`, which the body corruption
+    // refuses (`UnreadableStoredBlockError`).
+    const block2 = await makeApplicableBlock({ miner, height: 2 });
+
+    // Ten continuation bytes with no terminator — past the VLQ safe-integer
+    // range, so `decodeUtxoTxTree` raises `ReaderError` and
+    // `getOrderingBlock` wraps it (`UnreadableStoredBlockError`).
+    db.getDb()
+      .prepare('UPDATE ordering_blocks SET utxotx_tree_bytes = ? WHERE height = 1')
+      .run(Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]));
+
+    const ordering = await importOrdering();
+    const corruptState = await importCorruptState();
+    expect(() => ordering.getOrderingBlock(1)).toThrow(corruptState.UnreadableStoredBlockError);
+
+    expect(applyOrderingBlock(block2)).toBe(true);
   });
 });
 

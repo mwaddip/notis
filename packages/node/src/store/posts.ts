@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import type { PostCommit, PostId, PostType, TxId } from '@dagsocial/types';
 import type { Page, PostKey } from './index.js';
 
@@ -76,12 +76,10 @@ export function insertPost(postId: PostId, txId: TxId, commit: PostCommit, conte
   const contentHash = Buffer.from(commit.contentHash).toString('hex');
 
   db.transaction(() => {
-    db.prepare(
-      `INSERT INTO dag_posts
+    prepared(db, `INSERT INTO dag_posts
          (id, tx_id, content_hash, content, author, parent_refs,
           protocol_version, type, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-    ).run(
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`).run(
       postId,
       txId,
       contentHash,
@@ -92,9 +90,7 @@ export function insertPost(postId: PostId, txId: TxId, commit: PostCommit, conte
       commit.type,
     );
 
-    const insertRef = db.prepare(
-      'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)',
-    );
+    const insertRef = prepared(db, 'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)');
     for (const parentId of commit.parentRefs) {
       insertRef.run(postId, parentId);
     }
@@ -102,10 +98,7 @@ export function insertPost(postId: PostId, txId: TxId, commit: PostCommit, conte
 }
 
 export function setPostBody(postId: string, content: string): boolean {
-  const result = getDb()
-    .prepare(
-      `UPDATE dag_posts SET content = ? WHERE id = ? AND content IS NULL AND withdrawn_at_height IS NULL`,
-    )
+  const result = prepared(getDb(), `UPDATE dag_posts SET content = ? WHERE id = ? AND content IS NULL AND withdrawn_at_height IS NULL`)
     .run(content, postId);
   return result.changes > 0;
 }
@@ -114,20 +107,16 @@ export function setPostBody(postId: string, content: string): boolean {
 export function getPost(id: string): StoredPost | null {
   const db = getDb();
 
-  const postRow = db
-    .prepare('SELECT * FROM dag_posts WHERE id = ?')
+  const postRow = prepared(db, 'SELECT * FROM dag_posts WHERE id = ?')
     .get(id) as PostRow | undefined;
 
   return postRow ? rowToPost(postRow) : null;
 }
 
 export function getMissingBodies(): Array<{ id: string; contentHash: string }> {
-  const rows = getDb()
-    .prepare(
-      `SELECT id, content_hash FROM dag_posts
+  const rows = prepared(getDb(), `SELECT id, content_hash FROM dag_posts
        WHERE content IS NULL AND withdrawn_at_height IS NULL
-       ORDER BY block_height DESC, block_index DESC`,
-    )
+       ORDER BY block_height DESC, block_index DESC`)
     .all() as Array<{ id: string; content_hash: string }>;
   return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
 }
@@ -139,22 +128,16 @@ export function getMissingBodies(): Array<{ id: string; contentHash: string }> {
 // row and SQLite's variable cap would refuse a per-id placeholder list.
 export function getStillPlaceholderIds(ids: readonly string[]): string[] {
   if (ids.length === 0) return [];
-  const rows = getDb()
-    .prepare(
-      `SELECT id FROM dag_posts
+  const rows = prepared(getDb(), `SELECT id FROM dag_posts
        WHERE id IN (SELECT value FROM json_each(?))
-       AND content IS NULL AND withdrawn_at_height IS NULL`,
-    )
+       AND content IS NULL AND withdrawn_at_height IS NULL`)
     .all(JSON.stringify(ids)) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
 
 export function getPlaceholdersAt(height: number): Array<{ id: string; contentHash: string }> {
-  const rows = getDb()
-    .prepare(
-      `SELECT id, content_hash FROM dag_posts
-       WHERE block_height = ? AND content IS NULL AND withdrawn_at_height IS NULL`,
-    )
+  const rows = prepared(getDb(), `SELECT id, content_hash FROM dag_posts
+       WHERE block_height = ? AND content IS NULL AND withdrawn_at_height IS NULL`)
     .all(height) as Array<{ id: string; content_hash: string }>;
   return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
 }
@@ -209,7 +192,7 @@ export function queryPostsPage(opts: {
   committedSql += ` ORDER BY block_height DESC, block_index DESC LIMIT ?`;
   committedParams.push(opts.limit + 1);
 
-  const committedRows = db.prepare(committedSql).all(...committedParams) as PostRow[];
+  const committedRows = prepared(db, committedSql).all(...committedParams) as PostRow[];
   const hasMore = committedRows.length > opts.limit;
   const pageRows = hasMore ? committedRows.slice(0, opts.limit) : committedRows;
   const rows = pageRows.map(rowToPost);
@@ -226,51 +209,39 @@ export function queryPostsPage(opts: {
   if (opts.author) pendingParams.push(Buffer.from(opts.author));
   pendingParams.push(opts.limit);
 
-  const pendingRows = db.prepare(pendingSql).all(...pendingParams) as PostRow[];
+  const pendingRows = prepared(db, pendingSql).all(...pendingParams) as PostRow[];
   const pending = pendingRows.map(rowToPost);
-  const countRow = db.prepare(pendingCountSql).all(...pendingParams.slice(0, -1)) as Array<{ cnt: number }>;
+  const countRow = prepared(db, pendingCountSql).all(...pendingParams.slice(0, -1)) as Array<{ cnt: number }>;
   const pendingCount = countRow[0]?.cnt ?? 0;
 
   return { rows, next, pending, pendingCount };
 }
 
 export function confirmPost(postId: string, blockHeight: number, blockIndex: number): void {
-  getDb()
-    .prepare(
-      "UPDATE dag_posts SET status = 'confirmed', block_height = ?, block_index = ? WHERE id = ?",
-    )
+  prepared(getDb(), "UPDATE dag_posts SET status = 'confirmed', block_height = ?, block_index = ? WHERE id = ?")
     .run(blockHeight, blockIndex, postId);
 }
 
 export function withdrawPost(postId: string, height: number): void {
-  getDb()
-    .prepare(
-      `UPDATE dag_posts SET content = NULL, withdrawn_at_height = ? WHERE id = ?`,
-    )
+  prepared(getDb(), `UPDATE dag_posts SET content = NULL, withdrawn_at_height = ? WHERE id = ?`)
     .run(height, postId);
 }
 
 export function clearWithdrawal(postId: string, content: string | null): void {
-  getDb()
-    .prepare(
-      `UPDATE dag_posts SET content = ?, withdrawn_at_height = NULL WHERE id = ?`,
-    )
+  prepared(getDb(), `UPDATE dag_posts SET content = ?, withdrawn_at_height = NULL WHERE id = ?`)
     .run(content, postId);
 }
 
 export function unconfirmPost(postId: string): void {
-  getDb()
-    .prepare(
-      "UPDATE dag_posts SET status = 'pending', block_height = NULL, block_index = NULL WHERE id = ?",
-    )
+  prepared(getDb(), "UPDATE dag_posts SET status = 'pending', block_height = NULL, block_index = NULL WHERE id = ?")
     .run(postId);
 }
 
 export function deletePendingPost(postId: string): void {
   const db = getDb();
   db.transaction(() => {
-    db.prepare('DELETE FROM dag_parent_refs WHERE post_id = ?').run(postId);
-    db.prepare("DELETE FROM dag_posts WHERE id = ? AND status = 'pending'").run(postId);
+    prepared(db, 'DELETE FROM dag_parent_refs WHERE post_id = ?').run(postId);
+    prepared(db, "DELETE FROM dag_posts WHERE id = ? AND status = 'pending'").run(postId);
   })();
 }
 
@@ -297,19 +268,15 @@ export function getAncestorsNearest(
 ): { rows: StoredPost[]; count: number } {
   const db = getDb();
 
-  const countRow = db.prepare(
-    `${ANCESTOR_CTE} SELECT COUNT(*) AS cnt FROM chain`,
-  ).get(postId) as { cnt: number };
+  const countRow = prepared(db, `${ANCESTOR_CTE} SELECT COUNT(*) AS cnt FROM chain`).get(postId) as { cnt: number };
   const count = countRow.cnt;
 
-  const ancestorRows = db.prepare(
-    `${ANCESTOR_CTE}
+  const ancestorRows = prepared(db, `${ANCESTOR_CTE}
      SELECT dp.* FROM (
        SELECT pid, depth FROM chain ORDER BY depth ASC LIMIT ?
      ) nearest
      JOIN dag_posts dp ON dp.id = nearest.pid
-     ORDER BY nearest.depth DESC`,
-  ).all(postId, limit) as PostRow[];
+     ORDER BY nearest.depth DESC`).all(postId, limit) as PostRow[];
 
   return { rows: ancestorRows.map(rowToPost), count };
 }
@@ -333,7 +300,7 @@ const SUBTREE_CTE =
 export const DESCENDANT_COUNT_SQL = `${SUBTREE_CTE} SELECT COUNT(*) AS cnt FROM subtree`;
 
 export function getDescendantCount(postId: string): number {
-  const row = getDb().prepare(DESCENDANT_COUNT_SQL).get(postId) as { cnt: number };
+  const row = prepared(getDb(), DESCENDANT_COUNT_SQL).get(postId) as { cnt: number };
   return row.cnt;
 }
 
@@ -358,7 +325,7 @@ export function getSubtreePage(
   committedSql += ` ORDER BY dp.block_height, dp.block_index LIMIT ?`;
   committedParams.push(page.limit + 1);
 
-  const committedRows = db.prepare(committedSql).all(...committedParams) as PostRow[];
+  const committedRows = prepared(db, committedSql).all(...committedParams) as PostRow[];
   const hasMore = committedRows.length > page.limit;
   const pageRows = hasMore ? committedRows.slice(0, page.limit) : committedRows;
   const rows = pageRows.map(rowToPost);
@@ -368,22 +335,18 @@ export function getSubtreePage(
     : null;
 
   // Pending window: subtree's pending rows, newest arrival first, cut to limit
-  const pendingRows = db.prepare(
-    `${SUBTREE_CTE}
+  const pendingRows = prepared(db, `${SUBTREE_CTE}
      SELECT dp.* FROM dag_posts dp
      JOIN subtree s ON dp.id = s.id
      WHERE dp.status = 'pending'
      ORDER BY dp.rowid DESC
-     LIMIT ?`,
-  ).all(postId, page.limit) as PostRow[];
+     LIMIT ?`).all(postId, page.limit) as PostRow[];
   const pending = pendingRows.map(rowToPost);
 
-  const pendingCountRow = db.prepare(
-    `${SUBTREE_CTE}
+  const pendingCountRow = prepared(db, `${SUBTREE_CTE}
      SELECT COUNT(*) AS cnt FROM dag_posts dp
      JOIN subtree s ON dp.id = s.id
-     WHERE dp.status = 'pending'`,
-  ).get(postId) as { cnt: number };
+     WHERE dp.status = 'pending'`).get(postId) as { cnt: number };
   const pendingCount = pendingCountRow.cnt;
 
   // Count over the whole subtree, pending included; getDescendantCount is the
@@ -392,15 +355,13 @@ export function getSubtreePage(
 }
 
 export function getPendingPostAuthor(postId: string): Uint8Array | null {
-  const row = getDb()
-    .prepare("SELECT author FROM dag_posts WHERE id = ? AND status = 'pending'")
+  const row = prepared(getDb(), "SELECT author FROM dag_posts WHERE id = ? AND status = 'pending'")
     .get(postId) as { author: Buffer } | undefined;
   return row ? new Uint8Array(row.author) : null;
 }
 
 export function getParentRefs(postId: string): string[] {
-  const rows = getDb()
-    .prepare('SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')
+  const rows = prepared(getDb(), 'SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')
     .all(postId) as Array<{ parent_id: string }>;
   return rows.map((r) => r.parent_id);
 }

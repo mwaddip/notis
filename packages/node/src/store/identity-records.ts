@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import type { UserId, IdentityRecord } from '@dagsocial/types';
 import type { NetworkRecord } from '@dagsocial/consensus';
 
@@ -22,14 +22,10 @@ export type { NetworkRecord };
 
 /** The record for an identity, or null if it has none yet. */
 export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
-  const row = getDb()
-    .prepare(
-      `SELECT last_activity_block, last_decay_block, invited_at_block,
+  const row = prepared(getDb(), `SELECT last_activity_block, last_decay_block, invited_at_block,
               lifetime_likes_received, member_since_block, member_bar,
               member_vouches, member_likes, invites_used
-       FROM identity_records WHERE identity_id = ?`,
-    )
-    .safeIntegers()
+       FROM identity_records WHERE identity_id = ?`, true)
     .get(Buffer.from(identityId)) as
       {
         last_activity_block: bigint; last_decay_block: bigint;
@@ -67,15 +63,11 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
  * makes the read deterministic.
  */
 export function getAllIdentityRecords(): Array<{ identityId: UserId; record: IdentityRecord }> {
-  const rows = getDb()
-    .prepare(
-      `SELECT identity_id, last_activity_block, last_decay_block,
+  const rows = prepared(getDb(), `SELECT identity_id, last_activity_block, last_decay_block,
               invited_at_block, lifetime_likes_received,
               member_since_block, member_bar, member_vouches,
               member_likes, invites_used
-       FROM identity_records ORDER BY identity_id`,
-    )
-    .safeIntegers()
+       FROM identity_records ORDER BY identity_id`, true)
     .all() as Array<{
       identity_id: Buffer;
       last_activity_block: bigint;
@@ -116,15 +108,12 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
  * writer's (NODE_INTERFACE → Block Journal).
  */
 export function putIdentityRecord(identityId: UserId, record: IdentityRecord): void {
-  getDb()
-    .prepare(
-      `INSERT OR REPLACE INTO identity_records
+  prepared(getDb(), `INSERT OR REPLACE INTO identity_records
          (identity_id, last_activity_block, last_decay_block,
           invited_at_block, lifetime_likes_received,
           member_since_block, member_bar, member_vouches,
           member_likes, invites_used)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(
       Buffer.from(identityId),
       record.lastActivityBlock,
@@ -146,8 +135,7 @@ export function putIdentityRecord(identityId: UserId, record: IdentityRecord): v
  * a key.
  */
 export function deleteIdentityRecord(identityId: UserId): void {
-  getDb()
-    .prepare('DELETE FROM identity_records WHERE identity_id = ?')
+  prepared(getDb(), 'DELETE FROM identity_records WHERE identity_id = ?')
     .run(Buffer.from(identityId));
 }
 
@@ -157,8 +145,7 @@ export function deleteIdentityRecord(identityId: UserId): void {
 
 /** The one row; throws where none exists (a store never seeded). */
 export function getNetworkRecord(): NetworkRecord {
-  const row = getDb()
-    .prepare('SELECT member_count FROM network_record WHERE id = 1')
+  const row = prepared(getDb(), 'SELECT member_count FROM network_record WHERE id = 1')
     .get() as { member_count: number } | undefined;
   if (!row) {
     throw new Error('getNetworkRecord: no network record — store was never seeded');
@@ -172,9 +159,6 @@ export function getNetworkRecord(): NetworkRecord {
  * (NODE_INTERFACE → Block Journal).
  */
 export function putNetworkRecord(record: NetworkRecord): void {
-  getDb()
-    .prepare(
-      `INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, ?)`,
-    )
+  prepared(getDb(), `INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, ?)`)
     .run(record.memberCount);
 }

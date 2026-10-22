@@ -16,8 +16,6 @@ async function importFresh() {
 // The columns migrateMempoolTxColumns adds to an existing mempool table
 // (MEMPOOL_INTERFACE → Schema).
 const ALTER_COLUMNS = [
-  'tx_inputs',
-  'tx_output_ids',
   'tx_id',
   'tx_fee',
   'tx_bytes',
@@ -36,8 +34,6 @@ const GATE_INDEX_NAMES = [
   'idx_mempool_invite',
   'idx_mempool_vouch',
   'idx_mempool_expires',
-  'idx_mempool_tx_inputs',
-  'idx_mempool_tx_output_ids',
   'idx_mempool_tx_id',
   'idx_mempool_fee_rate',
   'idx_mempool_username_lower',
@@ -47,7 +43,7 @@ const GATE_INDEX_NAMES = [
   'idx_mempool_withdraw_post',
 ];
 
-// Pre-column mempool schema: literal SQL without the six ALTER columns and
+// Pre-column mempool schema: literal SQL without the ALTER columns and
 // without gate indexes. The test pins that the ALTER pass repairs a table
 // missing these columns; it does not pin any historical schema.
 const PRE_COLUMN_MEMPOOL = `CREATE TABLE mempool (
@@ -73,8 +69,6 @@ const MISSING_ONE_MEMPOOL = `CREATE TABLE mempool (
   like_liker TEXT,
   invite_inviter TEXT,
   vouch_voucher TEXT,
-  tx_inputs TEXT,
-  tx_output_ids TEXT,
   tx_id TEXT,
   tx_fee INTEGER
 )`;
@@ -135,7 +129,7 @@ describe('migrateMempoolTxColumns', () => {
     const cols = (db.pragma('table_info(mempool)') as Array<{ name: string }>)
       .map(c => c.name);
     expect(cols).toContain('tx_bytes');
-    for (const col of ['tx_inputs', 'tx_output_ids', 'tx_id', 'tx_fee']) {
+    for (const col of ['tx_id', 'tx_fee']) {
       expect(cols).toContain(col);
     }
 
@@ -180,7 +174,7 @@ describe('migrateMempoolTxColumns', () => {
     const db = getDb();
 
     const row = db.prepare(
-      `SELECT tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
+      `SELECT tx_id, tx_fee, tx_bytes,
               username_lower, username_claimant, cost_estimate,
               vouch_target, max_valid_height,
               karma_owner, karma_spend

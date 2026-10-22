@@ -24,7 +24,7 @@ import type { AnyBox } from '@dagsocial/types';
  * as, spread from or derived from another (NODE_INTERFACE → Three karma sets,
  * and none derives from another).
  *
- * `routes/blocks.ts` re-exports `KARMA_SUPPLY_TYPES`, derived below, for `GET /status`.
+ * `store/aggregates.ts`'s `getTotalKarma` reads `KARMA_SUPPLY_TYPES`, derived below.
  */
 const KARMA_SUPPLY_VERDICT: Record<AnyBox['boxType'], boolean> = {
   karma: true,

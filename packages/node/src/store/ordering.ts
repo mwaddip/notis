@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import {
   encodeHeader,
   decodeHeader,
@@ -116,12 +116,10 @@ export function createOrderingBlock(block: OrderingBlock, interlinks: string[]):
     throw new UnhashableStoredHeaderError('createOrderingBlock', block.header.height);
   }
 
-  db.prepare(
-    `INSERT INTO ordering_blocks
+  prepared(db, `INSERT INTO ordering_blocks
        (height, header_bytes, utxotx_tree_bytes,
         validator_signature, created_at, block_hash, interlinks)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+     VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
     block.header.height,
     Buffer.from(encodeHeader(block.header)),
     Buffer.from(encodeUtxoTxTree(block.utxoTxTree)),
@@ -138,8 +136,7 @@ export function createOrderingBlock(block: OrderingBlock, interlinks: string[]):
  */
 export function getOrderingBlock(height: number): OrderingBlock | null {
   const db = getDb();
-  const row = db
-    .prepare('SELECT * FROM ordering_blocks WHERE height = ?')
+  const row = prepared(db, 'SELECT * FROM ordering_blocks WHERE height = ?')
     .get(height) as OrderingBlockRow | undefined;
   return row ? rowToOrderingBlock(row) : null;
 }
@@ -156,8 +153,7 @@ export function getOrderingBlock(height: number): OrderingBlock | null {
  * that will not read are local corruption, never input a peer chose.
  */
 export function getUtxoTxTreeBytes(height: number): Uint8Array | null {
-  const row = getDb()
-    .prepare('SELECT utxotx_tree_bytes FROM ordering_blocks WHERE height = ?')
+  const row = prepared(getDb(), 'SELECT utxotx_tree_bytes FROM ordering_blocks WHERE height = ?')
     .get(height) as { utxotx_tree_bytes: Buffer } | undefined;
   return row ? new Uint8Array(row.utxotx_tree_bytes) : null;
 }
@@ -166,7 +162,7 @@ export function getUtxoTxTreeBytes(height: number): Uint8Array | null {
  * Delete an ordering block at the given height (for rollback).
  */
 export function deleteOrderingBlock(height: number): void {
-  getDb().prepare('DELETE FROM ordering_blocks WHERE height = ?').run(height);
+  prepared(getDb(), 'DELETE FROM ordering_blocks WHERE height = ?').run(height);
 }
 
 /**
@@ -179,16 +175,14 @@ export function deleteOrderingBlock(height: number): void {
  * (`storeOrderingBlock` writes `block.header.createdAt`).
  */
 export function getBlockCreatedAt(height: number): number | null {
-  const row = getDb()
-    .prepare('SELECT created_at FROM ordering_blocks WHERE height = ?')
+  const row = prepared(getDb(), 'SELECT created_at FROM ordering_blocks WHERE height = ?')
     .get(height) as { created_at: number } | undefined;
   return row?.created_at ?? null;
 }
 
 export function getCurrentHeight(): number {
   const db = getDb();
-  const row = db
-    .prepare('SELECT COALESCE(MAX(height), 0) AS h FROM ordering_blocks')
+  const row = prepared(db, 'SELECT COALESCE(MAX(height), 0) AS h FROM ordering_blocks')
     .get() as { h: number };
   return row.h;
 }
@@ -203,15 +197,13 @@ export function nextBlockHeight(): number {
 }
 
 export function getOrderingBlockHash(height: number): string | null {
-  const row = getDb()
-    .prepare('SELECT block_hash FROM ordering_blocks WHERE height = ?')
+  const row = prepared(getDb(), 'SELECT block_hash FROM ordering_blocks WHERE height = ?')
     .get(height) as { block_hash: string } | undefined;
   return row?.block_hash ?? null;
 }
 
 export function getHeightByBlockHash(hash: string): number | null {
-  const row = getDb()
-    .prepare('SELECT height FROM ordering_blocks WHERE block_hash = ?')
+  const row = prepared(getDb(), 'SELECT height FROM ordering_blocks WHERE block_hash = ?')
     .get(hash) as { height: number } | undefined;
   return row?.height ?? null;
 }
@@ -225,8 +217,7 @@ export function getHeightByBlockHash(hash: string): number | null {
  * handlers → "`setHeaderProvider(getHeaderAt)`").
  */
 export function getHeaderAt(height: number): BlockHeader | null {
-  const row = getDb()
-    .prepare('SELECT header_bytes FROM ordering_blocks WHERE height = ?')
+  const row = prepared(getDb(), 'SELECT header_bytes FROM ordering_blocks WHERE height = ?')
     .get(height) as { header_bytes: Buffer } | undefined;
   if (!row) return null;
   try {
@@ -245,8 +236,7 @@ export function getHeaderAt(height: number): BlockHeader | null {
  * are local corruption and raise `UnreadableStoredBlockError`.
  */
 export function getInterlinks(height: number): string[] | null {
-  const row = getDb()
-    .prepare('SELECT interlinks FROM ordering_blocks WHERE height = ?')
+  const row = prepared(getDb(), 'SELECT interlinks FROM ordering_blocks WHERE height = ?')
     .get(height) as { interlinks: Buffer } | undefined;
   if (!row) return null;
   try {
@@ -278,15 +268,13 @@ function rowToPopowHeader(row: PopowRow, site: string, height: number): PoPowHea
 }
 
 export function getPopowHeaderByHash(hash: string): PoPowHeader | null {
-  const row = getDb()
-    .prepare('SELECT header_bytes, interlinks, height FROM ordering_blocks WHERE block_hash = ?')
+  const row = prepared(getDb(), 'SELECT header_bytes, interlinks, height FROM ordering_blocks WHERE block_hash = ?')
     .get(hash) as (PopowRow & { height: number }) | undefined;
   return row ? rowToPopowHeader(row, 'getPopowHeaderByHash', row.height) : null;
 }
 
 export function getPopowHeaderAtHeight(height: number): PoPowHeader | null {
-  const row = getDb()
-    .prepare('SELECT header_bytes, interlinks FROM ordering_blocks WHERE height = ?')
+  const row = prepared(getDb(), 'SELECT header_bytes, interlinks FROM ordering_blocks WHERE height = ?')
     .get(height) as PopowRow | undefined;
   return row ? rowToPopowHeader(row, 'getPopowHeaderAtHeight', height) : null;
 }
@@ -307,8 +295,7 @@ function decodeHeaderRows(
 
 export function getLastHeaders(n: number): BlockHeader[] {
   if (n > MAX_NIPOPOW_PARAM) n = MAX_NIPOPOW_PARAM;
-  const rows = getDb()
-    .prepare('SELECT header_bytes, height FROM ordering_blocks ORDER BY height DESC LIMIT ?')
+  const rows = prepared(getDb(), 'SELECT header_bytes, height FROM ordering_blocks ORDER BY height DESC LIMIT ?')
     .all(n) as Array<{ header_bytes: Buffer; height: number }>;
   rows.reverse();
   return decodeHeaderRows(rows, 'getLastHeaders');

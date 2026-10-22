@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import type { PeerRecord, PeerStorage } from '@dagsocial/net';
 import { MAX_CAPABILITY_CODE } from '@dagsocial/net';
 
@@ -15,11 +15,8 @@ import { MAX_CAPABILITY_CODE } from '@dagsocial/net';
  * during startup, and one bad row must not prevent the node from starting.
  */
 export function loadAllPeers(): PeerRecord[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT address, last_seen_ms, agent_name, node_name, protocol_version, capabilities
-       FROM peers`,
-    )
+  const rows = prepared(getDb(), `SELECT address, last_seen_ms, agent_name, node_name, protocol_version, capabilities
+       FROM peers`)
     .all() as Array<{
       address: string;
       last_seen_ms: number;
@@ -61,12 +58,9 @@ export function loadAllPeers(): PeerRecord[] {
 
 /** Write-through upsert — PeerDb calls this on every record(). */
 export function putPeer(record: PeerRecord): void {
-  getDb()
-    .prepare(
-      `INSERT OR REPLACE INTO peers
+  prepared(getDb(), `INSERT OR REPLACE INTO peers
        (address, last_seen_ms, agent_name, node_name, protocol_version, capabilities)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
+       VALUES (?, ?, ?, ?, ?, ?)`)
     .run(
       record.address,
       record.lastSeenMs,
@@ -78,7 +72,7 @@ export function putPeer(record: PeerRecord): void {
 }
 
 export function deletePeer(address: string): void {
-  getDb().prepare('DELETE FROM peers WHERE address = ?').run(address);
+  prepared(getDb(), 'DELETE FROM peers WHERE address = ?').run(address);
 }
 
 /** The PeerStorage implementation handed to NetNode at construction. */

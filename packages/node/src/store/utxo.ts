@@ -1,4 +1,4 @@
-import { getDb } from './db.js';
+import { getDb, prepared } from './db.js';
 import type { Page, PageResult, BoxKey } from './index.js';
 import type {
   AnyBox,
@@ -360,18 +360,14 @@ export function rowToBox(row: UtxoRow): AnyBox {
  */
 export function getBox(boxId: string): AnyBox | null {
   const db = getDb();
-  const row = db
-    .prepare('SELECT * FROM utxo_boxes WHERE id = ? AND spent_at_block IS NULL')
-    .safeIntegers()
+  const row = prepared(db, 'SELECT * FROM utxo_boxes WHERE id = ? AND spent_at_block IS NULL', true)
     .get(boxId) as UtxoRow | undefined;
   return row ? rowToBox(row) : null;
 }
 
 export function getBoxProvenance(boxId: string): { txId: string; index: number } | null {
   const db = getDb();
-  const row = db
-    .prepare('SELECT tx_id, output_index FROM utxo_boxes WHERE id = ?')
-    .safeIntegers()
+  const row = prepared(db, 'SELECT tx_id, output_index FROM utxo_boxes WHERE id = ?', true)
     .get(boxId) as Pick<UtxoRow, 'tx_id' | 'output_index'> | undefined;
   return row ? { txId: row.tx_id, index: Number(row.output_index) } : null;
 }
@@ -396,14 +392,15 @@ export function getBoxProvenance(boxId: string): { txId: string; index: number }
  * expires.
  */
 export function getGenesisProofBox(): GenesisProofBox | null {
-  const row = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'genesis_proof' AND spent_at_block IS NULL
+  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
+  // per block touches what it answers": `owner` leads the owner index
+  // (`CREATE INDEX idx_utxo_boxes_owner_type_value ON utxo_boxes(owner,
+  // box_type, …)`), so this read's `owner IS NULL` lets the index answer it
+  // by its `(NULL, box_type)` prefix.
+  const row = prepared(getDb(), `SELECT * FROM utxo_boxes
+       WHERE owner IS NULL AND box_type = 'genesis_proof' AND spent_at_block IS NULL
        ORDER BY id
-       LIMIT 1`,
-    )
-    .safeIntegers()
+       LIMIT 1`, true)
     .get() as UtxoRow | undefined;
   return row ? (rowToBox(row) as GenesisProofBox) : null;
 }
@@ -426,14 +423,14 @@ export function getGenesisProofBox(): GenesisProofBox | null {
  * expires.
  */
 export function getEmissionBox(): EmissionBox | null {
-  const row = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'emission' AND spent_at_block IS NULL
+  // The owner index answers this read by its `(NULL, box_type)` prefix, as
+  // `getGenesisProofBox` states at full length (NODE_INTERFACE → Store
+  // Interface → "A read the node runs per request or per block touches what
+  // it answers").
+  const row = prepared(getDb(), `SELECT * FROM utxo_boxes
+       WHERE owner IS NULL AND box_type = 'emission' AND spent_at_block IS NULL
        ORDER BY id
-       LIMIT 1`,
-    )
-    .safeIntegers()
+       LIMIT 1`, true)
     .get() as UtxoRow | undefined;
   return row ? (rowToBox(row) as EmissionBox) : null;
 }
@@ -448,14 +445,14 @@ export function getEmissionBox(): EmissionBox | null {
  * never again after.
  */
 export function getTreasuryBox(): TreasuryBox | null {
-  const row = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'treasury' AND spent_at_block IS NULL
+  // The owner index answers this read by its `(NULL, box_type)` prefix, as
+  // `getGenesisProofBox` states at full length (NODE_INTERFACE → Store
+  // Interface → "A read the node runs per request or per block touches what
+  // it answers").
+  const row = prepared(getDb(), `SELECT * FROM utxo_boxes
+       WHERE owner IS NULL AND box_type = 'treasury' AND spent_at_block IS NULL
        ORDER BY id
-       LIMIT 1`,
-    )
-    .safeIntegers()
+       LIMIT 1`, true)
     .get() as UtxoRow | undefined;
   return row ? (rowToBox(row) as TreasuryBox) : null;
 }
@@ -473,14 +470,14 @@ export function getTreasuryBox(): TreasuryBox | null {
  * names no row.
  */
 export function getKarmaPoolBox(): KarmaPoolBox | null {
-  const row = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'karma_pool' AND spent_at_block IS NULL
+  // The owner index answers this read by its `(NULL, box_type)` prefix, as
+  // `getGenesisProofBox` states at full length (NODE_INTERFACE → Store
+  // Interface → "A read the node runs per request or per block touches what
+  // it answers").
+  const row = prepared(getDb(), `SELECT * FROM utxo_boxes
+       WHERE owner IS NULL AND box_type = 'karma_pool' AND spent_at_block IS NULL
        ORDER BY id
-       LIMIT 1`,
-    )
-    .safeIntegers()
+       LIMIT 1`, true)
     .get() as UtxoRow | undefined;
   return row ? (rowToBox(row) as KarmaPoolBox) : null;
 }
@@ -493,14 +490,14 @@ export function getKarmaPoolBox(): KarmaPoolBox | null {
  * no row.
  */
 export function getBackerPoolBox(): BackerPoolBox | null {
-  const row = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'backer_pool' AND spent_at_block IS NULL
+  // The owner index answers this read by its `(NULL, box_type)` prefix, as
+  // `getGenesisProofBox` states at full length (NODE_INTERFACE → Store
+  // Interface → "A read the node runs per request or per block touches what
+  // it answers").
+  const row = prepared(getDb(), `SELECT * FROM utxo_boxes
+       WHERE owner IS NULL AND box_type = 'backer_pool' AND spent_at_block IS NULL
        ORDER BY id
-       LIMIT 1`,
-    )
-    .safeIntegers()
+       LIMIT 1`, true)
     .get() as UtxoRow | undefined;
   return row ? (rowToBox(row) as BackerPoolBox) : null;
 }
@@ -509,14 +506,10 @@ export function getBackerPoolBox(): BackerPoolBox | null {
  * Return the live stake box for the given owner, or null if none.
  */
 export function getBackerStakeBox(owner: Uint8Array): BackerStakeBox | null {
-  const row = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
+  const row = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE box_type = 'backer_stake' AND owner = ? AND spent_at_block IS NULL
        ORDER BY id
-       LIMIT 1`,
-    )
-    .safeIntegers()
+       LIMIT 1`, true)
     .get(Buffer.from(owner)) as UtxoRow | undefined;
   return row ? (rowToBox(row) as BackerStakeBox) : null;
 }
@@ -526,13 +519,9 @@ export function getBackerStakeBox(owner: Uint8Array): BackerStakeBox | null {
  */
 export function getKarmaBox(owner: Uint8Array): KarmaBox | null {
   const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT * FROM utxo_boxes
+  const row = prepared(db, `SELECT * FROM utxo_boxes
        WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL
-       LIMIT 1`,
-    )
-    .safeIntegers()
+       LIMIT 1`, true)
     .get(Buffer.from(owner)) as UtxoRow | undefined;
   return row ? (rowToBox(row) as KarmaBox) : null;
 }
@@ -549,23 +538,9 @@ const CREDIT_UNSPENT_WHERE =
  */
 export function getKarmaBoxes(owner: Uint8Array): KarmaBox[] {
   const db = getDb();
-  const rows = db
-    .prepare(
-      // ⛔ **`value DESC` ALONE IS NOT A TOTAL ORDER, and this list feeds a
-      // derivation.** The decay pass lists these ids as the settlement's inputs
-      // and the transaction id hashes them in order, so two owners' boxes of
-      // EQUAL value — two invite grants naming the same bond, a payout that
-      // matches an existing balance — would be returned in whatever order SQLite
-      // chose and two nodes
-      // would derive two different transactions (NODE_INTERFACE → A derived
-      // quantity has TWO kinds of input). `id` breaks the tie and is one of the
-      // three permitted orderings; `value DESC` stays because callers select
-      // coins from the front.
-      `SELECT * FROM utxo_boxes
+  const rows = prepared(db, `SELECT * FROM utxo_boxes
        WHERE ${KARMA_UNSPENT_WHERE}
-       ORDER BY value DESC, id`,
-    )
-    .safeIntegers()
+       ORDER BY value DESC, id`, true)
     .all(Buffer.from(owner)) as UtxoRow[];
   return rows.map(rowToBox) as KarmaBox[];
 }
@@ -600,20 +575,14 @@ function boxPageQuery(
   limit: number,
 ): UtxoRow[] {
   if (!after) {
-    return db
-      .prepare(`SELECT * FROM utxo_boxes WHERE ${fragment} ORDER BY value DESC, id LIMIT ?`)
-      .safeIntegers()
+    return prepared(db, `SELECT * FROM utxo_boxes WHERE ${fragment} ORDER BY value DESC, id LIMIT ?`, true)
       .all(ownerBuf, limit + 1) as UtxoRow[];
   }
-  return db
-    .prepare(
-      `SELECT * FROM (
+  return prepared(db, `SELECT * FROM (
          SELECT * FROM utxo_boxes WHERE ${fragment} AND value = ? AND id > ? ORDER BY id LIMIT ?
        ) UNION ALL SELECT * FROM (
          SELECT * FROM utxo_boxes WHERE ${fragment} AND value < ? ORDER BY value DESC, id LIMIT ?
-       ) ORDER BY value DESC, id LIMIT ?`,
-    )
-    .safeIntegers()
+       ) ORDER BY value DESC, id LIMIT ?`, true)
     .all(ownerBuf, after.value, after.id, limit + 1,
          ownerBuf, after.value, limit + 1,
          limit + 1) as UtxoRow[];
@@ -635,8 +604,7 @@ export function getKarmaBoxesPage(
     ? { value: last.value, id: last.id }
     : null;
 
-  const countRow = db
-    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${KARMA_UNSPENT_WHERE}`)
+  const countRow = prepared(db, `SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${KARMA_UNSPENT_WHERE}`)
     .get(ownerBuf) as { cnt: number };
 
   return { rows: boxes, next, count: countRow.cnt };
@@ -644,12 +612,8 @@ export function getKarmaBoxesPage(
 
 // NODE_INTERFACE → "Every list a view returns is a page"
 export function getKarmaTotal(owner: Uint8Array): bigint {
-  const row = getDb()
-    .prepare(
-      `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
-       WHERE ${KARMA_UNSPENT_WHERE}`,
-    )
-    .safeIntegers()
+  const row = prepared(getDb(), `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
+       WHERE ${KARMA_UNSPENT_WHERE}`, true)
     .get(Buffer.from(owner)) as { s: bigint };
   return row.s;
 }
@@ -660,25 +624,17 @@ export function getKarmaTotal(owner: Uint8Array): bigint {
  */
 export function getCreditBoxes(owner: Uint8Array): CreditBox[] {
   const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes
+  const rows = prepared(db, `SELECT * FROM utxo_boxes
        WHERE ${CREDIT_UNSPENT_WHERE}
-       ORDER BY value DESC, id`,
-    )
-    .safeIntegers()
+       ORDER BY value DESC, id`, true)
     .all(Buffer.from(owner)) as UtxoRow[];
   return rows.map(rowToBox) as CreditBox[];
 }
 
 // NODE_INTERFACE → "Every list a view returns is a page"
 export function getCreditValue(owner: Uint8Array): bigint {
-  const row = getDb()
-    .prepare(
-      `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
-       WHERE ${CREDIT_UNSPENT_WHERE}`,
-    )
-    .safeIntegers()
+  const row = prepared(getDb(), `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
+       WHERE ${CREDIT_UNSPENT_WHERE}`, true)
     .get(Buffer.from(owner)) as { s: bigint };
   return row.s;
 }
@@ -701,8 +657,7 @@ export function getCreditBoxesPage(
     ? { value: last.value, id: last.id }
     : null;
 
-  const countRow = db
-    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${CREDIT_UNSPENT_WHERE}`)
+  const countRow = prepared(db, `SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${CREDIT_UNSPENT_WHERE}`)
     .get(ownerBuf) as { cnt: number };
 
   return { rows: boxes, next, count: countRow.cnt };
@@ -721,15 +676,11 @@ export function getRentEligibleCreditBoxes(
 ): Array<{ box: CreditBox; txId: string; index: number }> {
   const db = getDb();
   const cutoff = currentHeight - storageRentPeriodBlocks;
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes
+  const rows = prepared(db, `SELECT * FROM utxo_boxes
        WHERE box_type = 'credit' AND spent_at_block IS NULL
          AND created_at_block < ?
        ORDER BY created_at_block ASC
-       LIMIT ?`,
-    )
-    .safeIntegers()
+       LIMIT ?`, true)
     .all(cutoff, limit) as UtxoRow[];
   return rows.map((row) => ({
     box: rowToBox(row) as CreditBox,
@@ -747,15 +698,11 @@ export function getRentEligibleCreditBoxes(
  * (NODE_INTERFACE → Legal box transitions).
  */
 export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
-  const row = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
+  const row = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE box_type = 'bond'
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.inviteePublicKey') = ?
-       LIMIT 1`,
-    )
-    .safeIntegers()
+       LIMIT 1`, true)
     .get(pubkeyToHex(inviteePublicKey)) as UtxoRow | undefined;
   return row ? (rowToBox(row) as BondBox) : null;
 }
@@ -789,9 +736,7 @@ export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
  * Ordering key `(invited_at_block, box id)` — unique, because box id is unique.
  */
 export function getBondsInvitedAt(maxInvitedAt: number, limit: number): BondBox[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT b.* FROM utxo_boxes b
+  const rows = prepared(getDb(), `SELECT b.* FROM utxo_boxes b
        JOIN identity_records ir
          ON lower(hex(ir.identity_id)) = json_extract(b.extra_data, '$.inviteePublicKey')
        WHERE b.box_type = 'bond'
@@ -799,9 +744,7 @@ export function getBondsInvitedAt(maxInvitedAt: number, limit: number): BondBox[
          AND ir.invited_at_block > 0
          AND ir.invited_at_block <= ?
        ORDER BY ir.invited_at_block, b.id
-       LIMIT ?`,
-    )
-    .safeIntegers()
+       LIMIT ?`, true)
     .all(maxInvitedAt, limit) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as BondBox);
 }
@@ -820,11 +763,7 @@ export function getBondBoxesPage(
   if (page.after) params.push(page.after);
   params.push(page.limit + 1);
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes WHERE ${BOND_PAGE_WHERE}${afterClause} ORDER BY id LIMIT ?`,
-    )
-    .safeIntegers()
+  const rows = prepared(db, `SELECT * FROM utxo_boxes WHERE ${BOND_PAGE_WHERE}${afterClause} ORDER BY id LIMIT ?`, true)
     .all(...params) as UtxoRow[];
 
   const hasMore = rows.length > page.limit;
@@ -833,8 +772,7 @@ export function getBondBoxesPage(
   const last = resultRows[resultRows.length - 1];
   const next: string | null = hasMore && last ? last.id : null;
 
-  const countRow = db
-    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${BOND_PAGE_WHERE}`)
+  const countRow = prepared(db, `SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${BOND_PAGE_WHERE}`)
     .get(hex) as { cnt: number };
 
   return { rows: bonds, next, count: countRow.cnt };
@@ -848,15 +786,11 @@ export function getBondBoxesPage(
  * the release height, which is what a voucher needs to know.
  */
 export function getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
+  const rows = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE box_type = 'vouch_escrow'
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.owner') = ?
-       ORDER BY id`,
-    )
-    .safeIntegers()
+       ORDER BY id`, true)
     .all(pubkeyToHex(voucherId)) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as VouchEscrowBox);
 }
@@ -874,11 +808,7 @@ export function getVouchEscrowsForPage(
   if (page.after) params.push(page.after);
   params.push(page.limit + 1);
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes WHERE ${ESCROW_FOR_WHERE}${afterClause} ORDER BY id LIMIT ?`,
-    )
-    .safeIntegers()
+  const rows = prepared(db, `SELECT * FROM utxo_boxes WHERE ${ESCROW_FOR_WHERE}${afterClause} ORDER BY id LIMIT ?`, true)
     .all(...params) as UtxoRow[];
 
   const hasMore = rows.length > page.limit;
@@ -887,8 +817,7 @@ export function getVouchEscrowsForPage(
   const last = resultRows[resultRows.length - 1];
   const next: string | null = hasMore && last ? last.id : null;
 
-  const countRow = db
-    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${ESCROW_FOR_WHERE}`)
+  const countRow = prepared(db, `SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${ESCROW_FOR_WHERE}`)
     .get(hex) as { cnt: number };
 
   return { rows: escrows, next, count: countRow.cnt };
@@ -909,13 +838,10 @@ export function getVouchEscrowsForPage(
  * stated rule instead of an arithmetic accident.
  */
 export function hasActiveVouchEscrow(voucherId: Uint8Array): boolean {
-  const row = getDb()
-    .prepare(
-      `SELECT 1 FROM utxo_boxes
+  const row = prepared(getDb(), `SELECT 1 FROM utxo_boxes
        WHERE box_type = 'vouch_escrow'
          AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.owner') = ?`,
-    )
+         AND json_extract(extra_data, '$.owner') = ?`)
     .get(pubkeyToHex(voucherId));
   return row !== undefined;
 }
@@ -935,16 +861,12 @@ export function hasActiveVouchEscrow(voucherId: Uint8Array): boolean {
  * Ordering key `(releaseAtBlock, id)` — unique, because box id is unique.
  */
 export function getVouchEscrowsReleasableAt(height: number, limit: number): VouchEscrowBox[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
+  const rows = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE box_type = 'vouch_escrow'
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.releaseAtBlock') <= ?
        ORDER BY json_extract(extra_data, '$.releaseAtBlock'), id
-       LIMIT ?`,
-    )
-    .safeIntegers()
+       LIMIT ?`, true)
     .all(height, limit) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as VouchEscrowBox);
 }
@@ -957,15 +879,11 @@ export function getVouchEscrowsReleasableAt(height: number, limit: number): Vouc
  * (CONSENSUS_INTERFACE → StateView).
  */
 export function getLikeAccrualBoxes(author: Uint8Array): LikeAccrualBox[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
+  const rows = prepared(getDb(), `SELECT * FROM utxo_boxes
        WHERE box_type = 'like_accrual'
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.author') = ?
-       ORDER BY id`,
-    )
-    .safeIntegers()
+       ORDER BY id`, true)
     .all(pubkeyToHex(author)) as UtxoRow[];
   return rows.map((row) => rowToBox(row) as LikeAccrualBox);
 }
@@ -981,11 +899,8 @@ export function getLikeAccrualBoxes(author: Uint8Array): LikeAccrualBox[] {
  */
 export function getKarmaOwners(): string[] {
   return (
-    getDb()
-      .prepare(
-        `SELECT DISTINCT owner FROM utxo_boxes
-         WHERE box_type = 'karma' AND spent_at_block IS NULL AND owner IS NOT NULL`,
-      )
+    prepared(getDb(), `SELECT DISTINCT owner FROM utxo_boxes
+         WHERE box_type = 'karma' AND spent_at_block IS NULL AND owner IS NOT NULL`)
       .all() as { owner: Buffer }[]
   ).map(r => r.owner.toString('hex'));
 }
@@ -1113,13 +1028,11 @@ export function insertBox(box: AnyBox): void {
   // the collision structurally unreachable, so this is the backstop for that
   // property rather than a live path (NODE_INTERFACE → "Box provenance
   // columns").
-  db.prepare(
-    `INSERT INTO utxo_boxes
+  prepared(db, `INSERT INTO utxo_boxes
        (id, box_type, value, created_at_block, spent_at_block,
         owner, extra_data,
         tx_id, output_index)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
-  ).run(
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`).run(
     box.id,
     box.boxType,
     box.value,
@@ -1166,8 +1079,7 @@ export class BoxNotLiveError extends Error {
  * the `consumeBox` row).
  */
 export function consumeBox(boxId: string, consumedAtBlock: number): void {
-  const { changes } = getDb()
-    .prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL')
+  const { changes } = prepared(getDb(), 'UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL')
     .run(consumedAtBlock, boxId);
   if (changes === 0) throw new BoxNotLiveError(boxId);
 }
@@ -1177,7 +1089,7 @@ export function consumeBox(boxId: string, consumedAtBlock: number): void {
  * Fork-rollback inverse.
  */
 export function unconsumeBox(boxId: string): void {
-  getDb().prepare('UPDATE utxo_boxes SET spent_at_block = NULL WHERE id = ?').run(boxId);
+  prepared(getDb(), 'UPDATE utxo_boxes SET spent_at_block = NULL WHERE id = ?').run(boxId);
 }
 
 /**
@@ -1185,7 +1097,7 @@ export function unconsumeBox(boxId: string): void {
  * Fork-rollback inverse.
  */
 export function deleteBox(boxId: string): void {
-  getDb().prepare('DELETE FROM utxo_boxes WHERE id = ?').run(boxId);
+  prepared(getDb(), 'DELETE FROM utxo_boxes WHERE id = ?').run(boxId);
 }
 
 /**
@@ -1194,15 +1106,11 @@ export function deleteBox(boxId: string): void {
  */
 export function getUnspentBoxes(): AnyBox[] {
   const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT id, box_type, value, created_at_block, owner, extra_data,
+  const rows = prepared(db, `SELECT id, box_type, value, created_at_block, owner, extra_data,
               tx_id, output_index
        FROM utxo_boxes
        WHERE spent_at_block IS NULL
-       ORDER BY created_at_block ASC`,
-    )
-    .safeIntegers()
+       ORDER BY created_at_block ASC`, true)
     .all() as UtxoRow[];
   return rows.map(rowToBox);
 }
