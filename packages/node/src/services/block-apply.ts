@@ -761,8 +761,8 @@ export function writeBlockEffects(
   // MEMPOOL_INTERFACE → followAppliedBlock. Each applied id leaves by tx_id;
   // every box the block's mutations remove, body and settlement alike, takes
   // its pooled spender with its dependents; expiry and the ceiling run at the
-  // new tip. A block this node mined still clears its template rowids through
-  // submitMinedBlock, which the apply has already reached by tx_id
+  // new tip. A block this node mined clears its template rowids through
+  // submitMinedBlock, which the apply has reached by tx_id already
   // (MEMPOOL_INTERFACE → Confirmed-entry cleanup reaches every row).
   const spentBoxIds: string[] = [];
   for (const m of effects.mutations) {

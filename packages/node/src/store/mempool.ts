@@ -1125,6 +1125,9 @@ export function removeUnconfirmed(rowids: readonly number[]): number {
       }
       let refRows: Array<{ rowid: number }> = [];
       if (parentIds.length > 0) {
+        // INDEXED BY idx_dag_parent_refs_parent: the store keeps no statistics,
+        // so the planner walks the pending-post leg first and leaves
+        // idx_dag_parent_refs_parent on an empty join.
         refRows = prepared(
           db,
           `SELECT m.rowid AS rowid
@@ -1150,11 +1153,11 @@ export function removeUnconfirmed(rowids: readonly number[]): number {
       }
     }
     const ids = Array.from(closure);
-    prepared(
+    const result = prepared(
       db,
       'DELETE FROM mempool WHERE rowid IN (SELECT value FROM json_each(?))',
     ).run(JSON.stringify(ids));
-    return closure.size;
+    return result.changes;
   })();
 }
 

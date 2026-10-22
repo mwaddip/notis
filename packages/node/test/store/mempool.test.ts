@@ -20,6 +20,7 @@ async function importMempoolFresh() {
     getPendingEntries: (limit: number) => any[];
     purgeExpired: (currentHeight: number) => number;
     removeEntry: (rowid: number) => void;
+    removeUnconfirmed: (rowids: readonly number[]) => number;
     hasPendingLike: (targetPostId: string, likerId: string) => boolean;
     countPendingInvites: (inviterId: string) => number;
     hasPendingVouch: (voucherId: string, targetId: string) => boolean;
@@ -1323,5 +1324,33 @@ describe('the cost estimate', () => {
     mem.setCostEstimate(first, 290);
 
     expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([290, null]);
+  });
+});
+
+// MEMPOOL_INTERFACE → removeUnconfirmed → "Returns the number of entries
+// removed, dependents among them": the answer is the count of pool rows the
+// call deleted, so a rowid handed in that no longer stands counts for none.
+describe('removeUnconfirmed answers the entries it removed', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    const db = await importDbFresh();
+    db.initDb(':memory:');
+  });
+
+  afterEach(async () => {
+    const db = await importDbFresh();
+    db.closeDb();
+  });
+
+  it('a rowid already gone, handed in beside a live one, answers 1', async () => {
+    const mem = await importMempoolFresh();
+    const { getDb } = await importDbFresh();
+    const db = getDb();
+
+    const gone = mem.insertUtxoTx(txWithInput('rem_gone') as never, 100);
+    const live = mem.insertUtxoTx(txWithInput('rem_live') as never, 100);
+    (db as any).prepare('DELETE FROM mempool WHERE rowid = ?').run(gone);
+
+    expect(mem.removeUnconfirmed([gone, live])).toBe(1);
   });
 });
