@@ -143,7 +143,6 @@ describe('every applied block lets the pool follow it, on every node', () => {
     vi.restoreAllMocks();
   });
 
-  // 1. A block's spend takes a conflicting entry, on a server node.
   it('a block applying a conflicting post removes the pooled entry and its pending row', async () => {
     await freshNode();
     const A = makeTestIdentity();
@@ -153,32 +152,28 @@ describe('every applied block lets the pool follow it, on every node', () => {
     const mem = await importMempool();
     const posts = await importPosts();
 
-    const T1 = buildThread(A, X, 'T1 content');
-    const T1_id = computeTxId(T1);
-    const T1_post = computePostId(T1_id, 0);
-    mem.insertUtxoTx(T1, 1000);
-    // The pending-row shadow: a post entry's row rides the pool entry.
+    const Tpool = buildThread(A, X, 'contentious thread');
+    const Tpool_id = computeTxId(Tpool);
+    const Tpool_post = computePostId(Tpool_id, 0);
+    mem.insertUtxoTx(Tpool, 1000);
     const db = (await importDb()).getDb();
     db.prepare(
       `INSERT INTO dag_posts
         (id, tx_id, content_hash, content, author, parent_refs, protocol_version, type, status)
        VALUES (?, ?, ?, ?, ?, '[]', 1, 'regular', 'pending')`,
-    ).run(T1_post, T1_id, Buffer.from(computeContentHash('T1 content')).toString('hex'), 'T1 content', Buffer.from(A.userId));
+    ).run(Tpool_post, Tpool_id, Buffer.from(computeContentHash('contentious thread')).toString('hex'), 'contentious thread', Buffer.from(A.userId));
 
-    // Control: T1 is in the pool and its pending row stands.
     expect(mem.pendingKarmaSpend(toHex(A.userId))).toBe(POST_PRICE_THREAD);
-    expect(posts.getPost(T1_post)).not.toBeNull();
+    expect(posts.getPost(Tpool_post)).not.toBeNull();
 
-    const T2 = buildThread(A, X, 'T2 content');
-    const block = await makeApplicableBlock({ height: 1, utxoTxs: [T2] });
+    const Tblock = buildThread(A, X, 'the block\'s thread');
+    const block = await makeApplicableBlock({ height: 1, utxoTxs: [Tblock] });
     expect(await applyBlockThroughIntake(block)).toBe(true);
 
-    // The pending view holds no row for A, and T1's pending-post row is gone.
-    expect(posts.getPost(T1_post)).toBeNull();
+    expect(posts.getPost(Tpool_post)).toBeNull();
     expect(mem.pendingKarmaSpend(toHex(A.userId))).toBe(0n);
   });
 
-  // 3. Expiry on a server node — expiry and ceiling pinned at the boundary.
   it('a block at expiresAtHeight keeps the entry, the next block removes it', async () => {
     await freshNode();
     const A = makeTestIdentity();
@@ -204,8 +199,6 @@ describe('every applied block lets the pool follow it, on every node', () => {
     expect(mem.getPendingEntries(10)).toHaveLength(0);
   });
 
-  // 4. A conflict's dependents — T1, T1' on T1's change, T1'' on T1''s change,
-  //    a block spends T1's input via another transaction. All three leave.
   it('a chain of pooled spenders leaves with the entry whose input the block takes', async () => {
     await freshNode();
     const A = makeTestIdentity();
@@ -214,31 +207,29 @@ describe('every applied block lets the pool follow it, on every node', () => {
 
     const mem = await importMempool();
 
-    const T1 = buildThread(A, X, 'c4 T1');
-    mem.insertUtxoTx(T1, 1000);
-    const T1_change = changeBox(T1, A);
+    const Troot = buildThread(A, X, 'root of a chain');
+    mem.insertUtxoTx(Troot, 1000);
+    const Troot_change = changeBox(Troot, A);
 
-    const T1b = buildThread(A, T1_change, 'c4 T1b');
-    mem.insertUtxoTx(T1b, 1000);
-    const T1b_change = changeBox(T1b, A);
+    const Tchild = buildThread(A, Troot_change, 'a child spending the change');
+    mem.insertUtxoTx(Tchild, 1000);
+    const Tchild_change = changeBox(Tchild, A);
 
-    const T1bb = buildThread(A, T1b_change, 'c4 T1bb');
-    mem.insertUtxoTx(T1bb, 1000);
+    const Tgrand = buildThread(A, Tchild_change, 'a grandchild spending the change');
+    mem.insertUtxoTx(Tgrand, 1000);
 
     expect(mem.getPendingEntries(10)).toHaveLength(3);
 
-    // Another spender of X by A — the block carries it; T1 and its children
-    // leave together.
-    const T2 = buildThread(A, X, 'c4 T2');
-    const block = await makeApplicableBlock({ height: 1, utxoTxs: [T2] });
+    // Another spender of X by A — the block carries it; the whole chain
+    // leaves together.
+    const Tblock = buildThread(A, X, 'the block\'s spender');
+    const block = await makeApplicableBlock({ height: 1, utxoTxs: [Tblock] });
     expect(await applyBlockThroughIntake(block)).toBe(true);
 
     expect(mem.getPendingEntries(10)).toHaveLength(0);
   });
 
-  // 5. A reply's dependence — a reply R by another key naming P as its parent,
-  //    pooled; a block spends P's input through another transaction; R leaves.
-  it('a pooled reply leaves with the pooled parent its block confirms-away', async () => {
+  it('a pooled reply leaves with the parent whose input the block spends', async () => {
     await freshNode();
     const A = makeTestIdentity();
     const B = makeTestIdentity();
@@ -250,42 +241,37 @@ describe('every applied block lets the pool follow it, on every node', () => {
     const posts = await importPosts();
     const db = (await importDb()).getDb();
 
-    // P: A pools a thread spending Xa.
-    const P = buildThread(A, Xa, 'c5 P');
+    const P = buildThread(A, Xa, 'a parent in the pool');
     const P_id = computeTxId(P);
     const P_post = computePostId(P_id, 0);
     mem.insertUtxoTx(P, 1000);
     db.prepare(
       `INSERT INTO dag_posts (id, tx_id, content_hash, content, author, parent_refs, protocol_version, type, status)
        VALUES (?, ?, ?, ?, ?, '[]', 1, 'regular', 'pending')`,
-    ).run(P_post, P_id, Buffer.from(computeContentHash('c5 P')).toString('hex'), 'c5 P', Buffer.from(A.userId));
+    ).run(P_post, P_id, Buffer.from(computeContentHash('a parent in the pool')).toString('hex'), 'a parent in the pool', Buffer.from(A.userId));
 
-    // R: B pools a reply to P spending Xb.
-    const R = buildReply(B, Xb, 'c5 R', P_post, A.userId);
+    const R = buildReply(B, Xb, 'a reply to the pending parent', P_post, A.userId);
     const R_id = computeTxId(R);
     const R_post = computePostId(R_id, 0);
     mem.insertUtxoTx(R, 1000);
     db.prepare(
       `INSERT INTO dag_posts (id, tx_id, content_hash, content, author, parent_refs, protocol_version, type, status)
        VALUES (?, ?, ?, ?, ?, ?, 1, 'regular', 'pending')`,
-    ).run(R_post, R_id, Buffer.from(computeContentHash('c5 R')).toString('hex'), 'c5 R', Buffer.from(B.userId), JSON.stringify([P_post]));
+    ).run(R_post, R_id, Buffer.from(computeContentHash('a reply to the pending parent')).toString('hex'), 'a reply to the pending parent', Buffer.from(B.userId), JSON.stringify([P_post]));
     db.prepare('INSERT INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)').run(R_post, P_post);
 
     expect(posts.getPost(P_post)).not.toBeNull();
     expect(posts.getPost(R_post)).not.toBeNull();
     expect(db.prepare('SELECT 1 FROM dag_parent_refs WHERE post_id = ?').get(R_post)).toBeDefined();
 
-    // Block carries T2 spending Xa, confirming no post.
-    const T2 = buildThread(A, Xa, 'c5 T2');
-    const block = await makeApplicableBlock({ height: 1, utxoTxs: [T2] });
+    const Tblock = buildThread(A, Xa, 'the block\'s thread over Xa');
+    const block = await makeApplicableBlock({ height: 1, utxoTxs: [Tblock] });
     expect(await applyBlockThroughIntake(block)).toBe(true);
 
     expect(posts.getPost(R_post)).toBeNull();
     expect(db.prepare('SELECT 1 FROM dag_parent_refs WHERE post_id = ?').get(R_post)).toBeUndefined();
   });
 
-  // 6. A confirmed entry takes none — T1 and T1' on T1's change, block applies
-  //    T1, T1' stays pooled.
   it('a confirmed entry leaves alone and its dependent stays pooled', async () => {
     await freshNode();
     const A = makeTestIdentity();
@@ -293,25 +279,26 @@ describe('every applied block lets the pool follow it, on every node', () => {
     await seedBoxes([X]);
 
     const mem = await importMempool();
-    const T1 = buildThread(A, X, 'c6 T1');
-    mem.insertUtxoTx(T1, 1000);
-    const T1_change = changeBox(T1, A);
-    const T1b = buildThread(A, T1_change, 'c6 T1b');
-    mem.insertUtxoTx(T1b, 1000);
+    const T = buildThread(A, X, 'the one the block carries');
+    mem.insertUtxoTx(T, 1000);
+    const T_change = changeBox(T, A);
+    const Tdep = buildThread(A, T_change, 'the one that stays pooled');
+    mem.insertUtxoTx(Tdep, 1000);
 
     expect(mem.getPendingEntries(10)).toHaveLength(2);
 
-    const block = await makeApplicableBlock({ height: 1, utxoTxs: [T1] });
+    const block = await makeApplicableBlock({ height: 1, utxoTxs: [T] });
     expect(await applyBlockThroughIntake(block)).toBe(true);
 
     const kept = mem.getPendingEntries(10);
     expect(kept).toHaveLength(1);
-    expect(computeTxId(T1b)).toBe((kept[0] as any).utxoTxBytes && computeTxId(T1b));
+    // The one entry that remains is Tdep — its id read from its stored
+    // tx_id compared to computeTxId(Tdep).
+    const db = (await importDb()).getDb();
+    const row = db.prepare('SELECT tx_id FROM mempool WHERE rowid = ?').get(kept[0]!.rowid) as { tx_id: string };
+    expect(row.tx_id).toBe(computeTxId(Tdep));
   });
 
-  // 7. A reorg's re-inserted conflict — a reverted block's T1 is re-inserted,
-  //    the new branch's block at the same height spends T1's input through T2.
-  //    T1 does not stand after the reorg.
   it('a reorg does not return a transaction the new branch spends past', async () => {
     await freshNode();
     const A = makeTestIdentity();
@@ -321,29 +308,26 @@ describe('every applied block lets the pool follow it, on every node', () => {
     const mem = await importMempool();
 
     // Both branches build their blocks over the same pre-apply state (genesis
-    // plus seeded X). Chain B's block is built first and staged; chain A's
-    // block is built and applied after. The reorg restores the prover to the
-    // fork point, which is the state both blocks were built against.
+    // plus seeded X). The reorg restores the prover to the fork point,
+    // re-inserts the reverted branch's transaction into the pool at Phase 2,
+    // and the Phase 3 apply of the new branch's block removes it through
+    // followAppliedBlock.
     const { stagePrefix } = await import('./fork-resolution-fixtures.js');
 
-    const T2 = buildThread(A, X, 'c7 T2');
-    const blockB1 = await makeApplicableBlock({ height: 1, utxoTxs: [T2] });
+    const Tnew = buildThread(A, X, 'chain B\'s thread over X');
+    const blockB1 = await makeApplicableBlock({ height: 1, utxoTxs: [Tnew] });
     const hashes = await stagePrefix([blockB1]);
 
-    const T1 = buildThread(A, X, 'c7 T1');
-    const blockA1 = await makeApplicableBlock({ height: 1, utxoTxs: [T1] });
+    const Trev = buildThread(A, X, 'chain A\'s thread over X');
+    const blockA1 = await makeApplicableBlock({ height: 1, utxoTxs: [Trev] });
     expect(await applyBlockThroughIntake(blockA1)).toBe(true);
 
     const fork = await importFork();
     fork.reorg(0, hashes);
 
-    // T1 is not in the pool after the reorg commits: the new branch's apply
-    // spends X, so re-insertion either refused T1 or follow removed it.
     expect(mem.getPendingEntries(10)).toHaveLength(0);
   });
 
-  // 8. deletePendingPost on a confirmed post leaves its row and its parent
-  //    refs.
   it('deletePendingPost leaves a confirmed reply row and its parent refs', async () => {
     await freshNode();
     const A = makeTestIdentity();
@@ -355,27 +339,62 @@ describe('every applied block lets the pool follow it, on every node', () => {
     const posts = await importPosts();
     const db = (await importDb()).getDb();
 
-    // A thread confirmed first, so the reply has a confirmed parent.
-    const P = buildThread(A, Xa, 'c8 P');
+    const P = buildThread(A, Xa, 'the confirmed parent');
     const b1 = await makeApplicableBlock({ height: 1, utxoTxs: [P] });
     expect(await applyBlockThroughIntake(b1)).toBe(true);
     const P_post = computePostId(computeTxId(P), 0);
 
-    // A reply confirms at height 2.
-    const R = buildReply(B, Xb, 'c8 R', P_post, A.userId);
+    const R = buildReply(B, Xb, 'the confirmed reply', P_post, A.userId);
     const b2 = await makeApplicableBlock({ height: 2, utxoTxs: [R] });
     expect(await applyBlockThroughIntake(b2)).toBe(true);
     const R_post = computePostId(computeTxId(R), 0);
 
-    // Control: R is confirmed and names P as parent.
     expect(posts.getPost(R_post)?.status).toBe('confirmed');
     expect(db.prepare('SELECT 1 FROM dag_parent_refs WHERE post_id = ? AND parent_id = ?').get(R_post, P_post)).toBeDefined();
 
-    // The call: deletePendingPost on R. R is confirmed, so the row and its
-    // parent-ref row stay.
     posts.deletePendingPost(R_post);
 
     expect(posts.getPost(R_post)?.status).toBe('confirmed');
     expect(db.prepare('SELECT 1 FROM dag_parent_refs WHERE post_id = ? AND parent_id = ?').get(R_post, P_post)).toBeDefined();
+  });
+
+  it('an entry past its ceiling leaves with the block at ceiling + 1', async () => {
+    await freshNode();
+    const A = makeTestIdentity();
+    const X = makeKarmaBox(POST_PRICE_THREAD * 10n, A.userId, 0, 50);
+    await seedBoxes([X]);
+
+    const mem = await importMempool();
+    // A vouch cast carries a ceiling the rules give it
+    // (MEMPOOL_INTERFACE → Validity ceiling): with the vouch output's
+    // createdAtBlock = 10, the ceiling is 15.
+    const dummyKey = toHex(A.userId);
+    const voucher = Buffer.from('ee'.repeat(32), 'hex');
+    const target = Buffer.from('11'.repeat(32), 'hex');
+    const vouchTx: UtxoTransaction = {
+      inputs: [X.id!],
+      outputs: [
+        { boxType: 'karma', value: 99n, owner: A.userId, createdAtBlock: 10 } as unknown as AnyBox,
+        {
+          boxType: 'vouch', value: 1n, createdAtBlock: 10,
+          voucherId: new Uint8Array(voucher), targetId: new Uint8Array(target),
+        } as unknown as AnyBox,
+      ],
+      signatures: { [dummyKey]: new Uint8Array(64) },
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    mem.insertUtxoTx(vouchTx, 1000);
+
+    for (let h = 1; h <= 15; h++) {
+      const b = await makeApplicableBlock({ height: h });
+      expect(await applyBlockThroughIntake(b)).toBe(true);
+    }
+    // The block at ceiling keeps the entry.
+    expect(mem.getPendingEntries(10)).toHaveLength(1);
+
+    const b16 = await makeApplicableBlock({ height: 16 });
+    expect(await applyBlockThroughIntake(b16)).toBe(true);
+    // The block at ceiling + 1 removes it.
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
   });
 });
