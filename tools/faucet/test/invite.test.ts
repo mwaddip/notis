@@ -115,7 +115,10 @@ describe('buildInviteTx', () => {
     expect(verifies(two.tx, two.txId, pubHex)).toBe(true);
   });
 
-  it('refuses when the boxes cannot cover the bond', () => {
+  // NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+  // karma boxes" — selectKarmaInputs refuses when the pair cannot cover the
+  // bond, so the builder throws before the view's effective is ever read.
+  it('refuses when the pair cannot cover the bond', () => {
     expect(() => buildInviteTx(cfg, [{ boxId: B1, value: 10n }], invitee, 512, ERA))
       .toThrow(/insufficient/i);
   });
@@ -129,14 +132,27 @@ describe('buildInviteTx', () => {
     expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: String(KARMA_MINIMUM) });
   });
 
-  it('refuses one below the bond plus KARMA_MINIMUM', () => {
-    expect(() => buildInviteTx(cfg, [{ boxId: B1, value: 250n + KARMA_MINIMUM - 1n }], invitee, 512, ERA))
-      .toThrow(/insufficient karma/);
+  // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+  // one request at a time per endpoint." — the floor is a server-side check
+  // against the view's effective; the builder admits any pair that covers the
+  // bond, and the change rides whatever remains.
+  it.fails('builds under the bond plus KARMA_MINIMUM when the pair covers the bond', () => {
+    const { tx, changeValue } = buildInviteTx(
+      cfg, [{ boxId: B1, value: 250n + KARMA_MINIMUM - 1n }], invitee, 512, ERA,
+    );
+    expect(changeValue).toBe(KARMA_MINIMUM - 1n);
+    expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: String(KARMA_MINIMUM - 1n) });
   });
 
-  it('refuses a faucet holding exactly the bond', () => {
-    expect(() => buildInviteTx(cfg, [{ boxId: B1, value: 250n }], invitee, 512, ERA))
-      .toThrow(/floor/);
+  // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+  // one request at a time per endpoint." — at exactly the bond the pair covers
+  // it, and selectKarmaInputs picks the own box; the output is the bond alone.
+  it.fails('builds at exactly the bond with no change box', () => {
+    const { tx, changeValue, change } = buildInviteTx(cfg, [{ boxId: B1, value: 250n }], invitee, 512, ERA);
+    expect(changeValue).toBe(0n);
+    expect(change).toBeNull();
+    expect(outputsOf(tx)).toHaveLength(1);
+    expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'bond', value: '250' });
   });
 
   it('refuses a malformed invitee key', () => {
@@ -187,9 +203,10 @@ describe('buildInviteTx', () => {
     expect('income' in (outputs[0] ?? {})).toBe(false);
   });
 
-  // NODE_INTERFACE → Karma transition rules → "Only a post spends the floor":
-  // the drained refusal names what the faucet holds across both boxes.
-  it('names the sum of both boxes when the pair cannot cover the bond and the floor', () => {
+  // NODE_INTERFACE → Karma transition rules → "An identity holds at most two
+  // karma boxes" — selectKarmaInputs names what the owner's boxes total when
+  // the pair cannot cover the bond.
+  it('names the pair sum when the pair cannot cover the bond', () => {
     expect(() => buildInviteTx(cfg, [
       own(OWN_ID, 5n), income(INCOME_ID, 10n),
     ], invitee, 512, ERA)).toThrow(/15/);

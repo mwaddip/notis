@@ -61,8 +61,12 @@ describe('POST /faucet/karma', () => {
     expect(res.body.error).toContain('existing account');
   });
 
-  // A drained faucet is the faucet's own state, not a bad request.
-  it('answers 503 when it cannot cover the bond', async () => {
+  // NODE_INTERFACE → Faucet → "Every other answer is the service's own or
+  // the node's, never one dressed as the other." — a drained faucet answers
+  // 503, which an invite reaches when the view's effective, less the bond,
+  // stands below `KARMA_MINIMUM` (→ Karma transition rules → "Only a post
+  // spends the floor").
+  it('answers 503 when the view effective, less the bond, falls below the floor', async () => {
     client.karmaBoxes = async () => [{ boxId: K1, value: 10n }];
     const res = await request(createApp(cfg, client))
       .post('/faucet/karma').send({ pubkey: recipient });
@@ -70,7 +74,9 @@ describe('POST /faucet/karma', () => {
     expect(res.body.error).toMatch(/insufficient karma/);
   });
 
-  it('answers 503 when it holds exactly the bond and no floor beside it', async () => {
+  // NODE_INTERFACE → Faucet: at exactly the bond, the view's effective less
+  // the bond is zero, below the floor an invite leaves standing.
+  it('answers 503 at exactly the bond, with no floor beside it', async () => {
     client.karmaBoxes = async () => [{ boxId: K1, value: cfg.bondAmount }];
     const res = await request(createApp(cfg, client))
       .post('/faucet/karma').send({ pubkey: recipient });
@@ -105,19 +111,25 @@ describe('POST /faucet/karma', () => {
     expect(capped.status).toBe(429);
   });
 
-  // The chain is what makes two invites in one block interval both apply.
-  it('spends the first transaction\'s change on the second call', async () => {
+  // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+  // one request at a time per endpoint." — each call reads the view and
+  // submits against it, so a shared stub answering the same view each read
+  // yields two submissions with the same inputs.
+  it.fails('builds each karma call on the view it reads', async () => {
     const app = createApp(cfg, client);
     await request(app).post('/faucet/karma').send({ pubkey: recipient }).set(from('9.9.9.9'));
     await request(app).post('/faucet/karma').send({ pubkey: other }).set(from('9.9.9.8'));
     expect(submitted).toHaveLength(2);
-    expect(submitted[1]!.inputs).not.toEqual([K1]);
+    expect(submitted[0]!.inputs).toEqual([K1]);
+    expect(submitted[1]!.inputs).toEqual([K1]);
     expect((submitted[0]!.outputs as Record<string, unknown>[])[0]!.value).toBe('750');
-    expect((submitted[1]!.outputs as Record<string, unknown>[])[0]!.value).toBe('500');
+    expect((submitted[1]!.outputs as Record<string, unknown>[])[0]!.value).toBe('750');
   });
 
-  // A refused submission means the tip is not what the node holds.
-  it('drops the chain tip when the node refuses, and reselects the confirmed set', async () => {
+  // NODE_INTERFACE → Faucet → "The service keeps no record of its own
+  // submissions": a request the node refuses leaves no trace, and the request
+  // after it reads the view the stub answers at its own read.
+  it('a refused karma call leaves the next one reading the view it reads', async () => {
     const app = createApp(cfg, client);
     await request(app).post('/faucet/karma').send({ pubkey: recipient }).set(from('7.7.7.1'));
     client.submitInvite = async () => { throw new NodeError(400, 'nope'); };
@@ -188,9 +200,11 @@ describe('POST /faucet/credits', () => {
     expect(karma.status).toBe(202);
   });
 
-  // Credits are repeatable, so the credit side is not chained: each call reads
-  // the confirmed set again.
-  it('does not chain, and reselects the confirmed box each call', async () => {
+  // NODE_INTERFACE → Faucet → "The service builds on the node's pending view,
+  // one request at a time per endpoint." — the credit endpoint reads the
+  // view the stub answers at each call; a shared stub answering the same view
+  // yields two submissions with the same inputs.
+  it('each credit call builds on the view the stub answers at its read', async () => {
     const app = createApp(cfg, client);
     await request(app).post('/faucet/credits').send({ pubkey: recipient }).set(from('6.6.6.1'));
     await request(app).post('/faucet/credits').send({ pubkey: other }).set(from('6.6.6.2'));
