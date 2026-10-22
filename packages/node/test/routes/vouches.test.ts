@@ -941,6 +941,7 @@ describe('a resubmit is answered as held', () => {
     const block = await makeApplicableBlock({ height: 1 });
     expect(await applyBlockThroughIntake(block)).toBe(true);
 
+    const publishesBefore = broadcastTx.mock.calls.length;
     const r2 = await send('POST', '/', { tx: txJson });
     expect(r2.status).toBe(r1.status);
     expect(r2.data).toEqual(r1.data);
@@ -948,7 +949,8 @@ describe('a resubmit is answered as held', () => {
       .toBe((r1.data as Record<string, unknown>).expiresAtHeight);
 
     const calls = broadcastTx.mock.calls;
-    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
     const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
     const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
     expect(sentBytes).toBe(pooledBytes);
@@ -984,6 +986,7 @@ describe('a resubmit is answered as held', () => {
     const block = await makeApplicableBlock({ height: 2 });
     expect(await applyBlockThroughIntake(block)).toBe(true);
 
+    const publishesBefore = broadcastTx.mock.calls.length;
     const r2 = await send('DELETE', `/${Buffer.from(unTarget.pub).toString('hex')}`, { tx: txJson });
     expect(r2.status).toBe(r1.status);
     expect(r2.data).toEqual(r1.data);
@@ -991,7 +994,8 @@ describe('a resubmit is answered as held', () => {
       .toBe((r1.data as Record<string, unknown>).karmaReturnsAtBlock);
 
     const calls = broadcastTx.mock.calls;
-    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
     const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
     const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
     expect(sentBytes).toBe(pooledBytes);

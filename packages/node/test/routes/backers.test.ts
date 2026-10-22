@@ -366,13 +366,15 @@ describe('a resubmit is answered as held', () => {
     const block = await makeApplicableBlock({ height: 1 });
     expect(await applyBlockThroughIntake(block)).toBe(true);
 
+    const publishesBefore = broadcastTx.mock.calls.length;
     const r2 = await postReq(heldApp, '/backers/unstake', { tx: txJson });
     expect(r2.status).toBe(r1.status);
     expect(r2.body).toEqual(r1.body);
     expect(r2.body.expiresAtHeight).toBe(r1.body.expiresAtHeight);
 
     const calls = broadcastTx.mock.calls;
-    const sentTx = calls[calls.length - 1]![0] as UtxoTransaction;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
     const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
     const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
     expect(sentBytes).toBe(pooledBytes);
