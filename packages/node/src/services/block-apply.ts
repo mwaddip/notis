@@ -34,7 +34,7 @@ import {
   getCurrentHeight,
   createOrderingBlock as storeCreateOrderingBlock,
   getHeaderAt,
-  removeUtxoTxEntry,
+  followAppliedBlock,
   insertBlockTopology,
   getTopologyAuthorBytes,
   getTopologyHeight,
@@ -758,12 +758,21 @@ export function writeBlockEffects(
     return { id: postId, content: post.content };
   });
 
-  // Remove each applied transaction from the local mempool if present. This is
-  // the whole of the cleanup for a block that arrived from a peer — a block
-  // this node mined is cleaned by rowid in `submitMinedBlock`, which reaches every
-  // included entry wherever it sits (MEMPOOL_INTERFACE → Confirmed-entry
-  // cleanup reaches every row).
-  for (const { txId } of effects.appliedTxs) removeUtxoTxEntry(txId);
+  // MEMPOOL_INTERFACE → followAppliedBlock. Each applied id leaves by tx_id;
+  // every box the block's mutations remove, body and settlement alike, takes
+  // its pooled spender with its dependents; expiry and the ceiling run at the
+  // new tip. A block this node mined still clears its template rowids through
+  // submitMinedBlock, which the apply has already reached by tx_id
+  // (MEMPOOL_INTERFACE → Confirmed-entry cleanup reaches every row).
+  const spentBoxIds: string[] = [];
+  for (const m of effects.mutations) {
+    if (m.kind === 'box' && m.op === 'remove') spentBoxIds.push(m.boxId);
+  }
+  followAppliedBlock(
+    height,
+    effects.appliedTxs.map(({ txId }) => txId),
+    spentBoxIds,
+  );
 
   const journal: BlockJournal = {
     blockHeight: height,

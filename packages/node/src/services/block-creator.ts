@@ -72,7 +72,6 @@ import {
 import { blockCostBudget, costAlone, emptyBlockCost, marginalCost } from './cost-estimate.js';
 import {
   iteratePendingEntries,
-  purgeExpired,
   removeEntry,
   entryByteCost,
   setCostEstimate,
@@ -490,8 +489,10 @@ export function createOrderingBlock(): OrderingBlock | null {
   // pool, which is what bounds the loop (MINING_INTERFACE → Template and
   // submit).
   for (;;) {
-    // 1. Purge expired mempool entries
-    purgeExpired(currentHeight);
+    // 1. Expiry is block application's (MEMPOOL_INTERFACE → followAppliedBlock,
+    //    NODE_INTERFACE → Block creation step 1): the pool a build reads holds
+    //    no entry the tip has passed, and the tip moves only by an applied
+    //    block.
 
     // 2. The settlement cannot be built here: it consumes the fee boxes the body
     //    creates and pays a coinbase scaled by the actors the body carries, so it

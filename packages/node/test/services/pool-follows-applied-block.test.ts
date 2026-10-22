@@ -144,7 +144,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
   });
 
   // 1. A block's spend takes a conflicting entry, on a server node.
-  it.fails('a block applying a conflicting post removes the pooled entry and its pending row', async () => {
+  it('a block applying a conflicting post removes the pooled entry and its pending row', async () => {
     await freshNode();
     const A = makeTestIdentity();
     const X = makeKarmaBox(POST_PRICE_THREAD * 10n, A.userId, 0, 1);
@@ -179,7 +179,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
   });
 
   // 3. Expiry on a server node — expiry and ceiling pinned at the boundary.
-  it.fails('a block at expiresAtHeight keeps the entry, the next block removes it', async () => {
+  it('a block at expiresAtHeight keeps the entry, the next block removes it', async () => {
     await freshNode();
     const A = makeTestIdentity();
     const X = makeKarmaBox(POST_PRICE_THREAD * 10n, A.userId, 0, 2);
@@ -206,7 +206,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
 
   // 4. A conflict's dependents — T1, T1' on T1's change, T1'' on T1''s change,
   //    a block spends T1's input via another transaction. All three leave.
-  it.fails('a chain of pooled spenders leaves with the entry whose input the block takes', async () => {
+  it('a chain of pooled spenders leaves with the entry whose input the block takes', async () => {
     await freshNode();
     const A = makeTestIdentity();
     const X = makeKarmaBox(POST_PRICE_THREAD * 10n, A.userId, 0, 3);
@@ -238,7 +238,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
 
   // 5. A reply's dependence — a reply R by another key naming P as its parent,
   //    pooled; a block spends P's input through another transaction; R leaves.
-  it.fails('a pooled reply leaves with the pooled parent its block confirms-away', async () => {
+  it('a pooled reply leaves with the pooled parent its block confirms-away', async () => {
     await freshNode();
     const A = makeTestIdentity();
     const B = makeTestIdentity();
@@ -312,7 +312,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
   // 7. A reorg's re-inserted conflict — a reverted block's T1 is re-inserted,
   //    the new branch's block at the same height spends T1's input through T2.
   //    T1 does not stand after the reorg.
-  it.fails('a reorg does not return a transaction the new branch spends past', async () => {
+  it('a reorg does not return a transaction the new branch spends past', async () => {
     await freshNode();
     const A = makeTestIdentity();
     const X = makeKarmaBox(POST_PRICE_THREAD * 10n, A.userId, 0, 30);
