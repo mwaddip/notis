@@ -194,3 +194,11 @@ export {
   countUsernames,
 } from './usernames.js';
 export type { UsernameRow, HolderRecord } from './usernames.js';
+
+export {
+  countConfirmedPosts,
+  getTotalKarma,
+  getLiquidKarma,
+  getTotalCredits,
+  countPendingPosts,
+} from './aggregates.js';

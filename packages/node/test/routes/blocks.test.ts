@@ -10,8 +10,9 @@ import {
   createOrderingBlock,
 } from '../../src/store/ordering.js';
 import { getBlockProof, putBlockProof } from '../../src/store/block-proofs.js';
-import { createRouter, KARMA_SUPPLY_TYPES } from '../../src/routes/blocks.js';
+import { createRouter } from '../../src/routes/blocks.js';
 import type { BlocksDeps } from '../../src/routes/blocks.js';
+import { KARMA_SUPPLY_TYPES } from '../../src/karma-supply.js';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { mkdtempSync, rmSync } from 'fs';
@@ -580,7 +581,7 @@ describe('`/status` reads its aggregates once per applied tip', () => {
     rmSync(perTipTmpDir, { recursive: true, force: true });
   });
 
-  it.fails('two reads at one applied tip answer one reading of `postCount` and `totalCredits`', async () => {
+  it('two reads at one applied tip answer one reading of `postCount` and `totalCredits`', async () => {
     const { server, port } = await startApp();
     try {
       const first = await fetchStatus(port);
