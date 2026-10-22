@@ -437,7 +437,7 @@ export function gateMetadata(tx: UtxoTransaction): GateMetadata {
 }
 
 /**
- * The ids of the boxes this transaction would create.
+ * The boxes this transaction would create, in output order.
  *
  * Derived through `materializeOutput`, never re-derived here: outputs are
  * client-supplied and may carry any of `id`/`txId`/`index`, and that function is
@@ -447,9 +447,13 @@ export function gateMetadata(tx: UtxoTransaction): GateMetadata {
  *
  * `txId` is a parameter rather than a second `computeTxId` call, so the id this
  * row is keyed on and the ids of the boxes it promises come from one hash.
+ *
+ * MEMPOOL_INTERFACE → Schema → "An output row carries its box's owner, type
+ * and value": the row is written from the box this returns, so the pool's
+ * owner-type-value triple is `materializeOutput`'s on the same output.
  */
-function outputBoxIds(tx: UtxoTransaction, txId: string): string[] {
-  return (tx.outputs ?? []).map((out, i) => materializeOutput(out, txId, i).id!);
+function materializedOutputs(tx: UtxoTransaction, txId: string): AnyBox[] {
+  return (tx.outputs ?? []).map((out, i) => materializeOutput(out, txId, i));
 }
 
 /**
@@ -499,7 +503,7 @@ export function insertUtxoTx(
 
   const inputs = tx.inputs ?? [];
   const txId = computeTxId(tx);
-  const outputIds = outputBoxIds(tx, txId);
+  const outputs = materializedOutputs(tx, txId);
   const meta = gateMetadata(tx);
 
   // One SQLite transaction: the conflict gate (before the capacity gate),
@@ -549,12 +553,22 @@ export function insertUtxoTx(
     );
     const entryRowid = Number(result.lastInsertRowid);
 
-    // One row per input, one row per output id — the pending view's tables
-    // (MEMPOOL_INTERFACE → Schema).
+    // One row per input, one row per output — the pending view's tables
+    // (MEMPOOL_INTERFACE → Schema). The output row carries the box's owner,
+    // type and value from `materializeOutput`'s box, so the view by owner
+    // (MEMPOOL_INTERFACE → getBoxesPageWithPending) is a range of
+    // `idx_mempool_outputs_owner`; `owner` is NULL for a box type with
+    // none.
     const insertInput = prepared(db, 'INSERT INTO mempool_inputs (box_id, entry_rowid) VALUES (?, ?)');
     for (const boxId of inputs) insertInput.run(boxId, entryRowid);
-    const insertOutput = prepared(db, 'INSERT INTO mempool_outputs (box_id, entry_rowid) VALUES (?, ?)');
-    for (const boxId of outputIds) insertOutput.run(boxId, entryRowid);
+    const insertOutput = prepared(db, `INSERT INTO mempool_outputs
+         (box_id, entry_rowid, owner, box_type, value) VALUES (?, ?, ?, ?, ?)`);
+    for (const box of outputs) {
+      const ownerBuf = ('owner' in box && box.owner instanceof Uint8Array)
+        ? Buffer.from(box.owner)
+        : null;
+      insertOutput.run(box.id!, entryRowid, ownerBuf, box.boxType, box.value);
+    }
 
     return entryRowid;
   })();
