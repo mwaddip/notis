@@ -1077,87 +1077,134 @@ export function removeUtxoTxEntry(txId: string): number {
   return prepared(db, 'DELETE FROM mempool WHERE tx_id = ?').run(txId).changes;
 }
 
-// MEMPOOL_INTERFACE → removeUnconfirmed. The entries named, every pooled entry
-// spending an output of one of them or replying to its post — the dependents
-// read before any row leaves, so the output rows and the pending post rows the
-// walk reads leave with their entry. One SQLite transaction (a savepoint inside
-// a caller's). Each read is on an index: SCAN json_each →
-// idx_mempool_outputs_entry → mempool_inputs' primary key for the output half,
-// idx_dag_parent_refs_parent → dag_posts' primary key → idx_mempool_tx_id for
-// the parent-ref half.
+/**
+ * The closure of an unconfirmed set — the entries named, every pooled entry
+ * spending an output of one of them or replying to its post, and so on down
+ * (MEMPOOL_INTERFACE → removeUnconfirmed). Each read is on an index: SCAN
+ * json_each → idx_mempool_outputs_entry → mempool_inputs' primary key for the
+ * output half, idx_dag_parent_refs_parent → dag_posts' primary key →
+ * idx_mempool_tx_id for the parent-ref half. The output box ids a closure
+ * entry writes ride beside the rowids, so a caller holds the predicate
+ * `every input of an arrival is somewhere in this closure's outputs` as one
+ * in-memory lookup.
+ */
+export interface UnconfirmedClosure {
+  rowids: Set<number>;
+  txIdOf: Map<number, string | null>;
+  outputBoxIds: Set<string>;
+}
+
+function readClosureInner(
+  db: ReturnType<typeof getDb>,
+  rowids: readonly number[],
+): UnconfirmedClosure {
+  const closure = new Set<number>();
+  const txIdOf = new Map<number, string | null>();
+  const outputBoxIds = new Set<string>();
+  let frontier: readonly number[] = Array.from(new Set(rowids));
+  while (frontier.length > 0) {
+    const added: number[] = [];
+    for (const rowid of frontier) {
+      if (closure.has(rowid)) continue;
+      closure.add(rowid);
+      const row = prepared(
+        db,
+        "SELECT tx_id FROM mempool WHERE rowid = ? AND entry_type = 'utxo_tx'",
+      ).get(rowid) as { tx_id: string | null } | undefined;
+      txIdOf.set(rowid, row?.tx_id ?? null);
+      added.push(rowid);
+    }
+    if (added.length === 0) break;
+    // The output box ids each just-added entry writes, kept beside the
+    // closure's rowids so a caller tests an arrival's inputs in one lookup.
+    const outputRows = prepared(
+      db,
+      `SELECT box_id FROM mempool_outputs
+        WHERE entry_rowid IN (SELECT value FROM json_each(?))`,
+    ).all(JSON.stringify(added)) as Array<{ box_id: string }>;
+    for (const r of outputRows) outputBoxIds.add(r.box_id);
+    // Entries whose input is the output of a just-added entry.
+    const outRows = prepared(
+      db,
+      `SELECT DISTINCT mi.entry_rowid AS rowid
+         FROM mempool_outputs mo
+         JOIN mempool_inputs mi ON mi.box_id = mo.box_id
+        WHERE mo.entry_rowid IN (SELECT value FROM json_each(?))`,
+    ).all(JSON.stringify(added)) as Array<{ rowid: number }>;
+    // Pending posts replying to a just-added entry's post, found through
+    // dag_parent_refs (idx_dag_parent_refs_parent) and the reply's own
+    // transaction id (idx_mempool_tx_id).
+    const parentIds: string[] = [];
+    for (const r of added) {
+      const tx = txIdOf.get(r);
+      if (typeof tx === 'string' && tx.length > 0) {
+        parentIds.push(computePostId(tx, 0));
+      }
+    }
+    let refRows: Array<{ rowid: number }> = [];
+    if (parentIds.length > 0) {
+      // INDEXED BY idx_dag_parent_refs_parent: the store keeps no statistics,
+      // so the planner walks the pending-post leg first and leaves
+      // idx_dag_parent_refs_parent on an empty join.
+      refRows = prepared(
+        db,
+        `SELECT m.rowid AS rowid
+           FROM dag_parent_refs dpr INDEXED BY idx_dag_parent_refs_parent
+           JOIN dag_posts dp ON dp.id = dpr.post_id AND dp.status = 'pending'
+           JOIN mempool m ON m.tx_id = dp.tx_id
+          WHERE dpr.parent_id IN (SELECT value FROM json_each(?))`,
+      ).all(JSON.stringify(parentIds)) as Array<{ rowid: number }>;
+    }
+    const nextFrontier: number[] = [];
+    for (const r of outRows) if (!closure.has(r.rowid)) nextFrontier.push(r.rowid);
+    for (const r of refRows) if (!closure.has(r.rowid)) nextFrontier.push(r.rowid);
+    frontier = nextFrontier;
+  }
+  return { rowids: closure, txIdOf, outputBoxIds };
+}
+
+function deleteFromClosureInner(
+  db: ReturnType<typeof getDb>,
+  closure: UnconfirmedClosure,
+): number {
+  // Each closure entry's pending post row leaves first (NODE_INTERFACE → Post
+  // transactions → "The pending row is the mempool entry's DAG shadow"), then
+  // the entries themselves — one bound value through json_each so one DELETE
+  // reaches the whole set and SQLite's variable cap stays unspent.
+  for (const rowid of closure.rowids) {
+    const tx = closure.txIdOf.get(rowid);
+    if (typeof tx === 'string' && tx.length > 0) {
+      deletePendingPost(computePostId(tx, 0));
+    }
+  }
+  const ids = Array.from(closure.rowids);
+  const result = prepared(
+    db,
+    'DELETE FROM mempool WHERE rowid IN (SELECT value FROM json_each(?))',
+  ).run(JSON.stringify(ids));
+  return result.changes;
+}
+
+/**
+ * The read half of `removeUnconfirmed`, exposed beside it so a caller can
+ * answer whether an arrival depends on a resident's closure before the
+ * resident leaves — never a second walk (MEMPOOL_INTERFACE → Eviction, inside
+ * the credit class only; → removeUnconfirmed).
+ */
+export function readUnconfirmedClosure(rowids: readonly number[]): UnconfirmedClosure {
+  const db = getDb();
+  return readClosureInner(db, rowids);
+}
+
+// MEMPOOL_INTERFACE → removeUnconfirmed. One SQLite transaction (a savepoint
+// inside a caller's). The dependents are read before any row leaves, so the
+// output rows and the pending post rows the walk reads leave with their entry.
 export function removeUnconfirmed(rowids: readonly number[]): number {
   if (rowids.length === 0) return 0;
   const db = getDb();
   return db.transaction(() => {
-    const closure = new Set<number>();
-    const txIdOf = new Map<number, string | null>();
-    let frontier: readonly number[] = Array.from(new Set(rowids));
-    while (frontier.length > 0) {
-      const added: number[] = [];
-      for (const rowid of frontier) {
-        if (closure.has(rowid)) continue;
-        closure.add(rowid);
-        const row = prepared(
-          db,
-          "SELECT tx_id FROM mempool WHERE rowid = ? AND entry_type = 'utxo_tx'",
-        ).get(rowid) as { tx_id: string | null } | undefined;
-        txIdOf.set(rowid, row?.tx_id ?? null);
-        added.push(rowid);
-      }
-      if (added.length === 0) break;
-      // Entries whose input is the output of a just-added entry.
-      const outRows = prepared(
-        db,
-        `SELECT DISTINCT mi.entry_rowid AS rowid
-           FROM mempool_outputs mo
-           JOIN mempool_inputs mi ON mi.box_id = mo.box_id
-          WHERE mo.entry_rowid IN (SELECT value FROM json_each(?))`,
-      ).all(JSON.stringify(added)) as Array<{ rowid: number }>;
-      // Pending posts replying to a just-added entry's post, found through
-      // dag_parent_refs (idx_dag_parent_refs_parent) and the reply's own
-      // transaction id (idx_mempool_tx_id).
-      const parentIds: string[] = [];
-      for (const r of added) {
-        const tx = txIdOf.get(r);
-        if (typeof tx === 'string' && tx.length > 0) {
-          parentIds.push(computePostId(tx, 0));
-        }
-      }
-      let refRows: Array<{ rowid: number }> = [];
-      if (parentIds.length > 0) {
-        // INDEXED BY idx_dag_parent_refs_parent: the store keeps no statistics,
-        // so the planner walks the pending-post leg first and leaves
-        // idx_dag_parent_refs_parent on an empty join.
-        refRows = prepared(
-          db,
-          `SELECT m.rowid AS rowid
-             FROM dag_parent_refs dpr INDEXED BY idx_dag_parent_refs_parent
-             JOIN dag_posts dp ON dp.id = dpr.post_id AND dp.status = 'pending'
-             JOIN mempool m ON m.tx_id = dp.tx_id
-            WHERE dpr.parent_id IN (SELECT value FROM json_each(?))`,
-        ).all(JSON.stringify(parentIds)) as Array<{ rowid: number }>;
-      }
-      const nextFrontier: number[] = [];
-      for (const r of outRows) if (!closure.has(r.rowid)) nextFrontier.push(r.rowid);
-      for (const r of refRows) if (!closure.has(r.rowid)) nextFrontier.push(r.rowid);
-      frontier = nextFrontier;
-    }
-    // Delete each closure entry's pending post row (NODE_INTERFACE → Post
-    // transactions → "The pending row is the mempool entry's DAG shadow"),
-    // then the entries themselves — one bound value through json_each so one
-    // DELETE reaches the whole set and SQLite's variable cap stays unspent.
-    for (const rowid of closure) {
-      const tx = txIdOf.get(rowid);
-      if (typeof tx === 'string' && tx.length > 0) {
-        deletePendingPost(computePostId(tx, 0));
-      }
-    }
-    const ids = Array.from(closure);
-    const result = prepared(
-      db,
-      'DELETE FROM mempool WHERE rowid IN (SELECT value FROM json_each(?))',
-    ).run(JSON.stringify(ids));
-    return result.changes;
+    const closure = readClosureInner(db, rowids);
+    return deleteFromClosureInner(db, closure);
   })();
 }
 
