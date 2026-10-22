@@ -515,7 +515,13 @@ function createMempoolGateIndexes(database: Database.Database): void {
   `);
 }
 
-// NODE_INTERFACE → "A page read touches limit + 1 entries of one index that serves both its predicate and its order"
+// NODE_INTERFACE → "A page read touches limit + 1 entries of one index that
+// serves both its predicate and its order"; NODE_INTERFACE → Store Interface
+// → "A read the node runs per request or per block touches what it answers"
+// — one index per read, named as the contract names it, each partial `WHERE`
+// matching the read's predicate text for text so SQLite picks it.
+// NODE_INTERFACE → Header tree → "best_chain is read by hash as well as by
+// height": idx_best_chain_hash, UNIQUE.
 function createPageIndexes(database: Database.Database): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_utxo_boxes_owner_type_value
@@ -535,6 +541,20 @@ function createPageIndexes(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_utxo_boxes_vouch_target
       ON utxo_boxes(json_extract(extra_data, '$.targetId'), id)
       WHERE box_type = 'vouch' AND spent_at_block IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_vouch_voucher
+      ON utxo_boxes(json_extract(extra_data, '$.voucherId'), id)
+      WHERE box_type = 'vouch' AND spent_at_block IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_escrow_owner
+      ON utxo_boxes(json_extract(extra_data, '$.owner'), id)
+      WHERE box_type = 'vouch_escrow' AND spent_at_block IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_credit_created
+      ON utxo_boxes(created_at_block)
+      WHERE box_type = 'credit' AND spent_at_block IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_dag_posts_placeholder
+      ON dag_posts(block_height, block_index)
+      WHERE content IS NULL AND withdrawn_at_height IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_best_chain_hash
+      ON best_chain(hash);
     CREATE INDEX IF NOT EXISTS idx_dag_posts_pending
       ON dag_posts(status)
       WHERE status = 'pending';

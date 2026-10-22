@@ -271,7 +271,7 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it.fails('the voucher\'s vouch page, with and without after, and its count — on idx_utxo_boxes_vouch_voucher', async () => {
+  it('the voucher\'s vouch page, with and without after, and its count — on idx_utxo_boxes_vouch_voucher', async () => {
     const voucherHex = Buffer.from(voucher).toString('hex');
     const t1 = bytes('aa'.repeat(32));
     const t2 = bytes('bb'.repeat(32));
@@ -312,7 +312,7 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
     expect(allPlans.every((p) => /idx_utxo_boxes_vouch_voucher/i.test(p))).toBe(true);
   });
 
-  it.fails('the escrow page with and without after, its count, getVouchEscrowsFor and hasActiveVouchEscrow — on idx_utxo_boxes_escrow_owner', async () => {
+  it('the escrow page with and without after, its count, getVouchEscrowsFor and hasActiveVouchEscrow — on idx_utxo_boxes_escrow_owner', async () => {
     const escrows = [
       { boxType: 'vouch_escrow' as const, value: 1n, createdAtBlock: 0, owner: voucher, releaseAtBlock: 10 },
       { boxType: 'vouch_escrow' as const, value: 2n, createdAtBlock: 0, owner: voucher, releaseAtBlock: 11 },
@@ -364,7 +364,7 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
     expect(allPlans.every((p) => /idx_utxo_boxes_escrow_owner/i.test(p))).toBe(true);
   });
 
-  it.fails('the five ownerless singletons — SEARCH on idx_utxo_boxes_owner_type_value', async () => {
+  it('the five ownerless singletons — SEARCH on idx_utxo_boxes_owner_type_value', async () => {
     // One singleton of each ownerless type.
     const singletons = [
       { boxType: 'genesis_proof' as const, value: 0n, createdAtBlock: 0, payload: new Uint8Array([1, 2, 3]) },
@@ -425,7 +425,7 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
     expect(allPlans.every((p) => /\bSEARCH\b[^|]*\bidx_utxo_boxes_owner_type_value\b/i.test(p))).toBe(true);
   });
 
-  it.fails('getRentEligibleCreditBoxes — idx_utxo_boxes_credit_created, no USE TEMP B-TREE', async () => {
+  it('getRentEligibleCreditBoxes — idx_utxo_boxes_credit_created, no USE TEMP B-TREE', async () => {
     const credits = [
       { boxType: 'credit' as const, value: 10n, createdAtBlock: 1, owner },
       { boxType: 'credit' as const, value: 20n, createdAtBlock: 2, owner },
@@ -447,7 +447,7 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
     expect(plans.every((p) => !/USE TEMP B-TREE/i.test(p))).toBe(true);
   });
 
-  it.fails('getPlaceholdersAt and getMissingBodies — SEARCH on idx_dag_posts_placeholder, no USE TEMP B-TREE', async () => {
+  it('getPlaceholdersAt and getMissingBodies — SEARCH on idx_dag_posts_placeholder, no USE TEMP B-TREE', async () => {
     // Seed one placeholder row (content NULL) at block height 5.
     vi.resetModules();
     const dbMod = await importDbFresh();
@@ -483,7 +483,7 @@ describe('the voucher, escrow, singleton, rent, placeholder and best_chain reads
     expect(missPlans.every((p) => !/USE TEMP B-TREE/i.test(p))).toBe(true);
   });
 
-  it.fails('pruneHeadersBelow and removeHeaderSubtree\'s best_chain delete — no SCAN best_chain, uses idx_best_chain_hash', async () => {
+  it('pruneHeadersBelow and removeHeaderSubtree\'s best_chain delete — no SCAN best_chain, uses idx_best_chain_hash', async () => {
     // Seed one applied header, one `best_chain` entry, and one `staged_blocks`
     // row below the floor.
     vi.resetModules();

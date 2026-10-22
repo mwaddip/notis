@@ -396,10 +396,14 @@ export function getBoxProvenance(boxId: string): { txId: string; index: number }
  * expires.
  */
 export function getGenesisProofBox(): GenesisProofBox | null {
+  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
+  // per block touches what it answers": `owner IS NULL` is the index's
+  // leading column, so the owner index answers this by its `(NULL,
+  // box_type)` prefix.
   const row = getDb()
     .prepare(
       `SELECT * FROM utxo_boxes
-       WHERE box_type = 'genesis_proof' AND spent_at_block IS NULL
+       WHERE owner IS NULL AND box_type = 'genesis_proof' AND spent_at_block IS NULL
        ORDER BY id
        LIMIT 1`,
     )
@@ -426,10 +430,13 @@ export function getGenesisProofBox(): GenesisProofBox | null {
  * expires.
  */
 export function getEmissionBox(): EmissionBox | null {
+  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
+  // per block touches what it answers": `owner IS NULL` is the owner index's
+  // leading column.
   const row = getDb()
     .prepare(
       `SELECT * FROM utxo_boxes
-       WHERE box_type = 'emission' AND spent_at_block IS NULL
+       WHERE owner IS NULL AND box_type = 'emission' AND spent_at_block IS NULL
        ORDER BY id
        LIMIT 1`,
     )
@@ -448,10 +455,13 @@ export function getEmissionBox(): EmissionBox | null {
  * never again after.
  */
 export function getTreasuryBox(): TreasuryBox | null {
+  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
+  // per block touches what it answers": `owner IS NULL` is the owner index's
+  // leading column.
   const row = getDb()
     .prepare(
       `SELECT * FROM utxo_boxes
-       WHERE box_type = 'treasury' AND spent_at_block IS NULL
+       WHERE owner IS NULL AND box_type = 'treasury' AND spent_at_block IS NULL
        ORDER BY id
        LIMIT 1`,
     )
@@ -473,10 +483,13 @@ export function getTreasuryBox(): TreasuryBox | null {
  * names no row.
  */
 export function getKarmaPoolBox(): KarmaPoolBox | null {
+  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
+  // per block touches what it answers": `owner IS NULL` is the owner index's
+  // leading column.
   const row = getDb()
     .prepare(
       `SELECT * FROM utxo_boxes
-       WHERE box_type = 'karma_pool' AND spent_at_block IS NULL
+       WHERE owner IS NULL AND box_type = 'karma_pool' AND spent_at_block IS NULL
        ORDER BY id
        LIMIT 1`,
     )
@@ -493,10 +506,13 @@ export function getKarmaPoolBox(): KarmaPoolBox | null {
  * no row.
  */
 export function getBackerPoolBox(): BackerPoolBox | null {
+  // NODE_INTERFACE → Store Interface → "A read the node runs per request or
+  // per block touches what it answers": `owner IS NULL` is the owner index's
+  // leading column.
   const row = getDb()
     .prepare(
       `SELECT * FROM utxo_boxes
-       WHERE box_type = 'backer_pool' AND spent_at_block IS NULL
+       WHERE owner IS NULL AND box_type = 'backer_pool' AND spent_at_block IS NULL
        ORDER BY id
        LIMIT 1`,
     )
