@@ -306,8 +306,8 @@ describe('a build whose screen refuses a pooled transaction takes that transacti
     const bc = await importBlockCreator();
     bc.startBlockCreator(minerConfig);
 
-    // The build repeats until a template holds; the screen refuses P, carries
-    // its dependent out with it, and the second fill holds an empty body.
+    // The build's screen refuses P and carries its dependent out with it;
+    // the second fill holds an empty body, and the template stands.
     expect(bc.getCurrentTemplate()).not.toBeNull();
     expect(warns.some((w) => w.includes('body-rejected'))).toBe(true);
 

@@ -1327,9 +1327,9 @@ describe('the cost estimate', () => {
   });
 });
 
-// MEMPOOL_INTERFACE → removeUnconfirmed → "Returns the number of entries
-// removed, dependents among them": the answer is the count of pool rows the
-// call deleted, so a rowid handed in that no longer stands counts for none.
+// MEMPOOL_INTERFACE → removeUnconfirmed. The return value is the count of
+// pool rows the call removes; a rowid handed in whose row is absent counts
+// for none.
 describe('removeUnconfirmed answers the entries it removed', () => {
   beforeEach(async () => {
     vi.resetModules();

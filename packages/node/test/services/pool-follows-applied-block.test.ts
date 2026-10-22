@@ -562,7 +562,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
 
     // The block at height 5 carries Tb; the body spends X and emits
     // Tb_change, the post-body karma projection for A names Tb_change, and
-    // decay squares A — the settlement consumes Tb_change and emits a
+    // the settlement decays A — it consumes Tb_change and emits a
     // decay-burn karma box (NODE_INTERFACE → Karma decay).
     const block = await makeApplicableBlock({ height: 5, utxoTxs: [Tb] });
     expect(await applyBlockThroughIntake(block)).toBe(true);
