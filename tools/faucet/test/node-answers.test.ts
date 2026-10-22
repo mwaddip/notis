@@ -77,7 +77,7 @@ async function listenNeverWrites(): Promise<string> {
 // NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
 // node's, never one dressed as the other" — a 5xx of the node's answers 502.
 describe('a failed node answers 502, a node that did not answer 504', () => {
-  it.fails('the node answers /status with 500 — the faucet answers 502', async () => {
+  it('the node answers /status with 500 — the faucet answers 502', async () => {
     const app = appWith(router({
       '/status': () => json(500, { error: 'database down' }),
     }));
@@ -86,7 +86,7 @@ describe('a failed node answers 502, a node that did not answer 504', () => {
     expect(res.status).toBe(502);
   });
 
-  it.fails('the node answers /invites with 503 — the faucet answers 502', async () => {
+  it('the node answers /invites with 503 — the faucet answers 502', async () => {
     const app = appWith(router({
       '/status': () => okStatus(),
       '/karma': () => okKarma(),
@@ -100,7 +100,7 @@ describe('a failed node answers 502, a node that did not answer 504', () => {
   // WEB_INTERFACE → Reading a node's answer → "Every answer is rebuilt from
   // its own fields" — a karma box value is a canonical decimal in [0, 2^63);
   // "x" is not, and the listing is not its route's.
-  it.fails('the karma listing carries a box whose value is "x" — the faucet answers 502', async () => {
+  it('the karma listing carries a box whose value is "x" — the faucet answers 502', async () => {
     const app = appWith(router({
       '/status': () => okStatus(),
       '/karma': () => json(200, { boxes: [{ boxId: K1, value: 'x' }] }),
@@ -111,7 +111,7 @@ describe('a failed node answers 502, a node that did not answer 504', () => {
 
   // NIPOPOW_INTERFACE → compareProofs — one dead or hostile peer is a non-ok,
   // not fatal; a transport failure that is not the deadline's reads as 502.
-  it.fails('the credit listing fetch rejects with a transport failure — the faucet answers 502', async () => {
+  it('the credit listing fetch rejects with a transport failure — the faucet answers 502', async () => {
     const app = appWith(router({
       '/status': () => okStatus(),
       '/credits': () => { throw new TypeError('fetch failed'); },
@@ -122,7 +122,7 @@ describe('a failed node answers 502, a node that did not answer 504', () => {
 
   // WEB_INTERFACE → Reading a node's answer → "A failure the deadline ended
   // says so" — the deadline-ended failure answers 504, every other failure 502.
-  it.fails('the deadline ends the /status call — the faucet answers 504', async () => {
+  it('the deadline ends the /status call — the faucet answers 504', async () => {
     const base = await listenNeverWrites();
     const underShortDeadline: HttpFetch = (url) => fetch(url, { signal: AbortSignal.timeout(100) });
     const app = createApp(cfg, new HttpNodeClient(base, underShortDeadline));
@@ -133,7 +133,7 @@ describe('a failed node answers 502, a node that did not answer 504', () => {
   // CONSTANTS → Client reads — a write answer one byte over
   // `WRITE_ANSWER_READ_BYTES` reads as a body that will not parse: no honest
   // node sends one, so the answer is not its route's.
-  it.fails('a /credits/transfer 200 padded past the write cap — the faucet answers 502', async () => {
+  it('a /credits/transfer 200 padded past the write cap — the faucet answers 502', async () => {
     const padding = 'p'.repeat(1200);
     const app = appWith(router({
       '/status': () => okStatus(),
@@ -147,7 +147,7 @@ describe('a failed node answers 502, a node that did not answer 504', () => {
   // WEB_INTERFACE → Reading a node's answer → "Every answer is rebuilt from
   // its own fields" — `expiresAtHeight` is a non-negative safe integer; -1 is
   // not, and the answer is not its route's.
-  it.fails('/invites answers 201 with expiresAtHeight: -1 — the faucet answers 502', async () => {
+  it('/invites answers 201 with expiresAtHeight: -1 — the faucet answers 502', async () => {
     const app = appWith(router({
       '/status': () => okStatus(),
       '/karma': () => okKarma(),
@@ -160,7 +160,7 @@ describe('a failed node answers 502, a node that did not answer 504', () => {
   // NODE_INTERFACE → Karma transition rules → "An identity holds at most two
   // karma boxes" — one unmarked and one marked, so a listing with two unmarked
   // is not its route's.
-  it.fails('the karma listing carries two unmarked boxes — the faucet answers 502', async () => {
+  it('the karma listing carries two unmarked boxes — the faucet answers 502', async () => {
     const app = appWith(router({
       '/status': () => okStatus(),
       '/karma': () => json(200, {

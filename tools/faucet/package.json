@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@dagsocial/node-reads": "workspace:*",
     "@dagsocial/types": "workspace:*",
     "express": "^4.21.0"
   },

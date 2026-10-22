@@ -4,7 +4,7 @@ import { buildCreditTransferTx } from './transfer.js';
 import { PendingChain } from './pending.js';
 import { RateLimiter } from './rate-limit.js';
 import { NodeError } from './node-client.js';
-import { InsufficientFundsError, HEX64 } from './tx.js';
+import { BadRequestError, InsufficientFundsError, HEX64 } from './tx.js';
 import type { NodeClient } from './node-client.js';
 import type { FaucetConfig } from './config.js';
 
@@ -102,8 +102,10 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
 }
 
 /**
- * The node's verdict is relayed with its own status; the faucet's own states
- * carry theirs.
+ * NODE_INTERFACE → Faucet → "Every other answer is the service's own or the
+ * node's, never one dressed as the other" — the verdict is a `NodeError` the
+ * client built where the node's answer was read, carrying the status to
+ * answer; the service's own states carry theirs here.
  *
  * ⚠ **A drained faucet answers 503, not 400.** It draws down as it invites and
  * does not replenish, so exhaustion is a state of this service — a 400 would
@@ -118,5 +120,24 @@ function relay(res: express.Response, err: unknown): void {
     res.status(503).json({ error: err.message });
     return;
   }
-  res.status(400).json({ error: err instanceof Error ? err.message : 'faucet request failed' });
+  if (err instanceof BadRequestError) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+  // `express.json()` rejects a body it cannot parse with a 4xx of its own; the
+  // service relays that status with its own error text.
+  if (
+    typeof err === 'object'
+    && err !== null
+    && typeof (err as { status?: unknown }).status === 'number'
+    && (err as { status: number }).status >= 400
+    && (err as { status: number }).status < 500
+  ) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'bad request body' });
+    return;
+  }
+  // A fault of the service's own: the error text is not relayed; the error
+  // itself is logged server-side.
+  console.error('faucet request failed', err);
+  res.status(500).json({ error: 'faucet request failed' });
 }

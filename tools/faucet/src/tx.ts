@@ -161,12 +161,25 @@ export class InsufficientFundsError extends Error {
   }
 }
 
+/**
+ * A refusal of the request itself — a malformed key or the faucet's own key as
+ * the recipient — raised at build time and answered 400 (NODE_INTERFACE →
+ * Faucet → "Every other answer is the service's own or the node's, never one
+ * dressed as the other").
+ */
+export class BadRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BadRequestError';
+  }
+}
+
 /** The recipient of any faucet transaction: 32 bytes, and never the faucet's own key. */
 export function checkRecipient(cfg: FaucetConfig, hex: string, what: string): void {
   if (!HEX64.test(hex)) {
-    throw new Error(`${what} public key must be 64 lowercase hex characters`);
+    throw new BadRequestError(`${what} public key must be 64 lowercase hex characters`);
   }
   if (hex === cfg.publicKeyHex) {
-    throw new Error(`the faucet cannot address itself: ${what} is the faucet's own key`);
+    throw new BadRequestError(`the faucet cannot address itself: ${what} is the faucet's own key`);
   }
 }
