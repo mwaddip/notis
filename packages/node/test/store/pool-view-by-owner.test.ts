@@ -170,7 +170,7 @@ describe("an owner's boxes under the pool, read by owner", () => {
 
   // The view of a key with a pooled spend (credit): the confirmed box is
   // out, the owner holds the change, the recipient the payment.
-  it.fails("a pooled credit transfer answers change to the sender and payment to the recipient", () => {
+  it("a pooled credit transfer answers change to the sender and payment to the recipient", () => {
     const X = creditBox(100n, OWNER_A, 1);
     utxo.insertBox(X);
     // The confirmed read still holds X — the pool's rows are not yet joined
@@ -196,7 +196,7 @@ describe("an owner's boxes under the pool, read by owner", () => {
   });
 
   // A chain of two credit transfers from A — only the tail stands.
-  it.fails("a chain of two credit transfers leaves only the second's change", () => {
+  it("a chain of two credit transfers leaves only the second's change", () => {
     const X = creditBox(100n, OWNER_A, 1);
     utxo.insertBox(X);
 
@@ -220,7 +220,7 @@ describe("an owner's boxes under the pool, read by owner", () => {
 
   // Karma: an owner holds a confirmed own box and a confirmed income box; a
   // pooled karma spend moves the own box with change.
-  it.fails('a pooled karma spend answers the change and the marked income box', () => {
+  it('a pooled karma spend answers the change and the marked income box', () => {
     const own = karmaBoxFx(100n, OWNER_A, 1);
     const income = karmaBoxFx(50n, OWNER_A, 2, true);
     utxo.insertBox(own);
@@ -244,7 +244,7 @@ describe("an owner's boxes under the pool, read by owner", () => {
 
   // Paging across the halves: confirmed and pooled rows whose values
   // interleave, one value shared across a confirmed and a pooled row.
-  it.fails('a page walks confirmed and pooled rows merged in value DESC, id', () => {
+  it('a page walks confirmed and pooled rows merged in value DESC, id', () => {
     const C300 = creditBox(300n, OWNER_A, 1);
     const C200 = creditBox(200n, OWNER_A, 2);
     const C100 = creditBox(100n, OWNER_A, 3);

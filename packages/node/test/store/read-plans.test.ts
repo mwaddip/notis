@@ -244,6 +244,83 @@ describe('each pending read\'s prepared statement runs through indexes', () => {
     expect(plans.every((p) => !/json_each/i.test(p))).toBe(true);
     expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_inputs\b/i.test(p))).toBe(true);
   });
+
+  // MEMPOOL_INTERFACE → getBoxesPageWithPending: the page, its COUNT, and
+  // getBoxTotalWithPending's SUM each read the pooled half through
+  // `idx_mempool_outputs_owner` and probe `mempool_inputs` on its primary
+  // key; the confirmed half runs under `idx_utxo_boxes_owner_type_value`
+  // with no temp B-tree.
+  const OWNER_BYTES = bytes(OWNER_HEX);
+
+  // `NOT IN (SELECT box_id FROM mempool_inputs)` shows as `USING INDEX
+  // sqlite_autoindex_mempool_inputs_1 FOR IN-OPERATOR`, SQLite's name for a
+  // SEARCH on a `WITHOUT ROWID` table's primary key — the primary key is
+  // the autoindex. A plain `SEARCH mempool_inputs` is `hasPendingSpend`'s
+  // shape, kept so `findPendingOutput`'s shape stays admissible.
+  const mempoolInputsIndexed =
+    /\bSEARCH\b[^|]*\bmempool_inputs\b|\bsqlite_autoindex_mempool_inputs_1\b/i;
+
+  it('getBoxesPageWithPending without after — SEARCH on idx_mempool_outputs_owner, no SCAN', async () => {
+    const { result, sqls, db } = await recordReadOn(dbFile, (mem) =>
+      mem.getBoxesPageWithPending(OWNER_BYTES, 'karma', { limit: 10 }),
+    );
+
+    expect(result.rows.map((r) => r.id)).toContain(pooledOutput);
+    expect(sqls.length).toBeGreaterThan(0);
+
+    const plans = sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool_outputs\b/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/USE TEMP B-TREE/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_outputs\b[^|]*\bidx_mempool_outputs_owner\b/i.test(p))).toBe(true);
+    expect(plans.some((p) => mempoolInputsIndexed.test(p))).toBe(true);
+  });
+
+  it('getBoxesPageWithPending with after — SEARCH on idx_mempool_outputs_owner, no SCAN', async () => {
+    const { result, sqls, db } = await recordReadOn(dbFile, (mem) =>
+      mem.getBoxesPageWithPending(OWNER_BYTES, 'karma', {
+        limit: 10,
+        after: { value: 1n, id: pooledOutput },
+      }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(sqls.length).toBeGreaterThan(0);
+
+    const plans = sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool_outputs\b/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/USE TEMP B-TREE/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_outputs\b[^|]*\bidx_mempool_outputs_owner\b/i.test(p))).toBe(true);
+    expect(plans.some((p) => mempoolInputsIndexed.test(p))).toBe(true);
+  });
+
+  it('getBoxTotalWithPending — SEARCH on idx_mempool_outputs_owner, no SCAN', async () => {
+    const { sqls, db } = await recordReadOn(dbFile, (mem) =>
+      mem.getBoxTotalWithPending(OWNER_BYTES, 'karma'),
+    );
+
+    expect(sqls.length).toBeGreaterThan(0);
+    const plans = sqls.map((sql) => planOf(db, sql));
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool(?!_)/i.test(p))).toBe(true);
+    expect(plans.every((p) => !/\bSCAN\s+(?:TABLE\s+)?mempool_outputs\b/i.test(p))).toBe(true);
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_outputs\b[^|]*\bidx_mempool_outputs_owner\b/i.test(p))).toBe(true);
+    expect(plans.some((p) => mempoolInputsIndexed.test(p))).toBe(true);
+  });
+
+  // The existing reads on `mempool_outputs` keep their shape:
+  // findPendingOutput's SEARCH by box_id, and the cascade's read by
+  // entry_rowid — the owner index is picked only on predicates matching
+  // owner.
+  it('findPendingOutput keeps its SEARCH on mempool_outputs by box_id', async () => {
+    const { sqls, db } = await recordReadOn(dbFile, (mem) =>
+      mem.findPendingOutput(pooledOutput),
+    );
+
+    expect(sqls.length).toBeGreaterThan(0);
+    const plans = sqls.map((sql) => planOf(db, sql));
+    expect(plans.some((p) => /\bSEARCH\b[^|]*\bmempool_outputs\b[^|]*\bbox_id\b/i.test(p))).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

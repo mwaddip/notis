@@ -1,6 +1,7 @@
 import { getDb, prepared } from './db.js';
 import { getBox, getKarmaBoxes } from './utxo.js';
 import { deletePendingPost } from './posts.js';
+import type { BoxKey, Page, PageResult } from './index.js';
 import { ClientError } from '../services/client-error.js';
 import { materializeOutput, ceilingOf } from '@dagsocial/consensus';
 import type {
@@ -9,6 +10,8 @@ import type {
   VouchBox,
   UsernameBox,
   AnyBox,
+  KarmaBox,
+  CreditBox,
 } from '@dagsocial/types';
 import {
   MAX_TX_BYTES,
@@ -714,6 +717,135 @@ export function findPendingOutput(boxId: string): AnyBox | null {
 export function getBoxWithPending(boxId: string): AnyBox | null {
   if (hasPendingSpend([boxId]) !== null) throw new PendingSpendConflictError(boxId);
   return getBox(boxId) ?? findPendingOutput(boxId);
+}
+
+// The pending view as `getBoxWithPending` sees it, asked by owner and type
+// (MEMPOOL_INTERFACE → getBoxesPageWithPending). The set is a pair of
+// fragments the page, its COUNT, its SUM and rule 3's unmarked karma read
+// share, so the whole-set rule is stated once.
+const CONFIRMED_PENDING_WHERE =
+  `owner = ? AND box_type = ? AND spent_at_block IS NULL
+   AND id NOT IN (SELECT box_id FROM mempool_inputs)`;
+const POOLED_PENDING_WHERE =
+  `owner = ? AND box_type = ?
+   AND box_id NOT IN (SELECT box_id FROM mempool_inputs)`;
+
+interface PendingPageRow { id: string; value: bigint; src: bigint }
+
+// One page over the merged set, ordered `value DESC, id`, strictly after
+// `after`. Each half is read in the two-range form on `after` — the equal
+// value tail (`value = ? AND id > ?`) and the lesser values (`value < ?`) —
+// so SQLite walks each half's index in order and the outer merge sorts the
+// result in list order without a temp B-tree, matching `boxPageQuery`'s
+// shape (NODE_INTERFACE → Store Interface → "A page read touches `limit +
+// 1` entries of one index that serves both its predicate and its order.").
+// `src` tags the row's half so the second pass reads it from the right
+// table: 0 = confirmed, 1 = pooled.
+function pendingPageRows(
+  db: ReturnType<typeof getDb>,
+  ownerBuf: Buffer,
+  boxType: 'karma' | 'credit',
+  after: BoxKey | undefined,
+  limit: number,
+): PendingPageRow[] {
+  if (!after) {
+    return prepared(db, `SELECT id, value, src FROM (
+         SELECT id, value, 0 AS src FROM utxo_boxes WHERE ${CONFIRMED_PENDING_WHERE}
+         UNION ALL
+         SELECT box_id AS id, value, 1 AS src FROM mempool_outputs WHERE ${POOLED_PENDING_WHERE}
+       ) ORDER BY value DESC, id LIMIT ?`, true)
+      .all(ownerBuf, boxType, ownerBuf, boxType, limit + 1) as PendingPageRow[];
+  }
+  return prepared(db, `SELECT id, value, src FROM (
+         SELECT id, value, 0 AS src FROM utxo_boxes
+          WHERE ${CONFIRMED_PENDING_WHERE} AND value = ? AND id > ?
+         UNION ALL
+         SELECT id, value, 0 AS src FROM utxo_boxes
+          WHERE ${CONFIRMED_PENDING_WHERE} AND value < ?
+         UNION ALL
+         SELECT box_id AS id, value, 1 AS src FROM mempool_outputs
+          WHERE ${POOLED_PENDING_WHERE} AND value = ? AND box_id > ?
+         UNION ALL
+         SELECT box_id AS id, value, 1 AS src FROM mempool_outputs
+          WHERE ${POOLED_PENDING_WHERE} AND value < ?
+       ) ORDER BY value DESC, id LIMIT ?`, true)
+    .all(ownerBuf, boxType, after.value, after.id,
+         ownerBuf, boxType, after.value,
+         ownerBuf, boxType, after.value, after.id,
+         ownerBuf, boxType, after.value,
+         limit + 1) as PendingPageRow[];
+}
+
+/**
+ * `getBoxWithPending`'s view, asked by owner and type: the owner's confirmed
+ * unspent boxes of the type that no `mempool_inputs` row names, and the
+ * `mempool_outputs` rows of the type to the owner that no `mempool_inputs`
+ * row names (MEMPOOL_INTERFACE → getBoxesPageWithPending). One page in
+ * `value DESC, id` strictly after `after`, the two halves merged in list
+ * order; a confirmed row returned as `rowToBox` returns it, a pooled row as
+ * the box `materializeOutput` returns.
+ *
+ * The decode runs over the pooled rows the page answers alone — one entry
+ * read per answered pooled row, as `findPendingOutput` does for one id —
+ * never over the pool.
+ */
+export function getBoxesPageWithPending(
+  owner: Uint8Array,
+  boxType: 'karma' | 'credit',
+  page: Page<BoxKey>,
+): PageResult<KarmaBox | CreditBox, BoxKey> {
+  const db = getDb();
+  const ownerBuf = Buffer.from(owner);
+  const limit = page.limit;
+
+  const rows = pendingPageRows(db, ownerBuf, boxType, page.after, limit);
+  const hasMore = rows.length > limit;
+  const kept = hasMore ? rows.slice(0, limit) : rows;
+
+  const boxes: (KarmaBox | CreditBox)[] = kept.map((r) => {
+    // `safeIntegers` reads SQLite's `0 AS src` back as `0n`, so the half
+    // discriminator stays in bigint everywhere.
+    const box = r.src === 0n ? getBox(r.id) : findPendingOutput(r.id);
+    // The id came from the same set the page row is read against, so a
+    // null answer is a race only this process could have caused — the
+    // pool and the confirmed set are both local; fail loudly.
+    if (!box) throw new Error(`pending view row missing: ${r.id}`);
+    return box as KarmaBox | CreditBox;
+  });
+
+  const last = kept[kept.length - 1];
+  const next: BoxKey | null = hasMore && last
+    ? { value: last.value, id: last.id }
+    : null;
+
+  // COUNT over the whole set, both halves added. Each sub-count reads one
+  // index range (its half's), and the `NOT IN` subquery probes
+  // `mempool_inputs`'s primary key.
+  const countRow = prepared(db, `SELECT
+       (SELECT COUNT(*) FROM utxo_boxes WHERE ${CONFIRMED_PENDING_WHERE})
+     + (SELECT COUNT(*) FROM mempool_outputs WHERE ${POOLED_PENDING_WHERE})
+       AS cnt`)
+    .get(ownerBuf, boxType, ownerBuf, boxType) as { cnt: number };
+
+  return { rows: boxes, next, count: countRow.cnt };
+}
+
+/**
+ * The sum of the set `getBoxesPageWithPending` reads, both halves added
+ * (MEMPOOL_INTERFACE → getBoxesPageWithPending; NODE_INTERFACE → Store
+ * Interface → Mempool). `safeIntegers` keeps the sum in `bigint`: a box
+ * value can exceed what a double holds exactly (TYPES_INTERFACE → Box
+ * value domain), so a cast through `number` would lose low bits as the
+ * pool grows.
+ */
+export function getBoxTotalWithPending(owner: Uint8Array, boxType: 'karma' | 'credit'): bigint {
+  const ownerBuf = Buffer.from(owner);
+  const row = prepared(getDb(), `SELECT
+       COALESCE((SELECT SUM(value) FROM utxo_boxes WHERE ${CONFIRMED_PENDING_WHERE}), 0)
+     + COALESCE((SELECT SUM(value) FROM mempool_outputs WHERE ${POOLED_PENDING_WHERE}), 0)
+       AS s`, true)
+    .get(ownerBuf, boxType, ownerBuf, boxType) as { s: bigint };
+  return row.s;
 }
 
 /**

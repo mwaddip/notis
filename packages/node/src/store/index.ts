@@ -129,6 +129,8 @@ export {
   hasPendingSpend,
   findPendingOutput,
   getBoxWithPending,
+  getBoxesPageWithPending,
+  getBoxTotalWithPending,
   getOwnKarmaBoxIdsWithPending,
   getPendingUtxoTxBytesByTxId,
   MempoolFullError,
