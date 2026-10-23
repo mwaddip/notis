@@ -1495,9 +1495,6 @@ verifying it again (→ Inbound Processing). **The node hands net the check, ove
 (`NODE_INTERFACE → The signature memo`): an entry the node has accepted before is not checked again, so a transaction
 that arrives a second time costs no signature arithmetic here.
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** The memo's check leads the node's `index.ts`, which hands net `validation`'s own
-> `verifyTxSignatures`.
-
 **A refusal that rests on this node's state records nothing.** A scheduled-target mismatch (above), a
 transaction whose declared version is not the era of the block after this node's tip, and a post whose
 author is outside this node's karma set are Rejected — not delivered, not forwarded — and penalise

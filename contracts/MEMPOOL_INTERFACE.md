@@ -190,9 +190,6 @@ the reorg's re-insertion — it runs as a savepoint of that one.
 assertPoolAdmits(tx: UtxoTransaction): void
 ```
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** `assertPoolAdmits` leads `store/mempool.ts`, where the conflict and capacity
-> gates run inside `insertUtxoTx` alone, and `services/admit-tx.ts`, whose `admitTx` runs the cost gate ahead of them.
-
 **The pool's own refusals, asked before the cost gate.** It throws what `insertUtxoTx`'s conflict and capacity gates
 would throw for `tx` at that moment — `PendingSpendConflictError` for an input a pooled entry spends, then
 `MempoolFullError` for a full class the arrival cannot enter (→ Size cap; → Eviction, inside the credit class only) —

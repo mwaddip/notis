@@ -23,9 +23,6 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`) — or its 
 in through `ApplyContext`'s signature checks (→ ApplyContext) and `UtxoEngineDeps.verifySignature` (→ The overlay). The
 browser runs it as it is written (`ARCHITECTURE → Package boundaries`), held there by two checks (→ Tests).
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** `ApplyContext`'s signature checks lead `src/state-view.ts`, `src/apply-block.ts`
-> and `src/screen-body.ts`, which call `verifyEd25519Batch` and `verifyEd25519` directly.
-
 ## What it holds
 
 | Module | Exports the node calls | The rules it implements | State it reads |
@@ -145,14 +142,11 @@ Deterministic, and a throw is not a verdict, as `applyBlock`'s.
 network does not set (`MAX_ESCROW_RETURNS_PER_BLOCK` and its kin) is imported from `@dagsocial/types`, not carried.
 The node builds it from its configuration (`applyContextFrom`).
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** `signatureChecks` leads `src/state-view.ts`, whose `ApplyContext` carries the
-> profile's numbers alone, and the node's `applyContextFrom`.
-
 **And the signature checks, when its caller has its own:** `signatureChecks?: SignatureChecks`, `{ verify(signature,
-message, publicKey): boolean; verifyBatch(entries): boolean }` — the single check `screenBody` makes and the batch `applyBlock` makes
-(→ Applying a block; → Screening a body), `validation`'s `verifyEd25519` and `verifyEd25519Batch` when it is absent.
-**A caller's pair answers exactly what `validation`'s does** — a pair that answers otherwise is a fork. The node's
-answers from its signature memo, which remembers the triples `validation`'s rule accepted
+message, publicKey): boolean; verifyBatch(entries): boolean }` — the single check `screenBody` makes and the batch
+`applyBlock` makes (→ Applying a block; → Screening a body), `validation`'s `verifyEd25519` and `verifyEd25519Batch`
+when it is absent. **A caller's pair answers exactly what `validation`'s does** — a pair that answers otherwise is a
+fork. The node's answers from its signature memo, which remembers the triples `validation`'s rule accepted
 (`NODE_INTERFACE → The signature memo`), and `applyContextFrom` carries it on every block the node applies, speculates
 or screens.
 
@@ -438,9 +432,6 @@ signature memo on its HTTP routes (`NODE_INTERFACE → The signature memo`), `ve
 not hold, and on its relay answers from the map net's Stage 1 verified (`NODE_INTERFACE → Relay handlers`); absent,
 `validateTx` calls `verifyEd25519` for each signer. Who must sign, and the refusal of a map key no input
 requires, are `validateTx`'s on both paths.
-
-> ⚠ **AHEAD OF CODE (2026-10-23).** The memo as admission's `verifySignature` leads the node's `server.ts` and post
-> service, whose deps carry none, so `validateTx` calls `verifyEd25519` for every signer on the HTTP routes.
 
 ## BlockEffects
 

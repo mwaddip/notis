@@ -55,8 +55,9 @@ block** — the suites do, over a verifier's session that requires the proof con
   rule a replay from a proof cannot run.
 - **Workspace dependencies: `@dagsocial/types` and `@dagsocial/validation`, and nothing else — never `node`.**
 - **Every signature check is `validation`'s** — `verifyEd25519` for admission's `validateTx`, one `verifyEd25519Batch`
-  over every signature a block's body carries in `applyBlock`, strict RFC 8032 through `@noble/curves`
-  (`VALIDATION_INTERFACE → Acceptance criterion`; `CONSENSUS_INTERFACE → Applying a block`).
+  over every signature a block's body carries in `applyBlock`, or the caller's answer for that same check
+  (`ApplyContext.signatureChecks`, `UtxoEngineDeps.verifySignature` — the node's signature memo), strict RFC 8032
+  through `@noble/curves` (`VALIDATION_INTERFACE → Acceptance criterion`; `CONSENSUS_INTERFACE → Applying a block`).
 - **A verdict is a function of its inputs and the injected state.** Two runs over the same block and the same state
   answer the same, byte for byte; a difference is a fork.
 

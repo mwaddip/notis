@@ -518,8 +518,6 @@ else — no state, no height — so a caller that keeps the triples it accepted 
 arithmetic answers exactly what the rule does. The node keeps them (`NODE_INTERFACE → The signature memo`); this
 package keeps nothing, and its checks run the arithmetic every time they are called.
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** The node's memo leads `packages/node/src/services/`, where no module keeps one.
-
 **Its tests:** the RFC 8032 test vectors verify; the two malleation forms measured under the
 runtime's verifier on 2026-08-06 (Node 22.19.0 / OpenSSL 3.0.17) — a scalar raised by the group
 order (`S + L`) and the high-bit variant — refuse.
@@ -579,9 +577,6 @@ verifyTxSignatures(
   verifyBatch?: (entries: ReadonlyArray<Ed25519BatchEntry>) => boolean,
 ): boolean
 ```
-
-> ⚠ **AHEAD OF CODE (2026-10-23).** `verifyBatch` leads `src/verify.ts`, whose `verifyTxSignatures` takes the
-> transaction alone.
 
 **Every entry of a transaction's signature map verifies over its id.** One batch over the map's entries
 in its decoded order — each the entry's signature, the 32 bytes of `computeTxId(tx)` and the entry's

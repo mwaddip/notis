@@ -4960,10 +4960,6 @@ the handler.
    (`MEMPOOL_INTERFACE → assertPoolAdmits`), ahead of the cost gate's speculative `applyBlock`
    (`MEMPOOL_INTERFACE → The cost gate`); then the pool.
 
-   > ⚠ **AHEAD OF CODE (2026-10-23).** Step 4 leads `services/admit-tx.ts`, whose `admitTx` runs the cost gate before
-   > the pool's conflict and capacity checks, which `insertUtxoTx` alone runs, and the signature memo leads every
-   > admission's deps (→ The signature memo).
-
 **One function admits.** The pool's word on the id, the caller's own checks, `validateTx` at `tip + 1`, the pool entry's
 expiry at `tip + 1 + MEMPOOL_EXPIRY_BLOCKS` and `admitTx` run as one function, in that order, which every write route
 but `POST /posts` calls. Each caller passes its own checks, its own engine dependencies and the words its refusal opens
@@ -4992,11 +4988,6 @@ Queries serve the DAG tip. There is no validated watermark and nothing gates a
 read behind one.
 
 ### The signature memo — a signature the rule accepted is not checked again
-
-> ⚠ **AHEAD OF CODE (2026-10-23).** The memo leads `services/`, where no module holds one; `server.ts` and the post
-> service, whose `validateTx` deps carry no `verifySignature`, so admission checks every signer with `verifyEd25519`;
-> `index.ts`, which hands net `validation`'s own `verifyTxSignatures`; and `services/block-apply.ts`'s
-> `applyContextFrom`, whose `ApplyContext` carries no signature checks.
 
 **The node remembers every signature `validation`'s rule has accepted, and answers it again without checking it.** An
 entry is the triple a check takes — the signature, the message and the key — and the rule is a function of those three
