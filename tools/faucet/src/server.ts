@@ -1,4 +1,6 @@
 import express from 'express';
+import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import { isIPv4, isIPv6 } from 'node:net';
 import { KARMA_MINIMUM } from '@dagsocial/types';
 import { buildInviteTx } from './invite.js';
@@ -82,6 +84,11 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   });
 
   return app;
+}
+
+/** Creates the HTTP server over `app`, listens on `port` and returns it. */
+export function listenFaucet(app: express.Express, port: number): Server {
+  return createServer(app).listen(port);
 }
 
 const MAPPED_IPV4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i;
