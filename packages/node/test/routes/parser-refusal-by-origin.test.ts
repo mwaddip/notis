@@ -154,4 +154,25 @@ describe("a body that does not decompress is the parser's refusal", () => {
     expect(r.status).toBe(415);
     expect(JSON.parse(r.body)).toEqual({ error: 415, reason: 'bad request body' });
   });
+
+  it("an error raised outside the parser is the node's fault whatever status it carries", async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const getPostSpy = vi.spyOn(store, 'getPost').mockImplementation(() => {
+      throw Object.assign(new Error('store read failed'), { status: 400, statusCode: 400 });
+    });
+    try {
+      // control: the parser's 400 for a gzip `{bad}` body counts zero calls through the same spy.
+      const gzip = await postRaw('gzip', '{bad}');
+      expect(gzip.status).toBe(400);
+      expect(errorSpy).toHaveBeenCalledTimes(0);
+      const r = await fetch(`${publicUrl}/shell/${livePostId}`);
+      const body = (await r.json()) as unknown;
+      expect(r.status).toBe(500);
+      expect(body).toEqual({ error: 'internal' });
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      getPostSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
 });
