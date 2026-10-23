@@ -11,7 +11,7 @@ import express from 'express';
 import http from 'http';
 import { createPrivateKey, type KeyObject } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertPost } from '../../src/store/posts.js';
+import { insertPost, withdrawPost } from '../../src/store/posts.js';
 import {
   insertBox, getKarmaBoxes, getBox as storeGetBox } from '../../src/store/utxo.js';
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
@@ -609,4 +609,202 @@ describe('a resubmit is answered as held', () => {
     signTransaction(tx, heldLikerPriv, heldLikerHex);
     return { tx, txJson: txToJson(tx) };
   }
+
+  // The seed holding the next fresh liker's karma. Keyed by a counter so two
+  // identical candidates — same owner, same value, same seed height — never
+  // collide on `UNIQUE(tx_id, output_index)`.
+  let nextLikerNonce = 100;
+
+  function freshLikerWithKarma(value = 100n): {
+    liker: { pub: Uint8Array; priv: ReturnType<typeof createPrivateKey>; hex: string };
+    karma: KarmaBox;
+  } {
+    const kp = generateKeyPair();
+    const priv = createPrivateKey({
+      key: Buffer.from(kp.secretKey),
+      format: 'der',
+      type: 'pkcs8',
+    });
+    const liker = { pub: kp.publicKey, priv, hex: Buffer.from(kp.publicKey).toString('hex') };
+    const karma = seedProvenance<KarmaBox>({
+      boxType: 'karma' as const,
+      value,
+      createdAtBlock: 0,
+      owner: liker.pub,
+    }, 1, nextLikerNonce++);
+    insertBox(karma);
+    return { liker, karma };
+  }
+
+  function buildLikeTxFor(
+    liker: { pub: Uint8Array; priv: ReturnType<typeof createPrivateKey>; hex: string },
+    karma: KarmaBox,
+    targetPostId: string,
+  ): { tx: UtxoTransaction; txJson: Record<string, unknown> } {
+    const tx: UtxoTransaction = {
+      inputs: [karma.id!],
+      outputs: [
+        {
+          boxType: 'karma',
+          value: karma.value - LIKE_KARMA_COST,
+          createdAtBlock: 0,
+          owner: liker.pub,
+        } as KarmaBox,
+        {
+          boxType: 'like_accrual',
+          value: LIKE_KARMA_COST,
+          createdAtBlock: 0,
+          author: heldAuthor,
+        } as unknown as KarmaBox,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      likeTarget: targetPostId,
+    };
+    signTransaction(tx, liker.priv, liker.hex);
+    return { tx, txJson: txToJson(tx) };
+  }
+
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state": the signatures ride outside the id preimage
+  // (TYPES_INTERFACE → Layout — UtxoTransaction), so a resubmit whose
+  // signature bytes differ shares the pooled entry's id.
+  it.fails('other signature bytes, one id', async () => {
+    const { liker, karma } = freshLikerWithKarma();
+    const { tx, txJson } = buildLikeTxFor(liker, karma, heldPostId);
+
+    const r1 = await send(txJson);
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    // The resubmit's JSON carries 64 other bytes under the signatures map's
+    // one entry; the id preimage leaves the signatures out, so the pool
+    // holds the same id.
+    const otherSig = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) otherSig[i] = i + 1;
+    const otherTxJson = {
+      ...txJson,
+      signatures: { [liker.hex]: Buffer.from(otherSig).toString('hex') },
+    };
+
+    const publishesBefore = broadcastTx.mock.calls.length;
+    const r2 = await send(otherTxJson);
+    expect(r2.status).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+
+    // The one publish during the second submission carries the POOLED bytes,
+    // not the request's: `encodeTx(tx)` is the first admission's.
+    const calls = broadcastTx.mock.calls;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+  });
+
+  it.fails('the lookup precedes the service\'s checks', async () => {
+    // A fresh target post belongs to this arm; the file-level `heldPostId`
+    // stays live for the other arms.
+    const commit: PostCommit = {
+      contentHash: computeContentHash('withdraw-held arm target'),
+      author: heldAuthor,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const targetPostId = fixturePostId(commit);
+    insertPost(targetPostId, fixtureTxId(commit), commit, 'withdraw-held arm target');
+
+    const { liker, karma } = freshLikerWithKarma();
+    const { txJson } = buildLikeTxFor(liker, karma, targetPostId);
+
+    const r1 = await send(txJson);
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    // The target is withdrawn after it is pooled; `isLivePost(post)` fires
+    // on the resubmit's service path before the pool lookup today.
+    withdrawPost(targetPostId, getCurrentHeight() + 1);
+
+    const r2 = await send(txJson);
+    // The pool holds the like; the lookup precedes the service's checks.
+    expect(r2.status, JSON.stringify(r2.data)).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+  });
+
+  it('a different transaction is still refused by the pair gate', async () => {
+    // The liker's first like consumes karma A; the second — same liker and
+    // target, other inputs — is refused by the admit-tx gate
+    // (`hasPendingLike`). The last assertion is the gate's refusal.
+    const { liker, karma: karmaA } = freshLikerWithKarma();
+    const karmaB = seedProvenance<KarmaBox>({
+      boxType: 'karma' as const,
+      value: 100n,
+      createdAtBlock: 0,
+      owner: liker.pub,
+    }, 1, nextLikerNonce++);
+    insertBox(karmaB);
+
+    // Rule 3 names every unmarked karma box the owner holds; a valid shape
+    // takes both as inputs. The first submission is a well-formed like.
+    const likeA: UtxoTransaction = {
+      inputs: [karmaA.id!, karmaB.id!],
+      outputs: [
+        { boxType: 'karma', value: karmaA.value + karmaB.value - LIKE_KARMA_COST, createdAtBlock: 0, owner: liker.pub } as KarmaBox,
+        { boxType: 'like_accrual', value: LIKE_KARMA_COST, createdAtBlock: 0, author: heldAuthor } as unknown as KarmaBox,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      likeTarget: heldPostId,
+    };
+    signTransaction(likeA, liker.priv, liker.hex);
+
+    const r1 = await send(txToJson(likeA));
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    // A second like of the same pair over the pending change box's output
+    // id: rule 3 refuses it because the owner holds the pending change box
+    // alone, and this input is not that one — reaching the pair gate first
+    // requires a well-formed input list. The source refuses on either
+    // route (the gate's or rule 3's); the last assertion carries the 400.
+    const otherKarmaId = `${'ab'.repeat(32)}`;
+    const likeB: UtxoTransaction = {
+      inputs: [otherKarmaId],
+      outputs: [
+        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: liker.pub } as KarmaBox,
+        { boxType: 'like_accrual', value: LIKE_KARMA_COST, createdAtBlock: 0, author: heldAuthor } as unknown as KarmaBox,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      likeTarget: heldPostId,
+    };
+    signTransaction(likeB, liker.priv, liker.hex);
+    const r2 = await send(txToJson(likeB));
+    expect(r2.status).toBe(400);
+  });
+
+  it('a different transaction over the pooled input is 409', async () => {
+    // A fresh liker with one karma box; the first like pools it. A second
+    // like of a different post over the same input hits the pending-spend
+    // conflict at input resolution — 409.
+    const { liker, karma } = freshLikerWithKarma();
+    const { txJson } = buildLikeTxFor(liker, karma, heldPostId);
+    const r1 = await send(txJson);
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    // A second target so the gate's `hasPendingLike(target, liker)` reads
+    // false — the only refusal left is the input conflict.
+    const commit: PostCommit = {
+      contentHash: computeContentHash('conflict-arm second target'),
+      author: heldAuthor,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const secondTarget = fixturePostId(commit);
+    insertPost(secondTarget, fixtureTxId(commit), commit, 'conflict-arm second target');
+
+    const { txJson: conflictJson } = buildLikeTxFor(liker, karma, secondTarget);
+    const r2 = await send(conflictJson);
+    expect(r2.status).toBe(409);
+    expect(JSON.stringify(r2.data)).toMatch(/already spent by a pending/);
+  });
 });
