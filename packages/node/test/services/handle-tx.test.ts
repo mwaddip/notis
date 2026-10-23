@@ -143,6 +143,11 @@ describe('the relay handler takes a policy refusal as an answer', () => {
     expect(run.logged).toEqual([]);
     expect(run.errored).toEqual([]);
     expect(run.pooled).toBe(poolBefore);
+
+    // NODE_INTERFACE → Relay handlers: a held transaction is a refusal — the
+    // handler returns `false`, so net forwards nothing.
+    const { handleRelayedTx } = await import('../../src/services/handle-tx.js');
+    expect(handleRelayedTx(tx, undefined, 'peer-relay')).toBe(false);
   });
 
   it('control: a throw from admission that is no refusal still reaches net', async () => {
