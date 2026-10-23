@@ -231,8 +231,11 @@ six tags the head carries `description`, `og:type` website, `og:site_name` Notis
 (`HOUSE_STYLE → Where the artwork lives`). A scraper runs no script and most refuse a relative image, and the base
 is a path, so the build composes `og:image` as `<origin><base>og.png` from `VITE_PUBLIC_ORIGIN` — empty under the
 dev server, `https://notis.fun` in the release — and a host under another origin or base edits that value with the
-other six; `build-release.sh` checks it. No `og:url` on the root: a scraper takes the page's own. A post's page
+other six; `build-release.sh` checks it. No `og:url`, on the root or on a post's page: a scraper takes the page's own. A post's page
 carries none of this block — the node removes it before injecting the post's tags (`NODE_INTERFACE → Link previews`).
+
+> ⚠ **AHEAD OF CODE (2026-10-23).** The node writes an `og:url` on a post's page from the host's forwarding headers,
+> and `deploy/nginx.example.conf` sends it `X-Original-URI`, until both leave.
 
 **The web build's shell carries its own security policy.** The shell a web build writes holds, after its `charset`
 and before `<base>`,
