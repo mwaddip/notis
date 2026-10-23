@@ -187,7 +187,7 @@ function httpPing(port: number): Promise<{ status: number; body: string }> {
 }
 
 describe('listenPublic sets the deadlines, the connection bound and the unread-answer budget', () => {
-  it.fails('each of the six bounds read off the returned server equals its constant', async () => {
+  it('each of the six bounds read off the returned server equals its constant', async () => {
     const app = express();
     const server = listenPublic(app, 0);
     try {
@@ -208,7 +208,7 @@ describe('listenPublic sets the deadlines, the connection bound and the unread-a
     }
   });
 
-  it.fails('over the budget: the largest holder is among the closed, and the open connections sum within the budget', async () => {
+  it('over the budget: the largest holder is among the closed, and the open connections sum within the budget', async () => {
     const BIG_SIZE = 50 * 1024 * 1024;   // 50 MiB — larger than every other
     const MED_SIZE = 10 * 1024 * 1024;   // 10 MiB
     const MED_COUNT = 5;                 // 5 × 10 = 50 MiB, plus 50 BIG = 100 MiB in flight
@@ -250,7 +250,7 @@ describe('listenPublic sets the deadlines, the connection bound and the unread-a
     }
   });
 
-  it.fails('under the budget: no connection is closed across three check intervals', async () => {
+  it('under the budget: no connection is closed across three check intervals', async () => {
     // The positive control arrangement — one above-budget probe closes under
     // the sweep — holds the arrangement to the sweep's reality before the
     // quarter-sum arrangement makes its negative claim.
@@ -300,7 +300,7 @@ describe('listenPublic sets the deadlines, the connection bound and the unread-a
     }
   });
 
-  it.fails('beside the over-budget arrangement, a client that reads its answer receives it whole', async () => {
+  it('beside the over-budget arrangement, a client that reads its answer receives it whole', async () => {
     const BIG_SIZE = 50 * 1024 * 1024;
     const MED_SIZE = 10 * 1024 * 1024;
     const MED_COUNT = 5;
@@ -336,14 +336,24 @@ describe('listenPublic sets the deadlines, the connection bound and the unread-a
       await waitFor(() => h.serverSockets.size === MED_COUNT + 2, 10_000);
       expect(h.serverSockets.size).toBe(MED_COUNT + 2);
 
+      // Capture each silent client's server-side socket by remotePort while
+      // the HTTP server still carries that field.
+      const silentServerSockets = new Set<net.Socket>();
+      for (const s of h.serverSockets) {
+        if (s.remotePort !== undefined && silentRemotePorts.has(s.remotePort)) {
+          silentServerSockets.add(s);
+        }
+      }
+      expect(silentServerSockets.size).toBe(MED_COUNT + 1);
+
       // Control: the arrangement is above the budget.
       await waitFor(() => sumWritable(h.serverSockets) > HTTP_UNREAD_ANSWER_BYTES, 10_000);
       expect(sumWritable(h.serverSockets)).toBeGreaterThan(HTTP_UNREAD_ANSWER_BYTES);
 
       // Control: a silent (never-read) client closes under the sweep.
       const silentClosed = (): boolean => {
-        for (const s of h.closedServerSockets) {
-          if (s.remotePort !== undefined && silentRemotePorts.has(s.remotePort)) return true;
+        for (const s of silentServerSockets) {
+          if (h.closedServerSockets.has(s)) return true;
         }
         return false;
       };
@@ -358,7 +368,7 @@ describe('listenPublic sets the deadlines, the connection bound and the unread-a
     }
   });
 
-  it.fails('HTTP_CONNECTIONS_MAX raw connections are all held, one more is dropped with no byte answered and emits drop, and a freed slot answers a request', async () => {
+  it('HTTP_CONNECTIONS_MAX raw connections are all held, one more is dropped with no byte answered and emits drop, and a freed slot answers a request', async () => {
     const app = express();
     app.get('/ping', (_req, res) => { res.status(200).end('pong'); });
 

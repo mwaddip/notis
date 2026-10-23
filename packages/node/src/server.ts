@@ -36,6 +36,14 @@ import { tryGetAvlProver } from './state/avl-prover.js';
 import { bodyRefusal } from './routes/body-refusal.js';
 import type { Config } from './config.js';
 import { createServer, type Server } from 'http';
+import type { Socket } from 'net';
+import {
+  HTTP_HEADERS_TIMEOUT_MS,
+  HTTP_REQUEST_TIMEOUT_MS,
+  HTTP_KEEP_ALIVE_TIMEOUT_MS,
+  HTTP_CHECK_INTERVAL_MS,
+  HTTP_CONNECTIONS_MAX,
+} from '@dagsocial/types';
 
 // NODE_INTERFACE → "A body the parser refuses is the client's error"; CONSTANTS
 // → HTTP server bounds. The limit the JSON parser holds every write request to.
@@ -57,10 +65,69 @@ function noAnswerNamesTheSoftware(
 // listenPublic
 // ---------------------------------------------------------------------------
 
+// NODE_INTERFACE → The public server; CONSTANTS → HTTP server bounds.
+export const HTTP_IDLE_TIMEOUT_MS = 30_000;
+
+// NODE_INTERFACE → The public server; CONSTANTS → HTTP server bounds.
+export const HTTP_UNREAD_ANSWER_BYTES = 67_108_864;
+
 // NODE_INTERFACE → The public server → "One function builds the public server,
 // and every bound below is set there".
 export function listenPublic(app: express.Express, port: number): Server {
-  const server = createServer(app);
+  // NODE_INTERFACE → The public server — the four options Node's
+  // `http.createServer` reads for the headers deadline, the request deadline,
+  // the keep-alive deadline and the check cadence.
+  const server = createServer(
+    {
+      headersTimeout: HTTP_HEADERS_TIMEOUT_MS,
+      requestTimeout: HTTP_REQUEST_TIMEOUT_MS,
+      keepAliveTimeout: HTTP_KEEP_ALIVE_TIMEOUT_MS,
+      connectionsCheckingInterval: HTTP_CHECK_INTERVAL_MS,
+    },
+    app,
+  );
+  // NODE_INTERFACE → The public server — the two bounds the server instance carries.
+  server.timeout = HTTP_IDLE_TIMEOUT_MS;
+  server.maxConnections = HTTP_CONNECTIONS_MAX;
+
+  // NODE_INTERFACE → The public server → "The node holds at most
+  // HTTP_UNREAD_ANSWER_BYTES (64 MiB) of answers its readers have not taken":
+  // the server's own open connections, `'connection'` adds one, its `'close'`
+  // drops it.
+  const connections = new Set<Socket>();
+  server.on('connection', (socket: Socket) => {
+    connections.add(socket);
+    socket.on('close', () => {
+      connections.delete(socket);
+    });
+  });
+
+  // Every HTTP_CHECK_INTERVAL_MS the open connections' writableLength are
+  // summed; while the sum is above HTTP_UNREAD_ANSWER_BYTES the connection
+  // holding the most is destroyed and its bytes leave the sum.
+  const sweep = setInterval(() => {
+    let sum = 0;
+    for (const s of connections) sum += s.writableLength;
+    while (sum > HTTP_UNREAD_ANSWER_BYTES) {
+      let biggest: Socket | null = null;
+      let biggestLen = -1;
+      for (const s of connections) {
+        if (s.destroyed) continue;
+        if (s.writableLength > biggestLen) {
+          biggest = s;
+          biggestLen = s.writableLength;
+        }
+      }
+      if (biggest === null) break;
+      biggest.destroy();
+      sum -= biggestLen;
+    }
+  }, HTTP_CHECK_INTERVAL_MS);
+  sweep.unref();
+  server.on('close', () => {
+    clearInterval(sweep);
+  });
+
   server.listen(port);
   return server;
 }
