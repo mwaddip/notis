@@ -216,9 +216,10 @@ origin list is (→ Cross-origin requests).
 **The node holds at most `HTTP_UNREAD_ANSWER_BYTES` (64 MiB) of answers its readers have not taken.** Every
 `HTTP_CHECK_INTERVAL_MS` the bytes queued on the open connections and not yet handed to the operating system — each
 connection's `writableLength` — are summed; past the budget the connection holding the most is closed, then the next,
-until the sum is within it. A reader that takes an answer as it is written holds next to nothing, so the budget fills
-only with readers that stop: a slow honest reader of a large answer is closed only while the budget is full and it
-holds the most, and asks again. Between two checks the sum may pass the budget by what one interval's answers write.
+until the sum is within it. An answer is queued whole as it is written, and a reader that keeps reading drains its
+own, so the budget fills with readers that stop: a slow honest reader of a large answer is closed only while the
+budget is full and it holds the most, and asks again; a reader holding less than the ones that stopped is never
+reached. Between two checks the sum may pass the budget by what one interval's answers write.
 
 > ⚠ **AHEAD OF CODE (2026-10-23).** `listenPublic` does not exist yet: `index.ts` listens through `app.listen` with
 > Node's defaults — 60 s for the headers and 300 s for the request, each read every 30 s, no idle deadline, no
