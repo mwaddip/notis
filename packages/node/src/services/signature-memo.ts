@@ -36,9 +36,9 @@ export function createSignatureMemo(
   const held = new Set<string>();
 
   function keyOf(signature: Uint8Array, publicKey: Uint8Array, message: Uint8Array): string {
-    // The 171 B an entry (CONSTANTS → node) was measured on the flat latin1
-    // string a single `Buffer.concat` builds; a per-character `+=` would leave
-    // V8 cons strings behind.
+    // One `Buffer.concat`, one flat latin1 string — the form whose 171 B an
+    // entry `CONSTANTS → node` states; a per-character `+=` leaves V8 cons
+    // strings.
     return Buffer.concat([signature, publicKey, message]).toString('latin1');
   }
 
