@@ -60,7 +60,22 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { config } from '../../src/config.js';
-import { admissionOwed } from '../../src/services/karma-admission.js';
+import {
+  admissionOwed,
+  admissionHeld,
+  admissionGetOwnKarmaBoxIds,
+} from '../../src/services/karma-admission.js';
+import { admitTx as admitTxReal } from '../../src/services/admit-tx.js';
+import { getBoxWithPending } from '../../src/store/mempool.js';
+import {
+  applyBlockThroughIntake,
+  liveProver,
+  makeApplicableBlock,
+  seedBoxes,
+  toHex,
+} from '../helpers.js';
+import { setNet } from '../../src/services/net-instance.js';
+import { initJournal } from '../../src/journal.js';
 
 // A directory private to this run, so two runs of the suite on one machine
 // never write the same store file.
@@ -1942,5 +1957,289 @@ describe('POST /posts/batch — fail-stop under a confirmed row whose block list
       exit.mockRestore();
       errLog.mockRestore();
     }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+// before anything reads state."
+// NODE_INTERFACE → Service Layer Architecture → "A transaction the pool
+// already holds is answered as held."
+// ---------------------------------------------------------------------------
+describe('a resubmit is answered as held', () => {
+  let heldDir: string;
+  let broadcastTx: ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } };
+  let capturedLines: string[];
+  let nextKarmaNonce = 1;
+
+  async function freshAuthorWithKarma(value: bigint): Promise<{
+    author: ReturnType<typeof makeTestIdentity>;
+    karma: KarmaBox;
+  }> {
+    const author = makeTestIdentity();
+    const karma = seedProvenance<KarmaBox>({
+      boxType: 'karma',
+      value,
+      createdAtBlock: 0,
+      owner: author.userId,
+    }, 1, nextKarmaNonce++);
+    await seedBoxes([karma]);
+    return { author, karma };
+  }
+
+  // The deps `server.ts` wires for admission: the admission karma readers
+  // (`admissionHeld`, `admissionOwed`, `admissionGetOwnKarmaBoxIds`) and
+  // `getBoxWithPending`, matching `test/services/karma-spend-admission.test.ts`
+  // and `test/services/pool-follows-applied-block.test.ts`.
+  function heldDeps() {
+    const db = getDb();
+    const decayCfg = {
+      staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+      decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+      decayAmount: KARMA_DECAY_AMOUNT,
+      karmaMinimum: KARMA_MINIMUM,
+    };
+    const engineDeps = {
+      getBox: getBoxWithPending,
+      insertBox: (box: AnyBox) => { insertBox(box); },
+      consumeBox: (id: string, atBlock: number) => {
+        db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
+      },
+      getKarmaOwed: admissionOwed(decayCfg),
+      getKarmaValue: admissionHeld,
+      getOwnKarmaBoxIds: admissionGetOwnKarmaBoxIds,
+      getIdentityRecord: storeGetIdentityRecord,
+      hasActiveVouchEscrow: (voucherId: Uint8Array) => hasActiveVouchEscrow(voucherId),
+      vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      decayCfg,
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getTopologyAuthor: () => null,
+      getPendingPostAuthor,
+      runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
+    };
+    return {
+      insertPost,
+      getPost,
+      queryPostsPage,
+      verifyPost,
+      getKarmaBoxes,
+      getIdentityRecord: storeGetIdentityRecord,
+      decayCfg,
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getLikeRecordCount,
+      getDescendantCount,
+      hasLikeRecord,
+      getUsernameByOwner,
+      getAncestorsNearest,
+      getSubtreePage,
+      getBlockCreatedAt,
+      getPendingUtxoTxBytesByTxId,
+      getUtxoTxTreeBytes,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      getTopologyAuthor: () => null,
+      getPendingPostAuthor,
+      getCurrentHeight,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      admitTx: admitTxReal,
+      runInTransaction: (fn: () => void) => (db.transaction(fn) as () => void)(),
+      validateTx: (tx: UtxoTransaction, height: number) => validateTx(engineDeps, tx, height),
+      getBox: getBoxWithPending,
+    };
+  }
+
+  async function send(txJson: Record<string, unknown>, content: string): Promise<{ status: number; data: unknown }> {
+    return new Promise((resolve) => {
+      const app = express();
+      app.use(express.json());
+      app.use('/posts', createRouter(heldDeps() as never));
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const r = http.request(
+          {
+            hostname: 'localhost',
+            port: addr.port,
+            path: '/posts/',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          },
+          (res) => {
+            let d = '';
+            res.on('data', (c) => (d += c));
+            res.on('end', () => {
+              server.close();
+              try { resolve({ status: res.statusCode ?? 0, data: JSON.parse(d) }); }
+              catch { resolve({ status: res.statusCode ?? 0, data: d }); }
+            });
+          },
+        );
+        r.write(JSON.stringify({ tx: txJson, content }));
+        r.end();
+      });
+    });
+  }
+
+  function buildPostTx(
+    author: ReturnType<typeof makeTestIdentity>,
+    karma: KarmaBox,
+    content: string,
+  ): { tx: UtxoTransaction; txJson: Record<string, unknown> } {
+    const contentHash = computeContentHash(content);
+    const commit: PostCommit = {
+      contentHash,
+      author: author.userId,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const tx: UtxoTransaction = {
+      inputs: [karma.id!],
+      outputs: [
+        { boxType: 'karma', value: karma.value - POST_PRICE_THREAD, createdAtBlock: 0, owner: author.userId } as CandidateOf<KarmaBox>,
+        { boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: 0 } as CandidateOf<KarmaPriceBox>,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: commit,
+    };
+    signTransaction(tx, author.privateKey, toHex(author.userId));
+    const txJson = {
+      ...txToJson(tx),
+      post: {
+        contentHash: Buffer.from(contentHash).toString('hex'),
+        author: toHex(commit.author),
+        parentRefs: commit.parentRefs,
+        type: commit.type,
+      },
+    };
+    return { tx, txJson };
+  }
+
+  beforeAll(async () => {
+    heldDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-held-posts-'));
+    initDb(join(heldDir, 'store.sqlite'));
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve()) as unknown as typeof broadcastTx;
+    const netStub = {
+      penalizePeer: () => {},
+      chainMoved: () => {},
+      needHeaders: () => {},
+      broadcastOrderingBlock: async () => {},
+      broadcastTx,
+      getConnectedPeers: () => [],
+      tipApplied: () => {},
+      setKarmaMembers: () => {},
+      addKarmaMember: () => {},
+      removeKarmaMember: () => {},
+      requestPostBodies: async () => [],
+    };
+    setNet(netStub as unknown as Parameters<typeof setNet>[0]);
+
+    await liveProver();
+
+    // Observes the post lifecycle emitters as `test/journal.test.ts` does:
+    // the three `emitPost*` lines write through `process.stdout`, so the spy
+    // captures them (`JOURNAL_EVENTS.md → post_received`). `initJournal` is
+    // required for the emitters to write; it is a once-only switch.
+    capturedLines = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      capturedLines.push(String(chunk));
+      return true;
+    });
+    initJournal();
+  });
+
+  afterAll(() => {
+    setNet(null as unknown as Parameters<typeof setNet>[0]);
+    vi.restoreAllMocks();
+    closeDb();
+    rmSync(heldDir, { recursive: true, force: true });
+  });
+
+  it.fails('POST /posts', async () => {
+    // Plenty of karma; the arm pins the resubmit held answer alone.
+    const { author, karma } = await freshAuthorWithKarma(POST_PRICE_THREAD * 4n);
+    const content = 'held-arm post body';
+    const { tx, txJson } = buildPostTx(author, karma, content);
+
+    const r1 = await send(txJson, content);
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const publishesBefore = broadcastTx.mock.calls.length;
+    const r2 = await send(txJson, content);
+    expect(r2.status).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+    expect((r2.data as Record<string, unknown>).expiresAtHeight)
+      .toBe((r1.data as Record<string, unknown>).expiresAtHeight);
+
+    // The second submission publishes the pooled bytes exactly once,
+    // beside the request's own content.
+    const calls = broadcastTx.mock.calls;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(computeTxId(sentTx)).toBe(computeTxId(tx));
+    const sentContent = calls[publishesBefore]![1] as string;
+    expect(sentContent).toBe(content);
+  });
+
+  it.fails('the owner at the limit', async () => {
+    // The post rule reads `held - owed >= POST_PRICE_THREAD`. Owner karma
+    // covers exactly one post: the resubmit's refusal under admission's
+    // `held` reader is the karma shortfall the fix will remove.
+    const { author, karma } = await freshAuthorWithKarma(POST_PRICE_THREAD + 1n);
+    const content = 'held-arm karma-at-limit body';
+    const { txJson } = buildPostTx(author, karma, content);
+
+    const r1 = await send(txJson, content);
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    const r2 = await send(txJson, content);
+    // The post rule reads `held - owed >= POST_PRICE_THREAD`; a resubmit
+    // the pool holds answers 200 under the fix.
+    expect(r2.status, JSON.stringify(r2.data)).toBe(200);
+    expect(r2.data).toEqual(r1.data);
+  });
+
+  it.fails('a resubmitted post emits none of the three post events', async () => {
+    const { author, karma } = await freshAuthorWithKarma(POST_PRICE_THREAD * 4n);
+    const content = 'held-arm journal-silence body';
+    const { txJson } = buildPostTx(author, karma, content);
+
+    const r1 = await send(txJson, content);
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    const linesBefore = capturedLines.length;
+    const r2 = await send(txJson, content);
+    expect(r2.status, JSON.stringify(r2.data)).toBe(200);
+
+    // JOURNAL_EVENTS.md → "A post whose transaction the pool already holds,
+    // arriving again, emits none of the three post events".
+    const linesDuring = capturedLines.slice(linesBefore);
+    const events = linesDuring
+      .map((line) => { try { return JSON.parse(line).event as unknown; } catch { return null; } })
+      .filter((e): e is string => typeof e === 'string');
+    expect(events).not.toContain('post_received');
+    expect(events).not.toContain('post_validated');
+    expect(events).not.toContain('post_indexed');
   });
 });
