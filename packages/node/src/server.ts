@@ -35,7 +35,7 @@ import { registerProofEndpoint, registerRangeEndpoint } from './state/avl-endpoi
 import { tryGetAvlProver } from './state/avl-prover.js';
 import { bodyRefusal } from './routes/body-refusal.js';
 import type { Config } from './config.js';
-import type { Server } from 'http';
+import { createServer, type Server } from 'http';
 
 // NODE_INTERFACE → "A body the parser refuses is the client's error"; CONSTANTS
 // → HTTP server bounds. The limit the JSON parser holds every write request to.
@@ -51,6 +51,18 @@ function noAnswerNamesTheSoftware(
 ): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   next();
+}
+
+// ---------------------------------------------------------------------------
+// listenPublic
+// ---------------------------------------------------------------------------
+
+// NODE_INTERFACE → The public server → "One function builds the public server,
+// and every bound below is set there".
+export function listenPublic(app: express.Express, port: number): Server {
+  const server = createServer(app);
+  server.listen(port);
+  return server;
 }
 
 // ---------------------------------------------------------------------------
