@@ -267,17 +267,17 @@ describe('the signature memo rides admission, Stage 1 and every block context', 
   // map through the memo's batch (NET_INTERFACE → Stage 1 → "A transaction's
   // signatures are checked at Stage 1").
   it(
-    'netValidators().verifyTxSignatures twice over one honest transaction reads the batch at most once',
+    'netValidators\' signature check reads the batch once, then not at all',
     async () => {
       const signer = (await makeKeys(1))[0]!;
       const tx = buildTx([signer], [credit(receiver.publicKey, BOX_VALUE - 1n), fee(1n)]);
       vi.mocked(verifyEd25519Batch).mockClear();
       expect(netValidators().verifyTxSignatures(tx)).toBe(true);
       const after1 = vi.mocked(verifyEd25519Batch).mock.calls.length;
+      expect(after1).toBe(1);
       expect(netValidators().verifyTxSignatures(tx)).toBe(true);
       const total = vi.mocked(verifyEd25519Batch).mock.calls.length;
-      expect(after1).toBeGreaterThanOrEqual(0);
-      expect(total).toBeLessThanOrEqual(1);
+      expect(total).toBe(1);
     },
   );
 });
