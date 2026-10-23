@@ -393,6 +393,8 @@ describe('GET /shell/:id', () => {
       expect(withHeaders.status).toBe(200);
       expect(withoutHeaders.status).toBe(200);
       expect(withHeaders.body).toContain('<meta property="og:title"');
+      expect(withHeaders.body).not.toContain('og:url');
+      expect(withoutHeaders.body).not.toContain('og:url');
       expect(withHeaders.body).toBe(withoutHeaders.body);
     } finally {
       close();

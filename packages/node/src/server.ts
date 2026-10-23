@@ -125,7 +125,7 @@ function stripShellPreviewTags(html: string): string {
 
 // NODE_INTERFACE → Link previews: the title and the tags are put in place by
 // position, so no character of a value is read as a replacement pattern
-// (`$&`, `` $` ``, `$'`, `$$`). `needle` occurs once; a value absent from
+// (`$&`, `` $` ``, `$'`, `$$`). `needle` occurs once; a needle absent from
 // `haystack` leaves it untouched.
 function spliceAt(haystack: string, needle: string, replacement: string): string {
   const i = haystack.indexOf(needle);
