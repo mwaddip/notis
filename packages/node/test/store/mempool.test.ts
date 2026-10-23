@@ -1095,7 +1095,7 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
 
     // Controls: class full; resident pooled on `residentInput`; and the
     // arrival outbids the resident on the cross-multiplied rate
-    // `assertCapacity` itself compares — the arrival's `fee × resident
+    // `readCapacityVerdict` itself compares — the arrival's `fee × resident
     // bytes` above the resident's `fee × arrival bytes`, bytes read from
     // the pooled row and from `entryByteCost(encodeTx(arrival))`.
     const fullRow = (await importDbFresh()).getDb()
@@ -1142,7 +1142,7 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
 
     // Controls: credit class full with cheapest and bystander, both pooled
     // on their inputs; the arrival outbids the cheapest on the same
-    // cross-multiplied rate `assertCapacity` compares.
+    // cross-multiplied rate `readCapacityVerdict` compares.
     const fullRow = (await importDbFresh()).getDb()
       .prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL').get() as { n: number };
     expect(fullRow.n).toBe(2);
