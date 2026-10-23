@@ -112,10 +112,6 @@ logged**: a line a stranger can write at will is a log a stranger can fill. A re
 no body as far as a route sees — an empty object — and the route's own check answers it. **500 `{ error: 'internal'
 }` is a fault of the node's**, and it alone logs its stack.
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** A gzip or deflate body that does not decompress answers 500 and logs its stack:
-> `bodyRefusal` knows the parser's refusal by its `type` mark, and zlib's error, which the parser hands back with
-> status 400, carries none.
-
 **Hex is lowercase.** Every hex value the node reads — in a body, a path or a query: a key, an id, a box field, a
 signature — is lowercase hex of the width its field states, and any other spelling, uppercase included, is a 400 on
 every route. It is the one spelling the node writes and the one `types`' `hexToBytes` decodes.
@@ -220,10 +216,6 @@ until the sum is within it. An answer is queued whole as it is written, and a re
 own, so the budget fills with readers that stop: a slow honest reader of a large answer is closed only while the
 budget is full and it holds the most, and asks again; a reader holding less than the ones that stopped is never
 reached. Between two checks the sum may pass the budget by what one interval's answers write.
-
-> ⚠ **AHEAD OF CODE (2026-10-23).** `listenPublic` does not exist yet: `index.ts` listens through `app.listen` with
-> Node's defaults — 60 s for the headers and 300 s for the request, each read every 30 s, no idle deadline, no
-> connection bound and no answer budget.
 
 ### Posts
 
@@ -817,10 +809,6 @@ within `HTTP_REQUEST_TIMEOUT_MS`, both read every `HTTP_CHECK_INTERVAL_MS`, a ke
 (128 bytes; `{ pubkey }` is 77), one over it a malformed body's `400`. **It has no idle deadline and no answer
 budget**: a request waits its turn in its endpoint's line with no byte moving, which an idle deadline would end, and
 every answer is under a kilobyte, which a connection takes whole.
-
-> ⚠ **AHEAD OF CODE (2026-10-23).** The faucet's `index.ts` listens through `app.listen` with Node's defaults, sends
-> `X-Powered-By` and no `nosniff`, and reads bodies under `express.json()`'s 100 kB default until `listenFaucet` and
-> `FAUCET_BODY_MAX_BYTES` replace them.
 
 A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
 that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;

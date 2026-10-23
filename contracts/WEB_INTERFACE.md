@@ -234,9 +234,6 @@ dev server, `https://notis.fun` in the release — and a host under another orig
 other six; `build-release.sh` checks it. No `og:url`, on the root or on a post's page: a scraper takes the page's own. A post's page
 carries none of this block — the node removes it before injecting the post's tags (`NODE_INTERFACE → Link previews`).
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** The node writes an `og:url` on a post's page from the host's forwarding headers,
-> and `deploy/nginx.example.conf` sends it `X-Original-URI`, until both leave.
-
 **The web build's shell carries its own security policy.** The shell a web build writes holds, after its `charset`
 and before `<base>`,
 

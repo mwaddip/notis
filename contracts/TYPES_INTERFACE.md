@@ -3584,8 +3584,6 @@ What the node's public server and the faucet's set, one definition both read (`N
 `CONSTANTS → HTTP server bounds`). Numbers, nothing more: this package imports no server, and the browser runs it as
 it is written.
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** The five constants are not exported yet.
-
 ### Credit emission (Ergo-style linear decay)
 
 ```typescript

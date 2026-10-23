@@ -86,7 +86,8 @@ Event-specific fields are additional top-level keys.
 ### api_listening
 **Level:** INFO
 **Fields:** `bind_address` (string), `port` (number)
-**Emitted:** After `app.listen()` succeeds on the public API port.
+**Emitted:** When the public server `listenPublic` builds (`NODE_INTERFACE → The public server`) starts listening on the public API
+port.
 
 ## Core Events
 
