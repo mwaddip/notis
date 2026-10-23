@@ -37,12 +37,32 @@ import { bodyRefusal } from './routes/body-refusal.js';
 import type { Config } from './config.js';
 import type { Server } from 'http';
 
+// NODE_INTERFACE → "A body the parser refuses is the client's error"; CONSTANTS
+// → HTTP server bounds. The limit the JSON parser holds every write request to.
+export const HTTP_BODY_MAX_BYTES = 65_536;
+
+// NODE_INTERFACE → The public server → "No answer names the software, and none
+// is read as another type". Set on every answer of both apps, before any route
+// or body-parser middleware.
+function noAnswerNamesTheSoftware(
+  _req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+}
+
 // ---------------------------------------------------------------------------
 // createAdminApp
 // ---------------------------------------------------------------------------
 
 export function createAdminApp(config: Config, deps: AdminDeps): Server {
   const adminApp = express();
+  // NODE_INTERFACE → The public server → "No answer names the software, and
+  // none is read as another type".
+  adminApp.disable('x-powered-by');
+  adminApp.use(noAnswerNamesTheSoftware);
   adminApp.use(createAdminRouter(deps));
 
   // WARN if not loopback
@@ -91,7 +111,6 @@ function shellDescription(content: string): string {
 interface ShellTags {
   title: string;
   description: string;
-  ogUrl: string | null;
 }
 
 // NODE_INTERFACE → Link previews → "A tagged answer replaces the shell's own
@@ -104,11 +123,21 @@ function stripShellPreviewTags(html: string): string {
     .replace(/<meta\b[^>]*\bname="description"[^>]*>\s*/gi, '');
 }
 
+// NODE_INTERFACE → Link previews: the title and the tags are put in place by
+// position, so no character of a value is read as a replacement pattern
+// (`$&`, `` $` ``, `$'`, `$$`). `needle` occurs once; a value absent from
+// `haystack` leaves it untouched.
+function spliceAt(haystack: string, needle: string, replacement: string): string {
+  const i = haystack.indexOf(needle);
+  if (i < 0) return haystack;
+  return haystack.slice(0, i) + replacement + haystack.slice(i + needle.length);
+}
+
 /**
- * NODE_INTERFACE → Link previews: strips the shell's own preview tags,
- * replaces `<title>Notis</title>`, and injects `og:title`, `description`,
- * `og:description`, `og:type` article, `og:site_name` Notis and
- * `twitter:card` summary before `</head>`; `og:url` only when set.
+ * NODE_INTERFACE → Link previews: strips the shell's own preview tags, splices
+ * `<title>Notis</title>` by position, and splices `og:title`, `description`,
+ * `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card`
+ * summary before `</head>` by position. No `og:url` is written.
  */
 function taggedShell(shellHtml: string, tags: ShellTags): string {
   const title = escapeHtml(tags.title);
@@ -118,14 +147,13 @@ function taggedShell(shellHtml: string, tags: ShellTags): string {
     `<meta name="description" content="${description}">`,
     `<meta property="og:description" content="${description}">`,
     `<meta property="og:type" content="article">`,
-    tags.ogUrl !== null ? `<meta property="og:url" content="${escapeHtml(tags.ogUrl)}">` : null,
     `<meta property="og:site_name" content="Notis">`,
     `<meta name="twitter:card" content="summary">`,
-  ].filter((tag): tag is string => tag !== null).join('\n');
+  ].join('\n');
 
-  return stripShellPreviewTags(shellHtml)
-    .replace('<title>Notis</title>', `<title>${title}</title>`)
-    .replace('</head>', `${metaTags}\n</head>`);
+  const stripped = stripShellPreviewTags(shellHtml);
+  const titled = spliceAt(stripped, '<title>Notis</title>', `<title>${title}</title>`);
+  return spliceAt(titled, '</head>', `${metaTags}\n</head>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +213,11 @@ export function createApp(config: Config): express.Express {
   // a name given twice before any route runs.
   app.set('query parser', parseStrictQuery);
 
+  // NODE_INTERFACE → The public server → "No answer names the software, and
+  // none is read as another type".
+  app.disable('x-powered-by');
+  app.use(noAnswerNamesTheSoftware);
+
   // ---- Middleware ----
 
   // NODE_INTERFACE → Admin Listener: every request the public app receives.
@@ -218,7 +251,7 @@ export function createApp(config: Config): express.Express {
     next();
   });
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: HTTP_BODY_MAX_BYTES }));
 
   // GET /shell/:id — NODE_INTERFACE → Link previews
   app.get('/shell/:id', (req, res) => {
@@ -256,7 +289,6 @@ export function createApp(config: Config): express.Express {
       res.status(200).type('html').send(taggedShell(shellHtml, {
         title: 'withdrawn · Notis',
         description: 'withdrawn by its author',
-        ogUrl: null,
       }));
       return;
     }
@@ -267,9 +299,6 @@ export function createApp(config: Config): express.Express {
     }
 
     const authorHex = Buffer.from(result.author).toString('hex');
-    const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
-    const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? 'localhost';
-    const originalUri = req.get('x-original-uri');
 
     // NODE_INTERFACE → Link previews
     const held = store.getUsernameByOwner(result.author);
@@ -280,7 +309,6 @@ export function createApp(config: Config): express.Express {
     res.status(200).type('html').send(taggedShell(shellHtml, {
       title,
       description: shellDescription(result.content),
-      ogUrl: originalUri ? `${proto}://${host}${originalUri}` : null,
     }));
   });
 

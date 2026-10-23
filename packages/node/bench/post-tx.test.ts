@@ -22,6 +22,7 @@ import * as store from '../src/store/index.js';
 import { FeedService } from '../src/services/feed-service.js';
 import { parseBatchIds, isBatchIdsError } from '../src/routes/page.js';
 import { makeTestIdentity, makeCreditBox, makeCreditTx } from '../test/helpers.js';
+import { HTTP_BODY_MAX_BYTES } from '../src/server.js';
 
 /**
  * What the post routes' `tx=1` read costs when its rows sit in full blocks: a
@@ -217,7 +218,7 @@ function makeApp(): express.Express {
     getUtxoTxTreeBytes: store.getUtxoTxTreeBytes,
   });
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: HTTP_BODY_MAX_BYTES }));
   app.get('/posts', (req, res) => {
     const limit = Number(req.query['limit'] ?? 100);
     const tx = req.query['tx'] === '1';

@@ -252,7 +252,7 @@ describe('server', () => {
       }
     });
 
-    it.fails('POST /posts/batch one byte past HTTP_BODY_MAX_BYTES answers 413 body too large, not logged', async () => {
+    it('POST /posts/batch one byte past HTTP_BODY_MAX_BYTES answers 413 body too large, not logged', async () => {
       // 65 536 + 1 bytes of well-formed JSON so only the body bound can
       // refuse it (raw-body's `entity.too.large`).
       const prefix = `{"ids":["${'a'.repeat(64)}"],"pad":"`;
@@ -434,7 +434,7 @@ describe('nosniff and no X-Powered-By', () => {
     });
   }
 
-  it.fails('the public app answers every listed kind with nosniff and no X-Powered-By', async () => {
+  it('the public app answers every listed kind with nosniff and no X-Powered-By', async () => {
     const bigBody = '{"pad":"' + 'a'.repeat(1024 * 1024) + '"}';
     const kinds: Array<{ kind: string; status: number; call: () => Promise<{ status: number; headers: Headers | Map<string, string> }> }> = [
       {
@@ -546,7 +546,7 @@ describe('nosniff and no X-Powered-By', () => {
     }
   });
 
-  it.fails('the admin listener answers every listed kind with nosniff and no X-Powered-By', async () => {
+  it('the admin listener answers every listed kind with nosniff and no X-Powered-By', async () => {
     const adminServer = createAdminApp(
       makeTestConfig({ adminPort: 0, adminBindAddress: '127.0.0.1' }),
       {
@@ -624,7 +624,7 @@ describe('body bound at HTTP_BODY_MAX_BYTES', () => {
     expect(r.status).not.toBe(413);
   });
 
-  it.fails('a well-formed body of 65 536 + 1 bytes answers 413 body too large', async () => {
+  it('a well-formed body of 65 536 + 1 bytes answers 413 body too large', async () => {
     const body = paddedBatchBody(BOUND + 1);
     expect(Buffer.byteLength(body, 'utf-8')).toBe(BOUND + 1);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

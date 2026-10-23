@@ -238,7 +238,7 @@ describe('GET /shell/:id', () => {
     }
   });
 
-  it.fails('a tagged answer carries no og:url and reads no X-Original-URI, X-Forwarded-Proto or Host', async () => {
+  it('a tagged answer carries no og:url and reads no X-Original-URI, X-Forwarded-Proto or Host', async () => {
     const author = uid('shell-url-author');
     const content = 'a post for the forwarded-headers coverage';
     const commit = makePostCommit(author, content);
@@ -348,7 +348,7 @@ describe('GET /shell/:id', () => {
   ];
 
   for (const { label, content, expected } of splicePatterns) {
-    it.fails(`a content carrying ${label} splices by position: exactly one <body> and one </head>, description and og:description equal the escaped value`, async () => {
+    it(`a content carrying ${label} splices by position: exactly one <body> and one </head>, description and og:description equal the escaped value`, async () => {
       const author = uid(`shell-splice-${label}`);
       const commit = makePostCommit(author, content);
       const id = fixturePostId(commit);
@@ -374,7 +374,7 @@ describe('GET /shell/:id', () => {
   // NODE_INTERFACE → Link previews: a tagged answer carries no og:url and the
   // route reads no X-Forwarded-* and no X-Original-URI, so the bytes are the
   // same whatever headers the request carries.
-  it.fails("a tagged answer is byte-identical with X-Forwarded-Proto, X-Forwarded-Host and X-Original-URI carrying $' as without them, and neither carries og:url", async () => {
+  it("a tagged answer is byte-identical with X-Forwarded-Proto, X-Forwarded-Host and X-Original-URI carrying $' as without them, and neither carries og:url", async () => {
     const author = uid('shell-forwarded-ignored');
     const content = "a plain live post for the forwarded-headers check";
     const commit = makePostCommit(author, content);
