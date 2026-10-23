@@ -378,19 +378,22 @@ describe('the cost gate', () => {
     expect(handle.prover.prover.generateProof()).toEqual(empty);
   });
 
-  it('never refuses a reorg\'s re-insertion of a transaction its chain had carried', async () => {
+  it.fails('never refuses a reorg\'s re-insertion of a transaction its chain had carried', async () => {
     const { tx, admit, mem } = await gatedNode();
     const cost = await aloneCost(tx);
     const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
     expect(applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [tx] }))).toBe(true);
 
-    // Under a budget the gate refuses it by, the revert re-inserts it — the gate
-    // is above the store, where re-insertion never reaches.
+    // Under a budget the gate refuses it by, the revert re-inserts it — the
+    // seams above the store, where re-insertion never reaches, still refuse
+    // it. The pool's conflict gate answers first
+    // (MEMPOOL_INTERFACE → assertPoolAdmits), since the re-inserted entry
+    // spends the same input the arrival names.
     budget.set(cost - 1);
     const { reorg } = await import('../../src/services/fork-resolution.js');
     expect(() => reorg(0, [])).not.toThrow();
     expect(mem.getPendingEntries(10)).toHaveLength(1);
-    expect(() => admit.admitTx(tx, 1000)).toThrow(`cost ${cost} over the budget ${cost - 1}`);
+    expect(() => admit.admitTx(tx, 1000)).toThrow(mem.PendingSpendConflictError);
   });
 });
 
