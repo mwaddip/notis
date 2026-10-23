@@ -18,8 +18,7 @@ import {
   emitSyncComplete,
 } from './journal.js';
 import { NetNode } from '@dagsocial/net';
-import * as validation from '@dagsocial/validation';
-import { countedVerifyOrderingBlockPoW } from './metrics.js';
+import { netValidators } from './services/signature-memo.js';
 import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { createAvlProver } from './state/avl-prover.js';
@@ -145,7 +144,7 @@ const net = new NetNode(
     penaltySafeIntervalMs: config.penaltySafeIntervalMs,
     syncRequestTimeoutMs: config.syncRequestTimeoutMs,
   },
-  { ...validation, verifyOrderingBlockPoW: countedVerifyOrderingBlockPoW },
+  netValidators(),
   peerStorage,
 );
 setNet(net);

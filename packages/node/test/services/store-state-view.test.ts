@@ -103,9 +103,10 @@ describe('the store\'s StateView', () => {
     expect(s.blockApply.storeStateView.getTopologyAuthor('ff'.repeat(32))).toBeNull();
   });
 
-  it('the ApplyContext a node hands the rules is its profile\'s numbers', async () => {
+  it('the ApplyContext a node hands the rules is its profile\'s numbers and the memo', async () => {
     const { applyContextFrom } = await import('../../src/services/block-apply.js');
     const { config } = await import('../../src/config.js');
+    const { signatureMemo } = await import('../../src/services/signature-memo.js');
     const profile = config.profile;
     expect(applyContextFrom(config)).toEqual({
       protocolVersionSchedule: profile.protocolVersionSchedule,
@@ -120,6 +121,7 @@ describe('the store\'s StateView', () => {
       creditFixedRateBlocks: profile.creditFixedRateBlocks,
       creditEpochBlocks: profile.creditEpochBlocks,
       creditMinerRewardDelay: profile.creditMinerRewardDelay,
+      signatureChecks: signatureMemo,
     });
   });
 });

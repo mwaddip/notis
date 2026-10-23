@@ -86,6 +86,7 @@ import type { AvlProverHandle } from '../state/avl-prover.js';
 import { recordingSession } from '../state/prover-session.js';
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
+import { signatureMemo } from './signature-memo.js';
 import { getNet } from './net-instance.js';
 import {
   bytesToHex,
@@ -178,7 +179,8 @@ export const storeStateView: StateView = {
 
 /**
  * The network profile's numbers the rules read (CONSENSUS_INTERFACE →
- * ApplyContext), from a node's configuration.
+ * ApplyContext), from a node's configuration, with the signature memo as the
+ * context's checks (NODE_INTERFACE → The signature memo).
  */
 export function applyContextFrom(cfg: Config): ApplyContext {
   return {
@@ -199,6 +201,7 @@ export function applyContextFrom(cfg: Config): ApplyContext {
     creditFixedRateBlocks: cfg.creditFixedRateBlocks,
     creditEpochBlocks: cfg.creditEpochBlocks,
     creditMinerRewardDelay: cfg.creditMinerRewardDelay,
+    signatureChecks: signatureMemo,
   };
 }
 
