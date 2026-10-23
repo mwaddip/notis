@@ -12,16 +12,13 @@ import {
   HTTP_CHECK_INTERVAL_MS,
   HTTP_CONNECTIONS_MAX,
 } from '@dagsocial/types';
-import { listenPublic } from '../src/server.js';
+import {
+  listenPublic,
+  HTTP_IDLE_TIMEOUT_MS,
+  HTTP_UNREAD_ANSWER_BYTES,
+} from '../src/server.js';
 
 const SRC_DIR = join(__dirname, '../src');
-
-// NODE_INTERFACE → The public server; CONSTANTS → HTTP server bounds.
-const HTTP_IDLE_TIMEOUT_MS = 30_000;
-
-// NODE_INTERFACE → The public server → "The node holds at most
-// HTTP_UNREAD_ANSWER_BYTES (64 MiB) of answers its readers have not taken."
-const HTTP_UNREAD_ANSWER_BYTES = 67_108_864;
 
 /**
  * NODE_INTERFACE → The public server → "One function builds the public server,
@@ -401,7 +398,7 @@ describe('listenPublic sets the deadlines, the connection bound and the unread-a
       await waitFor(() => extra!.destroyed, 10_000);
 
       // Control: the server emitted 'drop' for the extra connection.
-      expect(dropped.length).toBeGreaterThan(0);
+      expect(dropped.length).toBe(1);
       // Control: no bytes come back to it.
       expect(bytesFromExtra).toBe(0);
 
