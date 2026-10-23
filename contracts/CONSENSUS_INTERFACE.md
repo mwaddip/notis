@@ -47,9 +47,9 @@ browser runs it as it is written (`ARCHITECTURE → Package boundaries`), held t
 | `block-cost` | `blockCost` · `checkBlockCost` (`BlockCost`) | this contract's `The block's cost` | none |
 
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
-`ApplyContext`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`, `SettlementDeps`,
-`SettlementBody`, `DecayDeps`, `DecayPlan`, `EmbeddedTx`, `TreeSession`, `TreeLookup`, `TreeStateView`, `TreeWrite`,
-`HoldingKind`, `HoldingsPage`, and the two shapes the store shares (`StateView` below).
+`ApplyContext`, `SignatureChecks`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`,
+`SettlementDeps`, `SettlementBody`, `DecayDeps`, `DecayPlan`, `EmbeddedTx`, `TreeSession`, `TreeLookup`,
+`TreeStateView`, `TreeWrite`, `HoldingKind`, `HoldingsPage`, and the two shapes the store shares (`StateView` below).
 **The export list is what the node's source, the light client's and the suites call, not a promise** — a helper
 nothing there calls leaves the barrel, and one a caller needs joins it with its caller.
 
@@ -148,8 +148,8 @@ The node builds it from its configuration (`applyContextFrom`).
 > ⚠ **AHEAD OF CODE (2026-10-23).** `signatureChecks` leads `src/state-view.ts`, whose `ApplyContext` carries the
 > profile's numbers alone, and the node's `applyContextFrom`.
 
-**And the signature checks, when its caller has its own:** `signatureChecks?: { verify(signature, message, publicKey):
-boolean; verifyBatch(entries): boolean }` — the single check `screenBody` makes and the batch `applyBlock` makes
+**And the signature checks, when its caller has its own:** `signatureChecks?: SignatureChecks`, `{ verify(signature,
+message, publicKey): boolean; verifyBatch(entries): boolean }` — the single check `screenBody` makes and the batch `applyBlock` makes
 (→ Applying a block; → Screening a body), `validation`'s `verifyEd25519` and `verifyEd25519Batch` when it is absent.
 **A caller's pair answers exactly what `validation`'s does** — a pair that answers otherwise is a fork. The node's
 answers from its signature memo, which remembers the triples `validation`'s rule accepted
