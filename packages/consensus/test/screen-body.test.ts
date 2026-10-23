@@ -181,8 +181,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
   const withChecks = (
     verify: (sig: Uint8Array, msg: Uint8Array, key: Uint8Array) => boolean,
     verifyBatch: (entries: ReadonlyArray<Ed25519BatchEntry>) => boolean = () => true,
-  ): ApplyContext =>
-    ({ ...ctx, signatureChecks: { verify, verifyBatch } }) as unknown as ApplyContext;
+  ): ApplyContext => ({ ...ctx, signatureChecks: { verify, verifyBatch } });
 
   it("the context's `verify` is called once per entry of each screened transaction, with (signature, transaction id bytes, key)", () => {
     const view = genesis();

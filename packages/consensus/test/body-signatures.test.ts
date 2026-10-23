@@ -395,8 +395,7 @@ describe("applyBlock answers through the context's signature checks", () => {
   const withChecks = (
     verify: (sig: Uint8Array, msg: Uint8Array, key: Uint8Array) => boolean,
     verifyBatch: (entries: ReadonlyArray<Ed25519BatchEntry>) => boolean,
-  ): ApplyContext =>
-    ({ ...ctx, signatureChecks: { verify, verifyBatch } }) as unknown as ApplyContext;
+  ): ApplyContext => ({ ...ctx, signatureChecks: { verify, verifyBatch } });
 
   beforeEach(() => {
     vi.mocked(verifyEd25519).mockClear();
