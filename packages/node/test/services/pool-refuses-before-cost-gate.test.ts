@@ -28,6 +28,7 @@ import {
   MempoolFullError,
 } from '../../src/store/mempool.js';
 import { admitTx } from '../../src/services/admit-tx.js';
+import { emptyBlockCost } from '../../src/services/cost-estimate.js';
 import { handleRelayedTx } from '../../src/services/handle-tx.js';
 import { createApp } from '../../src/server.js';
 import {
@@ -91,6 +92,10 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     initDb(':memory:');
     getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     await liveProver();
+    // Prime `emptyBlockCost`'s per-tip cache (MEMPOOL_INTERFACE → The cost
+    // gate), so each case's first admit spends one applyBlock call on its
+    // own candidate rather than two — the empty's and the arrival's.
+    emptyBlockCost('warmup');
     const app = createApp(makeTestConfig({
       port: 0,
       dbPath: ':memory:',
@@ -135,11 +140,15 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     insertBox(residentBox);
     insertBox(arrivalBox);
 
-    // Resident paying a non-zero fee pools fine.
+    // Resident paying a non-zero fee pools fine. The admission that pools it
+    // runs the cost gate once (MEMPOOL_INTERFACE → The cost gate), which the
+    // spy counts: the control that the arrival's zero-count below is a path
+    // read, not a spy that stopped intercepting.
     const resident = makeCreditTx(residentSender, [residentBox], 5_000n);
     const r1 = await post(server, '/credits/transfer', { tx: txToJson(resident) });
     expect(r1.status, JSON.stringify(r1.data)).toBe(200);
     expect(getPendingEntries(10)).toHaveLength(1);
+    expect(vi.mocked(applyBlock).mock.calls.length).toBe(1);
 
     vi.mocked(applyBlock).mockClear();
 
@@ -159,11 +168,14 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     const box = makeCreditBox(100_000n, sender.userId, 0, 2001);
     insertBox(box);
 
-    // Pool one transaction spending `box` directly, so a second arrival
-    // spending the same `box` reaches the pool's conflict gate.
+    // Pool one transaction spending `box` directly. The admission that
+    // pools it runs the cost gate once (MEMPOOL_INTERFACE → The cost gate),
+    // which the spy counts: the control that the arrival's zero-count below
+    // is a path read, not a spy that stopped intercepting.
     const first = makeCreditTx(sender, [box], 5_000n);
     admitTx(first, 1000);
     expect(getPendingEntries(10)).toHaveLength(1);
+    expect(vi.mocked(applyBlock).mock.calls.length).toBe(1);
 
     // The relay validates against the confirmed set (`getBox`), which still
     // holds `box`, so the pool's own conflict gate is what answers.
@@ -179,7 +191,7 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     expect(vi.mocked(applyBlock).mock.calls.length).toBe(0);
   });
 
-  it('castLike path: a full karma class refuses the arriving like before any applyBlock call for its cost', async () => {
+  it('admitTx: a full karma class refuses the arriving like before any applyBlock call for its cost', async () => {
     // Two likers, each with a karma box, targeting two distinct posts: the
     // same `(liker, target)` pair would be refused by the correctness gate
     // ahead of the pool's class check.
@@ -233,9 +245,14 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
       return tx;
     };
 
+    // The admission that pools the resident like runs the cost gate once
+    // (MEMPOOL_INTERFACE → The cost gate), which the spy counts: the control
+    // that the arrival's zero-count below is a path read, not a spy that
+    // stopped intercepting.
     const residentLike = buildLike(likerA, karmaA, postIdA);
     admitTx(residentLike, 1000);
     expect(getPendingEntries(10)).toHaveLength(1);
+    expect(vi.mocked(applyBlock).mock.calls.length).toBe(1);
 
     const arrivalLike = buildLike(likerB, karmaB, postIdB);
 
