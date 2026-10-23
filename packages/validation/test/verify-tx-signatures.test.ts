@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { verifyEd25519, verifyTxSignatures } from '../src/index.js';
+import type { Ed25519BatchEntry } from '../src/index.js';
 import { bytesToHex, computeTxId, hexToBytes } from '@dagsocial/types';
 import type { AnyBoxCandidate, UtxoTransaction } from '@dagsocial/types';
 import { RFC8032_VECTORS } from './rfc8032-vectors.js';
@@ -302,6 +303,87 @@ describe('verifyTxSignatures — agreement with the single check', () => {
       };
       const direct = verifyEd25519(malleated, message, genuine.publicKey);
       expect(verifyTxSignatures(entryTx)).toBe(direct);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The caller's batch check — VALIDATION_INTERFACE → verifyTxSignatures: the
+// entries are built here and the batch is `verifyBatch` when the caller hands
+// one.
+// ---------------------------------------------------------------------------
+
+describe('verifyTxSignatures — a caller\'s batch check', () => {
+  type Batch = (entries: ReadonlyArray<Ed25519BatchEntry>) => boolean;
+  const withBatch = verifyTxSignatures as unknown as (tx: UtxoTransaction, b: Batch) => boolean;
+
+  /** A stub batch that records every call's entries and answers `answer`. */
+  const recorder = (answer: boolean) => {
+    const calls: Array<ReadonlyArray<Ed25519BatchEntry>> = [];
+    const batch: Batch = (entries) => {
+      calls.push(entries);
+      return answer;
+    };
+    return { calls, batch };
+  };
+
+  it.fails('a batch handed in receives the map\'s entries in decoded order, once', () => {
+    const tx = signWith(baseTx(), [KEY_A, KEY_B, KEY_C]);
+    const rec = recorder(true);
+    expect(withBatch(tx, rec.batch)).toBe(true);
+    expect(rec.calls.length).toBe(1);
+    const id = hexToBytes(computeTxId(tx));
+    const keys = Object.keys(tx.signatures);
+    expect(keys.length).toBe(3);
+    const got = rec.calls[0]!;
+    expect(got.length).toBe(3);
+    keys.forEach((key, i) => {
+      expect(got[i]!.signature).toEqual(tx.signatures[key]);
+      expect(got[i]!.message).toEqual(id);
+      expect(got[i]!.publicKey).toEqual(hexToBytes(key));
+    });
+  });
+
+  it.fails('a batch answering false makes an honestly signed map answer false', () => {
+    const tx = signWith(baseTx(), [KEY_A, KEY_B]);
+    expect(verifyTxSignatures(tx)).toBe(true);
+    expect(withBatch(tx, recorder(false).batch)).toBe(false);
+  });
+
+  it.fails('a batch answering true makes a map with a flipped signature byte answer true', () => {
+    const tx = signWith(baseTx(), [KEY_A, KEY_B]);
+    const keyA = bytesToHex(KEY_A.publicKey);
+    const flipped = new Uint8Array(tx.signatures[keyA]!);
+    flipped[0] = flipped[0]! ^ 0x01;
+    const bad: UtxoTransaction = { ...tx, signatures: { ...tx.signatures, [keyA]: flipped } };
+    expect(verifyTxSignatures(bad)).toBe(false);
+    expect(withBatch(bad, recorder(true).batch)).toBe(true);
+  });
+
+  describe('a shape refusal answers false before the batch is called', () => {
+    const honest = signWith(baseTx(), [KEY_A]);
+    const validKey = bytesToHex(KEY_A.publicKey);
+    const validSignature = honest.signatures[validKey]!;
+
+    const refused: ReadonlyArray<readonly [string, unknown]> = [
+      ['a key in uppercase hex', { ...baseTx(), signatures: { [validKey.toUpperCase()]: validSignature } }],
+      ['a key of 62 hex characters', { ...baseTx(), signatures: { [validKey.slice(0, 62)]: validSignature } }],
+      ['an array as the map', { ...baseTx(), signatures: [] }],
+      ['a null tx', null],
+      ['a string tx', 'not an object'],
+      [
+        'an id that cannot be computed',
+        { ...baseTx(), inputs: ['xx'.repeat(32)], signatures: { [validKey]: validSignature } },
+      ],
+    ];
+
+    it.fails.each(refused)('%s', (_name, bad) => {
+      const control = recorder(true);
+      expect(withBatch(honest, control.batch)).toBe(true);
+      expect(control.calls.length).toBe(1);
+      const rec = recorder(true);
+      expect(withBatch(bad as UtxoTransaction, rec.batch)).toBe(false);
+      expect(rec.calls.length).toBe(0);
     });
   });
 });
