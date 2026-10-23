@@ -36,7 +36,7 @@ beforeEach(() => {
 });
 
 describe('createSignatureMemo', () => {
-  it.fails('an honest triple answers true, the rule is called once, then true with no call', () => {
+  it('an honest triple answers true, the rule is called once, then true with no call', () => {
     const memo = createSignatureMemo(16);
     const t = makeTriple(new Uint8Array(32).fill(1));
     expect(memo.verify(t.signature, t.message, t.publicKey)).toBe(true);
@@ -95,7 +95,7 @@ describe('createSignatureMemo', () => {
     expect(vi.mocked(verifyEd25519).mock.calls.length).toBe(2);
   });
 
-  it.fails('a batch the memo holds whole answers true with no batch call', () => {
+  it('a batch the memo holds whole answers true with no batch call', () => {
     const memo = createSignatureMemo(16);
     const t1 = makeTriple(new Uint8Array(32).fill(4));
     const t2 = makeTriple(new Uint8Array(32).fill(5));
@@ -106,7 +106,7 @@ describe('createSignatureMemo', () => {
     expect(vi.mocked(verifyEd25519Batch).mock.calls.length).toBe(1);
   });
 
-  it.fails('a batch partly held calls the rule once with exactly the unheld entries in order, each a hit after', () => {
+  it('a batch partly held calls the rule once with exactly the unheld entries in order, each a hit after', () => {
     const memo = createSignatureMemo(16);
     const t1 = makeTriple(new Uint8Array(32).fill(6));
     const t2 = makeTriple(new Uint8Array(32).fill(7));
@@ -148,7 +148,7 @@ describe('createSignatureMemo', () => {
     expect(called[0]!.signature.length).toBe(63);
   });
 
-  it.fails('at capacity 2, recording A, B, a hit on A, then C drops A — A calls the rule again, B and C do not', () => {
+  it('at capacity 2, recording A, B, a hit on A, then C drops A — A calls the rule again, B and C do not', () => {
     const memo = createSignatureMemo(2);
     const a = makeTriple(new Uint8Array(32).fill(12));
     const b = makeTriple(new Uint8Array(32).fill(13));

@@ -173,7 +173,7 @@ describe('the signature memo rides admission, Stage 1 and every block context', 
 
   // The admission site: `server.ts`'s `utxoEngineDeps.verifySignature` reads
   // through the memo (NODE_INTERFACE → The signature memo).
-  it.fails(
+  it(
     'POST /credits/transfer refused at validateTx\'s step 9 twice over three signers reads the rule once',
     async () => {
       const signers = await makeKeys(3);
@@ -197,7 +197,7 @@ describe('the signature memo rides admission, Stage 1 and every block context', 
 
   // The admission site, past the cost gate: a refusal the pool answers reaches
   // beyond the signatures, so the second arrival hits the memo on them.
-  it.fails(
+  it(
     'POST /credits/transfer refused for a full pool twice reads the rule once',
     async () => {
       setMempoolCap(2);
@@ -235,7 +235,7 @@ describe('the signature memo rides admission, Stage 1 and every block context', 
   // The block context: admission records the transfer's signature, and the
   // block that carries it pays no arithmetic for the same entry again
   // (CONSENSUS_INTERFACE → ApplyContext).
-  it.fails(
+  it(
     'a transfer admitted, then the block carrying it applied — no batch call carries the transfer\'s entries',
     async () => {
       const signer = (await makeKeys(1))[0]!;
@@ -266,7 +266,7 @@ describe('the signature memo rides admission, Stage 1 and every block context', 
   // The net site: `netValidators().verifyTxSignatures` reads one transaction's
   // map through the memo's batch (NET_INTERFACE → Stage 1 → "A transaction's
   // signatures are checked at Stage 1").
-  it.fails(
+  it(
     'netValidators().verifyTxSignatures twice over one honest transaction reads the batch at most once',
     async () => {
       const signer = (await makeKeys(1))[0]!;
