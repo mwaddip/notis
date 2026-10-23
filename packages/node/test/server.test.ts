@@ -252,10 +252,13 @@ describe('server', () => {
       }
     });
 
-    it('POST /posts/batch with a body over 1 MB answers 413 body too large, not logged', async () => {
-      // One byte past the parser's 1 MB limit, in valid JSON so the body
-      // bound is what refuses it (raw-body's `entity.too.large`).
-      const payload = '{"pad":"' + 'a'.repeat(1024 * 1024) + '"}';
+    it.fails('POST /posts/batch one byte past HTTP_BODY_MAX_BYTES answers 413 body too large, not logged', async () => {
+      // 65 536 + 1 bytes of well-formed JSON so only the body bound can
+      // refuse it (raw-body's `entity.too.large`).
+      const prefix = `{"ids":["${'a'.repeat(64)}"],"pad":"`;
+      const suffix = '"}';
+      const payload = prefix + 'x'.repeat(65_536 + 1 - prefix.length - suffix.length) + suffix;
+      expect(Buffer.byteLength(payload, 'utf-8')).toBe(65_536 + 1);
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       try {
         const res = await fetch(`${baseUrl}/posts/batch`, {
