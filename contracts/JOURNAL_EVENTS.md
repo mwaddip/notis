@@ -102,7 +102,10 @@ validated and `computePostId` can run — and, for `via: "pull"`, once the body 
 against the row's commitment and was stored. An id is not computable on an
 unvalidated payload (TYPES_INTERFACE → Totality), so an invalid arrival emits
 nothing. A post applied from a block without its body emits `post_indexed` for the
-placeholder row and `post_received` only when the body arrives.
+placeholder row and `post_received` only when the body arrives. **A post whose
+transaction the pool already holds, arriving again, emits none of the three post
+events**: it is answered before anything validates it
+(NODE_INTERFACE → Service Layer Architecture → "A transaction the pool already holds is answered as held").
 
 ### post_validated
 **Level:** INFO

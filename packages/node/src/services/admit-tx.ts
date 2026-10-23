@@ -1,12 +1,13 @@
 import { checkBlockCost } from '@dagsocial/consensus';
 import type { UtxoResult } from '@dagsocial/consensus';
-import { encodeTx, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
+import { computeTxId, decodeTx, encodeTx, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
   bidOf,
   countPendingInvites,
   entryByteCost,
   gateMetadata,
+  getHeldEntry,
   hasPendingClaim,
   hasPendingClaimBy,
   hasPendingInvitee,
@@ -193,34 +194,71 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
 
 /**
  * The one function every write route but `POST /posts` calls — the seam that
- * folds `validateTx` at `tip + 1`, the pool entry's expiry at
- * `tip + 1 + MEMPOOL_EXPIRY_BLOCKS` and `admitTx` into one call
- * (NODE_INTERFACE → Service Layer Architecture → "One function admits").
+ * folds the pool's word on the id, the caller's own checks, `validateTx` at
+ * `tip + 1`, the pool entry's expiry at `tip + 1 + MEMPOOL_EXPIRY_BLOCKS` and
+ * `admitTx` into one call, in that order (NODE_INTERFACE → Service Layer
+ * Architecture → "A write request runs in one order, cheapest first", → "One
+ * function admits").
  *
- * The caller passes its own validation — a service wraps `validateTx(deps, …)`
- * so its engine dependencies ride the closure, a route hands `deps.validateTx`
- * — and the words a refusal opens with: a non-empty `openingWords` prefixes
- * the verdict's `error` (`Invalid like transaction: `, `Invalid credit
- * transfer: `, and so on), and the two routes whose body is
- * `{ error: <message> }` through `respondError`'s `message` shape pass `''`,
- * so the message reaches that body unchanged.
+ * The caller passes its own checks as a `() => void` that throws
+ * `ClientError` on refusal, its own validation — a service wraps
+ * `validateTx(deps, …)` so its engine dependencies ride the closure, a route
+ * hands `deps.validateTx` — and the words a refusal opens with: a non-empty
+ * `openingWords` prefixes the verdict's `error` (`Invalid like transaction:
+ * `, `Invalid credit transfer: `, and so on), and the two routes whose body
+ * is `{ error: <message> }` through `respondError`'s `message` shape pass
+ * `''`, so the message reaches that body unchanged.
+ *
+ * **A transaction the pool already holds is answered as held**
+ * (MEMPOOL_INTERFACE → getHeldEntry; NODE_INTERFACE → Service Layer
+ * Architecture → "A transaction the pool already holds is answered as held"):
+ * the pool's one point read by id leads, and a standing entry ends the path
+ * with `held: true`, the pooled entry's own `expiresAtHeight` and the pooled
+ * transaction decoded from its stored bytes — no caller check, no
+ * `validateTx`, no gate, no floor, no cost gate and no insert runs. The
+ * caller builds its answer from the returned `tx`, `txId` and
+ * `expiresAtHeight` either way.
  *
  * `POST /posts` and the gossip relay pool a transaction alongside its pending
  * row in one store transaction (NODE_INTERFACE → Post transactions), so they
- * run the three around that transaction themselves and this seam is not
- * theirs.
+ * run the lookup first and the rest around that transaction themselves —
+ * this seam is not theirs.
  */
 export function admitWriteTx(
+  checks: () => void,
   validate: (tx: UtxoTransaction, currentBlockHeight: number) => UtxoResult,
   tx: UtxoTransaction,
   currentBlockHeight: number,
   openingWords: string,
-): { txId: string; expiresAtHeight: number } {
+): { txId: string; expiresAtHeight: number; tx: UtxoTransaction; held: boolean } {
+  // The id derives from the transaction's canonical bytes
+  // (TYPES_INTERFACE → Layout — UtxoTransaction) — the pool's lookup key.
+  // An unencodeable transaction cannot be held or admitted; the encoder's
+  // refusal is this layer's, under the caller's `openingWords`.
+  let txId: string;
+  try {
+    txId = computeTxId(tx);
+  } catch (err) {
+    throw new ClientError(`${openingWords}${(err as Error).message}`);
+  }
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state": the pool's one point read by id leads, and
+  // an entry standing ends the path with the pooled bytes decoded.
+  const entry = getHeldEntry(txId);
+  if (entry !== null) {
+    return {
+      txId,
+      expiresAtHeight: entry.expiresAtHeight,
+      tx: decodeTx(entry.txBytes),
+      held: true,
+    };
+  }
+  checks();
   const result = validate(tx, currentBlockHeight);
   if (!result.valid) {
     throw new ClientError(`${openingWords}${result.error ?? ''}`);
   }
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
   admitTx(tx, expiresAtHeight);
-  return { txId: result.txId!, expiresAtHeight };
+  return { txId, expiresAtHeight, tx, held: false };
 }

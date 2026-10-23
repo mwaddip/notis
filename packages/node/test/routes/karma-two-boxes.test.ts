@@ -624,10 +624,12 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
   it('a karma change carrying "income": false on a like through POST is refused', () => {
     const own = seedKarma(liker.pub, 10n, 1);
     // A user transaction's karma output admits no `income` key, whatever its
-    // value. Step 5 refuses the key by name — without reaching the per-arm
-    // karma rule and without the encoder — so `income: false` reads as unknown
-    // here exactly as `income: true` does. The sign-and-inject pattern is the
-    // same.
+    // value. The pool's word on the id leads admission (NODE_INTERFACE →
+    // Service Layer Architecture → "A write request runs in one order,
+    // cheapest first"), and the id derivation runs over the transaction's
+    // canonical bytes (TYPES_INTERFACE → Layout — UtxoTransaction); the admit
+    // seam treats the encoder's refusal of `income: false` as a `ClientError`
+    // under the opening words. The sign-and-inject pattern is the same.
     const base = buildLikeFromInputs(liker, [own], postId);
     const marked: UtxoTransaction = {
       ...base,
@@ -643,7 +645,7 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
       const e = err as ClientError;
       expect(e.statusCode).toBe(400);
       expect(e.message).toBe(
-        "Invalid like transaction: Invalid output shape at index 0 (karma): unexpected key 'income'",
+        'Invalid like transaction: writeBoxTypeFields: karma.income out of domain: false',
       );
     }
   });

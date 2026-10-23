@@ -72,8 +72,8 @@ import {
 import { blockCostBudget, costAlone, emptyBlockCost, marginalCost } from './cost-estimate.js';
 import {
   iteratePendingEntries,
-  purgeExpired,
   removeEntry,
+  removeUnconfirmed,
   entryByteCost,
   setCostEstimate,
 } from '../store/mempool.js';
@@ -383,12 +383,21 @@ export function submitMinedBlock(powNonce: number, submittedHeight: number): str
     throw err;
   }
 
-  // Clean up any mempool entries the intake did not remove. Double-removal is
-  // harmless. Runs on both arms: whatever made a rejected body invalid came
-  // out of the mempool, so leaving those entries in place would reassemble the
-  // same rejected block at every rebuild and stall the chain.
-  for (const rowid of minedRowids) {
-    removeEntry(rowid);
+  // Sweep the template's rowids. The applied arm hands each to `removeEntry` —
+  // the block's own application has removed those entries by tx_id (double-
+  // removal is harmless), and a confirmed entry takes no dependents. The
+  // refused arm hands the whole set to `removeUnconfirmed`, which takes each
+  // row's pooled dependents out with it — whatever made the body invalid came
+  // out of the mempool, so leaving those entries would reassemble the same
+  // rejected block at every rebuild and stall the chain
+  // (NODE_INTERFACE → Block finalization; MEMPOOL_INTERFACE → Block Creator
+  // Integration).
+  if (verdict.applied) {
+    for (const rowid of minedRowids) {
+      removeEntry(rowid);
+    }
+  } else {
+    removeUnconfirmed(Array.from(minedRowids));
   }
 
   if (!verdict.applied) {
@@ -490,8 +499,10 @@ export function createOrderingBlock(): OrderingBlock | null {
   // pool, which is what bounds the loop (MINING_INTERFACE → Template and
   // submit).
   for (;;) {
-    // 1. Purge expired mempool entries
-    purgeExpired(currentHeight);
+    // 1. Expiry is block application's (MEMPOOL_INTERFACE → followAppliedBlock,
+    //    NODE_INTERFACE → Block creation step 1): the pool a build reads holds
+    //    no entry the tip has passed, and the tip moves only by an applied
+    //    block.
 
     // 2. The settlement cannot be built here: it consumes the fee boxes the body
     //    creates and pays a coinbase scaled by the actors the body carries, so it
@@ -1095,9 +1106,10 @@ export function createOrderingBlock(): OrderingBlock | null {
     // carried, where it refuses no pooled one — the settlement, the signature
     // batch or a throw refused the body and the build must still move the
     // chain (MINING_INTERFACE → Template and submit; MEMPOOL_INTERFACE →
-    // Block Creator Integration). The build repeats from `purgeExpired` until
-    // a template holds or a body carrying no pool row is rejected; every
-    // repetition removes at least one row, which is what bounds the loop. A
+    // Block Creator Integration). The build repeats its fill over the pool the
+    // eviction left, until a template holds or a body carrying no pool row is
+    // rejected; every repetition removes at least one row, which is what
+    // bounds the loop. A
     // rejected body that carried no pool row is terminal: the chain state
     // cannot back even the empty body, or a defect is throwing, and no
     // repetition changes either.
@@ -1131,13 +1143,13 @@ export function createOrderingBlock(): OrderingBlock | null {
           `body-rejected and the screen refused no pooled transaction; ` +
           `evicting all ${rowids.size} mempool entries the body carried`,
         );
-        for (const rowid of rowids) removeEntry(rowid);
+        removeUnconfirmed(Array.from(rowids));
       } else {
         console.warn(
           `Block at height ${newHeight}: speculation returned body-rejected; ` +
           `evicting ${evicted.size} mempool entries the body's screen refused`,
         );
-        for (const rowid of evicted) removeEntry(rowid);
+        removeUnconfirmed(Array.from(evicted));
       }
       confirmedRowids = new Set();
       continue;

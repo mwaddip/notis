@@ -352,7 +352,13 @@ export function createApp(config: Config): express.Express {
       getUsernameByOwner: store.getUsernameByOwner,
       getUsername: store.getUsername,
       getTopologyAuthor: store.getTopologyAuthor,
-      getPendingUtxoTxBytesByTxId: store.getPendingUtxoTxBytesByTxId,
+      // MEMPOOL_INTERFACE → getHeldEntry: the one read of an entry by id,
+      // the bytes a pending post's `tx` field is read from.
+      getPendingUtxoTxBytesByTxId: (id: string) => store.getHeldEntry(id)?.txBytes ?? null,
+      // MEMPOOL_INTERFACE → getHeldEntry: the post service's held lookup
+      // (NODE_INTERFACE → Service Layer Architecture → "A transaction the
+      // pool already holds is answered as held").
+      getHeldEntry: store.getHeldEntry,
       getUtxoTxTreeBytes: guardStoreRead(store.getUtxoTxTreeBytes),
       admitTx,
       validateTx: (tx, currentBlockHeight) =>

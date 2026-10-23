@@ -1,5 +1,7 @@
 import {
   computePostId,
+  computeTxId,
+  decodeTx,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type {
@@ -48,6 +50,9 @@ export interface PostServiceDeps {
 
   admitTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
 
+  /** MEMPOOL_INTERFACE → getHeldEntry — the pool's one point read by id. */
+  getHeldEntry: (txId: string) => { expiresAtHeight: number; txBytes: Uint8Array } | null;
+
   validateTx: (
     tx: UtxoTransaction,
     currentBlockHeight: number,
@@ -92,6 +97,30 @@ export function createPost(
   const bodyCheck = verifyPostBody(content, commit.contentHash);
   if (!bodyCheck.valid) {
     throw new PostServiceError(bodyCheck.error ?? 'body verification failed');
+  }
+
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state". The id derives from the canonical bytes
+  // (TYPES_INTERFACE → Layout — UtxoTransaction); an id the encoder refuses
+  // is a PostServiceError, as any refusal of the service's is. A pooled
+  // entry ends the path with the stored bytes decoded and no journal event
+  // (JOURNAL_EVENTS.md → "A post whose transaction the pool already holds,
+  // arriving again, emits none of the three post events").
+  let heldTxId: string;
+  try {
+    heldTxId = computeTxId(tx);
+  } catch (err) {
+    throw new PostServiceError((err as Error).message);
+  }
+  const heldEntry = deps.getHeldEntry(heldTxId);
+  if (heldEntry !== null) {
+    return {
+      postId: computePostId(heldTxId, 0),
+      status: 'pending',
+      expiresAtHeight: heldEntry.expiresAtHeight,
+      txId: heldTxId,
+      tx: decodeTx(heldEntry.txBytes),
+    };
   }
 
   // ---- Verify the commit (domains, parents, karma) ----

@@ -84,6 +84,7 @@ async function importMempool() {
     insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{ rowid: number; entryType: string; utxoTxBytes: Uint8Array | null }>;
     removeEntry: (rowid: number) => void;
+    getHeldEntry: (txId: string) => { expiresAtHeight: number; txBytes: Uint8Array } | null;
   };
 }
 
@@ -518,6 +519,65 @@ describe('block creator vs a screened body', () => {
     const internals = errors.filter((e) => e.includes('INTERNAL'));
     expect(internals).toHaveLength(1);
     expect(internals[0]).toContain('body-rejected');
+  });
+
+  it('a refusal no pooled transaction accounts for takes the carried rows\' pooled dependents with them', async () => {
+    let callCount = 0;
+    let firstBodyIds: string[] = [];
+    vi.doMock('../../src/services/block-apply.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/services/block-apply.js')>();
+      return {
+        ...actual,
+        computePostBlockStateRoot: (
+          ...args: Parameters<typeof actual.computePostBlockStateRoot>
+        ) => {
+          callCount++;
+          if (callCount === 1) {
+            firstBodyIds = userTxIds(args[0] as OrderingBlock);
+            return { kind: 'body-rejected' as const };
+          }
+          return actual.computePostBlockStateRoot(...args);
+        },
+      };
+    });
+
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+
+    const h1 = makeTestIdentity();
+    const b1 = makeCreditBox(10n ** 7n, h1.userId, 0, 30);
+    utxo.insertBox(b1);
+    const t1 = creditTransferFrom(h1, [{ id: b1.id!, value: 10n ** 7n }], 1_000n);
+    const t1Id = computeTxId(t1);
+    const t1Change = materializeOutput(t1.outputs[0] as AnyBox, t1Id, 0);
+    const d = creditTransferFrom(h1, [{ id: t1Change.id!, value: 10n ** 7n - 1_000n }], 50_000n);
+    const dId = computeTxId(d);
+
+    await activateProverOverStore();
+
+    const { server, base } = await startApp();
+    const r1 = await postJson(base, '/credits/transfer', { tx: txToJson(t1) });
+    expect(r1.status, `t1 submit: ${JSON.stringify(r1.body)}`).toBe(200);
+    const rd = await postJson(base, '/credits/transfer', { tx: txToJson(d) });
+    expect(rd.status, `dependent submit: ${JSON.stringify(rd.body)}`).toBe(200);
+    server.close();
+
+    const mempool = await importMempool();
+    expect(mempool.getPendingEntries(10)).toHaveLength(2);
+    expect(mempool.getHeldEntry(dId)).not.toBeNull();
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    errSpy.mockRestore();
+
+    expect(callCount).toBeGreaterThanOrEqual(2);
+    expect(firstBodyIds).toContain(t1Id);
+    expect(firstBodyIds).not.toContain(dId);
+    expect(bc.getCurrentTemplate()).not.toBeNull();
+    expect(mempool.getHeldEntry(dId)).toBeNull();
   });
 
   it('a reply ahead of its parent stays pooled; the template carries the parent and not the reply', async () => {

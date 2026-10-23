@@ -44,6 +44,7 @@ import {
   getOwnKarmaBoxIdsWithPending,
 } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
+import { ClientError } from '../../src/services/client-error.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { config } from '../../src/config.js';
 import { admissionOwed } from '../../src/services/karma-admission.js';
@@ -265,16 +266,47 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     const karma = createKarmaBox(likerPubKey, 100n, 1);
     createTestPost(likerId);
 
-    // Stamped after signing: `likeTarget` is `opt(b32)` in the txId preimage
-    // now, so none of these four has an encoding and `buildBurnLikeTx` would
-    // die at `computeTxId` before `castLike` ever saw them. That is not a
-    // weakening — `castLike` takes a decoded transaction off the wire and must
-    // still refuse one carrying any of these, and its `LIKE_TARGET_RE` check is
-    // step 1, ahead of every id derivation and every signature read.
-    for (const bad of ['short', 'A'.repeat(64), 'zz'.repeat(32), '']) {
+    // Stamped after signing: `likeTarget` is `opt(b32)` in the txId preimage,
+    // so each of these four is an input `castLike` must refuse. The pool's
+    // word on the id leads admission (NODE_INTERFACE → Service Layer
+    // Architecture → "A write request runs in one order, cheapest first"),
+    // and the id derivation runs over the transaction's canonical bytes
+    // (TYPES_INTERFACE → Layout — UtxoTransaction); the admit seam treats
+    // the encoder's refusal of a malformed `likeTarget` as a `ClientError`
+    // under the opening words. The service's `LIKE_TARGET_RE` check inside
+    // the admit seam's checks closure catches a value the encoder admits.
+    const cases: { bad: string; expected: string }[] = [
+      {
+        bad: 'short',
+        expected:
+          'Invalid like transaction: writeHexNOrThrow: expected 64 lowercase hex chars, got 5 chars',
+      },
+      {
+        bad: 'A'.repeat(64),
+        expected:
+          'Invalid like transaction: writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
+      },
+      {
+        bad: 'zz'.repeat(32),
+        expected:
+          'Invalid like transaction: writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
+      },
+      {
+        bad: '',
+        expected:
+          'Invalid like transaction: writeHexNOrThrow: expected 64 lowercase hex chars, got 0 chars',
+      },
+    ];
+    for (const { bad, expected } of cases) {
       const tx = buildBurnLikeTx(karma, 'ab'.repeat(32));
       tx.likeTarget = bad;
-      expect(() => castLike(deps, tx, 5)).toThrow('likeTarget missing or malformed');
+      try {
+        castLike(deps, tx, 5);
+        throw new Error(`castLike admitted a malformed likeTarget: ${JSON.stringify(bad)}`);
+      } catch (err) {
+        expect(err).toBeInstanceOf(ClientError);
+        expect((err as ClientError).message).toBe(expected);
+      }
     }
   });
 

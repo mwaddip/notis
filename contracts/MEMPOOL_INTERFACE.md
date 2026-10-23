@@ -82,8 +82,8 @@ peer's block confirms it, and a scan that recomputes the id per candidate is the
 *Confirmed-entry cleanup* below. The index is **partial** — a row without a `tx_id` is not indexed.
 
 ⚠ **Rows written before the column existed carry `NULL` and no cleanup matches them.** They leave the
-pool by `purgeExpired` at their expiry height, which is the same path an unconfirmed entry always
-took.
+pool by expiry (→ What takes an entry out of the pool), the path every entry that does not confirm can
+take.
 
 ⛔ **A WITHDRAWAL IS AN ORDINARY `utxo_tx` ROW.** It is a karma transaction carrying a
 `UtxoTransaction.postWithdraw` payload (`NODE_INTERFACE` → Withdrawal transactions), so it is admitted,
@@ -193,6 +193,27 @@ Writes a row's `cost_estimate` once the creator has costed it alone (→ The cos
 submit → "Packing to the budget"`). It is the one write the fill makes to the pool while it reads it, and it moves
 neither a row's class nor its rate, so the fill's order stands (→ Ordering).
 
+### getHeldEntry
+
+```
+getHeldEntry(txId: string): { expiresAtHeight: number; txBytes: Uint8Array } | null
+```
+
+The pool's entry for one transaction id — its expiry and its stored bytes — or `null` where none stands: one point read
+of `idx_mempool_tx_id`. It is the one read of an entry by id: admission's first question, and the read a pending post's
+`tx` bytes come from (`NODE_INTERFACE → Posts → "The creating transaction rides a post row"`).
+
+**A transaction the pool holds is answered as held, before anything reads state.** Every admission path — each write
+route and the gossip relay — asks `getHeldEntry` for the transaction's id once the request or the packet has passed the
+checks that read nothing but itself, and an entry standing ends the path: no service check, no `validateTx`, no gate, no
+floor, no cost gate and no insert runs, so the spends the pool holds for the transaction — of its inputs, and of its
+owner's karma (→ Correctness gates) — are never held against the transaction that made them. **The id is the
+transaction**: it leaves the signatures out (`TYPES_INTERFACE → Layout — UtxoTransaction`), so an arrival whose
+signatures differ from the pooled entry's is the same transaction, and the pooled bytes are the ones that stand. What
+each path answers is its own
+(`NODE_INTERFACE → Service Layer Architecture → "A transaction the pool already holds is answered as held"`; → Relay
+Integration).
+
 ### Correctness gates (audit M-8)
 
 ```
@@ -225,13 +246,15 @@ a root's are not counted), because two invites by one member in one block read t
 The gossip relay and every write route meet them alike, each refusal its route's named answer (`NODE_INTERFACE → HTTP
 API`). The reorg path, which reaches the store directly, meets none: a transaction a reverted block carried was valid
 beside that block's others, and the creator's screen answers for it beside the pool's (`MINING_INTERFACE → Template
-and submit`).
+and submit`). **A transaction the pool itself holds never reaches them** — admission asks for its id first
+(→ getHeldEntry) — so a gate refuses only another transaction.
 
 **`pendingKarmaSpend` is an input of `validateTx`, not a gate a path can skip.** It answers the `SUM` of
 `karma_spend` over the rows whose `karma_owner` is the owner — what the pool's karma transactions have
 already spent of that owner's karma, `0n` where it holds none. Admission's `held` is the confirmed karma
 sum less it (`NODE_INTERFACE` → Karma transition rules), in the deps of the HTTP routes and of the relay
-alike, so a transaction is judged against the owner's karma as the pool's entries ahead of it leave it. An
+alike, so a transaction is judged against the owner's karma as the pool's entries ahead of it leave it — and never
+against its own entry, since a transaction the pool holds is answered before `validateTx` runs (→ getHeldEntry). An
 entry that leaves the pool — confirmed, expired or removed — leaves the sum with its row.
 
 ### The cost gate
@@ -325,8 +348,8 @@ Returns pending entries in FIFO order (`ORDER BY rowid ASC`), up to `limit`,
 starting after `afterRowid` (default `0` — from the beginning). Every row is a `utxo_tx`;
 the caller (block creator) decodes the payload.
 
-Entries are NOT filtered by expiry here — the caller calls `purgeExpired`
-first before fetching.
+Entries are not filtered by expiry here — the pool holds none the tip has passed
+(→ followAppliedBlock).
 
 **`afterRowid` is a keyset cursor, not an offset**, so paging stays `O(page)` as the pool deepens
 rather than re-walking what it already returned.
@@ -353,22 +376,47 @@ Deletes the `utxo_tx` entry whose `tx_id` matches, returning the rows deleted. *
 that confirmed-entry cleanup runs** when a block arrives from a peer — see below for why a scan is
 not an option.
 
+### followAppliedBlock
+
+```
+followAppliedBlock(height: number, appliedTxIds: readonly string[], spentBoxIds: readonly string[]): number
+```
+
+The pool's part of every applied block
+(→ What takes an entry out of the pool → "The pool follows every applied block, on every node"), run inside the block's
+own write. First each applied transaction's entry leaves by `tx_id` (`removeUtxoTxEntry`) — confirmed, so it takes no
+dependents and its post's row stays, which the apply confirms. Then, through `removeUnconfirmed`, every entry spending a
+box in `spentBoxIds` — every box the block's mutations remove, the body's and the settlement's — and, through
+`purgeExpired(height)`, every entry past its expiry or its ceiling. `height` is the applied block's, the new tip: the
+boundary block assembly drew at the same tip. Each set is an indexed read — the spent boxes against
+`mempool_inputs`' key, bound as one value (`json_each`), expiry a range of `idx_mempool_expires`, the ceiling a range of
+`idx_mempool_ceiling` — never a scan of the pool. Returns the number of entries that left unconfirmed.
+
 ### purgeExpired
 
 ```
 purgeExpired(currentHeight: number): number
 ```
 
-Deletes all entries where `expires_at_height < currentHeight`, **and every entry whose
-`max_valid_height` is below `currentHeight`** (Validity ceiling, below). Returns the number of deleted
-rows.
+`followAppliedBlock`'s expiry half, and nothing else's call: every entry whose `expires_at_height` is below
+`currentHeight`, **and every entry whose `max_valid_height` is** (→ Validity ceiling), leaves through
+`removeUnconfirmed`, its dependents with it. Returns the number of entries removed, dependents among them.
 
-Called at the start of block creation, before `getPendingEntries`. Ensures expired entries never make
-it into a block — and, with the ceiling, that an entry which can no longer be included is not
-reconsidered on every build.
+### removeUnconfirmed
 
-⚠ **Both reclaim paths run the pending-post cleanup**, not only the expiry one: an entry's DAG row
-dies with its pool row whichever condition removed it (NODE_INTERFACE → Post transactions).
+```
+removeUnconfirmed(rowids: readonly number[]): number
+```
+
+**Every exit of an entry that did not confirm runs through it**: the entries named, every pooled entry spending an
+output of one of them or replying to its post — a pending row whose parent ref names that post, found through its
+`tx_id` — and so on down
+(→ What takes an entry out of the pool → "An entry that leaves unconfirmed takes its dependents"), and each such post
+entry's pending row (NODE_INTERFACE → Post transactions). The dependents are read before any row leaves, since the
+output rows they are found through leave with their entry. One SQLite transaction — inside a caller's, a savepoint of
+that one. Its callers: `followAppliedBlock`, the credit class's eviction at the cap
+(→ Eviction, inside the credit class only), the creator's eviction of the rows a refused body's screen refuses, and the
+sweep of a mined block the intake refused (→ Block Creator Integration). Returns the number of entries removed.
 
 ### removeEntry
 
@@ -376,11 +424,10 @@ dies with its pool row whichever condition removed it (NODE_INTERFACE → Post t
 removeEntry(rowid: number): void
 ```
 
-Deletes a single entry by rowid. Called during block finalization for each
-confirmed entry. The block creator tracks which rowids were included in the
-block and removes them after the block is stored.
-
-Batch cleanup happens through `removeEntry` per rowid.
+Deletes a single entry by rowid, with its post's pending row and no dependents: the sweep of a mined block that
+applied. The block creator tracks which rowids the template carried and removes them once the intake answers; the
+block's own application has already removed each by `tx_id` (→ followAppliedBlock), so the sweep is the backstop the
+rule *cleanup reaches every row* asks for (→ Confirmed-entry cleanup reaches every row).
 
 ---
 
@@ -417,17 +464,17 @@ leaves the bound unchanged.
                                │ nothing in the pool triggers it)
                                ▼
                  ┌───────────────────────────┐
-                 │ 1. purgeExpired           │
-                 │ 2. fill to the byte and   │
+                 │ 1. fill to the byte and   │
                  │    cost budgets           │
-                 │ 3. assemble body +        │
+                 │ 2. assemble body +        │
                  │    settlement transaction │
-                 │ 4. speculate the body;    │
+                 │ 3. speculate the body;    │
                  │    over budget → trim,    │
                  │    under → refill once;   │
-                 │    rejected → removeEntry │
-                 │    per rowid, back to 1   │
-                 │ 5. mine / sign            │
+                 │    rejected →             │
+                 │    removeUnconfirmed,     │
+                 │    back to 1              │
+                 │ 4. mine / sign            │
                  └─────────────┬─────────────┘
                                │ submitMinedBlock()
                                ▼
@@ -435,8 +482,12 @@ leaves the bound unchanged.
                  │ 1. the intake's item:     │
                  │    admit, bind, stage,    │
                  │    apply (embedded txs,   │
-                 │    posts confirmed)       │
-                 │ 2. removeEntry per rowid  │
+                 │    posts confirmed,       │
+                 │    followAppliedBlock)    │
+                 │ 2. the sweep per rowid:   │
+                 │    applied → removeEntry, │
+                 │    refused →              │
+                 │    removeUnconfirmed      │
                  └───────────────────────────┘
 ```
 
@@ -444,15 +495,17 @@ leaves the bound unchanged.
 
 | State | How entered | How exited |
 |-------|------------|------------|
-| **Pending** | `insertUtxoTx` | Carried by a body this node built → `removeEntry` (finalized or rejected); confirmed by an applied block → `removeUtxoTxEntry`; or `purgeExpired` |
-| **Confirmed** | Block finalization (`removeEntry`), or an applied block's cleanup (`removeUtxoTxEntry`) | Gone from mempool; state now in ledger |
-| **Evicted** | A body this node built was rejected — at speculation, the rows its screen refuses (every row, where it refuses no pooled one); at finalize, every row it carried (`removeEntry` per rowid) | Gone from mempool; state never applied |
-| **Expired** | `purgeExpired` during block assembly | Gone from mempool; state never applied |
+| **Pending** | `insertUtxoTx` | Confirmed by an applied block → `followAppliedBlock`, or the sweep of a mined block that applied → `removeEntry`; every other exit → `removeUnconfirmed` |
+| **Confirmed** | An applied block's cleanup (`followAppliedBlock`), or the sweep of a mined block that applied (`removeEntry`) | Gone from mempool; state now in ledger |
+| **Evicted** | A body this node built was rejected — at speculation, the rows its screen refuses (every row, where it refuses no pooled one); at finalize, every row it carried — or the credit class's cap displaced it | Gone from mempool; state never applied |
+| **Expired** | The applied block that passes its expiry or its ceiling (`followAppliedBlock`) | Gone from mempool; state never applied |
+| **Spent elsewhere** | An applied block spent one of its inputs (`followAppliedBlock`) | Gone from mempool; state never applied |
+| **Orphaned** | An entry whose output it spends left unconfirmed (`removeUnconfirmed`) | Gone from mempool; state never applied |
 
 ### Expiry
 
 - **TTL:** 720 blocks (~12h at 60s block time)
-- **Expiry check:** at block assembly time (`purgeExpired`), not on a timer
+- **Expiry check:** at each applied block, on every node (`followAppliedBlock`), not on a timer
 - **Expired entries** are silently dropped — the API already returned
   `{ status: "pending" }` to the client; the client should re-submit if their
   operation times out
@@ -482,7 +535,8 @@ together.
 The block creator (`services/block-creator.ts`) is the sole consumer of
 pending entries:
 
-1. Calls `purgeExpired(currentHeight)` — drops stale entries
+1. Reads a pool that holds no entry the tip has passed: expiry is block application's (`followAppliedBlock`), and the
+   tip moves only by an applied block
 2. Draws pending entries — the karma class in FIFO order, then the credit class by fee rate (→ Ordering) — and fills
    to `BLOCK_BODY_BUDGET_BYTES`, `MAX_SETTLEMENT_BYTES` and the cost budget less `PACKING_COST_MARGIN`
    (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), **skipping an
@@ -502,13 +556,12 @@ pending entries:
    (`MINING_INTERFACE → Template and submit`)
 3. Every entry is a `utxo_tx` → `utxoTxIds` / `utxoTxs`
 4. Tracks `confirmedRowids` — **every** row the template carries
-5. After block finalization: `removeEntry(rowid)` for each tracked rowid. **A
-   body the mutation phase rejects loses, the same way, the rows of the transactions its screen
-   refuses** — every row it carried, where the screen refuses no pooled one — and the creator fills again from
-   what remains (`MINING_INTERFACE → Template and submit`); a rejected body that carried no row ends
-   the build. Rows a *peer's* block
-   confirms are reached by that block's application (`removeUtxoTxEntry` /
-   `removeUtxoTxEntry`), not by this step
+5. Once the intake answers a mined block, the sweep of each tracked rowid: `removeEntry` where the block applied,
+   `removeUnconfirmed` where the intake refused it. **A body the mutation phase rejects loses, the same way, the rows
+   of the transactions its screen refuses** (`removeUnconfirmed`) — every row it carried, where the screen refuses no
+   pooled one — and the creator fills again from what remains (`MINING_INTERFACE → Template and submit`); a rejected
+   body that carried no row ends the build. Rows a *peer's* block confirms are reached by that block's application
+   (`followAppliedBlock`), not by this step
 
 ### The fill budget is bytes; `getPendingEntries` is a count
 
@@ -643,8 +696,10 @@ like every other transaction.
 
 Inbound relay handlers insert into the mempool rather than applying state:
 
-- **`onTx(tx)`**: `validateTx` (read-only) → `admitTx`, its correctness gates (→ Correctness gates) as every
-  route's → `insertUtxoTx(tx, expiresAtHeight)`.
+- **`onTx(tx)`**: `getHeldEntry` → `validateTx` (read-only) → `admitTx`, its correctness gates (→ Correctness gates)
+  as every route's → `insertUtxoTx(tx, expiresAtHeight)`. **A transaction the pool holds answers `false` at the
+  lookup** — not admitted, so not forwarded — and logs nothing: a copy of a pooled transaction arriving again is
+  ordinary gossip (→ getHeldEntry).
   There is no sub-block relay handler — a post arrives as a transaction through
   `onTx` (`NODE_INTERFACE` → Relay handlers). It answers whether it admitted the
   transaction, and net forwards an admitted one and no other (`NET_INTERFACE` →
@@ -661,7 +716,8 @@ When an ordering block is received from gossip:
 2. For each `utxoTxId`: decode from mempool or reconstruct, **fully re-validate with
    `validateTx`**, then `applyTx`
 3. Confirm the block's posts (ids from its post transactions)
-4. Remove confirmed entries from mempool by `tx_id`
+4. The pool follows the block (`followAppliedBlock`): confirmed entries leave by `tx_id`, then the entries the block
+   leaves no place for (→ What takes an entry out of the pool)
 
 ⛔ **Step 2 is full re-validation, never a liveness-only re-check.** A permissionless block
 producer can embed a transaction that never passed pool entry or relay validation, so
@@ -670,19 +726,37 @@ authorization, transitions and conservation must not be assumed of anything a bl
 
 ### What takes an entry out of the pool
 
-**Four mechanisms, and none of them re-checks a pooled entry's validity on a timer.**
+**Five mechanisms, and none of them re-checks a pooled entry's validity on a timer.**
 
 1. **Confirmation.** A transaction a block applies leaves by `tx_id`; a block this node mined is
    swept by rowid in `submitMinedBlock`, which reaches every included entry wherever it sits.
 2. **Expiry.** Every insert carries `expiresAtHeight = <insert height> + MEMPOOL_EXPIRY_BLOCKS`, and
-   the block build purges past it before selecting.
+   an entry whose expiry — or validity ceiling (→ Validity ceiling) — the chain passes leaves with the block that
+   passes it.
 3. **The cap.** The credit class evicts its lowest fee-rate row; the karma class rejects at the cap
    and never evicts (→ Size cap).
 4. **A rejected body.** When the mutation phase refuses the body, the build evicts the rows of the
    transactions the body's screen refuses — every row the body included, where the screen refuses no pooled one —
    and reassembles (MINING_INTERFACE → Template and submit). **This is what
-   removes an entry that has gone invalid while its inputs are still live** — a liveness test cannot
-   see that class, and nothing else looks for it.
+   removes an entry that has gone invalid while its inputs are still live**, on a node that builds templates — a
+   liveness test cannot see that class; on a node that builds none, such an entry leaves by its expiry.
+5. **A block's spends.** An entry spending a box an applied block spent — any box the block's mutations remove, the
+   body's and the settlement's — leaves with that block: the chain has spent its input, so no block can carry it.
+
+**The pool follows every applied block, on every node.** Confirmation, expiry and a block's spends run in the block's
+own write (→ followAppliedBlock), so a peer's block, a block this node mined and each block a reorg applies take them
+alike, and a node that builds no template — a `server` node — keeps no entry the chain has spent or passed.
+Confirmation runs first, so an applied transaction is never read as a spend of its own inputs.
+
+**An entry that leaves unconfirmed takes its dependents.** Every pooled entry spending an output of an entry that leaves
+by mechanisms 2–5, or replying to the post it carries, leaves with it, and so on down: no block this node builds can
+carry it without the entry it depends on, and a pending reply would stand under a parent this node no longer holds
+(→ removeUnconfirmed). A confirmed entry takes none — its outputs exist now. A post entry that leaves unconfirmed takes
+its pending row (`NODE_INTERFACE → Post transactions`).
+
+**A reorg returns what it reverts and nothing else.** The transactions of the blocks a reorg reverts go back to the
+pool (`NODE_INTERFACE → Block Journal`); an entry that a reverted block's spends or its
+expiry removed stays gone, and its submitter sends it again (→ Expiry).
 
 ---
 
@@ -724,6 +798,12 @@ rest. When the credit class is full, an arriving transaction bidding above its
 cheapest resident **displaces** that resident; one bidding below is rejected.
 The karma-side class rejects at its cap and never evicts.
 
+**A displaced resident takes its dependents**
+(`removeUnconfirmed`; → What takes an entry out of the pool → "An entry that leaves unconfirmed takes its dependents"),
+**and an arrival never displaces what it depends on**: an arrival spending an output of the cheapest resident, or of an
+entry that would leave with it, is rejected as one bidding below is, since admitting it would pool an entry whose input
+no longer exists.
+
 ⚠ **The cheapest resident's bid is read back as a `bigint` at the row
 boundary.** `tx_fee` spans the box-value domain (TYPES_INTERFACE → Box value
 domain), and a plain integer read rounds silently above 2⁵³ — the displacement
@@ -738,8 +818,8 @@ traffic would evict all of them, and the coinbase's inclusion bonus
 longer reach the pool at all. The class boundary is what keeps the bonus
 reachable.
 
-`purgeExpired` still reclaims space every block, so a full pool also drains on
-its own as entries expire or confirm.
+Every applied block still reclaims space (→ followAppliedBlock), so a full pool also drains on
+its own as entries expire, confirm or are spent elsewhere.
 
 ### Storage rent is refused at admission
 
@@ -765,8 +845,8 @@ that cap.** The ceiling itself is defined once, against the consensus rules it m
 and on the same standing — no state is read, so an entry carries its ceiling whether or not this node
 has ever seen the inputs. `NULL` means no ceiling and is the ordinary case.
 
-**The pool reclaims; it does not screen.** `purgeExpired` removes an entry whose ceiling the chain
-has passed, alongside the entries whose expiry it has passed. This catches an entry that was live when
+**The pool reclaims; it does not screen.** The block that passes an entry's ceiling removes it (→ followAppliedBlock),
+alongside the entries whose expiry it passes. This catches an entry that was live when
 it was inserted and went dead as the tip rose — a vouch cast nobody mined inside its window is the
 case that exists today, and it needs no reorg to arise.
 
@@ -854,8 +934,10 @@ cannot index (→ Schema).
 - All state mutations flow through the mempool — no direct `consumeBox` or
   `insertBox` calls in HTTP routes or relay handlers
 - Mempool entries are encoded blobs — the store layer does not parse them
-- Expiry is checked at block assembly time, not on a background timer
-- Confirmed entries are removed by rowid after block finalization
+- Expiry is checked at each applied block, on every node, not on a background timer
+- Confirmed entries leave with the block that applies them; an entry that leaves unconfirmed takes its dependents
+- The pool holds a transaction once, and no entry spending a box the chain has spent: a transaction it holds is
+  answered as held before any check, and every applied block removes the entries its spends leave no place for
 - FIFO ordering within the karma-side class; fee-rate ordering within the credit
   class
 - Size-capped **per class**. The karma-side class rejects at its cap

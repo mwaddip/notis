@@ -541,6 +541,8 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(vouch_voucher) WHERE vouch_voucher IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_expires
       ON mempool(expires_at_height);
+    CREATE INDEX IF NOT EXISTS idx_mempool_ceiling
+      ON mempool(max_valid_height) WHERE max_valid_height IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_tx_id
       ON mempool(tx_id) WHERE tx_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_fee_rate

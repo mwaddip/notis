@@ -324,8 +324,8 @@ the template stands and a solve under way stays submittable (NODE_INTERFACE → 
 
 **A build whose body the mutation phase rejects is repeated, not abandoned, and it evicts what the body's own
 transactions refuse.** The creator screens the rejected body (`CONSENSUS_INTERFACE → Screening a body`), evicts the
-pool row of every transaction the screen refuses — the cleanup a rejected finalize runs — and fills again from what the
-pool still holds, until it holds a template or a body carrying **no pool row** is rejected. A transaction the screen
+pool row of every transaction the screen refuses, with its dependents (`MEMPOOL_INTERFACE → removeUnconfirmed`) — the
+cleanup a rejected finalize runs — and fills again from what the pool still holds, until it holds a template or a body carrying **no pool row** is rejected. A transaction the screen
 refuses fails against the state the body leaves before it: gone stale since its admission (a like of a post since
 withdrawn, a bond naming a key that has since become an account), or invalid beside a transaction ahead of it. It is
 never one that waits: the fill selects no entry that depends on what its body does not hold (`MEMPOOL_INTERFACE →

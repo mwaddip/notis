@@ -34,6 +34,7 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
     insertPost: () => {},
     getCurrentHeight: () => 100,
     admitTx: () => 1,
+    getHeldEntry: () => null,
     validateTx: (tx: UtxoTransaction) => ({ valid: true, txId: computeTxId(tx) }),
     getBox: () =>
       ({

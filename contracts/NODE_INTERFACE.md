@@ -78,8 +78,8 @@ finalized. See `MEMPOOL_INTERFACE.md` for the full contract.
 - Single SQLite table `mempool`, one entry type (`utxo_tx`)
 - FIFO ordering by insertion (`ORDER BY rowid ASC`)
 - TTL: 720 blocks (~12h at 60s block time)
-- Expired entries purged at block assembly time
-- Confirmed entries removed after block finalization
+- Expired entries leave with the block that passes their expiry, on every node
+- Confirmed entries leave with the block that applies them
 - No replacement semantics
   > ⚠ **"No size cap" was wrong and has been removed.** A cap exists, is documented in
   > detail in `MEMPOOL_INTERFACE.md`, and is **enforced at all three insert sites**
@@ -408,7 +408,8 @@ an ordering block includes the transaction.
 **There is no `/likes/remove`** (unlike is not a feature), no free tier, and no refund
 schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COST`.
 
-**Like flow:**
+**Like flow** — after the pool's word on the id
+(→ Service Layer Architecture → "A write request runs in one order, cheapest first"):
 
 1. Extract `likeTarget` from the tx; reject if absent or not 64-hex
 2. Verify the target post exists and is live (not withdrawn; a placeholder is live — `isLivePost`)
@@ -457,7 +458,8 @@ gateway DoS for the price of one extra signature.
 invitee shares their public key out of band; the inviter submits one transaction,
 and the block's settlement grants the invitee the bond's value from the pool.
 
-**Create flow:**
+**Create flow** — after the pool's word on the id
+(→ Service Layer Architecture → "A write request runs in one order, cheapest first"):
 
 0. Verify the inviter is a root, or a member with `invitesAvailable ≥ 1` —
    `⌊memberVouches / D(N)⌋ − invitesUsed`, `D` from the network record (`ARCHITECTURE → The
@@ -544,13 +546,13 @@ invites, vouches, credits, withdraw).
 2. ⛔ **The route answers `submitted`, never `withdrawn` and never `deleted`.** It reports that the
    transaction entered the pool, which is what happened; the outcome it does **not** promise is that
    a block carries it.
-3. After the edge (→ HTTP API → "A write request's transaction is checked whole before anything reads
-   it"), the route holds the payload's `postId` to `:id` and runs the withdrawal-specific checks — the
-   post known, a 404 where it is not; confirmed in an **earlier** block, read from `block_topology`; the
-   signer its consensus-recorded author; the row not already withdrawn — then admission (→ Service Layer
-   Architecture → "One function admits"), then `net.broadcastTx`. **The same order every sibling route
-   uses**, and the broadcast is what makes a withdrawal submitted to a non-mining node reach
-   consensus.
+3. After the edge (→ HTTP API → "A write request's transaction is checked whole before anything reads it"), the route
+   holds the payload's `postId` to `:id`, asks the pool for the transaction's id
+   (→ Service Layer Architecture → "A transaction the pool already holds is answered as held") and runs the
+   withdrawal-specific checks — the post known, a 404 where it is not; confirmed in an **earlier** block, read from
+   `block_topology`; the signer its consensus-recorded author; the row not already withdrawn — then admission
+   (→ Service Layer Architecture → "One function admits"), then `net.broadcastTx`. **The same order every sibling route
+   uses**, and the broadcast is what makes a withdrawal submitted to a non-mining node reach consensus.
    > ⚠ **The maturity bind reads topology, not the DAG.** A pending post has a `dag_posts` row and no
    > topology row, so a DAG-based read would admit a withdrawal that consensus must reject.
 4. At block application (→ The withdrawal phase): the transaction's own validation has already bound
@@ -621,12 +623,12 @@ five fields holds a second implementation of a consensus predicate, the mirror c
 |--------|------|---------|----------|--------|
 | `POST` | `/credits/transfer` | `{ tx: UtxoTransaction }` — client-built, client-signed; every output a credit box or a fee box — the outputs a credit spend may create (→ Legal box transitions) | `{ status: "pending", txId, expiresAtHeight }` | 400 on an output of another type, an invalid tx or signature; 402 when its fee is below this node's floor (`MEMPOOL_INTERFACE → Fee floor`) |
 
-**A credit transfer is a transaction, and it settles when it is mined.**
-The client builds and signs it; the node reads it through the edge (→ HTTP API → "A write request's transaction is
-checked whole before anything reads it"), holds its outputs to credit and fee boxes, admits it (→ Service Layer
-Architecture → "One function admits") and relays it with `net.broadcastTx` — the path every write takes. Credits move
-at block application on every node, not when the HTTP call returns. **A fee box is how a transfer bids**
-(`MEMPOOL_INTERFACE → Fee floor`), so a floor above zero prices a transfer and refuses none outright.
+**A credit transfer is a transaction, and it settles when it is mined.** The client builds and signs it; the node reads
+it through the edge (→ HTTP API → "A write request's transaction is checked whole before anything reads it") and admits
+it (→ Service Layer Architecture → "One function admits"), its outputs held to credit and fee boxes among the service's
+own checks, and relays it with `net.broadcastTx` — the path every write takes. Credits move at block application on
+every node, not when the HTTP call returns. **A fee box is how a transfer bids** (`MEMPOOL_INTERFACE → Fee floor`), so a
+floor above zero prices a transfer and refuses none outright.
 
 **The node never builds a transfer.** A transaction built and applied by the node itself enters no block and no
 journal and never reaches the tree, so the node's box table parts from its peers' with nothing to show it until a
@@ -1890,14 +1892,16 @@ There is **no other legal bond or invite shape**. In particular:
   `type` (TYPES_INTERFACE → Layout — PostCommit); the body reaches a node only in the same
   message as its transaction: `POST /posts { tx, content }` locally, the gossip packet from a
   peer (NET_INTERFACE → Gossip Topics). Both are validated together (`verifyPostBody(content,
-  tx.post.contentHash)`, then the commit and the transaction) and **admitted together in one
-  store transaction — the mempool entry and the DAG's pending row with the body — or refused
+  tx.post.contentHash)`, then the pool's word on the id — a held post is answered as held
+  (→ Service Layer Architecture) — then the commit and the transaction) and **admitted together in
+  one store transaction — the mempool entry and the DAG's pending row with the body — or refused
   together.** A producer therefore holds every body it mines by construction: a bodiless post
   transaction never enters a pool. A relayed post is visible on the receiving node as a pending
   row from admission, as it is on its origin node.
 - **The pending row is the mempool entry's DAG shadow — it exists iff the transaction is in the
-  pool, or the post is confirmed.** `purgeExpired` and eviction of an unconfirmed post entry
-  delete its pending row; `removeUtxoTxEntry` at confirmation does not (apply confirms the row);
+  pool, or the post is confirmed.** Every exit of an unconfirmed post entry deletes its pending row — expiry,
+  eviction, a block's spends, an entry it depends on leaving (`MEMPOOL_INTERFACE → removeUnconfirmed`);
+  `removeUtxoTxEntry` at confirmation does not (apply confirms the row);
   a reverted block's re-inserted transactions find their rows returned to pending by
   `unconfirmPost`, body intact.
 - **A post applied without its packet is a placeholder.** Block application inserts a row from
@@ -3099,7 +3103,8 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 
 ### Block creation (mempool-based)
 
-1. Purge expired mempool entries (`purgeExpired(currentHeight)`)
+1. *(Expiry is block application's: the pool a build reads holds no entry the tip has passed —
+   `MEMPOOL_INTERFACE → followAppliedBlock`. Numbering kept so later step references stay stable.)*
 2. Read the pool — every entry through `iteratePendingEntries`, karma class first
    (MEMPOOL_INTERFACE → Ordering); the read removes nothing. **A withdrawal is one of those
    entries**, selected like any other transaction and competing for the same body budget
@@ -3196,13 +3201,15 @@ window's `S` — and `submitMinedBlock` answers the verdict the item returns, ha
    of which is neither in the confirmed set nor an output of an entry it already
    selected (`MEMPOOL_INTERFACE → Block Creator Integration`), and the byte-budget trim
    pops from the end (→ Block creation). No produced body lists a consumer ahead of its
-   producer; a child whose predecessor left the pool by expiry or eviction is skipped
-   by every fill and leaves by its own expiry.
-5. Remove confirmed entries from mempool (`removeEntry` for each confirmed rowid).
+   producer; a child whose predecessor left the pool unconfirmed leaves with it
+   (`MEMPOOL_INTERFACE → What takes an entry out of the pool`).
+5. Sweep the template's rows by rowid — `removeEntry` where the block applied, whose own application already let
+   the pool follow it (`MEMPOOL_INTERFACE → followAppliedBlock`), and `removeUnconfirmed`, with their dependents,
+   where it was refused (`MEMPOOL_INTERFACE → Block Creator Integration`).
    ⚠ **This runs even when the block was rejected**, and that is deliberate,
    not an oversight: whatever made the body invalid is still pooled, so
    leaving it would rebuild the same rejected block every interval and stall
-   the chain — expiry cannot save it, since `purgeExpired` keys on a height
+   the chain — expiry cannot save it, since expiry keys on a height
    that stops advancing when production stops. Step 15b's `body rejected`
    outcome evicts for the same reason — the rows its screen refuses.
 6. Reset pending counter and template
@@ -4038,7 +4045,10 @@ one write feeds both, so the two cannot disagree.
 | `getBoxWithPending(boxId)` | `(string) => AnyBox \| null` | The pending view — confirmed ∪ pending outputs − pending inputs, three point reads on the pool's input and output tables and the confirmed set; submission's `getBox`, never block application's (MEMPOOL_INTERFACE → getBoxWithPending; → Block finalization) |
 | `getBoxesPageWithPending(owner, boxType, page)` | `(Uint8Array, 'karma' \| 'credit', Page<BoxKey>) => { rows: (KarmaBox \| CreditBox)[], next: BoxKey \| null, count: number }` | The same view asked by owner, one page in `value DESC, id` strictly after `after`: the owner's confirmed boxes of that type no pooled entry spends, beside the pooled outputs of that type to the owner no pooled entry spends — the listings' `pending=1` (→ UTXO queries; MEMPOOL_INTERFACE → getBoxesPageWithPending) |
 | `getBoxTotalWithPending(owner, boxType)` | `(Uint8Array, 'karma' \| 'credit') => bigint` | `COALESCE(SUM(value), 0)` over the set the page reads — `total` under `pending=1` |
-| `purgeExpired(currentHeight)` | `(number) => number` | Remove entries past expiry, returns count |
+| `getHeldEntry(txId)` | `(string) => { expiresAtHeight: number, txBytes: Uint8Array } \| null` | The pool's entry for one transaction id, one point read — admission's first question (MEMPOOL_INTERFACE → getHeldEntry) |
+| `followAppliedBlock(height, appliedTxIds, spentBoxIds)` | `(number, readonly string[], readonly string[]) => number` | The pool's part of every applied block, inside its write: the confirmed entries by `tx_id`, then every entry the block's spends, its expiry or its ceiling leave no place for, with their dependents (MEMPOOL_INTERFACE → followAppliedBlock) |
+| `purgeExpired(currentHeight)` | `(number) => number` | `followAppliedBlock`'s expiry half — the entries past their expiry or their ceiling, with their dependents (MEMPOOL_INTERFACE → purgeExpired) |
+| `removeUnconfirmed(rowids)` | `(readonly number[]) => number` | Every unconfirmed exit: the entries, their dependents down the chain, each post entry's pending row (MEMPOOL_INTERFACE → removeUnconfirmed) |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — the count admission holds a member's bonds to (MEMPOOL_INTERFACE → Correctness gates) |
 | `hasPendingInvitee(inviteeId)` | `(string) => boolean` | SQL EXISTS over `invite_invitee` — one pending bond per invitee |
@@ -4046,7 +4056,7 @@ one write feeds both, so the two cannot disagree.
 | `hasPendingClaim(nameLower)` | `(string) => boolean` | SQL EXISTS over `username_lower` — the pending mirror of one live name per canonical form (→ Username transition rules) |
 | `hasPendingClaimBy(claimantId)` | `(string) => boolean` | SQL EXISTS over `username_claimant` — the pending mirror of one name per identity |
 | `hasPendingWithdraw(postId)` | `(string) => boolean` | SQL EXISTS over `withdraw_post` — one pending withdrawal per post |
-| `removeEntry(rowid)` | `(number) => void` | Remove confirmed entry by rowid |
+| `removeEntry(rowid)` | `(number) => void` | Remove confirmed entry by rowid — the sweep of a mined block that applied |
 | `setMempoolCap(n)` | `(number) => void` | Set the pool bound; `index.ts` calls it once at startup with `config.maxMempoolEntries` (`MEMPOOL_INTERFACE → setMempoolCap`) |
 
 All insert functions throw a typed `MempoolFullError` at `MAX_MEMPOOL_ENTRIES`
@@ -4940,19 +4950,37 @@ the handler.
 **A write request runs in one order, cheapest first**, and a refusal at a step reaches no later one:
 
 1. The edge (→ HTTP API → "A write request's transaction is checked whole before anything reads it") — linear in the
-   request, no store read.
-2. The service's own checks — the diagnosis a client reads, store reads over a transaction the edge has bounded.
-3. Admission (below) — `validateTx`, its signatures among it, then `admitTx`'s floor and cost gate, a speculative
+   request, no store read — and the route's own checks of the request against itself: a payload against the path's
+   `:id`, a claim's name box, a post's body against its commitment (→ Post transactions).
+2. The pool's word on the id — one point read (`MEMPOOL_INTERFACE → getHeldEntry`): a transaction the pool already
+   holds is answered as held (below), and no later step runs.
+3. The service's own checks — the diagnosis a client reads, store reads over a transaction the edge has bounded.
+4. Admission (below) — `validateTx`, its signatures among it, then `admitTx`'s floor and cost gate, a speculative
    `applyBlock` (`MEMPOOL_INTERFACE → The cost gate`); then the pool.
 
-**One function admits.** `validateTx` at `tip + 1`, the pool entry's expiry at `tip + 1 + MEMPOOL_EXPIRY_BLOCKS` and
-`admitTx` run as one function, which every write route but `POST /posts` calls. Each caller passes its own engine
-dependencies and the words its refusal opens with, and gets the transaction's id and its expiry back. A post is pooled
-with its pending row in one store transaction (→ Post transactions), so `POST /posts` and the gossip relay, which
-carries posts, run the three around that transaction themselves. `admitTx` stays the seam above the store that the
-reorg path does not take (`MEMPOOL_INTERFACE → Fee floor`), and **it runs the pool's correctness gates**
+**One function admits.** The pool's word on the id, the caller's own checks, `validateTx` at `tip + 1`, the pool entry's
+expiry at `tip + 1 + MEMPOOL_EXPIRY_BLOCKS` and `admitTx` run as one function, in that order, which every write route
+but `POST /posts` calls. Each caller passes its own checks, its own engine dependencies and the words its refusal opens
+with, and gets back the transaction's id, its expiry and whether the pool already held it — for a held one, the pooled
+entry's own expiry and bytes. A post is pooled with its pending row in one store transaction (→ Post transactions), so
+`POST /posts` and the gossip relay, which carries posts, run the lookup first and the rest around that transaction
+themselves. `admitTx` stays the seam above the store that the reorg path does not take
+(`MEMPOOL_INTERFACE → Fee floor`), and **it runs the pool's correctness gates**
 (`MEMPOOL_INTERFACE → Correctness gates`), so a refusal a pending entry answers is the same on every route and on the
 relay.
+
+**A transaction the pool already holds is answered as held.** Every write route answers it with its own success status
+and body, as a first admission is answered: `txId`, the pooled entry's own `expiresAtHeight` — never a new one — and
+each other field read off the transaction as before (`postId`, `bondBoxId`, `karmaReturnsAtBlock`, `name`). So a client
+that lost its answer and sends the same transaction again learns that it is pending, and a 409 never answers a
+transaction the pool holds. The route then publishes the pooled entry's bytes, as a first admission publishes
+(`net.broadcastTx`) — a post with the body its request carried, which step 1 held to the commitment the id covers: a
+peer that holds the transaction does not admit it and penalises nobody
+(`NET_INTERFACE → Stage 2 → "A Stage 2 refusal records nothing"`), and one that missed it pools it. **Never the
+request's bytes**: the id leaves the signatures out, and a held answer has checked none of the request's
+(`MEMPOOL_INTERFACE → getHeldEntry`). A held transaction writes nothing and emits no journal event — its post arrived
+once (`JOURNAL_EVENTS → post_received`). **The gossip relay answers it `false`** — not admitted, so not forwarded
+(`NET_INTERFACE → Forwarding Rule`) — and logs nothing (→ Relay handlers).
 
 Queries serve the DAG tip. There is no validated watermark and nothing gates a
 read behind one.
@@ -5632,27 +5660,27 @@ not fail the API request.
 
 ### Relay handlers (mempool-based)
 
-- **`onTx(tx, content, fromPeerId)`**: validates (read-only, `validateTx`) → inserts into
-  mempool via `admitTx`, whose correctness gates refuse as every route's do; for a post
-  transaction the packet's body — already verified against `tx.post.contentHash` by net's topic
-  validator — is stored as the pending row in the same
-  store transaction as the admission (Post transactions → the packet is the unit), and
-  `emitPostReceived(postId, fromPeerId, via: 'packet')` fires. **It answers whether it admitted
-  the transaction**, and net forwards it then and only then (NET_INTERFACE → Forwarding Rule): every
-  refusal — the rules', a full pool, an input a pending entry spends, a policy refusal — answers
-  `false` and penalises nobody (NET_INTERFACE → Stage 2 → "A Stage 2 refusal records nothing").
-  **Its `validateTx` answers each required signature from net's Stage 1**, which verified every
-  entry of the map over the transaction's id (NET_INTERFACE → Stage 1 → "A transaction's signatures
-  are checked at Stage 1"): a required signer's check is `true` exactly when the signature is the
-  map's own entry for that key and the message is the transaction's id (CONSENSUS_INTERFACE → The
-  overlay).
+- **`onTx(tx, content, fromPeerId)`**: asks the pool for the transaction's id first — a held one answers `false` and
+  logs nothing (→ Service Layer Architecture → "A transaction the pool already holds is answered as held") — then
+  validates (read-only, `validateTx`) → inserts into mempool via `admitTx`, whose correctness gates refuse as every
+  route's do; for a post transaction the packet's body — already verified against `tx.post.contentHash` by net's topic
+  validator — is stored as the pending row in the same store transaction as the admission
+  (Post transactions → the packet is the unit), and `emitPostReceived(postId, fromPeerId, via: 'packet')` fires. **It
+  answers whether it admitted the transaction**, and net forwards it then and only then
+  (NET_INTERFACE → Forwarding Rule): every refusal — the rules', a full pool, an input a pending entry spends, a policy
+  refusal — answers `false` and penalises nobody (NET_INTERFACE → Stage 2 → "A Stage 2 refusal records nothing"). **Its
+  `validateTx` answers each required signature from net's Stage 1**, which verified every entry of the map over the
+  transaction's id (NET_INTERFACE → Stage 1 → "A transaction's signatures are checked at Stage 1"): a required signer's
+  check is `true` exactly when the signature is the map's own entry for that key and the message is the transaction's id
+  (CONSENSUS_INTERFACE → The overlay).
 - **`onOrderingBlock(block, fromPeerId)`**: Stage 1 (net) → the pipeline's intake, `fromPeerId` the
   relayer (Fork choice decides on verified headers → "One intake, one at a time"): the block's header is
   admitted — already held → no-op; **marked refused (→ Refused headers) → refused, nothing applied**; a
   parent the tree lacks → the block waits and the relayer is asked for headers — and the block is bound
   and staged when its header is on the best chain, or its parent is the applied tip (Fork choice decides
   on verified headers → "A block in hand extends the applied tip"); extension then applies it through
-  `applyOrderingBlockVerdict` → confirms posts → removes confirmed entries from mempool; **a
+  `applyOrderingBlockVerdict` → confirms posts → the pool follows the block
+  (`MEMPOOL_INTERFACE → What takes an entry out of the pool`); **a
   `'consensus'` refusal marks the header** in `refused_headers`, after the rollback and in its own
   write, and an `'unbound'`, `'acceptance'` or `'local'` refusal marks nothing (→ "The funnel answers
   with a class"). The pull path enters the **same** intake through net's `setPipeline` (Sync handlers),

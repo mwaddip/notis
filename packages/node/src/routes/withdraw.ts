@@ -10,7 +10,7 @@ import { respondError } from './respond-error.js';
 // ---------------------------------------------------------------------------
 
 export interface WithdrawDeps extends UtxoEngineDeps {
-  executePostWithdraw: (deps: UtxoEngineDeps, tx: UtxoTransaction, currentBlockHeight: number) => { txId: string; expiresAtHeight: number };
+  executePostWithdraw: (deps: UtxoEngineDeps, tx: UtxoTransaction, currentBlockHeight: number) => { txId: string; expiresAtHeight: number; tx: UtxoTransaction };
   getCurrentHeight: () => number;
 }
 
@@ -53,13 +53,17 @@ export function withdrawRoutes(deps: WithdrawDeps): Router {
     }
 
     try {
-      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx). The
+      // service's returned `tx` is the first admission's — the pooled bytes
+      // on a held answer, the request's on a first admission
+      // (NODE_INTERFACE → Service Layer Architecture → "A transaction the
+      // pool already holds is answered as held").
       const currentHeight = deps.getCurrentHeight() + 1;
-      const { txId, expiresAtHeight } = deps.executePostWithdraw(deps, tx, currentHeight);
+      const { txId, expiresAtHeight, tx: pooledTx } = deps.executePostWithdraw(deps, tx, currentHeight);
 
       const net = getNet();
       if (net) {
-        net.broadcastTx(tx).catch((err: Error) => {
+        net.broadcastTx(pooledTx).catch((err: Error) => {
           console.warn(`Failed to broadcast postWithdraw tx: ${err.message}`);
         });
       }
@@ -67,7 +71,7 @@ export function withdrawRoutes(deps: WithdrawDeps): Router {
       res.status(201).json({
         status: 'submitted',
         txId,
-        postId: tx.postWithdraw.postId,
+        postId: pooledTx.postWithdraw!.postId,
         expiresAtHeight,
       });
     } catch (err: unknown) {

@@ -34,6 +34,7 @@ const GATE_INDEX_NAMES = [
   'idx_mempool_invite',
   'idx_mempool_vouch',
   'idx_mempool_expires',
+  'idx_mempool_ceiling',
   'idx_mempool_tx_id',
   'idx_mempool_fee_rate',
   'idx_mempool_username_lower',

@@ -107,7 +107,8 @@ export function createRouter(deps: BackerRouteDeps): Router {
 
     try {
       const currentHeight = deps.getCurrentHeight() + 1;
-      const { txId, expiresAtHeight } = admitWriteTx(
+      const { txId, expiresAtHeight, tx: pooledTx } = admitWriteTx(
+        () => {},
         deps.validateTx,
         tx,
         currentHeight,
@@ -116,7 +117,7 @@ export function createRouter(deps: BackerRouteDeps): Router {
 
       const net = getNet();
       if (net) {
-        net.broadcastTx(tx).catch((err: Error) => {
+        net.broadcastTx(pooledTx).catch((err: Error) => {
           console.warn(`Failed to broadcast unstake tx: ${err.message}`);
         });
       }

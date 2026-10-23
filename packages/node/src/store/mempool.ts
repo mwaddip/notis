@@ -301,6 +301,7 @@ function assertCapacity(
   poolClass: PoolClass,
   fee: bigint | null,
   bytes: number,
+  arrivalInputs: readonly string[],
 ): void {
   const caps = classCaps();
 
@@ -322,7 +323,19 @@ function assertCapacity(
   const resident = cheapest.fee * BigInt(bytes);
   if (arriving <= resident) throw new MempoolFullError(caps.credit, 'credit');
 
-  prepared(db, 'DELETE FROM mempool WHERE rowid = ?').run(cheapest.rowid);
+  // The cheapest resident's closure, read once beside the delete that
+  // follows — never a second walk. An arrival whose input is in the closure's
+  // output set is refused: admitting it would pool an entry whose input no
+  // longer exists once the resident and its dependents leave. The displaced
+  // resident takes its dependents through `removeUnconfirmed`'s own path
+  // (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
+  const closure = readClosureInner(db, [cheapest.rowid]);
+  for (const inputId of arrivalInputs) {
+    if (closure.outputBoxIds.has(inputId)) {
+      throw new MempoolFullError(caps.credit, 'credit');
+    }
+  }
+  deleteFromClosureInner(db, closure);
 }
 
 export interface GateMetadata {
@@ -524,7 +537,7 @@ export function insertUtxoTx(
     // encoding — the budget is the resource being rationed.
     const fee = bidOf(tx);
     const bytes = entryByteCost(encoded);
-    assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes);
+    assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes, inputs);
 
     const result = prepared(db, `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
                             like_target, like_liker, invite_inviter, invite_invitee,
@@ -898,17 +911,23 @@ export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
 }
 
 /**
- * The stored `utxo_tx_bytes` of the pool entry whose `tx_id` equals the
- * argument, or `null` when no such entry stands — the bytes a pending
- * `PostJson`'s `tx` field is read from (NODE_INTERFACE → Posts → "The creating
- * transaction rides a post row").
+ * The pool's entry for one transaction id — its expiry and its stored bytes
+ * — or `null` where none stands: one point read of `idx_mempool_tx_id`
+ * (MEMPOOL_INTERFACE → getHeldEntry). It is the one read of an entry by id:
+ * admission's first question, and the read a pending post's `tx` bytes come
+ * from (NODE_INTERFACE → Posts → "The creating transaction rides a post row").
  */
-export function getPendingUtxoTxBytesByTxId(txId: string): Uint8Array | null {
-  const row = prepared(getDb(), `SELECT utxo_tx_bytes FROM mempool
+export function getHeldEntry(
+  txId: string,
+): { expiresAtHeight: number; txBytes: Uint8Array } | null {
+  const row = prepared(getDb(), `SELECT expires_at_height, utxo_tx_bytes FROM mempool
         WHERE entry_type = 'utxo_tx' AND tx_id = ?`)
-    .get(txId) as { utxo_tx_bytes: Buffer | null } | undefined;
+    .get(txId) as { expires_at_height: number; utxo_tx_bytes: Buffer | null } | undefined;
   if (!row || !row.utxo_tx_bytes) return null;
-  return new Uint8Array(row.utxo_tx_bytes);
+  return {
+    expiresAtHeight: row.expires_at_height,
+    txBytes: new Uint8Array(row.utxo_tx_bytes),
+  };
 }
 
 /** The columns a `PoolEntry` is read from — every reader of the pool selects these. */
@@ -986,8 +1005,8 @@ function* iterateKarmaFifo(): Generator<PoolEntry> {
  *
  * ⚠ **The id list is safe to hold across the body fetches, and that is not a
  * TOCTOU gap.** The only consumer is the block creator's fill, which is
- * synchronous and adds and removes no row while it runs — `purgeExpired` has
- * already finished and `submitMinedBlock` has not begun; its one write is a row's
+ * synchronous and adds and removes no row while it runs — no block applies
+ * while it runs and `submitMinedBlock` has not begun; its one write is a row's
  * estimate (`setCostEstimate`), which moves neither the class nor a rate. Neither
  * a transaction nor a defensive re-check is needed; the missing-row skip below
  * exists so the loop is total, not because a row is expected to vanish.
@@ -1077,24 +1096,166 @@ export function removeUtxoTxEntry(txId: string): number {
   return prepared(db, 'DELETE FROM mempool WHERE tx_id = ?').run(txId).changes;
 }
 
+/**
+ * The closure of an unconfirmed set — the entries named, every pooled entry
+ * spending an output of one of them or replying to its post, and so on down
+ * (MEMPOOL_INTERFACE → removeUnconfirmed). Each read is on an index: SCAN
+ * json_each → idx_mempool_outputs_entry → mempool_inputs' primary key for the
+ * output half, idx_dag_parent_refs_parent → dag_posts' primary key →
+ * idx_mempool_tx_id for the parent-ref half. The output box ids a closure
+ * entry writes ride beside the rowids, so the refusal of an arrival any of
+ * whose inputs is among this closure's outputs is one in-memory lookup.
+ */
+interface UnconfirmedClosure {
+  rowids: Set<number>;
+  txIdOf: Map<number, string | null>;
+  outputBoxIds: Set<string>;
+}
+
+function readClosureInner(
+  db: ReturnType<typeof getDb>,
+  rowids: readonly number[],
+): UnconfirmedClosure {
+  const closure = new Set<number>();
+  const txIdOf = new Map<number, string | null>();
+  const outputBoxIds = new Set<string>();
+  let frontier: readonly number[] = Array.from(new Set(rowids));
+  while (frontier.length > 0) {
+    const added: number[] = [];
+    for (const rowid of frontier) {
+      if (closure.has(rowid)) continue;
+      closure.add(rowid);
+      const row = prepared(
+        db,
+        "SELECT tx_id FROM mempool WHERE rowid = ? AND entry_type = 'utxo_tx'",
+      ).get(rowid) as { tx_id: string | null } | undefined;
+      txIdOf.set(rowid, row?.tx_id ?? null);
+      added.push(rowid);
+    }
+    if (added.length === 0) break;
+    // The output box ids each just-added entry writes, kept beside the
+    // closure's rowids so a caller tests an arrival's inputs in one lookup.
+    const outputRows = prepared(
+      db,
+      `SELECT box_id FROM mempool_outputs
+        WHERE entry_rowid IN (SELECT value FROM json_each(?))`,
+    ).all(JSON.stringify(added)) as Array<{ box_id: string }>;
+    for (const r of outputRows) outputBoxIds.add(r.box_id);
+    // Entries whose input is the output of a just-added entry.
+    const outRows = prepared(
+      db,
+      `SELECT DISTINCT mi.entry_rowid AS rowid
+         FROM mempool_outputs mo
+         JOIN mempool_inputs mi ON mi.box_id = mo.box_id
+        WHERE mo.entry_rowid IN (SELECT value FROM json_each(?))`,
+    ).all(JSON.stringify(added)) as Array<{ rowid: number }>;
+    // Pending posts replying to a just-added entry's post, found through
+    // dag_parent_refs (idx_dag_parent_refs_parent) and the reply's own
+    // transaction id (idx_mempool_tx_id).
+    const parentIds: string[] = [];
+    for (const r of added) {
+      const tx = txIdOf.get(r);
+      if (typeof tx === 'string' && tx.length > 0) {
+        parentIds.push(computePostId(tx, 0));
+      }
+    }
+    let refRows: Array<{ rowid: number }> = [];
+    if (parentIds.length > 0) {
+      // INDEXED BY idx_dag_parent_refs_parent: the store keeps no statistics,
+      // so the planner walks the pending-post leg first and leaves
+      // idx_dag_parent_refs_parent on an empty join.
+      refRows = prepared(
+        db,
+        `SELECT m.rowid AS rowid
+           FROM dag_parent_refs dpr INDEXED BY idx_dag_parent_refs_parent
+           JOIN dag_posts dp ON dp.id = dpr.post_id AND dp.status = 'pending'
+           JOIN mempool m ON m.tx_id = dp.tx_id
+          WHERE dpr.parent_id IN (SELECT value FROM json_each(?))`,
+      ).all(JSON.stringify(parentIds)) as Array<{ rowid: number }>;
+    }
+    const nextFrontier: number[] = [];
+    for (const r of outRows) if (!closure.has(r.rowid)) nextFrontier.push(r.rowid);
+    for (const r of refRows) if (!closure.has(r.rowid)) nextFrontier.push(r.rowid);
+    frontier = nextFrontier;
+  }
+  return { rowids: closure, txIdOf, outputBoxIds };
+}
+
+function deleteFromClosureInner(
+  db: ReturnType<typeof getDb>,
+  closure: UnconfirmedClosure,
+): number {
+  // Each closure entry's pending post row leaves first (NODE_INTERFACE → Post
+  // transactions → "The pending row is the mempool entry's DAG shadow"), then
+  // the entries themselves — one bound value through json_each so one DELETE
+  // reaches the whole set and SQLite's variable cap stays unspent.
+  for (const rowid of closure.rowids) {
+    const tx = closure.txIdOf.get(rowid);
+    if (typeof tx === 'string' && tx.length > 0) {
+      deletePendingPost(computePostId(tx, 0));
+    }
+  }
+  const ids = Array.from(closure.rowids);
+  const result = prepared(
+    db,
+    'DELETE FROM mempool WHERE rowid IN (SELECT value FROM json_each(?))',
+  ).run(JSON.stringify(ids));
+  return result.changes;
+}
+
+// MEMPOOL_INTERFACE → removeUnconfirmed. One SQLite transaction (a savepoint
+// inside a caller's). The dependents are read before any row leaves, so the
+// output rows and the pending post rows the walk reads leave with their entry.
+export function removeUnconfirmed(rowids: readonly number[]): number {
+  if (rowids.length === 0) return 0;
+  const db = getDb();
+  return db.transaction(() => {
+    const closure = readClosureInner(db, rowids);
+    return deleteFromClosureInner(db, closure);
+  })();
+}
+
+// MEMPOOL_INTERFACE → followAppliedBlock. The pool's part of every applied
+// block, inside its write: each applied transaction leaves by tx_id, then,
+// through removeUnconfirmed, every entry a spent box takes with it (one bound
+// value on mempool_inputs' primary key) and every entry past its expiry or its
+// ceiling. Confirmation runs first, so an applied transaction is never read as
+// a spend of its own inputs.
+export function followAppliedBlock(
+  height: number,
+  appliedTxIds: readonly string[],
+  spentBoxIds: readonly string[],
+): number {
+  const db = getDb();
+  return db.transaction(() => {
+    for (const txId of appliedTxIds) removeUtxoTxEntry(txId);
+    let unconfirmed = 0;
+    if (spentBoxIds.length > 0) {
+      const rows = prepared(
+        db,
+        `SELECT DISTINCT entry_rowid FROM mempool_inputs
+           WHERE box_id IN (SELECT value FROM json_each(?))`,
+      ).all(JSON.stringify(spentBoxIds)) as Array<{ entry_rowid: number }>;
+      unconfirmed += removeUnconfirmed(rows.map((r) => r.entry_rowid));
+    }
+    unconfirmed += purgeExpired(height);
+    return unconfirmed;
+  })();
+}
+
+// MEMPOOL_INTERFACE → purgeExpired. followAppliedBlock's expiry half: every
+// entry past its expiry or its ceiling leaves through removeUnconfirmed, its
+// dependents with it. Each predicate is one indexed range —
+// idx_mempool_expires and idx_mempool_ceiling.
 export function purgeExpired(currentHeight: number): number {
   const db = getDb();
-  // The pool DELETE and each pending post's row deletion are one multi-table
-  // mutation (ARCHITECTURE → "Single-transaction atomic writes").
-  return db.transaction(() => {
-    // NODE_INTERFACE → Post transactions — the pending-row rule: an unconfirmed
-    // post entry's DAG row dies with its pool row. Both expiry and ceiling
-    // reclaim go through this cleanup.
-    const expiring = prepared(db, `SELECT tx_id FROM mempool
-        WHERE (expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?))
-          AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL`).all(currentHeight, currentHeight) as Array<{ tx_id: string }>;
-    for (const { tx_id } of expiring) {
-      deletePendingPost(computePostId(tx_id, 0));
-    }
-    // MEMPOOL_INTERFACE → Validity ceiling — reclaim while pooled.
-    const result = prepared(db, 'DELETE FROM mempool WHERE expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?)').run(currentHeight, currentHeight);
-    return result.changes;
-  })();
+  const rows = prepared(
+    db,
+    `SELECT rowid FROM mempool WHERE expires_at_height < ?
+     UNION
+     SELECT rowid FROM mempool WHERE max_valid_height IS NOT NULL AND max_valid_height < ?`,
+  ).all(currentHeight, currentHeight) as Array<{ rowid: number }>;
+  return removeUnconfirmed(rows.map((r) => r.rowid));
 }
 
 export function removeEntry(rowid: number): void {
