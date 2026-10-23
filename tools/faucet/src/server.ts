@@ -2,7 +2,14 @@ import express from 'express';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { isIPv4, isIPv6 } from 'node:net';
-import { KARMA_MINIMUM } from '@dagsocial/types';
+import {
+  HTTP_CHECK_INTERVAL_MS,
+  HTTP_CONNECTIONS_MAX,
+  HTTP_HEADERS_TIMEOUT_MS,
+  HTTP_KEEP_ALIVE_TIMEOUT_MS,
+  HTTP_REQUEST_TIMEOUT_MS,
+  KARMA_MINIMUM,
+} from '@dagsocial/types';
 import { buildInviteTx } from './invite.js';
 import { buildCreditTransferTx } from './transfer.js';
 import { RateLimiter } from './rate-limit.js';
@@ -10,6 +17,12 @@ import { NodeError } from './node-client.js';
 import { BadRequestError, InsufficientFundsError, HEX64 } from './tx.js';
 import type { NodeClient } from './node-client.js';
 import type { FaucetConfig } from './config.js';
+
+/**
+ * The most bytes of JSON body a route reads: `{ pubkey }` is 77, rounded up to a
+ * power of two (`CONSTANTS → HTTP server bounds`).
+ */
+export const FAUCET_BODY_MAX_BYTES = 128;
 
 /**
  * Two endpoints, because a karma grant is repeatable once and a credit transfer
@@ -28,7 +41,13 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   // the hops it sends but not the one nginx adds, so it cannot prepend a value
   // to spend a rate-limit key other than its own.
   app.set('trust proxy', 'loopback');
-  app.use(express.json());
+  // NODE_INTERFACE → Faucet → "The service's server keeps the public server's headers, deadlines and connection bound"
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    next();
+  });
+  app.use(express.json({ limit: FAUCET_BODY_MAX_BYTES }));
 
   const karmaLimit = new RateLimiter(cfg.rateLimitPerHour);
   const creditLimit = new RateLimiter(cfg.rateLimitPerHour);
@@ -86,9 +105,22 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   return app;
 }
 
-/** Creates the HTTP server over `app`, listens on `port` and returns it. */
+/**
+ * Creates the HTTP server over `app`, listens on `port` and returns it.
+ *
+ * NODE_INTERFACE → Faucet → "The service's server keeps the public server's headers, deadlines and connection bound"
+ * (`CONSTANTS → HTTP server bounds`). `timeout` stays `0`: a request waits its
+ * turn in its endpoint's line with no byte moving, which an idle deadline would end.
+ */
 export function listenFaucet(app: express.Express, port: number): Server {
-  return createServer(app).listen(port);
+  const server = createServer({
+    headersTimeout: HTTP_HEADERS_TIMEOUT_MS,
+    requestTimeout: HTTP_REQUEST_TIMEOUT_MS,
+    keepAliveTimeout: HTTP_KEEP_ALIVE_TIMEOUT_MS,
+    connectionsCheckingInterval: HTTP_CHECK_INTERVAL_MS,
+  }, app);
+  server.maxConnections = HTTP_CONNECTIONS_MAX;
+  return server.listen(port);
 }
 
 const MAPPED_IPV4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i;

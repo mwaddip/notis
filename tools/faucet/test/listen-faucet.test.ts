@@ -25,7 +25,10 @@ describe('how the faucet listens', () => {
     expect(listening).toEqual(['server.ts']);
     const server = readFileSync(join(SRC, 'server.ts'), 'utf8');
     expect(server.split('.listen(')).toHaveLength(2);
-    expect(server).toMatch(/export function listenFaucet\([^)]*\)[^{]*\{[^}]*\.listen\(/);
+    const start = server.indexOf('export function listenFaucet(');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = server.indexOf('\n}\n', start);
+    expect(server.slice(start, end)).toContain('.listen(');
     expect(readFileSync(join(SRC, 'index.ts'), 'utf8')).toContain('listenFaucet(');
   });
 });
@@ -42,7 +45,7 @@ const listening = (server: Server): Promise<void> =>
   server.listening ? Promise.resolve() : new Promise((resolve) => server.once('listening', () => resolve()));
 
 describe('the faucet server', () => {
-  it.fails('holds the deadlines, the connection bound and no idle deadline', async () => {
+  it('holds the deadlines, the connection bound and no idle deadline', async () => {
     const server = listenFaucet(createApp(baseCfg, stubbed()), 0);
     try {
       await listening(server);
@@ -64,7 +67,7 @@ describe('the faucet server', () => {
     }
   });
 
-  it.fails('sends nosniff and no X-Powered-By on every status', async () => {
+  it('sends nosniff and no X-Powered-By on every status', async () => {
     const client = stubbed();
     const failing: NodeClient = { ...stubbed(), status: async () => { throw new Error('boom'); } };
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -92,7 +95,7 @@ describe('the faucet server', () => {
     }
   });
 
-  it.fails('refuses a body of 129 bytes and takes one of 128', async () => {
+  it('refuses a body of 129 bytes and takes one of 128', async () => {
     const bodyOf = (bytes: number): string => {
       const open = JSON.stringify({ pubkey: recipient, pad: '' });
       const body = JSON.stringify({ pubkey: recipient, pad: 'x'.repeat(bytes - open.length) });
