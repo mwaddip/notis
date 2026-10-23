@@ -126,7 +126,7 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     vi.mocked(applyBlock).mockClear();
   });
 
-  it.fails('POST /credits/transfer: a full credit class refuses an arrival bidding nothing, before any applyBlock call for its cost', async () => {
+  it('POST /credits/transfer: a full credit class refuses an arrival bidding nothing, before any applyBlock call for its cost', async () => {
     setMempoolCap(2); // credit class cap = 1
     const residentSender = makeTestIdentity();
     const arrivalSender = makeTestIdentity();
@@ -154,7 +154,7 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     expect(vi.mocked(applyBlock).mock.calls.length).toBe(0);
   });
 
-  it.fails('handleRelayedTx: a relayed arrival whose input a pooled entry spends answers false before any applyBlock call for its cost', async () => {
+  it('handleRelayedTx: a relayed arrival whose input a pooled entry spends answers false before any applyBlock call for its cost', async () => {
     const sender = makeTestIdentity();
     const box = makeCreditBox(100_000n, sender.userId, 0, 2001);
     insertBox(box);
@@ -179,7 +179,7 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     expect(vi.mocked(applyBlock).mock.calls.length).toBe(0);
   });
 
-  it.fails('castLike path: a full karma class refuses the arriving like before any applyBlock call for its cost', async () => {
+  it('castLike path: a full karma class refuses the arriving like before any applyBlock call for its cost', async () => {
     // Two likers, each with a karma box, targeting two distinct posts: the
     // same `(liker, target)` pair would be refused by the correctness gate
     // ahead of the pool's class check.

@@ -3,6 +3,7 @@ import type { UtxoResult } from '@dagsocial/consensus';
 import { computeTxId, decodeTx, encodeTx, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
+  assertPoolAdmits,
   bidOf,
   countPendingInvites,
   entryByteCost,
@@ -73,7 +74,10 @@ export class TxOverBlockBudgetError extends ClientError {
 }
 
 /**
- * Admission: this node's relay policy and the cost gate, then the pool.
+ * Admission: this node's relay policy, the pool's own refusals and the cost
+ * gate, in that order (MEMPOOL_INTERFACE → assertPoolAdmits; NODE_INTERFACE
+ * → Service Layer Architecture → "A write request runs in one order,
+ * cheapest first").
  *
  * ⛔ **The floor and the cost gate live here and must never move into
  * `insertUtxoTx`.** `fork-resolution` re-inserts transactions the chain has
@@ -177,6 +181,12 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
       }
     }
   }
+
+  // MEMPOOL_INTERFACE → assertPoolAdmits: the pool's own conflict and
+  // capacity refusals are asked before the cost gate's speculative
+  // `applyBlock`, so a transaction the pool would refuse never costs the
+  // candidate block.
+  assertPoolAdmits(tx);
 
   // MEMPOOL_INTERFACE → The cost gate.
   const alone = costAlone(tx, 'admitTx');

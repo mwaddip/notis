@@ -378,7 +378,7 @@ describe('the cost gate', () => {
     expect(handle.prover.prover.generateProof()).toEqual(empty);
   });
 
-  it.fails('never refuses a reorg\'s re-insertion of a transaction its chain had carried', async () => {
+  it('never refuses a reorg\'s re-insertion of a transaction its chain had carried', async () => {
     const { tx, admit, mem } = await gatedNode();
     const cost = await aloneCost(tx);
     const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
