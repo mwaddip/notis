@@ -158,11 +158,11 @@ describe('createSignatureMemo', () => {
     expect(memo.verify(a.signature, a.message, a.publicKey)).toBe(true);
     expect(memo.verify(c.signature, c.message, c.publicKey)).toBe(true);
     vi.mocked(verifyEd25519).mockClear();
-    expect(memo.verify(a.signature, a.message, a.publicKey)).toBe(true);
-    expect(vi.mocked(verifyEd25519).mock.calls.length).toBe(1);
     expect(memo.verify(b.signature, b.message, b.publicKey)).toBe(true);
-    expect(vi.mocked(verifyEd25519).mock.calls.length).toBe(1);
+    expect(vi.mocked(verifyEd25519).mock.calls.length).toBe(0);
     expect(memo.verify(c.signature, c.message, c.publicKey)).toBe(true);
+    expect(vi.mocked(verifyEd25519).mock.calls.length).toBe(0);
+    expect(memo.verify(a.signature, a.message, a.publicKey)).toBe(true);
     expect(vi.mocked(verifyEd25519).mock.calls.length).toBe(1);
   });
 
