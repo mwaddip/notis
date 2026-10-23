@@ -246,7 +246,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     expect(screenBody(view, block, withChecks(verify))).toStrictEqual({ refused: [] });
   });
 
-  it.fails("the context's `verify` is called on the object: a class whose method reads `this` applies", () => {
+  it("the context's `verify` is called on the object: a class whose method reads `this` applies", () => {
     class ClassChecks implements SignatureChecks {
       readonly received: Uint8Array[] = [];
       verify(_sig: Uint8Array, _msg: Uint8Array, key: Uint8Array): boolean {

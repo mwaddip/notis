@@ -503,7 +503,7 @@ describe("applyBlock answers through the context's signature checks", () => {
     expect(batchCheck).not.toHaveBeenCalled();
   });
 
-  it.fails("the context's `verifyBatch` is called on the object: a class whose method reads `this` applies", () => {
+  it("the context's `verifyBatch` is called on the object: a class whose method reads `this` applies", () => {
     class ClassChecks implements SignatureChecks {
       readonly received: number[] = [];
       verify(_sig: Uint8Array, _msg: Uint8Array, _key: Uint8Array): boolean {

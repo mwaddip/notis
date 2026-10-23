@@ -101,10 +101,11 @@ function runPass(
   for (const { postId, post } of blockPosts) state.insertBlockTopology(postId, post.author, height);
 
   // Per-entry decode, over-signed and signatures — each signature checked
-  // alone through `ctx.signatureChecks.verify`, `verifyEd25519` when the
-  // context carries none (CONSENSUS_INTERFACE → ApplyContext). A failure
-  // refuses that index with the reason `applyBlock` would give.
-  const verifyOne = ctx.signatureChecks?.verify ?? verifyEd25519;
+  // alone through `ctx.signatureChecks.verify` on its object,
+  // `verifyEd25519` when the context carries no pair
+  // (CONSENSUS_INTERFACE → ApplyContext). A failure refuses that index
+  // with the reason `applyBlock` would give.
+  const checks = ctx.signatureChecks;
   interface Decoded extends QueuedTx { index: number; }
   const decoded: Decoded[] = [];
   const verified = new Set<string>();
@@ -126,7 +127,9 @@ function runPass(
     const message = hexToBytes(d.item.txId);
     let allVerify = true;
     for (const [keyHex, signature] of Object.entries(d.item.tx.signatures)) {
-      if (!verifyOne(signature, message, hexToBytes(keyHex))) {
+      const key = hexToBytes(keyHex);
+      const ok = checks ? checks.verify(signature, message, key) : verifyEd25519(signature, message, key);
+      if (!ok) {
         allVerify = false;
         break;
       }
