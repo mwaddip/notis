@@ -1007,7 +1007,7 @@ describe('reorg', () => {
       getSubtreePage: storeIdx.getSubtreePage,
       getBlockCreatedAt: storeIdx.getBlockCreatedAt,
       getUsernameByOwner: storeIdx.getUsernameByOwner,
-      getPendingUtxoTxBytesByTxId: storeIdx.getPendingUtxoTxBytesByTxId,
+      getPendingUtxoTxBytesByTxId: (id: string) => storeIdx.getHeldEntry(id)?.txBytes ?? null,
       getUtxoTxTreeBytes: storeIdx.getUtxoTxTreeBytes,
     });
 
@@ -1026,8 +1026,7 @@ describe('reorg', () => {
     // The pool-full path: `reinsert` catches `MempoolFullError` and completes.
     // The dag_posts row stays — Phase 1's `unconfirmPost` only nulls
     // `block_height` — and the pool has no entry under its `tx_id`, so
-    // `getPendingUtxoTxBytesByTxId` answers null and FeedService answers
-    // `tx: null`.
+    // `getHeldEntry` answers null and FeedService answers `tx: null`.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const db = await importDb();
@@ -1063,7 +1062,7 @@ describe('reorg', () => {
       const ordering = await importOrdering();
       expect(ordering.getCurrentHeight()).toBe(0);
       const storeIdx = await import('../../src/store/index.js');
-      expect(storeIdx.getPendingUtxoTxBytesByTxId(txId)).toBeNull();
+      expect(storeIdx.getHeldEntry(txId)).toBeNull();
 
       const feedModule = await import('../../src/services/feed-service.js');
       const feed = new feedModule.FeedService({
@@ -1076,7 +1075,7 @@ describe('reorg', () => {
         getSubtreePage: storeIdx.getSubtreePage,
         getBlockCreatedAt: storeIdx.getBlockCreatedAt,
         getUsernameByOwner: storeIdx.getUsernameByOwner,
-        getPendingUtxoTxBytesByTxId: storeIdx.getPendingUtxoTxBytesByTxId,
+        getPendingUtxoTxBytesByTxId: (id: string) => storeIdx.getHeldEntry(id)?.txBytes ?? null,
         getUtxoTxTreeBytes: storeIdx.getUtxoTxTreeBytes,
       });
 

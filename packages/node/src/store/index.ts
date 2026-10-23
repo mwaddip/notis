@@ -134,7 +134,7 @@ export {
   getBoxesPageWithPending,
   getBoxTotalWithPending,
   getOwnKarmaBoxIdsWithPending,
-  getPendingUtxoTxBytesByTxId,
+  getHeldEntry,
   MempoolFullError,
   PendingSpendConflictError,
   TxTooLargeError,

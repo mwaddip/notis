@@ -84,7 +84,7 @@ async function importMempool() {
     insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{ rowid: number; entryType: string; utxoTxBytes: Uint8Array | null }>;
     removeEntry: (rowid: number) => void;
-    getPendingUtxoTxBytesByTxId: (txId: string) => Uint8Array | null;
+    getHeldEntry: (txId: string) => { expiresAtHeight: number; txBytes: Uint8Array } | null;
   };
 }
 
@@ -566,7 +566,7 @@ describe('block creator vs a screened body', () => {
 
     const mempool = await importMempool();
     expect(mempool.getPendingEntries(10)).toHaveLength(2);
-    expect(mempool.getPendingUtxoTxBytesByTxId(dId)).not.toBeNull();
+    expect(mempool.getHeldEntry(dId)).not.toBeNull();
 
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const bc = await importBlockCreator();
@@ -577,7 +577,7 @@ describe('block creator vs a screened body', () => {
     expect(firstBodyIds).toContain(t1Id);
     expect(firstBodyIds).not.toContain(dId);
     expect(bc.getCurrentTemplate()).not.toBeNull();
-    expect(mempool.getPendingUtxoTxBytesByTxId(dId)).toBeNull();
+    expect(mempool.getHeldEntry(dId)).toBeNull();
   });
 
   it('a reply ahead of its parent stays pooled; the template carries the parent and not the reply', async () => {

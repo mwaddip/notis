@@ -20,7 +20,13 @@ import {
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getLikeRecordCount, hasLikeRecord, insertLikeRecord } from '../../src/store/likes.js';
-import { insertUtxoTx, getPendingEntries, getPendingUtxoTxBytesByTxId } from '../../src/store/mempool.js';
+import { insertUtxoTx, getPendingEntries, getHeldEntry } from '../../src/store/mempool.js';
+
+// MEMPOOL_INTERFACE → getHeldEntry: the pool's one read by id, from which
+// FeedService's `getPendingUtxoTxBytesByTxId` deps field reads its bytes
+// (NODE_INTERFACE → Posts → "The creating transaction rides a post row").
+const getPendingUtxoTxBytesByTxId = (id: string): Uint8Array | null =>
+  getHeldEntry(id)?.txBytes ?? null;
 import { verifyPost } from '../../src/services/verifier.js';
 import { validateTx } from '@dagsocial/consensus';
 import {

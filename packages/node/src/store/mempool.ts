@@ -911,17 +911,23 @@ export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
 }
 
 /**
- * The stored `utxo_tx_bytes` of the pool entry whose `tx_id` equals the
- * argument, or `null` when no such entry stands — the bytes a pending
- * `PostJson`'s `tx` field is read from (NODE_INTERFACE → Posts → "The creating
- * transaction rides a post row").
+ * The pool's entry for one transaction id — its expiry and its stored bytes
+ * — or `null` where none stands: one point read of `idx_mempool_tx_id`
+ * (MEMPOOL_INTERFACE → getHeldEntry). It is the one read of an entry by id:
+ * admission's first question, and the read a pending post's `tx` bytes come
+ * from (NODE_INTERFACE → Posts → "The creating transaction rides a post row").
  */
-export function getPendingUtxoTxBytesByTxId(txId: string): Uint8Array | null {
-  const row = prepared(getDb(), `SELECT utxo_tx_bytes FROM mempool
+export function getHeldEntry(
+  txId: string,
+): { expiresAtHeight: number; txBytes: Uint8Array } | null {
+  const row = prepared(getDb(), `SELECT expires_at_height, utxo_tx_bytes FROM mempool
         WHERE entry_type = 'utxo_tx' AND tx_id = ?`)
-    .get(txId) as { utxo_tx_bytes: Buffer | null } | undefined;
+    .get(txId) as { expires_at_height: number; utxo_tx_bytes: Buffer | null } | undefined;
   if (!row || !row.utxo_tx_bytes) return null;
-  return new Uint8Array(row.utxo_tx_bytes);
+  return {
+    expiresAtHeight: row.expires_at_height,
+    txBytes: new Uint8Array(row.utxo_tx_bytes),
+  };
 }
 
 /** The columns a `PoolEntry` is read from — every reader of the pool selects these. */

@@ -15,11 +15,17 @@ import {
   confirmPost,
   withdrawPost,
   getBlockCreatedAt,
-  getPendingUtxoTxBytesByTxId,
+  getHeldEntry,
   getUtxoTxTreeBytes,
   getUsernameByOwner,
   putUsername,
 } from '../../src/store/index.js';
+
+// MEMPOOL_INTERFACE → getHeldEntry: the pool's one read by id, from which
+// FeedService's `getPendingUtxoTxBytesByTxId` deps field reads its bytes
+// (NODE_INTERFACE → Posts → "The creating transaction rides a post row").
+const getPendingUtxoTxBytesByTxId = (id: string): Uint8Array | null =>
+  getHeldEntry(id)?.txBytes ?? null;
 import { insertLikeRecord } from '../../src/store/likes.js';
 import { FeedService } from '../../src/services/feed-service.js';
 import type { PostJson, WithdrawnJson } from '../../src/services/feed-service.js';
@@ -758,9 +764,9 @@ describe('feed-service — tx bytes ride the row (NODE_INTERFACE → Posts → "
 
 // ---------------------------------------------------------------------------
 // Over the real store — a real transaction, the real mempool, a real
-// ordering_blocks row, and the real `getPendingUtxoTxBytesByTxId` and
-// `getOrderingBlock`. The branches above pin FeedService's shape; these
-// pin that the real store answers each branch's inputs.
+// ordering_blocks row, and the real `getHeldEntry` and `getOrderingBlock`.
+// The branches above pin FeedService's shape; these pin that the real
+// store answers each branch's inputs.
 // NODE_INTERFACE → Posts → "The creating transaction rides a post row".
 // ---------------------------------------------------------------------------
 
