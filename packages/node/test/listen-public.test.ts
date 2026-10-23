@@ -297,14 +297,15 @@ describe('listenPublic sets the deadlines, the connection bound and the unread-a
     }
   });
 
-  it('beside the over-budget arrangement, a client that reads its answer receives it whole', async () => {
-    const BIG_SIZE = 50 * 1024 * 1024;
-    const MED_SIZE = 10 * 1024 * 1024;
-    const MED_COUNT = 5;
-    const READER_SIZE = 4 * 1024 * 1024;
+  it('a reader still taking its answer through the sweep is not closed', async () => {
+    const BIG_SIZE = 48 * 1024 * 1024;  // 48 MiB — the largest silent holder
+    const MED_SIZE = 16 * 1024 * 1024;  // 16 MiB
+    const MED_COUNT = 4;                // 48 + 4 × 16 = 112 MiB silent — above the 64 MiB budget
+    const READER_SIZE = 8 * 1024 * 1024;  // 8 MiB — more than the loopback receive buffer can take whole
 
     const h = startHarness(bodyApp());
     const clients: net.Socket[] = [];
+    const timers: ReturnType<typeof setInterval>[] = [];
     try {
       const port = await serverPort(h.server);
 
@@ -319,29 +320,43 @@ describe('listenPublic sets the deadlines, the connection bound and the unread-a
         silentRemotePorts.add(c.localPort!);
       }
 
-      // The reader.
-      const reader = net.connect(port);
+      // The reader — a 1 MiB client-side readable buffer and a 500 ms puller
+      // give about 2 MiB/s, so an 8 MiB body takes about four seconds and the
+      // reader sits mid-answer through two or more sweeps.
+      const reader = new net.Socket({ highWaterMark: 1024 * 1024 } as net.SocketConstructorOpts);
+      reader.connect(port);
       clients.push(reader);
-      let received = 0;
-      reader.on('data', (d: Buffer) => { received += d.length; });
       await once(reader, 'connect');
       reader.write(
-        `GET /body?size=${READER_SIZE} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`,
+        `GET /body?size=${READER_SIZE} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n`,
       );
+      let received = 0;
+      const puller = setInterval(() => {
+        while (true) {
+          const chunk = reader.read() as Buffer | null;
+          if (chunk === null) break;
+          received += chunk.length;
+        }
+      }, 500);
+      timers.push(puller);
+      reader.on('close', () => clearInterval(puller));
+      const readerLocalPort = reader.localPort!;
 
       // Control: every connection reached the server.
       await waitFor(() => h.serverSockets.size === MED_COUNT + 2, 10_000);
       expect(h.serverSockets.size).toBe(MED_COUNT + 2);
 
-      // Capture each silent client's server-side socket by remotePort while
-      // the HTTP server still carries that field.
+      // Capture each silent and the reader's server-side socket by remotePort
+      // while the HTTP server still carries that field.
       const silentServerSockets = new Set<net.Socket>();
+      let readerServerSocket: net.Socket | null = null;
       for (const s of h.serverSockets) {
-        if (s.remotePort !== undefined && silentRemotePorts.has(s.remotePort)) {
-          silentServerSockets.add(s);
-        }
+        if (s.remotePort === undefined) continue;
+        if (silentRemotePorts.has(s.remotePort)) silentServerSockets.add(s);
+        else if (s.remotePort === readerLocalPort) readerServerSocket = s;
       }
       expect(silentServerSockets.size).toBe(MED_COUNT + 1);
+      expect(readerServerSocket).not.toBeNull();
 
       // Control: the arrangement is above the budget.
       await waitFor(() => sumWritable(h.serverSockets) > HTTP_UNREAD_ANSWER_BYTES, 10_000);
@@ -357,10 +372,19 @@ describe('listenPublic sets the deadlines, the connection bound and the unread-a
       await waitFor(silentClosed, 10_000);
       expect(silentClosed()).toBe(true);
 
-      // The reader receives the whole body.
+      // Control: at the first close, the reader stands open with part of its
+      // answer, read off the counter.
+      const receivedAtFirstClose = received;
+      expect(h.closedServerSockets.has(readerServerSocket!)).toBe(false);
+      expect(receivedAtFirstClose).toBeLessThan(READER_SIZE);
+
+      // The reader receives the whole body, and its server-side socket is not
+      // among the closed.
       await waitFor(() => received >= READER_SIZE, 15_000);
       expect(received).toBeGreaterThanOrEqual(READER_SIZE);
+      expect(h.closedServerSockets.has(readerServerSocket!)).toBe(false);
     } finally {
+      for (const t of timers) clearInterval(t);
       await closeHarness(h, clients);
     }
   });
