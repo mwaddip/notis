@@ -1106,9 +1106,10 @@ export function createOrderingBlock(): OrderingBlock | null {
     // carried, where it refuses no pooled one — the settlement, the signature
     // batch or a throw refused the body and the build must still move the
     // chain (MINING_INTERFACE → Template and submit; MEMPOOL_INTERFACE →
-    // Block Creator Integration). The build repeats from `purgeExpired` until
-    // a template holds or a body carrying no pool row is rejected; every
-    // repetition removes at least one row, which is what bounds the loop. A
+    // Block Creator Integration). The build repeats its fill over the pool the
+    // eviction left, until a template holds or a body carrying no pool row is
+    // rejected; every repetition removes at least one row, which is what
+    // bounds the loop. A
     // rejected body that carried no pool row is terminal: the chain state
     // cannot back even the empty body, or a defect is throwing, and no
     // repetition changes either.

@@ -1005,8 +1005,8 @@ function* iterateKarmaFifo(): Generator<PoolEntry> {
  *
  * ⚠ **The id list is safe to hold across the body fetches, and that is not a
  * TOCTOU gap.** The only consumer is the block creator's fill, which is
- * synchronous and adds and removes no row while it runs — `purgeExpired` has
- * already finished and `submitMinedBlock` has not begun; its one write is a row's
+ * synchronous and adds and removes no row while it runs — no block applies
+ * while it runs and `submitMinedBlock` has not begun; its one write is a row's
  * estimate (`setCostEstimate`), which moves neither the class nor a rate. Neither
  * a transaction nor a defensive re-check is needed; the missing-row skip below
  * exists so the loop is total, not because a row is expected to vanish.
