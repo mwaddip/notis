@@ -380,4 +380,54 @@ describe('a resubmit is answered as held', () => {
     expect(sentBytes).toBe(pooledBytes);
     expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
+
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state": the signatures ride outside the id preimage
+  // (TYPES_INTERFACE → Layout — UtxoTransaction), so a resubmit whose
+  // signature bytes differ shares the pooled entry's id, and the publish
+  // reads the pooled bytes.
+  it('other signature bytes, one id', async () => {
+    const holder = makeKeys();
+    const stake = seedStake(holder.pub, 100n);
+
+    const tx: UtxoTransaction = {
+      inputs: [stake.id!],
+      outputs: [
+        { boxType: 'backer_stake', value: 0n, createdAtBlock: 1, owner: holder.pub, weight: 60n } as any,
+        { boxType: 'backer_unstake', value: 0n, createdAtBlock: 1, owner: holder.pub, weight: 40n } as any,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, holder.priv, holder.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await postReq(heldApp, '/backers/unstake', { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: getCurrentHeight() + 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const otherSig = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) otherSig[i] = i + 1;
+    const otherTxJson = {
+      ...txJson,
+      signatures: { [holder.hex]: Buffer.from(otherSig).toString('hex') },
+    };
+
+    const publishesBefore = broadcastTx.mock.calls.length;
+    const r2 = await postReq(heldApp, '/backers/unstake', { tx: otherTxJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.body).toEqual(r1.body);
+
+    const calls = broadcastTx.mock.calls;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    const requestTx: UtxoTransaction = { ...tx, signatures: { [holder.hex]: otherSig } };
+    const requestBytes = Buffer.from(encodeTx(requestTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(sentBytes).not.toBe(requestBytes);
+  });
 });

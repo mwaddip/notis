@@ -782,4 +782,116 @@ describe('a resubmit is answered as held', () => {
     expect(sentBytes).toBe(pooledBytes);
     expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
+
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state": the signatures ride outside the id preimage
+  // (TYPES_INTERFACE → Layout — UtxoTransaction), so a resubmit whose
+  // signature bytes differ shares the pooled entry's id, and the publish
+  // reads the pooled bytes.
+  it('POST /usernames/:name/burn: other signature bytes, one id', async () => {
+    const burner2 = makeKeys();
+    const burner2Karma = seedKarma(burner2.pub, 100n);
+    const burner2UsernameBox = seedUsernameBox(burner2.pub, 'HeldBurnTwo');
+    putUsername({ nameLower: 'heldburntwo', name: 'HeldBurnTwo', owner: burner2.hex, boxId: burner2UsernameBox.id!, claimedAtBlock: 1 });
+    putIdentityRecord(burner2.pub, {
+      lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+
+    const tx: UtxoTransaction = {
+      inputs: [burner2Karma.id!, burner2UsernameBox.id!],
+      outputs: [
+        { boxType: 'karma', value: burner2Karma.value - USERNAME_BURN_PRICE, createdAtBlock: 1, owner: burner2.pub } as any,
+        { boxType: 'karma_price', value: USERNAME_BURN_PRICE, createdAtBlock: 1 } as any,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, burner2.priv, burner2.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await post(heldApp, '/usernames/HeldBurnTwo/burn', { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: getCurrentHeight() + 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const otherSig = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) otherSig[i] = i + 1;
+    const otherTxJson = {
+      ...txJson,
+      signatures: { [burner2.hex]: Buffer.from(otherSig).toString('hex') },
+    };
+
+    const publishesBefore = broadcastTx.mock.calls.length;
+    const r2 = await post(heldApp, '/usernames/HeldBurnTwo/burn', { tx: otherTxJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.body).toEqual(r1.body);
+
+    const calls = broadcastTx.mock.calls;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    const requestTx: UtxoTransaction = { ...tx, signatures: { [burner2.hex]: otherSig } };
+    const requestBytes = Buffer.from(encodeTx(requestTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(sentBytes).not.toBe(requestBytes);
+  });
+
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state": the signatures ride outside the id preimage
+  // (TYPES_INTERFACE → Layout — UtxoTransaction), so a resubmit whose
+  // signature bytes differ shares the pooled entry's id, and the publish
+  // reads the pooled bytes.
+  it('POST /usernames: other signature bytes, one id', async () => {
+    const claimant2 = makeKeys();
+    const claimant2Karma = seedKarma(claimant2.pub, 100n);
+    putIdentityRecord(claimant2.pub, {
+      lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+
+    const tx: UtxoTransaction = {
+      inputs: [claimant2Karma.id!],
+      outputs: [
+        { boxType: 'karma', value: claimant2Karma.value, createdAtBlock: 1, owner: claimant2.pub } as any,
+        { boxType: 'username', value: 0n as 0n, createdAtBlock: 1, owner: claimant2.pub, name: Buffer.from('HeldClaimTwo', 'utf8') } as any,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, claimant2.priv, claimant2.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await post(heldApp, '/usernames', { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: getCurrentHeight() + 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const otherSig = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) otherSig[i] = i + 1;
+    const otherTxJson = {
+      ...txJson,
+      signatures: { [claimant2.hex]: Buffer.from(otherSig).toString('hex') },
+    };
+
+    const publishesBefore = broadcastTx.mock.calls.length;
+    const r2 = await post(heldApp, '/usernames', { tx: otherTxJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.body).toEqual(r1.body);
+
+    const calls = broadcastTx.mock.calls;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    const claimRequestTx: UtxoTransaction = { ...tx, signatures: { [claimant2.hex]: otherSig } };
+    const claimRequestBytes = Buffer.from(encodeTx(claimRequestTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(sentBytes).not.toBe(claimRequestBytes);
+  });
 });

@@ -1001,4 +1001,136 @@ describe('a resubmit is answered as held', () => {
     expect(sentBytes).toBe(pooledBytes);
     expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
+
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state": the signatures ride outside the id preimage
+  // (TYPES_INTERFACE → Layout — UtxoTransaction), so a resubmit whose
+  // signature bytes differ shares the pooled entry's id, and the publish
+  // reads the pooled bytes.
+  it('POST /vouches: other signature bytes, one id', async () => {
+    const voucher2 = makeKeys();
+    const target2 = makeKeys();
+    putIdentityRecord(voucher2.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    putIdentityRecord(target2.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    const karmaBox = seedProvenance<KarmaBox>({
+      boxType: 'karma', value: VOUCH_MIN_BALANCE + VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0, owner: voucher2.pub,
+    }, 1, 20001);
+    insertBox(karmaBox);
+
+    const change: CandidateOf<KarmaBox> = {
+      boxType: 'karma',
+      value: karmaBox.value - VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
+      owner: voucher2.pub,
+    };
+    const vouchOut: CandidateOf<VouchBox> = {
+      boxType: 'vouch',
+      value: VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
+      voucherId: voucher2.pub,
+      targetId: target2.pub,
+    };
+    const tx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [change, vouchOut],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, voucher2.priv, voucher2.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await send('POST', '/', { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: getCurrentHeight() + 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const otherSig = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) otherSig[i] = i + 1;
+    const otherTxJson = {
+      ...txJson,
+      signatures: { [voucher2.hex]: Buffer.from(otherSig).toString('hex') },
+    };
+
+    const publishesBefore = broadcastTx.mock.calls.length;
+    const r2 = await send('POST', '/', { tx: otherTxJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+
+    const calls = broadcastTx.mock.calls;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    const requestTx: UtxoTransaction = { ...tx, signatures: { [voucher2.hex]: otherSig } };
+    const requestBytes = Buffer.from(encodeTx(requestTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(sentBytes).not.toBe(requestBytes);
+  });
+
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state": the signatures ride outside the id preimage
+  // (TYPES_INTERFACE → Layout — UtxoTransaction), so a resubmit whose
+  // signature bytes differ shares the pooled entry's id, and the publish
+  // reads the pooled bytes.
+  it('DELETE /vouches/:targetId: other signature bytes, one id', async () => {
+    const unTarget2 = makeKeys();
+    const vouchBox2 = seedProvenance<VouchBox>({
+      boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: 0,
+      voucherId: heldVoucher.pub, targetId: unTarget2.pub,
+    }, 1, 20002);
+    insertBox(vouchBox2);
+
+    const tx: UtxoTransaction = {
+      inputs: [vouchBox2.id!],
+      outputs: [{
+        boxType: 'vouch_escrow',
+        value: vouchBox2.value,
+        createdAtBlock: 0,
+        owner: heldVoucher.pub,
+        releaseAtBlock: 2,
+      } as unknown as CandidateOf<VouchBox>],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, heldVoucher.priv, heldVoucher.hex);
+    const txJson = txToJson(tx);
+
+    const r1 = await send('DELETE', `/${Buffer.from(unTarget2.pub).toString('hex')}`, { tx: txJson });
+    expect(r1.status, JSON.stringify(r1.data)).toBe(200);
+
+    const block = await makeApplicableBlock({ height: getCurrentHeight() + 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const otherSig = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) otherSig[i] = i + 1;
+    const otherTxJson = {
+      ...txJson,
+      signatures: { [heldVoucher.hex]: Buffer.from(otherSig).toString('hex') },
+    };
+
+    const publishesBefore = broadcastTx.mock.calls.length;
+    const r2 = await send('DELETE', `/${Buffer.from(unTarget2.pub).toString('hex')}`, { tx: otherTxJson });
+    expect(r2.status).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+
+    const calls = broadcastTx.mock.calls;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    const unRequestTx: UtxoTransaction = { ...tx, signatures: { [heldVoucher.hex]: otherSig } };
+    const unRequestBytes = Buffer.from(encodeTx(unRequestTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(sentBytes).not.toBe(unRequestBytes);
+  });
 });

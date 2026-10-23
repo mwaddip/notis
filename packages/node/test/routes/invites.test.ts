@@ -526,4 +526,83 @@ describe('a resubmit is answered as held', () => {
     expect(sentBytes).toBe(pooledBytes);
     expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
+
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state": the signatures ride outside the id preimage
+  // (TYPES_INTERFACE → Layout — UtxoTransaction), so a resubmit whose
+  // signature bytes differ shares the pooled entry's id, and the publish
+  // reads the pooled bytes.
+  it('other signature bytes, one id', async () => {
+    const freshInviter = generateKeyPair();
+    const freshInviterId = freshInviter.publicKey;
+    const freshInviterHex = Buffer.from(freshInviterId).toString('hex');
+    const freshInviterPriv = createPrivateKey({
+      key: Buffer.from(freshInviter.secretKey),
+      format: 'der',
+      type: 'pkcs8',
+    });
+    storePutIdentityRecord(freshInviterId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    const freshKarma = seedProvenance<KarmaBox>({
+      boxType: 'karma',
+      value: 100n,
+      createdAtBlock: 0,
+      owner: freshInviterId,
+    }, 1, 500);
+    storeInsertBox(freshKarma);
+
+    const invitee = generateKeyPair().publicKey;
+    const newKarma: CandidateOf<KarmaBox> = {
+      boxType: 'karma',
+      value: 100n - FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
+      owner: freshInviterId,
+    };
+    const bondBox: CandidateOf<BondBox> = {
+      boxType: 'bond',
+      value: FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
+      inviterId: freshInviterId,
+      inviteePublicKey: invitee,
+    };
+    const tx: UtxoTransaction = {
+      inputs: [freshKarma.id!],
+      outputs: [newKarma, bondBox],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, freshInviterPriv, freshInviterHex);
+    const txJson = txToJson(tx);
+
+    const r1 = await send(txJson);
+    expect(r1.status, JSON.stringify(r1.data)).toBe(201);
+
+    const block = await makeApplicableBlock({ height: getCurrentHeight() + 1 });
+    expect(await applyBlockThroughIntake(block)).toBe(true);
+
+    const otherSig = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) otherSig[i] = i + 1;
+    const otherTxJson = {
+      ...txJson,
+      signatures: { [freshInviterHex]: Buffer.from(otherSig).toString('hex') },
+    };
+
+    const publishesBefore = broadcastTx.mock.calls.length;
+    const r2 = await send(otherTxJson);
+    expect(r2.status).toBe(r1.status);
+    expect(r2.data).toEqual(r1.data);
+
+    const calls = broadcastTx.mock.calls;
+    expect(calls.length).toBe(publishesBefore + 1);
+    const sentTx = calls[publishesBefore]![0] as UtxoTransaction;
+    const pooledBytes = Buffer.from(encodeTx(tx)).toString('hex');
+    const sentBytes = Buffer.from(encodeTx(sentTx)).toString('hex');
+    const requestTx: UtxoTransaction = { ...tx, signatures: { [freshInviterHex]: otherSig } };
+    const requestBytes = Buffer.from(encodeTx(requestTx)).toString('hex');
+    expect(sentBytes).toBe(pooledBytes);
+    expect(sentBytes).not.toBe(requestBytes);
+  });
 });
