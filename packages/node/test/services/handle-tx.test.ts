@@ -124,7 +124,7 @@ describe('the relay handler takes a policy refusal as an answer', () => {
   // before anything reads state."
   // NODE_INTERFACE → Relay handlers (mempool-based)
   // ---------------------------------------------------------------------------
-  it.fails('a pooled transaction relayed again is answered as held, logs nothing, pool unchanged', async () => {
+  it('a pooled transaction relayed again is answered as held, logs nothing, pool unchanged', async () => {
     const { sender, box } = await storeWithCredit();
     const tx = makeCreditTx(sender, [box], 1_000n);
 

@@ -21,6 +21,7 @@ import {
   getUsername,
   getUsernameByOwner,
 } from '../store/index.js';
+import { getHeldEntry } from '../store/mempool.js';
 import { admitTx } from './admit-tx.js';
 import { admissionHeld, admissionOwed, relayGetOwnKarmaBoxIds } from './karma-admission.js';
 import { ClientError } from './client-error.js';
@@ -61,6 +62,14 @@ export function handleRelayedTx(
   // → The overlay). `true` exactly when the signature is the map's own entry
   // for that key and the message is this transaction's id.
   const txIdHex = computeTxId(tx);
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state". The pool's one point read by id leads
+  // the relay handler's work; a standing entry ends the path with `false`
+  // and no log line (NODE_INTERFACE → Service Layer Architecture →
+  // "A transaction the pool already holds is answered as held").
+  if (getHeldEntry(txIdHex) !== null) {
+    return false;
+  }
   const relayVerifySignature = (
     signature: Uint8Array,
     message: Uint8Array,

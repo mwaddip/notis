@@ -202,6 +202,7 @@ async function buildPostDeps(engine: UtxoEngineDeps, getCurrentHeight: () => num
     getCurrentHeight,
     protocolVersionSchedule: engine.protocolVersionSchedule,
     admitTx: admit.admitTx,
+    getHeldEntry: store.getHeldEntry,
     validateTx: (tx, h) => consensus.validateTx(engine, tx, h),
     getBox: engine.getBox,
     runInTransaction: engine.runInTransaction,

@@ -133,6 +133,7 @@ async function request(
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       getUsername: () => null,
       admitTx: insertUtxoTx,
+      getHeldEntry,
       runInTransaction: (fn: () => void) => db.transaction(fn)(),
       validateTx: (tx: UtxoTransaction, height: number) => {
         return validateTx(
@@ -314,6 +315,7 @@ describe('posts routes', () => {
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }] as const,
       getUsername: () => null,
       admitTx: insertUtxoTx,
+      getHeldEntry,
       runInTransaction: (fn: () => void) => fn(),
       validateTx: (): never => { throw new PendingSpendConflictError(boxId); },
       getBox: () => null,
@@ -2061,6 +2063,7 @@ describe('a resubmit is answered as held', () => {
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       getUsername: () => null,
       admitTx: admitTxReal,
+      getHeldEntry,
       runInTransaction: (fn: () => void) => (db.transaction(fn) as () => void)(),
       validateTx: (tx: UtxoTransaction, height: number) => validateTx(engineDeps, tx, height),
       getBox: getBoxWithPending,
@@ -2176,7 +2179,7 @@ describe('a resubmit is answered as held', () => {
     rmSync(heldDir, { recursive: true, force: true });
   });
 
-  it.fails('POST /posts', async () => {
+  it('POST /posts', async () => {
     // Plenty of karma; the arm pins the resubmit held answer alone.
     const { author, karma } = await freshAuthorWithKarma(POST_PRICE_THREAD * 4n);
     const content = 'held-arm post body';
@@ -2208,7 +2211,7 @@ describe('a resubmit is answered as held', () => {
     expect(sentContent).toBe(content);
   });
 
-  it.fails('the owner at the limit', async () => {
+  it('the owner at the limit', async () => {
     // The post rule reads `held - owed >= POST_PRICE_THREAD`. Owner karma
     // covers exactly one post: the resubmit's refusal under admission's
     // `held` reader is the karma shortfall the fix will remove.
@@ -2226,7 +2229,7 @@ describe('a resubmit is answered as held', () => {
     expect(r2.data).toEqual(r1.data);
   });
 
-  it.fails('a resubmitted post emits none of the three post events', async () => {
+  it('a resubmitted post emits none of the three post events', async () => {
     const { author, karma } = await freshAuthorWithKarma(POST_PRICE_THREAD * 4n);
     const content = 'held-arm journal-silence body';
     const { txJson } = buildPostTx(author, karma, content);

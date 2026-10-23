@@ -53,6 +53,7 @@ import {
   pendingKarmaSpend,
   getKarmaValue as storeKarmaValue,
   getPost as storeGetPost,
+  getHeldEntry,
 } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
 import { createInvite } from '../../src/services/invites.js';
@@ -346,6 +347,7 @@ function postServiceDeps(engine: UtxoEngineDeps, getCurrentHeight: () => number)
     getCurrentHeight,
     protocolVersionSchedule: engine.protocolVersionSchedule,
     admitTx,
+    getHeldEntry,
     validateTx: (tx, h) => validateTx(engine, tx, h),
     getBox: engine.getBox,
     runInTransaction: engine.runInTransaction,
