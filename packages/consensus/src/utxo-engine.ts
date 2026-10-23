@@ -239,9 +239,11 @@ export interface UtxoEngineDeps {
   /**
    * The check a required signer's signature answers to, the one parameter the
    * two builds set apart (CONSENSUS_INTERFACE → The overlay): `applyBlock`'s
-   * answers from the set its body check verified; absent — admission's build —
-   * authorization calls `verifyEd25519`. Who must sign, and the refusal of a map
-   * key no input requires, are `validateTx`'s either way.
+   * answers from the set its body check verified; the node's admission passes its
+   * signature memo on the HTTP routes and the check against the map Stage 1
+   * verified on its relay; absent, authorization calls `verifyEd25519`. Who must
+   * sign, and the refusal of a map key no input requires, are `validateTx`'s
+   * either way.
    */
   verifySignature?: (signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array) => boolean;
 }

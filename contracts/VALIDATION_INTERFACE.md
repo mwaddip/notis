@@ -501,17 +501,22 @@ and the **cofactored** equation `[8][S]B = [8]R + [8][k]A`, `k = SHA-512(R ‖ A
 but the key's holder can make a second signature that verifies for a message; the holder can, under
 another nonce, as often as it likes. **`verifyEd25519Batch` is the same rule over many
 entries** (→ verifyEd25519Batch). The sites: `verifyValidatorSignature` below calls `verifyEd25519`;
-`validateTx`'s authorization check calls it, or answers from the set a caller's batch verified
-(`CONSENSUS_INTERFACE → The overlay`); `applyBlock` checks every signature a block's body carries
-with one `verifyEd25519Batch` (`CONSENSUS_INTERFACE → Applying a block`); `verifyTxSignatures` checks one
-transaction's map with one (→ verifyTxSignatures). No site builds a key object
-or asks a runtime's verifier. **The rule is this repo's, stated here and implemented once**, so every
+`validateTx`'s authorization check calls it, or answers from the set a caller's batch verified or from its caller's
+own answer for it (`CONSENSUS_INTERFACE → The overlay`); `applyBlock` checks every signature a block's body carries
+with one `verifyEd25519Batch`, or its caller's answer for that batch (`CONSENSUS_INTERFACE → Applying a block`);
+`verifyTxSignatures` checks one transaction's map with one (→ verifyTxSignatures). No site builds a key object or asks
+a runtime's verifier. **The rule is this repo's, stated here and implemented once**, so every
 runtime that runs it — a node, a browser — accepts the same set, and a change to it is a consensus
 change, never a dependency bump.
 
 **It is total.** A signature that is not 64 bytes, a key that is not 32, or a key that does not
 decode to a point answers `false`, never a throw — the verifiers above it promise no-panic (→
 Postconditions).
+
+**A remembered acceptance is the rule's answer.** The rule reads the signature, the message and the key, and nothing
+else — no state, no height — so a caller that keeps the triples it accepted and answers them again without the
+arithmetic answers exactly what the rule does. The node keeps them (`NODE_INTERFACE → The signature memo`); this
+package keeps nothing, and its checks run the arithmetic every time they are called.
 
 **Its tests:** the RFC 8032 test vectors verify; the two malleation forms measured under the
 runtime's verifier on 2026-08-06 (Node 22.19.0 / OpenSSL 3.0.17) — a scalar raised by the group
@@ -567,13 +572,18 @@ computed apart from the implementation.
 ### verifyTxSignatures
 
 ```
-verifyTxSignatures(tx: UtxoTransaction): boolean
+verifyTxSignatures(
+  tx: UtxoTransaction,
+  verifyBatch?: (entries: ReadonlyArray<Ed25519BatchEntry>) => boolean,
+): boolean
 ```
 
-**Every entry of a transaction's signature map verifies over its id.** One `verifyEd25519Batch` over the
-map's entries in its decoded order — each the entry's signature, the 32 bytes of `computeTxId(tx)` and
-the entry's key — answering what the batch answers (→ verifyEd25519Batch). The empty map answers
-`true`.
+**Every entry of a transaction's signature map verifies over its id.** One batch over the map's entries
+in its decoded order — each the entry's signature, the 32 bytes of `computeTxId(tx)` and the entry's
+key — answering what the batch answers (→ verifyEd25519Batch). The batch is `verifyBatch` when the
+caller hands one, which must answer what `verifyEd25519Batch` answers — the node's answers from its
+signature memo (`NODE_INTERFACE → The signature memo`) — and `verifyEd25519Batch` when it does not.
+The entries are this function's to build, whoever checks them. The empty map answers `true`.
 
 **Stateless, so not authorization.** It asks nothing of the inputs: who must sign is the boxes', which
 `validateTx` reads from state. What it holds is the half of authorization no state can change: a valid
@@ -584,7 +594,7 @@ it, behind `verifyTxStructure` (`NET_INTERFACE → Stage 1 → "A transaction's 
 Stage 1"`).
 
 **Total.** `false`, never a throw, on a map key that is not 64 lowercase hex or a transaction whose id
-cannot be computed — whatever ran before it.
+cannot be computed — whatever ran before it — and a caller's `verifyBatch` is total as `verifyEd25519Batch` is.
 
 ### verifyValidatorSignature
 

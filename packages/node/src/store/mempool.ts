@@ -285,46 +285,60 @@ function cheapestCreditEntry(
 }
 
 /**
- * Make room for an arriving entry, or refuse it.
+ * The verdict on an arrival at a class — the one answer `assertPoolAdmits`'s
+ * read and `insertUtxoTx`'s act share, so the two routes answer alike
+ * (MEMPOOL_INTERFACE → assertPoolAdmits → "One statement of each gate").
  *
  * Karma-side rejects at its cap: nothing in that class bids, so there is no
  * basis on which one entry deserves another's slot. The credit class compares
  * the arrival against its cheapest resident and displaces it when the arrival
  * pays more per byte — cross-multiplied, because THIS comparison decides
  * whether a transaction is dropped and the float above is only an ordering.
- *
- * Checked by every insert path — an unbounded pool is a disk-DoS lever
- * (audit M-8).
  */
-function assertCapacity(
+type CapacityVerdict =
+  | { kind: 'room' }
+  | { kind: 'refuse'; poolClass: PoolClass; cap: number }
+  | { kind: 'displace'; closure: UnconfirmedClosure };
+
+/**
+ * The pool's capacity verdict for the arriving entry — a pure read, with no
+ * mutation (MEMPOOL_INTERFACE → assertPoolAdmits →
+ * "The pool's own refusals, asked before the cost gate"). The cheapest
+ * resident's closure is read once and handed to the caller: a displacement
+ * the caller takes acts on this closure directly, so the walk is not
+ * repeated inside the insert's transaction.
+ */
+function readCapacityVerdict(
   db: ReturnType<typeof getDb>,
   poolClass: PoolClass,
   fee: bigint | null,
   bytes: number,
   arrivalInputs: readonly string[],
-): void {
+): CapacityVerdict {
   const caps = classCaps();
 
   if (poolClass === 'karma' || fee === null) {
-    if (classCount(db, 'karma') >= caps.karma) throw new MempoolFullError(caps.karma, 'karma');
-    return;
+    if (classCount(db, 'karma') >= caps.karma) {
+      return { kind: 'refuse', poolClass: 'karma', cap: caps.karma };
+    }
+    return { kind: 'room' };
   }
 
-  if (classCount(db, 'credit') < caps.credit) return;
+  if (classCount(db, 'credit') < caps.credit) return { kind: 'room' };
 
   const cheapest = cheapestCreditEntry(db);
   // A full class with nothing rankable in it — every resident predates the
   // columns, or a zero byte cost no encoder produces. Refuse rather than evict
   // blind: the arrival has not been shown to be worth more than anything.
-  if (!cheapest) throw new MempoolFullError(caps.credit, 'credit');
+  if (!cheapest) return { kind: 'refuse', poolClass: 'credit', cap: caps.credit };
 
   // `fee / bytes > cheapest.fee / cheapest.bytes`, without the division.
   const arriving = fee * BigInt(cheapest.bytes);
   const resident = cheapest.fee * BigInt(bytes);
-  if (arriving <= resident) throw new MempoolFullError(caps.credit, 'credit');
+  if (arriving <= resident) return { kind: 'refuse', poolClass: 'credit', cap: caps.credit };
 
-  // The cheapest resident's closure, read once beside the delete that
-  // follows — never a second walk. An arrival whose input is in the closure's
+  // The cheapest resident's closure, read once beside the delete the caller
+  // runs — never a second walk. An arrival whose input is in the closure's
   // output set is refused: admitting it would pool an entry whose input no
   // longer exists once the resident and its dependents leave. The displaced
   // resident takes its dependents through `removeUnconfirmed`'s own path
@@ -332,10 +346,37 @@ function assertCapacity(
   const closure = readClosureInner(db, [cheapest.rowid]);
   for (const inputId of arrivalInputs) {
     if (closure.outputBoxIds.has(inputId)) {
-      throw new MempoolFullError(caps.credit, 'credit');
+      return { kind: 'refuse', poolClass: 'credit', cap: caps.credit };
     }
   }
-  deleteFromClosureInner(db, closure);
+  return { kind: 'displace', closure };
+}
+
+/**
+ * **The pool's own refusals, asked before the cost gate**
+ * (MEMPOOL_INTERFACE → assertPoolAdmits). Throws what `insertUtxoTx`'s
+ * conflict and capacity gates would throw for `tx` at that moment —
+ * `PendingSpendConflictError` for an input a pooled entry spends, then
+ * `MempoolFullError` for a full class the arrival cannot enter — and writes
+ * nothing: a displacement it finds open is the insert's to make.
+ *
+ * `admitTx` runs it after the correctness gates and the floor and before the
+ * cost gate, so a transaction the pool would refuse never costs the
+ * speculative block (NODE_INTERFACE → Service Layer Architecture → "A write
+ * request runs in one order, cheapest first").
+ */
+export function assertPoolAdmits(tx: UtxoTransaction): void {
+  const db = getDb();
+  const inputs = tx.inputs ?? [];
+  const conflict = hasPendingSpend(inputs);
+  if (conflict !== null) throw new PendingSpendConflictError(conflict);
+  const encoded = encodeTx(tx);
+  const fee = bidOf(tx);
+  const bytes = entryByteCost(encoded);
+  const verdict = readCapacityVerdict(db, fee === null ? 'karma' : 'credit', fee, bytes, inputs);
+  if (verdict.kind === 'refuse') {
+    throw new MempoolFullError(verdict.cap, verdict.poolClass);
+  }
 }
 
 export interface GateMetadata {
@@ -527,7 +568,9 @@ export function insertUtxoTx(
   // the eviction a full credit class makes, and the entry's row plus its
   // input and output rows commit together or not at all
   // (MEMPOOL_INTERFACE → insertUtxoTx → "The conflict gate runs before the
-  // capacity gate.", → "One SQLite transaction.").
+  // capacity gate.", → "One SQLite transaction."). The two checks run
+  // through the same code `assertPoolAdmits` reads
+  // (MEMPOOL_INTERFACE → assertPoolAdmits → "One statement of each gate").
   return db.transaction(() => {
     const conflict = hasPendingSpend(inputs);
     if (conflict !== null) throw new PendingSpendConflictError(conflict);
@@ -537,7 +580,13 @@ export function insertUtxoTx(
     // encoding — the budget is the resource being rationed.
     const fee = bidOf(tx);
     const bytes = entryByteCost(encoded);
-    assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes, inputs);
+    const verdict = readCapacityVerdict(db, fee === null ? 'karma' : 'credit', fee, bytes, inputs);
+    if (verdict.kind === 'refuse') {
+      throw new MempoolFullError(verdict.cap, verdict.poolClass);
+    }
+    if (verdict.kind === 'displace') {
+      deleteFromClosureInner(db, verdict.closure);
+    }
 
     const result = prepared(db, `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
                             like_target, like_liker, invite_inviter, invite_invitee,

@@ -28,6 +28,7 @@ import { isLivePost, type StoredPost } from './store/posts.js';
 import { getDb } from './store/db.js';
 import { validateTx } from '@dagsocial/consensus';
 import { admitTx } from './services/admit-tx.js';
+import { signatureMemo } from './services/signature-memo.js';
 import { createAdminRouter, type AdminDeps } from './routes/admin.js';
 import { noteHttpRequest } from './metrics.js';
 import { registerProofEndpoint, registerRangeEndpoint } from './state/avl-endpoint.js';
@@ -308,6 +309,9 @@ export function createApp(config: Config): express.Express {
     getKarmaValue: admissionHeld,
     getKarmaOwed: admissionOwed(decayConfig()),
     getOwnKarmaBoxIds: admissionGetOwnKarmaBoxIds,
+    // The signature memo answers an entry it holds without the rule's
+    // arithmetic (NODE_INTERFACE → The signature memo).
+    verifySignature: signatureMemo.verify,
     getIdentityRecord: store.getIdentityRecord,
     hasActiveVouchEscrow: store.hasActiveVouchEscrow,
     vouchCooldownBlocks: config.vouchCooldownBlocks,

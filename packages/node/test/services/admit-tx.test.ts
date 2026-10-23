@@ -12,6 +12,7 @@ import { createHash, generateKeyPairSync } from 'crypto';
 import {
   boxRecordBytes,
   computeBoxId,
+  computeTxId,
   PROTOCOL_VERSION,
   STORAGE_RENT_PER_BYTE,
   KARMA_STALE_THRESHOLD_BLOCKS,
@@ -384,12 +385,21 @@ describe('the cost gate', () => {
     const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
     expect(applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [tx] }))).toBe(true);
 
-    // Under a budget the gate refuses it by, the revert re-inserts it — the gate
-    // is above the store, where re-insertion never reaches.
+    // Under a budget the gate refuses it by, the revert re-inserts it — the
+    // seams above the store, where re-insertion never reaches, refuse the
+    // same transaction twice over: first through the pool's conflict gate
+    // (MEMPOOL_INTERFACE → assertPoolAdmits), since the re-inserted entry
+    // spends the same input the arrival names; and once that pooled entry
+    // is out of the way through `removeUtxoTxEntry`, through the cost gate
+    // at the lowered budget (MEMPOOL_INTERFACE → The cost gate).
     budget.set(cost - 1);
     const { reorg } = await import('../../src/services/fork-resolution.js');
     expect(() => reorg(0, [])).not.toThrow();
     expect(mem.getPendingEntries(10)).toHaveLength(1);
+    expect(() => admit.admitTx(tx, 1000)).toThrow(mem.PendingSpendConflictError);
+
+    expect(mem.removeUtxoTxEntry(computeTxId(tx))).toBe(1);
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
     expect(() => admit.admitTx(tx, 1000)).toThrow(`cost ${cost} over the budget ${cost - 1}`);
   });
 });

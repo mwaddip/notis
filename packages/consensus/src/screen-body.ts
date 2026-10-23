@@ -32,8 +32,9 @@ export interface BodyScreen {
  * withdrawals — refuses a failing transaction alone with the position and the reason `applyBlock`
  * would give, applies nothing of it, judges the later ones without it, and repeats the passes over
  * the survivors until a pass refuses nothing. Each signature is checked alone through
- * `verifyEd25519`, a failing entry refusing its transaction with the batch's reason
- * (CONSENSUS_INTERFACE → Applying a block). The settlement, the grants, the counters, the
+ * `ctx.signatureChecks.verify` when the caller carries it, `verifyEd25519` when it does not
+ * (CONSENSUS_INTERFACE → ApplyContext); a failing entry refuses its transaction with the batch's
+ * reason (CONSENSUS_INTERFACE → Applying a block). The settlement, the grants, the counters, the
  * membership pass, the decay clocks and the block's cost are not screened.
  */
 export function screenBody(view: StateView, block: OrderingBlock, ctx: ApplyContext): BodyScreen {
@@ -100,8 +101,11 @@ function runPass(
   for (const { postId, post } of blockPosts) state.insertBlockTopology(postId, post.author, height);
 
   // Per-entry decode, over-signed and signatures — each signature checked
-  // alone through `verifyEd25519`. A failure refuses that index with the
-  // reason `applyBlock` would give.
+  // alone through `ctx.signatureChecks.verify` on its object,
+  // `verifyEd25519` when the context carries no pair
+  // (CONSENSUS_INTERFACE → ApplyContext). A failure refuses that index
+  // with the reason `applyBlock` would give.
+  const checks = ctx.signatureChecks;
   interface Decoded extends QueuedTx { index: number; }
   const decoded: Decoded[] = [];
   const verified = new Set<string>();
@@ -123,7 +127,9 @@ function runPass(
     const message = hexToBytes(d.item.txId);
     let allVerify = true;
     for (const [keyHex, signature] of Object.entries(d.item.tx.signatures)) {
-      if (!verifyEd25519(signature, message, hexToBytes(keyHex))) {
+      const key = hexToBytes(keyHex);
+      const ok = checks ? checks.verify(signature, message, key) : verifyEd25519(signature, message, key);
+      if (!ok) {
         allVerify = false;
         break;
       }

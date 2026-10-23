@@ -14,6 +14,7 @@ import type {
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
+import type { Ed25519BatchEntry } from '@dagsocial/validation';
 import type { UsernameRow } from './utxo-engine.js';
 
 /** A post's standing in the DAG: a row that is live, a row that is withdrawn, or no row. */
@@ -81,9 +82,21 @@ export interface StateView {
 }
 
 /**
- * The network profile's numbers the rules read, and nothing else
- * (CONSENSUS_INTERFACE → ApplyContext). A protocol constant the network does
- * not set is imported from `@dagsocial/types`, never carried here.
+ * The signature checks the caller hands the rules, each answering what
+ * `validation`'s rule does (CONSENSUS_INTERFACE → ApplyContext).
+ * `verify` is `screenBody`'s per-entry check and `verifyBatch` is
+ * `applyBlock`'s one call over the body's entries.
+ */
+export interface SignatureChecks {
+  verify(signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean;
+  verifyBatch(entries: ReadonlyArray<Ed25519BatchEntry>): boolean;
+}
+
+/**
+ * The network profile's numbers the rules read, and the signature checks when
+ * its caller has its own (CONSENSUS_INTERFACE → ApplyContext). A protocol
+ * constant the network does not set is imported from `@dagsocial/types`,
+ * never carried here.
  */
 export interface ApplyContext {
   protocolVersionSchedule: readonly ProtocolEra[];
@@ -98,4 +111,12 @@ export interface ApplyContext {
   creditFixedRateBlocks: number;
   creditEpochBlocks: number;
   creditMinerRewardDelay: number;
+  /**
+   * The caller's signature checks, each answering what `validation`'s does
+   * (CONSENSUS_INTERFACE → ApplyContext). `applyBlock` makes its one batch
+   * call through `signatureChecks.verifyBatch` and `screenBody`'s per-entry
+   * check goes through `signatureChecks.verify`; absent, `validation`'s
+   * `verifyEd25519Batch` and `verifyEd25519` answer.
+   */
+  signatureChecks?: SignatureChecks;
 }

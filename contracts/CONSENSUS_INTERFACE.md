@@ -19,8 +19,9 @@ it from its caller, and a rule that needs state reads it through the interface i
 values are constants, the two `TextDecoder`s its username reads decode through (a decode without `stream` leaves no
 state behind), and the two memos of `settlement.ts`' sizing probes, each a pure function of the era it is keyed by.
 Every signature check it makes is `validation`'s — `verifyEd25519` one transaction at a time, `verifyEd25519Batch`
-for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browser runs it as it is written
-(`ARCHITECTURE → Package boundaries`), held there by two checks (→ Tests).
+for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`) — or its caller's answer for that same check, handed
+in through `ApplyContext`'s signature checks (→ ApplyContext) and `UtxoEngineDeps.verifySignature` (→ The overlay). The
+browser runs it as it is written (`ARCHITECTURE → Package boundaries`), held there by two checks (→ Tests).
 
 ## What it holds
 
@@ -43,9 +44,9 @@ for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`). The browse
 | `block-cost` | `blockCost` · `checkBlockCost` (`BlockCost`) | this contract's `The block's cost` | none |
 
 Beside them the barrel exports the types a caller builds their arguments and reads their answers with — `StateView`,
-`ApplyContext`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`, `SettlementDeps`,
-`SettlementBody`, `DecayDeps`, `DecayPlan`, `EmbeddedTx`, `TreeSession`, `TreeLookup`, `TreeStateView`, `TreeWrite`,
-`HoldingKind`, `HoldingsPage`, and the two shapes the store shares (`StateView` below).
+`ApplyContext`, `SignatureChecks`, `ApplyResult`, `BlockEffects`, `HolderRecord`, `UtxoEngineDeps`, `UtxoResult`,
+`SettlementDeps`, `SettlementBody`, `DecayDeps`, `DecayPlan`, `EmbeddedTx`, `TreeSession`, `TreeLookup`,
+`TreeStateView`, `TreeWrite`, `HoldingKind`, `HoldingsPage`, and the two shapes the store shares (`StateView` below).
 **The export list is what the node's source, the light client's and the suites call, not a promise** — a helper
 nothing there calls leaves the barrel, and one a caller needs joins it with its caller.
 
@@ -77,7 +78,8 @@ block's cost): it is that record's place among them, ahead of the body's, that t
 **A block's signatures are checked together, before any transaction applies.** Once every declared id is proven,
 `applyBlock` gathers each entry of every embedded transaction's signature map — in body order, and within a
 transaction in its map's decoded order — as the signature, the transaction id's 32 bytes and the key, and makes one
-`verifyEd25519Batch` call (`VALIDATION_INTERFACE → verifyEd25519Batch`). `false` rejects the block: `Rejected block
+batch call: `ctx`'s batch check (→ ApplyContext), `verifyEd25519Batch` when it carries none
+(`VALIDATION_INTERFACE → verifyEd25519Batch`). `false` rejects the block: `Rejected block
 height=H: a signature in the body does not verify`. **No transaction may carry more signatures than inputs, and that
 is checked first:** each input requires at most one signer and a map key no input requires refuses its transaction, so
 a map with more entries than its transaction has inputs is refused before the batch runs — `Rejected block height=H:
@@ -113,18 +115,18 @@ screenBody(view: StateView, block: OrderingBlock, ctx: ApplyContext): BodyScreen
 BodyScreen = { refused: { index: number; reason: string }[] }
 ```
 
-**`screenBody` answers which of a body's user transactions apply, each against the state the ones before it leave.**
-It is the producer's question about a body `applyBlock` refused (`MINING_INTERFACE → Template and submit`), and it
-runs `applyBlock`'s own phases over one overlay of `view`: the block's posts and their topology rows, the pre-body
-captures, the user transactions in committed order and the withdrawals. **Where `applyBlock` would refuse the block
-for one transaction, `screenBody` refuses that transaction alone** — its position in `utxoTxIds` and the reason
-`applyBlock` would give — and nothing of it applies; the transactions after it are judged without it. **Each signature
-is checked alone**, `verifyEd25519` over its transaction's id (`VALIDATION_INTERFACE → Acceptance criterion`): a batch
-that fails names no transaction. **A pass that refuses a transaction runs again over the ones it kept**, because the
-posts and the captures are read from the whole body before its transactions apply, and a refused transaction's post
-and inputs no longer belong among them; the passes end at one that refuses nothing, and `refused` lists every
-transaction any pass refused, in body order. The settlement, last, is never screened, and neither are the grants, the
-counters, the membership pass, the decay clocks or the block's cost.
+**`screenBody` answers which of a body's user transactions apply, each against the state the ones before it leave.** It
+is the producer's question about a body `applyBlock` refused (`MINING_INTERFACE → Template and submit`), and it runs
+`applyBlock`'s own phases over one overlay of `view`: the block's posts and their topology rows, the pre-body captures,
+the user transactions in committed order and the withdrawals. **Where `applyBlock` would refuse the block for one
+transaction, `screenBody` refuses that transaction alone** — its position in `utxoTxIds` and the reason `applyBlock`
+would give — and nothing of it applies; the transactions after it are judged without it. **Each signature is checked
+alone** over its transaction's id — `ctx`'s single check (→ ApplyContext), `verifyEd25519` when it carries none
+(`VALIDATION_INTERFACE → Acceptance criterion`): a batch that fails names no transaction. **A pass that refuses a
+transaction runs again over the ones it kept**, because the posts and the captures are read from the whole body before
+its transactions apply, and a refused transaction's post and inputs no longer belong among them; the passes end at one
+that refuses nothing, and `refused` lists every transaction any pass refused, in body order. The settlement, last, is
+never screened, and neither are the grants, the counters, the membership pass, the decay clocks or the block's cost.
 
 **One implementation.** The phases are the code `applyBlock` runs — its decoding of one entry, the posts it lays and
 the withdrawals it finds, its owed capture, its loop and its withdrawal arm, called by both — and neither copies the
@@ -133,12 +135,20 @@ Deterministic, and a throw is not a verdict, as `applyBlock`'s.
 
 ## ApplyContext
 
-**The network profile's numbers the rules read, and nothing else:** `protocolVersionSchedule` · `vouchCooldownBlocks`
+**The network profile's numbers the rules read:** `protocolVersionSchedule` · `vouchCooldownBlocks`
 · `inviteBondMin` · `inviteBondMax` · `inviteProbationBlocks` · the decay configuration (`staleThresholdBlocks`,
 `decayIntervalBlocks`, `decayAmount`, `karmaMinimum`) · `storageRentPeriodBlocks` · `membershipBarMultiplier` ·
 `backerSupply` · `creditFixedRateBlocks` · `creditEpochBlocks` · `creditMinerRewardDelay`. A protocol constant the
 network does not set (`MAX_ESCROW_RETURNS_PER_BLOCK` and its kin) is imported from `@dagsocial/types`, not carried.
 The node builds it from its configuration (`applyContextFrom`).
+
+**And the signature checks, when its caller has its own:** `signatureChecks?: SignatureChecks`, `{ verify(signature,
+message, publicKey): boolean; verifyBatch(entries): boolean }` — the single check `screenBody` makes and the batch
+`applyBlock` makes (→ Applying a block; → Screening a body), `validation`'s `verifyEd25519` and `verifyEd25519Batch`
+when it is absent. **A caller's pair answers exactly what `validation`'s does** — a pair that answers otherwise is a
+fork. The node's answers from its signature memo, which remembers the triples `validation`'s rule accepted
+(`NODE_INTERFACE → The signature memo`), and `applyContextFrom` carries it on every block the node applies, speculates
+or screens.
 
 ## StateView
 
@@ -417,9 +427,10 @@ commits to its height, so no transaction id — and no box id derived from one �
 overlay, so `validateTx`, `applyTx`, `checkSettlement`, `deriveKarmaDecay` and `commitDecayClocks` run unchanged; the
 node builds `UtxoEngineDeps` over its store for admission, where `validateTx` is the pool's check, and runs no
 `applyTx` of its own. **`UtxoEngineDeps.verifySignature` is the one parameter the two builds set apart:**
-`applyBlock`'s answers from the set its body check verified (→ Applying a block); admission's is absent on the
-node's HTTP routes, where `validateTx` then calls `verifyEd25519` for each signer, and on its relay answers from
-the map net's Stage 1 verified (`NODE_INTERFACE → Relay handlers`). Who must sign, and the refusal of a map key no input
+`applyBlock`'s answers from the set its body check verified (→ Applying a block); admission's is the node's
+signature memo on its HTTP routes (`NODE_INTERFACE → The signature memo`), `verifyEd25519` for a signer the memo does
+not hold, and on its relay answers from the map net's Stage 1 verified (`NODE_INTERFACE → Relay handlers`); absent,
+`validateTx` calls `verifyEd25519` for each signer. Who must sign, and the refusal of a map key no input
 requires, are `validateTx`'s on both paths.
 
 ## BlockEffects

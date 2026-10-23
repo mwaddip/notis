@@ -93,7 +93,8 @@ The node serves no client (NODE_INTERFACE → The node serves no client).
   `createHash('blake2b512')` truncates to 32 bytes and answers the same bytes (`ARCHITECTURE → Cryptographic`).
 - **Signatures** — raw Ed25519 (64 bytes), verified by `@dagsocial/validation`'s one rule — `verifyEd25519`, or
   `verifyEd25519Batch` over a block's body inside `applyBlock` — strict RFC 8032 through `@noble/curves`
-  (`VALIDATION_INTERFACE → Acceptance criterion`).
+  (`VALIDATION_INTERFACE → Acceptance criterion`). A triple the rule accepted is remembered and answered again with no
+  arithmetic, at admission, net's Stage 1 and every block context (`NODE_INTERFACE → The signature memo`).
 - **On-chain time = block height**, never wall-clock.
 - **Single-transaction atomic writes** for any multi-table mutation.
 - **Secret keys never** appear in API responses or DTOs.

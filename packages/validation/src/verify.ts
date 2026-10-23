@@ -529,12 +529,17 @@ export function verifyEd25519(signature: Uint8Array, message: Uint8Array, public
 // ---------------------------------------------------------------------------
 
 /**
- * One `verifyEd25519Batch` over the transaction's signature map in its decoded
- * order: each entry carries the entry's signature, the 32 bytes of
- * `computeTxId(tx)` and the entry's key, and the function answers what the
- * batch answers (VALIDATION_INTERFACE → verifyTxSignatures). The empty map
- * reaches the batch's `n === 0 → true` branch after `computeTxId` has run
- * (VALIDATION_INTERFACE → verifyEd25519Batch).
+ * One batch over the transaction's signature map in its decoded order: each
+ * entry carries the entry's signature, the 32 bytes of `computeTxId(tx)` and
+ * the entry's key, and the function answers what the batch answers
+ * (VALIDATION_INTERFACE → verifyTxSignatures). The batch is `verifyBatch` when
+ * the caller hands one, `verifyEd25519Batch` when not; the entries are built
+ * here either way. The empty map reaches the batch after `computeTxId` has
+ * run, and a caller's batch answers `true` for no entries as
+ * `verifyEd25519Batch` does (VALIDATION_INTERFACE → verifyEd25519Batch).
+ *
+ * The caller's batch is not wrapped: it is total by the contract, so a throw
+ * from it surfaces to the caller.
  *
  * Stateless: no input box is read and no claim is made about who must sign —
  * that is `validateTx`'s half of authorization
@@ -552,7 +557,10 @@ export function verifyEd25519(signature: Uint8Array, message: Uint8Array, public
  * same sentinel `false`, as `verifyEd25519` and `verifyTxStructure` convert
  * theirs — not a swallowed error.
  */
-export function verifyTxSignatures(tx: UtxoTransaction): boolean {
+export function verifyTxSignatures(
+  tx: UtxoTransaction,
+  verifyBatch: (entries: ReadonlyArray<Ed25519BatchEntry>) => boolean = verifyEd25519Batch,
+): boolean {
   if (!isObject(tx)) return false;
   const map = (tx as Record<string, unknown>).signatures;
   if (!isObject(map) || Array.isArray(map)) return false;
@@ -571,7 +579,7 @@ export function verifyTxSignatures(tx: UtxoTransaction): boolean {
   for (const [key, value] of rawEntries) {
     entries.push({ signature: value as Uint8Array, message, publicKey: hexToBytes(key) });
   }
-  return verifyEd25519Batch(entries);
+  return verifyBatch(entries);
 }
 
 // ---------------------------------------------------------------------------

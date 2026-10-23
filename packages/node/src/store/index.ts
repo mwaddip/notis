@@ -112,6 +112,7 @@ export {
 
 export {
   insertUtxoTx,
+  assertPoolAdmits,
   getPendingEntries,
   iteratePendingEntries,
   followAppliedBlock,
