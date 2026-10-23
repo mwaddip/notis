@@ -403,7 +403,7 @@ describe("applyBlock answers through the context's signature checks", () => {
     vi.mocked(verifyEd25519Batch).mockClear();
   });
 
-  it.fails("the batch is the context's: `verifyBatch` receives every body entry, in body order and each map ascending", () => {
+  it("the batch is the context's: `verifyBatch` receives every body entry, in body order and each map ascending", () => {
     const singleCheck = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(() => true);
     const batchCheck = vi.fn<[ReadonlyArray<Ed25519BatchEntry>], boolean>(() => true);
     const before = view.digest();
@@ -423,7 +423,7 @@ describe("applyBlock answers through the context's signature checks", () => {
     ).toEqual([expectedEntries()]);
   });
 
-  it.fails("a `verifyBatch` answering false refuses the honest block with the body check's reason", () => {
+  it("a `verifyBatch` answering false refuses the honest block with the body check's reason", () => {
     const singleCheck = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(() => true);
     const batchCheck = vi.fn<[ReadonlyArray<Ed25519BatchEntry>], boolean>(() => false);
     // Control: the honest block applies under `ctx`.
@@ -436,7 +436,7 @@ describe("applyBlock answers through the context's signature checks", () => {
     expect(result).toEqual({ ok: false, reason: BODY_REASON });
   });
 
-  it.fails('a `verifyBatch` answering true accepts a block carrying one flipped signature byte', () => {
+  it('a `verifyBatch` answering true accepts a block carrying one flipped signature byte', () => {
     const key = hex(payerLow.userId);
     const bad = flipped(body[1]!.tx.signatures[key]!);
     const flippedBlock = withEntry(valid, 1, (tx) => {

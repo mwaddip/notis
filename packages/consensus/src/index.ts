@@ -32,7 +32,7 @@ export { applyBlock } from './apply-block.js';
 export type { ApplyResult, BlockEffects } from './apply-block.js';
 export { screenBody } from './screen-body.js';
 export type { BodyScreen } from './screen-body.js';
-export type { StateView, ApplyContext } from './state-view.js';
+export type { StateView, ApplyContext, SignatureChecks } from './state-view.js';
 // The record shapes are types', beside their codecs (TYPES_INTERFACE → Layout —
 // tree records).
 export type { NetworkRecord, HolderRecord } from '@dagsocial/types';

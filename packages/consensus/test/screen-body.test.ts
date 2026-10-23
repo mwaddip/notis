@@ -184,7 +184,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
   ): ApplyContext =>
     ({ ...ctx, signatureChecks: { verify, verifyBatch } }) as unknown as ApplyContext;
 
-  it.fails("the context's `verify` is called once per entry of each screened transaction, with (signature, transaction id bytes, key)", () => {
+  it("the context's `verify` is called once per entry of each screened transaction, with (signature, transaction id bytes, key)", () => {
     const view = genesis();
     const txs: Built[] = [
       threadTx(a, largest(view, a), 'first honest', 2),
@@ -208,7 +208,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     ).toEqual(expected);
   });
 
-  it.fails("a `verify` answering false for one transaction's key refuses that transaction alone at its index with the body check's reason", () => {
+  it("a `verify` answering false for one transaction's key refuses that transaction alone at its index with the body check's reason", () => {
     const view = genesis();
     const txs: Built[] = [
       threadTx(a, largest(view, a), 'first honest', 2),
@@ -229,7 +229,7 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     });
   });
 
-  it.fails("a `verify` answering true lets a flipped-signature body be refused nothing", () => {
+  it("a `verify` answering true lets a flipped-signature body be refused nothing", () => {
     const view = genesis();
     const txs: Built[] = [
       threadTx(a, largest(view, a), 'first honest', 2),

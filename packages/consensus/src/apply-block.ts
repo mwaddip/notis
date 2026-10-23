@@ -655,11 +655,13 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // Every signature the body carries, checked as one batch before any
   // transaction applies (CONSENSUS_INTERFACE → Applying a block → "A block's
   // signatures are checked together, before any transaction applies"). The
-  // pass's `validateTx` answers each signature from what the batch verified;
-  // a missing signature is not an entry, and the pass refuses it with its
-  // transaction's reason. The settlement is outside the queue and carries no
-  // signature (`checkSettlement` refuses one).
-  const verified = verifiedSignaturesOf(queue);
+  // batch is `ctx.signatureChecks.verifyBatch` when the caller carries it,
+  // `verifyEd25519Batch` when it does not (CONSENSUS_INTERFACE → ApplyContext).
+  // The pass's `validateTx` answers each signature from what the batch
+  // verified; a missing signature is not an entry, and the pass refuses it
+  // with its transaction's reason. The settlement is outside the queue and
+  // carries no signature (`checkSettlement` refuses one).
+  const verified = verifiedSignaturesOf(queue, ctx.signatureChecks?.verifyBatch);
   if (verified === null) {
     return reject(`Rejected block height=${height}: a signature in the body does not verify`);
   }
@@ -1009,14 +1011,17 @@ function advanceActivityClock(state: BlockOverlay, owner: Uint8Array, height: nu
 }
 
 /**
- * Every signature the queued transactions carry, checked as one
- * `verifyEd25519Batch` call (CONSENSUS_INTERFACE → Applying a block): each entry
- * of each signature map — in body order, and within a transaction in its map's
- * decoded order — as the signature, the transaction id's 32 bytes and the key.
+ * Every signature the queued transactions carry, checked as one batch call
+ * (CONSENSUS_INTERFACE → Applying a block): each entry of each signature
+ * map — in body order, and within a transaction in its map's decoded
+ * order — as the signature, the transaction id's 32 bytes and the key. The
+ * batch is `verifyBatch` when the caller carries one (the context's), and
+ * `verifyEd25519Batch` when it does not (CONSENSUS_INTERFACE → ApplyContext).
  * Answers the set the batch verified, or `null` when the batch refuses.
  */
 function verifiedSignaturesOf(
   queue: ReadonlyArray<{ txId: string; tx: UtxoTransaction }>,
+  verifyBatch: ((entries: ReadonlyArray<Ed25519BatchEntry>) => boolean) | undefined,
 ): ReadonlySet<string> | null {
   const entries: Ed25519BatchEntry[] = [];
   const verified = new Set<string>();
@@ -1027,7 +1032,8 @@ function verifiedSignaturesOf(
       verified.add(signatureEntryKey(txId, keyHex, signature));
     }
   }
-  return verifyEd25519Batch(entries) ? verified : null;
+  const batch = verifyBatch ?? verifyEd25519Batch;
+  return batch(entries) ? verified : null;
 }
 
 /** An entry of the verified set: the transaction id, the key and the signature, as hex. */
