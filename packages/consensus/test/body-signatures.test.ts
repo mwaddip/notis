@@ -4,7 +4,7 @@ import { MAX_BLOCK_COST, PROTOCOL_VERSION, W_SIG, computeTxId, decodeTx, encodeT
 import type { AnyBoxCandidate, CreditBox, KarmaBox, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { verifyEd25519, verifyEd25519Batch } from '@dagsocial/validation';
 import { applyBlock } from '@dagsocial/consensus';
-import type { ApplyContext } from '@dagsocial/consensus';
+import type { ApplyContext, SignatureChecks } from '@dagsocial/consensus';
 import type { Ed25519BatchEntry } from '@dagsocial/validation';
 import {
   MemoryStateView,
@@ -501,5 +501,27 @@ describe("applyBlock answers through the context's signature checks", () => {
     });
     expect(singleCheck).not.toHaveBeenCalled();
     expect(batchCheck).not.toHaveBeenCalled();
+  });
+
+  it.fails("the context's `verifyBatch` is called on the object: a class whose method reads `this` applies", () => {
+    class ClassChecks implements SignatureChecks {
+      readonly received: number[] = [];
+      verify(_sig: Uint8Array, _msg: Uint8Array, _key: Uint8Array): boolean {
+        return true;
+      }
+      verifyBatch(entries: ReadonlyArray<Ed25519BatchEntry>): boolean {
+        this.received.push(entries.length);
+        return true;
+      }
+    }
+    const checks = new ClassChecks();
+    // Control: a fresh class instance has recorded nothing.
+    expect(checks.received).toEqual([]);
+    const before = view.digest();
+    const result = applyBlock(view, valid, { ...ctx, signatureChecks: checks });
+    expect(view.digest()).toBe(before);
+    expect(result.ok).toBe(true);
+    // Last: the class recorded one batch call, with the body's five entries.
+    expect(checks.received).toEqual([5]);
   });
 });

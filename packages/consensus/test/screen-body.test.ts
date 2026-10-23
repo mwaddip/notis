@@ -9,7 +9,7 @@ import {
 } from '@dagsocial/types';
 import type { AnyBoxCandidate, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { applyBlock, screenBody } from '@dagsocial/consensus';
-import type { ApplyContext } from '@dagsocial/consensus';
+import type { ApplyContext, SignatureChecks } from '@dagsocial/consensus';
 import type { Ed25519BatchEntry } from '@dagsocial/validation';
 import {
   MemoryStateView,
@@ -244,6 +244,33 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     const verify = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(() => true);
     // Last: a `verify` answering true leaves the flipped-signature body refused nothing.
     expect(screenBody(view, block, withChecks(verify))).toStrictEqual({ refused: [] });
+  });
+
+  it.fails("the context's `verify` is called on the object: a class whose method reads `this` applies", () => {
+    class ClassChecks implements SignatureChecks {
+      readonly received: Uint8Array[] = [];
+      verify(_sig: Uint8Array, _msg: Uint8Array, key: Uint8Array): boolean {
+        this.received.push(key);
+        return true;
+      }
+      verifyBatch(_entries: ReadonlyArray<Ed25519BatchEntry>): boolean {
+        return true;
+      }
+    }
+    const view = genesis();
+    const txs: Built[] = [
+      threadTx(a, largest(view, a), 'first honest', 2),
+      threadTx(b, largest(view, b), 'second honest', 2),
+      threadTx(c, largest(view, c), 'third honest', 2),
+    ];
+    const block = candidateBlock(view, 2, txs, miner.userId, ctx);
+    const checks = new ClassChecks();
+    // Control: a fresh class instance has recorded nothing.
+    expect(checks.received).toEqual([]);
+    const screen = screenBody(view, block, { ...ctx, signatureChecks: checks });
+    expect(screen).toStrictEqual({ refused: [] });
+    // Last: the class recorded one call per screened entry, each with its signer's key.
+    expect(checks.received.map((k) => hex(k))).toEqual([hex(a.userId), hex(b.userId), hex(c.userId)]);
   });
 
   it('the withdrawal arm — two withdrawals of one post, the second alone', () => {
