@@ -32,6 +32,8 @@ and send them credits. It runs on the VPS beside the node and nowhere else.
 - `POST /faucet/karma` — builds `karma → karma + bond` and posts it to the node's `POST /invites`.
   The block's settlement grants the bond's own value to the named key.
 - `POST /faucet/credits` — an ordinary owner-signed credit transfer.
+- It listens through `listenFaucet` — the node's header, request and keep-alive deadlines and connection bound,
+  no idle deadline, a 128-byte body, `nosniff` and no `X-Powered-By` (`NODE_INTERFACE → Faucet`).
 
 - **Owns:** `src/*`, `test/*`, `scripts/dagsocial-faucet.service`.
 - **Does NOT own:** anything in `packages/` and anything in `contracts/`. It lives under `tools/`
