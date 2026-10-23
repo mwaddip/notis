@@ -377,15 +377,24 @@ describe('likes routes', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // POST /likes — duplicate (detected via mempool gate)
+  // MEMPOOL_INTERFACE → "A transaction the pool holds is answered as held,
+  // before anything reads state."
+  // NODE_INTERFACE → Service Layer Architecture → "A transaction the pool
+  // already holds is answered as held."
   // ---------------------------------------------------------------------------
 
-  it('POST /likes duplicate returns 400', async () => {
-    const { txJson } = buildLikeTx(karmaBox, likerPrivKey, likerId, likerPubKeyHex, postId);
-    // The pending like from the previous test occupies the (liker, post) pair
-    // in the mempool gate, so the same pair is rejected.
+  it.fails('POST /likes resubmit answers held', async () => {
+    const { tx, txJson } = buildLikeTx(karmaBox, likerPrivKey, likerId, likerPubKeyHex, postId);
+    // The preceding case pooled the like built from these inputs. A
+    // resubmit of the same transaction answers with the first admission's
+    // status and body: 200, `status: 'pending'`, `txId` the pooled entry's,
+    // `expiresAtHeight` the pooled entry's own.
     const res = await request('/', 'POST', { tx: txJson });
-    expect(res.status).toBe(400);
+    expect(res.status, JSON.stringify(res.data)).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.status).toBe('pending');
+    expect(body.txId).toBe(computeTxId(tx));
+    expect(typeof body.expiresAtHeight).toBe('number');
   });
 
   // ---------------------------------------------------------------------------
