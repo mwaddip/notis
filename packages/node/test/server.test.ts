@@ -215,9 +215,9 @@ describe('server', () => {
   });
 
   // NODE_INTERFACE → HTTP API → "A body the parser refuses is the client's
-  // error". The public app's last handler reads `bodyRefusal` first and
-  // answers 4xx with the mapped body, no log line, and the CORS header the
-  // middleware set ahead of the parser.
+  // error". The parser's callback in `createApp` answers through `bodyRefusal`:
+  // 4xx with the mapped body, no log line, and the CORS header the middleware
+  // set ahead of the parser.
   describe('a body the parser refuses', () => {
     it('POST /posts/batch with Content-Type JSON and body `{` answers 400 malformed JSON body, not logged', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
