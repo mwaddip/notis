@@ -1491,7 +1491,12 @@ not require."), so an entry that does not verify makes the transaction invalid o
 refusal the sender could have reached, penalised `misbehavior`. It runs last of the tx topic's checks,
 behind the karma gate, because it is the dearest — 1.1–1.7 ms a signature (NODE_INTERFACE → Post
 transactions, measured). Node's admission answers each required signature from this check rather than
-verifying it again (→ Inbound Processing).
+verifying it again (→ Inbound Processing). **The node hands net the check, over its signature memo**
+(`NODE_INTERFACE → The signature memo`): an entry the node has accepted before is not checked again, so a transaction
+that arrives a second time costs no signature arithmetic here.
+
+> ⚠ **AHEAD OF CODE (2026-10-23).** The memo's check leads the node's `index.ts`, which hands net `validation`'s own
+> `verifyTxSignatures`.
 
 **A refusal that rests on this node's state records nothing.** A scheduled-target mismatch (above), a
 transaction whose declared version is not the era of the block after this node's tip, and a post whose

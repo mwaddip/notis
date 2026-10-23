@@ -4955,8 +4955,14 @@ the handler.
 2. The pool's word on the id — one point read (`MEMPOOL_INTERFACE → getHeldEntry`): a transaction the pool already
    holds is answered as held (below), and no later step runs.
 3. The service's own checks — the diagnosis a client reads, store reads over a transaction the edge has bounded.
-4. Admission (below) — `validateTx`, its signatures among it, then `admitTx`'s floor and cost gate, a speculative
-   `applyBlock` (`MEMPOOL_INTERFACE → The cost gate`); then the pool.
+4. Admission (below) — `validateTx`, its signatures among it, each one the signature memo holds answered with no check
+   (→ The signature memo); then `admitTx`'s correctness gates, its floor and the pool's own refusals, each a read
+   (`MEMPOOL_INTERFACE → assertPoolAdmits`), ahead of the cost gate's speculative `applyBlock`
+   (`MEMPOOL_INTERFACE → The cost gate`); then the pool.
+
+   > ⚠ **AHEAD OF CODE (2026-10-23).** Step 4 leads `services/admit-tx.ts`, whose `admitTx` runs the cost gate before
+   > the pool's conflict and capacity checks, which `insertUtxoTx` alone runs, and the signature memo leads every
+   > admission's deps (→ The signature memo).
 
 **One function admits.** The pool's word on the id, the caller's own checks, `validateTx` at `tip + 1`, the pool entry's
 expiry at `tip + 1 + MEMPOOL_EXPIRY_BLOCKS` and `admitTx` run as one function, in that order, which every write route
@@ -4984,6 +4990,54 @@ once (`JOURNAL_EVENTS → post_received`). **The gossip relay answers it `false`
 
 Queries serve the DAG tip. There is no validated watermark and nothing gates a
 read behind one.
+
+### The signature memo — a signature the rule accepted is not checked again
+
+> ⚠ **AHEAD OF CODE (2026-10-23).** The memo leads `services/`, where no module holds one; `server.ts` and the post
+> service, whose `validateTx` deps carry no `verifySignature`, so admission checks every signer with `verifyEd25519`;
+> `index.ts`, which hands net `validation`'s own `verifyTxSignatures`; and `services/block-apply.ts`'s
+> `applyContextFrom`, whose `ApplyContext` carries no signature checks.
+
+**The node remembers every signature `validation`'s rule has accepted, and answers it again without checking it.** An
+entry is the triple a check takes — the signature, the message and the key — and the rule is a function of those three
+byte strings and of nothing else (`VALIDATION_INTERFACE → Acceptance criterion`): no state, no height, no tip. An answer
+once given is the answer at every tip and on every path, so remembering it moves no verdict. The memo's key is the
+triple's bytes — the signature's 64, the key's 32, then the message. **Only those widths are looked up**: an entry
+whose signature is not 64 bytes or whose key is not 32 goes to the rule, which refuses it, so two fixed widths stand
+ahead of the one that varies, no two triples a lookup can meet share a key, and no hash stands between them.
+
+**It remembers acceptances only.** A triple the rule refused is checked again each time it arrives; `validateTx` stops
+at a transaction's first signer that fails, so a transaction sent again with a bad signature costs at most one check.
+
+**A batch the rule accepted records every entry it held.** `verifyEd25519Batch` answers `true` exactly when every entry
+passes `verifyEd25519`, but for the probability at most 2⁻¹²⁸ a batch carries
+(`VALIDATION_INTERFACE → verifyEd25519Batch`), and that margin is all a recorded entry brings to a later single answer.
+
+**A batch through the memo checks only the entries it does not hold.** The rest go to `verifyEd25519Batch` in their
+order, and a batch the memo holds whole answers `true` with no check. The answer is the whole batch's, because every
+entry left out passes `verifyEd25519`. An entry of other widths is never looked up, so it reaches the batch, whose shape
+check refuses it.
+
+**Its sites are four, each a check `validation`'s rule makes:**
+
+- admission's `validateTx` on every write route and on `POST /posts` — `UtxoEngineDeps.verifySignature` is the memo's
+  single check (`CONSENSUS_INTERFACE → The overlay`);
+- net's Stage 1 — the node hands net `verifyTxSignatures` over the memo's batch
+  (`VALIDATION_INTERFACE → verifyTxSignatures`; `NET_INTERFACE → Stage 1 → "A transaction's signatures are checked at
+  Stage 1"`);
+- `applyBlock`'s body check, through `ApplyContext`'s signature checks (`CONSENSUS_INTERFACE → ApplyContext`) — a block
+  applied, the producer's speculation and the cost gate's candidate block (`MEMPOOL_INTERFACE → The cost gate`);
+- `screenBody`'s single checks, through the same `ApplyContext`.
+
+The relay's `validateTx` answers each required signature from the map Stage 1 verified (→ Relay handlers), and Stage 1
+has answered that map through the memo. **So a node pays once for each signature it accepts**, at the first check
+that meets it: the cost gate's candidate block, the block that later carries the transaction and every arrival of it
+again answer from the memo while it holds them.
+
+**Bounded, and a miss is a check, never another verdict.** The memo holds at most `SIGNATURE_MEMO_ENTRIES` triples,
+and the one recorded first leaves first (`CONSTANTS → node`). A triple that has left is checked again when it returns,
+so the bound weighs memory and nothing it drops moves an answer. The memo lives in the process's memory: a restart
+begins it empty, and the store never holds it.
 
 ### The genesis state root is checked fail-stop, once, where it is built
 

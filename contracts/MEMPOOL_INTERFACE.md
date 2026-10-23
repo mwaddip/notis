@@ -173,7 +173,8 @@ refuses those — so the path should never trip it, and it is defended anyway.
 (`PendingSpendConflictError`, 409) before it can displace anything: a full credit class would otherwise evict its
 cheapest resident for an arrival that is then refused — or, where that resident is the conflicting entry itself,
 replace it, which this pool never does (→ No replacement semantics). The relay reaches the gate with such an
-arrival, since it validates against the confirmed set alone (→ getBoxWithPending).
+arrival, since it validates against the confirmed set alone (→ getBoxWithPending). Admission asks both gates first, and
+writes nothing then (→ assertPoolAdmits).
 
 **One SQLite transaction.** The eviction a full credit class makes, the entry's row and its input and output rows
 commit together or not at all (`ARCHITECTURE → "Single-transaction atomic writes"`); inside a caller's transaction —
@@ -182,6 +183,27 @@ the reorg's re-insertion — it runs as a savepoint of that one.
 - `expiresAtHeight` is the block height at which the entry becomes invalid.
 - `costEstimate` is the cost gate's marginal cost, written as the row's `cost_estimate` (→ The cost gate); a caller
   that did not cost the transaction — a reorg's re-insertion — passes none, and the row carries NULL.
+
+### assertPoolAdmits
+
+```
+assertPoolAdmits(tx: UtxoTransaction): void
+```
+
+> ⚠ **AHEAD OF CODE (2026-10-23).** `assertPoolAdmits` leads `store/mempool.ts`, where the conflict and capacity
+> gates run inside `insertUtxoTx` alone, and `services/admit-tx.ts`, whose `admitTx` runs the cost gate ahead of them.
+
+**The pool's own refusals, asked before the cost gate.** It throws what `insertUtxoTx`'s conflict and capacity gates
+would throw for `tx` at that moment — `PendingSpendConflictError` for an input a pooled entry spends, then
+`MempoolFullError` for a full class the arrival cannot enter (→ Size cap; → Eviction, inside the credit class only) —
+and writes nothing: a displacement it finds open is the insert's to make. `admitTx` calls it after the correctness gates
+and the floor and before the cost gate (→ The cost gate), so a transaction the pool would refuse never costs the
+speculative block — on the gossip relay above all, which validates against the confirmed set alone (→ getBoxWithPending)
+and reaches the conflict gate here.
+
+**One statement of each gate.** `insertUtxoTx` runs the same two checks through the same code and acts on their
+answer — refusing, or displacing the cheapest resident — and it alone runs on the reorg path, which reaches the store
+directly. Admission is synchronous from this call to the insert, so the two answer alike.
 
 ### setCostEstimate
 
