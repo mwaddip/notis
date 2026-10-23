@@ -95,7 +95,7 @@ describe("a body that does not decompress is the parser's refusal", () => {
     });
   }
 
-  it.fails('a gzip body `{bad}` answers 400 bad request body with nosniff', async () => {
+  it('a gzip body `{bad}` answers 400 bad request body with nosniff', async () => {
     const r = await postRaw('gzip', '{bad}');
     expect(r.headers.get('x-content-type-options')).toBe('nosniff');
     expect(r.headers.has('x-powered-by')).toBe(false);
@@ -105,7 +105,7 @@ describe("a body that does not decompress is the parser's refusal", () => {
     });
   });
 
-  it.fails('a deflate body `{bad}` answers 400 bad request body with nosniff', async () => {
+  it('a deflate body `{bad}` answers 400 bad request body with nosniff', async () => {
     const r = await postRaw('deflate', '{bad}');
     expect(r.headers.get('x-content-type-options')).toBe('nosniff');
     expect(r.headers.has('x-powered-by')).toBe(false);
@@ -115,7 +115,7 @@ describe("a body that does not decompress is the parser's refusal", () => {
     });
   });
 
-  it.fails('a truncated gzip header answers 400 bad request body with nosniff', async () => {
+  it('a truncated gzip header answers 400 bad request body with nosniff', async () => {
     const r = await postRaw('gzip', Buffer.from([0x1f, 0x8b, 0x08]));
     expect(r.headers.get('x-content-type-options')).toBe('nosniff');
     expect(r.headers.has('x-powered-by')).toBe(false);
@@ -125,7 +125,7 @@ describe("a body that does not decompress is the parser's refusal", () => {
     });
   });
 
-  it.fails(
+  it(
     'across the three decompression refusals and the sync-throw 500, console.error is called exactly once',
     async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

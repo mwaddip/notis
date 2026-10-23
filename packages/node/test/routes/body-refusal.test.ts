@@ -84,11 +84,11 @@ describe('bodyRefusal — a body the parser refuses is the client\'s error', () 
     expect(bodyRefusal(new Error('something broke'))).toBeNull();
   });
 
-  it.fails('a ClientError (a route\'s own 400) answers 400 bad request body', () => {
+  it('a ClientError (a route\'s own 400) answers 400 bad request body', () => {
     expect(bodyRefusal(new ClientError('bad', 400))).toEqual({ status: 400, reason: 'bad request body' });
   });
 
-  it.fails('an object with status 400 and no parser mark answers 400 bad request body', () => {
+  it('an object with status 400 and no parser mark answers 400 bad request body', () => {
     const err = Object.assign(new Error('fake'), { status: 400, statusCode: 400 });
     expect(bodyRefusal(err)).toEqual({ status: 400, reason: 'bad request body' });
   });

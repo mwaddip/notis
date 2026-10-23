@@ -251,7 +251,28 @@ export function createApp(config: Config): express.Express {
     next();
   });
 
-  app.use(express.json({ limit: HTTP_BODY_MAX_BYTES }));
+  // NODE_INTERFACE → HTTP API → "A refusal is the parser's by where it comes from":
+  // every error `express.json` hands back is the parser's. A 4xx answers through
+  // `bodyRefusal` here, with no log; anything else is passed to the final
+  // handler, which logs and answers 500.
+  const jsonParser = express.json({ limit: HTTP_BODY_MAX_BYTES });
+  app.use((req, res, next) => {
+    jsonParser(req, res, (err?: unknown) => {
+      if (err === undefined || err === null) {
+        next();
+        return;
+      }
+      const refusal = bodyRefusal(err);
+      if (refusal !== null) {
+        res.status(refusal.status).json({
+          error: refusal.status,
+          reason: refusal.reason,
+        });
+        return;
+      }
+      next(err);
+    });
+  });
 
   // GET /shell/:id — NODE_INTERFACE → Link previews
   app.get('/shell/:id', (req, res) => {
@@ -580,17 +601,8 @@ export function createApp(config: Config): express.Express {
       res: express.Response,
       _next: express.NextFunction,
     ) => {
-      // NODE_INTERFACE → HTTP API → "A body the parser refuses is the client's
-      // error": the parser's refusal answers 4xx with its own body and is not
-      // logged. Any other error is the node's fault — 500 with its stack.
-      const refusal = bodyRefusal(err);
-      if (refusal !== null) {
-        res.status(refusal.status).json({
-          error: refusal.status,
-          reason: refusal.reason,
-        });
-        return;
-      }
+      // NODE_INTERFACE → HTTP API → "500 `{ error: 'internal' }` is a fault of
+      // the node's".
       console.error('500 error:', err instanceof Error ? err.stack : err);
       res.status(500).json({ error: 'internal' });
     },
