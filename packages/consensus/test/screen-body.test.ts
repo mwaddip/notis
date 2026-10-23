@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { sign as cryptoSign } from 'crypto';
 import {
   PROTOCOL_VERSION,
@@ -10,6 +10,7 @@ import {
 import type { AnyBoxCandidate, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { applyBlock, screenBody } from '@dagsocial/consensus';
 import type { ApplyContext } from '@dagsocial/consensus';
+import type { Ed25519BatchEntry } from '@dagsocial/validation';
 import {
   MemoryStateView,
   applyContextFor,
@@ -175,6 +176,75 @@ describe('screenBody — which of a body\'s transactions apply', () => {
     const reason = reasonFor(view, block);
     expect(reason).toBe('Rejected block height=2: a signature in the body does not verify');
     expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [{ index: 1, reason }] });
+  });
+
+  const withChecks = (
+    verify: (sig: Uint8Array, msg: Uint8Array, key: Uint8Array) => boolean,
+    verifyBatch: (entries: ReadonlyArray<Ed25519BatchEntry>) => boolean = () => true,
+  ): ApplyContext =>
+    ({ ...ctx, signatureChecks: { verify, verifyBatch } }) as unknown as ApplyContext;
+
+  it.fails("the context's `verify` is called once per entry of each screened transaction, with (signature, transaction id bytes, key)", () => {
+    const view = genesis();
+    const txs: Built[] = [
+      threadTx(a, largest(view, a), 'first honest', 2),
+      threadTx(b, largest(view, b), 'second honest', 2),
+      threadTx(c, largest(view, c), 'third honest', 2),
+    ];
+    const block = candidateBlock(view, 2, txs, miner.userId, ctx);
+    const verify = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(() => true);
+    const screen = screenBody(view, block, withChecks(verify));
+    // Control: the honest body is refused nothing.
+    expect(screen).toStrictEqual({ refused: [] });
+    const expected = txs.map(({ tx, txId }) => {
+      const pair = Object.entries(tx.signatures)[0]!;
+      const [keyHex, signature] = pair;
+      return [hex(signature), txId, keyHex];
+    });
+    // Last: each call carries the entry's signature, its transaction id's 32 bytes and its key —
+    // one call per entry of each screened transaction, in body order.
+    expect(
+      verify.mock.calls.map((call) => [hex(call[0]!), hex(call[1]!), hex(call[2]!)]),
+    ).toEqual(expected);
+  });
+
+  it.fails("a `verify` answering false for one transaction's key refuses that transaction alone at its index with the body check's reason", () => {
+    const view = genesis();
+    const txs: Built[] = [
+      threadTx(a, largest(view, a), 'first honest', 2),
+      threadTx(b, largest(view, b), 'the one whose key answers false', 2),
+      threadTx(c, largest(view, c), 'last honest', 2),
+    ];
+    const block = candidateBlock(view, 2, txs, miner.userId, ctx);
+    const bKey = hex(b.userId);
+    const verify = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(
+      (_sig, _msg, key) => hex(key) !== bKey,
+    );
+    // Control: the honest body is refused nothing under `ctx`.
+    expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [] });
+    const reason = `Rejected block height=2: a signature in the body does not verify`;
+    // Last: the second transaction is refused alone at index 1 with the body check's reason.
+    expect(screenBody(view, block, withChecks(verify))).toStrictEqual({
+      refused: [{ index: 1, reason }],
+    });
+  });
+
+  it.fails("a `verify` answering true lets a flipped-signature body be refused nothing", () => {
+    const view = genesis();
+    const txs: Built[] = [
+      threadTx(a, largest(view, a), 'first honest', 2),
+      threadTx(b, largest(view, b), 'the one with the flipped signature', 2),
+      threadTx(c, largest(view, c), 'last honest', 2),
+    ];
+    const valid = candidateBlock(view, 2, txs, miner.userId, ctx);
+    const key = hex(b.userId);
+    const block = withEntry(valid, 1, (tx) => { tx.signatures[key] = flipped(tx.signatures[key]!); });
+    // Control: under `ctx` the flipped-signature body is refused at index 1.
+    const reason = `Rejected block height=2: a signature in the body does not verify`;
+    expect(screenBody(view, block, ctx)).toStrictEqual({ refused: [{ index: 1, reason }] });
+    const verify = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(() => true);
+    // Last: a `verify` answering true leaves the flipped-signature body refused nothing.
+    expect(screenBody(view, block, withChecks(verify))).toStrictEqual({ refused: [] });
   });
 
   it('the withdrawal arm — two withdrawals of one post, the second alone', () => {

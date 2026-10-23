@@ -4,6 +4,8 @@ import { MAX_BLOCK_COST, PROTOCOL_VERSION, W_SIG, computeTxId, decodeTx, encodeT
 import type { AnyBoxCandidate, CreditBox, KarmaBox, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { verifyEd25519, verifyEd25519Batch } from '@dagsocial/validation';
 import { applyBlock } from '@dagsocial/consensus';
+import type { ApplyContext } from '@dagsocial/consensus';
+import type { Ed25519BatchEntry } from '@dagsocial/validation';
 import {
   MemoryStateView,
   applyContextFor,
@@ -360,5 +362,145 @@ describe("applyBlock checks the signatures' cost before the batch", () => {
       reason: expect.stringContaining('has an unresolved input'),
     });
     expect(unresolvedInput).not.toHaveProperty('overBudget');
+  });
+});
+
+/**
+ * `applyBlock` makes its one batch call through the context's signature checks
+ * when the caller carries them, and `validation`'s `verifyEd25519Batch` when
+ * the context carries none (CONSENSUS_INTERFACE → ApplyContext).
+ */
+describe("applyBlock answers through the context's signature checks", () => {
+  const { view, first, income: _income, others, credits } = genesis();
+  void _income;
+  const firstThread = threadTx(author, first, 'the first thread', H);
+  const secondInput = changeOf(firstThread);
+  const body = [
+    firstThread,
+    payment(credits),
+    threadTx(author, secondInput, 'the second thread, by the same author', H),
+    threadTx(other, others, 'the last thread', H),
+  ];
+  const valid = candidateBlock(view, H, body, miner.userId, ctx);
+
+  /** The five entries the body carries, in body order and each map ascending — the shape the batch is called with. */
+  const expectedEntries = (): string[][] =>
+    body.flatMap(({ tx, txId }) =>
+      Object.keys(tx.signatures)
+        .sort()
+        .map((key) => [txId, key, hex(tx.signatures[key]!)]),
+    );
+
+  /** The context with a caller's checks over `ctx`. */
+  const withChecks = (
+    verify: (sig: Uint8Array, msg: Uint8Array, key: Uint8Array) => boolean,
+    verifyBatch: (entries: ReadonlyArray<Ed25519BatchEntry>) => boolean,
+  ): ApplyContext =>
+    ({ ...ctx, signatureChecks: { verify, verifyBatch } }) as unknown as ApplyContext;
+
+  beforeEach(() => {
+    vi.mocked(verifyEd25519).mockClear();
+    vi.mocked(verifyEd25519Batch).mockClear();
+  });
+
+  it.fails("the batch is the context's: `verifyBatch` receives every body entry, in body order and each map ascending", () => {
+    const singleCheck = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(() => true);
+    const batchCheck = vi.fn<[ReadonlyArray<Ed25519BatchEntry>], boolean>(() => true);
+    const before = view.digest();
+    const result = applyBlock(view, valid, withChecks(singleCheck, batchCheck));
+    // Controls: the honest block applies under the context's checks, the view is read-only,
+    // the single checks are left alone.
+    expect(view.digest()).toBe(before);
+    expect(result.ok).toBe(true);
+    expect(singleCheck).not.toHaveBeenCalled();
+    expect(vi.mocked(verifyEd25519)).not.toHaveBeenCalled();
+    // Last: the context's batch received every entry of the body, in body order and each map
+    // ascending, as the one call.
+    expect(
+      batchCheck.mock.calls.map((call) =>
+        (call[0] ?? []).map((entry) => [hex(entry.message), hex(entry.publicKey), hex(entry.signature)]),
+      ),
+    ).toEqual([expectedEntries()]);
+  });
+
+  it.fails("a `verifyBatch` answering false refuses the honest block with the body check's reason", () => {
+    const singleCheck = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(() => true);
+    const batchCheck = vi.fn<[ReadonlyArray<Ed25519BatchEntry>], boolean>(() => false);
+    // Control: the honest block applies under `ctx`.
+    expect(applyBlock(view, valid, ctx).ok).toBe(true);
+    const before = view.digest();
+    const result = applyBlock(view, valid, withChecks(singleCheck, batchCheck));
+    expect(view.digest()).toBe(before);
+    expect(singleCheck).not.toHaveBeenCalled();
+    // Last: `verifyBatch` answering false refuses the block with the body check's reason.
+    expect(result).toEqual({ ok: false, reason: BODY_REASON });
+  });
+
+  it.fails('a `verifyBatch` answering true accepts a block carrying one flipped signature byte', () => {
+    const key = hex(payerLow.userId);
+    const bad = flipped(body[1]!.tx.signatures[key]!);
+    const flippedBlock = withEntry(valid, 1, (tx) => {
+      tx.signatures[key] = bad;
+    });
+    const singleCheck = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(() => true);
+    const batchCheck = vi.fn<[ReadonlyArray<Ed25519BatchEntry>], boolean>(() => true);
+    // Control: under `ctx` the flipped-signature block is refused with the body check's reason.
+    expect(applyBlock(view, flippedBlock, ctx)).toEqual({ ok: false, reason: BODY_REASON });
+    const result = applyBlock(view, flippedBlock, withChecks(singleCheck, batchCheck));
+    expect(singleCheck).not.toHaveBeenCalled();
+    // Last: with `verifyBatch` answering true, the block applies although the signature flipped.
+    expect(result.ok).toBe(true);
+  });
+
+  it('an over-signed body and one over the budget are refused before any check runs', () => {
+    const outsiderKey = hex(outsider.userId);
+    const extra = flipped(signatureBy(outsider, body[3]!.txId));
+    const overSigned = withEntry(valid, 3, (tx) => {
+      tx.signatures[outsiderKey] = extra;
+    });
+    const overSignedReason = `Rejected block height=${H}: embedded UTXO tx ${body[3]!.txId} carries more signatures than inputs`;
+    const singleCheck = vi.fn<[Uint8Array, Uint8Array, Uint8Array], boolean>(() => true);
+    const batchCheck = vi.fn<[ReadonlyArray<Ed25519BatchEntry>], boolean>(() => true);
+    // Control: the over-signed block is refused with its own reason, under `ctx` and the context's checks alike.
+    expect(applyBlock(view, overSigned, ctx)).toEqual({ ok: false, reason: overSignedReason });
+    expect(applyBlock(view, overSigned, withChecks(singleCheck, batchCheck))).toEqual({
+      ok: false,
+      reason: overSignedReason,
+    });
+
+    // A body one signature over the budget — the first transaction's cost gate catches it.
+    const AT_BUDGET = MAX_BLOCK_COST / W_SIG;
+    const settled = candidateBlock(view, H, [], miner.userId, ctx);
+    const SIGNERS_PER_TX = 77;
+    const bulk = (from: number, signers: number, inputs = signers): { txId: string; bytes: Uint8Array } => {
+      const tx: UtxoTransaction = {
+        inputs: [],
+        outputs: [{ boxType: 'credit', value: 1n, createdAtBlock: H, owner: outsider.userId } as AnyBoxCandidate],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      for (let i = from; i < from + inputs; i++) tx.inputs.push(hex(uid(`body-signatures/ctx-input-${i}`)));
+      for (let i = from; i < from + signers; i++) tx.signatures[hex(uid(`body-signatures/ctx-key-${i}`))] = new Uint8Array(64).fill(1);
+      return { txId: computeTxId(tx), bytes: encodeTx(tx) };
+    };
+    const txs: Array<{ txId: string; bytes: Uint8Array }> = [];
+    const total = AT_BUDGET + 1;
+    for (let from = 0; from < total; from += SIGNERS_PER_TX) txs.push(bulk(from, Math.min(SIGNERS_PER_TX, total - from)));
+    const overBudgetBlock: OrderingBlock = {
+      ...settled,
+      utxoTxTree: {
+        utxoTxIds: [...txs.map((t) => t.txId), ...settled.utxoTxTree.utxoTxIds],
+        utxoTxs: [...txs.map((t) => t.bytes), ...settled.utxoTxTree.utxoTxs],
+      },
+    };
+    const budgetReason = `Rejected block height=${H}: its ${total} signatures cost more than a block may`;
+    expect(applyBlock(view, overBudgetBlock, ctx)).toEqual({ ok: false, reason: budgetReason, overBudget: true });
+    expect(applyBlock(view, overBudgetBlock, withChecks(singleCheck, batchCheck))).toEqual({
+      ok: false,
+      reason: budgetReason,
+      overBudget: true,
+    });
+    expect(singleCheck).not.toHaveBeenCalled();
+    expect(batchCheck).not.toHaveBeenCalled();
   });
 });
