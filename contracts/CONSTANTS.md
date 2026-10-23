@@ -342,7 +342,7 @@ under → Size caps.
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `BLOCK_FETCH_WINDOW` (literal) | `400` | blocks the pipeline wants above the applied tip when extending | policy | decided 2026-10-17: one block request's ids (`MAX_CHAIN_RESPONSE_ITEMS`), so what extension stages is at most 400 × `MAX_ORDERING_BLOCK_BYTES` — about 800 MB at the cap, kilobytes a block in practice; a switch's prefix is bounded by work instead (`NODE_INTERFACE → Fork choice decides on verified headers`) | DECIDED | `NODE_INTERFACE → Fork choice decides on verified headers` |
-| `SIGNATURE_MEMO_ENTRIES` (literal) | `65_536` | signatures the node remembers as accepted, about 11 MB | policy | decided 2026-10-23: 171 B an entry measured (Node 22, the 128-byte key as a one-byte string in a `Set`); ten full blocks' signatures (`MAX_BLOCK_COST`, 6 000 each) rounded up to 2¹⁶, so a pooled transaction's signatures are still held when a block within ten of its admission carries it, in a chain whose blocks run full; a miss costs one check and never another verdict. `node/src/services/` | DECIDED | `NODE_INTERFACE → The signature memo` |
+| `SIGNATURE_MEMO_ENTRIES` (literal) | `65_536` | signatures the node remembers as accepted, about 11 MB | policy | user ruling 2026-10-23: 171 B an entry measured (Node 22, the 128-byte key as a one-byte string in a `Set`); ten full blocks' signatures (`MAX_BLOCK_COST`, 6 000 each) rounded up to 2¹⁶, so a pooled transaction's signatures are still held when a block within ten of its admission carries it, in a chain whose blocks run full; a miss costs one check and never another verdict. `node/src/services/` | RULED | `NODE_INTERFACE → The signature memo` |
 
 ## Producer policy
 
