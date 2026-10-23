@@ -383,7 +383,7 @@ describe('likes routes', () => {
   // already holds is answered as held."
   // ---------------------------------------------------------------------------
 
-  it.fails('POST /likes resubmit answers held', async () => {
+  it('POST /likes resubmit answers held', async () => {
     const { tx, txJson } = buildLikeTx(karmaBox, likerPrivKey, likerId, likerPubKeyHex, postId);
     // The preceding case pooled the like built from these inputs. A
     // resubmit of the same transaction answers with the first admission's
@@ -569,7 +569,7 @@ describe('a resubmit is answered as held', () => {
     rmSync(heldDir, { recursive: true, force: true });
   });
 
-  it.fails('POST /likes', async () => {
+  it('POST /likes', async () => {
     const { tx, txJson } = buildHeldLikeTx();
 
     const r1 = await send(txJson);
@@ -678,7 +678,7 @@ describe('a resubmit is answered as held', () => {
   // before anything reads state": the signatures ride outside the id preimage
   // (TYPES_INTERFACE → Layout — UtxoTransaction), so a resubmit whose
   // signature bytes differ shares the pooled entry's id.
-  it.fails('other signature bytes, one id', async () => {
+  it('other signature bytes, one id', async () => {
     const { liker, karma } = freshLikerWithKarma();
     const { tx, txJson } = buildLikeTxFor(liker, karma, heldPostId);
 
@@ -710,7 +710,7 @@ describe('a resubmit is answered as held', () => {
     expect(sentBytes).toBe(pooledBytes);
   });
 
-  it.fails('the lookup precedes the service\'s checks', async () => {
+  it('the lookup precedes the service\'s checks', async () => {
     // A fresh target post belongs to this arm; the file-level `heldPostId`
     // stays live for the other arms.
     const commit: PostCommit = {

@@ -1095,7 +1095,7 @@ describe('a resubmit is answered as held', () => {
     rmSync(heldDir, { recursive: true, force: true });
   });
 
-  it.fails('POST /credits/transfer', async () => {
+  it('POST /credits/transfer', async () => {
     const { tx, txJson } = buildTransfer();
 
     const r1 = await send(txJson);

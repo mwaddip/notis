@@ -91,12 +91,12 @@ const STUB_DEPS: UtxoEngineDeps = {
 async function request(
   postId: string,
   body: unknown,
-  executePostWithdrawImpl?: (deps: UtxoEngineDeps, tx: UtxoTransaction, height: number) => { txId: string; expiresAtHeight: number },
+  executePostWithdrawImpl?: (deps: UtxoEngineDeps, tx: UtxoTransaction, height: number) => { txId: string; expiresAtHeight: number; tx: UtxoTransaction },
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
     const deps = {
       ...STUB_DEPS,
-      executePostWithdraw: executePostWithdrawImpl ?? ((_d: UtxoEngineDeps, _t: UtxoTransaction, h: number) => ({ txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS })),
+      executePostWithdraw: executePostWithdrawImpl ?? ((_d: UtxoEngineDeps, t: UtxoTransaction, h: number) => ({ txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS, tx: t })),
       getCurrentHeight: () => 10,
     };
     const app = express();
@@ -224,7 +224,7 @@ describe('withdraw route', () => {
     let captured: UtxoTransaction | undefined;
     const res = await request(TEST_POST_HASH, { tx: makeJsonPostWithdrawTxBody() }, (_deps, tx, h) => {
       captured = tx;
-      return { txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS };
+      return { txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS, tx };
     });
 
     expect(res.status).toBe(201);
@@ -389,7 +389,7 @@ describe('a resubmit is answered as held', () => {
     rmSync(heldDir, { recursive: true, force: true });
   });
 
-  it.fails('POST /posts/:id/withdraw', async () => {
+  it('POST /posts/:id/withdraw', async () => {
     const { tx, txJson } = buildWithdrawTx(changeBoxOf(postTx));
 
     const r1 = await send(txJson, postId);

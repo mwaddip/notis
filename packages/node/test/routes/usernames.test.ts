@@ -715,7 +715,7 @@ describe('a resubmit is answered as held', () => {
     rmSync(heldDir, { recursive: true, force: true });
   });
 
-  it.fails('POST /usernames', async () => {
+  it('POST /usernames', async () => {
     const tx: UtxoTransaction = {
       inputs: [claimantKarma.id!],
       outputs: [
@@ -749,7 +749,7 @@ describe('a resubmit is answered as held', () => {
     expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
 
-  it.fails('POST /usernames/:name/burn', async () => {
+  it('POST /usernames/:name/burn', async () => {
     const tx: UtxoTransaction = {
       inputs: [burnerKarma.id!, burnerUsernameBox.id!],
       outputs: [

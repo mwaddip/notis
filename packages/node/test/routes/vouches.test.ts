@@ -906,7 +906,7 @@ describe('a resubmit is answered as held', () => {
     rmSync(heldDir, { recursive: true, force: true });
   });
 
-  it.fails('POST /vouches', async () => {
+  it('POST /vouches', async () => {
     const karmaBox = seedProvenance<KarmaBox>({
       boxType: 'karma', value: VOUCH_MIN_BALANCE + VOUCH_KARMA_AMOUNT,
       createdAtBlock: 0, owner: heldVoucher.pub,
@@ -957,7 +957,7 @@ describe('a resubmit is answered as held', () => {
     expect(computeTxId(sentTx)).toBe(computeTxId(tx));
   });
 
-  it.fails('DELETE /vouches/:targetId', async () => {
+  it('DELETE /vouches/:targetId', async () => {
     const unTarget = makeKeys();
     const vouchBox = seedProvenance<VouchBox>({
       boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: 0,

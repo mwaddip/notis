@@ -502,7 +502,7 @@ describe('a resubmit is answered as held', () => {
     rmSync(heldDir, { recursive: true, force: true });
   });
 
-  it.fails('POST /invites', async () => {
+  it('POST /invites', async () => {
     const { tx, txJson } = buildInviteTx();
 
     const r1 = await send(txJson);

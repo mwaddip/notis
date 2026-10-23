@@ -347,7 +347,7 @@ describe('a resubmit is answered as held', () => {
     rmSync(heldDir, { recursive: true, force: true });
   });
 
-  it.fails('POST /backers/unstake', async () => {
+  it('POST /backers/unstake', async () => {
     const tx: UtxoTransaction = {
       inputs: [heldStake.id!],
       outputs: [

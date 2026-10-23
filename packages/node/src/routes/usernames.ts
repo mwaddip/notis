@@ -49,11 +49,15 @@ export function createRouter(deps: UsernameRouteDeps): Router {
     }
 
     // The pending-name gates ride admission (MEMPOOL_INTERFACE →
-    // Correctness gates). The handler keeps the shape-level checks only.
+    // Correctness gates). The handler keeps the shape-level checks only;
+    // `admitWriteTx` asks the pool first (NODE_INTERFACE → Service Layer
+    // Architecture → "A transaction the pool already holds is answered as
+    // held") so a resubmit answers with the pooled transaction's bytes.
 
     try {
       const currentHeight = deps.getCurrentHeight() + 1;
-      const { txId, expiresAtHeight } = admitWriteTx(
+      const { txId, expiresAtHeight, tx: pooledTx } = admitWriteTx(
+        () => {},
         deps.validateTx,
         tx,
         currentHeight,
@@ -62,12 +66,15 @@ export function createRouter(deps: UsernameRouteDeps): Router {
 
       const net = getNet();
       if (net) {
-        net.broadcastTx(tx).catch((err: Error) => {
+        net.broadcastTx(pooledTx).catch((err: Error) => {
           console.warn(`Failed to broadcast claim tx: ${err.message}`);
         });
       }
 
-      const nameAsTyped = Buffer.from(usernameOut.name).toString('utf8');
+      const pooledOut = (pooledTx.outputs ?? []).find(
+        (o): o is UsernameBox => o.boxType === 'username',
+      )!;
+      const nameAsTyped = Buffer.from(pooledOut.name).toString('utf8');
       res.status(200).json({ status: 'pending', txId, expiresAtHeight, name: nameAsTyped });
     } catch (err) {
       respondError(res, err, 'POST /usernames', 'message');
@@ -112,7 +119,8 @@ export function createRouter(deps: UsernameRouteDeps): Router {
 
     try {
       const currentHeight = deps.getCurrentHeight() + 1;
-      const { txId, expiresAtHeight } = admitWriteTx(
+      const { txId, expiresAtHeight, tx: pooledTx } = admitWriteTx(
+        () => {},
         deps.validateTx,
         tx,
         currentHeight,
@@ -121,7 +129,7 @@ export function createRouter(deps: UsernameRouteDeps): Router {
 
       const net = getNet();
       if (net) {
-        net.broadcastTx(tx).catch((err: Error) => {
+        net.broadcastTx(pooledTx).catch((err: Error) => {
           console.warn(`Failed to broadcast burn tx: ${err.message}`);
         });
       }

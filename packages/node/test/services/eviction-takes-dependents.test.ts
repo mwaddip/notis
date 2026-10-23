@@ -163,11 +163,11 @@ describe('a credit-class displacement takes the cheapest resident\'s dependents'
 
     const C = creditTransfer(spender, boxC, 10n);
     const Cid = computeTxId(C);
-    admit.admitWriteTx(validate, C, 1, '');
+    admit.admitWriteTx(() => {}, validate, C, 1, '');
 
     const Cprime = creditTransfer(spender, changeOf(C), 20n);
     const CprimeId = computeTxId(Cprime);
-    admit.admitWriteTx(validate, Cprime, 1, '');
+    admit.admitWriteTx(() => {}, validate, Cprime, 1, '');
 
     const mem = await importMempool();
     expect(mem.getPendingEntries(10)).toHaveLength(2);
@@ -175,7 +175,7 @@ describe('a credit-class displacement takes the cheapest resident\'s dependents'
     // The arriving entry bids above the cheapest resident, which is `C`.
     const A = creditTransfer(spender, boxA, 500n);
     const Aid = computeTxId(A);
-    admit.admitWriteTx(validate, A, 1, '');
+    admit.admitWriteTx(() => {}, validate, A, 1, '');
 
     const held = mem.getPendingEntries(10);
     expect(held).toHaveLength(1);
@@ -218,11 +218,11 @@ describe('an arrival that depends on the cheapest resident\'s closure is refused
 
     const C = creditTransfer(spender, boxC, 10n);
     const Cid = computeTxId(C);
-    admit.admitWriteTx(validate, C, 1, '');
+    admit.admitWriteTx(() => {}, validate, C, 1, '');
 
     const Cprime = creditTransfer(spender, changeOf(C), 20n);
     const CprimeId = computeTxId(Cprime);
-    admit.admitWriteTx(validate, Cprime, 1, '');
+    admit.admitWriteTx(() => {}, validate, Cprime, 1, '');
 
     const mem = await importMempool();
     expect(mem.getPendingEntries(10)).toHaveLength(2);
@@ -232,7 +232,7 @@ describe('an arrival that depends on the cheapest resident\'s closure is refused
     // what would leave with `C` and must not displace it.
     const A2 = creditTransfer(spender, changeOf(Cprime), 500n);
 
-    expect(() => admit.admitWriteTx(validate, A2, 1, '')).toThrow(mem.MempoolFullError);
+    expect(() => admit.admitWriteTx(() => {}, validate, A2, 1, '')).toThrow(mem.MempoolFullError);
 
     const held = mem.getPendingEntries(10);
     expect(held).toHaveLength(2);
@@ -270,11 +270,11 @@ describe('an arrival that depends on the cheapest resident\'s closure is refused
     };
     signTransaction(C, spender.privateKey, hex(spender.userId));
     const Cid = computeTxId(C);
-    admit.admitWriteTx(validate, C, 1, '');
+    admit.admitWriteTx(() => {}, validate, C, 1, '');
 
     const Cprime = creditTransfer(spender, changeOf(C), 20n);
     const CprimeId = computeTxId(Cprime);
-    admit.admitWriteTx(validate, Cprime, 1, '');
+    admit.admitWriteTx(() => {}, validate, Cprime, 1, '');
 
     const mem = await importMempool();
     expect(mem.getPendingEntries(10)).toHaveLength(2);
@@ -285,7 +285,7 @@ describe('an arrival that depends on the cheapest resident\'s closure is refused
     const secondChange = materializeOutput(C.outputs[1] as AnyBox, Cid, 1) as CreditBox;
     const A2 = creditTransfer(spender, secondChange, 500n);
 
-    expect(() => admit.admitWriteTx(validate, A2, 1, '')).toThrow(mem.MempoolFullError);
+    expect(() => admit.admitWriteTx(() => {}, validate, A2, 1, '')).toThrow(mem.MempoolFullError);
 
     const held = mem.getPendingEntries(10);
     expect(held).toHaveLength(2);
@@ -343,11 +343,11 @@ describe('a build whose screen refuses a pooled transaction takes that transacti
     // (MEMPOOL_INTERFACE → Block Creator Integration).
     const P = creditTransfer(spender, boxX, 10n);
     const Pid = computeTxId(P);
-    admit.admitWriteTx(validate, P, 1, '');
+    admit.admitWriteTx(() => {}, validate, P, 1, '');
 
     const D = creditTransfer(spender, changeOf(P), 500n);
     const Did = computeTxId(D);
-    admit.admitWriteTx(validate, D, 1, '');
+    admit.admitWriteTx(() => {}, validate, D, 1, '');
 
     const mem = await importMempool();
     expect(mem.getPendingEntries(10)).toHaveLength(2);
@@ -414,7 +414,7 @@ describe('a mined block the intake refuses sweeps the template rows\' pooled dep
 
     const P = creditTransfer(spender, boxX, 10n);
     const Pid = computeTxId(P);
-    admit.admitWriteTx(validate, P, 1, '');
+    admit.admitWriteTx(() => {}, validate, P, 1, '');
 
     await activateProverOverStore();
 
@@ -430,7 +430,7 @@ describe('a mined block the intake refuses sweeps the template rows\' pooled dep
     // parent.
     const D = creditTransfer(spender, changeOf(P), 5n);
     const Did = computeTxId(D);
-    admit.admitWriteTx(validate, D, 1, '');
+    admit.admitWriteTx(() => {}, validate, D, 1, '');
 
     const mem = await importMempool();
     expect(mem.getPendingEntries(10)).toHaveLength(2);
