@@ -342,6 +342,13 @@ export const PAGE_LIMIT_MAX = 100;      // local — the most rows one page carr
 export const BATCH_READ_MAX = 100;      // local — the most post ids one `POST /posts/batch` takes
 export const RANGE_PAGE_MAX = 256;      // local — the most entries one page of `GET /api/v1/range` carries
 
+// HTTP server bounds — TYPES_INTERFACE → HTTP server bounds
+export const HTTP_HEADERS_TIMEOUT_MS = 20_000;     // local — a request's headers arrive within it
+export const HTTP_REQUEST_TIMEOUT_MS = 30_000;     // local — the whole request arrives within it
+export const HTTP_KEEP_ALIVE_TIMEOUT_MS = 5_000;   // local — a kept connection waits this long for its next request
+export const HTTP_CHECK_INTERVAL_MS = 1_000;       // local — how often the deadlines are read
+export const HTTP_CONNECTIONS_MAX = 1_024;         // local — connections a server holds open at once
+
 // Crypto
 /** DER-encoded SPKI prefix for raw Ed25519 32-byte public keys (RFC 8410). */
 export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';
