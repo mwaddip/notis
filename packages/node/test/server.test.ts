@@ -10,6 +10,7 @@ import { initDb, getDb, closeDb } from '../src/store/db.js';
 import { createApp, createAdminApp } from '../src/server.js';
 import { bodyRefusal } from '../src/routes/body-refusal.js';
 import { insertPost, confirmPost } from '../src/store/posts.js';
+import * as store from '../src/store/index.js';
 import type { Config } from '../src/config.js';
 import { MAX_BLOCK_BODY_BYTES, profileFor } from '@dagsocial/types';
 import { resetForTests, getCounters } from '../src/metrics.js';
@@ -401,39 +402,6 @@ describe('nosniff and no X-Powered-By', () => {
     closeDb();
   });
 
-  // The error-handler kind reaches the handler through a Content-Encoding:
-  // gzip header on a non-gzip body: zlib raises an error whose `type` is
-  // undefined, which `bodyRefusal` returns null for, so the final handler
-  // answers 500.
-  function postRawBadGzip(targetUrl: string): Promise<{ status: number; headers: Map<string, string> }> {
-    const url = new URL(targetUrl);
-    return new Promise((resolve, reject) => {
-      const req = http.request(
-        {
-          hostname: url.hostname,
-          port: Number(url.port),
-          path: '/posts/batch',
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Encoding': 'gzip',
-          },
-        },
-        (res) => {
-          const headers = new Map<string, string>();
-          for (const [k, v] of Object.entries(res.headers)) {
-            if (typeof v === 'string') headers.set(k.toLowerCase(), v);
-          }
-          res.on('data', () => {});
-          res.on('end', () => resolve({ status: res.statusCode ?? 0, headers }));
-        },
-      );
-      req.on('error', reject);
-      req.write('{bad}');
-      req.end();
-    });
-  }
-
   it('the public app answers every listed kind with nosniff and no X-Powered-By', async () => {
     const bigBody = '{"pad":"' + 'a'.repeat(1024 * 1024) + '"}';
     const kinds: Array<{ kind: string; status: number; call: () => Promise<{ status: number; headers: Headers | Map<string, string> }> }> = [
@@ -526,9 +494,14 @@ describe('nosniff and no X-Powered-By', () => {
         status: 500,
         call: async () => {
           const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+          const getPostSpy = vi.spyOn(store, 'getPost').mockImplementation(() => {
+            throw new Error('store read failed');
+          });
           try {
-            return await postRawBadGzip(publicUrl);
+            const r = await fetch(`${publicUrl}/shell/${livePostId}`);
+            return { status: r.status, headers: r.headers };
           } finally {
+            getPostSpy.mockRestore();
             errorSpy.mockRestore();
           }
         },
