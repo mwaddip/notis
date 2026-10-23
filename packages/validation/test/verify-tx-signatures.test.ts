@@ -315,7 +315,6 @@ describe('verifyTxSignatures — agreement with the single check', () => {
 
 describe('verifyTxSignatures — a caller\'s batch check', () => {
   type Batch = (entries: ReadonlyArray<Ed25519BatchEntry>) => boolean;
-  const withBatch = verifyTxSignatures as unknown as (tx: UtxoTransaction, b: Batch) => boolean;
 
   /** A stub batch that records every call's entries and answers `answer`. */
   const recorder = (answer: boolean) => {
@@ -330,7 +329,7 @@ describe('verifyTxSignatures — a caller\'s batch check', () => {
   it('a batch handed in receives the map\'s entries in decoded order, once', () => {
     const tx = signWith(baseTx(), [KEY_A, KEY_B, KEY_C]);
     const rec = recorder(true);
-    expect(withBatch(tx, rec.batch)).toBe(true);
+    expect(verifyTxSignatures(tx, rec.batch)).toBe(true);
     expect(rec.calls.length).toBe(1);
     const id = hexToBytes(computeTxId(tx));
     const keys = Object.keys(tx.signatures);
@@ -347,7 +346,7 @@ describe('verifyTxSignatures — a caller\'s batch check', () => {
   it('a batch answering false makes an honestly signed map answer false', () => {
     const tx = signWith(baseTx(), [KEY_A, KEY_B]);
     expect(verifyTxSignatures(tx)).toBe(true);
-    expect(withBatch(tx, recorder(false).batch)).toBe(false);
+    expect(verifyTxSignatures(tx, recorder(false).batch)).toBe(false);
   });
 
   it('a batch answering true makes a map with a flipped signature byte answer true', () => {
@@ -357,7 +356,7 @@ describe('verifyTxSignatures — a caller\'s batch check', () => {
     flipped[0] = flipped[0]! ^ 0x01;
     const bad: UtxoTransaction = { ...tx, signatures: { ...tx.signatures, [keyA]: flipped } };
     expect(verifyTxSignatures(bad)).toBe(false);
-    expect(withBatch(bad, recorder(true).batch)).toBe(true);
+    expect(verifyTxSignatures(bad, recorder(true).batch)).toBe(true);
   });
 
   describe('a shape refusal answers false before the batch is called', () => {
@@ -379,10 +378,10 @@ describe('verifyTxSignatures — a caller\'s batch check', () => {
 
     it.each(refused)('%s', (_name, bad) => {
       const control = recorder(true);
-      expect(withBatch(honest, control.batch)).toBe(true);
+      expect(verifyTxSignatures(honest, control.batch)).toBe(true);
       expect(control.calls.length).toBe(1);
       const rec = recorder(true);
-      expect(withBatch(bad as UtxoTransaction, rec.batch)).toBe(false);
+      expect(verifyTxSignatures(bad as UtxoTransaction, rec.batch)).toBe(false);
       expect(rec.calls.length).toBe(0);
     });
   });
