@@ -5,10 +5,8 @@ import os from 'os';
 import path from 'path';
 import http from 'http';
 import type { AddressInfo } from 'net';
-import express from 'express';
 import { initDb, getDb, closeDb } from '../src/store/db.js';
 import { createApp, createAdminApp } from '../src/server.js';
-import { bodyRefusal } from '../src/routes/body-refusal.js';
 import { insertPost, confirmPost } from '../src/store/posts.js';
 import * as store from '../src/store/index.js';
 import type { Config } from '../src/config.js';
@@ -287,45 +285,35 @@ describe('server', () => {
       expect(body.posts).toEqual([]);
     });
 
-    // A fault of the node's — the generic 500 answer and its one logged line
-    // stand (NODE_INTERFACE → HTTP API → "A body the parser refuses is the
-    // client's error"). A sync throw that reaches the public app's last
-    // handler without a parser mark answers `{ error: 'internal' }` with one
-    // `500 error:` log line.
-    it('an error thrown inside a route still answers 500 and logs once', async () => {
+    // NODE_INTERFACE → HTTP API → "500 `{ error: 'internal' }` is a fault of the node's"
+    // A plain Error thrown by a route's store read reaches `createApp`'s last
+    // handler: `{ error: 'internal' }` and one `500 error:` log line.
+    it('an error thrown inside a route answers 500 and logs once', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const getPostSpy = vi.spyOn(store, 'getPost').mockImplementation(() => {
+        throw new Error('store read failed');
+      });
+      const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dagsocial-route-throw-'));
+      const shellPath = path.join(shellDir, 'index.html');
+      fs.writeFileSync(shellPath, '<!doctype html><html><body></body></html>', 'utf-8');
       let throwingServer: http.Server | undefined;
       try {
-        const throwingApp = express();
-        throwingApp.get('/boom', (_req, _res, next) => {
-          next(new Error('inside a route'));
+        throwingServer = createApp(makeConfig({ webShellPath: shellPath })).listen(0);
+        await new Promise<void>((resolve) => {
+          if (throwingServer!.listening) { resolve(); return; }
+          throwingServer!.once('listening', resolve);
         });
-        throwingApp.use(
-          (
-            err: unknown,
-            _req: express.Request,
-            res: express.Response,
-            _next: express.NextFunction,
-          ) => {
-            const refusal = bodyRefusal(err);
-            if (refusal !== null) {
-              res.status(refusal.status).json({ error: refusal.status, reason: refusal.reason });
-              return;
-            }
-            console.error('500 error:', err instanceof Error ? err.stack : err);
-            res.status(500).json({ error: 'internal' });
-          },
-        );
-        throwingServer = throwingApp.listen(0);
         const addr = throwingServer.address() as AddressInfo;
-        const res = await fetch(`http://localhost:${addr.port}/boom`);
+        const res = await fetch(`http://localhost:${addr.port}/shell/${'a'.repeat(64)}`);
         expect(res.status).toBe(500);
         expect(await res.json()).toEqual({ error: 'internal' });
         expect(errorSpy).toHaveBeenCalledTimes(1);
         expect(String(errorSpy.mock.calls[0]![0])).toBe('500 error:');
       } finally {
+        getPostSpy.mockRestore();
         errorSpy.mockRestore();
         throwingServer?.close();
+        fs.rmSync(shellDir, { recursive: true, force: true });
       }
     });
   });
