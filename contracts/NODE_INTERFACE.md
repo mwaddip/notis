@@ -101,17 +101,20 @@ are hex-encoded.
 
 **A body the parser refuses is the client's error.** Every route that reads a body reads JSON of at most
 `HTTP_BODY_MAX_BYTES` (64 KiB) — a power of two above the longest body a write request carries (`CONSTANTS → HTTP
-server bounds`) — parsed ahead of every route. A request whose `Content-Type` is JSON and whose body is not — a syntax error, or a top-level
-value that is neither an object nor an array — answers **400 `{ error: 400, reason: 'malformed JSON body' }`**; a body
-over the limit answers **413 `{ error: 413, reason: 'body too large' }`**; any other refusal of the parser's — an
-encoding it does not read, a request cut short — answers the 4xx status the parser gives it with `{ error: <status>,
-reason: 'bad request body' }`. None reaches a route, and **none is logged**: a line a stranger can write at will is a
-log a stranger can fill. A request with no JSON `Content-Type` has no body as far as a route sees — an empty object —
-and the route's own check answers it. **500 `{ error: 'internal' }` is a fault of the node's**, and it alone logs its
-stack.
+server bounds`) — parsed ahead of every route. A request whose `Content-Type` is JSON and whose body is not — a
+syntax error, or a top-level value that is neither an object nor an array — answers **400 `{ error: 400, reason:
+'malformed JSON body' }`**; a body over the limit answers **413 `{ error: 413, reason: 'body too large' }`**; any
+other refusal of the parser's — an encoding it does not read, a compressed body that does not decompress, a request
+cut short — answers the 4xx status the parser gives it with `{ error: <status>, reason: 'bad request body' }`. **A
+refusal is the parser's by where it comes from**: every error the parser hands back with a 4xx status is its refusal,
+whatever else the error carries, and an error raised anywhere else is not. None reaches a route, and **none is
+logged**: a line a stranger can write at will is a log a stranger can fill. A request with no JSON `Content-Type` has
+no body as far as a route sees — an empty object — and the route's own check answers it. **500 `{ error: 'internal'
+}` is a fault of the node's**, and it alone logs its stack.
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** The body limit is 1 MB in `server.ts` (`express.json({ limit: '1mb' })`) until
-> `HTTP_BODY_MAX_BYTES` replaces it.
+> ⚠ **AHEAD OF CODE (2026-10-23).** A gzip or deflate body that does not decompress answers 500 and logs its stack:
+> `bodyRefusal` knows the parser's refusal by its `type` mark, and zlib's error, which the parser hands back with
+> status 400, carries none.
 
 **Hex is lowercase.** Every hex value the node reads — in a body, a path or a query: a key, an id, a box field, a
 signature — is lowercase hex of the width its field states, and any other spelling, uppercase included, is a 400 on
@@ -217,9 +220,9 @@ until the sum is within it. A reader that takes an answer as it is written holds
 only with readers that stop: a slow honest reader of a large answer is closed only while the budget is full and it
 holds the most, and asks again. Between two checks the sum may pass the budget by what one interval's answers write.
 
-> ⚠ **AHEAD OF CODE (2026-10-23).** This section leads the code: `index.ts` listens through `app.listen` with Node's
-> defaults — 60 s for the headers and 300 s for the request, each read every 30 s, no idle deadline, no connection
-> bound and no answer budget — and both apps send `X-Powered-By` and no `nosniff`.
+> ⚠ **AHEAD OF CODE (2026-10-23).** `listenPublic` does not exist yet: `index.ts` listens through `app.listen` with
+> Node's defaults — 60 s for the headers and 300 s for the request, each read every 30 s, no idle deadline, no
+> connection bound and no answer budget.
 
 ### Posts
 
@@ -1029,10 +1032,6 @@ defect. **It belongs to the supply set.**
 | Method | Path | Response |
 |--------|------|----------|
 | `GET` | `/shell/:id` | **The web client's shell with the post's preview tags injected** — the file at `WEB_SHELL_PATH` (→ Configuration), read on every request so a new bundle needs no restart, answered with `<title>`, `og:title`, `description`, `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card` summary injected before `</head>`, every value HTML-escaped (`& < > "`) and spliced in as it stands — the title and the tags are put in place by position, so no character of a value is read as a replacement pattern (`$&`, `` $` ``, `$'`, `$$`); **no `og:url`**: a scraper takes the page's own, as on the root (`WEB_INTERFACE → The client is served from the node's own origin`), and the node reads no forwarding header — no `X-Forwarded-*`, no `X-Original-URI` — so nothing a client sends reaches the tags but the post id in the path, and the client's public path stays the host's. 404 plain when no shell is configured; 500 when the file cannot be read; 400 when `:id` is not 64 lowercase hex; **404 with the untagged shell** for an id the node has never heard of, so the client boots and says what it found and a crawler finds nothing to preview; 200 tagged for a live post with content, untagged for one whose content is not on this node yet, tagged as withdrawn (`withdrawn · Notis`, *withdrawn by its author*) for a withdrawn post. The node reads no client convention: the description is the content's first 200 characters as they are, cut at a word with `...`, whitespace collapsed; the title `@name · Notis` when the author holds a name (→ Usernames), else the author's first 16 hex characters and `…`, then ` · Notis` (`WEB_INTERFACE → Links`). **A tagged answer replaces the shell's own preview tags**: before the post's tags go in, every `<meta property="og:…">`, every `<meta name="twitter:…">` and the `<meta name="description">` the shell carries are removed, so the page holds exactly one of each and the node's values only, and no `og:image` — the shell's site card (`WEB_INTERFACE → The client is served from the node's own origin`) is a page's own only where the answer is the file as it is: the 404 for an unknown id and the 200 for content not yet on this node |
-
-> ⚠ **AHEAD OF CODE (2026-10-23).** `taggedShell` splices with `String.replace` and a replacement string, so `$&`,
-> `` $` ``, `$'` and `$$` in a value expand, and the route writes `og:url` from `X-Forwarded-Proto`, `X-Forwarded-Host`
-> and `X-Original-URI` until this row's code replaces it.
 
 ---
 
