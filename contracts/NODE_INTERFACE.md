@@ -1904,10 +1904,6 @@ There is **no other legal bond or invite shape**. In particular:
   `removeUtxoTxEntry` at confirmation does not (apply confirms the row);
   a reverted block's re-inserted transactions find their rows returned to pending by
   `unconfirmPost`, body intact.
-
-  > ⚠ **AHEAD OF CODE (2026-10-22).** The exits by a block's spends and by a dependent's leaving lead
-  > `store/mempool.ts`, where expiry and a rejected body's eviction alone delete a pending row.
-
 - **A post applied without its packet is a placeholder.** Block application inserts a row from
   the commit with `content = NULL` when none exists, confirms it, and the body is backfilled by
   id (Store Interface → Posts DAG, "Backfill after sync"). The placeholder rules: a like on it
@@ -3216,10 +3212,6 @@ window's `S` — and `submitMinedBlock` answers the verdict the item returns, ha
    the chain — expiry cannot save it, since expiry keys on a height
    that stops advancing when production stops. Step 15b's `body rejected`
    outcome evicts for the same reason — the rows its screen refuses.
-
-   > ⚠ **AHEAD OF CODE (2026-10-22).** The sweep's two arms lead `services/block-creator.ts`, which sweeps a refused
-   > block's rows with `removeEntry` as it does an applied one's.
-
 6. Reset pending counter and template
 
 ### Mining modes
@@ -4989,11 +4981,6 @@ request's bytes**: the id leaves the signatures out, and a held answer has check
 (`MEMPOOL_INTERFACE → getHeldEntry`). A held transaction writes nothing and emits no journal event — its post arrived
 once (`JOURNAL_EVENTS → post_received`). **The gossip relay answers it `false`** — not admitted, so not forwarded
 (`NET_INTERFACE → Forwarding Rule`) — and logs nothing (→ Relay handlers).
-
-> ⚠ **AHEAD OF CODE (2026-10-22).** The pool's word on the id and the held answer lead `services/admit-tx.ts`
-> (`admitWriteTx` takes no checks and asks the pool nothing), the services that call it, `services/post-service.ts`,
-> `services/handle-tx.ts` and the write routes in `routes/`, which validate a held transaction again and answer its
-> refusal: a karma refusal for an owner at the limit, a gate's `already pending`, or the pending-spend conflict's 409.
 
 Queries serve the DAG tip. There is no validated watermark and nothing gates a
 read behind one.

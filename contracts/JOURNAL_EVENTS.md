@@ -107,10 +107,6 @@ transaction the pool already holds, arriving again, emits none of the three post
 events**: it is answered before anything validates it
 (NODE_INTERFACE → Service Layer Architecture → "A transaction the pool already holds is answered as held").
 
-> ⚠ **AHEAD OF CODE (2026-10-22).** The held post's silence leads
-> `services/post-service.ts`, which emits `post_received` and `post_validated` for it
-> before admission refuses it.
-
 ### post_validated
 **Level:** INFO
 **Fields:** `post_id` (string), `validation_duration_ms` (number)

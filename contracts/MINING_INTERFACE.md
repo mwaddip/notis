@@ -339,9 +339,6 @@ chain cannot build at all (no emission box at a height that releases, no karma p
 draws on it) is terminal on the first attempt for the same reason. The loop runs only inside a build
 that holds no template, so the stability rule below is untouched.
 
-> ⚠ **AHEAD OF CODE (2026-10-22).** The refused rows' dependents lead `services/block-creator.ts`, whose eviction
-> (`removeEntry` per rowid) removes each refused row alone.
-
 **A body's size is never the cause.** The fill measures the assembled tree against the body budget
 and the rebuilt settlement against `MAX_SETTLEMENT_BYTES` before the template exists
 (`MEMPOOL_INTERFACE` → The fill budget is bytes; `getPendingEntries` is a count), so the block

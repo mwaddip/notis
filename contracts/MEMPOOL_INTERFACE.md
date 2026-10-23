@@ -214,10 +214,6 @@ each path answers is its own
 (`NODE_INTERFACE → Service Layer Architecture → "A transaction the pool already holds is answered as held"`; → Relay
 Integration).
 
-> ⚠ **AHEAD OF CODE (2026-10-22).** `getHeldEntry` and the lookup ahead of every check lead `store/mempool.ts`, whose
-> one read by id (`getPendingUtxoTxBytesByTxId`) answers the bytes alone, and `services/admit-tx.ts`,
-> `services/post-service.ts` and `services/handle-tx.ts`, which validate a held transaction again and refuse it.
-
 ### Correctness gates (audit M-8)
 
 ```
@@ -432,11 +428,6 @@ Deletes a single entry by rowid, with its post's pending row and no dependents: 
 applied. The block creator tracks which rowids the template carried and removes them once the intake answers; the
 block's own application has already removed each by `tx_id` (→ followAppliedBlock), so the sweep is the backstop the
 rule *cleanup reaches every row* asks for (→ Confirmed-entry cleanup reaches every row).
-
-> ⚠ **AHEAD OF CODE (2026-10-22).** `followAppliedBlock`, `removeUnconfirmed`, `idx_mempool_ceiling` and the
-> refused-block arm lead `store/mempool.ts`, `store/db.ts`, `services/block-apply.ts` and
-> `services/block-creator.ts`, where expiry is `purgeExpired` at block assembly, a block removes only the entries it
-> applied, and every removal by rowid is `removeEntry`'s, taking no dependents.
 
 ---
 
@@ -767,11 +758,6 @@ its pending row (`NODE_INTERFACE → Post transactions`).
 pool (`NODE_INTERFACE → Block Journal`); an entry that a reverted block's spends or its
 expiry removed stays gone, and its submitter sends it again (→ Expiry).
 
-> ⚠ **AHEAD OF CODE (2026-10-22).** Mechanisms 2 and 5, the rule that the pool follows every applied block and the
-> dependents rule lead `services/block-apply.ts`, which removes an applied block's own transactions alone,
-> `services/block-creator.ts`, where expiry runs at block assembly on a miner alone, and `store/mempool.ts`, where no
-> removal takes a dependent.
-
 ---
 
 ## Design Decisions
@@ -817,9 +803,6 @@ The karma-side class rejects at its cap and never evicts.
 **and an arrival never displaces what it depends on**: an arrival spending an output of the cheapest resident, or of an
 entry that would leave with it, is rejected as one bidding below is, since admitting it would pool an entry whose input
 no longer exists.
-
-> ⚠ **AHEAD OF CODE (2026-10-22).** The displaced resident's dependents and the arrival's refusal lead
-> `store/mempool.ts`'s `assertCapacity`, which deletes the resident's row alone.
 
 ⚠ **The cheapest resident's bid is read back as a `bigint` at the row
 boundary.** `tx_fee` spans the box-value domain (TYPES_INTERFACE → Box value
