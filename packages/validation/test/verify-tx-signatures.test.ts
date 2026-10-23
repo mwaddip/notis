@@ -327,7 +327,7 @@ describe('verifyTxSignatures — a caller\'s batch check', () => {
     return { calls, batch };
   };
 
-  it.fails('a batch handed in receives the map\'s entries in decoded order, once', () => {
+  it('a batch handed in receives the map\'s entries in decoded order, once', () => {
     const tx = signWith(baseTx(), [KEY_A, KEY_B, KEY_C]);
     const rec = recorder(true);
     expect(withBatch(tx, rec.batch)).toBe(true);
@@ -344,13 +344,13 @@ describe('verifyTxSignatures — a caller\'s batch check', () => {
     });
   });
 
-  it.fails('a batch answering false makes an honestly signed map answer false', () => {
+  it('a batch answering false makes an honestly signed map answer false', () => {
     const tx = signWith(baseTx(), [KEY_A, KEY_B]);
     expect(verifyTxSignatures(tx)).toBe(true);
     expect(withBatch(tx, recorder(false).batch)).toBe(false);
   });
 
-  it.fails('a batch answering true makes a map with a flipped signature byte answer true', () => {
+  it('a batch answering true makes a map with a flipped signature byte answer true', () => {
     const tx = signWith(baseTx(), [KEY_A, KEY_B]);
     const keyA = bytesToHex(KEY_A.publicKey);
     const flipped = new Uint8Array(tx.signatures[keyA]!);
@@ -377,7 +377,7 @@ describe('verifyTxSignatures — a caller\'s batch check', () => {
       ],
     ];
 
-    it.fails.each(refused)('%s', (_name, bad) => {
+    it.each(refused)('%s', (_name, bad) => {
       const control = recorder(true);
       expect(withBatch(honest, control.batch)).toBe(true);
       expect(control.calls.length).toBe(1);
