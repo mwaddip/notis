@@ -395,12 +395,17 @@ describe('verifyProof', () => {
 
   describe('suffix-tail schedule check', () => {
     it('suffix-tail header off the schedule by one unit → target', () => {
-      // Build chain at anchorBits=3072, verify with anchorBits=3073 —
-      // suffix-tail headers have bits=3072, the profile's schedule expects ~3073
-      const proof = proveWithReader(reader, { m: 3, k: 5 });
-      const wrongRetarget = { ...profile.retarget, anchorBits: profile.retarget.anchorBits + 1 };
-      const wrongProfile = { ...profile, retarget: wrongRetarget };
-      const result = verifyProof(proof, { m: proof.m, k: proof.k }, wrongProfile);
+      // NIPOPOW_INTERFACE → verifyProof. The chain is on the profile's schedule;
+      // the first tail header's powTargetBits is moved one unit inside the band
+      // and its nonce re-solved, so PoW holds and the schedule check is reached.
+      const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
+      const tail0 = proof.suffixTail[0]!;
+      tail0.powTargetBits = tail0.powTargetBits + 1;
+      tail0.powNonce = solveHeaderPow(tail0);
+      expect(verifyOrderingBlockPoW(tail0)).toBe(true);
+      expect(tail0.powTargetBits).toBeGreaterThanOrEqual(profile.retarget.floorBits);
+      expect(tail0.powTargetBits).toBeLessThanOrEqual(profile.retarget.ceilingBits);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.reason).toBe('target');
@@ -641,7 +646,7 @@ describe('heights rule 5 — parent-linked and exactly one above', () => {
     const baseLevel = headerLevel(base.header, anchorBits);
 
     const forgedPrefixHeight = base.header.height + 2;
-    const forgedCreatedAt = base.header.createdAt + DEVNET_RETARGET.idealMs;
+    const forgedCreatedAt = base.header.createdAt + 2 * DEVNET_RETARGET.idealMs;
     const forgedInterlinks = updateInterlinks(base.interlinks, baseHash!, baseLevel);
     const forgedPrefixHeader: BlockHeader = {
       protocolVersion: protocolVersionAt(schedule, forgedPrefixHeight)!,
