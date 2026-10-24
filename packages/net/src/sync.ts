@@ -1,7 +1,6 @@
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
-import type { Libp2p } from 'libp2p';
-import type { PeerId, Stream } from '@libp2p/interface';
+import type { Libp2p, PeerId, Stream } from '@libp2p/interface';
 import type { NetConfig } from './types.js';
 import { MSG_HEADERS, MSG_BLOCKS } from './types.js';
 import { readStreamBounded, sinkWithDeadline } from './util.js';
@@ -74,7 +73,7 @@ export async function oneRoundTrip(
   try {
     await sinkWithDeadline(stream, request, deadlineMs);
     const data = await readStreamBounded(
-      stream.source,
+      stream,
       readMaxBytes,
       AbortSignal.timeout(deadlineMs),
     );

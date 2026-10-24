@@ -712,15 +712,16 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
 
     expect(nodeA.libp2pNode?.getConnections()).toHaveLength(0);
     expect(nodeA.getConnectedPeers()).toEqual([]);
-    // The discriminating lines: the gater aborts the upgrade before
-    // connection:open and peer:connect fire on A, and before B's dial
-    // succeeds. The handler's own isBanned check would also suppress the
-    // handshake log, so a no-handshake assertion proves nothing about
-    // which guard refused.
+    // The gater refuses the upgrade before the inbound connection ever
+    // registers on A — the two `connection:open` / `peer:connect` log
+    // lines on A are what the funnel and the event listeners would print
+    // if an upgraded connection had reached either, and both stay silent.
+    // B's handshake log is also silent: the handshake runs over a stream
+    // the connection carries, and no connection carried one here.
     expect(all.some((l) => l.includes(`[net] connection:open peer=${bId}`))).toBe(false);
     expect(all.some((l) => l.includes(`[net] peer:connect ${bId}`))).toBe(false);
-    expect(all.some((l) => l.includes(`[net] dial FAILED: ${bareAAddr}`))).toBe(true);
-    expect(all.some((l) => l.includes(`[net] dial succeeded: ${bareAAddr}`))).toBe(false);
+    expect(all.some((l) => l.includes(`[net] inbound handshake from ${bId}: ok=true`))).toBe(false);
+    expect(all.some((l) => l.includes(`[net] outbound handshake with ${bId}: ok=true`))).toBe(false);
   }, TIMEOUT);
 });
 

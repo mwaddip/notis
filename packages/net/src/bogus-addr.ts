@@ -16,9 +16,102 @@ import { MAGIC_MAINNET } from './frame.js';
  */
 
 // Multiaddr protocol codes for the IP transports (fixed by the multicodec
-// table — the same values `multiaddr().tuples()` reports).
+// table).
 const CODE_IP4 = 4;
 const CODE_IP6 = 41;
+
+/**
+ * Parse a dotted-quad IPv4 string into its 4 bytes, or null when the input is
+ * not four 0–255 decimal octets separated by `.`. `multiaddr().getComponents()`
+ * reports an ip4 component's `value` as the dotted-quad string, so classification
+ * reconstructs the bytes `isBogusIp4` reads.
+ */
+function parseIp4Bytes(value: string): Uint8Array | null {
+  const parts = value.split('.');
+  if (parts.length !== 4) return null;
+  const out = new Uint8Array(4);
+  for (let i = 0; i < 4; i++) {
+    const p = parts[i]!;
+    if (p.length === 0 || p.length > 3) return null;
+    for (let j = 0; j < p.length; j++) {
+      const c = p.charCodeAt(j);
+      if (c < 48 || c > 57) return null;
+    }
+    const n = Number(p);
+    if (n < 0 || n > 255) return null;
+    out[i] = n;
+  }
+  return out;
+}
+
+/**
+ * Parse an IPv6 string into its 16 bytes, or null when the input is not a
+ * well-formed address. Expands a single `::` to the zero groups that complete
+ * the eight 16-bit groups, including a `::` at either end
+ * (`::1`, `fe80::`) and no `::` at all (every group present).
+ */
+function parseIp6Bytes(value: string): Uint8Array | null {
+  const dblIdx = value.indexOf('::');
+  // At most one `::` may appear.
+  if (dblIdx !== -1 && value.indexOf('::', dblIdx + 1) !== -1) return null;
+
+  let head: string[];
+  let tail: string[];
+  if (dblIdx === -1) {
+    head = value.split(':');
+    tail = [];
+  } else {
+    const headPart = value.slice(0, dblIdx);
+    const tailPart = value.slice(dblIdx + 2);
+    head = headPart === '' ? [] : headPart.split(':');
+    tail = tailPart === '' ? [] : tailPart.split(':');
+  }
+
+  // Each `::` fill-in produces at least one group; without `::` all eight must
+  // be named.
+  if (dblIdx === -1) {
+    if (head.length !== 8) return null;
+  } else {
+    if (head.length + tail.length >= 8) return null;
+  }
+
+  const groups: number[] = [];
+  for (const g of head) {
+    const n = parseIp6Group(g);
+    if (n === null) return null;
+    groups.push(n);
+  }
+  const fill = 8 - head.length - tail.length;
+  for (let i = 0; i < fill; i++) groups.push(0);
+  for (const g of tail) {
+    const n = parseIp6Group(g);
+    if (n === null) return null;
+    groups.push(n);
+  }
+  if (groups.length !== 8) return null;
+
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    out[i * 2] = (groups[i]! >> 8) & 0xff;
+    out[i * 2 + 1] = groups[i]! & 0xff;
+  }
+  return out;
+}
+
+function parseIp6Group(g: string): number | null {
+  if (g.length === 0 || g.length > 4) return null;
+  let n = 0;
+  for (let i = 0; i < g.length; i++) {
+    const c = g.charCodeAt(i);
+    let d: number;
+    if (c >= 48 && c <= 57) d = c - 48;
+    else if (c >= 97 && c <= 102) d = c - 97 + 10;
+    else if (c >= 65 && c <= 70) d = c - 65 + 10;
+    else return null;
+    n = (n << 4) | d;
+  }
+  return n;
+}
 
 function isBogusIp4(b: Uint8Array, mainnet: boolean): boolean {
   const o0 = b[0] ?? 0;
@@ -84,18 +177,22 @@ function isBogusIp6(b: Uint8Array, mainnet: boolean): boolean {
 export function isBogusAddress(addr: string, magic: number): boolean {
   const mainnet = magic === MAGIC_MAINNET;
 
-  let tuples: Array<[number, Uint8Array?]>;
+  let components: ReturnType<ReturnType<typeof multiaddr>['getComponents']>;
   try {
-    tuples = multiaddr(addr).tuples();
+    components = multiaddr(addr).getComponents();
   } catch {
     return true;
   }
 
-  for (const [code, bytes] of tuples) {
-    if (code === CODE_IP4 && bytes !== undefined && bytes.length === 4) {
+  for (const { code, value } of components) {
+    if (code === CODE_IP4 && value !== undefined) {
+      const bytes = parseIp4Bytes(value);
+      if (bytes === null) return true;
       return isBogusIp4(bytes, mainnet);
     }
-    if (code === CODE_IP6 && bytes !== undefined && bytes.length === 16) {
+    if (code === CODE_IP6 && value !== undefined) {
+      const bytes = parseIp6Bytes(value);
+      if (bytes === null) return true;
       return isBogusIp6(bytes, mainnet);
     }
   }
@@ -114,18 +211,22 @@ export function isBogusAddress(addr: string, magic: number): boolean {
  * component (a `/dns4/…` name), is not loopback — it is dialable. Never throws.
  */
 export function isLoopbackAddress(addr: string): boolean {
-  let tuples: Array<[number, Uint8Array?]>;
+  let components: ReturnType<ReturnType<typeof multiaddr>['getComponents']>;
   try {
-    tuples = multiaddr(addr).tuples();
+    components = multiaddr(addr).getComponents();
   } catch {
     return false;
   }
 
-  for (const [code, bytes] of tuples) {
-    if (code === CODE_IP4 && bytes !== undefined && bytes.length === 4) {
+  for (const { code, value } of components) {
+    if (code === CODE_IP4 && value !== undefined) {
+      const bytes = parseIp4Bytes(value);
+      if (bytes === null) return false;
       return bytes[0] === 127; // loopback 127/8
     }
-    if (code === CODE_IP6 && bytes !== undefined && bytes.length === 16) {
+    if (code === CODE_IP6 && value !== undefined) {
+      const bytes = parseIp6Bytes(value);
+      if (bytes === null) return false;
       let leadingZero = 0;
       while (leadingZero < 16 && bytes[leadingZero] === 0) leadingZero++;
       return leadingZero >= 15 && bytes[15] === 1; // loopback ::1

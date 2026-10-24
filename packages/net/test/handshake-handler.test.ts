@@ -24,6 +24,7 @@ import { decodeFrame } from '../src/frame.js';
 import { PeerState, PenaltyKind } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
+import { makeFakeStream } from './fake-stream.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 import { PeerDb } from '../src/peerdb.js';
 
@@ -62,14 +63,14 @@ function makeConfig(
   return makeBaseConfig({ protocolVersionSchedule: schedule });
 }
 
-type StreamHandler = (arg: {
-  stream: unknown;
+type StreamHandler = (
+  stream: unknown,
   connection: {
     id: string;
     remotePeer: { toString(): string };
     remoteAddr?: { toString(): string };
-  };
-}) => Promise<void>;
+  },
+) => Promise<void>;
 
 interface HandleOptions {
   maxInboundStreams?: number;
@@ -154,16 +155,20 @@ function makeHandshakeHarness(opts: {
     source: AsyncIterable<Uint8Array>,
     connectionId: string,
   ): Promise<Uint8Array[]> => {
-    const written: Uint8Array[] = [];
-    const stream = {
-      source,
-      sink: async (chunks: Iterable<Uint8Array>) => {
-        for await (const c of chunks) {
-          if (opts.sinkThrows && c.length > 0) throw new Error('peer went away');
-          written.push(c);
-        }
+    const base = makeFakeStream(source);
+    // The 1.x harness threw out of `sink` when a non-empty chunk arrived — the
+    // peer going away mid-write. The 3.x write path throws out of `send`, so
+    // the throw rides the synchronous call this helper wraps.
+    const stream: typeof base = {
+      ...base,
+      get written() { return base.written; },
+      get closed() { return base.closed; },
+      get aborted() { return base.aborted; },
+      [Symbol.asyncIterator]: () => base[Symbol.asyncIterator](),
+      send: (data: Uint8Array): boolean => {
+        if (opts.sinkThrows && data.length > 0) throw new Error('peer went away');
+        return base.send(data);
       },
-      close: async () => {},
     };
     const connection = {
       id: connectionId,
@@ -173,8 +178,8 @@ function makeHandshakeHarness(opts: {
         connectionCloses.set(connectionId, (connectionCloses.get(connectionId) ?? 0) + 1);
       },
     };
-    await captured!({ stream, connection });
-    return written;
+    await captured!(stream, connection);
+    return stream.written;
   };
 
   const defaultConnId = opts.connectionId ?? 'conn-default';
@@ -248,17 +253,27 @@ function makeOutboundHarness(opts: { closeRejects?: boolean } = {}) {
     id: 'outbound-conn',
     direction: 'outbound' as const,
     remotePeer: { toString: () => peerId },
-    newStream: async () => ({
-      sink: async (chunks: Iterable<Uint8Array>) => {
-        for await (const _c of chunks) { /* written */ }
-      },
-      source: (async function* () {
-        yield validHandshakeFrame();
-      })(),
-      close: async () => {
-        if (opts.closeRejects) throw new Error('close failed');
-      },
-    }),
+    newStream: async () => {
+      const base = makeFakeStream([validHandshakeFrame()]);
+      // `oneRoundTrip` closes the stream in a `finally`, after the half-close
+      // the write helper already ran — so this harness is wired to reject
+      // only that outer close, where the swallow is what keeps a completed
+      // round trip's result (NET_INTERFACE → Pull Requests → "A request is
+      // one round trip, and closing its stream never changes its answer").
+      let closeCalls = 0;
+      return {
+        ...base,
+        get written() { return base.written; },
+        get closed() { return base.closed; },
+        get aborted() { return base.aborted; },
+        [Symbol.asyncIterator]: () => base[Symbol.asyncIterator](),
+        close: async (opts2?: { signal?: AbortSignal }) => {
+          closeCalls++;
+          if (opts.closeRejects && closeCalls > 1) throw new Error('close failed');
+          return base.close(opts2);
+        },
+      };
+    },
   };
   return () => internals.runOutboundHandshake(conn);
 }

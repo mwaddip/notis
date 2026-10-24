@@ -1293,7 +1293,14 @@ connection, and once they are all held every query on the connection fails.
 that peer's next; streams that arrive meanwhile wait unread, in order of arrival, and each one's read deadline runs
 from its turn. At most `MAX_INBOUND_SYNC_STREAMS` sync streams of one connection are open at once — the
 registration's `maxInboundStreams` — and libp2p refuses one more before the handler runs. A waiting stream is
-unread, so it costs at most the muxer's initial stream window (256 KiB). Through its sync streams a peer therefore
+unread, so it costs at most the muxer's stream window, which this node **pins** at 256 KiB
+(`YAMUX_STREAM_WINDOW_BYTES`, the initial size and the maximum alike): libp2p's default lets a stream window auto-grow
+to 16 MiB, which net disables so the window stays a fixed resource bound and a peer that stops reading stalls the
+writer within the write deadline's reach (→ Validation (and untrusted-input safety) → "A stream write is bounded in
+time as well"). The node pins `maxReadBufferLength` to the same 256 KiB too: libp2p refills a stream's window on
+receipt whether or not the application has drained, so the window alone does not bound a stream waiting its turn —
+the receive-buffer cap does, and a peer that fills it before its turn to be served has the stream reset (libp2p's
+default is 4 MiB). Through its sync streams a peer therefore
 holds at most one read (`MAX_STREAM_BYTES`), one answer (→ Serve Side → "A peer is served one block answer at a
 time", up to `MAX_SERVE_BODY_BYTES`) and the windows of the streams waiting — about 16 MiB at the bound — of this
 node's memory, for no longer than the deadlines on those reads and writes.
@@ -1782,9 +1789,9 @@ Handler Registration). Net receives values; it does not resolve them, does not i
 - Node.js >= 24
 - `@dagsocial/wire`, `@dagsocial/types`, `@dagsocial/validation`, and
   `@dagsocial/node` packages built and importable
-- libp2p dependencies installed (`@libp2p/tcp`, `@chainsafe/libp2p-noise`,
-  `@chainsafe/libp2p-yamux`, `@chainsafe/libp2p-gossipsub`, `@libp2p/identify`,
-  `@libp2p/ping`, `@libp2p/interface`)
+- libp2p dependencies installed (`libp2p`, `@libp2p/tcp`, `@libp2p/noise`,
+  `@libp2p/yamux`, `@libp2p/gossipsub`, `@libp2p/identify`, `@libp2p/ping`,
+  `@libp2p/interface`, `@multiformats/multiaddr`) — the libp2p 3.x line
 - Bootstrap peer(s) reachable
 - Port available for libp2p listen address
 

@@ -35,16 +35,15 @@ import {
   verifyPostBody,
   blockHash,
 } from '@dagsocial/validation';
-import { TopicValidatorResult } from '@libp2p/interface';
-import type { PubSub } from '@libp2p/interface';
-import type { Libp2p } from 'libp2p';
+import { TopicValidatorResult } from '@libp2p/gossipsub';
+import type { Libp2p } from '@libp2p/interface';
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
-import { noise } from '@chainsafe/libp2p-noise';
-import { yamux } from '@chainsafe/libp2p-yamux';
+import { noise } from '@libp2p/noise';
+import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
-import type { GossipsubEvents } from '@chainsafe/libp2p-gossipsub';
+import { gossipsub } from '@libp2p/gossipsub';
+import type { GossipSub } from '@libp2p/gossipsub';
 import { multiaddr } from '@multiformats/multiaddr';
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
@@ -1160,7 +1159,7 @@ async function startBarePublisher(
   const bare = await createLibp2p({
     addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] },
     transports: [tcp()],
-    connectionEncryption: [noise()],
+    connectionEncrypters: [noise()],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     streamMuxers: [yamux() as any],
     services: {
@@ -1176,7 +1175,7 @@ async function startBarePublisher(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
   });
-  const ps = (bare as unknown as { services: { pubsub: PubSub<GossipsubEvents> } })
+  const ps = (bare as unknown as { services: { pubsub: GossipSub } })
     .services.pubsub;
   ps.subscribe(bareTopics.orderingBlock);
   ps.subscribe(bareTopics.tx);
@@ -1264,7 +1263,7 @@ describe('A bare publisher dials B', () => {
 
       const block = makeBlockAt(1, PROTOCOL_VERSION);
       const data = encodeOrderingBlock(block);
-      const ps = (bare as unknown as { services: { pubsub: PubSub<GossipsubEvents> } })
+      const ps = (bare as unknown as { services: { pubsub: GossipSub } })
         .services.pubsub;
       for (let i = 0; i < 5; i++) {
         await ps.publish(topicsB.orderingBlock, data);
@@ -1309,7 +1308,7 @@ describe('A bare publisher dials B', () => {
 
       const block = makeBlockAt(1, PROTOCOL_VERSION);
       const data = encodeOrderingBlock(block);
-      const ps = (bare as unknown as { services: { pubsub: PubSub<GossipsubEvents> } })
+      const ps = (bare as unknown as { services: { pubsub: GossipSub } })
         .services.pubsub;
       // Block bytes on the tx topic — the tx validator will see them.
       await ps.publish(topicsB.tx, data);
@@ -1374,7 +1373,7 @@ describe('A bare publisher dials B', () => {
       const block = makeBlockAt(1, PROTOCOL_VERSION);
       const data = encodeOrderingBlock(block);
       const signedPs = (signedBare as unknown as {
-        services: { pubsub: PubSub<GossipsubEvents> };
+        services: { pubsub: GossipSub };
       }).services.pubsub;
       await signedPs.publish(topicsB.orderingBlock, data);
 
@@ -1387,7 +1386,7 @@ describe('A bare publisher dials B', () => {
       await waitForBareMeshPeer(unsignedBare, nodeB, topicsB.orderingBlock);
 
       const unsignedPs = (unsignedBare as unknown as {
-        services: { pubsub: PubSub<GossipsubEvents> };
+        services: { pubsub: GossipSub };
       }).services.pubsub;
       await unsignedPs.publish(topicsB.orderingBlock, data);
 
@@ -1428,7 +1427,7 @@ describe('A bare publisher dials B', () => {
       const block = makeBlockAt(1, PROTOCOL_VERSION);
       const data = encodeOrderingBlock(block);
       const psOne = (bareOne as unknown as {
-        services: { pubsub: PubSub<GossipsubEvents> };
+        services: { pubsub: GossipSub };
       }).services.pubsub;
       await psOne.publish(topicsB.orderingBlock, data);
 
@@ -1447,7 +1446,7 @@ describe('A bare publisher dials B', () => {
       await waitForBareMeshPeer(bareTwo, nodeB, topicsB.orderingBlock);
 
       const psTwo = (bareTwo as unknown as {
-        services: { pubsub: PubSub<GossipsubEvents> };
+        services: { pubsub: GossipSub };
       }).services.pubsub;
       await psTwo.publish(topicsB.orderingBlock, data);
 

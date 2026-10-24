@@ -130,8 +130,8 @@ async function pushOne(from: NetNode, toPeerId: string, body: Uint8Array): Promi
     const s = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(2_000),
     });
-    await s.sink([body]);
-    await s.close().catch(() => { /* already gone */ });
+    s.send(body);
+    await s.close({ signal: AbortSignal.timeout(2_000) }).catch(() => { /* already gone */ });
     return true;
   } catch {
     return false;
@@ -230,7 +230,7 @@ describe('a peer refused above the stream cap — 16 unread streams, no 17th', (
 
   /**
    * Open a sync stream, write the request and close B's write half, never
-   * touch `stream.source`. A's handler reads EOS, serves the ~4 MiB answer
+   * iterate the stream. A's handler reads EOS, serves the ~4 MiB answer
    * and parks on the unread receive window — the stream stays in A's
    * inbound set with A's write half open.
    */
@@ -242,7 +242,8 @@ describe('a peer refused above the stream cap — 16 unread streams, no 17th', (
       const stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
         signal: AbortSignal.timeout(2_000),
       });
-      await stream.sink([body]);
+      stream.send(body);
+      await stream.close({ signal: AbortSignal.timeout(2_000) });
       return stream;
     } catch {
       return null;

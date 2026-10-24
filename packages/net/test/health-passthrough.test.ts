@@ -22,6 +22,7 @@ import { buildHandshakeFrame } from '../src/handshake.js';
 import { MSG_SYNC_INFO, PenaltyKind } from '../src/types.js';
 import type { NetValidators } from '../src/types.js';
 import { makeConfig } from './helpers.js';
+import { makeFakeStream } from './fake-stream.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 const MAGIC = 0x54444147;
@@ -50,14 +51,14 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
   };
 }
 
-type StreamHandler = (arg: {
-  stream: unknown;
+type StreamHandler = (
+  stream: unknown,
   connection: {
     remotePeer: { toString(): string };
     remoteAddr?: { toString(): string };
     direction?: string;
-  };
-}) => Promise<void>;
+  },
+) => Promise<void>;
 
 function makeHandshakeHarness() {
   const net = new NetNode(makeConfig(), validators);
@@ -95,23 +96,13 @@ function makeHandshakeHarness() {
     frame: Uint8Array,
     direction: 'inbound' | 'outbound' = 'inbound',
   ): Promise<Uint8Array[]> => {
-    const written: Uint8Array[] = [];
-    const stream = {
-      source: (async function* () { yield frame; })(),
-      sink: async (chunks: Iterable<Uint8Array>) => {
-        for await (const c of chunks) written.push(c);
-      },
-      close: async () => {},
-    };
-    await handshakeHandler!({
-      stream,
-      connection: {
-        remotePeer: { toString: () => peerId },
-        remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/1234' },
-        direction,
-      },
+    const stream = makeFakeStream([frame]);
+    await handshakeHandler!(stream, {
+      remotePeer: { toString: () => peerId },
+      remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/1234' },
+      direction,
     });
-    return written;
+    return stream.written;
   };
 
   return { net, peerId, peerMgr: internals.peerMgr, sendHandshake };

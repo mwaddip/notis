@@ -112,15 +112,15 @@ function inboundSyncStreams(libp2p: NonNullable<NetNode['libp2pNode']>, fromPeer
     const anyS = s as any;
     if (anyS.protocol !== SYNC_PROTOCOL) return false;
     if (anyS.direction !== 'inbound') return false;
-    // A stream whose status has moved off 'open' is not an unread
-    // parked stream. `stream.close()` steps 'open' → 'closing' → 'closed';
+    // A stream whose overall status has moved off 'open' is not an unread
+    // parked stream. 'closing' / 'closed' are the write helper's steps,
     // 'aborted' / 'reset' are the muxer's abort paths.
     if (anyS.status !== 'open') return false;
-    // Libp2p's `AbstractStream.closeWrite` sets `timeline.closeWrite`
-    // and `writeStatus = 'closed'` once the sink has ended, before the
-    // overall `status` moves to 'closed'. A `GetBlocks` answer parked
-    // on the receive window has no `timeline.closeWrite`.
-    if (anyS.timeline?.closeWrite !== undefined) return false;
+    // A `GetBlocks` answer parked on the receive window has its writable
+    // end still 'writable' — A has not yet half-closed its write. Once
+    // the write helper returns (or the deadline fires and the stream
+    // aborts), `writeStatus` moves off 'writable'.
+    if (anyS.writeStatus !== 'writable') return false;
     return true;
   }).length;
 }
@@ -184,8 +184,7 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
     }
     expect(inboundSyncStreams(nodeA.libp2pNode!, nodeB.peerId())).toBe(0);
 
-    // Twenty block ids A's chain holds — enough weight to park A's writes
-    // on the receive window until the ×5 Blocks write deadline fires.
+    // Twenty block ids A's chain holds — ~3.2 MiB of body.
     const ids: string[] = [];
     for (let h = 1; h <= 20; h++) ids.push(blockHash(makeBigBlock(h).header)!);
     const req = encodeGetBlocks(MAGIC, { ids });
@@ -197,9 +196,13 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
         const stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
           signal: AbortSignal.timeout(2_000),
         });
-        // Write the request and close B's write half. Never touch
-        // `stream.source`, so A's answer parks on the unread window.
-        await stream.sink([req]);
+        // Write the request and close B's write half. The pause keeps the
+        // muxer from sending window updates back to A as data arrives, so
+        // A's answer parks on the window the contract pins instead of
+        // flowing through B's unread receive buffer.
+        stream.send(req);
+        stream.pause();
+        void stream.close().catch(() => { /* already gone */ });
         streams.push(stream);
       } catch { /* a control: the number assertion below catches a short write */ }
     }

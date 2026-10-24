@@ -141,13 +141,28 @@ export const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 
 /**
  * Largest number of inbound sync-protocol streams a single connection may hold
- * open at once (NET_INTERFACE → Stream Protocols → "A peer's sync streams are
- * served one at a time"). libp2p checks this against the connection's own
- * inbound stream count and aborts a stream over it. A waiting stream is
- * unread, so it costs at most the muxer's 256 KiB initial window; 16 cost
- * 4 MiB per connection.
+ * open at once (NET_INTERFACE → "A peer's sync streams are served one at a
+ * time"). libp2p checks this against the connection's own inbound stream count
+ * and aborts a stream over it. A waiting stream is unread, so it costs at most
+ * one `YAMUX_STREAM_WINDOW_BYTES` worth of buffered bytes; 16 cost 4 MiB per
+ * connection.
  */
 export const MAX_INBOUND_SYNC_STREAMS = 16;
+
+/**
+ * The size — the initial and the maximum stream window alike, and the receive
+ * buffer cap alike — net pins on a yamux stream (NET_INTERFACE → "A peer's
+ * sync streams are served one at a time"). yamux refuses an initial below
+ * 256 KiB and a maximum below the initial, so 256 KiB is the floor the library
+ * admits for the window; the receive buffer cap is pinned to the same bound,
+ * so a waiting stream (no reader attached yet) stays at one window's worth of
+ * bytes instead of libp2p's 4 MiB default. The window bounds what a reading
+ * stream may buffer between drains; the cap bounds a stream before its turn
+ * comes. The two together make a peer that stops reading stall the write for
+ * the serve deadline rather than the response arriving in a receive buffer
+ * before the deadline fires.
+ */
+export const YAMUX_STREAM_WINDOW_BYTES = 256 * 1024;
 
 /**
  * Shortest interval between two `SyncInfo`s from one peer that this node
