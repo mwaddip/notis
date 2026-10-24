@@ -1782,9 +1782,9 @@ Handler Registration). Net receives values; it does not resolve them, does not i
 - Node.js >= 24
 - `@dagsocial/wire`, `@dagsocial/types`, `@dagsocial/validation`, and
   `@dagsocial/node` packages built and importable
-- libp2p dependencies installed (`@libp2p/tcp`, `@chainsafe/libp2p-noise`,
-  `@chainsafe/libp2p-yamux`, `@chainsafe/libp2p-gossipsub`, `@libp2p/identify`,
-  `@libp2p/ping`, `@libp2p/interface`)
+- libp2p dependencies installed (`libp2p`, `@libp2p/tcp`, `@libp2p/noise`,
+  `@libp2p/yamux`, `@libp2p/gossipsub`, `@libp2p/identify`, `@libp2p/ping`,
+  `@libp2p/interface`, `@multiformats/multiaddr`) — the libp2p 3.x line
 - Bootstrap peer(s) reachable
 - Port available for libp2p listen address
 
