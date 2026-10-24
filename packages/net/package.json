@@ -23,7 +23,7 @@
     "@dagsocial/wire": "workspace:*",
     "@libp2p/gossipsub": "^17.0.0",
     "@libp2p/identify": "^4.0.0",
-    "@libp2p/interface": "^3.0.0",
+    "@libp2p/interface": "^3.4.0",
     "@libp2p/noise": "^17.0.0",
     "@libp2p/ping": "^3.0.0",
     "@libp2p/tcp": "^11.0.0",
