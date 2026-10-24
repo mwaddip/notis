@@ -46,7 +46,7 @@ import {
 import type {
   PostCommit, UtxoTransaction, OrderingBlock, BlockHeader, UtxoTxTree, ProtocolEra,
 } from '@dagsocial/types';
-import { TopicValidatorResult } from '@libp2p/interface';
+import { TopicValidatorResult } from '@libp2p/gossipsub';
 import {
   subscribeTopics,
   gossipTopics,
