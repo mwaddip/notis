@@ -87,9 +87,9 @@ export async function sinkWithDeadline(
   }, deadlineMs);
   try {
     // `send` is synchronous — a throw lands here and is attributed to the
-    // write just as a sink rejection used to be. On a false return the muxer's
-    // send window is full; wait on `onDrain` under the same deadline so a
-    // peer that stops reading cannot park the write past it.
+    // write. On a false return the muxer's send window is full; wait on
+    // `onDrain` under the same deadline so a peer that stops reading cannot
+    // park the write past it.
     if (!stream.send(data)) {
       await stream.onDrain({ signal: deadlineController.signal });
     }
