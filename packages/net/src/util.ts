@@ -24,11 +24,14 @@ type StreamChunk = Uint8Array | { subarray(): Uint8Array };
  * `send` returns `false` when the muxer's send window is full and the stream
  * cannot take more bytes without an `onDrain`; `onDrain` resolves when it can
  * again, and rejects when the stream closes or is aborted before that.
+ * `close` half-closes the writable end — the stream stays readable — and
+ * resolves once pending bytes are flushed.
  */
 interface WritableStream {
   send: (data: Uint8Array) => boolean;
   onDrain: (options?: { signal?: AbortSignal }) => Promise<void>;
   abort: (err: Error) => void;
+  close: (options?: { signal?: AbortSignal }) => Promise<void>;
 }
 
 /**
@@ -57,11 +60,17 @@ export class StreamReadTimeout extends Error {
  * the reason the read deadline is unpenalised: a slow link is a slow link.
  *
  * `send` returns `false` when the muxer's send buffer is full; the write then
- * waits on `onDrain` under the same deadline. The deadline fires at most once:
- * on expiry, the stream is aborted and the pending drain rejects, which this
- * function swallows. A send that throws before the deadline (the peer went
- * away mid-write) is re-thrown — the caller tells a slow link from a dropped
- * one by the log it makes. An error that lands after the abort — the abort's
+ * waits on `onDrain` under the same deadline. Once the bytes are queued, the
+ * writable end is half-closed with `close` under the same deadline so the
+ * reader on the other side sees the end of this frame as EOF; the stream
+ * stays readable (the Stream contract is half-closable), so a request/reply
+ * protocol still receives the reply on the same stream.
+ *
+ * The deadline fires at most once: on expiry, the stream is aborted and the
+ * pending drain or close rejects, which this function swallows. A send,
+ * drain or close that throws before the deadline (the peer went away
+ * mid-write) is re-thrown — the caller tells a slow link from a dropped one
+ * by the log it makes. An error that lands after the abort — the abort's
  * own — is swallowed, since the caller already accepted the outcome.
  */
 export async function sinkWithDeadline(
@@ -82,13 +91,14 @@ export async function sinkWithDeadline(
     // send window is full; wait on `onDrain` under the same deadline so a
     // peer that stops reading cannot park the write past it.
     if (!stream.send(data)) {
-      try {
-        await stream.onDrain({ signal: deadlineController.signal });
-      } catch (err) {
-        if (deadlineFired) return;
-        throw err;
-      }
+      await stream.onDrain({ signal: deadlineController.signal });
     }
+    // Half-close the writable end — the paired reader needs EOF to end its
+    // iteration on this frame. `close` resolves once pending bytes are
+    // flushed; the readable end stays open, so the reply still rides this
+    // stream. The caller's own `stream.close()` after this is idempotent
+    // and remains in place.
+    await stream.close({ signal: deadlineController.signal });
   } catch (err) {
     if (deadlineFired) return;
     throw err instanceof Error ? err : new Error(String(err));
