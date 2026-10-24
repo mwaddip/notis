@@ -158,7 +158,7 @@ Version: $VERSION
 Section: net
 Priority: optional
 Architecture: amd64
-Depends: nodejs (>= 22)
+Depends: nodejs (>= 24)
 Maintainer: DAGsocial
 Description: DAGsocial node — decentralized social network
  DAGsocial is a decentralized social network with an author-owned content DAG

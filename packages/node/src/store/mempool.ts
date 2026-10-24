@@ -1298,13 +1298,23 @@ export function followAppliedBlock(
 // idx_mempool_expires and idx_mempool_ceiling.
 export function purgeExpired(currentHeight: number): number {
   const db = getDb();
-  const rows = prepared(
+  // MEMPOOL_INTERFACE → purgeExpired — expiry a range of idx_mempool_expires,
+  // the ceiling a range of idx_mempool_ceiling, never a scan of the pool. Two
+  // reads rather than a UNION of them: SQLite scans the pool for the expiry arm
+  // of the UNION, sorting to dedup it, which loses that index; each SELECT on
+  // its own is a covering-index range. The rowids dedup here.
+  const expired = prepared(
     db,
-    `SELECT rowid FROM mempool WHERE expires_at_height < ?
-     UNION
-     SELECT rowid FROM mempool WHERE max_valid_height IS NOT NULL AND max_valid_height < ?`,
-  ).all(currentHeight, currentHeight) as Array<{ rowid: number }>;
-  return removeUnconfirmed(rows.map((r) => r.rowid));
+    'SELECT rowid FROM mempool WHERE expires_at_height < ?',
+  ).all(currentHeight) as Array<{ rowid: number }>;
+  const overCeiling = prepared(
+    db,
+    'SELECT rowid FROM mempool WHERE max_valid_height IS NOT NULL AND max_valid_height < ?',
+  ).all(currentHeight) as Array<{ rowid: number }>;
+  const rowids = new Set<number>();
+  for (const r of expired) rowids.add(r.rowid);
+  for (const r of overCeiling) rowids.add(r.rowid);
+  return removeUnconfirmed(Array.from(rowids));
 }
 
 export function removeEntry(rowid: number): void {

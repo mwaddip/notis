@@ -18,7 +18,7 @@ import {
 
 // NODE_INTERFACE → HTTP API → "A refusal is the parser's by where it comes from"
 
-describe("a body that does not decompress is the parser's refusal", () => {
+describe('an encoded request body is refused unread', () => {
   let publicServer: http.Server;
   let publicUrl: string;
   let shellDir: string;
@@ -95,38 +95,38 @@ describe("a body that does not decompress is the parser's refusal", () => {
     });
   }
 
-  it('a gzip body `{bad}` answers 400 bad request body with nosniff', async () => {
+  it('a gzip-encoded body answers 415 bad request body with nosniff', async () => {
     const r = await postRaw('gzip', '{bad}');
     expect(r.headers.get('x-content-type-options')).toBe('nosniff');
     expect(r.headers.has('x-powered-by')).toBe(false);
     expect({ status: r.status, body: JSON.parse(r.body) }).toEqual({
-      status: 400,
-      body: { error: 400, reason: 'bad request body' },
+      status: 415,
+      body: { error: 415, reason: 'bad request body' },
     });
   });
 
-  it('a deflate body `{bad}` answers 400 bad request body with nosniff', async () => {
+  it('a deflate-encoded body answers 415 bad request body with nosniff', async () => {
     const r = await postRaw('deflate', '{bad}');
     expect(r.headers.get('x-content-type-options')).toBe('nosniff');
     expect(r.headers.has('x-powered-by')).toBe(false);
     expect({ status: r.status, body: JSON.parse(r.body) }).toEqual({
-      status: 400,
-      body: { error: 400, reason: 'bad request body' },
+      status: 415,
+      body: { error: 415, reason: 'bad request body' },
     });
   });
 
-  it('a truncated gzip header answers 400 bad request body with nosniff', async () => {
+  it('a gzip-encoded body is refused before its bytes are read — 415, never a decompression error', async () => {
     const r = await postRaw('gzip', Buffer.from([0x1f, 0x8b, 0x08]));
     expect(r.headers.get('x-content-type-options')).toBe('nosniff');
     expect(r.headers.has('x-powered-by')).toBe(false);
     expect({ status: r.status, body: JSON.parse(r.body) }).toEqual({
-      status: 400,
-      body: { error: 400, reason: 'bad request body' },
+      status: 415,
+      body: { error: 415, reason: 'bad request body' },
     });
   });
 
   it(
-    'across the three decompression refusals and the sync-throw 500, console.error is called exactly once',
+    'across the three encoding refusals and the sync-throw 500, console.error is called exactly once',
     async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const getPostSpy = vi.spyOn(store, 'getPost').mockImplementation(() => {
@@ -161,9 +161,9 @@ describe("a body that does not decompress is the parser's refusal", () => {
       throw Object.assign(new Error('store read failed'), { status: 400, statusCode: 400 });
     });
     try {
-      // control: the parser's 400 for a gzip `{bad}` body counts zero calls through the same spy.
+      // control: the parser's 415 for a gzip-encoded body counts zero calls through the same spy.
       const gzip = await postRaw('gzip', '{bad}');
-      expect(gzip.status).toBe(400);
+      expect(gzip.status).toBe(415);
       expect(errorSpy).toHaveBeenCalledTimes(0);
       const r = await fetch(`${publicUrl}/shell/${livePostId}`);
       const body = (await r.json()) as unknown;

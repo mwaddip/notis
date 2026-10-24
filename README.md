@@ -14,7 +14,7 @@ verifiable operation, not a favor from a moderation team.
 **Status:** a node with an HTTP API, libp2p networking and PoW consensus; a browser client that is
 a product of its own; a light client; and a public testnet at [notis.fun](https://notis.fun).
 Pre-mainnet: consensus formats change freely, and a change to any committed byte starts the
-testnet chain again from genesis — an additive change deploys onto the running chain. Node.js ≥ 22,
+testnet chain again from genesis — an additive change deploys onto the running chain. Node.js ≥ 24,
 TypeScript, pnpm. MIT licensed.
 
 ---
@@ -238,7 +238,7 @@ preconfigured for testnet:
 | Artifact | What it is |
 |---|---|
 | `notis-node-<ver>-linux-x64.tar.gz` | the node with a bundled Node runtime — unpack, then `./run.sh` for a server node or `./run-miner.sh` for a node that mines; no system Node needed |
-| `dagsocial-node_<ver>_amd64.deb` | the node and the faucet service as systemd units for a Debian host with Node ≥ 22; configuration in `/etc/dagsocial/node.env` and `faucet.env` |
+| `dagsocial-node_<ver>_amd64.deb` | the node and the faucet service as systemd units for a Debian host with Node ≥ 24; configuration in `/etc/dagsocial/node.env` and `faucet.env` |
 | `notis-node-<ver>-win-x64-setup.exe` | a per-user Windows installer with **Notis Node** and **Notis Node (Miner)** shortcuts |
 | `notis-web-<ver>.zip` | the browser client, a static bundle configured after download (→ Web client) |
 | `notis-extension-<ver>-chrome.zip` · `-firefox.zip` | the same client as a browser extension, the key held by the extension (→ Browser extension) |
@@ -315,7 +315,7 @@ NODE_URL=https://your-node.example.com/testnet/api MINER_PCT=25 MINING_SECRET=<s
 pace the interval between blocks, since a solve that finishes inside one work
 window never reaches the sleep. `MINER_PUBKEY` names the key the coinbase pays;
 unset, the reward goes to the node's own validator key. The miner is a single zero-dependency
-script — no repo checkout needed, just Node.js ≥ 22. A reference systemd unit
+script — no repo checkout needed, just Node.js ≥ 24. A reference systemd unit
 is at `packages/node/scripts/dagsocial-miner.service`.
 
 It re-reads the template as it works and abandons a solve once the tip moves,

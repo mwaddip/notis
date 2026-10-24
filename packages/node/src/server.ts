@@ -334,7 +334,10 @@ export function createApp(config: Config): express.Express {
   // every error `express.json` hands back is the parser's. A 4xx answers through
   // `bodyRefusal` here, with no log; anything else is passed to the final
   // handler, which logs and answers 500.
-  const jsonParser = express.json({ limit: HTTP_BODY_MAX_BYTES });
+  // NODE_INTERFACE → HTTP API → "The node reads no compressed request body":
+  // `inflate: false` refuses any `Content-Encoding` before a decompression
+  // stream is created.
+  const jsonParser = express.json({ limit: HTTP_BODY_MAX_BYTES, inflate: false });
   app.use((req, res, next) => {
     jsonParser(req, res, (err?: unknown) => {
       if (err === undefined || err === null) {

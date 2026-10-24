@@ -5,7 +5,7 @@ An invite-only decentralized social network on a **dual-ledger** design: a **Pos
 **credits**); every post, like and withdrawal is a transaction on the UTXO ledger, and withdrawal is
 the author's only act over a post. Consensus is single-phase PoW — validator-produced ordering blocks; posts and
 likes ride them as ordinary transactions. TypeScript monorepo, pnpm
-workspaces, Node.js ≥ 22, SQLite storage.
+workspaces, Node.js ≥ 24, SQLite storage.
 
 Repo directory is `dagsocial`; the project is Notis.
 
@@ -228,5 +228,5 @@ Every 32-byte digest the packages the browser runs compute is `@dagsocial/types`
 `@noble/hashes`, the first 32 bytes — one implementation for the node and the browser
 (`TYPES_INTERFACE → The protocol hash`). Node-only code — net's frame checksum, the miner script, the e2e suite —
 uses `createHash('blake2b512')` with `.subarray(0, 32)`, which answers the same bytes;
-Node.js v22 has no `blake2b256`, and a 32-byte BLAKE2b digest is a different function from the first 32 bytes of a
+Node.js has no `blake2b256`, and a 32-byte BLAKE2b digest is a different function from the first 32 bytes of a
 64-byte one.

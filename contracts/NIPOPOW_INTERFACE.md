@@ -348,7 +348,7 @@ light client:
 ---
 
 ## Preconditions
-- Node.js ≥ 22
+- Node.js ≥ 24
 - `@dagsocial/types` and `@dagsocial/validation` built and importable — the only dependencies
 
 ## Postconditions

@@ -521,7 +521,7 @@ The network magics are **not** constants of this package — see §Exports.
 
 ## Preconditions
 
-- Node.js >= 22
+- Node.js >= 24
 - No runtime dependencies
 
 ## Postconditions

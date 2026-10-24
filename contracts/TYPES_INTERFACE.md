@@ -3673,7 +3673,7 @@ provisional, and neither is a profile field.
 ---
 
 ## Preconditions
-- Node.js ≥ 22
+- Node.js ≥ 24
 - `@dagsocial/wire` is the only dependency — this package has no runtime dependency outside
   the workspace; in particular it does not depend on `cbor-x`
 
