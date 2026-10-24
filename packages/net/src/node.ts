@@ -1,13 +1,13 @@
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
-import { noise } from '@chainsafe/libp2p-noise';
-import { yamux } from '@chainsafe/libp2p-yamux';
+import { noise } from '@libp2p/noise';
+import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
+import { gossipsub } from '@libp2p/gossipsub';
 import { multiaddr } from '@multiformats/multiaddr';
 
-import type { Libp2p } from 'libp2p';
+import type { Libp2p } from '@libp2p/interface';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
 import { PROTOCOL_VERSION, protocolVersionAt, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
 import { ReaderError } from '@dagsocial/wire';
@@ -659,17 +659,13 @@ export class NetNode {
     this.topics = gossipTopics(this.config.magic);
     const topics = this.topics;
 
-    // createLibp2p options cast to `any` works around @libp2p/interface version
-    // mismatches in the dependency tree (v1.7, v2.11, v3.2 coexist).  The
-    // runtime behaviour is correct; only the static types disagree.
     const libp2p = await createLibp2p({
       addresses: {
         listen: [this.config.listenAddrs],
       },
       transports: [tcp()],
-      connectionEncryption: [noise()],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      streamMuxers: [yamux() as any],
+      connectionEncrypters: [noise()],
+      streamMuxers: [yamux()],
       services: {
         // NET_INTERFACE → libp2p Stack.
         pubsub: gossipsub({
@@ -707,8 +703,7 @@ export class NetNode {
         }),
         identify: identify(),
         ping: ping(),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any,
+      },
       // NET_INTERFACE → "A banned peer's inbound connection is refused at the transport"
       connectionGater: {
         denyInboundEncryptedConnection: (peerId: { toString(): string }) =>
@@ -716,7 +711,6 @@ export class NetNode {
       },
       connectionManager: {
         maxConnections: this.config.maxPeers,
-        minConnections: 0,
       },
       // Disable the built-in connection monitor heartbeat.  When enabled it
       // pings peers every 10 s via /ipfs/ping/1.0.0 and aborts the connection
@@ -727,13 +721,12 @@ export class NetNode {
       connectionMonitor: {
         enabled: false,
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any);
+    });
     this.libp2p = libp2p;
 
     try {
       // Create PeerDb with self-address filtering
-      const listenAddrs = this.libp2p.getMultiaddrs();
+      const listenAddrs = libp2p.getMultiaddrs();
       const selfAddrs = listenAddrs.map(a => a.toString());
       this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap, selfAddrs);
 
@@ -781,7 +774,7 @@ export class NetNode {
       //   peer:connect     — fires after, only has PeerId
       //   connection:close — fires first, has full Connection object + timeline
       //   peer:disconnect  — fires after, only has PeerId
-      this.libp2p.addEventListener('connection:open', (evt: any) => {
+      libp2p.addEventListener('connection:open', (evt: any) => {
         const conn = evt.detail;
         const peerId = conn?.remotePeer?.toString() ?? 'unknown';
         const direction = conn?.direction ?? '?';
@@ -792,7 +785,7 @@ export class NetNode {
         if (typeof conn?.id === 'string') this.startHandshakeDeadline(conn);
       });
 
-      this.libp2p.addEventListener('peer:connect', (evt: any) => {
+      libp2p.addEventListener('peer:connect', (evt: any) => {
         const peerId = evt.detail?.toString() ?? 'unknown';
         // NET_INTERFACE →
         // "A connection whose remote peer id is this node's own is never a peer":
@@ -808,7 +801,7 @@ export class NetNode {
         });
       });
 
-      this.libp2p.addEventListener('connection:close', (evt: any) => {
+      libp2p.addEventListener('connection:close', (evt: any) => {
         const conn = evt.detail;
         const peerId = conn?.remotePeer?.toString() ?? 'unknown';
         const remoteAddr = conn?.remoteAddr?.toString() ?? '?';
@@ -838,7 +831,7 @@ export class NetNode {
         console.log(`[net] connection:close peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
       });
 
-      this.libp2p.addEventListener('peer:disconnect', (evt: any) => {
+      libp2p.addEventListener('peer:disconnect', (evt: any) => {
         const peerId = evt.detail?.toString() ?? 'unknown';
         console.log(`[net] peer:disconnect ${peerId} (total=${Math.max(0, this.peerMgr.getPeerCount() - 1)})`);
         this.peerMgr.removePeer(peerId);
@@ -855,7 +848,7 @@ export class NetNode {
       });
 
       // Log identify completion — confirms the connection was fully upgraded
-      this.libp2p.addEventListener('peer:identify', (evt: any) => {
+      libp2p.addEventListener('peer:identify', (evt: any) => {
         const result = evt.detail;
         const peerId = result?.peerId?.toString() ?? '?';
         console.log(`[net] peer:identify ${peerId}`);
@@ -884,7 +877,7 @@ export class NetNode {
       };
 
       await subscribeTopics(
-        asGossip(this.libp2p),
+        asGossip(libp2p),
         this.validators,
         this.peerMgr,
         handlers,
@@ -907,7 +900,7 @@ export class NetNode {
       // that window has no timer yet. Sweep every connection libp2p is
       // holding and start the deadline for it; `startHandshakeDeadline` is
       // idempotent on a connection whose timer is already running.
-      for (const conn of this.libp2p.getConnections()) {
+      for (const conn of libp2p.getConnections()) {
         this.startHandshakeDeadline(conn);
       }
 
@@ -1211,7 +1204,7 @@ export class NetNode {
   private registerHandshakeHandler(libp2p: Libp2p): void {
     const magic = this.config.magic;
 
-    libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
+    libp2p.handle('/dagsocial/handshake/1', async (stream, connection) => {
       const peerId = connection.remotePeer.toString();
       const connId = connection.id;
       // NET_INTERFACE → Validation → "A stream write is bounded in time as
@@ -1265,7 +1258,7 @@ export class NetNode {
         return;
       }
       try {
-        const data = await readStreamBounded(stream.source, MAX_HANDSHAKE_FRAME_BYTES, AbortSignal.timeout(deadlineMs));
+        const data = await readStreamBounded(stream, MAX_HANDSHAKE_FRAME_BYTES, AbortSignal.timeout(deadlineMs));
         if (data === null) {
           console.warn(`[net] handshake stream from ${peerId} exceeded ${MAX_HANDSHAKE_FRAME_BYTES} bytes`);
           this.peerMgr.recordPenaltyKind(
@@ -1404,7 +1397,7 @@ export class NetNode {
   private registerSyncStreamHandler(libp2p: Libp2p): void {
     const magic = this.config.magic;
 
-    libp2p.handle(SYNC_PROTOCOL, async ({ stream, connection }) => {
+    libp2p.handle(SYNC_PROTOCOL, async (stream, connection) => {
       const peerId = connection.remotePeer.toString();
 
       // NET_INTERFACE → Stream Protocols → "A peer's sync streams are served
@@ -1512,7 +1505,7 @@ export class NetNode {
     };
 
     try {
-      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
+      const data = await readStreamBounded(stream, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
       if (data === null) {
         console.warn(`[net] sync stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
         this.peerMgr.recordPenaltyKind(

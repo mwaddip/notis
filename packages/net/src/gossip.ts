@@ -14,9 +14,8 @@ import {
 } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra, UtxoTxTree } from '@dagsocial/types';
-import { TopicValidatorResult } from '@libp2p/interface';
-import type { PubSub } from '@libp2p/interface';
-import type { GossipsubEvents } from '@chainsafe/libp2p-gossipsub';
+import { TopicValidatorResult } from '@libp2p/gossipsub';
+import type { GossipSub } from '@libp2p/gossipsub';
 import { PenaltyKind } from './types.js';
 import type { NetValidators } from './types.js';
 import type { PeerManager } from './peer-mgr.js';
@@ -30,12 +29,13 @@ import type { PeerManager } from './peer-mgr.js';
 // ---------------------------------------------------------------------------
 
 // NET_INTERFACE → Forwarding Rule → "An ordering block is forwarded once Stage 1
-// passes; a transaction once this node admits it". gossipsub's
-// `reportMessageValidationResult` is not in `PubSub<GossipsubEvents>`, so the
-// listener below reads it off the gossipsub router directly.
+// passes; a transaction once this node admits it". `reportMessageValidationResult`
+// is a method on the concrete `GossipSub` class but is not published on the
+// public `GossipSub` interface, so the listener below reads it off the service
+// through this intersection type.
 export interface Libp2pGossip {
   services: {
-    pubsub: PubSub<GossipsubEvents> & {
+    pubsub: GossipSub & {
       reportMessageValidationResult(
         msgId: string,
         propagationSource: string,
