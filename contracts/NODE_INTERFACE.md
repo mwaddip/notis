@@ -112,8 +112,6 @@ logged**: a line a stranger can write at will is a log a stranger can fill. A re
 no body as far as a route sees — an empty object — and the route's own check answers it. **500 `{ error: 'internal'
 }` is a fault of the node's**, and it alone logs its stack.
 
-> ⚠ **AHEAD OF CODE (2026-10-24).** `inflate: false` on the `express.json` in `packages/node/src/server.ts` and `tools/faucet/src/server.ts`.
-
 **The node reads no compressed request body.** The body parser runs with `inflate: false`, so a request carrying
 any `Content-Encoding` is refused before a decompression stream is created — the 4xx the parser gives it, by the rule
 above — and no request body is piped through `zlib`. The node's clients send plain JSON; none is encoded.
