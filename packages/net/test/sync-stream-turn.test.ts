@@ -144,7 +144,8 @@ describe("a peer's sync streams are served one at a time", () => {
     // against the receive window.
     const heavyIds: string[] = [];
     for (let h = 1; h <= 20; h++) heavyIds.push(blockHash(makeBigBlock(h).header)!);
-    await held.sink([encodeGetBlocks(MAGIC, { ids: heavyIds })]);
+    held.send(encodeGetBlocks(MAGIC, { ids: heavyIds }));
+    await held.close({ signal: AbortSignal.timeout(2_000) });
 
     // Let A begin writing before the second stream arrives.
     await new Promise((r) => setTimeout(r, 300));
@@ -194,7 +195,8 @@ describe("a peer's sync streams are served one at a time", () => {
     });
     const heavyIds: string[] = [];
     for (let h = 1; h <= 20; h++) heavyIds.push(blockHash(makeBigBlock(h).header)!);
-    await held.sink([encodeGetBlocks(MAGIC, { ids: heavyIds })]);
+    held.send(encodeGetBlocks(MAGIC, { ids: heavyIds }));
+    await held.close({ signal: AbortSignal.timeout(2_000) });
     await new Promise((r) => setTimeout(r, 300));
 
     // The second stream is a one-way `SyncInfo` push with a distinct
@@ -205,8 +207,8 @@ describe("a peer's sync streams are served one at a time", () => {
     const pushStream = await nodeB.libp2pNode!.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(2_000),
     });
-    await pushStream.sink([encodeSyncInfo(MAGIC, { tipHeight: pushedHeight, tipHash: '00'.repeat(32) })]);
-    await pushStream.close().catch(() => { /* already gone */ });
+    pushStream.send(encodeSyncInfo(MAGIC, { tipHeight: pushedHeight, tipHash: '00'.repeat(32) }));
+    await pushStream.close({ signal: AbortSignal.timeout(2_000) }).catch(() => { /* already gone */ });
 
     // Wait past A's ×5 Blocks write deadline (5 s) with headroom, so A has
     // moved on from the first stream and read the push.
