@@ -171,10 +171,10 @@ at fault.
    `[floorBits, ceilingBits]` (`target`), and `verifyOrderingBlockPoW` against the header's **own**
    declared bits (`pow`). **A header whose parent the proof carries carries exactly the scheduled
    target** (`target`): block 1 carries `profile.retarget.anchorBits` — the height-1 block is not scheduled
-   (`VALIDATION_INTERFACE → asertTargetBits`); every suffix-tail header, and every other element whose
-   `prevBlockHash` is the `blockHash` of the element before it, carries `asertTargetBits(profile.retarget, t_a,
-   previous)`, `t_a` block 1's `createdAt` and `previous` the element before it — the inputs a full node schedules
-   the header from (`MINING_INTERFACE → Difficulty Schedule`). On a proof `proveWithReader` builds, that is the
+   (`VALIDATION_INTERFACE → asertTargetBits`); every other element whose `prevBlockHash` is the `blockHash` of the
+   element before it carries `asertTargetBits(profile.retarget, t_a, previous)`, `t_a` block 1's `createdAt` and
+   `previous` the element before it — the inputs a full node schedules the header from
+   (`MINING_INTERFACE → Difficulty Schedule`). On a proof `proveWithReader` builds, that is the
    level-0 sweep from its second header on, the suffix head and the tail; an element whose parent is not the
    element before it — a superblock reached by a vector hop, or the sweep's first header — is band-bounded alone,
    its parent absent. Declared bits are never trusted as work: a level is measured against the anchor target
