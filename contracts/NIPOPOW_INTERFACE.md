@@ -197,10 +197,6 @@ at fault.
    valid chain satisfies adjacency — **pinned by the package's property test over mined chains,
    not argued here.** If that test ever fails, this rule loosens and this contract says why.
 
-> ⚠ **AHEAD OF CODE (2026-10-24).** Rule 3's scheduled target, and the trust model's rule 2 that restates it, lead
-> `packages/nipopow/src/verify.ts`, which checks the schedule on the suffix tail alone and holds block 1, the level-0
-> sweep and the suffix head to the band.
-
 On success `headers` is the flattened sequence, `tip` its last element, `tipHeight` that header's
 height, `suffixHead` the PoPowHeader a client verifies box proofs against
 (`NODE_INTERFACE → Nipopow prover`, the light client's use).
