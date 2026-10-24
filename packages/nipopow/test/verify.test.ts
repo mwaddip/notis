@@ -418,7 +418,7 @@ describe('verifyProof', () => {
     // prefix element in an honest proof, so under the schedule rule its bits
     // are refused at index prefix.length when they move one unit inside the
     // band and the nonce is re-solved so PoW holds.
-    it.fails('the suffix head, parent-linked, off by one unit → target at prefix.length', () => {
+    it('the suffix head, parent-linked, off by one unit → target at prefix.length', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       const lastPrefix = proof.prefix[proof.prefix.length - 1]!;
       const lastPrefixHash = blockHash(lastPrefix.header);
@@ -445,7 +445,7 @@ describe('verifyProof', () => {
   // other element whose prevBlockHash is the blockHash of the element before
   // it carries asertTargetBits over that previous element.
   describe('chained-target schedule — the rule across the flattened sequence', () => {
-    it.fails('block 1 off the profile anchor by one unit → target at index 0', () => {
+    it('block 1 off the profile anchor by one unit → target at index 0', () => {
       const proof = proveWithReader(reader, { m: 3, k: 5 });
       const wrongRetarget = { ...profile.retarget, anchorBits: profile.retarget.anchorBits + 1 };
       const wrongProfile = { ...profile, retarget: wrongRetarget };
@@ -461,7 +461,7 @@ describe('verifyProof', () => {
     // suffix on an honest chain, so the level-0 sweep carries at least three
     // contiguous heights; the picked header is neither the sweep's first
     // (where the predecessor in the proof is a vector hop) nor its last.
-    it.fails('a level-0 sweep header, parent-linked, off by one unit → target at its index', () => {
+    it('a level-0 sweep header, parent-linked, off by one unit → target at its index', () => {
       const localChain = buildMinedChain({ count: 100 });
       const localReader = makeReader(localChain);
       const proof = clone(proveWithReader(localReader, { m: 24, k: 5 }));
