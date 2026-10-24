@@ -668,13 +668,16 @@ export class NetNode {
       connectionEncrypters: [noise()],
       // NET_INTERFACE → "A peer's sync streams are served one at a time":
       // the stream window is pinned at `YAMUX_STREAM_WINDOW_BYTES` for the
-      // initial size and the maximum alike, so a waiting stream's buffered
-      // bytes stay bounded and a peer that stops reading stalls the write
-      // for the serve deadline rather than consuming an auto-grown window.
+      // initial size and the maximum alike, and the receive-buffer cap is
+      // pinned at the same bound. The window bounds what a reading stream
+      // may buffer between drains, and the receive-buffer cap bounds what
+      // a waiting stream (no reader attached yet) may hold — a sync stream
+      // whose turn has not come stays at one window's worth of bytes.
       streamMuxers: [yamux({
         streamOptions: {
           initialStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
           maxStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
+          maxReadBufferLength: YAMUX_STREAM_WINDOW_BYTES,
         },
       })],
       services: {
