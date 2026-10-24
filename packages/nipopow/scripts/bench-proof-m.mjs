@@ -19,9 +19,8 @@
 // it directly: a match supports the claim (any anchor mined this way gives the same shape), a mismatch refutes
 // it.
 //
-// Independent trials, without editing test/helpers.ts (out of this executor's scope, packages/nipopow/scripts/
-// only). buildMinedChainFresh is a pure function of its opts: no clock, no seed, no randomness anywhere in the
-// walk, so two calls with the same count and retarget are byte-for-byte identical, not independent samples —
+// Independent trials. buildMinedChainFresh is a pure function of its opts: no clock, no seed, no randomness in
+// the walk, so two calls with the same count and retarget are byte-for-byte identical, not independent samples —
 // and two chains mined at DIFFERENT idealMs can't be compared under one shared verifyProof/compareProofs profile
 // (every header whose parent the proof carries — block 1, every parent-linked prefix element, the suffix head
 // and the tail — carries a target recomputed from profile.retarget, which must be the retarget that actually
