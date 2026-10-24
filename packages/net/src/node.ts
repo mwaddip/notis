@@ -58,6 +58,7 @@ import {
   MAX_INV_IDS,
   MAX_SERVE_BODY_BYTES,
   MAX_STREAM_BYTES,
+  YAMUX_STREAM_WINDOW_BYTES,
 } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
@@ -665,7 +666,17 @@ export class NetNode {
       },
       transports: [tcp()],
       connectionEncrypters: [noise()],
-      streamMuxers: [yamux()],
+      // NET_INTERFACE → "A peer's sync streams are served one at a time":
+      // the stream window is pinned at `YAMUX_STREAM_WINDOW_BYTES` for the
+      // initial size and the maximum alike, so a waiting stream's buffered
+      // bytes stay bounded and a peer that stops reading stalls the write
+      // for the serve deadline rather than consuming an auto-grown window.
+      streamMuxers: [yamux({
+        streamOptions: {
+          initialStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
+          maxStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
+        },
+      })],
       services: {
         // NET_INTERFACE → libp2p Stack.
         pubsub: gossipsub({
@@ -1164,6 +1175,23 @@ export class NetNode {
       }
     } catch (err: any) {
       this.pendingDials.delete(addr);
+      // NET_INTERFACE →
+      // "A connection whose remote peer id is this node's own is never a peer":
+      // libp2p 3.x throws `InvalidPeerIdError('Can not dial self')` from the
+      // dial path rather than resolving to a connection, so the self-dial
+      // cleanup runs on the error branch too — the address is forgotten (a
+      // candidate) or recorded as self (a seed) with no `dial FAILED` noise.
+      const name: unknown = err?.name;
+      const message: string = typeof err?.message === 'string' ? err.message : String(err);
+      if (name === 'InvalidPeerIdError' && message.toLowerCase().includes('dial self')) {
+        console.log(`[net] dial to ${addr} resolved to our own peer id — closing`);
+        if (source === 'seed') {
+          this.outboundMgr?.recordSeedSelf(addr);
+          this.markBootstrapSettled(addr);
+        }
+        else this.peerDb?.forgetSelf(addr);
+        return false;
+      }
       console.warn(`[net] dial FAILED: ${addr} — ${err?.message ?? err}`);
       this.outboundMgr?.recordDialResult(addr, false);
       if (source === 'seed') this.markBootstrapSettled(addr);
