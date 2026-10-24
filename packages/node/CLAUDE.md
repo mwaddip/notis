@@ -53,8 +53,11 @@ row"). **The two list routes answer light under `light=1`** — each live row it
 400 — **and `POST /posts/batch` answers posts by id**: 1 to `BATCH_READ_MAX` ids, the rows `GET /posts/:id` answers in
 the order asked, an unknown id left out, `viewer` and `tx=1` as on the post reads, nothing written (NODE_INTERFACE →
 Posts → "A light row is a post's id and the node's word", → "The batch read answers posts by id"). A body the parser
-refuses answers its own 4xx and logs nothing (NODE_INTERFACE → "500 `{ error: 'internal' }` is a fault of the node's").
-The node serves no client (NODE_INTERFACE → The node serves no client).
+refuses answers its own 4xx at the parser and logs nothing (NODE_INTERFACE → HTTP API → "A refusal is the parser's by
+where it comes from"). **The node listens through `listenPublic`** — the header, request, keep-alive and idle deadlines,
+`HTTP_CONNECTIONS_MAX` and a budget of unread answers set there, no `X-Powered-By` and `nosniff` on every answer
+(NODE_INTERFACE → The public server); `/shell/:id` splices by position and writes no `og:url` (NODE_INTERFACE → Link
+previews). The node serves no client (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).
 - **Does NOT own:** the state-transition rules (`@dagsocial/consensus` — the node hands them a tree view over its

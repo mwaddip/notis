@@ -3570,6 +3570,20 @@ export const RANGE_PAGE_MAX = 256;      // local — the most entries one page o
 Interface numbers, not consensus: the node serves within them and every client asks within them, so one definition
 reaches both (`NODE_INTERFACE → "Every list a view returns is a page"`, `CONSTANTS → HTTP view bounds`).
 
+### HTTP server bounds
+
+```typescript
+export const HTTP_HEADERS_TIMEOUT_MS = 20_000;     // local — a request's headers arrive within it
+export const HTTP_REQUEST_TIMEOUT_MS = 30_000;     // local — the whole request arrives within it
+export const HTTP_KEEP_ALIVE_TIMEOUT_MS = 5_000;   // local — a kept connection waits this long for its next request
+export const HTTP_CHECK_INTERVAL_MS = 1_000;       // local — how often the deadlines are read
+export const HTTP_CONNECTIONS_MAX = 1_024;         // local — connections a server holds open at once
+```
+
+What the node's public server and the faucet's set, one definition both read (`NODE_INTERFACE → The public server`,
+`CONSTANTS → HTTP server bounds`). Numbers, nothing more: this package imports no server, and the browser runs it as
+it is written.
+
 ### Credit emission (Ergo-style linear decay)
 
 ```typescript

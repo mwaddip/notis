@@ -35,7 +35,102 @@ import { registerProofEndpoint, registerRangeEndpoint } from './state/avl-endpoi
 import { tryGetAvlProver } from './state/avl-prover.js';
 import { bodyRefusal } from './routes/body-refusal.js';
 import type { Config } from './config.js';
-import type { Server } from 'http';
+import { createServer, type Server } from 'http';
+import type { Socket } from 'net';
+import {
+  HTTP_HEADERS_TIMEOUT_MS,
+  HTTP_REQUEST_TIMEOUT_MS,
+  HTTP_KEEP_ALIVE_TIMEOUT_MS,
+  HTTP_CHECK_INTERVAL_MS,
+  HTTP_CONNECTIONS_MAX,
+} from '@dagsocial/types';
+
+// NODE_INTERFACE → "A body the parser refuses is the client's error"; CONSTANTS
+// → HTTP server bounds. The limit the JSON parser holds every write request to.
+export const HTTP_BODY_MAX_BYTES = 65_536;
+
+// NODE_INTERFACE → The public server → "No answer names the software, and none
+// is read as another type". Set on every answer of both apps, before any route
+// or body-parser middleware.
+function noAnswerNamesTheSoftware(
+  _req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+}
+
+// ---------------------------------------------------------------------------
+// listenPublic
+// ---------------------------------------------------------------------------
+
+// NODE_INTERFACE → The public server; CONSTANTS → HTTP server bounds.
+export const HTTP_IDLE_TIMEOUT_MS = 30_000;
+
+// NODE_INTERFACE → The public server; CONSTANTS → HTTP server bounds.
+export const HTTP_UNREAD_ANSWER_BYTES = 67_108_864;
+
+// NODE_INTERFACE → The public server → "One function builds the public server,
+// and every bound below is set there".
+export function listenPublic(app: express.Express, port: number): Server {
+  // NODE_INTERFACE → The public server — the four options Node's
+  // `http.createServer` reads for the headers deadline, the request deadline,
+  // the keep-alive deadline and the check cadence.
+  const server = createServer(
+    {
+      headersTimeout: HTTP_HEADERS_TIMEOUT_MS,
+      requestTimeout: HTTP_REQUEST_TIMEOUT_MS,
+      keepAliveTimeout: HTTP_KEEP_ALIVE_TIMEOUT_MS,
+      connectionsCheckingInterval: HTTP_CHECK_INTERVAL_MS,
+    },
+    app,
+  );
+  // NODE_INTERFACE → The public server — the two bounds the server instance carries.
+  server.timeout = HTTP_IDLE_TIMEOUT_MS;
+  server.maxConnections = HTTP_CONNECTIONS_MAX;
+
+  // NODE_INTERFACE → The public server → "The node holds at most
+  // HTTP_UNREAD_ANSWER_BYTES (64 MiB) of answers its readers have not taken":
+  // the server's own open connections, `'connection'` adds one, its `'close'`
+  // drops it.
+  const connections = new Set<Socket>();
+  server.on('connection', (socket: Socket) => {
+    connections.add(socket);
+    socket.on('close', () => {
+      connections.delete(socket);
+    });
+  });
+
+  // Every HTTP_CHECK_INTERVAL_MS the open connections' writableLength are
+  // summed; while the sum is above HTTP_UNREAD_ANSWER_BYTES the connection
+  // holding the most is destroyed and its bytes leave the sum.
+  const sweep = setInterval(() => {
+    let sum = 0;
+    for (const s of connections) sum += s.writableLength;
+    while (sum > HTTP_UNREAD_ANSWER_BYTES) {
+      let biggest: Socket | null = null;
+      let biggestLen = -1;
+      for (const s of connections) {
+        if (s.destroyed) continue;
+        if (s.writableLength > biggestLen) {
+          biggest = s;
+          biggestLen = s.writableLength;
+        }
+      }
+      if (biggest === null) break;
+      biggest.destroy();
+      sum -= biggestLen;
+    }
+  }, HTTP_CHECK_INTERVAL_MS);
+  sweep.unref();
+  server.on('close', () => {
+    clearInterval(sweep);
+  });
+
+  server.listen(port);
+  return server;
+}
 
 // ---------------------------------------------------------------------------
 // createAdminApp
@@ -43,6 +138,10 @@ import type { Server } from 'http';
 
 export function createAdminApp(config: Config, deps: AdminDeps): Server {
   const adminApp = express();
+  // NODE_INTERFACE → The public server → "No answer names the software, and
+  // none is read as another type".
+  adminApp.disable('x-powered-by');
+  adminApp.use(noAnswerNamesTheSoftware);
   adminApp.use(createAdminRouter(deps));
 
   // WARN if not loopback
@@ -91,7 +190,6 @@ function shellDescription(content: string): string {
 interface ShellTags {
   title: string;
   description: string;
-  ogUrl: string | null;
 }
 
 // NODE_INTERFACE → Link previews → "A tagged answer replaces the shell's own
@@ -104,11 +202,21 @@ function stripShellPreviewTags(html: string): string {
     .replace(/<meta\b[^>]*\bname="description"[^>]*>\s*/gi, '');
 }
 
+// NODE_INTERFACE → Link previews: the title and the tags are put in place by
+// position, so no character of a value is read as a replacement pattern
+// (`$&`, `` $` ``, `$'`, `$$`). `needle` occurs once; a needle absent from
+// `haystack` leaves it untouched.
+function spliceAt(haystack: string, needle: string, replacement: string): string {
+  const i = haystack.indexOf(needle);
+  if (i < 0) return haystack;
+  return haystack.slice(0, i) + replacement + haystack.slice(i + needle.length);
+}
+
 /**
- * NODE_INTERFACE → Link previews: strips the shell's own preview tags,
- * replaces `<title>Notis</title>`, and injects `og:title`, `description`,
- * `og:description`, `og:type` article, `og:site_name` Notis and
- * `twitter:card` summary before `</head>`; `og:url` only when set.
+ * NODE_INTERFACE → Link previews: strips the shell's own preview tags, splices
+ * `<title>Notis</title>` by position, and splices `og:title`, `description`,
+ * `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card`
+ * summary before `</head>` by position. No `og:url` is written.
  */
 function taggedShell(shellHtml: string, tags: ShellTags): string {
   const title = escapeHtml(tags.title);
@@ -118,14 +226,13 @@ function taggedShell(shellHtml: string, tags: ShellTags): string {
     `<meta name="description" content="${description}">`,
     `<meta property="og:description" content="${description}">`,
     `<meta property="og:type" content="article">`,
-    tags.ogUrl !== null ? `<meta property="og:url" content="${escapeHtml(tags.ogUrl)}">` : null,
     `<meta property="og:site_name" content="Notis">`,
     `<meta name="twitter:card" content="summary">`,
-  ].filter((tag): tag is string => tag !== null).join('\n');
+  ].join('\n');
 
-  return stripShellPreviewTags(shellHtml)
-    .replace('<title>Notis</title>', `<title>${title}</title>`)
-    .replace('</head>', `${metaTags}\n</head>`);
+  const stripped = stripShellPreviewTags(shellHtml);
+  const titled = spliceAt(stripped, '<title>Notis</title>', `<title>${title}</title>`);
+  return spliceAt(titled, '</head>', `${metaTags}\n</head>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +292,11 @@ export function createApp(config: Config): express.Express {
   // a name given twice before any route runs.
   app.set('query parser', parseStrictQuery);
 
+  // NODE_INTERFACE → The public server → "No answer names the software, and
+  // none is read as another type".
+  app.disable('x-powered-by');
+  app.use(noAnswerNamesTheSoftware);
+
   // ---- Middleware ----
 
   // NODE_INTERFACE → Admin Listener: every request the public app receives.
@@ -218,7 +330,28 @@ export function createApp(config: Config): express.Express {
     next();
   });
 
-  app.use(express.json({ limit: '1mb' }));
+  // NODE_INTERFACE → HTTP API → "A refusal is the parser's by where it comes from":
+  // every error `express.json` hands back is the parser's. A 4xx answers through
+  // `bodyRefusal` here, with no log; anything else is passed to the final
+  // handler, which logs and answers 500.
+  const jsonParser = express.json({ limit: HTTP_BODY_MAX_BYTES });
+  app.use((req, res, next) => {
+    jsonParser(req, res, (err?: unknown) => {
+      if (err === undefined || err === null) {
+        next();
+        return;
+      }
+      const refusal = bodyRefusal(err);
+      if (refusal !== null) {
+        res.status(refusal.status).json({
+          error: refusal.status,
+          reason: refusal.reason,
+        });
+        return;
+      }
+      next(err);
+    });
+  });
 
   // GET /shell/:id — NODE_INTERFACE → Link previews
   app.get('/shell/:id', (req, res) => {
@@ -256,7 +389,6 @@ export function createApp(config: Config): express.Express {
       res.status(200).type('html').send(taggedShell(shellHtml, {
         title: 'withdrawn · Notis',
         description: 'withdrawn by its author',
-        ogUrl: null,
       }));
       return;
     }
@@ -267,9 +399,6 @@ export function createApp(config: Config): express.Express {
     }
 
     const authorHex = Buffer.from(result.author).toString('hex');
-    const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
-    const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? 'localhost';
-    const originalUri = req.get('x-original-uri');
 
     // NODE_INTERFACE → Link previews
     const held = store.getUsernameByOwner(result.author);
@@ -280,7 +409,6 @@ export function createApp(config: Config): express.Express {
     res.status(200).type('html').send(taggedShell(shellHtml, {
       title,
       description: shellDescription(result.content),
-      ogUrl: originalUri ? `${proto}://${host}${originalUri}` : null,
     }));
   });
 
@@ -552,17 +680,8 @@ export function createApp(config: Config): express.Express {
       res: express.Response,
       _next: express.NextFunction,
     ) => {
-      // NODE_INTERFACE → HTTP API → "A body the parser refuses is the client's
-      // error": the parser's refusal answers 4xx with its own body and is not
-      // logged. Any other error is the node's fault — 500 with its stack.
-      const refusal = bodyRefusal(err);
-      if (refusal !== null) {
-        res.status(refusal.status).json({
-          error: refusal.status,
-          reason: refusal.reason,
-        });
-        return;
-      }
+      // NODE_INTERFACE → HTTP API → "500 `{ error: 'internal' }` is a fault of
+      // the node's".
       console.error('500 error:', err instanceof Error ? err.stack : err);
       res.status(500).json({ error: 'internal' });
     },

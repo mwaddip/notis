@@ -99,15 +99,18 @@ are hex-encoded.
 `userId` on the wire is hex-encoded (64 lowercase hex chars). Internally `UserId` is
 `Uint8Array` (32 raw bytes).
 
-**A body the parser refuses is the client's error.** Every route that reads a body reads JSON of at most 1 MB, parsed
-ahead of every route. A request whose `Content-Type` is JSON and whose body is not — a syntax error, or a top-level
-value that is neither an object nor an array — answers **400 `{ error: 400, reason: 'malformed JSON body' }`**; a body
-over the limit answers **413 `{ error: 413, reason: 'body too large' }`**; any other refusal of the parser's — an
-encoding it does not read, a request cut short — answers the 4xx status the parser gives it with `{ error: <status>,
-reason: 'bad request body' }`. None reaches a route, and **none is logged**: a line a stranger can write at will is a
-log a stranger can fill. A request with no JSON `Content-Type` has no body as far as a route sees — an empty object —
-and the route's own check answers it. **500 `{ error: 'internal' }` is a fault of the node's**, and it alone logs its
-stack.
+**A body the parser refuses is the client's error.** Every route that reads a body reads JSON of at most
+`HTTP_BODY_MAX_BYTES` (64 KiB) — a power of two above the longest body a write request carries (`CONSTANTS → HTTP
+server bounds`) — parsed ahead of every route. A request whose `Content-Type` is JSON and whose body is not — a
+syntax error, or a top-level value that is neither an object nor an array — answers **400 `{ error: 400, reason:
+'malformed JSON body' }`**; a body over the limit answers **413 `{ error: 413, reason: 'body too large' }`**; any
+other refusal of the parser's — an encoding it does not read, a compressed body that does not decompress, a request
+cut short — answers the 4xx status the parser gives it with `{ error: <status>, reason: 'bad request body' }`. **A
+refusal is the parser's by where it comes from**: every error the parser hands back with a 4xx status is its refusal,
+whatever else the error carries, and an error raised anywhere else is not. None reaches a route, and **none is
+logged**: a line a stranger can write at will is a log a stranger can fill. A request with no JSON `Content-Type` has
+no body as far as a route sees — an empty object — and the route's own check answers it. **500 `{ error: 'internal'
+}` is a fault of the node's**, and it alone logs its stack.
 
 **Hex is lowercase.** Every hex value the node reads — in a body, a path or a query: a key, an id, a box field, a
 signature — is lowercase hex of the width its field states, and any other spelling, uppercase included, is a 400 on
@@ -175,6 +178,44 @@ CORS header**: it is the operator's, unauthenticated on loopback, and a page on 
 local node's metrics through it (→ Admin Listener). **The faucet sends none** (→ Faucet): its rate limit is
 keyed on the caller's address, so a page on another origin could spend each visitor's allowance on a key of
 its choosing.
+
+### The public server
+
+**One function builds the public server, and every bound below is set there.** `listenPublic(app, port)` in
+`server.ts` creates the HTTP server over the app `createApp` answers, sets each bound on it and listens; the node's
+start listens through it and through nothing else. A bound left at Node's default is one nobody chose, so none is.
+The admin listener is the operator's, on loopback (→ Admin Listener): it carries the two headers below and none of the
+bounds.
+
+**No answer names the software, and none is read as another type.** Neither the public app nor the admin listener
+sends `X-Powered-By`, and every answer of both carries `X-Content-Type-Options: nosniff`, whatever its status — the
+type a route sets is the type a browser reads. Framing and transport security are the host's: the shell's
+`frame-ancestors` rides the host's own locations (`WEB_INTERFACE → The client is served from the node's own origin`).
+
+**A connection is held while it moves, and no longer.**
+
+- A request's headers arrive within `HTTP_HEADERS_TIMEOUT_MS` (20 s) and the whole request within
+  `HTTP_REQUEST_TIMEOUT_MS` (30 s); past either the node answers `408` and closes the connection. Both are read every
+  `HTTP_CHECK_INTERVAL_MS` (1 s), so each closes within a second of its time.
+- A kept connection with no request in it closes after `HTTP_KEEP_ALIVE_TIMEOUT_MS` (5 s).
+- A connection on which no byte moves either way for `HTTP_IDLE_TIMEOUT_MS` (30 s) is closed, unanswered. That is a
+  reader that stopped taking its answer, and equally a request the node has not begun to answer in that time: a stall
+  of the node's own longer than the deadline closes the connections that waited through it, and their clients ask
+  again.
+
+**At most `HTTP_CONNECTIONS_MAX` (1 024) connections are open at once**, and a connection past it is closed as it
+arrives, unanswered. The bound keeps the node, not a client: a held connection pins about one request of
+`HTTP_BODY_MAX_BYTES` while that request arrives, so the API refuses before the node runs short of the memory and the
+file descriptors its peers need (`CONSTANTS → HTTP server bounds`). A bound per client is the fronting proxy's, as an
+origin list is (→ Cross-origin requests).
+
+**The node holds at most `HTTP_UNREAD_ANSWER_BYTES` (64 MiB) of answers its readers have not taken.** Every
+`HTTP_CHECK_INTERVAL_MS` the bytes queued on the open connections and not yet handed to the operating system — each
+connection's `writableLength` — are summed; past the budget the connection holding the most is closed, then the next,
+until the sum is within it. An answer is queued whole as it is written, and a reader that keeps reading drains its
+own, so the budget fills with readers that stop: a slow honest reader of a large answer is closed only while the
+budget is full and it holds the most, and asks again; a reader holding less than the ones that stopped is never
+reached. Between two checks the sum may pass the budget by what one interval's answers write.
 
 ### Posts
 
@@ -760,6 +801,15 @@ limit is keyed on the caller's address, an IPv6 caller's by its /64** — the sm
 routes to one subscriber, so a caller cycling the addresses inside it holds one allowance — and an IPv4
 address, or one mapped into IPv6, whole.
 
+**The service's server keeps the public server's headers, deadlines and connection bound** (→ The public server):
+`listenFaucet(app, port)` in its `server.ts` sets them and its start listens through it — no `X-Powered-By`,
+`X-Content-Type-Options: nosniff` on every answer, a request's headers within `HTTP_HEADERS_TIMEOUT_MS` and the whole
+within `HTTP_REQUEST_TIMEOUT_MS`, both read every `HTTP_CHECK_INTERVAL_MS`, a kept connection closed after
+`HTTP_KEEP_ALIVE_TIMEOUT_MS`, at most `HTTP_CONNECTIONS_MAX` open, and a body of at most `FAUCET_BODY_MAX_BYTES`
+(128 bytes; `{ pubkey }` is 77), one over it a malformed body's `400`. **It has no idle deadline and no answer
+budget**: a request waits its turn in its endpoint's line with no byte moving, which an idle deadline would end, and
+every answer is under a kilobyte, which a connection takes whole.
+
 A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
 that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;
 mainnet's does not, so no faucet identity exists in mainnet state. **Absence of the field is the whole
@@ -970,7 +1020,7 @@ defect. **It belongs to the supply set.**
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/shell/:id` | **The web client's shell with the post's preview tags injected** — the file at `WEB_SHELL_PATH` (→ Configuration), read on every request so a new bundle needs no restart, answered with `<title>`, `og:title`, `description`, `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card` summary injected before `</head>`, every value HTML-escaped (`& < > "`); `og:url` is `<proto>://<host><path>` — the proto from `X-Forwarded-Proto`, else the request's own; the host from `X-Forwarded-Host`, else `Host`; the path the `X-Original-URI` header the host's proxy sets — omitted when that header is absent — the node never learns the client's public path. 404 plain when no shell is configured; 500 when the file cannot be read; 400 when `:id` is not 64 lowercase hex; **404 with the untagged shell** for an id the node has never heard of, so the client boots and says what it found and a crawler finds nothing to preview; 200 tagged for a live post with content, untagged for one whose content is not on this node yet, tagged as withdrawn (`withdrawn · Notis`, *withdrawn by its author*, no `og:url`) for a withdrawn post. The node reads no client convention: the description is the content's first 200 characters as they are, cut at a word with `...`, whitespace collapsed; the title `@name · Notis` when the author holds a name (→ Usernames), else the author's first 16 hex characters and `…`, then ` · Notis` (`WEB_INTERFACE → Links`). **A tagged answer replaces the shell's own preview tags**: before the post's tags go in, every `<meta property="og:…">`, every `<meta name="twitter:…">` and the `<meta name="description">` the shell carries are removed, so the page holds exactly one of each and the node's values only, and no `og:image` — the shell's site card (`WEB_INTERFACE → The client is served from the node's own origin`) is a page's own only where the answer is the file as it is: the 404 for an unknown id and the 200 for content not yet on this node |
+| `GET` | `/shell/:id` | **The web client's shell with the post's preview tags injected** — the file at `WEB_SHELL_PATH` (→ Configuration), read on every request so a new bundle needs no restart, answered with `<title>`, `og:title`, `description`, `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card` summary injected before `</head>`, every value HTML-escaped (`& < > "`) and spliced in as it stands — the title and the tags are put in place by position, so no character of a value is read as a replacement pattern (`$&`, `` $` ``, `$'`, `$$`); **no `og:url`**: a scraper takes the page's own, as on the root (`WEB_INTERFACE → The client is served from the node's own origin`), and the node reads no forwarding header — no `X-Forwarded-*`, no `X-Original-URI` — so nothing a client sends reaches the tags but the post id in the path, and the client's public path stays the host's. 404 plain when no shell is configured; 500 when the file cannot be read; 400 when `:id` is not 64 lowercase hex; **404 with the untagged shell** for an id the node has never heard of, so the client boots and says what it found and a crawler finds nothing to preview; 200 tagged for a live post with content, untagged for one whose content is not on this node yet, tagged as withdrawn (`withdrawn · Notis`, *withdrawn by its author*) for a withdrawn post. The node reads no client convention: the description is the content's first 200 characters as they are, cut at a word with `...`, whitespace collapsed; the title `@name · Notis` when the author holds a name (→ Usernames), else the author's first 16 hex characters and `…`, then ` · Notis` (`WEB_INTERFACE → Links`). **A tagged answer replaces the shell's own preview tags**: before the post's tags go in, every `<meta property="og:…">`, every `<meta name="twitter:…">` and the `<meta name="description">` the shell carries are removed, so the page holds exactly one of each and the node's values only, and no `og:image` — the shell's site card (`WEB_INTERFACE → The client is served from the node's own origin`) is a page's own only where the answer is the file as it is: the 404 for an unknown id and the 200 for content not yet on this node |
 
 ---
 

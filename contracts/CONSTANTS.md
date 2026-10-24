@@ -370,6 +370,26 @@ so the drift test's converse does not reach it and its row is marked.
 | `RANGE_PAGE_MAX` | `256` | the most entries one page of `GET /api/v1/range` carries, the page served when no `limit` is named, and the `limit` the light client asks | policy | provisional: a page looks up at most `1 + 2 · 256` keys — about 110 KB of proof and 17–20 ms over a tree of 1.4·10⁶ leaves (`NODE_INTERFACE → AVL+ State Root`) | PROVISIONAL | `NODE_INTERFACE → AVL+ State Root` |
 | `NIPOPOW_PROOF_CACHE_ENTRIES` (literal) | `4` | the `(m, k)` proofs `GET /nipopow/proof` keeps at one tip | policy | provisional: one entry serves every client asking the client defaults at one tip, and the most the cache holds is four of the largest proof the route builds, at the caps — about 7 MB on a million-block chain at testnet's floor, so about 28 MB (`NODE_INTERFACE → Nipopow prover`). `node/src/routes/nipopow.ts` | PROVISIONAL | `NODE_INTERFACE → Nipopow prover` |
 
+## HTTP server bounds
+
+`@dagsocial/types`, read by the node's public server and the faucet's — the deadlines and the connection bound both
+set (`NODE_INTERFACE → The public server`, `→ Faucet`) — and beside them the node's own literals and the faucet's,
+outside the drift test (→ The drift test), each held by its package's suite on the server its function returns.
+Interface numbers, not consensus. The memory figures were measured on Node 22.19 against a node at `15eccb7e`;
+testnet's two boxes hold 961 MB each, the node 210–355 MB of it.
+
+| Name | Value | Reads as | Kind | Argument | Status | Rule |
+|---|---|---|---|---|---|---|
+| `HTTP_HEADERS_TIMEOUT_MS` | `20_000` | 20 s for a request's headers to arrive | local | user ruling 2026-10-23: a header block is one TCP segment, and four lost sends back off for 1 + 2 + 4 + 8 = 15 s, so a lossy link's request arrives and a trickle ends | RULED | `NODE_INTERFACE → The public server` |
+| `HTTP_REQUEST_TIMEOUT_MS` | `30_000` | 30 s for the whole request | local | user ruling 2026-10-23: the headers' 20 s and 10 s for a body of at most `HTTP_BODY_MAX_BYTES` — 64 KiB at about 6.5 kB/s; a proxy that buffers the body (nginx's default) hands it to the node at loopback speed. Node refuses one below the headers' | RULED | `NODE_INTERFACE → The public server` |
+| `HTTP_KEEP_ALIVE_TIMEOUT_MS` | `5_000` | 5 s a kept connection waits for its next request | local | user ruling 2026-10-23: Node's default, stated so that a Node release which moves its default moves nothing here | RULED | `NODE_INTERFACE → The public server` |
+| `HTTP_CHECK_INTERVAL_MS` | `1_000` | how often the header and request deadlines, and the node's answer budget, are read | local | user ruling 2026-10-23: at Node's 30 s a 60 s header deadline closed its connection at 71 s; at 1 s each deadline closes within a second of its time, one walk over at most `HTTP_CONNECTIONS_MAX` connections a second | RULED | `NODE_INTERFACE → The public server` |
+| `HTTP_CONNECTIONS_MAX` | `1_024` | connections a server holds open at once | local | user ruling 2026-10-23: 1 024 connections each stalled just under 64 KiB of body pinned 94.7 MB on the node, an idle one about 1 kB, and nothing bounds the count where Node is left alone — 3 000 idle connections were all held | RULED | `NODE_INTERFACE → The public server` |
+| `HTTP_IDLE_TIMEOUT_MS` (literal) | `30_000` | 30 s with no byte moving on a node connection | local | user ruling 2026-10-23: no route holds a request open, so 30 s with nothing moving is a reader that stopped or a stall of the node's own; under Node's default of none, 50 readers that never took a 3 MB answer held 152 MB past 75 s. `node/src/server.ts` | RULED | `NODE_INTERFACE → The public server` |
+| `HTTP_UNREAD_ANSWER_BYTES` (literal) | `67_108_864` | 64 MiB of answers written and not yet taken | local | user ruling 2026-10-23: an unread answer pins its own size, so the budget is ten range pages at their ceiling (6.4 MB, `RANGE_PAGE_READ_BYTES`' argument) or twenty proofs at the caps on a million-block chain (3.1 MB). `node/src/server.ts` | RULED | `NODE_INTERFACE → The public server` |
+| `HTTP_BODY_MAX_BYTES` (literal) | `65_536` | 64 KiB of JSON body on the node's routes | local | ≤ 52 132 bytes: a `{ tx }` whose transaction encodes to `MAX_TX_BYTES` filled with the output whose JSON is longest for its encoded bytes — a `karma_price` box, 89 B for 18 — every field at its widest, with a post commit and `MAX_CONTENT_BYTES` of content each byte escaped to six characters, as `JSON.stringify` writes them; which outputs a transaction may carry left aside, so a bound (measured 2026-10-23). A batch read's ids are 6.7 KB, a mined nonce's submit tens of bytes. A body stalled at the bound pins about 95 kB. `node/src/server.ts` | DERIVED | `NODE_INTERFACE → "A body the parser refuses is the client's error"` |
+| `FAUCET_BODY_MAX_BYTES` (faucet) | `128` | 128 bytes of JSON body on the faucet's routes | local | `{ pubkey }` is 77 bytes as `JSON.stringify` writes it, rounded up to a power of two. `tools/faucet/src/server.ts` | DERIVED | `NODE_INTERFACE → Faucet` |
+
 ## Client defaults
 
 `tools/nipopow-client` — what the light client asks for when no flag says otherwise. The library exports the pair as

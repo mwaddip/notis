@@ -416,9 +416,9 @@ the client owns beyond its files is a post's standalone page, `<base>p/<post id>
 thread alone. Two ways to serve it:
 
 - **With a link preview.** Set `WEB_SHELL_PATH` in the node's environment to the bundle's
-  `index.html`, and have nginx proxy `<base>p/<id>` to the node's `GET /shell/<id>`, sending
-  `X-Original-URI`. The node answers the client's own shell with that post's Open Graph tags
-  injected, so a chat app previews the link and the client boots from the same response.
+  `index.html`, and have nginx proxy `<base>p/<id>` to the node's `GET /shell/<id>`. The node
+  answers the client's own shell with that post's Open Graph tags injected, so a chat app
+  previews the link and the client boots from the same response.
 - **Without one.** Serve the shell plain for the same path (`try_files /web/index.html`). The thread
   opens; the link carries no preview.
 

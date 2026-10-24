@@ -238,9 +238,9 @@ describe('GET /shell/:id', () => {
     }
   });
 
-  it('sets og:url from X-Original-URI, X-Forwarded-Proto and Host; omits it without the header', async () => {
+  it('a tagged answer carries no og:url and reads no X-Original-URI, X-Forwarded-Proto or Host', async () => {
     const author = uid('shell-url-author');
-    const content = 'a post with a canonical url';
+    const content = 'a post for the forwarded-headers coverage';
     const commit = makePostCommit(author, content);
     const id = fixturePostId(commit);
     insertPost(id, fixtureTxId(commit), commit, content);
@@ -253,14 +253,12 @@ describe('GET /shell/:id', () => {
         'X-Forwarded-Proto': 'https',
         'Host': 'notis.fun',
       });
+      const withoutHeader = await getWithHeaders(port, `/shell/${id}`, {});
       expect(withHeader.status).toBe(200);
-      expect(withHeader.body).toContain(
-        `<meta property="og:url" content="https://notis.fun/web/p/${id}">`,
-      );
-
-      const withoutHeader = await fetch(`http://localhost:${port}/shell/${id}`);
-      const htmlWithout = await withoutHeader.text();
-      expect(htmlWithout).not.toContain('og:url');
+      expect(withoutHeader.status).toBe(200);
+      expect(withHeader.body).not.toContain('og:url');
+      expect(withoutHeader.body).not.toContain('og:url');
+      expect(withHeader.body).toBe(withoutHeader.body);
     } finally {
       close();
     }
@@ -333,6 +331,71 @@ describe('GET /shell/:id', () => {
       expect(html).toContain('Reputation not for sale');
       expect(html).toContain('og:image');
       expect(html).toContain('twitter:card');
+    } finally {
+      close();
+    }
+  });
+
+  // NODE_INTERFACE → Link previews: the shell's two splices put the title and
+  // the tags in place by position, so a value's `$&`, `` $` ``, `$'` or `$$`
+  // reaches the page as typed (after escaping). The description carries the
+  // value; the title is author-derived and holds no `$`.
+  const splicePatterns: Array<{ label: string; content: string; expected: string }> = [
+    { label: "$'", content: "hello $' world", expected: "hello $' world" },
+    { label: '$&', content: 'amp $& here', expected: 'amp $&amp; here' },
+    { label: '$`', content: 'tick $` here', expected: 'tick $` here' },
+    { label: '$$', content: 'two $$ dollars', expected: 'two $$ dollars' },
+  ];
+
+  for (const { label, content, expected } of splicePatterns) {
+    it(`a content carrying ${label} splices by position: exactly one <body> and one </head>, description and og:description equal the escaped value`, async () => {
+      const author = uid(`shell-splice-${label}`);
+      const commit = makePostCommit(author, content);
+      const id = fixturePostId(commit);
+      insertPost(id, fixtureTxId(commit), commit, content);
+      confirmPost(id, 20, 0);
+
+      const { port, close } = startApp(shellPath);
+      try {
+        const res = await fetch(`http://localhost:${port}/shell/${id}`);
+        expect(res.status).toBe(200);
+        const html = await res.text();
+        expect(html).toContain('<meta property="og:title"');
+        expect(html.match(/<body>/g)?.length ?? 0).toBe(1);
+        expect(html.match(/<\/head>/g)?.length ?? 0).toBe(1);
+        expect(html).toContain(`<meta name="description" content="${expected}">`);
+        expect(html).toContain(`<meta property="og:description" content="${expected}">`);
+      } finally {
+        close();
+      }
+    });
+  }
+
+  // NODE_INTERFACE → Link previews: a tagged answer carries no og:url and the
+  // route reads no X-Forwarded-* and no X-Original-URI, so the bytes are the
+  // same whatever headers the request carries.
+  it("a tagged answer is byte-identical with X-Forwarded-Proto, X-Forwarded-Host and X-Original-URI carrying $' as without them, and neither carries og:url", async () => {
+    const author = uid('shell-forwarded-ignored');
+    const content = "a plain live post for the forwarded-headers check";
+    const commit = makePostCommit(author, content);
+    const id = fixturePostId(commit);
+    insertPost(id, fixtureTxId(commit), commit, content);
+    confirmPost(id, 21, 0);
+
+    const { port, close } = startApp(shellPath);
+    try {
+      const withHeaders = await getWithHeaders(port, `/shell/${id}`, {
+        'X-Forwarded-Proto': 'https',
+        'X-Forwarded-Host': 'notis.fun',
+        'X-Original-URI': `/web/p/${id}?q=$'`,
+      });
+      const withoutHeaders = await getWithHeaders(port, `/shell/${id}`, {});
+      expect(withHeaders.status).toBe(200);
+      expect(withoutHeaders.status).toBe(200);
+      expect(withHeaders.body).toContain('<meta property="og:title"');
+      expect(withHeaders.body).not.toContain('og:url');
+      expect(withoutHeaders.body).not.toContain('og:url');
+      expect(withHeaders.body).toBe(withoutHeaders.body);
     } finally {
       close();
     }

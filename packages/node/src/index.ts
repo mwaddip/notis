@@ -4,7 +4,7 @@ import { setMempoolCap } from './store/mempool.js';
 import { seedGenesisState } from './services/genesis-state.js';
 import { getNetworkRecord } from './store/identity-records.js';
 import { startBlockCreator, stopBlockCreator } from './services/block-creator.js';
-import { createApp, createAdminApp } from './server.js';
+import { createApp, createAdminApp, listenPublic } from './server.js';
 import {
   initJournal,
   emitServerStarting,
@@ -277,7 +277,8 @@ const adminServer = createAdminApp(config, {
   syncPhase: () => net.syncPhase(),
   protocolVersionSchedule: config.protocolVersionSchedule,
 });
-const server = app.listen(config.port, () => {
+const server = listenPublic(app, config.port);
+server.on('listening', () => {
   // Read off the socket rather than named from config: `listen(port)` passes no
   // host, so the public API has no configured bind address — only the admin
   // server does — and which interface Node chose is a fact only the bound

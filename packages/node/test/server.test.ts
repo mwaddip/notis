@@ -1,11 +1,14 @@
-import { makeTestConfig } from './helpers.js';
+import { makeTestConfig, makePostCommit, fixturePostId, fixtureTxId, uid } from './helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import http from 'http';
 import type { AddressInfo } from 'net';
-import express from 'express';
 import { initDb, getDb, closeDb } from '../src/store/db.js';
 import { createApp, createAdminApp } from '../src/server.js';
-import { bodyRefusal } from '../src/routes/body-refusal.js';
+import { insertPost, confirmPost } from '../src/store/posts.js';
+import * as store from '../src/store/index.js';
 import type { Config } from '../src/config.js';
 import { MAX_BLOCK_BODY_BYTES, profileFor } from '@dagsocial/types';
 import { resetForTests, getCounters } from '../src/metrics.js';
@@ -210,9 +213,9 @@ describe('server', () => {
   });
 
   // NODE_INTERFACE → HTTP API → "A body the parser refuses is the client's
-  // error". The public app's last handler reads `bodyRefusal` first and
-  // answers 4xx with the mapped body, no log line, and the CORS header the
-  // middleware set ahead of the parser.
+  // error". The parser's callback in `createApp` answers through `bodyRefusal`:
+  // 4xx with the mapped body, no log line, and the CORS header the middleware
+  // set ahead of the parser.
   describe('a body the parser refuses', () => {
     it('POST /posts/batch with Content-Type JSON and body `{` answers 400 malformed JSON body, not logged', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -248,10 +251,13 @@ describe('server', () => {
       }
     });
 
-    it('POST /posts/batch with a body over 1 MB answers 413 body too large, not logged', async () => {
-      // One byte past the parser's 1 MB limit, in valid JSON so the body
-      // bound is what refuses it (raw-body's `entity.too.large`).
-      const payload = '{"pad":"' + 'a'.repeat(1024 * 1024) + '"}';
+    it('POST /posts/batch one byte past HTTP_BODY_MAX_BYTES answers 413 body too large, not logged', async () => {
+      // 65 536 + 1 bytes of well-formed JSON so only the body bound can
+      // refuse it (raw-body's `entity.too.large`).
+      const prefix = `{"ids":["${'a'.repeat(64)}"],"pad":"`;
+      const suffix = '"}';
+      const payload = prefix + 'x'.repeat(65_536 + 1 - prefix.length - suffix.length) + suffix;
+      expect(Buffer.byteLength(payload, 'utf-8')).toBe(65_536 + 1);
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       try {
         const res = await fetch(`${baseUrl}/posts/batch`, {
@@ -279,45 +285,35 @@ describe('server', () => {
       expect(body.posts).toEqual([]);
     });
 
-    // A fault of the node's — the generic 500 answer and its one logged line
-    // stand (NODE_INTERFACE → HTTP API → "A body the parser refuses is the
-    // client's error"). A sync throw that reaches the public app's last
-    // handler without a parser mark answers `{ error: 'internal' }` with one
-    // `500 error:` log line.
-    it('an error thrown inside a route still answers 500 and logs once', async () => {
+    // NODE_INTERFACE → HTTP API → "500 `{ error: 'internal' }` is a fault of the node's"
+    // A plain Error thrown by a route's store read reaches `createApp`'s last
+    // handler: `{ error: 'internal' }` and one `500 error:` log line.
+    it('an error thrown inside a route answers 500 and logs once', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const getPostSpy = vi.spyOn(store, 'getPost').mockImplementation(() => {
+        throw new Error('store read failed');
+      });
+      const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dagsocial-route-throw-'));
+      const shellPath = path.join(shellDir, 'index.html');
+      fs.writeFileSync(shellPath, '<!doctype html><html><body></body></html>', 'utf-8');
       let throwingServer: http.Server | undefined;
       try {
-        const throwingApp = express();
-        throwingApp.get('/boom', (_req, _res, next) => {
-          next(new Error('inside a route'));
+        throwingServer = createApp(makeConfig({ webShellPath: shellPath })).listen(0);
+        await new Promise<void>((resolve) => {
+          if (throwingServer!.listening) { resolve(); return; }
+          throwingServer!.once('listening', resolve);
         });
-        throwingApp.use(
-          (
-            err: unknown,
-            _req: express.Request,
-            res: express.Response,
-            _next: express.NextFunction,
-          ) => {
-            const refusal = bodyRefusal(err);
-            if (refusal !== null) {
-              res.status(refusal.status).json({ error: refusal.status, reason: refusal.reason });
-              return;
-            }
-            console.error('500 error:', err instanceof Error ? err.stack : err);
-            res.status(500).json({ error: 'internal' });
-          },
-        );
-        throwingServer = throwingApp.listen(0);
         const addr = throwingServer.address() as AddressInfo;
-        const res = await fetch(`http://localhost:${addr.port}/boom`);
+        const res = await fetch(`http://localhost:${addr.port}/shell/${'a'.repeat(64)}`);
         expect(res.status).toBe(500);
         expect(await res.json()).toEqual({ error: 'internal' });
         expect(errorSpy).toHaveBeenCalledTimes(1);
         expect(String(errorSpy.mock.calls[0]![0])).toBe('500 error:');
       } finally {
+        getPostSpy.mockRestore();
         errorSpy.mockRestore();
         throwingServer?.close();
+        fs.rmSync(shellDir, { recursive: true, force: true });
       }
     });
   });
@@ -347,6 +343,263 @@ describe('admin app CORS', () => {
       expect(res.headers.has('access-control-allow-origin')).toBe(false);
     } finally {
       adminServer.close();
+    }
+  });
+});
+
+// NODE_INTERFACE → The public server → "No answer names the software, and none
+// is read as another type": every answer of the public app and the admin
+// listener carries X-Content-Type-Options: nosniff, and neither sends
+// X-Powered-By, whatever its status.
+describe('nosniff and no X-Powered-By', () => {
+  let publicServer: http.Server;
+  let publicUrl: string;
+  let shellDir: string;
+  let shellPath: string;
+  let livePostId: string;
+
+  beforeAll(async () => {
+    initDb(':memory:');
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    shellDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dagsocial-nosniff-'));
+    shellPath = path.join(shellDir, 'index.html');
+    fs.writeFileSync(
+      shellPath,
+      '<!doctype html><html><head><title>Notis</title></head><body></body></html>',
+      'utf-8',
+    );
+    const author = uid('nosniff-live-author');
+    const content = 'a live post for the nosniff coverage';
+    const commit = makePostCommit(author, content);
+    livePostId = fixturePostId(commit);
+    insertPost(livePostId, fixtureTxId(commit), commit, content);
+    confirmPost(livePostId, 30, 0);
+    const app = createApp(makeTestConfig({ port: 0, webShellPath: shellPath }));
+    publicServer = app.listen(0);
+    await new Promise<void>((resolve) => {
+      if (publicServer.listening) { resolve(); return; }
+      publicServer.once('listening', resolve);
+    });
+    const addr = publicServer.address() as AddressInfo;
+    publicUrl = `http://localhost:${addr.port}`;
+  });
+
+  afterAll(() => {
+    publicServer.close();
+    fs.rmSync(shellDir, { recursive: true, force: true });
+    closeDb();
+  });
+
+  it('the public app answers every listed kind with nosniff and no X-Powered-By', async () => {
+    const bigBody = '{"pad":"' + 'a'.repeat(1024 * 1024) + '"}';
+    const kinds: Array<{ kind: string; status: number; call: () => Promise<{ status: number; headers: Headers | Map<string, string> }> }> = [
+      {
+        kind: '2xx of a route',
+        status: 200,
+        call: async () => {
+          const r = await fetch(`${publicUrl}/status`);
+          return { status: r.status, headers: r.headers };
+        },
+      },
+      {
+        kind: '4xx of a route',
+        status: 400,
+        call: async () => {
+          const r = await fetch(`${publicUrl}/posts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          return { status: r.status, headers: r.headers };
+        },
+      },
+      {
+        kind: '404 of an unmounted path',
+        status: 404,
+        call: async () => {
+          const r = await fetch(`${publicUrl}/no/such/path`);
+          return { status: r.status, headers: r.headers };
+        },
+      },
+      {
+        kind: 'OPTIONS 204',
+        status: 204,
+        call: async () => {
+          const r = await fetch(`${publicUrl}/posts`, { method: 'OPTIONS' });
+          return { status: r.status, headers: r.headers };
+        },
+      },
+      {
+        kind: "parser's 400",
+        status: 400,
+        call: async () => {
+          const r = await fetch(`${publicUrl}/posts/batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{',
+          });
+          return { status: r.status, headers: r.headers };
+        },
+      },
+      {
+        kind: "parser's 413",
+        status: 413,
+        call: async () => {
+          const r = await fetch(`${publicUrl}/posts/batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: bigBody,
+          });
+          return { status: r.status, headers: r.headers };
+        },
+      },
+      {
+        kind: '/shell/:id 200',
+        status: 200,
+        call: async () => {
+          const r = await fetch(`${publicUrl}/shell/${livePostId}`);
+          return { status: r.status, headers: r.headers };
+        },
+      },
+      {
+        kind: '/shell/:id 400 bad id',
+        status: 400,
+        call: async () => {
+          const r = await fetch(`${publicUrl}/shell/${'z'.repeat(64)}`);
+          return { status: r.status, headers: r.headers };
+        },
+      },
+      {
+        kind: '/shell/:id 404 unknown id',
+        status: 404,
+        call: async () => {
+          const r = await fetch(`${publicUrl}/shell/${'b'.repeat(64)}`);
+          return { status: r.status, headers: r.headers };
+        },
+      },
+      {
+        kind: "error handler's 500",
+        status: 500,
+        call: async () => {
+          const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+          const getPostSpy = vi.spyOn(store, 'getPost').mockImplementation(() => {
+            throw new Error('store read failed');
+          });
+          try {
+            const r = await fetch(`${publicUrl}/shell/${livePostId}`);
+            return { status: r.status, headers: r.headers };
+          } finally {
+            getPostSpy.mockRestore();
+            errorSpy.mockRestore();
+          }
+        },
+      },
+    ];
+    for (const row of kinds) {
+      const r = await row.call();
+      expect(r.status, row.kind).toBe(row.status);
+      const headerGet = (name: string): string | null =>
+        r.headers instanceof Map ? (r.headers.get(name) ?? null) : r.headers.get(name);
+      const headerHas = (name: string): boolean =>
+        r.headers instanceof Map ? r.headers.has(name) : r.headers.has(name);
+      expect(headerHas('x-powered-by'), `${row.kind}: X-Powered-By`).toBe(false);
+      expect(headerGet('x-content-type-options'), `${row.kind}: nosniff`).toBe('nosniff');
+    }
+  });
+
+  it('the admin listener answers every listed kind with nosniff and no X-Powered-By', async () => {
+    const adminServer = createAdminApp(
+      makeTestConfig({ adminPort: 0, adminBindAddress: '127.0.0.1' }),
+      {
+        getConnectedPeers: () => [],
+        syncPhase: () => 'idle',
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      },
+    );
+    await new Promise<void>((resolve) => {
+      if (adminServer.listening) { resolve(); return; }
+      adminServer.once('listening', resolve);
+    });
+    try {
+      const addr = adminServer.address() as AddressInfo;
+      const baseUrl = `http://127.0.0.1:${addr.port}`;
+      const kinds: Array<{ kind: string; status: number; path: string }> = [
+        { kind: '2xx /health', status: 200, path: '/health' },
+        { kind: '2xx /stats', status: 200, path: '/stats' },
+        { kind: '404 unmounted', status: 404, path: '/no/such/path' },
+      ];
+      for (const row of kinds) {
+        const r = await fetch(`${baseUrl}${row.path}`);
+        expect(r.status, row.kind).toBe(row.status);
+        expect(r.headers.has('x-powered-by'), `${row.kind}: X-Powered-By`).toBe(false);
+        expect(r.headers.get('x-content-type-options'), `${row.kind}: nosniff`).toBe('nosniff');
+      }
+    } finally {
+      adminServer.close();
+    }
+  });
+});
+
+// NODE_INTERFACE → "A body the parser refuses is the client's error":
+// `HTTP_BODY_MAX_BYTES` is 64 KiB (CONSTANTS → HTTP server bounds), so a
+// well-formed body one byte past it is answered 413, and one at exactly
+// the limit reaches the route.
+describe('body bound at HTTP_BODY_MAX_BYTES', () => {
+  const BOUND = 65_536;
+  let server: http.Server;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    initDb(':memory:');
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const app = createApp(makeTestConfig({ port: 0 }));
+    server = app.listen(0);
+    await new Promise<void>((resolve) => {
+      if (server.listening) { resolve(); return; }
+      server.once('listening', resolve);
+    });
+    const addr = server.address() as AddressInfo;
+    baseUrl = `http://localhost:${addr.port}`;
+  });
+
+  afterAll(() => {
+    server.close();
+    closeDb();
+  });
+
+  function paddedBatchBody(total: number): string {
+    const prefix = `{"ids":["${'a'.repeat(64)}"],"pad":"`;
+    const suffix = '"}';
+    const need = total - prefix.length - suffix.length;
+    return prefix + 'x'.repeat(need) + suffix;
+  }
+
+  it('a well-formed body of exactly 65 536 bytes is answered by the route, not by the parser', async () => {
+    const body = paddedBatchBody(BOUND);
+    expect(Buffer.byteLength(body, 'utf-8')).toBe(BOUND);
+    const r = await fetch(`${baseUrl}/posts/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    expect(r.status).not.toBe(413);
+  });
+
+  it('a well-formed body of 65 536 + 1 bytes answers 413 body too large', async () => {
+    const body = paddedBatchBody(BOUND + 1);
+    expect(Buffer.byteLength(body, 'utf-8')).toBe(BOUND + 1);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const r = await fetch(`${baseUrl}/posts/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      expect(r.status).toBe(413);
+      expect(await r.json()).toEqual({ error: 413, reason: 'body too large' });
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
     }
   });
 });
