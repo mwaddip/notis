@@ -1289,8 +1289,6 @@ answer, zero bytes included; one whose frame does not decode, or whose code no a
 stream left open holds one of libp2p's inbound streams for its protocol on that connection for the life of the
 connection, and once they are all held every query on the connection fails.
 
-> ⚠ **AHEAD OF CODE (2026-10-24).** The yamux window pin — `YAMUX_STREAM_WINDOW_BYTES` in `net/src/msg-guards.ts`, passed as `yamux({ initialStreamWindowSize, maxStreamWindowSize })` in `net/src/node.ts`'s `createLibp2p`.
-
 **A peer's sync streams are served one at a time.** The sync handler reads and serves a peer's stream before it reads
 that peer's next; streams that arrive meanwhile wait unread, in order of arrival, and each one's read deadline runs
 from its turn. At most `MAX_INBOUND_SYNC_STREAMS` sync streams of one connection are open at once — the
