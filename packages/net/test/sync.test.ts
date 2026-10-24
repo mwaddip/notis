@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import type { Libp2p } from 'libp2p';
+import type { Libp2p } from '@libp2p/interface';
 import { SYNC_PROTOCOL, requestBlocks, requestHeaders } from '../src/sync.js';
 import { encodeFrame } from '../src/frame.js';
 import { encodePeers } from '../src/sync-codec.js';
 import { MSG_BLOCKS, MSG_HEADERS } from '../src/types.js';
 import { makeConfig } from './helpers.js';
+import { makeFakeStream, type FakeStream } from './fake-stream.js';
 
 const MAGIC = 0x54444147;
 const PEER = 'peer-under-test';
@@ -17,25 +18,19 @@ const PEER = 'peer-under-test';
  */
 function makeDialStub(response: Uint8Array) {
   const dialled: string[] = [];
-  const sent: Uint8Array[] = [];
+  const streams: FakeStream[] = [];
 
   const libp2p = {
     getPeers: () => [{ toString: () => PEER }],
     dialProtocol: async (_peer: unknown, protocol: string) => {
       dialled.push(protocol);
-      return {
-        sink: async (chunks: Iterable<Uint8Array>) => {
-          for await (const c of chunks) sent.push(c);
-        },
-        source: (async function* () {
-          yield response;
-        })(),
-        close: async () => {},
-      };
+      const stream = makeFakeStream([response]);
+      streams.push(stream);
+      return stream;
     },
   } as unknown as Libp2p;
 
-  return { libp2p, dialled, sent };
+  return { libp2p, dialled, streams };
 }
 
 describe('sync protocol', () => {

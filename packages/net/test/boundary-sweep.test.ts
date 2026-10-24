@@ -20,6 +20,7 @@ import { PeerDb } from '../src/peerdb.js';
 import { PeerState } from '../src/types.js';
 import type { NetValidators } from '../src/types.js';
 import { makeConfig } from './helpers.js';
+import { makeFakeStream } from './fake-stream.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 // ---------------------------------------------------------------------------
@@ -146,11 +147,7 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
         id: 'outbound-conn',
         remotePeer: { toString: () => peerId },
         direction: 'outbound',
-        newStream: async () => ({
-          sink: async () => {},
-          source: (async function* () { yield replyFrame(2); })(),
-          close: async () => {},
-        }),
+        newStream: async () => makeFakeStream([replyFrame(2)]),
       }),
       getPeers: () => [{ toString: () => peerId }],
       getMultiaddrs: () => [],
@@ -185,11 +182,7 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
         id: 'outbound-conn',
         remotePeer: { toString: () => peerId },
         direction: 'outbound',
-        newStream: async () => ({
-          sink: async () => {},
-          source: (async function* () { yield replyFrame(1); })(),
-          close: async () => {},
-        }),
+        newStream: async () => makeFakeStream([replyFrame(1)]),
       }),
       getPeers: () => [{ toString: () => peerId }],
       getMultiaddrs: () => [],
