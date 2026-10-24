@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  body-parser@<1.20.9: ^1.20.9
+  qs@<6.16.0: ^6.16.0
+  proxy-addr@<2.0.8: ^2.0.8
+
 importers:
 
   .: {}
@@ -78,6 +83,9 @@ importers:
       '@libp2p/identify':
         specifier: ^2.0.0
         version: 2.1.5
+      '@libp2p/interface':
+        specifier: ^1.0.0
+        version: 1.7.0
       '@libp2p/ping':
         specifier: ^2.0.0
         version: 2.0.37
@@ -91,14 +99,11 @@ importers:
         specifier: ^1.0.0
         version: 1.9.4
     devDependencies:
-      '@libp2p/interface':
-        specifier: ^1.0.0
-        version: 1.7.0
       '@noble/curves':
-        specifier: ^2.2.0
+        specifier: 2.2.0
         version: 2.2.0
       '@noble/hashes':
-        specifier: ^2.2.0
+        specifier: 2.2.0
         version: 2.2.0
       '@types/node':
         specifier: ^22.0.0
@@ -162,8 +167,8 @@ importers:
         specifier: ^1.6.0
         version: 1.6.4
       express:
-        specifier: ^4.21.0
-        version: 4.22.2
+        specifier: ^4.22.3
+        version: 4.22.3
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.0
@@ -215,10 +220,10 @@ importers:
         specifier: workspace:*
         version: link:../wire
       '@noble/curves':
-        specifier: ^2.2.0
+        specifier: 2.2.0
         version: 2.2.0
       '@noble/hashes':
-        specifier: ^2.2.0
+        specifier: 2.2.0
         version: 2.2.0
     devDependencies:
       '@types/node':
@@ -240,10 +245,10 @@ importers:
         specifier: workspace:*
         version: link:../types
       '@noble/curves':
-        specifier: ^2.2.0
+        specifier: 2.2.0
         version: 2.2.0
       '@noble/hashes':
-        specifier: ^2.2.0
+        specifier: 2.2.0
         version: 2.2.0
     devDependencies:
       '@types/node':
@@ -274,10 +279,10 @@ importers:
         specifier: ^2.2.0
         version: 2.4.0
       '@noble/curves':
-        specifier: ^2.2.0
+        specifier: 2.2.0
         version: 2.2.0
       '@noble/hashes':
-        specifier: ^2.2.0
+        specifier: 2.2.0
         version: 2.2.0
     devDependencies:
       fake-indexeddb:
@@ -348,8 +353,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
       express:
-        specifier: ^4.21.0
-        version: 4.22.2
+        specifier: ^4.22.3
+        version: 4.22.3
     devDependencies:
       '@types/express':
         specifier: ^4.17.0
@@ -395,7 +400,7 @@ importers:
         version: link:../../packages/validation
     devDependencies:
       '@noble/curves':
-        specifier: ^2.2.0
+        specifier: 2.2.0
         version: 2.2.0
       '@types/node':
         specifier: ^22.0.0
@@ -1379,8 +1384,8 @@ packages:
   bluebird@3.7.2:
     resolution: {integrity: sha512-XpNj6GDQzdfW+r2Wnn7xiSAd7TM3jzkxGXBGTtWKuSXv1xUV+azxAm8jdWZN06QTQk+2N2XB9jRDkvbmQmcRtg==}
 
-  body-parser@1.20.6:
-    resolution: {integrity: sha512-p5tAzS57i5MV9fZFDj9LeIiTZEufbSe2eDozP+ElheSUq1m74CRq1jI4mYNDdVs9vQztXFLuk/Gd6BWTdwRJ5g==}
+  body-parser@1.20.9:
+    resolution: {integrity: sha512-FISIQxV5u91Y9gvuFq3q/tA/qTqLJn3AhRcEvyozyhJTh5OBFFtv827AdHU7Rbyct4r+Ba1/99oFa1Y3yuFsdw==}
     engines: {node: '>= 0.8', npm: 1.2.8000 || >= 1.4.16}
 
   boolbase@1.0.0:
@@ -1866,8 +1871,8 @@ packages:
     resolution: {integrity: sha512-XYfuKMvj4O35f/pOXLObndIRvyQ+/+6AhODh+OKWj9S9498pHHn/IMszH+gt0fBCRWMNfk1ZSp5x3AifmnI2vg==}
     engines: {node: '>=6'}
 
-  express@4.22.2:
-    resolution: {integrity: sha512-IuL+Elrou2ZvCFHs18/CIzy2Nzvo25nZ1/D2eIZlz7c+QUayAcYoiM2BthCjs+EBHVpjYjcuLDAiCWgeIX3X1Q==}
+  express@4.22.3:
+    resolution: {integrity: sha512-Bdcs4+3qlpVlx2NRn6fgX2Ue2/gGRaPeawebgclM0ERSCqDpA+owF1fdPwjJUTAJWMTuAaxjDf+hzb0/4eKvvw==}
     engines: {node: '>= 0.10.0'}
 
   fake-indexeddb@6.2.5:
@@ -2749,8 +2754,8 @@ packages:
   protons-runtime@7.0.0:
     resolution: {integrity: sha512-r/e72006xoVND4Uvf1aIs4OQOkJaASBU3ip4DzOWAktoKAkTiOYqKoS3TYMBm8HnnYU8+h0uEzr5gIRwk/pmTg==}
 
-  proxy-addr@2.0.7:
-    resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
+  proxy-addr@2.0.8:
+    resolution: {integrity: sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==}
     engines: {node: '>= 0.10'}
 
   pump@3.0.4:
@@ -2771,8 +2776,8 @@ packages:
     resolution: {integrity: sha512-KTqnxsgGiQ6ZAzZCVlJH5eOjSnvlyEgx1m8bkRJfOhmGRqfo5KLvmAlACQkrjEtOQ4B7wF9TdSLIs9O90MX9xA==}
     engines: {node: '>=16.0.0'}
 
-  qs@6.15.3:
-    resolution: {integrity: sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==}
+  qs@6.16.1:
+    resolution: {integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==}
     engines: {node: '>=0.6'}
 
   quick-format-unescaped@4.0.4:
@@ -4423,7 +4428,7 @@ snapshots:
 
   bluebird@3.7.2: {}
 
-  body-parser@1.20.6:
+  body-parser@1.20.9:
     dependencies:
       bytes: 3.1.2
       content-type: 1.0.5
@@ -4433,7 +4438,7 @@ snapshots:
       http-errors: 2.0.1
       iconv-lite: 0.4.24
       on-finished: 2.4.1
-      qs: 6.15.3
+      qs: 6.16.1
       raw-body: 2.5.3
       type-is: 1.6.18
       unpipe: 1.0.0
@@ -4979,11 +4984,11 @@ snapshots:
 
   expand-template@2.0.3: {}
 
-  express@4.22.2:
+  express@4.22.3:
     dependencies:
       accepts: 1.3.8
       array-flatten: 1.1.1
-      body-parser: 1.20.6
+      body-parser: 1.20.9
       content-disposition: 0.5.4
       content-type: 1.0.5
       cookie: 0.7.2
@@ -5001,8 +5006,8 @@ snapshots:
       on-finished: 2.4.1
       parseurl: 1.3.3
       path-to-regexp: 0.1.13
-      proxy-addr: 2.0.7
-      qs: 6.15.3
+      proxy-addr: 2.0.8
+      qs: 6.16.1
       range-parser: 1.2.1
       safe-buffer: 5.2.1
       send: 0.19.2
@@ -5900,7 +5905,7 @@ snapshots:
       uint8arraylist: 3.0.2
       uint8arrays: 6.1.1
 
-  proxy-addr@2.0.7:
+  proxy-addr@2.0.8:
     dependencies:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
@@ -5922,7 +5927,7 @@ snapshots:
 
   pvutils@1.1.5: {}
 
-  qs@6.15.3:
+  qs@6.16.1:
     dependencies:
       es-define-property: 1.0.1
       side-channel: 1.1.1
@@ -6225,7 +6230,7 @@ snapshots:
       formidable: 3.5.4
       methods: 1.1.2
       mime: 2.6.0
-      qs: 6.15.3
+      qs: 6.16.1
     transitivePeerDependencies:
       - supports-color
 
