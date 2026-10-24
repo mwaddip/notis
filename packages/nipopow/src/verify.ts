@@ -121,18 +121,29 @@ export function verifyProof(
     if (!verifyOrderingBlockPoW(h)) return fail('pow', i);
   }
 
-  // Rule 3 continued: suffix-tail exact schedule check
-  // NIPOPOW_INTERFACE → verifyProof rule 3 — suffixHead is band-only
+  // Rule 3 continued: the schedule check across the flattened sequence.
+  // Block 1 carries profile.retarget.anchorBits; every other element whose
+  // prevBlockHash is the blockHash of the element before it carries
+  // asertTargetBits(profile.retarget, t_a, previous).
+  // NIPOPOW_INTERFACE → verifyProof
   const t_a = first.header.createdAt;
   const suffixStartIdx = p.prefix.length;
-  let prev: { height: number; createdAt: number } = p.suffixHead.header;
-  for (let j = 0; j < p.suffixTail.length; j++) {
-    const tailH = p.suffixTail[j]!;
-    const scheduled = asertTargetBits(profile.retarget, t_a, prev);
-    if (tailH.powTargetBits !== scheduled) {
-      return fail('target', suffixStartIdx + 1 + j);
+  if (allHeaders[0]!.powTargetBits !== profile.retarget.anchorBits) {
+    return fail('target', 0);
+  }
+  for (let i = 1; i < allHeaders.length; i++) {
+    const prev = allHeaders[i - 1]!;
+    const cur = allHeaders[i]!;
+    const prevHash = blockHash(prev);
+    if (prevHash !== null && cur.prevBlockHash === prevHash) {
+      const scheduled = asertTargetBits(profile.retarget, t_a, {
+        height: prev.height,
+        createdAt: prev.createdAt,
+      });
+      if (cur.powTargetBits !== scheduled) {
+        return fail('target', i);
+      }
     }
-    prev = tailH;
   }
 
   // Rule 3 continued: time — createdAt strictly increasing

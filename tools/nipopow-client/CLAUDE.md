@@ -10,7 +10,7 @@ your standing context — read it and the linked docs before touching code.
 2. `~/.claude/RTK.md` — RTK proxy rules (`rtk proxy` for completeness-critical searches/diffs).
 3. `../../CLAUDE.md` (repo root) — project overview + Design-by-Contract dispatch workflow.
 4. `../../contracts/NIPOPOW_INTERFACE.md` — **the contract this tool CONSUMES first**: `verifyProof`,
-   `compareProofs`, and **The trust model** (the three rules this tool embodies).
+   `compareProofs`, and **The trust model** (the rules this tool embodies).
 5. `../../contracts/NODE_INTERFACE.md` — the routes it reads: `Nipopow` (HTTP API), `Nipopow prover`,
    the two proof routes — `/api/v1/proof/:key`, one key, and `/api/v1/range/:kind/:owner`, a page of a key's
    holdings (the two "avl-endpoint" bullets, "The AVL value carries provenance" and "A proof at an older height

@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/nipopow`
 **Protocol version:** 1
-**Last updated:** 2026-10-15
+**Last updated:** 2026-10-24
 
 ## Scope
 
@@ -107,9 +107,10 @@ defaults`).
 **A moving target changes no layout here.** The proof carries no difficulty headers, and needs none:
 a superblock level is measured against the network's anchor target rather than the header's own
 (`VALIDATION_INTERFACE → level`), so a count of superblocks is a count of work in anchor units whatever
-a header declares and → compareProofs stays a work comparison; the suffix tail's targets are recomputed
-exactly (→ verifyProof, rule 3) because the suffix is contiguous and block 1 is every proof's first
-element. What the difficulty schedule (`MINING_INTERFACE → Difficulty Schedule`) moves is
+a header declares and → compareProofs stays a work comparison; every target whose inputs the proof carries is
+recomputed exactly (→ verifyProof, rule 3) — block 1's, and each header's whose parent is the element before it, the
+level-0 sweep, the suffix head and the tail running contiguously as the chain they are drawn from, and block 1 being
+every proof's first element. What the difficulty schedule (`MINING_INTERFACE → Difficulty Schedule`) moves is
 `interlinkRoot` — a committed byte the fresh chain covers — not this contract's objects, codecs or
 version.
 
@@ -168,13 +169,18 @@ at fault.
    `verifyProtocolVersion(h.protocolVersion, h.height, profile.protocolVersionSchedule)` (`version`),
    `powTargetBits` inside the profile band
    `[floorBits, ceilingBits]` (`target`), and `verifyOrderingBlockPoW` against the header's **own**
-   declared bits (`pow`). **Every suffix-tail header** additionally carries exactly the scheduled
-   target — `asertTargetBits(profile.retarget, t_a, previous)` with `t_a` the first prefix element's
-   `createdAt` and `previous` the header before it in the suffix (`target`) — computable because the
-   suffix is parent-linked and block 1 is every proof's first element; `suffixHead`'s parent is not in
-   the proof, so its target is band-bounded like a prefix header's. Declared bits are never trusted as
-   work: a level is measured against the anchor target (`VALIDATION_INTERFACE → level`), so a cheap
-   target buys no score. **Time:** `createdAt` strictly increases across the flattened sequence
+   declared bits (`pow`). **A header whose parent the proof carries carries exactly the scheduled
+   target** (`target`): block 1 carries `profile.retarget.anchorBits` — the height-1 block is not scheduled
+   (`VALIDATION_INTERFACE → asertTargetBits`); every other element whose `prevBlockHash` is the `blockHash` of the
+   element before it carries `asertTargetBits(profile.retarget, t_a, previous)`, `t_a` block 1's `createdAt` and
+   `previous` the element before it — the inputs a full node schedules the header from
+   (`MINING_INTERFACE → Difficulty Schedule`). On a proof `proveWithReader` builds, that is the
+   level-0 sweep from its second header on, the suffix head and the tail; an element whose parent is not the
+   element before it — a superblock reached by a vector hop, or the sweep's first header — is band-bounded alone,
+   its parent absent. Declared bits are never trusted as work: a level is measured against the anchor target
+   (`VALIDATION_INTERFACE → level`), so a cheap target buys no score; and where the parent is present a declared
+   target is the schedule's, so a chained stretch carries the targets its own timestamps schedule, never cheaper
+   ones of its choosing. **Time:** `createdAt` strictly increases across the flattened sequence
    (`time`) — an honest chain is monotone in time, so its every subsequence is — and the tip's
    `createdAt ≤ profile.nowMs + profile.maxFutureDriftMs` (`clock`), the acceptance rule a full node
    applies, so a proof cannot claim more real time than exists.
@@ -320,16 +326,16 @@ class ProofBuildError extends Error {
 
 ## The trust model — what a proof proves
 
-Four rules, stated once here and consumed by `NODE_INTERFACE → Nipopow prover` and by every
+Five rules, stated once here and consumed by `NODE_INTERFACE → Nipopow prover` and by every
 light client:
 
 1. **A proof carries headers and vectors.** Body validity — the validator signature, the
-   transactions, the state transitions, the genesis state — is trusted to the PoW majority: a
-   chain no honest full node accepts is an attacker's chain and loses on work. The SPV assumption,
-   stated rather than assumed.
+   transactions, the state transitions, the genesis state — is trusted to the honest share of the PoW:
+   a chain no honest full node accepts is an attacker's chain, and a proof of it stands against the
+   honest chain's on work (→ rule 5). The SPV assumption, stated rather than assumed.
 2. **A header's declared target is never trusted as work.** Rule 3 checks every header's PoW against
-   its own declared bits and the bits against the profile band, recomputes the suffix tail's targets
-   from the schedule the client was built with, and measures every level against the profile's anchor
+   its own declared bits and the bits against the profile band, recomputes every target whose parent the
+   proof carries from the schedule the client was built with, and measures every level against the profile's anchor
    target — so what a proof scores is work in the client's own unit, and a header's `powTargetBits`
    decides its validity, never its weight.
 3. **Chain choice is the best proof among the nodes asked.** A client that asks one node can be
@@ -344,6 +350,16 @@ light client:
    beneath no header but its own — one block at the schedule's target, which a node can mine over the honest tip with
    a root of its choosing — so a client proves what it acts on at the suffix head, and reads the tip only for what has
    landed since.
+5. **The hashrate share a proof comparison tolerates is not established.** The comparison is our construction
+   (→ compareProofs, "The score is work, whatever the headers declare"), and the analysis it builds on needs an
+   adversary below one quarter for its level-comparison lemma, by its authors' own note in KMZ17's LaTeX source; how
+   often a proof of less work wins is measured, not proven (→ compareProofs). Below the anchor's target few headers
+   register a level, so a short fork is decided by few of them: in a simulation of the comparison (2026-10-15 — the
+   walk with the level-0 sweep, the fork's proof carrying every header it has, `m = 24`, 1 000 trials a cell), a
+   fork of 40 blocks against the honest chain's 50, both at one target, won about 14% of comparisons at the anchor's
+   target and 39% at the floor's. **While a network's hashrate is low, a client's protection is the nodes it asks**
+   (rule 3): a seed list of nodes run by operators the client trusts — the extension's is its build's
+   (`WEB_INTERFACE → The extension`).
 
 ---
 

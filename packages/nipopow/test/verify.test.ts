@@ -395,12 +395,17 @@ describe('verifyProof', () => {
 
   describe('suffix-tail schedule check', () => {
     it('suffix-tail header off the schedule by one unit → target', () => {
-      // Build chain at anchorBits=3072, verify with anchorBits=3073 —
-      // suffix-tail headers have bits=3072, the profile's schedule expects ~3073
-      const proof = proveWithReader(reader, { m: 3, k: 5 });
-      const wrongRetarget = { ...profile.retarget, anchorBits: profile.retarget.anchorBits + 1 };
-      const wrongProfile = { ...profile, retarget: wrongRetarget };
-      const result = verifyProof(proof, { m: proof.m, k: proof.k }, wrongProfile);
+      // NIPOPOW_INTERFACE → verifyProof. The chain is on the profile's schedule;
+      // the first tail header's powTargetBits is moved one unit inside the band
+      // and its nonce re-solved, so PoW holds and the schedule check is reached.
+      const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
+      const tail0 = proof.suffixTail[0]!;
+      tail0.powTargetBits = tail0.powTargetBits + 1;
+      tail0.powNonce = solveHeaderPow(tail0);
+      expect(verifyOrderingBlockPoW(tail0)).toBe(true);
+      expect(tail0.powTargetBits).toBeGreaterThanOrEqual(profile.retarget.floorBits);
+      expect(tail0.powTargetBits).toBeLessThanOrEqual(profile.retarget.ceilingBits);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.reason).toBe('target');
@@ -409,15 +414,125 @@ describe('verifyProof', () => {
       }
     });
 
-    it('suffixHead with bits inside the band but off the schedule → accepted', () => {
-      // suffixHead's target is band-bounded only (its parent is not in the proof);
-      // a valid proof's suffixHead has bits=3072 which matches the schedule —
-      // verify that the schedule check runs only on suffix-TAIL, not suffixHead,
-      // by confirming the proof passes despite suffixHead's bits being "wrong"
-      // relative to a profile with different anchorBits for band-only
-      const proof = proveWithReader(reader, { m: 3, k: 1 });
-      // k=1 means suffixTail is empty, suffixHead is the only suffix element
+    // NIPOPOW_INTERFACE → verifyProof. The suffix head's parent is the last
+    // prefix element in an honest proof, so under the schedule rule its bits
+    // are refused at index prefix.length when they move one unit inside the
+    // band and the nonce is re-solved so PoW holds.
+    it('the suffix head, parent-linked, off by one unit → target at prefix.length', () => {
+      const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
+      const lastPrefix = proof.prefix[proof.prefix.length - 1]!;
+      const lastPrefixHash = blockHash(lastPrefix.header);
+      expect(proof.suffixHead.header.prevBlockHash).toBe(lastPrefixHash);
+
+      const sh = proof.suffixHead.header;
+      sh.powTargetBits = sh.powTargetBits + 1;
+      sh.powNonce = solveHeaderPow(sh);
+      expect(verifyOrderingBlockPoW(sh)).toBe(true);
+      expect(sh.powTargetBits).toBeGreaterThanOrEqual(profile.retarget.floorBits);
+      expect(sh.powTargetBits).toBeLessThanOrEqual(profile.retarget.ceilingBits);
+
       const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toBe('target');
+        expect(result.index).toBe(proof.prefix.length);
+      }
+    });
+  });
+
+  // NIPOPOW_INTERFACE → verifyProof. The chained-target rule across the
+  // flattened sequence: block 1 carries profile.retarget.anchorBits; every
+  // other element whose prevBlockHash is the blockHash of the element before
+  // it carries asertTargetBits over that previous element.
+  describe('chained-target schedule — the rule across the flattened sequence', () => {
+    it('block 1 off the profile anchor by one unit → target at index 0', () => {
+      const proof = proveWithReader(reader, { m: 3, k: 5 });
+      const wrongRetarget = { ...profile.retarget, anchorBits: profile.retarget.anchorBits + 1 };
+      const wrongProfile = { ...profile, retarget: wrongRetarget };
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, wrongProfile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toBe('target');
+        expect(result.index).toBe(0);
+      }
+    });
+
+    // A chain of 100 at the client's m places anchoringHeight well below the
+    // suffix on an honest chain, so the level-0 sweep carries at least three
+    // contiguous heights; the picked header is neither the sweep's first
+    // (where the predecessor in the proof is a vector hop) nor its last.
+    it('a level-0 sweep header, parent-linked, off by one unit → target at its index', () => {
+      const localChain = buildMinedChain({ count: 100 });
+      const localReader = makeReader(localChain);
+      const proof = clone(proveWithReader(localReader, { m: 24, k: 5 }));
+
+      const heights = proof.prefix.map(ph => ph.header.height);
+      let idx = -1;
+      for (let i = 2; i < heights.length - 1; i++) {
+        if (heights[i]! === heights[i - 1]! + 1 && heights[i + 1]! === heights[i]! + 1) {
+          idx = i;
+          break;
+        }
+      }
+      expect(idx).toBeGreaterThan(-1);
+      expect(proof.prefix[idx]!.header.prevBlockHash).toBe(blockHash(proof.prefix[idx - 1]!.header));
+
+      const h = proof.prefix[idx]!.header;
+      h.powTargetBits = h.powTargetBits + 1;
+      h.powNonce = solveHeaderPow(h);
+      expect(verifyOrderingBlockPoW(h)).toBe(true);
+      expect(h.powTargetBits).toBeGreaterThanOrEqual(profile.retarget.floorBits);
+      expect(h.powTargetBits).toBeLessThanOrEqual(profile.retarget.ceilingBits);
+
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toBe('target');
+        expect(result.index).toBe(idx);
+      }
+    });
+
+    // A stretched chain whose targets walk to the floor by block 7, with
+    // forced level-1 at heights 2, 5 and 15 so the proof contains vector hops
+    // below the sweep. The flattened sequence carries at least two distinct
+    // powTargetBits across its parent-linked members, and at least one
+    // vector-hop element whose bits differ from asertTargetBits over the
+    // element before it — the band-alone arm.
+    it('a proof over a chain whose targets move passes', () => {
+      const forced = new Map<number, number>([[2, 1], [5, 1], [15, 1]]);
+      const stretched = buildMinedChain({ count: 20, stampIntervalMs: 200 * 60_000, forceLevels: forced });
+      const stretchedReader = makeReader(stretched);
+      const stretchedProof = proveWithReader(stretchedReader, { m: 1, k: 5 });
+
+      const flat: BlockHeader[] = [
+        ...stretchedProof.prefix.map(ph => ph.header),
+        stretchedProof.suffixHead.header,
+        ...stretchedProof.suffixTail,
+      ];
+      const t_a = stretchedProof.prefix[0]!.header.createdAt;
+
+      const parentLinkedBits = new Set<number>();
+      let hopOffSchedule = false;
+      for (let i = 1; i < flat.length; i++) {
+        const prev = flat[i - 1]!;
+        const cur = flat[i]!;
+        const prevHash = blockHash(prev);
+        if (prevHash !== null && cur.prevBlockHash === prevHash) {
+          parentLinkedBits.add(cur.powTargetBits);
+        } else {
+          const scheduled = asertTargetBits(DEVNET_RETARGET, t_a, {
+            height: prev.height,
+            createdAt: prev.createdAt,
+          });
+          if (cur.powTargetBits !== scheduled) hopOffSchedule = true;
+        }
+      }
+      expect(parentLinkedBits.size).toBeGreaterThanOrEqual(2);
+      expect(hopOffSchedule).toBe(true);
+
+      const nowMs = flat[flat.length - 1]!.createdAt + 1_000;
+      const stretchedProfile = { ...devnetProfile(), nowMs };
+      const result = verifyProof(stretchedProof, { m: stretchedProof.m, k: stretchedProof.k }, stretchedProfile);
       expect(result.ok).toBe(true);
     });
   });
@@ -641,7 +756,7 @@ describe('heights rule 5 — parent-linked and exactly one above', () => {
     const baseLevel = headerLevel(base.header, anchorBits);
 
     const forgedPrefixHeight = base.header.height + 2;
-    const forgedCreatedAt = base.header.createdAt + DEVNET_RETARGET.idealMs;
+    const forgedCreatedAt = base.header.createdAt + 2 * DEVNET_RETARGET.idealMs;
     const forgedInterlinks = updateInterlinks(base.interlinks, baseHash!, baseLevel);
     const forgedPrefixHeader: BlockHeader = {
       protocolVersion: protocolVersionAt(schedule, forgedPrefixHeight)!,
