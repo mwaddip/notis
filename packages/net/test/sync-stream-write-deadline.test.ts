@@ -196,12 +196,12 @@ describe("A's write to an unreading peer times out, the stream aborts", () => {
         const stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
           signal: AbortSignal.timeout(2_000),
         });
-        // Write the request and close B's write half. Never iterate the
-        // stream, so A's answer parks on the unread window. The close
-        // resolves once B's bytes are flushed; `stream.close` under a
-        // signal that times out would turn into a reset and tear the
-        // stream down before A ever reads the request.
+        // Write the request and close B's write half. The pause keeps the
+        // muxer from sending window updates back to A as data arrives, so
+        // A's answer parks on the window the contract pins instead of
+        // flowing through B's unread receive buffer.
         stream.send(req);
+        stream.pause();
         void stream.close().catch(() => { /* already gone */ });
         streams.push(stream);
       } catch { /* a control: the number assertion below catches a short write */ }
