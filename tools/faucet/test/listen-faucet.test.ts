@@ -2,6 +2,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:http';
+import { request as httpRequest } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
@@ -110,5 +112,40 @@ describe('the faucet server', () => {
     const over = await post(bodyOf(129));
     expect(over.status).toBe(400);
     expect(over.body.error).toBe('request entity too large');
+  });
+
+  // NODE_INTERFACE → HTTP API → "The node reads no compressed request body" —
+  // the faucet's parser runs `inflate: false`, so a request carrying a
+  // Content-Encoding is refused before a decompression stream is created; the
+  // service relays the parser's 4xx as its own 400. Sent over a raw socket:
+  // supertest does not deliver a Content-Encoding body byte for byte.
+  it('refuses a gzip-encoded body unread — 400, no decompression', async () => {
+    const server = listenFaucet(createApp(baseCfg, stubbed()), 0);
+    try {
+      await listening(server);
+      const port = (server.address() as AddressInfo).port;
+      const body = gzipSync(Buffer.from(JSON.stringify({ pubkey: recipient })));
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: '127.0.0.1',
+            port,
+            method: 'POST',
+            path: '/faucet/karma',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Encoding': 'gzip',
+              'Content-Length': body.length,
+            },
+          },
+          (res) => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)); },
+        );
+        req.on('error', reject);
+        req.end(body);
+      });
+      expect(status).toBe(400);
+    } finally {
+      server.close();
+    }
   });
 });

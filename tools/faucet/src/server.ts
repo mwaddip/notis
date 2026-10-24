@@ -47,7 +47,10 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
     res.setHeader('X-Content-Type-Options', 'nosniff');
     next();
   });
-  app.use(express.json({ limit: FAUCET_BODY_MAX_BYTES }));
+  // NODE_INTERFACE → HTTP API → "The node reads no compressed request body":
+  // `inflate: false` refuses any `Content-Encoding` before a decompression
+  // stream is created, as the node's parser does.
+  app.use(express.json({ limit: FAUCET_BODY_MAX_BYTES, inflate: false }));
 
   const karmaLimit = new RateLimiter(cfg.rateLimitPerHour);
   const creditLimit = new RateLimiter(cfg.rateLimitPerHour);
