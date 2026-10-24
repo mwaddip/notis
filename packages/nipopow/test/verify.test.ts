@@ -475,6 +475,7 @@ describe('verifyProof', () => {
         }
       }
       expect(idx).toBeGreaterThan(-1);
+      expect(proof.prefix[idx]!.header.prevBlockHash).toBe(blockHash(proof.prefix[idx - 1]!.header));
 
       const h = proof.prefix[idx]!.header;
       h.powTargetBits = h.powTargetBits + 1;
