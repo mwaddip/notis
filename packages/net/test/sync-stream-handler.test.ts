@@ -41,6 +41,7 @@ import {
 } from '../src/types.js';
 import type { NetValidators } from '../src/types.js';
 import { makeConfig } from './helpers.js';
+import { makeFakeStream } from './fake-stream.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 // ---------------------------------------------------------------------------
@@ -73,10 +74,10 @@ const validators: NetValidators = {
   verifyPostBody,
 };
 
-type StreamHandler = (arg: {
-  stream: unknown;
-  connection: { remotePeer: { toString(): string }; remoteAddr?: { toString(): string } };
-}) => Promise<void>;
+type StreamHandler = (
+  stream: unknown,
+  connection: { remotePeer: { toString(): string }; remoteAddr?: { toString(): string } },
+) => Promise<void>;
 
 /**
  * Build a NetNode with the sync stream handler registered against a stub
@@ -163,22 +164,12 @@ function makeHandlerHarness(opts: {
 
   /** Drive the handler with an arbitrary source; returns what was written back. */
   const drive = async (source: AsyncIterable<Uint8Array>): Promise<Uint8Array[]> => {
-    const written: Uint8Array[] = [];
-    const stream = {
-      source,
-      sink: async (chunks: Iterable<Uint8Array>) => {
-        for await (const c of chunks) written.push(c);
-      },
-      close: async () => {},
-    };
-    await captured!({
-      stream,
-      connection: {
-        remotePeer: { toString: () => peerId },
-        remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/1234' },
-      },
+    const stream = makeFakeStream(source);
+    await captured!(stream, {
+      remotePeer: { toString: () => peerId },
+      remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/1234' },
     });
-    return written;
+    return stream.written;
   };
 
   /** Feed one well-formed request. */
