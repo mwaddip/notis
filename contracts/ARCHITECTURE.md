@@ -2679,7 +2679,7 @@ Six rules govern it:
    omits the dependency silently typechecks against whatever copy exists further up the filesystem —
    including one in the developer's home directory. Measured 2026-08-08: `net` and `wire` declared
    none and were resolving `@types/node@12.20.55` (Node 12, 2021) from `/home/<user>/node_modules`,
-   231 times in a single `--traceResolution` run, while the repo pins Node ≥ 22. Consequences, both
+   231 times in a single `--traceResolution` run, while the repo pins Node ≥ 24. Consequences, both
    real: **net's typecheck was not reproducible** on another machine or in CI — it depended on a file
    outside the repo — and the stale typings *invented* two errors in `validation/src/verify.ts`
    (Node 12 typed `crypto.verify` as returning `Buffer`; Node 22 returns `boolean`), which surfaced

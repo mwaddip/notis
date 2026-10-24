@@ -1779,12 +1779,12 @@ Handler Registration). Net receives values; it does not resolve them, does not i
 
 ## Preconditions
 
-- Node.js >= 22
+- Node.js >= 24
 - `@dagsocial/wire`, `@dagsocial/types`, `@dagsocial/validation`, and
   `@dagsocial/node` packages built and importable
 - libp2p dependencies installed (`@libp2p/tcp`, `@chainsafe/libp2p-noise`,
   `@chainsafe/libp2p-yamux`, `@chainsafe/libp2p-gossipsub`, `@libp2p/identify`,
-  `@libp2p/ping`)
+  `@libp2p/ping`, `@libp2p/interface`)
 - Bootstrap peer(s) reachable
 - Port available for libp2p listen address
 

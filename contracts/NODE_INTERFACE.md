@@ -104,13 +104,19 @@ are hex-encoded.
 server bounds`) — parsed ahead of every route. A request whose `Content-Type` is JSON and whose body is not — a
 syntax error, or a top-level value that is neither an object nor an array — answers **400 `{ error: 400, reason:
 'malformed JSON body' }`**; a body over the limit answers **413 `{ error: 413, reason: 'body too large' }`**; any
-other refusal of the parser's — an encoding it does not read, a compressed body that does not decompress, a request
+other refusal of the parser's — a `Content-Encoding` the parser does not accept, a request
 cut short — answers the 4xx status the parser gives it with `{ error: <status>, reason: 'bad request body' }`. **A
 refusal is the parser's by where it comes from**: every error the parser hands back with a 4xx status is its refusal,
 whatever else the error carries, and an error raised anywhere else is not. None reaches a route, and **none is
 logged**: a line a stranger can write at will is a log a stranger can fill. A request with no JSON `Content-Type` has
 no body as far as a route sees — an empty object — and the route's own check answers it. **500 `{ error: 'internal'
 }` is a fault of the node's**, and it alone logs its stack.
+
+> ⚠ **AHEAD OF CODE (2026-10-24).** `inflate: false` on the `express.json` in `packages/node/src/server.ts` and `tools/faucet/src/server.ts`.
+
+**The node reads no compressed request body.** The body parser runs with `inflate: false`, so a request carrying
+any `Content-Encoding` is refused before a decompression stream is created — the 4xx the parser gives it, by the rule
+above — and no request body is piped through `zlib`. The node's clients send plain JSON; none is encoded.
 
 **Hex is lowercase.** Every hex value the node reads — in a body, a path or a query: a key, an id, a box field, a
 signature — is lowercase hex of the width its field states, and any other spelling, uppercase included, is a 400 on
@@ -806,7 +812,8 @@ address, or one mapped into IPv6, whole.
 `X-Content-Type-Options: nosniff` on every answer, a request's headers within `HTTP_HEADERS_TIMEOUT_MS` and the whole
 within `HTTP_REQUEST_TIMEOUT_MS`, both read every `HTTP_CHECK_INTERVAL_MS`, a kept connection closed after
 `HTTP_KEEP_ALIVE_TIMEOUT_MS`, at most `HTTP_CONNECTIONS_MAX` open, and a body of at most `FAUCET_BODY_MAX_BYTES`
-(128 bytes; `{ pubkey }` is 77), one over it a malformed body's `400`. **It has no idle deadline and no answer
+(128 bytes; `{ pubkey }` is 77), one over it a malformed body's `400`, and its body parser reads no encoding —
+`inflate: false` — as the node's does (→ "A body the parser refuses is the client's error"). **It has no idle deadline and no answer
 budget**: a request waits its turn in its endpoint's line with no byte moving, which an idle deadline would end, and
 every answer is under a kilobyte, which a connection takes whole.
 
@@ -6204,7 +6211,7 @@ no per-post serve path. `onPeerActive` is wired to peer-readiness
 ---
 
 ## Preconditions
-- Node.js ≥ 22
+- Node.js ≥ 24
 - `@dagsocial/types`, `@dagsocial/validation`, and `@dagsocial/net` packages
   built and importable
 - `better-sqlite3` native bindings built
