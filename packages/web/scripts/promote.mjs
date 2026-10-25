@@ -7,7 +7,11 @@
 // The faucet is a root (ARCHITECTURE → Membership: devnet k=1). This grants a
 // throwaway R karma through the faucet service, has R post two threads, then has
 // the faucet vouch R and like both posts — the earned-membership path
-// (NODE_INTERFACE → Membership pass). Every step is counted against /karma.
+// (NODE_INTERFACE → Membership pass). Every spend reads the node's pending
+// view — `GET /karma/<key>?pending=1` — so the box a pending spend holds is
+// out of the view at once (WEB_INTERFACE → The wallet → "The spendable views
+// are the node's pending view"). The waits that stand are for a post to
+// confirm before it is liked and for the membership pass to count.
 //
 // Usage:
 //   node packages/web/scripts/promote.mjs [apiBase] [faucetBase]
@@ -104,12 +108,13 @@ async function main() {
   await fetch(FAUCET + '/faucet/karma', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pubkey: R.publicKeyHex }) })
     .then(async (r) => { if (!r.ok) die(`faucet refused: ${r.status} ${await r.text()}`); });
   await waitFor('R to receive karma', async () => (await jget(`/karma/${R.publicKeyHex}`)).boxCount > 0);
-  let rK = await jget(`/karma/${R.publicKeyHex}`);
+  let rK = await jget(`/karma/${R.publicKeyHex}?pending=1`);
   console.log(`R is a resident: member=${rK.member}, karma boxes=${rK.boxCount}`);
 
-  // 2. R posts two threads. Each step re-reads the confirmed karma view: the
-  // builder outputs array maps every output, the karma_price box included, and
-  // only block application may spend that one.
+  // 2. R posts two threads. Each step reads the node's pending view, so the
+  // box a pending spend holds is out of the view at once; the wait between
+  // the two threads is for the FIRST POST to confirm before it is liked,
+  // which the membership pass needs.
   console.log('R posts two threads…');
   const t1 = buildThreadTx(R, karmaBoxes(rK), 'promote thread 1', rK.height, version);
   const t1Res = await jpost('/posts', { tx: t1.json, content: t1.content });
@@ -117,7 +122,7 @@ async function main() {
     const p = await jget(`/posts/${t1Res.postId}`).catch(() => null);
     return p && p.status === 'confirmed';
   });
-  rK = await jget(`/karma/${R.publicKeyHex}`);
+  rK = await jget(`/karma/${R.publicKeyHex}?pending=1`);
   const t2 = buildThreadTx(R, karmaBoxes(rK), 'promote thread 2', rK.height, version);
   const t2Res = await jpost('/posts', { tx: t2.json, content: t2.content });
   await waitFor('R\'s posts to confirm', async () => {
@@ -127,23 +132,17 @@ async function main() {
 
   // 3. The faucet vouches R (memberBar = 1 on devnet).
   console.log('the faucet vouches R…');
-  let fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}`);
+  let fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}?pending=1`);
   const vouch = buildVouchTx(DEVNET_FAUCET, karmaBoxes(fK), R, fK.height, version);
   await jpost('/vouches', { tx: vouch.json });
   await waitFor('the vouch to count', async () => (await jget(`/karma/${R.publicKeyHex}`)).memberVouches >= 1);
 
   // 4. The faucet likes each of R's posts once (memberLikesBar = 2 on devnet).
-  // Wait for like1 to land before re-reading — the box like1 spent is still
-  // listed until a block settles it.
   console.log('the faucet likes both of R\'s posts…');
-  fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}`);
+  fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}?pending=1`);
   const like1 = buildLikeTx(DEVNET_FAUCET, karmaBoxes(fK), t1Res.postId, R.publicKeyHex, fK.height, version);
   await jpost('/likes', { tx: like1.json });
-  await waitFor('like1 to land', async () => {
-    const p = await jget(`/posts/${t1Res.postId}`).catch(() => null);
-    return p && p.likeCount >= 1;
-  });
-  fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}`);
+  fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}?pending=1`);
   const like2 = buildLikeTx(DEVNET_FAUCET, karmaBoxes(fK), t2Res.postId, R.publicKeyHex, fK.height, version);
   await jpost('/likes', { tx: like2.json });
 
@@ -156,11 +155,7 @@ async function main() {
   // its own post, and without a non-R post in the feed the like word never
   // renders (WEB_INTERFACE → What the feed reads).
   console.log('the faucet posts one thread…');
-  await waitFor('like2 to land before the faucet reads its karma', async () => {
-    const p = await jget(`/posts/${t2Res.postId}`).catch(() => null);
-    return p && p.likeCount >= 1;
-  });
-  fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}`);
+  fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}?pending=1`);
   const ft = buildThreadTx(DEVNET_FAUCET, karmaBoxes(fK), 'faucet root thread — a non-R post for step 4', fK.height, version);
   const ftRes = await jpost('/posts', { tx: ft.json, content: ft.content });
   await waitFor('the faucet thread to confirm', async () => {

@@ -101,7 +101,7 @@ background takes every message but `arrived` and `offered` from the extension's 
 the bridge runs in a web page's process. **The credits
 send** (`WEB_INTERFACE → The wallet window`, `→ The wallet`, `→ The faucet step`): the `@wallet` window's `balance`
 and `send` rows — the balance in gold, a send to a key or an `@handle` resolved at the press, the confirm row, the
-flight in the row, the row standing while a send's own line stands — on a `buildSend` frozen like the others, the ledger's two views split by kind; the faucet's `$NOTIS` step
+flight in the row, the row standing while a send's own line stands — on a `buildSend` frozen like the others, the spendable view the node's `pending=1` listing; the faucet's `$NOTIS` step
 beside the rep step; a credits amount is $NOTIS on the face and base units on the wire, through one module the
 extension's prompt reads too.
 
@@ -287,8 +287,15 @@ expiry is the ledger's own — the build height plus `MEMPOOL_EXPIRY_BLOCKS`, so
 (`WEB_INTERFACE → The wallet`).
 
 **The pending ledger is per identity** — `notis.pending.<pubKeyHex>`, rebuilt at once on an identity
-change; a second key never sees the first's predicted change. A faucet grant rides it as a `grant` entry
-so the bounded poll runs while it stands.
+change; a per-identity key keeps one key's entries from another. The ledger holds the reader's own
+submissions for what they draw — the pending card, the like overlay, each flight's stage line and the
+bounded poll — and nothing more: an entry holds no input and no change, so the ledger chooses no input
+and gates no spend. The spendable views are the node's `pending=1` listings, read before every write
+(`WEB_INTERFACE → The wallet`). A faucet grant rides the ledger as a `grant` entry so the bounded poll
+runs while it stands. The reader's spends run one at a time per ledger: a rep queue (post / like /
+withdraw / vouch / invite / claim / burn) and a send queue; an unvouch queues with neither. A press
+waiting its turn belongs to the key and the node of the press — a key change takes the press's step
+with everything the old key had standing, a node change ends it as a decline ends one.
 
 ⛔ **The reader's identity file — kept outside the repo — never enters the repo, a test, a commit, a
 log or a report:** not the file, not its path in code, not its passphrase, not any value from it. It is
