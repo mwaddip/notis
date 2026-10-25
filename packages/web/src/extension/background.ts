@@ -16,11 +16,9 @@ import { readHex64 } from '../hex64';
 // the envelope in `storage.local` and the unlocked seed in `storage.session`,
 // reloads what it needs from storage on every call, and never keeps state in a
 // worker global. Records the prompt page reads live in `storage.session`, so a
-// worker killed while the human reads the prompt loses nothing
-// (WEB_INTERFACE → "The contexts, and what each may hold"). At every start
-// the background closes `storage.local` to content scripts where the browser
-// offers the call — WEB_INTERFACE → The extension → "The contexts, and what
-// each may hold".
+// worker killed while the human reads the prompt loses nothing, and at every
+// start it closes `storage.local` to content scripts where the browser offers
+// the call (WEB_INTERFACE → The extension → "The contexts, and what each may hold").
 
 // ---------------------------------------------------------------------------
 // Local storage keys with no reader outside this module —
