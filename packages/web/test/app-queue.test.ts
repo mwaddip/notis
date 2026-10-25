@@ -430,3 +430,48 @@ describe('a node change ends a waiting press as a decline does', () => {
     expect(ctrl2!.el.querySelector('.karma')?.textContent).toBe('post not sent.');
   });
 });
+
+// WEB_INTERFACE → The wallet → "A press waiting its turn belongs to the key and the node it was made under" — the key-change arm. On an identity change the identity module clears the overlays and the flights (onIdentityChange); the queue's turn for the waiting press runs nothing. Were the key check at `'cancelled'` deleted, the synthesized decline would run for the old key's press and write *like not sent.* to a surface the old key no longer owns. The control shows the surface IS reachable: the same arrangement with a node change writes the line.
+describe('a key-change cancellation writes no decline line for the old key\'s press', () => {
+  it('a like waiting behind a held like, identity change, release: no "like not sent." lands in the feed report line', async () => {
+    const h = harness();
+    h.holdNextLike();
+    const first = h.drive.likePost(TARGET1);
+    await flush();
+    const second = h.drive.likePost(TARGET2);
+    await flush();
+
+    h.switchCurrent(PUB2);
+    h.fireIdentityChange();
+    await flush();
+    // Seed the feed so a wayward setReportForPost would land its line.
+    h.drive.state.feed.posts.push(confirmedPost(TARGET2) as unknown as { id: string });
+
+    h.releaseNextLike();
+    await first;
+    await flush();
+    await second;
+
+    expect(h.drive.state.feed.report).not.toBe('like not sent.');
+  });
+
+  it('control: a like waiting behind a held like, node change, release: the decline writes "like not sent." to the feed report line', async () => {
+    const h = harness();
+    h.holdNextLike();
+    const first = h.drive.likePost(TARGET1);
+    await flush();
+    const second = h.drive.likePost(TARGET2);
+    await flush();
+
+    await h.drive.changeNode('https://b.example');
+    // Seed the feed so setReportForPost's line reaches `state.feed.report`.
+    h.drive.state.feed.posts.push(confirmedPost(TARGET2) as unknown as { id: string });
+
+    h.releaseNextLike();
+    await first;
+    await flush();
+    await second;
+
+    expect(h.drive.state.feed.report).toBe('like not sent.');
+  });
+});
