@@ -1,6 +1,6 @@
 // The links preference and the pending-record prefix — WEB_INTERFACE → The
-// extension → "Links into the extension". Pure — no `chrome`, no DOM — because
-// the bridge imports it too.
+// extension → "Links into the extension". Pure — no `chrome`, no DOM — read
+// by the background on `arrived` and by the page.
 
 export const K_LINKS = 'notis.links';
 export const K_OPEN_PREFIX = 'notis.open.';

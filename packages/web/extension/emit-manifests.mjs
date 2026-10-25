@@ -59,7 +59,7 @@ const chromeKey = process.env.NOTIS_EXTENSION_KEY ?? DEFAULT_CHROME_KEY;
 const chrome = {
   ...tpl,
   background: { service_worker: 'background.js' },
-  minimum_chrome_version: '112',
+  minimum_chrome_version: '140',
   ...(contentScripts ? { content_scripts: contentScripts } : {}),
   ...(optionalHosts ? { optional_host_permissions: optionalHosts } : {}),
   key: chromeKey,

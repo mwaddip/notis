@@ -74,7 +74,7 @@ describe('background — closing storage.local to content scripts', () => {
   // the background calls storage.local.setAccessLevel({ accessLevel:
   // 'TRUSTED_CONTEXTS' }) at every start where storage.local offers the
   // method, and asks whether the call exists, never which browser it runs in.
-  it.fails('install over Chromes shape calls storage.local.setAccessLevel exactly once with TRUSTED_CONTEXTS before any message, and nothing calls session.setAccessLevel', async () => {
+  it('install over Chromes shape calls storage.local.setAccessLevel exactly once with TRUSTED_CONTEXTS before any message, and nothing calls session.setAccessLevel', async () => {
     const c = fakeChrome();
     install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
     expect(c.storage.setAccessLevelCalls.local).toEqual([{ accessLevel: 'TRUSTED_CONTEXTS' }]);

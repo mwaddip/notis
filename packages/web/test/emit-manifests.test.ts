@@ -107,7 +107,7 @@ describe('emit-manifests — testnet bases', () => {
 
   // WEB_INTERFACE → The extension → "The manifest" — the Chrome manifest's
   // minimum_chrome_version is the first that offers storage.local.setAccessLevel.
-  it.fails('chrome manifest minimum_chrome_version is 140', () => {
+  it('chrome manifest minimum_chrome_version is 140', () => {
     expect(m.chrome.minimum_chrome_version).toBe('140');
   });
 

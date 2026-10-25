@@ -185,7 +185,7 @@ describe('bridge — on arrival', () => {
     expect(b.localGets()).toBe(0);
   });
 
-  it.fails('under "site" with every predicate holding, the bridge reads no storage and sends exactly one arrived', async () => {
+  it('under "site" with every predicate holding, the bridge reads no storage and sends exactly one arrived', async () => {
     const b = build({ pref: 'site' });
     bridge(b.env);
     await flush();
@@ -194,7 +194,7 @@ describe('bridge — on arrival', () => {
     expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
   });
 
-  it.fails('storage.local closed to the bridge: every predicate holding and get/set/remove rejecting, exactly one arrived leaves with the lower-cased id and no storage read runs', async () => {
+  it('storage.local closed to the bridge: every predicate holding and get/set/remove rejecting, exactly one arrived leaves with the lower-cased id and no storage read runs', async () => {
     const b = build({ pathname: PATH_THREAD_UPPER, pref: 'here' });
     let gets = 0;
     const refusal = (): Promise<never> =>
@@ -240,7 +240,7 @@ describe('bridge — on arrival', () => {
     expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
   });
 
-  it.fails('all holding: exactly one arrived with the id lower-cased from an upper-case path, and no storage read runs', async () => {
+  it('all holding: exactly one arrived with the id lower-cased from an upper-case path, and no storage read runs', async () => {
     const b = build({ pathname: PATH_THREAD_UPPER, pref: 'here' });
     bridge(b.env);
     await flush();
