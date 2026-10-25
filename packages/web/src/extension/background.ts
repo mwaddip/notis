@@ -16,8 +16,9 @@ import { readHex64 } from '../hex64';
 // the envelope in `storage.local` and the unlocked seed in `storage.session`,
 // reloads what it needs from storage on every call, and never keeps state in a
 // worker global. Records the prompt page reads live in `storage.session`, so a
-// worker killed while the human reads the prompt loses nothing
-// (WEB_INTERFACE → "The contexts, and what each may hold").
+// worker killed while the human reads the prompt loses nothing, and at every
+// start it closes `storage.local` to content scripts where the browser offers
+// the call (WEB_INTERFACE → The extension → "The contexts, and what each may hold").
 
 // ---------------------------------------------------------------------------
 // Local storage keys with no reader outside this module —
@@ -70,6 +71,12 @@ const PROMPT_TOP = 80;    // the drop under the toolbar
  *  extension → "`sign`, in the background, in order", step 9). */
 export function install(api: typeof chrome, config: BackgroundConfig, options: InstallOptions): void {
   const locks = options.locks;
+  // WEB_INTERFACE → The extension → "The contexts, and what each may hold" —
+  // the call runs where storage.local offers it. The promise is voided like
+  // the other start-up calls; a refusal surfaces in the browser's error log.
+  if (typeof api.storage.local.setAccessLevel === 'function') {
+    void api.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+  }
   api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // WEB_INTERFACE → The extension → "Every message is answered". A failure
     // inside a handler answers `{ error }` with the failure's words; no
@@ -309,8 +316,11 @@ function checkBridgeSender(
 async function arrived(api: typeof chrome, config: BackgroundConfig, rawId: string, sender: chrome.runtime.MessageSender): Promise<'ok' | { error: string }> {
   const id = checkBridgeSender(api, config, rawId, sender);
   if (id === null) return { error: 'arrived is only accepted from the bridge' };
+  // WEB_INTERFACE → The extension → "A takeover needs a tab created for the
+  // link" — the preference does not gate the bridge; the background lands
+  // the thread only where it reads `here`.
   const pref = await readStoredLinksPref(api);
-  if (pref !== 'here') return 'ok'; // the bridge checked; the background is the authority
+  if (pref !== 'here') return 'ok';
   const raise = sender.tab?.active === true;
   await openInWorkspace(api, id, raise, sender.tab!.id!);
   return 'ok';

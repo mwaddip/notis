@@ -69,6 +69,27 @@ function unsignedCreditSendTx(
 // state / draft / create — the identity's lifecycle before a sign.
 // ---------------------------------------------------------------------------
 
+describe('background — closing storage.local to content scripts', () => {
+  // WEB_INTERFACE → The extension → "The contexts, and what each may hold" —
+  // the background calls storage.local.setAccessLevel({ accessLevel:
+  // 'TRUSTED_CONTEXTS' }) at every start where storage.local offers the
+  // method, and asks whether the call exists, never which browser it runs in.
+  it("install over Chrome's shape calls storage.local.setAccessLevel exactly once with TRUSTED_CONTEXTS before any message, and nothing calls session.setAccessLevel", async () => {
+    const c = fakeChrome();
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
+    expect(c.storage.setAccessLevelCalls.local).toEqual([{ accessLevel: 'TRUSTED_CONTEXTS' }]);
+    expect(c.storage.setAccessLevelCalls.session).toEqual([]);
+  });
+
+  it("install over Firefox's shape returns and a state message afterwards is answered", async () => {
+    const c = fakeChrome(undefined, undefined, { firefoxShape: true });
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
+    expect(c.storage.setAccessLevelCalls.local).toEqual([]);
+    expect(c.storage.setAccessLevelCalls.session).toEqual([]);
+    expect(await c.send({ kind: 'state' })).toBeNull();
+  });
+});
+
 describe('background — state and identity lifecycle', () => {
   it('state answers null with no envelope stored', async () => {
     const c = fakeChrome();

@@ -230,7 +230,7 @@ export function loadConfig(): Readonly<Config> {
     // Net settings
     bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',
-    maxPeers: readWholeNumber('MAX_PEERS', 50, { floor: 0 }),
+    maxPeers: readWholeNumber('MAX_PEERS', 50, { floor: 1 }),
     minPeers: readWholeNumber('MIN_PEERS', 3, { floor: 0 }),
     peerDbCap: readWholeNumber('PEER_DB_CAP', 1000, { floor: 0 }),
     outboundRedialCooldownMs: readWholeNumber('OUTBOUND_REDIAL_COOLDOWN_MS', 60_000, { floor: 0 }),

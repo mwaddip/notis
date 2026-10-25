@@ -90,8 +90,8 @@ createAvlProver();
 //     may seed is `profile.faucetPublicKey`, and this node holds no secret key
 //     to go with it.
 //
-//     Fail-stop in three steps: the message, then `closeDb()`, then a non-zero
-//     exit — the only startup gate in this file with that shape. Closing the
+//     Fail-stop as a trio: the message, then `closeDb()`, then a non-zero
+//     exit — the shape this file's fail-stop gates follow. Closing the
 //     handle before exiting is what keeps a refusal from leaving a `-wal` beside
 //     a store the operator is about to inspect. Every refusal `seedGenesisState`
 //     raises is a node that must not run, and each one writes a sentence for the
@@ -216,28 +216,29 @@ initBackfill({
 
 // 4. Start net
 //
-// The try covers `net.start()` and nothing else, because "net startup failed" is
-// the only verdict the catch below has. Everything that used to sit inside it —
-// the discovery decision and the two handler registrations — either states
-// something about this node's configuration rather than about net, or is a bug
-// of ours if it throws. Under a try wide enough to hold them, anything failing
-// after the discovery mark reached the catch and overwrote `searching` with
-// `unavailable`, which opens the mining gate unconditionally.
+// NODE_INTERFACE → Net Integration → "A net.start() that throws stops the node".
+// The catch writes a sentence naming `net.start()`, closes the DB and
+// exits non-zero — the file's fail-stop shape. Nothing between the catch and
+// the process's end listens or starts the block creator.
 try {
   await net.start();
   console.log(`Net node started, peer ID: ${net.peerId()}`);
 } catch (err) {
-  console.warn(`Net startup failed (continuing without networking): ${String(err)}`);
+  console.error(
+    `net.start() threw: ${err instanceof Error ? err.message : String(err)}`,
+  );
+  closeDb();
+  process.exit(1);
 }
 
-// Discovery opens here on both paths, and this is the only place it can.
-// `net.start()` awaits every bootstrap dial and its handshake in sequence, so
-// its return already IS the bootstrap-completion signal — a peer reached is
-// Active by now. What the window covers is what completion leaves unfinished: a
-// dial that failed, whose next attempt is on net's 30s outbound tick
-// (`services/peer-readiness.ts` sizes the window from that cadence). Marking
-// from here rather than from process start is what keeps the window bounding
-// dial time and not store opening, AVL bootstrap or genesis seeding.
+// Discovery opens once `net.start()` has returned, and this is the only place
+// it can. `net.start()` awaits every bootstrap dial and its handshake in
+// sequence, so its return already IS the bootstrap-completion signal — a peer
+// reached is Active by now. What the window covers is what completion leaves
+// unfinished: a dial that failed, whose next attempt is on net's 30s outbound
+// tick (`services/peer-readiness.ts` sizes the window from that cadence).
+// Marking from here rather than from process start is what keeps the window
+// bounding dial time and not store opening, AVL bootstrap or genesis seeding.
 enterDiscovery(config.bootstrapPeers.length);
 
 // The arrival half of "readiness is not latched" (`MINING_INTERFACE` → "The

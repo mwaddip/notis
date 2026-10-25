@@ -1,14 +1,14 @@
 // The extension's one content script — WEB_INTERFACE → The extension →
 // "Links into the extension". Injected at document_start into the top frame
-// of the build's public thread pages. It holds nothing: no key, no seed, no
-// identity, no state between pages. It imports only pure modules, so it
-// builds as one classic file with no `import`.
+// of the build's public thread pages. It holds nothing and reads no storage,
+// and sends the background two messages
+// (WEB_INTERFACE → The extension → "The contexts, and what each may hold").
+// It imports only pure modules, so it builds as one classic file with no `import`.
 //
 // Written as one exported function over its environment, so the tests drive
 // the function over fakes and happy-dom; the auto-run at the foot mirrors
 // `background.ts`.
 
-import { K_LINKS, readLinksPref } from './links';
 import { decideMode } from '../mode';
 import { readHex64 } from '../hex64';
 
@@ -75,18 +75,15 @@ export function bridge(env: BridgeEnv): void {
   });
 
   // WEB_INTERFACE → The extension → "A takeover needs a tab created for the
-  // link" — the cheap predicates first; the storage read is last, so a page
-  // opened under `site` wakes no worker.
+  // link" — the preference does not gate the bridge; the background lands
+  // the thread only where it reads `here`. The bridge reads no storage.
   if (env.history.length !== 1) return;
   const navs = env.performance.getEntriesByType('navigation');
   const first = navs[0] as { type?: unknown } | undefined;
   if (first?.type !== 'navigate') return;
   if (env.document.prerendering === true) return;
 
-  void chromeApi.storage.local.get(K_LINKS).then((got) => {
-    if (readLinksPref(got[K_LINKS]) !== 'here') return;
-    void chromeApi.runtime.sendMessage({ kind: 'arrived', id });
-  });
+  void chromeApi.runtime.sendMessage({ kind: 'arrived', id });
 }
 
 // Auto-run at module load — the browser injects the script at document_start,

@@ -83,10 +83,14 @@ going to the proven key** (`→ "The verified names"`). **Links into
 the extension** (`WEB_INTERFACE → The extension → "Links into the extension"`, `→ The way into the workspace`): a
 post's link stays the website's, and a reader who runs the extension follows it into the extension's workspace. **The
 bridge** (`src/extension/bridge.ts`, built as `bridge.js`) is the extension's one content script, declared for
-`<notis-public>p/*` with the port dropped; it holds nothing and sends the background two messages. `arrived { id }`
-leaves when a Notis link opened a tab of its own — `history.length === 1`, a `navigate` entry, outside a private
-window — and the preference *a Notis link opens* reads `here` (the default; `notis.links` in `storage.local`, the
-settings window's row, read from storage by the page and by the bridge, never from `state`). `offered { id }` leaves
+`<notis-public>p/*` with the port dropped; it holds nothing, reads no storage, and sends the background two messages.
+`arrived { id }` leaves when a Notis link opened a tab of its own — `history.length === 1`, a `navigate` entry, outside
+a private window; the preference *a Notis link opens* is the background's and gates the landing (`notis.links` in
+`storage.local`, the settings window's row, read on `arrived` by the background and by the page, never from `state`;
+`here` is the default and under `site` the background answers `'ok'` and does nothing). `storage.local` is closed to
+content scripts where the browser offers the call — Chrome from 140, the Chrome manifest's floor — through
+`storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })` at every background start, and Firefox's area
+stays open. `offered { id }` leaves
 when the hosted page's `add to workspace` offers the thread: `Tabs.offer` dispatches a cancelable `notis:open` event on
 `document`, synchronously in the press and before any `await`, and the bridge cancels it under the browser's user
 activation — a reader without the extension sees no difference. Both end in the background's `openInWorkspace`: a
@@ -524,7 +528,8 @@ file through `vite.bridge.config.ts` — then `extension/emit-manifests.mjs <ver
 <firefox-outdir> <public-base> <faucet-base>` writes each browser's `manifest.json` from
 `extension/manifest.template.json`, the bridge's one `content_scripts` entry among it and **the one optional host,
 the faucet's origin** — both patterns from `extension/match-pattern.mjs` (`matchPatternFor`, `originPatternFor`), the
-port dropped, since Firefox silently drops a match that carries one — and Firefox's `browser_specific_settings`: the
+port dropped, since Firefox silently drops a match that carries one — Chrome's `minimum_chrome_version` of `'140'`,
+the first that offers `storage.local.setAccessLevel` — and Firefox's `browser_specific_settings`: the
 id, a minimum of 140, the `update_url`, the two required data categories, and an Android floor of 142
 (`WEB_INTERFACE → The extension → "The manifest"`). The icons under `extension/icons/` are
 copied in, the checks run (no inline `<script>`, `<base href="/">`, the metas at the build's values, no
@@ -594,7 +599,7 @@ from the tab that became the workspace (two backs at one column: the workspace's
 13–16 read `NOT RUN`. **With `--verified-tip` (and `--node-dist`, `--miner`, `--scratch`, `--node-p2p`) the
 verified-tip block**, for which the harness owns every node but A — a peer **B** of A, an in-process **relay** that
 serves A's reads and flips one byte of its proof, a node **C** that syncs from A and is then restarted cut off
-(`MAX_PEERS=0`, an empty bootstrap, a new listen port) to mine three blocks of its own, and a fresh isolated **D**
+(an empty bootstrap and a new listen port — a node with no seed dials nobody) to mine three blocks of its own, and a fresh isolated **D**
 — each step asserting the rendered corner (the dot's class, the tip span's classes, the `title`, the tip in it
 being the reading node's own) and counting `/nipopow/proof/` requests from CDP: **17a** the `node` row on D at
 height 0 — *the chain is too short to check yet · tip 0*; **17** *verified across 2 nodes*, one proof request per

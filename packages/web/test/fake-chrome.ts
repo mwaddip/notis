@@ -23,6 +23,14 @@ export interface FakeChrome {
     /** Fire an external change on the fixture — used to simulate one instance's
      *  writes reaching another's listeners. */
     fireChange(area: 'local' | 'session', key: string, oldValue: unknown, newValue: unknown): void;
+    /** Each area's `setAccessLevel` arguments in call order, by area. Present on
+     *  Chrome's shape — WEB_INTERFACE → The extension → "The contexts, and what
+     *  each may hold" — and empty on the Firefox shape where the method is
+     *  absent from `local`. */
+    setAccessLevelCalls: {
+      local: Array<{ accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }>;
+      session: Array<{ accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }>;
+    };
   };
   /** Send a message to this instance's onMessage listeners. Returns the answer
    *  the listener produced through `sendResponse`. */
@@ -67,18 +75,36 @@ export interface FakeChrome {
   origin: string;
 }
 
+/** The shape of the `storage.local` surface the fake stands in for —
+ *  WEB_INTERFACE → The extension → "The contexts, and what each may hold". */
+export interface FakeChromeOptions {
+  /** Firefox's shape: `storage.local` carries no `setAccessLevel`, so the area
+   *  stays open to the bridge's process. The default is Chrome's shape, where
+   *  the method is present and each call is recorded. */
+  firefoxShape?: boolean;
+}
+
 /** Build a fake chrome API. Two instances built with the same `fixture` share
  *  storage — the worker-restart scenario. */
-export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-extension://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/'): FakeChrome {
+export function fakeChrome(
+  fixture: Fixture = freshFixture(),
+  origin = 'chrome-extension://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/',
+  options: FakeChromeOptions = {},
+): FakeChrome {
   // The one runtime id both the api and every default sender read — the guard
   // WEB_INTERFACE → The extension → "The messages" fires on `sender.id`.
   const runtimeId = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const setAccessLevelCalls = {
+    local: [] as Array<{ accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }>,
+    session: [] as Array<{ accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }>,
+  };
   const state: FakeChrome = {
     api: {} as unknown as typeof chrome,
     storage: {
       local: fixture.local,
       session: fixture.session,
       fireChange: (area, key, oldValue, newValue) => fireChange(fixture, area, key, oldValue, newValue),
+      setAccessLevelCalls,
     },
     send: async (message, sender) => {
       const s: chrome.runtime.MessageSender = sender ?? { id: runtimeId, url: origin + 'index.html' };
@@ -151,7 +177,11 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
   // The error the next `windows.create` throws; cleared after the one throw.
   let nextCreateThrow: Error | undefined;
 
-  const storageArea = (map: Map<string, unknown>, area: 'local' | 'session'): chrome.storage.StorageArea => ({
+  const storageArea = (
+    map: Map<string, unknown>,
+    area: 'local' | 'session',
+    withSetAccessLevel: boolean,
+  ): chrome.storage.StorageArea => ({
     async get(keys) {
       if (keys === undefined || keys === null) {
         return Object.fromEntries(map.entries());
@@ -194,6 +224,17 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       map.clear();
       if (Object.keys(changes).length) fireChangeSet(fixture, area, changes);
     },
+    // The method is present on Chrome's shape and absent on Firefox's —
+    // WEB_INTERFACE → The extension → "The contexts, and what each may hold".
+    ...(withSetAccessLevel
+      ? {
+          async setAccessLevel(opts: {
+            accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS';
+          }): Promise<void> {
+            setAccessLevelCalls[area].push({ accessLevel: opts.accessLevel });
+          },
+        }
+      : {}),
   });
 
   const api: typeof chrome = {
@@ -214,8 +255,12 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       id: runtimeId,
     },
     storage: {
-      local: storageArea(fixture.local, 'local'),
-      session: storageArea(fixture.session, 'session'),
+      // Firefox's `storage.local` carries no `setAccessLevel`; `session` keeps
+      // the shape it has under Chrome for the control that nothing calls it
+      // (WEB_INTERFACE → The extension → "The contexts, and what each may
+      // hold").
+      local: storageArea(fixture.local, 'local', options.firefoxShape !== true),
+      session: storageArea(fixture.session, 'session', true),
       onChanged: {
         addListener(
           listener: (changes: Record<string, chrome.storage.StorageChange>, area: 'local' | 'session') => void,

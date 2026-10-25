@@ -5610,8 +5610,9 @@ value it refuses stops the node at load.** `loadConfig` reads `PORT`, `ADMIN_POR
 `PENALTY_SCORE_THRESHOLD`, `TEMPORAL_BAN_DURATION_MS`, `PENALTY_SAFE_INTERVAL_MS`, `SYNC_REQUEST_TIMEOUT_MS`,
 `MAX_PROOF_HISTORY`, `PROOF_RETENTION_BLOCKS`, `PROOF_RETENTION_BYTES`, `PROOF_WINDOW_BLOCKS` and `PROOF_WINDOW_NODES`
 through it: decimal digits and nothing else, a safe integer, at or above the setting's floor — 1 for
-`BLOCK_BODY_BUDGET_BYTES`, `PENALTY_SAFE_INTERVAL_MS` and `SYNC_REQUEST_TIMEOUT_MS`, whose zero names nothing a node
-runs on, and 0 for every other (`MAX_PEERS=0` is a node that takes no peers) — and a port at most 65 535. An unset
+`BLOCK_BODY_BUDGET_BYTES`, `MAX_PEERS`, `PENALTY_SAFE_INTERVAL_MS` and `SYNC_REQUEST_TIMEOUT_MS`, whose zero names
+nothing a node runs on (a node is a peer of a network: one that takes no peers is no node of it), and 0 for every
+other — and a port at most 65 535. An unset
 setting takes its default; a set one the reader refuses stops the node at startup naming the setting, never with a
 default in its place: a value the node cannot read is a policy nobody chose — `parseInt` answers `NaN` for `abc`,
 under which no peer is ever banned (`PENALTY_SCORE_THRESHOLD`) or every stream read throws (`SYNC_REQUEST_TIMEOUT_MS`),
@@ -5742,14 +5743,18 @@ Stage 2 handlers for inbound gossip messages. Startup order:
 2. Create NetNode with config + validators
 3. Register Stage 2 handlers (onOrderingBlock, onTx)
 4. Register sync handlers (setPipeline, setChainView, setHeadersHandler, setHeaderProvider, setChainHeightProvider, setBlockIdProvider, setHeightByBlockIdProvider) BEFORE net.start()
-5. await net.start()          // connect to bootstrap, subscribe to topics
+5. await net.start()          // connect to bootstrap, subscribe to topics — a throw stops the node
 6. startHttpServer()          // begin accepting API requests
 7. startBlockCreator()         // begin producing ordering blocks
 ```
 
 Net starts before HTTP — the network layer is ready before the API accepts
 requests. If bootstrap peers are unreachable, the node still starts (gossip
-will connect as peers become available). Sync handlers are registered
+will connect as peers become available). **A `net.start()` that throws stops the node**: the error is logged
+and the process exits non-zero, before the HTTP server listens or the block creator starts — an address libp2p
+cannot listen on, a configuration it refuses. A node is a peer of a network, and one without networking would
+serve reads that never move and, as a miner, hold its window shut, since the window rises only through net's sync
+(`MINING_INTERFACE → The window gate`). Sync handlers are registered
 before `net.start()`: until `setChainView` is called the scheduler asks no peer anything, and a serve arm with no
 provider answers zero bytes (NET_INTERFACE → Sync Handler Registration).
 

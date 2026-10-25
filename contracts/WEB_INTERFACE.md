@@ -285,7 +285,15 @@ server that signs, no call home.
   reloads what it needs from storage on every call. The envelope and the backed-up flag live in
   `storage.local` under `notis.identity` and `notis.identity.backedup`, the envelope the shape → The
   identity module states; a clear value there, or an envelope outside the scrypt bound (→ The identity module →
-  "An envelope's scrypt cost is bounded"), reads as no identity. **The unlocked seed lives in
+  "An envelope's scrypt cost is bounded"), reads as no identity. **`storage.local` is closed to content scripts
+  wherever the browser can close it**: at every start the background calls `storage.local.setAccessLevel({
+  accessLevel: 'TRUSTED_CONTEXTS' })` where `storage.local` offers the call — Chrome from 140, the floor its manifest
+  names (→ "The manifest") — and the browser keeps the setting with the extension, through a stopped worker and a
+  restart, so the bridge's process reads and writes nothing in the area. The background asks whether the call
+  exists, never which browser it runs in. **Where `storage.local` offers no such call — Firefox — the area stays
+  open to the bridge's process**: a page process taken over on a public thread page can copy the envelope and guess
+  its passphrase offline, each guess at the envelope's scrypt cost; delete it, and a key never exported goes with
+  it; or write the backed-up flag and the policy. **The unlocked seed lives in
   `storage.session`** under `notis.seed` — memory-only, never written to disk, cleared when the browser
   closes, and it survives the worker being killed, which is what makes the design workable. `lock`
   deletes it; closing the browser is a lock; **the lock state is per browser, not per tab.** **A seed is the
@@ -309,9 +317,9 @@ server that signs, no call home.
   while it signs; the page's title is the first line, so the browser's frame names the transaction too.
 - **The bridge** is a content script, `bridge.js` — the extension's one script on a web page, declared for
   the build's public thread pages, `<notis-public>p/*`, and nowhere else. **It holds nothing**: no key, no
-  seed, no identity, no state between two pages. It reads one preference from `storage.local`, `notis.links`,
-  and sends the background two messages, each carrying a post id (→ "Links into the extension", below). It
-  runs at `document_start`, in the top frame, and does nothing in a private window.
+  seed, no identity, no state between two pages. It reads nothing from storage, and sends the background two
+  messages, each carrying a post id (→ "Links into the extension", below). It runs at `document_start`, in the
+  top frame, and does nothing in a private window.
 
 **The action button opens or focuses the page** — `action.onClicked` finds a tab at the page's URL and
 raises it, else creates one. No `default_popup`, since one suppresses `onClicked`.
@@ -339,7 +347,8 @@ resolve"); and beyond that nothing leaves the browser: no telemetry, no error re
 the action with no popup, the permissions above, the bridge as the one `content_scripts` entry — emitted when
 the build's `notis-public` is not empty, absent otherwise — the mark at 16, 32, 48 and 128 px as PNG
 (`HOUSE_STYLE → Where the artwork lives`: the files are tracked, the pipeline is not). Chrome: a
-service-worker background, a minimum of Chrome 112, and a pinned `key` — the RSA public key tracked in the
+service-worker background, a minimum of Chrome 140, the first whose `storage.local` takes `setAccessLevel` (→ "The
+contexts, and what each may hold"), and a pinned `key` — the RSA public key tracked in the
 manifest emitter's Chrome overlay, public by nature — so the extension id is stable and derived from the key.
 Firefox: an event-page background and `browser_specific_settings` — under `gecko` the id `extension@notis.fun`,
 a minimum of Firefox 140, the `update_url` (→ "The Firefox build ships signed as well") and
@@ -795,16 +804,17 @@ transaction carries a `fee` box (→ The wallet, the denomination rule).
 follows it into the extension's workspace — without being asked where the preference says so, by the website's
 own control otherwise. **The preference is the background's**, `notis.links` in `storage.local`: `here` — the
 default, and what an absent value reads as — or `site`; set through `links`, and read from `storage.local` by the
-page as the bridge reads it, since `state` answers nothing where no identity is loaded and a reader needs none
-to follow a link; the settings window's row (→ The settings window).
+background when an `arrived` comes in and by the page, since `state` answers nothing where no identity is loaded
+and a reader needs none to follow a link; the settings window's row (→ The settings window).
 
 **A takeover needs a tab created for the link.** On a public thread page the bridge reads the post id from the
 path as the client's own mode rule does (→ The standalone thread) and sends `arrived { id }` only when all of
-this holds: the preference is `here`; the page is the tab's only history entry — `history.length === 1`, the
-rule the website's page closes itself by (→ The way into the workspace); the navigation entry's type is
-`navigate`; the document is not prerendering — `document.prerendering` is `true` only where a browser defines
-it; the window is not private. The bridge reads the preference from storage itself, so a page opened under
-`site` wakes no worker. **Everything else is left to the website**: a link followed inside a tab the reader was
+this holds: the page is the tab's only history entry — `history.length === 1`, the rule the website's page closes
+itself by (→ The way into the workspace); the navigation entry's type is `navigate`; the document is not
+prerendering — `document.prerendering` is `true` only where a browser defines it; the window is not private. The
+background lands the thread only where the preference is `here`; under `site` it answers `arrived` and does
+nothing, so a tab a link opened under `site` wakes the worker for one storage read. **Everything else is left to
+the website**: a link followed inside a tab the reader was
 using and a back or forward onto a thread page, each by the history's length — a browser may report a traversal's
 type as `navigate` — and a reload, by its type. The predicate fails closed — whatever it does not recognise as a
 tab created for the link is the website behaving as it does for anyone, its `add to workspace` one press away.
@@ -2101,10 +2111,11 @@ client that expects to announce itself first is built against an endpoint that d
   page-supplied body is shown only when it hashes to the commit (→ The extension). *(extension)*
 - **The web bundle carries no extension code.** The build checks it; the App is one source tree in two
   builds (→ The extension). *(extension)*
-- **Nothing crosses the bridge but a post id.** The bridge holds nothing, only a 64-hex id is acted on, nothing
-  flows back to the page but its event's cancellation, and the background takes the bridge's two messages from
-  this extension's own content script on a public thread page alone — and every other message from the
-  extension's own pages alone, so a web page's process reaches no signature (→ The extension). *(extension)*
+- **Nothing crosses the bridge but a post id.** The bridge holds nothing and reads no storage, only a 64-hex id
+  is acted on, nothing flows back to the page but its event's cancellation, and the background takes the bridge's
+  two messages from this extension's own content script on a public thread page alone — and every other message
+  from the extension's own pages alone, so a web page's process reaches no signature (→ The extension).
+  *(extension)*
 - **The website shows a reader without the extension nothing of it.** The offer is a DOM event inside the
   press, cancelled or not; the page names no extension (→ The way into the workspace). *(extension)*
 - **Every read carries the viewer's key once an identity is loaded, and none does before.** *(write

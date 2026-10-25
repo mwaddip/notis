@@ -145,10 +145,10 @@ describe('peer readiness — the window elapsing', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Entering discovery — the decision `index.ts` makes on both outcomes of
-// `net.start()`. What it keys on is the node's configuration, never whether net
-// came up: `unavailable` says "I am the origin of my network", which is a claim
-// a node with bootstrap addresses may not make however badly its startup went.
+// Entering discovery — `enterDiscovery` decides on the configured bootstrap
+// count and never on net's state. A node with bootstrap addresses waits
+// through the window; a node with none is ready at once, by the `unavailable`
+// verdict reserved for the origin of its own network.
 // ---------------------------------------------------------------------------
 
 describe('peer readiness — entering discovery', () => {
@@ -164,21 +164,20 @@ describe('peer readiness — entering discovery', () => {
     expect(isPeerReady()).toBe(true);
   });
 
-  it('still waits with bootstrap addresses when net failed to start', () => {
-    // The `catch` case, and the one that was wrong: a node whose `net.start()`
-    // threw *with three bootstrap peers configured* was handed the verdict
-    // reserved for a node with nothing to dial, so the gate opened with zero
-    // Active peers and it mined alone past maxReorgDepth. Net's state is not
-    // an input here — three configured peers is three configured peers.
+  it('waits with three configured peers and no net instance', () => {
+    // `enterDiscovery` reads the configured bootstrap count and nothing of
+    // net's state. Three configured peers takes the `searching` branch of
+    // the function — a null net instance changes nothing about that branch.
     setNet(null as unknown as NetNode);
     enterDiscovery(3);
     expect(isPeerReady()).toBe(false);
   });
 
-  it('is ready at once when net failed to start and there was nothing to dial', () => {
-    // The control: same failure, no bootstrap address. This node genuinely is
-    // the origin of its network, and waiting would stand in for a dial it was
-    // never going to make.
+  it('is ready at once with no configured peer and no net instance', () => {
+    // The control for the above. Zero configured peers takes the
+    // `unavailable` branch of `enterDiscovery` whatever a null net instance
+    // adds — the node is the origin of its own network, and no window
+    // stands in for a dial it does not make.
     setNet(null as unknown as NetNode);
     enterDiscovery(0);
     expect(isPeerReady()).toBe(true);

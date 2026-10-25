@@ -185,13 +185,32 @@ describe('bridge — on arrival', () => {
     expect(b.localGets()).toBe(0);
   });
 
-  it('preference "site": exactly one storage.local read and no sendMessage at all', async () => {
+  it('under "site" with every predicate holding, the bridge reads no storage and sends exactly one arrived', async () => {
     const b = build({ pref: 'site' });
     bridge(b.env);
     await flush();
     await flush();
-    expect(b.localGets()).toBe(1);
-    expect(b.messages).toEqual([]);
+    expect(b.localGets()).toBe(0);
+    expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
+  });
+
+  it('storage.local closed to the bridge: every predicate holding and get/set/remove rejecting, exactly one arrived leaves with the lower-cased id and no storage read runs', async () => {
+    const b = build({ pathname: PATH_THREAD_UPPER, pref: 'here' });
+    let gets = 0;
+    const refusal = (): Promise<never> =>
+      Promise.reject(new Error('Access to storage is not allowed from this context.'));
+    b.env.chrome.storage.local.get = ((keys?: unknown) => {
+      void keys;
+      gets += 1;
+      return refusal();
+    }) as typeof chrome.storage.local.get;
+    b.env.chrome.storage.local.set = refusal as typeof chrome.storage.local.set;
+    b.env.chrome.storage.local.remove = refusal as typeof chrome.storage.local.remove;
+    bridge(b.env);
+    await flush();
+    await flush();
+    expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
+    expect(gets).toBe(0);
   });
 
   it('document.prerendering undefined with everything else holding: arrived leaves', async () => {
@@ -202,13 +221,13 @@ describe('bridge — on arrival', () => {
     expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
   });
 
-  it('all holding: exactly one arrived, id lower-cased from an upper-case path', async () => {
+  it('all holding: exactly one arrived with the id lower-cased from an upper-case path, and no storage read runs', async () => {
     const b = build({ pathname: PATH_THREAD_UPPER, pref: 'here' });
     bridge(b.env);
     await flush();
     await flush();
     expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
-    expect(b.localGets()).toBe(1);
+    expect(b.localGets()).toBe(0);
   });
 
   it('a private window: no arrived, and a later notis:open is neither cancelled nor sent', async () => {
