@@ -206,9 +206,9 @@ describe('bridge — on arrival', () => {
     }) as typeof chrome.storage.local.get;
     b.env.chrome.storage.local.set = refusal as typeof chrome.storage.local.set;
     b.env.chrome.storage.local.remove = refusal as typeof chrome.storage.local.remove;
-    // The browser-shaped rejection may surface as an unhandled rejection on
-    // the chain that still calls get; take vitests default listener aside
-    // for the window, then restore it (as handover.test.ts does).
+    // Vitest fails the run on an unhandled rejection; the browser-shaped
+    // rejection surfaces where the chain calls get. Hand its default
+    // listener aside for the window — as handover.test.ts does.
     const proc = (globalThis as { process?: unknown }).process as {
       on(event: string, handler: (reason: unknown) => void): void;
       removeListener(event: string, handler: (reason: unknown) => void): void;

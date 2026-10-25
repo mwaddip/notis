@@ -7433,8 +7433,8 @@ async function main() {
         setRefused13a = sVal.ok === false && typeof sVal.msg === 'string' && sVal.msg.includes('Access to storage is not allowed from this context');
         try { sh.close(); } catch {}
         // The extension page's own storage.local — a trusted context — holds
-        // no probe and still answers its notis.links. The page is cx10,
-        // the extension's own page the harness opened at start.
+        // no probe and answers its notis.links. The page is cx10, the
+        // extension's own page the harness opened at start.
         const pageProbe = await cx10.eval(`(async () => {
           const all = await chrome.storage.local.get(null);
           return { hasProbe: Object.prototype.hasOwnProperty.call(all, 'notis.k4b-probe'), links: all['notis.links'] ?? null };
