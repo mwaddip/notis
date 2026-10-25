@@ -1491,7 +1491,7 @@ a spend's inputs, gate it and fill the `rep` and `balance` rows, and the extensi
 the credits view `/credits`'s, so a send's change is never offered to a post, nor a post's to a send.
 
 > ⚠ **AHEAD OF CODE (2026-10-25).** The reads under `pending=1`, the spendable views as the node's, the pending ledger that
-> chooses no input, the floor held before a signature, the spends run one at a time, a rejection worded by the node's
+> chooses no input and holds no input or change, the floor held before a signature, the spends run one at a time, a rejection worded by the node's
 > message and a landing read off the plain listings lead `src/wallet/reads.ts`, `src/wallet/ledger.ts`,
 > `src/wallet/submit.ts`, `src/api/client.ts` and `src/app.ts`, which read the plain listings, build on the ledger's
 > predicted change, check no floor but the vouch's, run spends side by side and word a like's 409 as already liked.
@@ -1509,7 +1509,9 @@ boxes for as long as the own box covers what they do, and the total shown is the
 
 **The pending ledger holds the reader's own submissions, for what they draw** — the pending card, the like's
 overlay, a flight's stage line, a landing — and for the bounded poll (→ "Landing is the one unsolicited update, and
-it is bounded"); it chooses no input and gates no spend, which the views do. **It is persisted, per identity** —
+it is bounded"); it chooses no input and gates no spend, which the views do. **An entry holds no input and no change**, since nothing
+chooses a box from it: its kind, its subject, its transaction's id, its two heights (below) and, for a send, the
+payment (→ The wallet window → "The `send` row"). **It is persisted, per identity** —
 `notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another key's entries,
 and a reload still draws what the reader submitted. **An identity change rebuilds the ledger for the new key at
 once** (→ The identity module, `onChange`).
@@ -1546,9 +1548,9 @@ change. An invite: change and a `bond` box of
 the amount the reader chose inside the network's `inviteBondMin`–`inviteBondMax`, `inviterId` the reader's
 key, `inviteePublicKey` the pasted key. A withdrawal: one karma input — the reader's own box, or the income
 box where they hold no own box — and one karma output of its value to the reader's key,
-`postWithdraw` naming the post; the returned box is the entry's `change` (→ The withdraw control). A claim: the
+`postWithdraw` naming the post; the returned box is its change (→ The withdraw control). A claim: the
 same one box in — it spends and returns one box — one karma output
-of its value to the reader's key at index 0, the entry's `change`, and one `username` box of `value: 0n`, `owner`
+of its value to the reader's key at index 0, its change, and one `username` box of `value: 0n`, `owner`
 the reader's key, `name` the bytes as typed (`TYPES_INTERFACE → UsernameBox`); an empty view is a client refusal,
 since the transaction needs one box to spend. A burn: karma covering `USERNAME_BURN_PRICE` and the reader's
 `username` box in — the box resolved **at the press** from `GET /usernames?owner=`, never from a render — the karma
@@ -1938,8 +1940,7 @@ faucet base is configured, a `/status` answer stands, and its credits view shows
 `/status` answer would record none. The call is `POST <faucet>/credits
 { pubkey }` in the same module; the answer is `202 { txId, status, expiresAtHeight, boxId }`
 (`NODE_INTERFACE → Faucet`) — the transfer's expiry relayed from the node, and the id of the box the grant
-creates. The wait rides the ledger as a `creditGrant` entry whose subject is that box id, `inputs: []` and no
-change; reconcile is the plain `GET /credits/:key`: the box listed → landed, and the row's
+creates. The wait rides the ledger as a `creditGrant` entry whose subject is that box id; reconcile is the plain `GET /credits/:key`: the box listed → landed, and the row's
 balance reads it; past `expiresAtHeight` and absent → expired — *no block took the faucet's transfer by height
 N.*, and `ask again` beside it once a `/status` answer stands, for the step's own reason; the line survives a change of
 the node being read, so it can stand before one does. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
@@ -2110,8 +2111,7 @@ Interaction`). The maturity bind, liveness and authorship are the node's to refu
 
 **The flight runs in the slot.** The second press replaces the `withdraw` button with the stage line —
 `submitting…`, then `submitted`, the like count staying beside it — and the ledger holds a `withdraw` entry:
-its subject the post, its one input the spent
-box, its `change` the returned box under its predicted id, its `expiresAtHeight` the ledger's (→ The wallet). A reload
+its subject the post, its `expiresAtHeight` the ledger's (→ The wallet). A reload
 renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` answered the withdrawn marker,
 and the client replaces the row in place with what it fetched — in every open thread the post becomes the
 withdrawn card at its depth (the marker's `parentRefs`, `NODE_INTERFACE → Withdrawal`), the feed and any
