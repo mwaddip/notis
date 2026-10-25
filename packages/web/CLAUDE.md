@@ -599,7 +599,7 @@ from the tab that became the workspace (two backs at one column: the workspace's
 13–16 read `NOT RUN`. **With `--verified-tip` (and `--node-dist`, `--miner`, `--scratch`, `--node-p2p`) the
 verified-tip block**, for which the harness owns every node but A — a peer **B** of A, an in-process **relay** that
 serves A's reads and flips one byte of its proof, a node **C** that syncs from A and is then restarted cut off
-(`MAX_PEERS=0`, an empty bootstrap, a new listen port) to mine three blocks of its own, and a fresh isolated **D**
+(an empty bootstrap and a new listen port — a node with no seed dials nobody) to mine three blocks of its own, and a fresh isolated **D**
 — each step asserting the rendered corner (the dot's class, the tip span's classes, the `title`, the tip in it
 being the reading node's own) and counting `/nipopow/proof/` requests from CDP: **17a** the `node` row on D at
 height 0 — *the chain is too short to check yet · tip 0*; **17** *verified across 2 nodes*, one proof request per
