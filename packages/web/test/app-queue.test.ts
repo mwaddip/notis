@@ -9,12 +9,11 @@ import type { KarmaResult, PostResult, StatusResult, FeedResult, BlockCurrent, C
 import { karmaResult } from './karma-fixture';
 import { setNode, prefs } from '../src/prefs';
 
-// WEB_INTERFACE → The wallet → "The reader's spends run one at a time, per
-// ledger" and → "A press waiting its turn belongs to the key and the node
-// of the press". Two queues: a rep queue (post / like / withdraw / vouch /
-// invite / claim / burn) and a send queue; an unvouch queues with neither.
-// A press waiting its turn captures the generation at the press; a node or
-// identity change moves the generation, and the press's turn runs nothing.
+// WEB_INTERFACE → The wallet → "The reader's spends run one at a time, per ledger" and → "A press waiting its turn belongs to the key and the node it was made under".
+// Two queues: a rep queue (post / like / withdraw / vouch / invite / claim /
+// burn) and a send queue; an unvouch queues with neither. A waiting press
+// captures the generation at the press; a node or identity change moves the
+// generation, and the press's turn runs nothing.
 
 const PUB = 'aa'.repeat(32);
 const PUB2 = 'cc'.repeat(32);
@@ -48,14 +47,19 @@ function creditsResult(): CreditsResult {
 interface Harness {
   app: App;
   karmaReads(): number;
+  karmaPendingReads(): number;
   creditsReads(): number;
+  creditsPendingReads(): number;
   likePosts(): number;
   sendPosts(): number;
   unvouchPosts(): number;
+  signCount(): number;
   holdNextLike(): void;
   releaseNextLike(result?: LikeSubmitResult): void;
   holdNextSend(): void;
   releaseNextSend(result?: SendSubmitResult): void;
+  switchCurrent(key: string): void;
+  fireIdentityChange(): void;
   drive: {
     likePost(postId: string): Promise<void>;
     send(toHex: string, toName: string | null, amount: bigint): Promise<void>;
@@ -68,23 +72,27 @@ interface Harness {
 
 /** The App over fakes, with the write client's `submitLike` and `submitSend`
  *  controllable: `holdNextLike()` makes the next POST /likes wait for
- *  `releaseNextLike()`; same for sends. */
+ *  `releaseNextLike()`; same for sends. The identity exposes `switchCurrent`
+ *  and `fireIdentityChange` so a case can move `current()` and trigger the
+ *  listener the App registered. */
 function harness(opts: { karmaBox?: string } = {}): Harness {
   const signCalls: string[] = [];
+  const currentKey = { hex: PUB };
+  let changeListener: ((id: { pubKeyHex: string } | null) => void) | null = null;
   const identity: AppIdentity = {
-    current: () => ({ pubKeyHex: PUB, locked: false }),
+    current: () => ({ pubKeyHex: currentKey.hex, locked: false }),
     sign: async (_bytes, t) => { signCalls.push(t); return { signature: 'ab'.repeat(64) }; },
-    draft: async () => ({ pubKeyHex: PUB }),
-    create: async () => ({ pubKeyHex: PUB }),
+    draft: async () => ({ pubKeyHex: currentKey.hex }),
+    create: async () => ({ pubKeyHex: currentKey.hex }),
     discardDraft: () => {},
-    inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
-    importFile: async () => ({ pubKeyHex: PUB }),
+    inspectFile: async () => ({ kind: 'clear', pubKeyHex: currentKey.hex }),
+    importFile: async () => ({ pubKeyHex: currentKey.hex }),
     exportFile: async () => '{}',
     unlock: async () => {},
     lock: async () => {},
     forget: async () => {},
     backedUp: () => true,
-    onChange: () => {},
+    onChange: (fn) => { changeListener = fn; },
   };
   const last = (): string => signCalls[signCalls.length - 1]!;
 
@@ -94,7 +102,9 @@ function harness(opts: { karmaBox?: string } = {}): Harness {
   });
 
   let karmaN = 0;
+  let karmaPendingN = 0;
   let creditsN = 0;
+  let creditsPendingN = 0;
   let likeN = 0;
   let sendN = 0;
   let unvouchN = 0;
@@ -105,8 +115,8 @@ function harness(opts: { karmaBox?: string } = {}): Harness {
     post: async (id) => confirmedPost(id),
     status: async () => statusResult(),
     currentBlock: async (): Promise<BlockCurrent> => ({ height: 6001, hash: null }),
-    karma: async () => { karmaN++; return karma; },
-    credits: async () => { creditsN++; return creditsResult(); },
+    karma: async (_k, _p, o) => { karmaN++; if (o?.pending === true) karmaPendingN++; return karma; },
+    credits: async (_k, _p, o) => { creditsN++; if (o?.pending === true) creditsPendingN++; return creditsResult(); },
     vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
     vouchesByVoucher: async () => ({
       vouches: [{ boxId: '77'.repeat(32), value: '1', createdAtBlock: 5900, voucherId: PUB, targetId: PUB2, voucherName: null, targetName: null }],
@@ -171,10 +181,13 @@ function harness(opts: { karmaBox?: string } = {}): Harness {
   return {
     app,
     karmaReads: () => karmaN,
+    karmaPendingReads: () => karmaPendingN,
     creditsReads: () => creditsN,
+    creditsPendingReads: () => creditsPendingN,
     likePosts: () => likeN,
     sendPosts: () => sendN,
     unvouchPosts: () => unvouchN,
+    signCount: () => signCalls.length,
     holdNextLike: () => { holdLikeNext = true; },
     releaseNextLike: (r) => {
       const resolve = holdLikeResolve;
@@ -189,6 +202,8 @@ function harness(opts: { karmaBox?: string } = {}): Harness {
       if (resolve === null) throw new Error('no held send');
       resolve(r ?? { status: 'pending', txId: '', expiresAtHeight: 6720 });
     },
+    switchCurrent: (hex) => { currentKey.hex = hex; },
+    fireIdentityChange: () => { if (changeListener !== null) changeListener({ pubKeyHex: currentKey.hex }); },
     drive: app as unknown as Harness['drive'],
   };
 }
@@ -257,9 +272,7 @@ describe('the reader\'s spends run one at a time, per ledger', () => {
     await second;
   });
 
-  // The two queues are separate: a held rep spend never holds a send's reads.
-  // Plain `it` — green on the code the gate reads (no queue, the flows run in
-  // parallel) and green under the rule (the two queues run apart).
+  // The two queues run apart: a held rep spend never holds a send's reads.
   it('a held like does not hold a send\'s /credits read', async () => {
     const h = harness();
     h.holdNextLike();
@@ -278,9 +291,8 @@ describe('the reader\'s spends run one at a time, per ledger', () => {
     await sendRun;
   });
 
-  // An unvouch is on neither queue — its reads and its write leave while a
-  // like is held. Plain `it` — green on the code the gate reads (no queue)
-  // and green under the rule (unvouch queues with neither).
+  // An unvouch queues with neither: its reads and its write leave while a
+  // like is held.
   it('with a like held, an unvouch\'s reads and its write leave', async () => {
     const h = harness();
     h.holdNextLike();
@@ -299,41 +311,62 @@ describe('the reader\'s spends run one at a time, per ledger', () => {
   });
 });
 
-describe('a press waiting its turn belongs to the node of the press', () => {
-  it.fails('a second like waiting behind a held first: a node change ends the waiting press — no read, no POST', async () => {
+describe('a press waiting its turn belongs to the node and key of the press', () => {
+  it.fails('a second like waiting behind a held first: a node change ends the waiting press — no karma?pending=1 after the change, no sign at or after release, no second POST /likes', async () => {
     const h = harness();
     h.holdNextLike();
     const first = h.drive.likePost(TARGET1);
     await flush();
-    const karmaAfterFirst = h.karmaReads();
 
     const second = h.drive.likePost(TARGET2);
     await flush();
     expect(h.drive.optimisticLikes.has(TARGET2)).toBe(true); // control: the overlay stands
 
-    // Change the node before releasing the first — the waiting press belongs
-    // to the node of the press.
+    // Change the node before releasing the first.
     await h.drive.changeNode('https://b.example');
 
-    // Release the first — the waiting press ends with the node change.
+    const pendingKarmaBeforeRelease = h.karmaPendingReads();
+    const signsBeforeRelease = h.signCount();
     h.releaseNextLike();
     await first;
     await flush();
-
-    // The rule: no read for the waiting press and no second POST /likes.
-    expect(h.karmaReads()).toBe(karmaAfterFirst);
-    expect(h.likePosts()).toBe(1);
-
-    // The second's promise settles without a POST leaving.
     await second;
+
+    // The waiting press's own effects:
+    // (a) no karma?pending=1 read happens for the waiting press after the change.
+    //     Before the rule this is 0 either way — flows ask plain, never pending=1.
+    expect(h.karmaPendingReads() - pendingKarmaBeforeRelease).toBe(0);
+    // (b) no sign call happens at or after release — the waiting press never signs.
+    expect(h.signCount() - signsBeforeRelease).toBe(0);
+    // (c) the LAST assertion: no second POST /likes leaves.
+    expect(h.likePosts()).toBe(1);
   });
 
-  // A note on identity-change: a change through `forget` + fresh `create`
-  // takes the ledger with it (per-identity key, `onIdentityChange`), so the
-  // waiting press's handling is the ledger's rebuild — the overlay the press
-  // set is dropped, the submission list is cleared, and the queue is a new
-  // one. The existing identity-change path through `changeNode` already
-  // covers the shape of the ending; the harness here does not reach the
-  // identity module's own `onChange`, so the specific identity-change case
-  // is left for the module's own suite.
+  it.fails('a second like waiting behind a held first: an identity change ends the waiting press — no sign at or after release, no second POST /likes', async () => {
+    const h = harness();
+    h.holdNextLike();
+    const first = h.drive.likePost(TARGET1);
+    await flush();
+
+    const second = h.drive.likePost(TARGET2);
+    await flush();
+    expect(h.drive.optimisticLikes.has(TARGET2)).toBe(true); // control: the overlay stands
+
+    // Switch current() to PUB2 and fire the registered onChange listener,
+    // as a `forget` + fresh `create` through the identity module would.
+    h.switchCurrent(PUB2);
+    h.fireIdentityChange();
+
+    const signsBeforeRelease = h.signCount();
+    h.releaseNextLike();
+    await first;
+    await flush();
+    await second;
+
+    // Waiting press's own effects:
+    // (a) no sign call at or after release — the waiting press never signs.
+    expect(h.signCount() - signsBeforeRelease).toBe(0);
+    // (b) the LAST assertion: no second POST /likes leaves.
+    expect(h.likePosts()).toBe(1);
+  });
 });
