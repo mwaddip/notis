@@ -65,8 +65,12 @@ interface Harness {
     send(toHex: string, toName: string | null, amount: bigint): Promise<void>;
     unvouch(key: string): Promise<void>;
     changeNode(origin: string): Promise<void>;
+    openComposer(parentId: string | null): void;
+    submitComposer(parentId: string | null, text: string): Promise<void>;
+    composers: Map<string, { el: HTMLElement }>;
     optimisticLikes: Set<string>;
     sendFlight: unknown;
+    state: { feed: { posts: Array<{ id: string }>; report: string | null } };
   };
 }
 
@@ -368,5 +372,65 @@ describe('a press waiting its turn belongs to the node and key of the press', ()
     expect(h.signCount() - signsBeforeRelease).toBe(0);
     // (b) the LAST assertion: no second POST /likes leaves.
     expect(h.likePosts()).toBe(1);
+  });
+});
+
+// WEB_INTERFACE → The wallet → "A change of the key takes the press's step with everything the old key had standing (→ The identity module); a change of the node ends the press as a decline ends one (→ "A flow can end before the node ever sees it: `notSigned`") — its step undone, the composer still open with its text, the line *… not sent.*"
+describe('a node change ends a waiting press as a decline does', () => {
+  it.fails('a like waiting behind a held like, node change, release: the waiting like\'s overlay is gone and its report line reads *like not sent.*', async () => {
+    const h = harness();
+    // Seed the feed so setReportForPost writes to state.feed.report.
+    h.drive.state.feed.posts.push({ id: TARGET1 }, { id: TARGET2 });
+
+    h.holdNextLike();
+    const first = h.drive.likePost(TARGET1);
+    await flush();
+
+    const second = h.drive.likePost(TARGET2);
+    await flush();
+    // Control, before the node change: the waiting overlay stands.
+    expect(h.drive.optimisticLikes.has(TARGET2)).toBe(true);
+
+    // Change the node, release the first.
+    await h.drive.changeNode('https://b.example');
+    h.releaseNextLike();
+    await first;
+    await flush();
+    await second;
+
+    // The rule: the waiting like's overlay is gone and the report line reads
+    // *like not sent.* — the decline ending the contract names.
+    expect(h.drive.optimisticLikes.has(TARGET2)).toBe(false);
+    expect(h.drive.state.feed.report).toBe('like not sent.');
+  });
+
+  it.fails('a composer\'s post waiting behind a held like, node change, release: the composer is open, holds its text, `post` enabled, foot reads *post not sent.*', async () => {
+    const h = harness();
+    h.holdNextLike();
+    const first = h.drive.likePost(TARGET1);
+    await flush();
+
+    h.drive.openComposer(null);
+    const ctrl = h.drive.composers.get('@feed')!;
+    (ctrl.el.querySelector('.composer-text') as HTMLTextAreaElement).value = 'a draft that waits';
+    const second = h.drive.submitComposer(null, 'a draft that waits');
+    await flush();
+
+    // Control, before the node change: the composer is open with its text and
+    // its `sending` look (the press stays before the queue).
+    expect(h.drive.composers.get('@feed')).toBeDefined();
+
+    await h.drive.changeNode('https://b.example');
+    h.releaseNextLike();
+    await first;
+    await flush();
+    await second;
+
+    // The rule: composer open with its text, re-enabled, foot *post not sent.*
+    const ctrl2 = h.drive.composers.get('@feed');
+    expect(ctrl2).toBeDefined();
+    const ta = ctrl2!.el.querySelector('.composer-text') as HTMLTextAreaElement;
+    expect(ta.value).toBe('a draft that waits');
+    expect(ctrl2!.el.querySelector('.karma')?.textContent).toBe('post not sent.');
   });
 });
