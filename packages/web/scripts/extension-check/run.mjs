@@ -7357,101 +7357,6 @@ async function main() {
     return out;
   }
 
-  // ------- Step 13a — WEB_INTERFACE → The extension → "The contexts, and
-  // what each may hold" — storage.local closed to content scripts where the
-  // browser offers the call. On a hosted public thread page, the bridge's
-  // isolated world runs under the extension's origin: chrome.runtime.id
-  // reads the extension's id (the control that the context is the content
-  // script's), storage.local.get and storage.local.set reject with the
-  // browser's words, and the extension page's own storage.local — a trusted
-  // context — reads back its notis.links and holds no probe key.
-  {
-    const startIdx13a = bcx.events.length;
-    const created13a = await bcx.call('Target.createTarget', { url: publicLink });
-    const hostedId13a = created13a.targetId;
-    const hostedInfo13a = await findTargetById(hostedId13a, 15000);
-    let runId13a = false;
-    let getRefused13a = false;
-    let setRefused13a = false;
-    let pageHoldsNoProbe13a = false;
-    let pageReadsLinks13a = false;
-    const EXT_ORIGIN = `chrome-extension://${EXT_ID}`;
-    if (!hostedInfo13a) {
-      record('13a', false, `hosted target ${hostedId13a.slice(0, 8)}… never appeared in /json/list`);
-    } else {
-      // Open the bridge's isolated world through Runtime.enable's event
-      // stream — the context whose `auxData.type` is 'isolated' and whose
-      // `origin` names the extension.
-      const sh = new WebSocket(hostedInfo13a.webSocketDebuggerUrl);
-      await new Promise((res, rej) => { sh.onopen = res; sh.onerror = rej; });
-      let nh = 0;
-      const ph = new Map();
-      const ctxCreated = [];
-      sh.onmessage = (ev) => {
-        const m = JSON.parse(ev.data);
-        if (m.id && ph.has(m.id)) { ph.get(m.id)(m); ph.delete(m.id); }
-        if (m.method === 'Runtime.executionContextCreated') ctxCreated.push(m.params.context);
-      };
-      const callH = (method, params = {}) => new Promise((res, rej) => {
-        const id = ++nh;
-        const timer = setTimeout(() => { ph.delete(id); rej(new Error(`CDP timeout on ${method}`)); }, 30000);
-        ph.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
-        sh.send(JSON.stringify({ id, method, params }));
-      });
-      await callH('Runtime.enable');
-      // Wait up to 10 s for the bridge's isolated world to be created on
-      // this target — the extension's content script registers one at
-      // document_start.
-      const t0 = Date.now();
-      let bridgeCx = null;
-      while (Date.now() - t0 < 10000 && bridgeCx === null) {
-        bridgeCx = ctxCreated.find((c) => c.auxData?.type === 'isolated' && typeof c.origin === 'string' && c.origin === EXT_ORIGIN) ?? null;
-        if (bridgeCx === null) await sleep(100);
-      }
-      if (bridgeCx === null) {
-        record('13a', false, `no isolated execution context at origin ${EXT_ORIGIN} on the hosted page`);
-      } else {
-        const evalIn = async (expression) => {
-          const r = await callH('Runtime.evaluate', {
-            expression,
-            returnByValue: true,
-            awaitPromise: true,
-            contextId: bridgeCx.id,
-          });
-          return r;
-        };
-        // Control: the context is this extension's content script.
-        const rid = await evalIn(`typeof chrome.runtime.id === 'string' && chrome.runtime.id`);
-        runId13a = rid.result?.value === EXT_ID;
-        // storage.local.get(null) rejects with the browser's words.
-        const gRes = await evalIn(`chrome.storage.local.get(null).then(() => ({ ok: true }), (e) => ({ ok: false, msg: String(e && e.message || e) }))`);
-        const gVal = gRes.result?.value ?? { ok: null };
-        getRefused13a = gVal.ok === false && typeof gVal.msg === 'string' && gVal.msg.includes('Access to storage is not allowed from this context');
-        // storage.local.set rejects the same way.
-        const sRes = await evalIn(`chrome.storage.local.set({ 'notis.k4b-probe': 1 }).then(() => ({ ok: true }), (e) => ({ ok: false, msg: String(e && e.message || e) }))`);
-        const sVal = sRes.result?.value ?? { ok: null };
-        setRefused13a = sVal.ok === false && typeof sVal.msg === 'string' && sVal.msg.includes('Access to storage is not allowed from this context');
-        try { sh.close(); } catch {}
-        // The extension page's own storage.local — a trusted context — holds
-        // no probe and answers its notis.links. The page is cx10, the
-        // extension's own page the harness opened at start.
-        const pageProbe = await cx10.eval(`(async () => {
-          const all = await chrome.storage.local.get(null);
-          return { hasProbe: Object.prototype.hasOwnProperty.call(all, 'notis.k4b-probe'), links: all['notis.links'] ?? null };
-        })()`);
-        pageHoldsNoProbe13a = pageProbe && pageProbe.hasProbe === false;
-        pageReadsLinks13a = pageProbe && (pageProbe.links === 'site' || pageProbe.links === 'here');
-      }
-      // Close the hosted target — a leftover would collide with step 13's
-      // own fresh target below.
-      try { await bcx.call('Target.closeTarget', { targetId: hostedId13a }); } catch {}
-      void startIdx13a;
-      record('13a',
-        runId13a && getRefused13a && setRefused13a && pageHoldsNoProbe13a && pageReadsLinks13a,
-        `runtime.id==${EXT_ID.slice(0, 8)}…=${runId13a}, get refused=${getRefused13a}, set refused=${setRefused13a}, page holds no probe=${pageHoldsNoProbe13a}, page reads notis.links=${pageReadsLinks13a}`);
-    }
-  }
-
   // ------- Step 13 — pref `on the site`, the button arm. The browser-context
   // arm ("13-uncancelled") is the last thing the harness does with the
   // browser, after the verified-tip block: `Target.createBrowserContext` +
@@ -7460,8 +7365,106 @@ async function main() {
   // cannot shadow any other step.
   const step13Prefs = await setLinksPrefViaUi(cx10, 'site');
   if (step13Prefs !== 'site') {
+    record('13a', false, `pref did not take: notis.links=${step13Prefs}`);
     record(13, false, `pref did not take: notis.links=${step13Prefs}`);
   } else {
+    // ------- Step 13a — WEB_INTERFACE → The extension → "The contexts, and
+    // what each may hold" — storage.local closed to content scripts where
+    // the browser offers the call. Under `site` the background answers the
+    // bridge's `arrived` and leaves the tab alone, so the hosted target
+    // stands for the probe. The bridge's isolated world runs under the
+    // extension's origin: chrome.runtime.id reads the extension's id (the
+    // control that the context is the content script's), storage.local.get
+    // and storage.local.set reject with the browser's words, and the
+    // extension page's own storage.local — a trusted context — reads its
+    // notis.links back and holds no probe key.
+    {
+      const created13a = await bcx.call('Target.createTarget', { url: publicLink });
+      const hostedId13a = created13a.targetId;
+      const hostedInfo13a = await findTargetById(hostedId13a, 15000);
+      let runId13a = false;
+      let getRefused13a = false;
+      let setRefused13a = false;
+      let pageHoldsNoProbe13a = false;
+      let pageReadsLinks13a = false;
+      const EXT_ORIGIN = `chrome-extension://${EXT_ID}`;
+      if (!hostedInfo13a) {
+        record('13a', false, `hosted target ${hostedId13a.slice(0, 8)}… never appeared in /json/list`);
+      } else {
+        // Open the bridge's isolated world through Runtime.enable's event
+        // stream — the context whose `auxData.type` is 'isolated' and whose
+        // `origin` names the extension.
+        const sh = new WebSocket(hostedInfo13a.webSocketDebuggerUrl);
+        await new Promise((res, rej) => { sh.onopen = res; sh.onerror = rej; });
+        let nh = 0;
+        const ph = new Map();
+        const ctxCreated = [];
+        sh.onmessage = (ev) => {
+          const m = JSON.parse(ev.data);
+          if (m.id && ph.has(m.id)) { ph.get(m.id)(m); ph.delete(m.id); }
+          if (m.method === 'Runtime.executionContextCreated') ctxCreated.push(m.params.context);
+        };
+        const callH = (method, params = {}) => new Promise((res, rej) => {
+          const id = ++nh;
+          const timer = setTimeout(() => { ph.delete(id); rej(new Error(`CDP timeout on ${method}`)); }, 30000);
+          ph.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+          sh.send(JSON.stringify({ id, method, params }));
+        });
+        await callH('Runtime.enable');
+        // Wait up to 10 s for the bridge's isolated world to be created on
+        // this target — the extension's content script registers one at
+        // document_start.
+        const t0 = Date.now();
+        let bridgeCx = null;
+        while (Date.now() - t0 < 10000 && bridgeCx === null) {
+          bridgeCx = ctxCreated.find((c) => c.auxData?.type === 'isolated' && typeof c.origin === 'string' && c.origin === EXT_ORIGIN) ?? null;
+          if (bridgeCx === null) await sleep(100);
+        }
+        if (bridgeCx === null) {
+          record('13a', false, `no isolated execution context at origin ${EXT_ORIGIN} on the hosted page`);
+        } else {
+          const evalIn = async (expression) => {
+            const r = await callH('Runtime.evaluate', {
+              expression,
+              returnByValue: true,
+              awaitPromise: true,
+              contextId: bridgeCx.id,
+            });
+            return r;
+          };
+          // Control: the context is this extension's content script.
+          const rid = await evalIn(`typeof chrome.runtime.id === 'string' && chrome.runtime.id`);
+          runId13a = rid.result?.value === EXT_ID;
+          // storage.local.get(null) rejects with the browser's words.
+          const gRes = await evalIn(`chrome.storage.local.get(null).then(() => ({ ok: true }), (e) => ({ ok: false, msg: String(e && e.message || e) }))`);
+          const gVal = gRes.result?.value ?? { ok: null };
+          getRefused13a = gVal.ok === false && typeof gVal.msg === 'string' && gVal.msg.includes('Access to storage is not allowed from this context');
+          // storage.local.set rejects the same way.
+          const sRes = await evalIn(`chrome.storage.local.set({ 'notis.k4b-probe': 1 }).then(() => ({ ok: true }), (e) => ({ ok: false, msg: String(e && e.message || e) }))`);
+          const sVal = sRes.result?.value ?? { ok: null };
+          setRefused13a = sVal.ok === false && typeof sVal.msg === 'string' && sVal.msg.includes('Access to storage is not allowed from this context');
+          try { sh.close(); } catch {}
+          // The extension page's own storage.local — a trusted context —
+          // holds no probe and answers its notis.links. The page is cx10,
+          // the extension's own page the harness opened at start; the
+          // preference stands at `site` here, so the control reads
+          // notis.links === 'site'.
+          const pageProbe = await cx10.eval(`(async () => {
+            const all = await chrome.storage.local.get(null);
+            return { hasProbe: Object.prototype.hasOwnProperty.call(all, 'notis.k4b-probe'), links: all['notis.links'] ?? null };
+          })()`);
+          pageHoldsNoProbe13a = pageProbe && pageProbe.hasProbe === false;
+          pageReadsLinks13a = pageProbe && pageProbe.links === 'site';
+        }
+        // Close the hosted target — a leftover would collide with step 13's
+        // own fresh target below.
+        try { await bcx.call('Target.closeTarget', { targetId: hostedId13a }); } catch {}
+        record('13a',
+          runId13a && getRefused13a && setRefused13a && pageHoldsNoProbe13a && pageReadsLinks13a,
+          `runtime.id==${EXT_ID.slice(0, 8)}…=${runId13a}, get refused=${getRefused13a}, set refused=${setRefused13a}, page holds no probe=${pageHoldsNoProbe13a}, page reads notis.links=='site'=${pageReadsLinks13a}`);
+      }
+    }
+
     // Fresh target on the post's public link — the destruction event may
     // arrive before this line returns, so the browser event index is taken
     // BEFORE the call.
