@@ -115,19 +115,13 @@ export function markDiscoveryUnavailable(): void {
 }
 
 /**
- * Enter discovery, by the one rule both outcomes of `net.start()` answer to.
+ * Enter discovery, by the one rule the configured bootstrap count answers.
  *
- * **The question is what this node was configured to be, not whether net came
- * up.** A bootstrap address means it is joining somebody else's network and has
- * something to wait for; no bootstrap address means it is the origin of its own
- * and never dials. `unavailable` is the verdict reserved for the second, and it
- * makes `isPeerReady` answer true unconditionally — so a node that failed to
- * start *with bootstrap peers configured* must not receive it, or the gate opens
- * with zero Active peers on the node that most needs it shut.
- *
- * One function for both paths rather than the same test written twice: a caller
- * that reaches this from a `catch` is answering the same question as one
- * reaching it from a return.
+ * **The question is what this node's configuration says it is.** A bootstrap
+ * address means it is joining somebody else's network and has something to
+ * wait for; no bootstrap address means it is the origin of its own and never
+ * dials. `unavailable` is the verdict reserved for the second, and it makes
+ * `isPeerReady` answer true unconditionally.
  */
 export function enterDiscovery(bootstrapPeerCount: number): void {
   if (bootstrapPeerCount > 0) {
