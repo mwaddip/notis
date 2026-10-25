@@ -7440,7 +7440,7 @@ async function main() {
           const gVal = gRes.result?.value ?? { ok: null };
           getRefused13a = gVal.ok === false && typeof gVal.msg === 'string' && gVal.msg.includes('Access to storage is not allowed from this context');
           // storage.local.set rejects the same way.
-          const sRes = await evalIn(`chrome.storage.local.set({ 'notis.k4b-probe': 1 }).then(() => ({ ok: true }), (e) => ({ ok: false, msg: String(e && e.message || e) }))`);
+          const sRes = await evalIn(`chrome.storage.local.set({ 'notis.bridge-probe': 1 }).then(() => ({ ok: true }), (e) => ({ ok: false, msg: String(e && e.message || e) }))`);
           const sVal = sRes.result?.value ?? { ok: null };
           setRefused13a = sVal.ok === false && typeof sVal.msg === 'string' && sVal.msg.includes('Access to storage is not allowed from this context');
           try { sh.close(); } catch {}
@@ -7451,7 +7451,7 @@ async function main() {
           // notis.links === 'site'.
           const pageProbe = await cx10.eval(`(async () => {
             const all = await chrome.storage.local.get(null);
-            return { hasProbe: Object.prototype.hasOwnProperty.call(all, 'notis.k4b-probe'), links: all['notis.links'] ?? null };
+            return { hasProbe: Object.prototype.hasOwnProperty.call(all, 'notis.bridge-probe'), links: all['notis.links'] ?? null };
           })()`);
           pageHoldsNoProbe13a = pageProbe && pageProbe.hasProbe === false;
           pageReadsLinks13a = pageProbe && pageProbe.links === 'site';
