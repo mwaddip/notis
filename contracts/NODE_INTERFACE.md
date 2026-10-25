@@ -5754,11 +5754,7 @@ will connect as peers become available). **A `net.start()` that throws stops the
 and the process exits non-zero, before the HTTP server listens or the block creator starts — an address libp2p
 cannot listen on, a configuration it refuses. A node is a peer of a network, and one without networking would
 serve reads that never move and, as a miner, hold its window shut, since the window rises only through net's sync
-(`MINING_INTERFACE → The window gate`).
-
-> ⚠ **AHEAD OF CODE (2026-10-25).** `MAX_PEERS`'s floor of 1 (→ the configuration rule above) and the stop on a
-> `net.start()` that throws lead `packages/node/src/config.ts` and `packages/node/src/index.ts`, which floors the
-> setting at 0 and logs the throw and carries on. Sync handlers are registered
+(`MINING_INTERFACE → The window gate`). Sync handlers are registered
 before `net.start()`: until `setChainView` is called the scheduler asks no peer anything, and a serve arm with no
 provider answers zero bytes (NET_INTERFACE → Sync Handler Registration).
 
