@@ -1314,3 +1314,21 @@ describe('a pending entry holds no input and no change', () => {
     expect(ledger.all().map((e) => e.txId)).toEqual(['ta', 'tb']);
   });
 });
+
+// WEB_INTERFACE → The wallet → "An entry holds no input and no change":
+// the shape holds for every flow. The like case already pins the rule in the
+// `a pending entry holds no input and no change` block above; the withdraw
+// case here, with a change the current builder predicts (the single karma
+// output), fails pre-rule on both the `change` and the `inputs` key.
+describe('a withdraw entry holds no input and no change', () => {
+  it.fails('a withdraw\'s entry has no inputs key and no change key after a 2xx', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
+    const res = await submitWithdrawFlow(deps, TARGET_ID);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.entry.kind).toBe('withdraw'); // control
+    expect('inputs' in res.entry).toBe(false);
+    expect('change' in res.entry).toBe(false);
+  });
+});

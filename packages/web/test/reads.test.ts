@@ -182,3 +182,34 @@ describe("the /karma reader rebuilds a row with `income` of the mark's domain", 
     });
   }
 });
+
+// WEB_INTERFACE → The wallet → "The spendable views are the node's pending view":
+// `readBuildContext` asks `/karma/:key?pending=1`; `readCreditContext` asks
+// `/credits/:key?pending=1`. The fake karma/credits now take an optional third
+// arg (the shape the client offers today) and record whether `pending` was
+// passed, so a case can assert the rule's view.
+describe('readBuildContext asks the pending view', () => {
+  it.fails('karma is asked with { pending: true }', async () => {
+    const seen: boolean[] = [];
+    const reads: Pick<Api, 'karma' | 'status'> = {
+      karma: async (_k, _p, opts) => { seen.push(opts?.pending === true); return karmaPage([], null); },
+      status: async () => statusResult(),
+    };
+    await readBuildContext(reads, new PendingLedger(AUTHOR), AUTHOR);
+    expect(seen.length).toBeGreaterThan(0); // control: karma was asked
+    expect(seen.every((p) => p === true)).toBe(true);
+  });
+});
+
+describe('readCreditContext asks the pending view', () => {
+  it.fails('credits is asked with { pending: true }', async () => {
+    const seen: boolean[] = [];
+    const reads: Pick<Api, 'credits' | 'status'> = {
+      credits: async (_k, _p, opts) => { seen.push(opts?.pending === true); return creditsPage([], null); },
+      status: async () => statusResult(),
+    };
+    await readCreditContext(reads, new PendingLedger(AUTHOR), AUTHOR);
+    expect(seen.length).toBeGreaterThan(0); // control: credits was asked
+    expect(seen.every((p) => p === true)).toBe(true);
+  });
+});
