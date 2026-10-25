@@ -1,9 +1,9 @@
 // The extension's one content script — WEB_INTERFACE → The extension →
 // "Links into the extension". Injected at document_start into the top frame
 // of the build's public thread pages. It holds nothing and reads no storage,
-// and sends the background two messages — "The contexts, and what each may
-// hold". It imports only pure modules, so it builds as one classic file with
-// no `import`.
+// and sends the background two messages
+// (WEB_INTERFACE → The extension → "The contexts, and what each may hold").
+// It imports only pure modules, so it builds as one classic file with no `import`.
 //
 // Written as one exported function over its environment, so the tests drive
 // the function over fakes and happy-dom; the auto-run at the foot mirrors
