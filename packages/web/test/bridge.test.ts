@@ -206,30 +206,11 @@ describe('bridge — on arrival', () => {
     }) as typeof chrome.storage.local.get;
     b.env.chrome.storage.local.set = refusal as typeof chrome.storage.local.set;
     b.env.chrome.storage.local.remove = refusal as typeof chrome.storage.local.remove;
-    // Vitest fails the run on an unhandled rejection; the browser-shaped
-    // rejection surfaces where the chain calls get. Hand its default
-    // listener aside for the window — as handover.test.ts does.
-    const proc = (globalThis as { process?: unknown }).process as {
-      on(event: string, handler: (reason: unknown) => void): void;
-      removeListener(event: string, handler: (reason: unknown) => void): void;
-      listeners(event: string): Array<(reason: unknown) => void>;
-      removeAllListeners(event: string): void;
-    };
-    const saved = proc.listeners('unhandledRejection');
-    const silence = (): void => {};
-    proc.removeAllListeners('unhandledRejection');
-    proc.on('unhandledRejection', silence);
-    try {
-      bridge(b.env);
-      await flush();
-      await flush();
-      await new Promise((r) => setTimeout(r, 20));
-      expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
-      expect(gets).toBe(0);
-    } finally {
-      proc.removeListener('unhandledRejection', silence);
-      for (const l of saved) proc.on('unhandledRejection', l);
-    }
+    bridge(b.env);
+    await flush();
+    await flush();
+    expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
+    expect(gets).toBe(0);
   });
 
   it('document.prerendering undefined with everything else holding: arrived leaves', async () => {
