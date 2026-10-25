@@ -1589,7 +1589,10 @@ transport failure, or `notSigned`. So each flow reads the rep view with every ea
 two presses never select one box. A press made while one is in flight waits its turn behind it, in press order,
 and keeps its own step at the press — the like's overlay, a flight's `submitting…`. **A press waiting its turn
 belongs to the key and the node it was made under**: a change of either ends every press still waiting — no read,
-nothing signed, nothing sent — as the change ends what the old key had standing (→ The identity module). A send queues the same way on the
+nothing signed, nothing sent. A change of the key takes the press's step with everything the old key had standing
+(→ The identity module); a change of the node ends the press as a decline ends one (→ "A flow can end before the node
+ever sees it: `notSigned`") — its step undone, the composer still open with its text, the line *… not sent.* A send
+queues the same way on the
 credits view, apart from the rep spends; an unvouch spends a `vouch` box, no view's, and queues with neither. A spend
 from another page, or another browser, can still meet a box this page selected: the node's 409 (→ "Nothing retries").
 
