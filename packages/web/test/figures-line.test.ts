@@ -815,3 +815,76 @@ describe('figuresLine — row 6: undecided or stale reads "not checked yet"', ()
     expect(line).toEqual({ text: 'not checked yet', weight: 'muted' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// The row's figure is the view's; the valuation reproduces the plain
+// listing's `effective`; where the row figure differs from the plain's a
+// clause names the row figure beside the proven amount
+// (WEB_INTERFACE → The extension → "The verified figures" — "and last, where
+// the row's figure is not the plain listing's, *… · 75 $NOTIS to spend in
+// the next block, by this node's word*"). The plain figure the valuation
+// reproduces lands in `result.karma.effective` for rep and in the sum of
+// proven credit boxes for the balance; `shown` is the row figure (the view's
+// `effective` / spendable sum).
+// ---------------------------------------------------------------------------
+describe('figuresLine — the row figure differs from the plain listing figure', () => {
+  it.fails('karma: every box proven, valuation 87, row shows 82 — "87 rep proven at block 9005 · 82 rep to spend in the next block, by this node\'s word"', () => {
+    const r = result({
+      boxes: [box({ boxClass: 'karma', status: 'proven', value: 87n })],
+      karma: { ...emptyKarma, proven: 87n, effective: 87n },
+    });
+    const line = figuresLine(input({
+      ledger: 'karma', verdict: VERIFIED, result: r,
+      shown: 82n, boxCount: 1,
+    }));
+    expect(line).toEqual({
+      text: "87 rep proven at block 9005 · 82 rep to spend in the next block, by this node's word",
+      weight: 'muted',
+    });
+  });
+
+  it.fails('credits: every box proven, valuation 87.5 $NOTIS, row shows 75 $NOTIS — "87.5 $NOTIS proven at block 9005 · 75 $NOTIS to spend in the next block, by this node\'s word"', () => {
+    const r = result({
+      boxes: [box({ boxClass: 'credit', status: 'proven', value: 8_750_000_000n })],
+      credits: { ...emptyCredits, proven: 8_750_000_000n },
+    });
+    const line = figuresLine(input({
+      ledger: 'credits', verdict: VERIFIED, result: r,
+      shown: 7_500_000_000n, boxCount: 1,
+    }));
+    expect(line).toEqual({
+      text: "87.5 $NOTIS proven at block 9005 · 75 $NOTIS to spend in the next block, by this node's word",
+      weight: 'muted',
+    });
+  });
+
+  it.fails('karma: young 5 and a row that differs — "87 rep proven at block 9005 · 5 rep landed since · 82 rep to spend in the next block, by this node\'s word"', () => {
+    const r = result({
+      boxes: [
+        box({ boxClass: 'karma', status: 'proven', value: 87n }),
+        box({ boxClass: 'karma', status: 'young', value: 5n }),
+      ],
+      karma: { ...emptyKarma, proven: 87n, young: 5n, effective: 87n },
+    });
+    const line = figuresLine(input({
+      ledger: 'karma', verdict: VERIFIED, result: r,
+      shown: 82n, boxCount: 1,
+    }));
+    expect(line).toEqual({
+      text: "87 rep proven at block 9005 · 5 rep landed since · 82 rep to spend in the next block, by this node's word",
+      weight: 'muted',
+    });
+  });
+
+  it.fails('karma: empty plain listing beside a non-empty view — the clause alone fires', () => {
+    const r = result({ karma: { ...emptyKarma, effective: 0n } });
+    const line = figuresLine(input({
+      ledger: 'karma', verdict: VERIFIED, result: r,
+      shown: 5n, boxCount: 0,
+    }));
+    expect(line).toEqual({
+      text: "5 rep to spend in the next block, by this node's word",
+      weight: 'muted',
+    });
+  });
+});
