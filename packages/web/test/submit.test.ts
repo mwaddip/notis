@@ -453,8 +453,7 @@ describe('submitUnvouchFlow', () => {
     expect(outputs).toHaveLength(1);
     expect(outputs[0]!.boxType).toBe('vouch_escrow');
     expect(outputs.some((o) => o.boxType === 'karma')).toBe(false);
-    expect(res.entry).toMatchObject({ kind: 'unvouch', postId: VOUCH_TARGET, inputs: [VOUCH_BOX] });
-    expect(res.entry.change).toBeUndefined();
+    expect(res.entry).toMatchObject({ kind: 'unvouch', postId: VOUCH_TARGET });
   });
 
   it('a pair already gone re-reports withdrawn before any write', async () => {
@@ -534,10 +533,8 @@ describe('submitWithdrawFlow', () => {
     const outputs = writeCalls[0]!.tx.outputs as Array<Record<string, unknown>>;
     expect(outputs).toHaveLength(1);
     expect(outputs[0]).toMatchObject({ boxType: 'karma', value: '227', owner: PUB });
-    // The entry carries the body's expiresAtHeight and the output box as change.
+    // The entry carries the body's expiresAtHeight and the heights.
     expect(res.entry).toMatchObject({ kind: 'withdraw', postId: TARGET_ID, expiresAtHeight: 6720, submittedAtHeight: 6000 });
-    expect(res.entry.change?.value).toBe(227n);
-    expect(res.entry.inputs).toEqual([BOX_ID]);
     expect(ledger.all().map((e) => e.kind)).toEqual(['withdraw']);
   });
 
@@ -1231,7 +1228,7 @@ function readsRecording(
 }
 
 describe('the reads before a write are the node\'s pending view', () => {
-  it.fails('a like\'s reads are /karma/:key?pending=1 then /status, no plain /karma', async () => {
+  it('a like\'s reads are /karma/:key?pending=1 then /status, no plain /karma', async () => {
     const requests: string[] = [];
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: readsRecording(requests), write: write(), ledger, identity, network: null };
@@ -1244,7 +1241,7 @@ describe('the reads before a write are the node\'s pending view', () => {
     expect(requests).toEqual(['karma?pending=1', 'status']);
   });
 
-  it.fails('a send\'s reads are /credits/:key?pending=1 then /status, no plain /credits', async () => {
+  it('a send\'s reads are /credits/:key?pending=1 then /status, no plain /credits', async () => {
     const requests: string[] = [];
     const ledger = new PendingLedger(PUB);
     const CREDIT_BOX: CreditBoxRow = { boxId: '55'.repeat(32), value: '10000000000' };
@@ -1263,17 +1260,14 @@ describe('the reads before a write are the node\'s pending view', () => {
 });
 
 describe('the spendable view is the node\'s, not the ledger\'s', () => {
-  it.fails('a pending like\'s change is not offered; the box standing in pending=1 is spent next', async () => {
-    const X = '77'.repeat(32); // the box the ledger's pending like names as its input
-    const Y = '66'.repeat(32); // the change the pending like names
+  it('a pending like holds no input in the ledger; the box the node\'s pending view lists is the next like\'s input', async () => {
+    const X = '77'.repeat(32); // the box the node's pending view lists
     const ledger = new PendingLedger(PUB);
     ledger.add({
-      txId: 't1', kind: 'like', postId: 'ab'.repeat(32), inputs: [X],
-      change: { boxId: Y, value: 226n, createdAtBlock: 6000 },
+      txId: 't1', kind: 'like', postId: 'ab'.repeat(32),
       expiresAtHeight: 6720, submittedAtHeight: 6000,
     });
-    // The node does not pool the like the ledger holds — the node dropped it,
-    // or it expired on the node — so the pending view lists X and knows no Y.
+    // The ledger holds no input: the spendable view is the node's answer.
     const deps: SubmitDeps = {
       reads: reads(PARENT_AUTHOR, [{ boxId: X, value: '227' }]),
       write: write(), ledger, identity, network: null,
@@ -1286,7 +1280,7 @@ describe('the spendable view is the node\'s, not the ledger\'s', () => {
 });
 
 describe('a pending entry holds no input and no change', () => {
-  it.fails('a like\'s entry has no inputs key and no change key after a 2xx', async () => {
+  it('a like\'s entry has no inputs key and no change key after a 2xx', async () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitLikeFlow(deps, TARGET_ID);
@@ -1321,7 +1315,7 @@ describe('a pending entry holds no input and no change', () => {
 // case here, with a change the current builder predicts (the single karma
 // output), fails pre-rule on both the `change` and the `inputs` key.
 describe('a withdraw entry holds no input and no change', () => {
-  it.fails('a withdraw\'s entry has no inputs key and no change key after a 2xx', async () => {
+  it('a withdraw\'s entry has no inputs key and no change key after a 2xx', async () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
     const res = await submitWithdrawFlow(deps, TARGET_ID);

@@ -723,7 +723,6 @@ describe('a landing after the list moved on', () => {
       txId: hid('wd' + 's'),
       kind: 'withdraw',
       postId: ls.id,
-      inputs: [],
       expiresAtHeight: 999,
       submittedAtHeight: 0,
     });

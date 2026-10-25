@@ -702,7 +702,7 @@ describe('a refresh lands on the rows standing as it lands', () => {
     const h = harness({ [A]: a });
     await h.drive.loadFeed();
     expect(cards(h.feedEl)).toEqual([W.id, hid('P2')]);
-    h.ledger.add({ txId: 'e1'.repeat(32), kind: 'withdraw', postId: W.id, inputs: [], expiresAtHeight: 5000, submittedAtHeight: 990 });
+    h.ledger.add({ txId: 'e1'.repeat(32), kind: 'withdraw', postId: W.id, expiresAtHeight: 5000, submittedAtHeight: 990 });
     a.feed = [row('N'), ...a.feed];
 
     h.nodes.setHold((c) => c.method === 'feed' && c.after === null);
@@ -815,9 +815,9 @@ describe('a refresh on a list holding no first page reads the first page', () =>
 // ---------------------------------------------------------------------------
 
 let entrySeq = 0;
-function entry(kind: 'withdraw' | 'like', postId: string): { txId: string; kind: 'withdraw' | 'like'; postId: string; inputs: string[]; expiresAtHeight: number; submittedAtHeight: number } {
+function entry(kind: 'withdraw' | 'like', postId: string): { txId: string; kind: 'withdraw' | 'like'; postId: string; expiresAtHeight: number; submittedAtHeight: number } {
   entrySeq += 1;
-  return { txId: entrySeq.toString(16).padStart(2, '0').repeat(32), kind, postId, inputs: [], expiresAtHeight: 5000, submittedAtHeight: 990 };
+  return { txId: entrySeq.toString(16).padStart(2, '0').repeat(32), kind, postId, expiresAtHeight: 5000, submittedAtHeight: 990 };
 }
 const withdrawnCard = (root: HTMLElement, id: string): boolean => root.querySelector(`[data-post-id="${id}"] .withdrawn`) !== null;
 

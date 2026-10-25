@@ -334,7 +334,7 @@ describe('post-check — the ledger\'s read hands reconcile the rebuilt row', ()
     });
     h.ledger.add({
       txId: 'like' + base.id.slice(0, 10), kind: 'like', postId: base.id,
-      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+      expiresAtHeight: 721, submittedAtHeight: 1,
     });
     await h.drive.pollTick();
     await flush();
@@ -362,7 +362,7 @@ describe('post-check — the ledger\'s read hands reconcile the rebuilt row', ()
     });
     h.ledger.add({
       txId: 'like' + base.id.slice(0, 10), kind: 'like', postId: base.id,
-      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+      expiresAtHeight: 721, submittedAtHeight: 1,
     });
     await h.drive.pollTick();
     await flush();
@@ -382,7 +382,7 @@ describe('post-check — the ledger\'s read hands reconcile the rebuilt row', ()
     });
     h.ledger.add({
       txId: 'like' + base.id.slice(0, 10), kind: 'like', postId: base.id,
-      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+      expiresAtHeight: 721, submittedAtHeight: 1,
     });
     await h.drive.pollTick();
     await flush();
@@ -401,7 +401,7 @@ describe('post-check — the ledger\'s read hands reconcile the rebuilt row', ()
     });
     h.ledger.add({
       txId: 'wd' + w.id.slice(0, 10), kind: 'withdraw', postId: w.id,
-      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+      expiresAtHeight: 721, submittedAtHeight: 1,
     });
     await h.drive.pollTick();
     await flush();
@@ -422,7 +422,7 @@ describe('post-check — the ledger\'s read hands reconcile the rebuilt row', ()
     });
     h.ledger.add({
       txId: 'wd' + w.id.slice(0, 10), kind: 'withdraw', postId: w.id,
-      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+      expiresAtHeight: 721, submittedAtHeight: 1,
     });
     await h.drive.pollTick();
     await flush();
@@ -438,7 +438,7 @@ describe('post-check — the ledger\'s read hands reconcile the rebuilt row', ()
     });
     h.ledger.add({
       txId: 'like' + base.id.slice(0, 10), kind: 'like', postId: base.id,
-      inputs: [], expiresAtHeight: 721, submittedAtHeight: 1,
+      expiresAtHeight: 721, submittedAtHeight: 1,
     });
     await h.drive.pollTick();
     await flush();

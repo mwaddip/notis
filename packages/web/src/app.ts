@@ -34,6 +34,7 @@ import {
 import type { PendingEntry, EntryOutcome } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
+import { FlowQueue } from './wallet/queue';
 import { identity as identitySingleton } from './identity/identity';
 import { profileBody, type ProfileBody } from './view/profile';
 import {
@@ -297,6 +298,13 @@ export class App {
   // nowhere else (WEB_INTERFACE → The workspace → "A window's body stands while
   // the window is open").
   private bodies = new Map<string, HeldBody>();
+  // Two queues: a rep queue (post / like / withdraw / vouch / invite / claim /
+  // burn) and a send queue; an unvouch queues with neither (WEB_INTERFACE →
+  // The wallet → "The reader's spends run one at a time, per ledger"). A press
+  // captures `readerGen` and enqueues; at the turn, a moved generation runs
+  // nothing — the queue returns 'cancelled' — and the pump moves on.
+  private repQueue = new FlowQueue();
+  private sendQueue = new FlowQueue();
   // Targets the reader pressed like on, shown liked at once and reverted on a
   // rejection or expiry (WEB_INTERFACE → The wallet).
   private optimisticLikes = new Set<string>();
@@ -1015,13 +1023,11 @@ export class App {
     return this.withdrawFlights.get(postId) ?? null;
   }
 
-  /** The spendable view is non-empty — the courtesy gate the withdraw button reads,
-   *  from the wallet's view the App already holds; the node's refusal is the truth
-   *  (WEB_INTERFACE → The withdraw control). */
+  /** The profile's `/karma` listing is non-empty — the courtesy gate the
+   *  withdraw button reads, directly off `profileKarma.boxes`; the node's
+   *  refusal is the truth (WEB_INTERFACE → The withdraw control). */
   private canSignWithdraw(): boolean {
-    if (this.profileKarma === null) return false;
-    const confirmed = this.profileKarma.boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
-    return this.ledger.spendable(confirmed).length > 0;
+    return this.profileKarma !== null && this.profileKarma.boxes.length > 0;
   }
 
   /** The spendable view covers the minimum bond — a courtesy that shows the invite
@@ -2909,7 +2915,6 @@ export class App {
       txId: res.txId,
       kind: 'grant',
       postId: cur.pubKeyHex, // the key the grant was asked for; a grant has no post
-      inputs: [],
       expiresAtHeight: res.expiresAtHeight,
       submittedAtHeight: askedAt,
     });
@@ -3017,7 +3022,7 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     try {
-      const ctx = await readBuildContext(this.client, this.ledger, cur.pubKeyHex);
+      const ctx = await readBuildContext(this.client, cur.pubKeyHex);
       const total = ctx.spendable.reduce((sum, b) => sum + b.value, 0n);
       this.composers.get(key)?.setAffordable(total >= price);
     } catch {
@@ -3078,9 +3083,20 @@ export class App {
       this.renderForParent(parentId);
       this.focusOpener(parentId);
     };
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitPostFlow({ ...this.submitDeps(), onSigned, onCachePost: this.cachePostFromSubmit(text) }, text, parentId);
+      const r = await this.repQueue.enqueue(
+        () => submitPostFlow({ ...this.submitDeps(), onSigned, onCachePost: this.cachePostFromSubmit(text) }, text, parentId),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' }; // node change: end as a decline (onSigned never fired)
+      } else {
+        result = r;
+      }
     } catch {
       // A transport failure. Before the sign — a pre-sign read threw and
       // onSigned never fired — the composer is still open with its text; after
@@ -3137,7 +3153,19 @@ export class App {
     sub.expiresAtHeight = null;
     sub.blockHeight = null;
     this.renderForParent(sub.parentId);
-    await this.flight(sub, () => submitPostFlow({ ...this.submitDeps(), onCachePost: this.cachePostFromSubmit(sub.content) }, sub.content, sub.parentId));
+    const pressGen = this.readerGen;
+    await this.flight(sub, async () => {
+      const r = await this.repQueue.enqueue(
+        () => submitPostFlow({ ...this.submitDeps(), onCachePost: this.cachePostFromSubmit(sub.content) }, sub.content, sub.parentId),
+        () => this.readerGen === pressGen,
+      );
+      // A key or node change in the wait: `flight` reads this `declined` as
+      // the notSigned arm and returns the card to *expired* with `try again`
+      // still offered — a key change clears `state.submissions` through
+      // `onIdentityChange` beforehand, which hides even that.
+      if (r === 'cancelled') return { ok: false, notSigned: 'declined' as const, reason: '' } as const;
+      return r;
+    });
   }
 
   /** Drive a submission's flight from a `try again`. notSigned there has no
@@ -3194,9 +3222,20 @@ export class App {
     this.optimisticLikes.add(postId);
     this.renderRegionsForPost(postId);
     this.renderFeedPost(postId);
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitLikeFlow(this.submitDeps(), postId);
+      const r = await this.repQueue.enqueue(
+        () => submitLikeFlow(this.submitDeps(), postId),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' }; // node change: end as a decline
+      } else {
+        result = r;
+      }
     } catch {
       this.optimisticLikes.delete(postId);
       this.setReportForPost(postId, "like rejected: can't reach the node right now.");
@@ -3228,9 +3267,20 @@ export class App {
     if (this.withdrawFlights.has(postId) || pendingWithdrawTargets(this.ledger.all()).has(postId)) return;
     this.withdrawFlights.set(postId, { stage: 'submitting' });
     this.renderRegionsForPost(postId);
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitWithdrawFlow(this.submitDeps(), postId);
+      const r = await this.repQueue.enqueue(
+        () => submitWithdrawFlow(this.submitDeps(), postId),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press (withdrawFlights cleared)
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.withdrawFlights.delete(postId);
       this.setReportForPost(postId, "withdraw rejected: can't reach the node right now.");
@@ -3507,9 +3557,20 @@ export class App {
     const d = this.authorData.get(key);
     if (d) d.flight = { stage: 'submitting' };
     this.renderRegionsFor(authorWindowId(key));
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitVouchFlow(this.submitDeps(), key);
+      const r = await this.repQueue.enqueue(
+        () => submitVouchFlow(this.submitDeps(), key),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.optimisticVouches.delete(key);
       if (d) d.flight = { stage: 'rejected', reason: "vouch rejected: can't reach the node right now." };
@@ -3794,9 +3855,20 @@ export class App {
     if (cur === null) return;
     this.inviteFlight = { stage: 'submitting' };
     this.renderInvitesRowInPlace();
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitInviteFlow(this.submitDeps(), inviteeKey, bond);
+      const r = await this.repQueue.enqueue(
+        () => submitInviteFlow(this.submitDeps(), inviteeKey, bond),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.inviteFlight = { stage: 'rejected', reason: "invite rejected: can't reach the node right now." };
       this.renderInvitesRowInPlace();
@@ -3850,9 +3922,20 @@ export class App {
     this.usernameInFlight = { kind: 'claim', name };
     this.usernameFlight = { stage: 'submitting' };
     this.renderUsernameRowInPlace();
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitClaimFlow(this.submitDeps(), name);
+      const r = await this.repQueue.enqueue(
+        () => submitClaimFlow(this.submitDeps(), name),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.usernameInFlight = null;
       this.usernameFlight = { stage: 'rejected', reason: "claim rejected: can't reach the node right now." };
@@ -3880,9 +3963,20 @@ export class App {
     this.usernameInFlight = { kind: 'burn', name };
     this.usernameFlight = { stage: 'submitting' };
     this.renderUsernameRowInPlace();
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitBurnFlow(this.submitDeps());
+      const r = await this.repQueue.enqueue(
+        () => submitBurnFlow(this.submitDeps()),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.usernameInFlight = null;
       this.usernameFlight = { stage: 'rejected', reason: "burn rejected: can't reach the node right now." };
@@ -4112,9 +4206,20 @@ export class App {
     if (cur === null) return;
     this.sendFlight = { stage: 'submitting' };
     this.renderCreditsRowInPlace();
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitSendFlow(this.submitDeps(), toHex, toName, amount);
+      const r = await this.sendQueue.enqueue(
+        () => submitSendFlow(this.submitDeps(), toHex, toName, amount),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.sendFlight = { stage: 'rejected', reason: "send rejected: can't reach the node right now." };
       this.renderCreditsRowInPlace();
@@ -4182,7 +4287,6 @@ export class App {
       txId: res.txId,
       kind: 'creditGrant',
       postId: res.boxId, // a credits grant's subject is the box id the faucet named
-      inputs: [],
       expiresAtHeight: res.expiresAtHeight,
       submittedAtHeight: askedAt,
     });

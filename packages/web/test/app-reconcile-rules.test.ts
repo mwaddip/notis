@@ -152,24 +152,24 @@ function harness(entries: PendingEntry[], opts: Parameters<typeof fakeNode>[0]):
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 const SEND = (boxId: string): PendingEntry => ({
-  txId: 'ab'.repeat(32), kind: 'send', postId: REC, inputs: ['11'.repeat(32)],
+  txId: 'ab'.repeat(32), kind: 'send', postId: REC,
   expiresAtHeight: 5_000, submittedAtHeight: 1_000,
   send: { toHex: REC, toName: null, amount: AMOUNT, boxId },
 });
 
 const INVITE = (invitee: string): PendingEntry => ({
-  txId: 'cd'.repeat(32), kind: 'invite', postId: invitee, inputs: ['22'.repeat(32)],
+  txId: 'cd'.repeat(32), kind: 'invite', postId: invitee,
   expiresAtHeight: 5_000, submittedAtHeight: 1_000,
 });
 
 const GRANT: PendingEntry = {
-  txId: 'ef'.repeat(32), kind: 'grant', postId: ME, inputs: [],
+  txId: 'ef'.repeat(32), kind: 'grant', postId: ME,
   expiresAtHeight: 5_000, submittedAtHeight: 1_000,
 };
 
 const CREDIT_GRANT_BOX = 'bc'.repeat(32);
 const CREDIT_GRANT: PendingEntry = {
-  txId: '13'.repeat(32), kind: 'creditGrant', postId: CREDIT_GRANT_BOX, inputs: [],
+  txId: '13'.repeat(32), kind: 'creditGrant', postId: CREDIT_GRANT_BOX,
   expiresAtHeight: 5_000, submittedAtHeight: 1_000,
 };
 

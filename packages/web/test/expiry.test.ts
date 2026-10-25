@@ -60,8 +60,7 @@ describe('boundedExpiry', () => {
 describe('heldEntry', () => {
   it('answers a new entry with the bounded expiry and every other field as given, the input untouched', () => {
     const entry: UnboundedEntry = {
-      txId: 't1', kind: 'post', postId: 'p1', inputs: ['in1'],
-      change: { boxId: 'chg1', value: 222n, createdAtBlock: BUILT },
+      txId: 't1', kind: 'post', postId: 'p1',
       expiresAtHeight: 1e15, submittedAtHeight: BUILT,
     };
     const held = heldEntry(entry);
@@ -71,7 +70,7 @@ describe('heldEntry', () => {
   });
 
   it('an entry whose answer carried no expiry is held at the client\'s own', () => {
-    const held = heldEntry({ txId: 't2', kind: 'like', postId: 'p2', inputs: [], expiresAtHeight: undefined, submittedAtHeight: BUILT });
+    const held = heldEntry({ txId: 't2', kind: 'like', postId: 'p2', expiresAtHeight: undefined, submittedAtHeight: BUILT });
     expect(held.expiresAtHeight).toBe(OWN);
   });
 });

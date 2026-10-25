@@ -155,7 +155,7 @@ function harness(opts: { layout?: string; verifiers?: boolean; entries?: Array<{
   for (const [i, e] of (opts.entries ?? []).entries()) {
     ledger.add({
       txId: (i + 1).toString(16).padStart(2, '0').repeat(32), kind: e.kind, postId: e.postId,
-      inputs: [], expiresAtHeight: 5000, submittedAtHeight: 1060,
+      expiresAtHeight: 5000, submittedAtHeight: 1060,
     });
   }
   const figuresCalls: FigureCall[] = [];
@@ -497,10 +497,10 @@ describe('every landing of the reader\'s own transaction re-reads the listing it
     setNode(NODE);
     const h = harness({ entries: [] });
     h.ledger.add({
-      txId: 'e1'.repeat(32), kind: 'send', postId: X, inputs: [C1], expiresAtHeight: 5000, submittedAtHeight: 1060,
+      txId: 'e1'.repeat(32), kind: 'send', postId: X, expiresAtHeight: 5000, submittedAtHeight: 1060,
       send: { toHex: X, toName: null, amount: 100000000n, boxId: 'e2'.repeat(32) },
     });
-    h.ledger.add({ txId: 'e3'.repeat(32), kind: 'creditGrant', postId: C2, inputs: [], expiresAtHeight: 5000, submittedAtHeight: 1060 });
+    h.ledger.add({ txId: 'e3'.repeat(32), kind: 'creditGrant', postId: C2, expiresAtHeight: 5000, submittedAtHeight: 1060 });
     // The recipient lists the payment; the reader's own listing holds the change and the grant.
     const recipient = { boxId: 'e2'.repeat(32), value: '100000000' };
     const api = h.node.api as { credits: Api['credits'] };

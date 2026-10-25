@@ -30,48 +30,40 @@ const KEY = 'aa'.repeat(32); // the identity that owns the ledger
 const STORE = pendingKeyFor(KEY)!; // notis.pending.<KEY>
 
 const postEntry: PendingEntry = {
-  txId: 't1', kind: 'post', postId: 'p1', inputs: ['in1'],
-  change: { boxId: 'chg1', value: 222n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+  txId: 't1', kind: 'post', postId: 'p1', expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 const likeEntry: PendingEntry = {
-  txId: 't2', kind: 'like', postId: 'target1', inputs: ['in2'],
-  change: { boxId: 'chg2', value: 226n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+  txId: 't2', kind: 'like', postId: 'target1', expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 const noChangeEntry: PendingEntry = {
-  txId: 't3', kind: 'post', postId: 'p3', inputs: ['in5'], expiresAtHeight: 5720, submittedAtHeight: 5000,
+  txId: 't3', kind: 'post', postId: 'p3', expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 const grantEntry: PendingEntry = {
-  txId: 'g1', kind: 'grant', postId: KEY, inputs: [], expiresAtHeight: 5900, submittedAtHeight: 5800,
+  txId: 'g1', kind: 'grant', postId: KEY, expiresAtHeight: 5900, submittedAtHeight: 5800,
 };
 
 const TARGET = '11'.repeat(32); // vouch/unvouch subject
 const INVITEE = '22'.repeat(32); // invite subject
-const VOUCH_BOX = '33'.repeat(32); // the vouch box an unvouch spends
 const vouchEntry: PendingEntry = {
-  txId: 'v1', kind: 'vouch', postId: TARGET, inputs: ['in6'],
-  change: { boxId: 'chg6', value: 226n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+  txId: 'v1', kind: 'vouch', postId: TARGET, expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 const unvouchEntry: PendingEntry = {
-  txId: 'u1', kind: 'unvouch', postId: TARGET, inputs: [VOUCH_BOX], expiresAtHeight: 5720, submittedAtHeight: 5000,
+  txId: 'u1', kind: 'unvouch', postId: TARGET, expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 const inviteEntry: PendingEntry = {
-  txId: 'i1', kind: 'invite', postId: INVITEE, inputs: ['in7'],
-  change: { boxId: 'chg7', value: 127n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+  txId: 'i1', kind: 'invite', postId: INVITEE, expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 
 const WITHDRAW_TARGET = 'ee'.repeat(32); // the post a withdrawal empties
 const withdrawEntry: PendingEntry = {
-  txId: 'w1', kind: 'withdraw', postId: WITHDRAW_TARGET, inputs: ['in8'],
-  change: { boxId: 'chg8', value: 227n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+  txId: 'w1', kind: 'withdraw', postId: WITHDRAW_TARGET, expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 
 const claimEntry: PendingEntry = {
-  txId: 'c1', kind: 'claim', postId: 'Alice_01', inputs: ['in9'],
-  change: { boxId: 'chg9', value: 227n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+  txId: 'c1', kind: 'claim', postId: 'Alice_01', expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 const burnEntry: PendingEntry = {
-  txId: 'b1', kind: 'burn', postId: 'Alice_01', inputs: ['in10', 'name_box'],
-  change: { boxId: 'chg10', value: 217n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+  txId: 'b1', kind: 'burn', postId: 'Alice_01', expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 
 function postResult(over: Partial<PostJson>): PostResult {
@@ -84,40 +76,14 @@ function postResult(over: Partial<PostJson>): PostResult {
 
 beforeEach(() => localStorage.clear());
 
-describe('PendingLedger — the spendable view', () => {
-  it('drops a spent input and adds the predicted change', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add(postEntry);
-    const confirmed = [{ boxId: 'in1', value: 100n }, { boxId: 'in3', value: 50n }];
-    expect(ledger.spendable(confirmed)).toEqual([
-      { boxId: 'in3', value: 50n },
-      { boxId: 'chg1', value: 222n },
-    ]);
-  });
-
-  it('a change already chained into a later pending transaction drops out too', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add(postEntry); // change 'chg1'
-    ledger.add({
-      txId: 't9', kind: 'post', postId: 'p9', inputs: ['chg1'],
-      change: { boxId: 'chg9', value: 217n, createdAtBlock: 5001 }, expiresAtHeight: 5721, submittedAtHeight: 5001,
-    });
-    // 'chg1' is now an input, so it is not spendable; only 'chg9' remains from the changes.
-    expect(ledger.spendable([{ boxId: 'in1', value: 100n }])).toEqual([{ boxId: 'chg9', value: 217n }]);
-  });
-});
-
 describe('PendingLedger — persistence and removal', () => {
-  it('round-trips entries through localStorage with bigints intact', () => {
+  it('round-trips entries through localStorage', () => {
     const a = new PendingLedger(KEY);
     a.add(postEntry);
     a.add(likeEntry);
     a.add(noChangeEntry);
     const b = new PendingLedger(KEY);
     expect(b.all()).toEqual(a.all());
-    const restored = b.all().find((e) => e.txId === 't1');
-    expect(restored?.change?.value).toBe(222n);
-    expect(b.all().find((e) => e.txId === 't3')?.change).toBeUndefined();
   });
 
   it('remove() drops an entry and persists the removal — the 409 drop', () => {
@@ -138,8 +104,8 @@ describe('PendingLedger — persistence and removal', () => {
 
   it('a single malformed entry starts the whole ledger empty — all or nothing', () => {
     const good = {
-      txId: 't1', kind: 'post', postId: 'p1', inputs: ['in1'],
-      change: { boxId: 'chg1', value: '222', createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+      txId: 't1', kind: 'post', postId: 'p1',
+      expiresAtHeight: 5720, submittedAtHeight: 5000,
     };
     // A well-formed array loads.
     localStorage.setItem(STORE, JSON.stringify([good]));
@@ -147,13 +113,11 @@ describe('PendingLedger — persistence and removal', () => {
     // One good entry beside a bad-kind one → the whole ledger is dropped.
     localStorage.setItem(STORE, JSON.stringify([good, { ...good, txId: 't2', kind: 'nope' }]));
     expect(new PendingLedger(KEY).size).toBe(0);
-    // Each shape fault drops the ledger: non-string inputs, a change whose value
-    // is not a decimal string, a non-string id, and a submittedAtHeight that is
-    // not a number at all — restore holds any number through the bound.
+    // Each shape fault drops the ledger: a non-string id, and a
+    // submittedAtHeight that is not a number at all — restore holds any
+    // number through the bound.
     const { submittedAtHeight: _built, ...unbuilt } = good;
     for (const bad of [
-      { ...good, inputs: [1, 2] },
-      { ...good, change: { boxId: 'c', value: 5, createdAtBlock: 1 } },
       { ...good, txId: 42 },
       { ...good, submittedAtHeight: 'soon' },
       { ...good, submittedAtHeight: null },
@@ -166,7 +130,7 @@ describe('PendingLedger — persistence and removal', () => {
 
   it('restore takes any number as submittedAtHeight — a fraction, a negative and an out-of-range value all restore, bounded', () => {
     const stored = (txId: string, submittedAtHeight: number): Record<string, unknown> => ({
-      txId, kind: 'post', postId: 'p-' + txId, inputs: ['in-' + txId],
+      txId, kind: 'post', postId: 'p-' + txId,
       submittedAtHeight, expiresAtHeight: 5720,
     });
     localStorage.setItem(STORE, JSON.stringify([
@@ -342,15 +306,6 @@ describe('the membership reconciles', () => {
     expect(targets.size).toBe(1);
   });
 
-  it('an unvouch entry does not touch the spendable view — its input is a vouch box', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add(unvouchEntry);
-    const confirmed = [{ boxId: 'k1', value: 100n }, { boxId: 'k2', value: 50n }];
-    // The vouch box the unvouch spends is not among the confirmed karma boxes, and
-    // the entry predicts no change, so the view is unchanged.
-    expect(ledger.spendable(confirmed)).toEqual(confirmed);
-  });
-
   it('round-trips the three kinds through localStorage', () => {
     const a = new PendingLedger(KEY);
     a.add(vouchEntry);
@@ -413,18 +368,10 @@ describe('the faucet grant entry', () => {
     expect(reconcileGrant(grantEntry, karmaResult({ boxCount: 1 }), 5901)).toBe('landed');
   });
 
-  it('round-trips through localStorage — inputs [], no change, postId the key asked', () => {
+  it('round-trips through localStorage — postId the key asked', () => {
     const a = new PendingLedger(KEY);
     a.add(grantEntry);
     expect(new PendingLedger(KEY).all()).toEqual([grantEntry]);
-  });
-
-  it('is inert in the spendable view — a grant spends and predicts nothing', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add(grantEntry);
-    const confirmed = [{ boxId: 'b1', value: 100n }, { boxId: 'b2', value: 50n }];
-    // The same view an empty ledger gives — inputs [] and no change touch nothing.
-    expect(ledger.spendable(confirmed)).toEqual(confirmed);
   });
 
   it('is neither a dedupe target nor a like-overlay target', () => {
@@ -483,8 +430,6 @@ const PAYMENT_BOX = 'a1'.repeat(32);
 const CREDIT_GRANT_BOX = 'a2'.repeat(32);
 const sendEntry: PendingEntry = {
   txId: 's1', kind: 'send', postId: RECIPIENT,
-  inputs: ['credit_in1'],
-  change: { boxId: 'credit_chg', value: 500n, createdAtBlock: 5000 },
   send: { toHex: RECIPIENT, toName: null, amount: 100n, boxId: PAYMENT_BOX },
   expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
@@ -494,49 +439,9 @@ const sendWithNameEntry: PendingEntry = {
   send: { toHex: RECIPIENT, toName: 'bob', amount: 250n, boxId: 'a3'.repeat(32) },
 };
 const creditGrantEntry: PendingEntry = {
-  txId: 'cg1', kind: 'creditGrant', postId: CREDIT_GRANT_BOX, inputs: [],
+  txId: 'cg1', kind: 'creditGrant', postId: CREDIT_GRANT_BOX,
   expiresAtHeight: 5900, submittedAtHeight: 5800,
 };
-
-describe('the two views over one ledger', () => {
-  it('a send\'s inputs and change count in the credits view — the karma view leaves them alone', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add(sendEntry);
-    const credits = [{ boxId: 'credit_in1', value: 600n }, { boxId: 'credit_other', value: 30n }];
-    // Credits view: input dropped, change added.
-    expect(ledger.spendable(credits, 'credits')).toEqual([
-      { boxId: 'credit_other', value: 30n },
-      { boxId: 'credit_chg', value: 500n },
-    ]);
-    // Karma view: the credit input passes through untouched, and no credit change appears.
-    const karma = [{ boxId: 'karma_in', value: 100n }];
-    expect(ledger.spendable(karma, 'karma')).toEqual(karma);
-  });
-
-  it('a post\'s inputs and change count in the karma view — the credits view leaves them alone', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add(postEntry);
-    const karma = [{ boxId: 'in1', value: 300n }];
-    expect(ledger.spendable(karma, 'karma')).toEqual([{ boxId: 'chg1', value: 222n }]);
-    const credits = [{ boxId: 'credit_x', value: 500n }];
-    expect(ledger.spendable(credits, 'credits')).toEqual(credits);
-  });
-
-  it('a creditGrant is inert on both sides — it spends nothing and predicts no change', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add(creditGrantEntry);
-    const credits = [{ boxId: 'c1', value: 100n }];
-    const karma = [{ boxId: 'k1', value: 100n }];
-    expect(ledger.spendable(credits, 'credits')).toEqual(credits);
-    expect(ledger.spendable(karma, 'karma')).toEqual(karma);
-  });
-
-  it('the default side is karma — every pre-send caller reads the karma view', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add(postEntry);
-    expect(ledger.spendable([{ boxId: 'in1', value: 300n }])).toEqual([{ boxId: 'chg1', value: 222n }]);
-  });
-});
 
 describe('the credits reconciles', () => {
   it('reconcileSend lands when the recipient\'s boxes list the payment box id', () => {
@@ -577,7 +482,7 @@ describe('the send payload — round trip and malformed refusal', () => {
     expect(restored?.send?.toName).toBeNull();
   });
 
-  it('a creditGrant entry round-trips through localStorage — inputs [] and no send', () => {
+  it('a creditGrant entry round-trips through localStorage — no send', () => {
     const a = new PendingLedger(KEY);
     a.add(creditGrantEntry);
     expect(new PendingLedger(KEY).all()).toEqual([creditGrantEntry]);
@@ -585,7 +490,7 @@ describe('the send payload — round trip and malformed refusal', () => {
 
   it('a malformed send field drops the whole ledger — all or nothing', () => {
     const good = {
-      txId: 's1', kind: 'send', postId: RECIPIENT, inputs: ['x'],
+      txId: 's1', kind: 'send', postId: RECIPIENT,
       send: { toHex: RECIPIENT, toName: null, amount: '100', boxId: PAYMENT_BOX },
       expiresAtHeight: 5720, submittedAtHeight: 5000,
     };
@@ -604,58 +509,3 @@ describe('the send payload — round trip and malformed refusal', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The view over own and income — WEB_INTERFACE → The wallet. The confirmed
-// side carries the mark on the income box; the predicted change of a
-// pending karma spend is always unmarked, by rule. A pending entry whose
-// inputs cover both the own and the income box leaves one unmarked box in
-// the view — its predicted change.
-// ---------------------------------------------------------------------------
-
-describe('PendingLedger — own and income in the spendable view', () => {
-  it('the view preserves the mark on each confirmed box', () => {
-    const ledger = new PendingLedger(KEY);
-    const confirmed = [
-      { boxId: 'own_box', value: 50n },
-      // income on the input survives into the view, since the view does
-      // not rewrite confirmed entries (WEB_INTERFACE → The wallet).
-      { boxId: 'income_box', value: 100n, income: true },
-    ];
-    expect(ledger.spendable(confirmed as never)).toEqual(confirmed);
-  });
-
-  it('a prior spend that took both own and income leaves one unmarked predicted change', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add({
-      txId: 'tp', kind: 'post', postId: 'p', inputs: ['own_box', 'income_box'],
-      change: { boxId: 'chg', value: 148n, createdAtBlock: 5000 },
-      expiresAtHeight: 5720, submittedAtHeight: 5000,
-    });
-    const confirmed = [
-      { boxId: 'own_box', value: 50n },
-      { boxId: 'income_box', value: 100n, income: true },
-    ];
-    const view = ledger.spendable(confirmed as never);
-    expect(view.map((b) => b.boxId)).toEqual(['chg']);
-    expect((view[0] as { income?: unknown }).income).toBeUndefined();
-  });
-
-  it('a prior spend that took only the own box leaves the income box and the predicted change in the view', () => {
-    const ledger = new PendingLedger(KEY);
-    ledger.add({
-      txId: 'tp', kind: 'like', postId: 't', inputs: ['own_box'],
-      change: { boxId: 'chg', value: 49n, createdAtBlock: 5000 },
-      expiresAtHeight: 5720, submittedAtHeight: 5000,
-    });
-    const confirmed = [
-      { boxId: 'own_box', value: 50n },
-      { boxId: 'income_box', value: 100n, income: true },
-    ];
-    const view = ledger.spendable(confirmed as never);
-    // income still present, carrying its mark; chg beside it, unmarked.
-    expect(view).toEqual([
-      { boxId: 'income_box', value: 100n, income: true },
-      { boxId: 'chg', value: 49n },
-    ]);
-  });
-});

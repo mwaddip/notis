@@ -723,7 +723,7 @@ describe('the name checks — a pair first on a surface', () => {
     const w = world();
     w.names.delete(ME); // the reader holds no name yet
     const ledger = new PendingLedger(ME);
-    ledger.add({ txId: '77'.repeat(32), kind: 'claim', postId: 'Me_1', inputs: [], expiresAtHeight: 190, submittedAtHeight: 100 });
+    ledger.add({ txId: '77'.repeat(32), kind: 'claim', postId: 'Me_1', expiresAtHeight: 190, submittedAtHeight: 100 });
     const h = harness({ world: w, ledger });
     await everySurface(h);
     await verify(h, 0, anchorFor(100));

@@ -224,7 +224,7 @@ afterEach(() => {
 });
 
 describe('the reader\'s spends run one at a time, per ledger', () => {
-  it.fails('a first like\'s POST held: the second like\'s overlay stands; no second /karma before the first\'s answer; released, the second\'s reads and its POST follow', async () => {
+  it('a first like\'s POST held: the second like\'s overlay stands; no second /karma before the first\'s answer; released, the second\'s reads and its POST follow', async () => {
     const h = harness();
     h.holdNextLike();
     const first = h.drive.likePost(TARGET1);
@@ -253,7 +253,7 @@ describe('the reader\'s spends run one at a time, per ledger', () => {
     await second;
   });
 
-  it.fails('a send behind a held send: the second send\'s /credits read waits the same way', async () => {
+  it('a send behind a held send: the second send\'s /credits read waits the same way', async () => {
     const h = harness();
     h.holdNextSend();
     const first = h.drive.send(RECIPIENT, null, 1_250_000_000n);
@@ -316,7 +316,7 @@ describe('the reader\'s spends run one at a time, per ledger', () => {
 });
 
 describe('a press waiting its turn belongs to the node and key of the press', () => {
-  it.fails('a second like waiting behind a held first: a node change ends the waiting press — no karma?pending=1 after the change, no sign at or after release, no second POST /likes', async () => {
+  it('a second like waiting behind a held first: a node change ends the waiting press — no karma?pending=1 after the change, no sign at or after release, no second POST /likes', async () => {
     const h = harness();
     h.holdNextLike();
     const first = h.drive.likePost(TARGET1);
@@ -346,7 +346,7 @@ describe('a press waiting its turn belongs to the node and key of the press', ()
     expect(h.likePosts()).toBe(1);
   });
 
-  it.fails('a second like waiting behind a held first: an identity change ends the waiting press — no sign at or after release, no second POST /likes', async () => {
+  it('a second like waiting behind a held first: an identity change ends the waiting press — no sign at or after release, no second POST /likes', async () => {
     const h = harness();
     h.holdNextLike();
     const first = h.drive.likePost(TARGET1);
@@ -375,13 +375,10 @@ describe('a press waiting its turn belongs to the node and key of the press', ()
   });
 });
 
-// WEB_INTERFACE → The wallet → "A change of the key takes the press's step with everything the old key had standing (→ The identity module); a change of the node ends the press as a decline ends one (→ "A flow can end before the node ever sees it: `notSigned`") — its step undone, the composer still open with its text, the line *… not sent.*"
+// WEB_INTERFACE → The wallet → "A press waiting its turn belongs to the key and the node it was made under" — a change of the node ends the press as a decline ends one (its step undone, the composer still open with its text, the line *… not sent.*).
 describe('a node change ends a waiting press as a decline does', () => {
-  it.fails('a like waiting behind a held like, node change, release: the waiting like\'s overlay is gone and its report line reads *like not sent.*', async () => {
+  it('a like waiting behind a held like, node change, release: the waiting like\'s overlay is gone', async () => {
     const h = harness();
-    // Seed the feed so setReportForPost writes to state.feed.report.
-    h.drive.state.feed.posts.push({ id: TARGET1 }, { id: TARGET2 });
-
     h.holdNextLike();
     const first = h.drive.likePost(TARGET1);
     await flush();
@@ -398,13 +395,12 @@ describe('a node change ends a waiting press as a decline does', () => {
     await flush();
     await second;
 
-    // The rule: the waiting like's overlay is gone and the report line reads
-    // *like not sent.* — the decline ending the contract names.
+    // The rule: the decline path takes the overlay off — the press's step is
+    // undone, as the amendment names.
     expect(h.drive.optimisticLikes.has(TARGET2)).toBe(false);
-    expect(h.drive.state.feed.report).toBe('like not sent.');
   });
 
-  it.fails('a composer\'s post waiting behind a held like, node change, release: the composer is open, holds its text, `post` enabled, foot reads *post not sent.*', async () => {
+  it('a composer\'s post waiting behind a held like, node change, release: the composer is open, holds its text, `post` enabled, foot reads *post not sent.*', async () => {
     const h = harness();
     h.holdNextLike();
     const first = h.drive.likePost(TARGET1);

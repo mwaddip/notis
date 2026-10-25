@@ -926,7 +926,6 @@ describe('a landing after a node change writes nothing', () => {
       txId: hid('wd' + 'a'),
       kind: 'withdraw',
       postId: la.id,
-      inputs: [],
       expiresAtHeight: 999,
       submittedAtHeight: 0,
     });
@@ -1044,7 +1043,6 @@ describe('the reader\'s own pending post is a card and never a slot', () => {
       txId: own.txId!,
       kind: 'post',
       postId: own.id,
-      inputs: [],
       submittedAtHeight: 0,
       expiresAtHeight: 999,
     });
@@ -1078,7 +1076,6 @@ describe('after a reload the reader\'s own pending post stands in feed.pending a
       txId: own.txId!,
       kind: 'post',
       postId: own.id,
-      inputs: [],
       submittedAtHeight: 0,
       expiresAtHeight: 999,
     });
@@ -1116,7 +1113,6 @@ describe('after a reload the reader\'s own pending post stands in feed.pending a
       txId: own.txId!,
       kind: 'post',
       postId: own.id,
-      inputs: [],
       submittedAtHeight: 0,
       expiresAtHeight: 999,
     });

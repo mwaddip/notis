@@ -183,7 +183,7 @@ function harness(opts: { layout?: string; verifiers?: boolean; entries?: Array<{
   for (const [i, e] of (opts.entries ?? []).entries()) {
     ledger.add({
       txId: (i + 1).toString(16).padStart(2, '0').repeat(32), kind: e.kind, postId: e.postId,
-      inputs: [], expiresAtHeight: 5000, submittedAtHeight: 1060,
+      expiresAtHeight: 5000, submittedAtHeight: 1060,
     });
   }
   const figuresCalls: FigureCall[] = [];
