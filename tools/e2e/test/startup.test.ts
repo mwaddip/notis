@@ -13,7 +13,7 @@ import {
 import { assertDistFresh, NODE_LOADS } from '../src/dist-freshness.js';
 import { p2pPort } from '../src/ports.js';
 
-const FILE_INDEX = 23;
+const FILE_INDEX = 24;
 const EXIT_DEADLINE_MS = 30_000;
 
 interface SpawnedStatus {
