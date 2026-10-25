@@ -129,9 +129,10 @@ describe('startup', () => {
     expect(exitCode).not.toBe(0);
     expect(statusAnswered).toBe(false);
     const output = node.logs.join('\n');
-    // libp2p's `UnsupportedListenAddressesError` wraps Node's `EADDRINUSE` for
-    // the held TCP port; neither token appears in an ordinary startup line.
-    expect(output).toMatch(/UnsupportedListenAddressesError|EADDRINUSE/);
+    // The node writes the thrown error's message (`net.start() threw: …`),
+    // which carries Node's `EADDRINUSE` for the held TCP port; the token
+    // appears in no ordinary startup line.
+    expect(output).toMatch(/EADDRINUSE/);
   });
 
   it('MAX_PEERS=0 stops the node naming the setting', async () => {
