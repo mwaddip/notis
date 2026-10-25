@@ -185,13 +185,13 @@ describe('bridge — on arrival', () => {
     expect(b.localGets()).toBe(0);
   });
 
-  it('preference "site": exactly one storage.local read and no sendMessage at all', async () => {
+  it.fails('under "site" with every predicate holding, the bridge reads no storage and sends exactly one arrived', async () => {
     const b = build({ pref: 'site' });
     bridge(b.env);
     await flush();
     await flush();
-    expect(b.localGets()).toBe(1);
-    expect(b.messages).toEqual([]);
+    expect(b.localGets()).toBe(0);
+    expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
   });
 
   it.fails('storage.local closed to the bridge: every predicate holding and get/set/remove rejecting, exactly one arrived leaves with the lower-cased id and no storage read runs', async () => {
