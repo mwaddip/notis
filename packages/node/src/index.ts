@@ -216,18 +216,19 @@ initBackfill({
 
 // 4. Start net
 //
-// The try covers `net.start()` and nothing else, because "net startup failed" is
-// the only verdict the catch below has. Everything that used to sit inside it —
-// the discovery decision and the two handler registrations — either states
-// something about this node's configuration rather than about net, or is a bug
-// of ours if it throws. Under a try wide enough to hold them, anything failing
-// after the discovery mark reached the catch and overwrote `searching` with
-// `unavailable`, which opens the mining gate unconditionally.
+// NODE_INTERFACE → Net Integration → "A net.start() that throws stops the
+// node". The catch writes a sentence naming `net.start()`, closes the DB and
+// exits non-zero — the file's fail-stop shape. Nothing between the catch and
+// the process's end listens or starts the block creator.
 try {
   await net.start();
   console.log(`Net node started, peer ID: ${net.peerId()}`);
 } catch (err) {
-  console.warn(`Net startup failed (continuing without networking): ${String(err)}`);
+  console.error(
+    `net.start() threw: ${err instanceof Error ? err.message : String(err)}`,
+  );
+  closeDb();
+  process.exit(1);
 }
 
 // Discovery opens here on both paths, and this is the only place it can.

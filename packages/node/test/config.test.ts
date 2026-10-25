@@ -963,7 +963,7 @@ describe('config', () => {
       { env: 'ADMIN_PORT',                  floor: 0, port: true, field: 'adminPort',                  dflt: 3001 },
       { env: 'BLOCK_BODY_BUDGET_BYTES',     floor: 1,             field: 'blockBodyBudgetBytes',       dflt: MAX_BLOCK_BODY_BYTES },
       { env: 'MAX_MEMPOOL_ENTRIES',         floor: 0,             field: 'maxMempoolEntries',          dflt: 10_000 },
-      { env: 'MAX_PEERS',                   floor: 0,             field: 'maxPeers',                   dflt: 50 },
+      { env: 'MAX_PEERS',                   floor: 1,             field: 'maxPeers',                   dflt: 50 },
       { env: 'MIN_PEERS',                   floor: 0,             field: 'minPeers',                   dflt: 3 },
       { env: 'PEER_DB_CAP',                 floor: 0,             field: 'peerDbCap',                  dflt: 1000 },
       { env: 'OUTBOUND_REDIAL_COOLDOWN_MS', floor: 0,             field: 'outboundRedialCooldownMs',   dflt: 60_000 },
@@ -1085,10 +1085,11 @@ describe('config', () => {
 
     // 17g — MAX_PEERS joins the four settings whose zero names nothing a node
     // runs on (NODE_INTERFACE → Configuration → "Every whole-number setting is
-    // read by one reader"). Standalone, so the assertion rides a case the
-    // table's loops do not generate for a floor-0 row.
+    // read by one reader, and a set value it refuses stops the node at load").
+    // Standalone, so the assertion rides a case the table's loops do not
+    // generate for a floor-0 row.
     describe('17g. MAX_PEERS floors at 1', () => {
-      it.fails('MAX_PEERS=0 is refused naming MAX_PEERS', async () => {
+      it('MAX_PEERS=0 is refused naming MAX_PEERS', async () => {
         process.env['MAX_PEERS'] = '0';
         await expect(import('../src/config.js')).rejects.toThrow(/MAX_PEERS/);
       });
