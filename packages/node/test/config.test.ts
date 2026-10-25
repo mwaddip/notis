@@ -1082,5 +1082,16 @@ describe('config', () => {
         });
       }
     });
+
+    // 17g — MAX_PEERS joins the four settings whose zero names nothing a node
+    // runs on (NODE_INTERFACE → Configuration → "Every whole-number setting is
+    // read by one reader"). Standalone, so the assertion rides a case the
+    // table's loops do not generate for a floor-0 row.
+    describe('17g. MAX_PEERS floors at 1', () => {
+      it.fails('MAX_PEERS=0 is refused naming MAX_PEERS', async () => {
+        process.env['MAX_PEERS'] = '0';
+        await expect(import('../src/config.js')).rejects.toThrow(/MAX_PEERS/);
+      });
+    });
   });
 });
