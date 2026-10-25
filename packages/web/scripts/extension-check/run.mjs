@@ -173,8 +173,10 @@ const C_ADMIN_PORT = 19791;
 const C_P2P_PORT = 19792;
 // C's second life listens on a fresh port, cut off from A: A's peer store
 // carries C's first-life address, so a new port makes that stale and A cannot
-// reach C — combined with MAX_PEERS=0 and BOOTSTRAP_PEERS="" on C, the three
-// assertions of step 19b then read peers_connected=0.
+// reach C. With BOOTSTRAP_PEERS="" C dials nobody: the floor phase of the
+// outbound manager iterates an empty seed list, and the fill phase, the only
+// one that reads the peer store, needs MIN_PEERS outbound connections that C
+// never reaches. The three assertions of step 19b read peers_connected=0.
 const C_P2P_PORT_ISOLATED = 19793;
 const C_ORIGIN = `http://127.0.0.1:${C_HTTP_PORT}`;
 // Node D — the isolated helper for 17a (too-short) and 19c (no shared block).
@@ -1912,11 +1914,11 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
       } else {
         console.log(`[vt] 19b phase 1: C synced at ${hCsync} ≥ ${cSyncMin} (A=${(await currentHeight(NODE))})`);
         // Phase 2 — stop C, restart on the same store, cut off from A. New
-        // listen port so A's cached address for C is stale; MAX_PEERS=0 and
-        // empty BOOTSTRAP_PEERS block C's outbound; the three assertions read
-        // peers_connected=0 to prove it.
+        // listen port so A's cached address for C is stale; empty
+        // BOOTSTRAP_PEERS leaves the floor phase no seed to dial and the fill
+        // phase unreached; the three assertions read peers_connected=0.
         await stopChild('c');
-        console.log(`[vt] 19b phase 2: restarting C isolated (BOOTSTRAP_PEERS='', MAX_PEERS=0, p2p=${C_P2P_PORT_ISOLATED})`);
+        console.log(`[vt] 19b phase 2: restarting C isolated (fresh p2p port, BOOTSTRAP_PEERS='', p2p=${C_P2P_PORT_ISOLATED})`);
         spawnDaemon('c', NODE_DIST, {
           NETWORK_TYPE: 'devnet',
           NODE_ROLE: 'miner',
@@ -1926,7 +1928,6 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
           BOOTSTRAP_PEERS: '',
           DB_PATH: cDbPath,
           MINING_SECRET: cSecret,
-          MAX_PEERS: '0',
         });
         const cBackUp = await waitForHttpUp(C_ORIGIN, 30000);
         if (!cBackUp) {
