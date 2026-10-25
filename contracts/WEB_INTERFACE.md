@@ -432,16 +432,19 @@ reading node's proof — block 1, the header `verifyProof` holds to the profile'
 reading node's proof verified, under `verified` and under `thin` alike: naming a chain takes a proof that verifies,
 not a second witness. It names the post cache (→ "The post cache") and nothing else reads it.
 
-**The verified figures.** The extension proves the two figures the reading node serves for the loaded key — the
-wallet's balance and the profile's rep — against the state the verified chain committed, **the key's holdings read
-whole, by range**, and says beneath each what does not hold. **The anchor**: a tip run answers `{ verdict, anchor, chain }`, `anchor` being the **reading
+**The verified figures.** The extension proves what the reading node lists for the loaded key — **the plain
+listings**, `GET /karma/:key` and `GET /credits/:key`, the confirmed state the profile's rep and the wallet's balance
+stand on — against the state the verified chain committed, **the key's holdings read whole, by range**, and says
+beneath each figure what does not hold, and what the figure is where it is not the plain listing's: the figures are
+the views', the node's word (→ The wallet → "The spendable views are the node's pending view"). **The anchor**: a tip run answers `{ verdict, anchor, chain }`, `anchor` being the **reading
 node's own** verified `tip` and `suffixHead` headers from its proof, non-null when and only when the verdict is
 `verified` — under it they are PoW-verified, on the best chain (`behind` carried them), and heights of the reading
 node's own chain, where the winner's tip may be a block it has not seen — heights it proves at while they are in its
 proof window (`NODE_INTERFACE → "A height of the proof window with no kept root is served from the store"`). The anchor is held beside the verdict, written by the
 run that writes it, cleared with it, dropped with it on a node change; nothing is stored. **The run** is `proveFigures`
 of `@dagsocial/nipopow-client` — the code the command-line light client runs — which reads **what the key holds, by
-range**, and judges **the listing the rows rendered** against it, in this order: at `suffixHead.height`, against its
+range**, and judges **the plain listing** — read whole beside every read of the view its row shows — against it, in
+this order: at `suffixHead.height`, against its
 `stateRoot`, the key's identity record under `identityKey` (`TYPES_INTERFACE → The tree keys`) and the range of each
 ledger whose listing the run is handed — `karma`, `credit` — page by page until the range ends
 (`NODE_INTERFACE → AVL+ State Root`, the range route; `CONSENSUS_INTERFACE → The holdings page`); the same ranges at
@@ -483,8 +486,8 @@ verified tip. **Each ledger's read carries a status of its own beside its boxes'
 **A box the key holds at `suffixHead` and not at `tip` was spent since, and is in
 no figure.** The record is `proven` or `null` at `suffixHead` — the same `null` the node values — or
 `unproven` / `no-proof` by the same rules. **The valuation** is `effectiveKarma` over the proven karma face total and
-the proven record **at the karma listing's own `height`** — the height the node computed the row's `effective` at — so
-an unchanged state reproduces the number shown exactly. **That height is the node's word, and is taken only from
+the proven record **at the plain karma listing's own `height`** — the height the node computed that listing's
+`effective` at — so an unchanged state reproduces that `effective` exactly. **That height is the node's word, and is taken only from
 `tip.height` to `heightAfter`** — a listing read after the anchor is no older than it and no newer than the height the
 node answers next, the lower bound alone where `heightAfter` is unread: a listing valued at any other height has no
 valuation, as one whose `height` is no block height has none, since a stale identity valued before its decay would
@@ -497,15 +500,16 @@ the live one. **It proves a listing read after its anchor, and never one read be
 `absent` exact: the anchor predates the listing, so the reading node's height at the listing was at least the tip's,
 where a listing read before the anchor may name a box spent since, which the chain rightly no longer holds. **It
 runs**, in the extension build alone and only with an identity and an anchor: right after every tip run that ends
-`verified`, **reading the reader's listings first** — `/karma` always, `/credits` while the wallet window is open — the
-rows taking the fresh figures in place (`HOUSE_STYLE → Motion`); and after every read of a listing while an anchor
-stands — a window opening, its `↻`, a landing, an identity or a node change — whose listing is read after the anchor
-already. **A listing not read after the current anchor is handed to the run as not read** — never as an empty
+`verified`, **reading the reader's plain listings first, beside their views** — `/karma` always, `/credits` while the
+wallet window is open — the rows taking the fresh figures in place (`HOUSE_STYLE → Motion`); and after every read of a
+view while an anchor stands — a window opening, its `↻`, a 2xx of the reader's own spend, a landing, an identity or a
+node change — each of which reads the plain listing beside the view, after the anchor already. **A listing not read after the current anchor is handed to the run as not read** — never as an empty
 one, under which every box the key holds would read `unlisted` — and its row, where one is on screen, reads muted
-*not checked yet*: the run reads nothing of that ledger. The karma listing is read whole, following `next` (→ "Paging is keyset, never offset"),
-the row's number the first page's `effective`. One run in flight; a listing or an anchor that moves during a run marks
-one more run, started when it ends; a result for a listing no longer rendered, or under an older generation, is
-dropped; a run in flight keeps the line it had. **A run is total**: an answer of any shape from the node — a body that
+*not checked yet*: the run reads nothing of that ledger. Each plain listing is read whole, following `next` (→ "Paging
+is keyset, never offset"); the plain karma listing's first page's `effective` is what the valuation reproduces, and
+the row's number is the rep view's (→ The profile window). One run in flight; a listing or an anchor that moves during a
+run marks one more run, started when it ends; a result for a listing no longer standing beside its row's view, or under
+an older generation, is dropped; a run in flight keeps the line it had. **A run is total**: an answer of any shape from the node — a body that
 is not the route's, a `proof` that is not a string, a key that is not 64 hex, bytes the lookup cannot parse — ends in a
 status (`unproven`, or `heightAfter` unread), never in a thrown run, because a run that does not end writes no line, and
 a figure with no line reads as proven. **A run ends**: a request a run would make later than 60 seconds after it
@@ -515,8 +519,8 @@ muted line beneath the figure — the element the balance row's locked line is �
 a figure every box of which proved reads as it reads without a verifier.** The lines, the first that holds: **none** in
 a build with no verifier; *not checked — the
 chain is not verified* while the verdict is `thin` or `refused` and no result stands — a verdict or a run not yet
-returned shows nothing; muted *not checked yet* where the run did not read the ledger, or proved a listing the row no
-longer shows — never a figure of
+returned shows nothing; muted *not checked yet* where the run did not read the ledger, or proved a listing no longer
+standing beside the row's view — never a figure of
 *0 proven* for it; **clay, and the figure clay**, when a box, the record or the ledger's read is `unproven` or a box
 is `absent` or
 `unlisted` — *the node lists 12.5 $NOTIS the chain does not hold* when any is `absent`, else *the chain holds 12.5
@@ -524,20 +528,29 @@ $NOTIS the node does not list* when any is `unlisted`, else *this node's proof o
 *… lists 5 rep …*, *… holds 5 rep …* and *… proof of your rep …*; muted *the node served no proof for 12.5 $NOTIS* (*… for
 your rep*) when a box, the record or the ledger's read is `no-proof` — *… for the balance* where no listed box gives
 an amount; muted *not checked yet* when a box is `undecided` or the ledger's read is `stale`; **nothing** when every
-listed box is `proven` and the valuation equals the
-number shown, and nothing over an empty listing whose ranges the run read with no box `unlisted` or `undecided`; else muted *87.5 $NOTIS proven at block 9005 · 12.5 $NOTIS landed since* (`young`) · *… · 12.5 $NOTIS not
+listed box is `proven`, the valuation equals the plain listing's `effective` and the row's figure is the plain
+listing's own, and nothing over an empty listing whose ranges the run read with no box `unlisted` or `undecided`, its view empty
+too; else muted *87.5 $NOTIS proven at block 9005 · 12.5 $NOTIS landed since* (`young`) · *… · 12.5 $NOTIS not
 checked yet* (`unchecked`), both when both, *proven at block* naming `suffixHead.height`, for rep *87 rep proven at
-block 9005 · 5 rep landed since*. **An empty listing takes these lines as any listing does** — that the key holds nothing is the node's claim, and the
+block 9005 · 5 rep landed since*; and last, where the row's figure is not the plain listing's, *… · 75 $NOTIS to spend
+in the next block, by this node's word*, for rep *… · 82 rep to spend in the next block, by this node's word* — the
+view's figure, which no proof covers, named beside what was proven. The plain listing's `effective` is valued at the
+tip and the view's at `tip + 1` (NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as admission
+spends from it"), so the clause can stand with nothing pooled — in the block a stale key's decay period turns — and
+it never calls the difference a pending spend. **An empty listing takes these lines as any listing does** — that the key holds nothing is the node's claim, and the
 range decides it: the line stands beneath the faucet step or the words standing there, with no figure to turn clay,
 and only the ledger's own facts speak under it — its read, a box `unlisted` or `undecided`, and for rep the record and
 the valuation.
-**The line never replaces the figure** — the balance row's spendable sum and the rep
-row's `effective` are the reads the run proved, in every state; the line describes them. The two weights are the corner's
+**The line never replaces the figure** — the balance row's spendable sum and the rep row's `effective` are the
+views', in every state; the run proves the plain listings beside them, and the line describes the two. The two weights are the corner's
 (`HOUSE_STYLE → Gold and clay are not interchangeable`): a heads-up is the line alone, the full rule the line in clay
 and the figure in clay (→ The wallet window, → The profile window). **What it means** is the key's holdings of each ledger read, whole, at the two heights:
 every proven box is real and the key's, and a node that withholds a box from its listing is never without a line: in
 clay on a run it answers the anchor's own height to and proves the tip's range under, and muted on every other —
 *not checked yet*, or *the node served no proof for …* where it serves none.
+
+> ⚠ **AHEAD OF CODE (2026-10-25).** The run over the plain listings read beside the views, and the line's *to spend in the next
+> block* clause, lead `src/app.ts` and `src/model/figures-line.ts`, which prove the listing the row shows.
 
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
@@ -953,13 +966,18 @@ one.
   the count `N liked` on every card with likes, the reader's own included; the word `like` after it on
   another's landed or confirmed post the reader has not liked, with the unlock row under the meta when the
   identity is locked; the press removes the word and moves the count by one at once, muted while the like is
-  pending and green once a block takes it (→ The wallet); no control on a pending card; the copy glyph at the
+  pending and green once a block takes it (→ The wallet) — at the floor it answers the floor's line and moves
+  nothing, the word staying (→ The wallet → "The floor is the client's to know"); no control on a pending card; the copy glyph at the
   row's right edge (→ Links); and with no identity loaded neither `like` nor any other write control, the feed
   being the read surface exactly. A like from the feed re-renders that
   card at the press and at its landing — the count moving by the reader's own act and nothing else moving —
   and a rejection or an expiry reports in the feed's report line, where `↻` reports. Reply and withdraw are
   not on a feed card: the composer and the confirm row live inside a pane. The author-posts window's cards
   follow the feed card (→ The author window).
+
+  > ⚠ **AHEAD OF CODE (2026-10-25).** A press at the floor answering the floor's line leads `src/app.ts`'s `pressLike` and
+  > `likePost`, which move the count and send.
+
 - **A row the reader opened under a card outlasts a redraw of its list.** Three rows mount under a card's meta at the
   reader's press: the unlock form a locked `like` or `withdraw` asks for (→ The identity module) and the withdraw
   question (→ The withdraw control), one of the two at a time directly beneath the meta, and beside either — beneath
@@ -1452,24 +1470,36 @@ carrying the parent author's share. The post rides inside that transaction — `
 the `computeTxId` preimage — so the signature covers the post and a relay can no more rewrite it than
 it can re-point a like.
 
-**Reads before a write, in this order: `GET /karma/:key` following `next`, then `GET /status`.**
+**Reads before a write, in this order: `GET /karma/:key?pending=1` following `next`, then `GET /status`.**
 Every output declares `createdAtBlock`, which may not be below any input's
 (`TYPES_INTERFACE → Monotonic creation height`), and a `/karma` row carries no `createdAtBlock` — so
 the client declares the `/status` height, and reading it *after* the boxes is what guarantees no
-selected box is newer than the height declared. **A send reads the other ledger by the same rule:
-`GET /credits/:key` following `next`, then `GET /status`** — and a credit row whose `lockedUntilBlock` is
-above the `/status` height is left out of the view (`TYPES_INTERFACE → CreditBox`): the node judges a spend
-at tip + 1, so the client is conservative by one block, and the node's refusal stays the truth.
+selected box is newer than the height declared: a pooled output declares no height above the tip it was admitted
+at, since the node refuses one that claims a height its chain has not reached. **A send reads the other ledger by
+the same rule: `GET /credits/:key?pending=1` following `next`, then `GET /status`** — and a credit row whose
+`lockedUntilBlock` is above the `/status` height is left out of the view (`TYPES_INTERFACE → CreditBox`): the node
+judges a spend at tip + 1, so the client is conservative by one block, and the node's refusal stays the truth.
 
-**The spendable view** is the confirmed boxes, minus the inputs of the client's own pending
-transactions, plus their predicted change — `computeCandidateBoxId(change, txId, 0)`, exact because
-ids are provenance-derived. **There are two views over one ledger, split by the entry's kind:** a `send`
-entry's inputs and change are credit boxes and count in the credits view only, and every other kind's count
-in the rep view only — so a send's change is never offered to a post, nor a post's to a send.
+**The spendable views are the node's pending view** (NODE_INTERFACE → UTXO queries → "`pending=1` answers the
+pending view, as admission spends from it"): the reader's confirmed boxes no pooled transaction spends, and the
+outputs pooled transactions create to the reader's key that none spends — the reader's own spends from this page,
+from another page and from another browser alike, and a send to the reader the node pools. **The client keeps no
+model of the pool**: a transaction the node drops returns its inputs to the view at the next read, and a spend made
+anywhere else leaves it. **The views are the answering node's word** — no proof covers a pooled box — so they choose
+a spend's inputs, gate it and fill the `rep` and `balance` rows, and the extension's verified figures never read them
+(→ The extension → "The verified figures"). **There are two views, one per ledger:** the rep view is `/karma`'s and
+the credits view `/credits`'s, so a send's change is never offered to a post, nor a post's to a send.
+
+> ⚠ **AHEAD OF CODE (2026-10-25).** The reads under `pending=1`, the spendable views as the node's, the pending ledger that
+> chooses no input, the floor held before a signature, the spends run one at a time, a rejection worded by the node's
+> message and a landing read off the plain listings lead `src/wallet/reads.ts`, `src/wallet/ledger.ts`,
+> `src/wallet/submit.ts`, `src/api/client.ts` and `src/app.ts`, which read the plain listings, build on the ledger's
+> predicted change, check no floor but the vouch's, run spends side by side and word a like's 409 as already liked.
 
 **The rep view holds two boxes at most, and every karma builder tells them apart.** The reader's **own
-box** is their unmarked karma box, or the predicted change of their latest pending spend; their **income
-box** is the one `GET /karma/:userId` answers with `income: true` — where the node pays what the reader
+box** is their unmarked karma box — a pooled output to the reader is unmarked (`NODE_INTERFACE → Karma transition
+rules → "No karma output carries the mark"`), so the change of the reader's latest pooled spend is the own box;
+their **income box** is the one `GET /karma/:userId` answers with `income: true` — where the node pays what the reader
 earns (`NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"`). **A
 builder names the own box, always** — the node refuses a karma spend that leaves it out — **and adds the
 income box only when the own box does not cover the spend.** A spend that names the income box is refused
@@ -1477,11 +1507,12 @@ when a payout to the reader lands before it does, since the payout replaces that
 box alone is not. A reader who holds no own box spends the income box. So a reader's rep can stand in two
 boxes for as long as the own box covers what they do, and the total shown is the sum of both.
 
-**The pending ledger is persisted, per identity** —
-`notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another
-key's entries and cannot try to spend its predicted change; a reload that forgot the ledger would
-re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
-identity change rebuilds the ledger for the new key at once** (→ The identity module, `onChange`).
+**The pending ledger holds the reader's own submissions, for what they draw** — the pending card, the like's
+overlay, a flight's stage line, a landing — and for the bounded poll (→ "Landing is the one unsolicited update, and
+it is bounded"); it chooses no input and gates no spend, which the views do. **It is persisted, per identity** —
+`notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another key's entries,
+and a reload still draws what the reader submitted. **An identity change rebuilds the ledger for the new key at
+once** (→ The identity module, `onChange`).
 
 **A pending entry's expiry is the client's, and a node's answer can only bring it sooner.** An entry expires at its
 `submittedAtHeight` plus `MEMPOOL_EXPIRY_BLOCKS` — the lifetime a node gives every transaction it pools
@@ -1489,10 +1520,10 @@ identity change rebuilds the ledger for the new key at once** (→ The identity 
 is a block height below it. `submittedAtHeight` is the height the transaction was built at, the `/status` height its
 outputs declare; for a faucet grant, the highest tip the client has read when it asks. The ledger applies the rule
 where an entry enters it — added, and restored from storage — so every flow is covered, and a stored entry carrying a
-later height is cut back at the next load: an answered height alone would let a node hold an entry's inputs out of
-the spendable view for good, and across a node change, since the ledger is the identity's. **A 2xx is recorded
-whether or not its body carries `expiresAtHeight`** — the transaction is the reader's own and may land, so its inputs
-stay reserved. One whose `txId` differs from the built one is a client rejection — *"the node computed a different
+later height is cut back at the next load: an answered height alone would let a node keep an entry drawn as pending,
+and the poll running, for good, and across a node change, since the ledger is the identity's. **A 2xx is recorded
+whether or not its body carries `expiresAtHeight`** — the transaction is the reader's own and may land, so it is
+drawn as pending until it lands or expires. One whose `txId` differs from the built one is a client rejection — *"the node computed a different
 transaction id"* — since the client records no entry under an id the node does not share; and so is one whose fields
 are not their types — a `txId`, `postId` or `bondBoxId` that is not 64 lowercase hex, a `name` that is not a
 well-formed one (→ Reading a node's answer). A 2xx body over its route's cap, or one that does not parse, ends
@@ -1533,6 +1564,31 @@ refusal that names the floor, so the reader never spends a rejection to learn it
 (`TYPES_INTERFACE → Box value domain`). Every builder is frozen against vectors held as constants in
 `builders.test.ts`; a change that moves one is a wire change.
 
+**The floor is the client's to know.** The node judges every rep spend against the rep view's `effective` — under
+`pending=1` the `remaining` admission judges a spend against at `tip + 1` — a post may spend all of it, and every
+other spend only what stands above `KARMA_MINIMUM` (`NODE_INTERFACE → Karma transition rules → "A karma spend is
+covered by effective karma, over the block's body as a whole"`). **The client holds each spend to the same rule
+before it signs**, against the `effective` of the read its own flow made: a thread while `effective ≥
+POST_PRICE_THREAD`, a reply while `effective ≥ POST_PRICE_REPLY`, a like while `effective − LIKE_KARMA_COST ≥
+KARMA_MINIMUM`, a vouch while `effective ≥ VOUCH_MIN_BALANCE`, an invite while `effective − bond ≥ KARMA_MINIMUM`, a
+burn while `effective − USERNAME_BURN_PRICE ≥ KARMA_MINIMUM`; a withdrawal and a claim spend and return one box, and
+the node judges no spend of 0. A spend the rule refuses is a client refusal — status 0, nothing signed, nothing sent
+(→ "Nothing retries"). **What a surface offers reads the number the `rep` row shows** (→ The profile window): the
+composer's `post` (→ Invariants → "Affordability is known before the attempt"), the invite form and its bond's
+maximum (→ The profile window), `burn` (→ The username row), the `your vouch` row (→ The author window). **`like`
+stays live at the floor**: a press the row's number refuses answers *like not sent: the last N rep is for posting.*
+in the report line a like's rejection takes, `N` being `KARMA_MINIMUM`, and moves no count; a press it admits
+takes its overlay at once, and a refusal from the flow's own read undoes the overlay with the same line. *The last N
+rep is for posting* is the floor's one sentence on every surface that names it.
+
+**The reader's spends run one at a time, per ledger.** A rep spend — a post, a like, a vouch, an invite, a
+withdrawal, a claim, a burn — makes its reads only once the rep spend before it has its answer: the node's, a
+transport failure, or `notSigned`. So each flow reads the rep view with every earlier spend of this page in it, and
+two presses never select one box. A press made while one is in flight waits its turn behind it, in press order,
+and keeps its own step at the press — the like's overlay, a flight's `submitting…`. A send queues the same way on the
+credits view, apart from the rep spends; an unvouch spends a `vouch` box, no view's, and queues with neither. A spend
+from another page, or another browser, can still meet a box this page selected: the node's 409 (→ "Nothing retries").
+
 **A credits amount crosses the API in base units and reaches the face in $NOTIS.** Every `value` on the wire
 is a decimal string of base units — 10⁻⁸ of a credit (`TYPES_INTERFACE → Denomination`) — and the face never
 shows one: a base-unit amount is formatted as $NOTIS with up to eight decimals and no trailing zeros, and a
@@ -1542,8 +1598,11 @@ module does both, and every surface that shows a credits amount reads it — the
 flight lines, and the extension's prompt (→ The extension). Rep is indivisible and stays a plain integer.
 
 **Nothing retries.** A rejection is one `Rejection { status, message }`, normalised from both body
-shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; a 409 drops the entry
-and re-reads the spendable view, and the reader sees the rejection.
+shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; the reader sees the rejection, and
+the next spend reads the views anew. **A rejection's words follow the node's message, never its status alone**: a
+409 is the pool's conflict over a box another pooled spend holds (`MEMPOOL_INTERFACE → getBoxWithPending`), which
+reads *that rep is still tied up in a spend that has not landed.* on every rep surface, and a like the node already
+holds reads *you have already liked this post* only from the node's own words for it.
 
 **A flow can end before the node ever sees it: `notSigned`.** Beside `ok` and `rejection`, every submit
 flow answers `{ ok: false, notSigned: 'locked' | 'declined' | 'refused', reason }` when the signature did
@@ -1593,16 +1652,17 @@ the box the faucet named (→ The faucet step).
 
 **Every ending of a pending entry is the reading node's word, in both builds**: a row it answers, a 404, a list that
 names the box or does not, and the height `/blocks/current` answers. A node that answers a height past every entry's
-ends them all, as it could by a 404 each; their inputs return to the spendable view, and a spend of one the node
-still pools is its 409 (→ "Nothing retries"). No ending moves value. The height is held to a block height, as every
+ends them all, as it could by a 404 each; an ending changes neither view, which is the node's already. No ending
+moves value. **A landing reads the plain listings, never `pending=1`**, which lists a pooled box before any block
+holds it — a send's one page, a credits grant's `/credits`, a rep grant's `boxCount`. The height is held to a block height, as every
 field of an answer is held to its type (→ Reading a node's answer).
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
 beside it. The set, with the ledger's pending vouches overlaid, is what the author window's `your vouch` row reads (→ The author
 window). The cooldown arm is the escrow gate — after any unvouch, no cast until `releaseAtBlock`
-(`NODE_INTERFACE → Vouch transition rules`) — which the client withholds as a courtesy, like the vouch
-floor `VOUCH_MIN_BALANCE`; the node's refusal stays the truth for every other rule.
+(`NODE_INTERFACE → Vouch transition rules`) — which the client withholds as a courtesy, like the floor
+(→ "The floor is the client's to know"); the node's refusal stays the truth for every other rule.
 
 **Landing is the one unsolicited update, and it is bounded.** While the ledger holds an entry the
 client reads `GET /blocks/current` every 15 seconds, and when the height moves it reconciles the
@@ -1687,10 +1747,11 @@ shows the word on no surface (user, 2026-09-18).
 
 **The `invites` row** *(membership actions)*: the line — `K invites available` for a member, *"as many
 as your rep covers"* for a root, *"invites come with membership"* for a resident; the form, a real
-`<form>` in place shown only when an invite is available and the spendable view covers the minimum
-bond — the invitee's key, 64 hex pasted out of band, and the bond, a whole number inside the network's
-`inviteBondMin`–`inviteBondMax` (→ Invariants → "A per-network number is read, never assumed"), **default the
-minimum**, anything else the form's refusal line — with what happens under it: *"they receive the
+`<form>` in place shown only when an invite is available and the rep view's `effective` less the minimum bond
+leaves `KARMA_MINIMUM` standing (→ The wallet → "The floor is the client's to know") — the invitee's key, 64 hex
+pasted out of band, and the bond, a whole number from the network's `inviteBondMin` to the lesser of its
+`inviteBondMax` (→ Invariants → "A per-network number is read, never assumed") and `effective − KARMA_MINIMUM`,
+**default the minimum**, anything else the form's refusal line — with what happens under it: *"they receive the
 bond's rep from the pool. your bond comes back as they receive likes, one rep per three, and the
 rest goes to the pool after N blocks."* (`INVITE_BOND_VEST_PER_LIKES` from `@dagsocial/types`, the network's
 `inviteProbationBlocks`); the flight in the row, the deferred unlock in the row when
@@ -1699,20 +1760,29 @@ the invitee's identity (→ The identity display, so the reader can vouch for th
 and the bond's value — following `next`. No settle height: no view serves it, and the client invents
 no number. The available count drops when the bond lands, in place, never animated.
 
-**The `rep` row is the `effective` number alone**, in mono — the value every sufficiency check on the node
-reads, never the face `total`, which would promise rep the next spend does not have; the row's label says what
+**The `rep` row is the rep view's `effective` alone** (→ The wallet), in mono — the `remaining` admission judges the
+reader's next spend against, never the face `total`, which would promise rep the next spend does not have, and never
+the plain listing's `effective`, which promises rep the reader's pooled spends already hold; the row's label says what
 the number counts, so no unit follows it (user, 2026-09-18). This is the one place a rep balance rests on the
 reading surface. **The number takes a new value whenever one is read** (`HOUSE_STYLE → Motion`) — the window's `↻`,
-**every landing of the reader's own transaction**, which re-reads `/karma` (a post, a like, a vouch, a withdrawal, a claim
-or a burn changed what it counts; a landing reports it, never predicts it), and in the extension every verified tip. **In
+**every 2xx of the reader's own spend and every landing of one**, each of which re-reads `/karma?pending=1` (a post, a
+like, a vouch, an invite, a withdrawal, a claim or a burn changed what it counts; the number is the node's answer,
+never the client's prediction), and in the extension every verified tip. **In
 the extension, beneath the number and only when something is not whole, one muted line says
 what the verified-figures run could not prove** — *87 rep proven at block 9005 · 5 rep landed since*, *the node served
-no proof for your rep*, *not checked — the chain is not verified* — **and under the full rule the line and the number
+no proof for your rep*, *not checked — the chain is not verified* — and, where the row's number is not the plain
+listing's `effective` the run valued, what the number is — *87 rep proven at block 9005 · 82 rep to spend in the next
+block, by this node's word* — **and under the full rule the line and the number
 are clay**: *this node's proof of your rep did not verify*, *the node lists 5 rep the chain does not hold*, *the chain
 holds 5 rep the node does not list* (→ The extension → "The verified figures", the rule and every line). **A listing
-with no box reads its line too**, beneath the faucet step or *no rep yet.*, where no number stands to turn clay. The number is the live `effective` in every state; a
-row every box of which proved, and whose valuation reproduces it, reads exactly as it reads on the web. **A card by the
+with no box reads its line too**, beneath the faucet step or *no rep yet.*, where no number stands to turn clay. The
+number is the rep view's `effective` in every state; a row every box of which proved, whose valuation reproduces the
+plain listing's `effective`, and whose number is that `effective`, reads exactly as it reads on the web. **A card by the
 loaded key reads `· you`** after the prefix, muted ink, text only.
+
+> ⚠ **AHEAD OF CODE (2026-10-25).** The invite form shown and bounded by the floor, and the `rep` row on the rep view, lead
+> `src/app.ts`'s `canAffordMinBond` and the row's reads and `src/view/profile.ts`'s invite form, which read the plain
+> `effective` against the minimum bond, bound the bond by the network alone and re-read the row at a landing only.
 
 ### The wallet window *(write surface)*
 
@@ -1730,22 +1800,29 @@ send         the send form / the confirm row / the flight · the pending line
 The window's `↻` is live and re-reads `/credits/:key`, which the window also reads when it opens. A pending send
 reconciles whether or not the window is open (→ The wallet); the update in place happens where the row is.
 
-**The `balance` row**: the balance from `GET /credits/:key` — the spendable sum, formatted as
-$NOTIS (→ The wallet), in `gold` (`HOUSE_STYLE → "Gold means credits and nothing else"`) — and beneath it, when
+**The `balance` row**: the balance from `GET /credits/:key?pending=1` — the credits view's spendable sum (→ The
+wallet), formatted as $NOTIS, in `gold` (`HOUSE_STYLE → "Gold means credits and nothing else"`) — and beneath it, when
 a box is locked, one muted line, *N $NOTIS more unlock by block H*, H the latest `lockedUntilBlock` among them.
 With no box spendable at the `/status` height: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS
 yet.* — both only once a `/status` answer stands; until then the row reads `—` in their place. **The balance
-takes a new value whenever one is read** — the window's opening and `↻`, every landing of the reader's own
-transaction (a send's and a grant's landing are read off `/credits` itself, open or closed), and in the extension every
+takes a new value whenever one is read** — the window's opening and `↻`, every 2xx of the reader's own send and every
+landing of one (a send's and a grant's landing are read off the plain `/credits` itself, open or closed — → The
+wallet → "Every ending of a pending entry is the reading node's word, in both builds"), and in the extension every
 verified tip while the window is open (`HOUSE_STYLE → Motion`). **In the extension, one more muted line of the same element stands beneath the figure only when the verified-figures run could
 not prove the whole balance** — *87.5 $NOTIS proven at block 9005 · 12.5 $NOTIS landed since*, *… · 12.5 $NOTIS not
-checked yet*, *the node served no proof for 12.5 $NOTIS*, *not checked — the chain is not verified* — **and under the
+checked yet*, *the node served no proof for 12.5 $NOTIS*, *not checked — the chain is not verified* — or when the
+figure is not the plain listing's spendable sum the run valued — *87.5 $NOTIS proven at block 9005 · 75 $NOTIS to
+spend in the next block, by this node's word* — **and under the
 full rule that line and the gold figure are clay**: *the node lists 12.5 $NOTIS the chain does not hold*, *the chain
 holds 12.5 $NOTIS the node does not list*, *this node's proof of the balance did not verify* (→ The extension → "The
 verified figures"). **A listing with no box reads its line too**, beneath the faucet step or *no $NOTIS yet.*, where
 no figure stands to turn clay. Gold still means credits: the figure
 gives up the colour only while the node's own proof of it fails, as the corner's height does on `refused`. The figure is
-the live spendable sum in every state; a balance every box of which proved reads exactly as it reads on the web.
+the credits view's spendable sum in every state; a balance every box of which proved, and whose figure is the plain
+listing's spendable sum, reads exactly as it reads on the web.
+
+> ⚠ **AHEAD OF CODE (2026-10-25).** The `balance` row on the credits view, re-read at a send's 2xx, leads `src/app.ts`'s
+> `/credits` reads, which read the plain listing.
 
 **The `send` row** stands while a box is spendable, and while a send's own line stands — its flight, the pending
 line, *sent* — so a send of the whole balance still reads its ending. The
@@ -1822,7 +1899,7 @@ arrangement is persisted text with no row of its own (→ The workspace).
 ### The faucet step *(identity interface)*
 
 **In the rep row, one word — `ask the faucet for rep` — while three things hold:** an
-identity is loaded, its `/karma` `boxCount` is 0, and a faucet base is configured. Not a header control:
+identity is loaded, its rep view's `boxCount` is 0, and a faucet base is configured. Not a header control:
 a grant is once per key for ever (`NODE_INTERFACE → Faucet`), so a standing control would sit dead before
 its one press and after it. The request carries only the public key, so a **locked** identity can ask.
 
@@ -1845,7 +1922,7 @@ already had its faucet grant."*; 429 → *"the faucet is busy right now. try aga
 
 **The wait rides the bounded poll, as a `grant` entry in the pending ledger.** A 202 adds
 `{ kind: 'grant', txId, expiresAtHeight, submittedAtHeight }`, so the tip poll runs while it stands and
-stops at zero (→ The wallet). Reconcile is `GET /karma/:key`: `boxCount` risen → landed, and the row's
+stops at zero (→ The wallet). Reconcile is the plain `GET /karma/:key`: `boxCount` risen → landed, and the row's
 fixed line box reads the balance; past `expiresAtHeight` and still zero → expired — *"no block took the
 faucet's invite by height N."* with `ask again`. Colour and text in a fixed box: the geometry price the
 motion contract asks of pending state (`HOUSE_STYLE → Motion`).
@@ -1856,18 +1933,21 @@ reserves nothing of the reader's, so refusing one releases nothing. The expiry a
 entry's is (→ The wallet).
 
 **The $NOTIS step, in the wallet's `balance` row — `ask the faucet for $NOTIS` — while an identity is loaded, a
-faucet base is configured, a `/status` answer stands, and its `/credits` shows no box spendable at that height**
+faucet base is configured, a `/status` answer stands, and its credits view shows no box spendable at that height**
 (→ The wallet window). A grant records the highest tip the client has read (→ The wallet), and an ask before any
 `/status` answer would record none. The call is `POST <faucet>/credits
 { pubkey }` in the same module; the answer is `202 { txId, status, expiresAtHeight, boxId }`
 (`NODE_INTERFACE → Faucet`) — the transfer's expiry relayed from the node, and the id of the box the grant
 creates. The wait rides the ledger as a `creditGrant` entry whose subject is that box id, `inputs: []` and no
-change, so it is inert in both views; reconcile is `GET /credits/:key`: the box listed → landed, and the row's
+change; reconcile is the plain `GET /credits/:key`: the box listed → landed, and the row's
 balance reads it; past `expiresAtHeight` and absent → expired — *no block took the faucet's transfer by height
 N.*, and `ask again` beside it once a `/status` answer stands, for the step's own reason; the line survives a change of
 the node being read, so it can stand before one does. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
 above. The relayed refusals map as the rep step's do, except a 400 — credits repeat, so it is not the
 once-per-key rule: *the faucet refused that key: <message>*.
+
+> ⚠ **AHEAD OF CODE (2026-10-25).** The rep step on the rep view's `boxCount` and both grants reconciled off the plain listings
+> lead `src/app.ts`; the step and both reconciles read the one plain listing.
 
 ### The username row *(username surface)*
 
@@ -1897,12 +1977,16 @@ or burn stands (→ The wallet); a 404 is *holding none*, and a read not yet ans
 - **A claim or a burn pending** — the ledger's entry, durable across a reload: the pending handle in `inkMute`
   and the stage line `submitted` in the flight slot, `submitting…` while the press is in flight; no control.
 - **Holding `@Name`:** the handle, the word `burn`, and *held since block N. a burn costs N rep and restores
-  your free claim.* `burn` is disabled with the reason as its `title` — *a burn costs N rep; this key has
-  less* — while `effective` is under `USERNAME_BURN_PRICE`, the invite gate's shape; the node's refusal is the
-  truth for everything else. The press asks in place, as `forget` does — *burn @Name for N rep? the name is
+  your free claim.* `burn` is disabled with the reason as its `title` — *a burn costs N rep, and the last M rep is
+  for posting; this key has less*, `M` being `KARMA_MINIMUM` — while the rep view's `effective` less
+  `USERNAME_BURN_PRICE` stands below `KARMA_MINIMUM` (→ The wallet → "The floor is the client's to know"), the
+  invite gate's shape; the node's refusal is the truth for everything else. The press asks in place, as `forget` does — *burn @Name for N rep? the name is
   open to anyone again, and your free claim returns.* with `burn` and `keep`, focus on `keep`, Esc and `keep`
   restoring the word — and the question's `burn` signs, the unlock form in the question's place first when the
   identity is locked. The name and its box are resolved at the press (→ The wallet).
+
+  > ⚠ **AHEAD OF CODE (2026-10-25).** `burn`'s gate at the floor and its title lead `src/app.ts`'s `canAffordBurn` and
+  > `src/view/profile.ts`, which gate at `USERNAME_BURN_PRICE`.
 
 **The flight ends in the row.** A rejection reads *claim rejected:* or *burn rejected:* and the node's refusal
 as a sentence — *that name is taken.*, *this key already holds a name.*, *that name is not 1 to M letters,
@@ -1910,8 +1994,7 @@ digits or _.* (`M` as above), *a claim for that name is already pending.*, *this
 *that name is not held any more.*, *the node's pool is full right now.*, *can't reach the node right now.*, else the
 node's message lowercased — and the form or the word returns (`HOUSE_STYLE → Voice`). A landing re-renders the row
 and the header (→ The identity display) and nothing else. An expiry reads *no block took this by height N.* with
-`try again`, which rebuilds from the current view with the same name; the entry is removed and the box returns
-to the view.
+`try again`, which rebuilds from the current view with the same name; the entry is removed.
 
 ### The identity display *(membership actions)*
 
@@ -1989,8 +2072,12 @@ as an unvouch does, and the landing renders `vouched since block N`; a rejection
 re-renders the row to `vouch` and says so — *"that vouch was already withdrawn."* Its copy states what
 happens: the stake is held until block N and no new vouch until then. The reasons the reader cannot
 vouch, one line each: *"vouching comes with membership"*, *"your stake from an unvouch is held until
-block N"*, *"this is you"*. With no identity loaded the window is the
+block N"*, *"this is you"*, and while the rep view's `effective` is under `VOUCH_MIN_BALANCE` *"the last N rep is for
+posting"*, `N` being `KARMA_MINIMUM` (→ The wallet → "The floor is the client's to know"). With no identity loaded the window is the
 read surface exactly — key, name, endorsers, posts, and no `your vouch` row.
+
+> ⚠ **AHEAD OF CODE (2026-10-25).** The floor's reason in the `your vouch` row leads `src/app.ts`'s `yourVouchFor`, which
+> reads *vouching needs N rep held* off the plain `effective`.
 
 **The author-posts window — `@posts:<64hex>`** — opened from `posts`, placed by the same rule (from the
 feed, the author window takes the first column and the posts the next), raised when open, persisted.
@@ -2037,8 +2124,7 @@ stays the node's until the ↻. A submission card is the composer's placeholder 
 replaces it with the node's row, and a withdrawal landing is the one event that settles it sooner.
 This is the one landing that changes a card's shape (→ The wallet, `HOUSE_STYLE → Motion`).
 **Expired:** the stage line reads *"no block took this by height N."* with `try
-again`, which rebuilds from the current view and submits anew; the entry is removed and the box returns to
-the spendable view. **Rejected:** the column's report line reads *"withdraw rejected: …"* with the node's
+again`, which rebuilds from the current view and submits anew; the entry is removed. **Rejected:** the column's report line reads *"withdraw rejected: …"* with the node's
 refusal in the voice register — its known refusals mapped to sentences, as the like's and the vouch's
 are (`HOUSE_STYLE → Voice`) — and the control returns; a transport failure reads *"withdraw rejected:
 can't reach the node right now."* and leaves nothing pending.
@@ -2051,7 +2137,7 @@ can't reach the node right now."* and leaves nothing pending.
 | Ask the faucet for $NOTIS | `POST <faucet>/credits` — `{ pubkey }` → `{ txId, status, expiresAtHeight, boxId }` | *(identity interface)* — the faucet's edge, repeatable (`NODE_INTERFACE → Faucet`) |
 | Submit a post | `POST /posts` — `{ tx, content }` → `{ postId, status, expiresAtHeight, txId }` | *(write surface)* |
 | Like | `POST /likes` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(write surface)* |
-| The reader's rep and $NOTIS | `GET /karma/:userId`, `GET /credits/:userId` | *(write surface)* — the spendable view |
+| The reader's rep and $NOTIS | `GET /karma/:userId?pending=1`, `GET /credits/:userId?pending=1` — the views; the plain `GET /karma/:userId`, `GET /credits/:userId` for a landing and the extension's verified figures | *(write surface)* — the spendable views (→ The wallet) |
 | Vouch | `POST /vouches` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(membership actions)* |
 | Unvouch | `DELETE /vouches/:targetId` — `{ tx }` → `{ status, txId, expiresAtHeight, karmaReturnsAtBlock }` — the one non-`POST` write; the client reads the release from the cooldown arm, not the last field | *(membership actions)* |
 | Invite | `POST /invites` — `{ tx }` → `{ status, txId, expiresAtHeight, bondBoxId }` | *(membership actions)* |
@@ -2121,12 +2207,18 @@ client that expects to announce itself first is built against an endpoint that d
 - **Every read carries the viewer's key once an identity is loaded, and none does before.** *(write
   surface)*
 - **A consensus constant is imported; a per-network number is read.** `POST_PRICE_THREAD`,
-  `POST_PRICE_REPLY`, `REPLY_AUTHOR_SHARE`, `LIKE_KARMA_COST` and `USERNAME_BURN_PRICE` are consensus and ruled
-  (`CONSTANTS → Post price and likes`, `CONSTANTS → Usernames`) and come from `@dagsocial/types`; what differs per
+  `POST_PRICE_REPLY`, `REPLY_AUTHOR_SHARE`, `LIKE_KARMA_COST`, `USERNAME_BURN_PRICE`, `KARMA_MINIMUM` and
+  `VOUCH_MIN_BALANCE` are consensus and ruled
+  (`CONSTANTS → Post price and likes`, `CONSTANTS → Usernames`, `CONSTANTS → Karma`, `CONSTANTS → Vouch`) and come from `@dagsocial/types`; what differs per
   network is never held as a constant (→ "A per-network number is read, never assumed"). *(write surface)*
-- **Affordability is known before the attempt.** Opening a composer reads the spendable view once; a
-  price it cannot cover disables `post` and says so, so the reader never spends a rejection to learn
-  what the client already knew. *(write surface)*
+- **Affordability is known before the attempt.** Opening a composer reads the rep view once; a price its
+  `effective` does not cover disables `post` and says so, so the reader never spends a rejection to learn
+  what the client already knew; every other rep spend is held to the floor before it signs (→ The wallet → "The
+  floor is the client's to know"). *(write surface)*
+
+  > ⚠ **AHEAD OF CODE (2026-10-25).** The composer's affordability on the rep view's `effective` leads `src/app.ts`'s
+  > `readAffordability`, which sums the face of the ledger's spendable view.
+
 - **The client reads the protocol era; it never holds one.** `GET /status` → `protocolVersion` is the
   era at `blockHeight + 1`, and the field is in every id preimage, so a client learns the era before
   it signs. A build constant would agree with one network and be refused by another
