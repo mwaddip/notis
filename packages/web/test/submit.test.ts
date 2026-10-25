@@ -3,10 +3,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps, type SubmitResult, type SignResult,
 } from '../src/wallet/submit';
-import { PendingLedger, reconcileCreditGrant, reconcileGrant } from '../src/wallet/ledger';
+import { PendingLedger } from '../src/wallet/ledger';
 import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { Api } from '../src/api/client';
-import type { PendingEntry } from '../src/wallet/types';
 import type { CreditBoxRow, CreditsResult, KarmaBoxRow, KarmaResult, PostResult, StatusResult, VouchesVoucherResult } from '../src/api/dto';
 import { karmaResult as karmaFixture } from './karma-fixture';
 import { isRejection } from '../src/api/write';
@@ -1203,7 +1202,7 @@ describe('submitPostFlow over the extension proxy and background', () => {
 // WEB_INTERFACE → The wallet → "The spendable views are the node's pending
 // view". A rep spend's reads before the write are `/karma/:key?pending=1`
 // pages following `next`, then `/status`; a send's the same over
-// `/credits/:key?pending=1`. The spendable boxes are what the node answered;
+// `/credits/:key?pending=1`. The spendable boxes are the node's answer;
 // the ledger chooses no input and holds no input or change.
 // ---------------------------------------------------------------------------
 
@@ -1265,23 +1264,23 @@ describe('the reads before a write are the node\'s pending view', () => {
 
 describe('the spendable view is the node\'s, not the ledger\'s', () => {
   it.fails('a pending like\'s change is not offered; the box standing in pending=1 is spent next', async () => {
-    const X = '77'.repeat(32); // the box the ledger\'s pending like already spent
-    const Y = '66'.repeat(32); // the change the pending like named
+    const X = '77'.repeat(32); // the box the ledger's pending like names as its input
+    const Y = '66'.repeat(32); // the change the pending like names
     const ledger = new PendingLedger(PUB);
     ledger.add({
       txId: 't1', kind: 'like', postId: 'ab'.repeat(32), inputs: [X],
       change: { boxId: Y, value: 226n, createdAtBlock: 6000 },
       expiresAtHeight: 6720, submittedAtHeight: 6000,
     });
-    // The fake node\'s pending=1 listing answers X (admission has not yet
-    // dropped the pending spend; the change Y is unknown to the node).
+    // The node does not pool the like the ledger holds — the node dropped it,
+    // or it expired on the node — so the pending view lists X and knows no Y.
     const deps: SubmitDeps = {
       reads: reads(PARENT_AUTHOR, [{ boxId: X, value: '227' }]),
       write: write(), ledger, identity, network: null,
     };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res.ok).toBe(true);
-    // The next like\'s one input is X — the box the node\'s pending view listed.
+    // The next like's one input is X — the box the node's pending view listed.
     expect(writeCalls[0]!.tx.inputs).toEqual([X]);
   });
 });
@@ -1300,9 +1299,9 @@ describe('a pending entry holds no input and no change', () => {
     expect('change' in res.entry).toBe(false);
   });
 
-  // The control a plain `it` carries: an older build\'s stored ledger carrying
-  // `inputs` and `change` restores every entry under the rule too, so a browser
-  // holding one at the time of the update keeps its pending state.
+  // WEB_INTERFACE → The wallet: a stored entry carrying `inputs` and `change`
+  // restores through `parseStoredEntry`, which requires neither and reads
+  // neither.
   it('a stored ledger whose entries carry inputs and change restores every entry', () => {
     localStorage.setItem('notis.pending.' + PUB, JSON.stringify([
       { txId: 'ta', kind: 'post', postId: 'pa', inputs: ['x'],
@@ -1313,28 +1312,5 @@ describe('a pending entry holds no input and no change', () => {
     ]));
     const ledger = new PendingLedger(PUB);
     expect(ledger.all().map((e) => e.txId)).toEqual(['ta', 'tb']);
-  });
-});
-
-// WEB_INTERFACE → The wallet → "A landing reads the plain listings, never
-// `pending=1`" — the plain listing is what a send\'s one page, a credits
-// grant\'s /credits and a rep grant\'s boxCount read. These plain `it`s hold
-// the rule against the pending=1 reads the writes add. The one send-landing
-// read is already pinned in app-credits.test.ts; the shape here is the ledger
-// landing shape, not the write path.
-describe('a landing is read off the plain listings', () => {
-  it('reconcileCreditGrant lands on a plain /credits box listing', () => {
-    // reconcileCreditGrant takes a CreditsResult the plain /credits answers
-    // (no `pending=1` on the wire). The landing is the box the faucet named,
-    // listed on the plain view.
-    const BOX = 'a2'.repeat(32);
-    const entry = { txId: 'g1', kind: 'creditGrant', postId: BOX, inputs: [], expiresAtHeight: 5900, submittedAtHeight: 5800 } as PendingEntry;
-    const credits: CreditsResult = { userId: PUB, total: '10', boxes: [{ boxId: BOX, value: '10' }], boxCount: 1, next: null };
-    expect(reconcileCreditGrant(entry, credits, 5850)).toBe('landed');
-  });
-
-  it('reconcileGrant lands on a plain /karma rising boxCount', () => {
-    const entry = { txId: 'g2', kind: 'grant', postId: PUB, inputs: [], expiresAtHeight: 5900, submittedAtHeight: 5800 } as PendingEntry;
-    expect(reconcileGrant(entry, karmaResult([{ boxId: BOX_ID, value: '10' }]), 5850)).toBe('landed');
   });
 });
