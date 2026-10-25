@@ -99,7 +99,7 @@ describe('startup', () => {
     expect(res.ok).toBe(true);
   });
 
-  it.fails('a held p2p port stops the node', async () => {
+  it('a held p2p port stops the node', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
     dbDirs.push(dbDir);
@@ -134,7 +134,7 @@ describe('startup', () => {
     expect(output).toMatch(/UnsupportedListenAddressesError|EADDRINUSE/);
   });
 
-  it.fails('MAX_PEERS=0 stops the node naming the setting', async () => {
+  it('MAX_PEERS=0 stops the node naming the setting', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
     dbDirs.push(dbDir);
