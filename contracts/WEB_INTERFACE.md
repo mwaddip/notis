@@ -1591,9 +1591,10 @@ and keeps its own step at the press — the like's overlay, a flight's `submitti
 belongs to the key and the node it was made under**: a change of either ends every press still waiting — no read,
 nothing signed, nothing sent. A change of the key takes the press's step with everything the old key had standing
 (→ The identity module); a change of the node ends the press as a decline ends one (→ "A flow can end before the node
-ever sees it: `notSigned`") — its step undone, and the decline's line where the press's surface still stands: the
-composer still open with its text and *post not sent.*, a row's flight its own *… not sent.*; a surface the change
-draws anew — a list's cards, an author window — takes none (→ The settings window). A send queues the same way on the
+ever sees it: `notSigned`") — its step undone, and the decline's line wherever the press's surface stands when the
+press ends: the composer still open with its text and *post not sent.*, a row's flight its own *… not sent.*, a card's
+in the report line of each list that holds its post — none where the change has drawn no such list yet (→ The settings
+window). A send queues the same way on the
 credits view, apart from the rep spends; an unvouch spends a `vouch` box, no view's, and queues with neither. A spend
 from another page, or another browser, can still meet a box this page selected: the node's 409 (→ "Nothing retries").
 
