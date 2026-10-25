@@ -86,7 +86,6 @@ function assertCommonInvariants(m: Emitted): void {
   expect(m.chrome.version).toBe(VERSION);
   expect(m.firefox.version).toBe(VERSION);
   expect(m.chrome.key).toBe(DEFAULT_CHROME_KEY);
-  expect(m.chrome.minimum_chrome_version).toBe('112');
   expect(m.firefox.background).toEqual({ scripts: ['background.js'] });
   expect(m.chrome.background).toEqual({ service_worker: 'background.js' });
   // Firefox's browser_specific_settings is exactly the object above.
@@ -104,6 +103,12 @@ describe('emit-manifests — testnet bases', () => {
 
   it('common invariants hold', () => {
     assertCommonInvariants(m);
+  });
+
+  // WEB_INTERFACE → The extension → "The manifest" — the Chrome manifest's
+  // minimum_chrome_version is the first that offers storage.local.setAccessLevel.
+  it.fails('chrome manifest minimum_chrome_version is 140', () => {
+    expect(m.chrome.minimum_chrome_version).toBe('140');
   });
 
   it('optional_host_permissions equals [<origin>/*] on both manifests', () => {

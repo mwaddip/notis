@@ -194,6 +194,44 @@ describe('bridge — on arrival', () => {
     expect(b.messages).toEqual([]);
   });
 
+  it.fails('storage.local closed to the bridge: every predicate holding and get/set/remove rejecting, exactly one arrived leaves with the lower-cased id and no storage read runs', async () => {
+    const b = build({ pathname: PATH_THREAD_UPPER, pref: 'here' });
+    let gets = 0;
+    const refusal = (): Promise<never> =>
+      Promise.reject(new Error('Access to storage is not allowed from this context.'));
+    b.env.chrome.storage.local.get = ((keys?: unknown) => {
+      void keys;
+      gets += 1;
+      return refusal();
+    }) as typeof chrome.storage.local.get;
+    b.env.chrome.storage.local.set = refusal as typeof chrome.storage.local.set;
+    b.env.chrome.storage.local.remove = refusal as typeof chrome.storage.local.remove;
+    // The browser-shaped rejection may surface as an unhandled rejection on
+    // the chain that still calls get; take vitests default listener aside
+    // for the window, then restore it (as handover.test.ts does).
+    const proc = (globalThis as { process?: unknown }).process as {
+      on(event: string, handler: (reason: unknown) => void): void;
+      removeListener(event: string, handler: (reason: unknown) => void): void;
+      listeners(event: string): Array<(reason: unknown) => void>;
+      removeAllListeners(event: string): void;
+    };
+    const saved = proc.listeners('unhandledRejection');
+    const silence = (): void => {};
+    proc.removeAllListeners('unhandledRejection');
+    proc.on('unhandledRejection', silence);
+    try {
+      bridge(b.env);
+      await flush();
+      await flush();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(b.messages).toEqual([{ kind: 'arrived', id: HEX }]);
+      expect(gets).toBe(0);
+    } finally {
+      proc.removeListener('unhandledRejection', silence);
+      for (const l of saved) proc.on('unhandledRejection', l);
+    }
+  });
+
   it('document.prerendering undefined with everything else holding: arrived leaves', async () => {
     const b = build({ prerendering: undefined, pref: 'here' });
     bridge(b.env);
