@@ -321,10 +321,6 @@ server that signs, no call home.
   messages, each carrying a post id (→ "Links into the extension", below). It runs at `document_start`, in the
   top frame, and does nothing in a private window.
 
-> ⚠ **AHEAD OF CODE (2026-10-25).** The background's `storage.local.setAccessLevel` call at every start, the bridge
-> that reads nothing from storage and sends `arrived` under either preference (→ "Links into the extension") and the
-> Chrome 140 floor (→ "The manifest") lead `background.ts`, `bridge.ts` and `emit-manifests.mjs`.
-
 **The action button opens or focuses the page** — `action.onClicked` finds a tab at the page's URL and
 raises it, else creates one. No `default_popup`, since one suppresses `onClicked`.
 
