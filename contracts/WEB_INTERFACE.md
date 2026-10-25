@@ -1587,7 +1587,9 @@ rep is for posting* is the floor's one sentence on every surface that names it.
 withdrawal, a claim, a burn — makes its reads only once the rep spend before it has its answer: the node's, a
 transport failure, or `notSigned`. So each flow reads the rep view with every earlier spend of this page in it, and
 two presses never select one box. A press made while one is in flight waits its turn behind it, in press order,
-and keeps its own step at the press — the like's overlay, a flight's `submitting…`. A send queues the same way on the
+and keeps its own step at the press — the like's overlay, a flight's `submitting…`. **A press waiting its turn
+belongs to the key and the node it was made under**: a change of either ends every press still waiting — no read,
+nothing signed, nothing sent — as the change ends what the old key had standing (→ The identity module). A send queues the same way on the
 credits view, apart from the rep spends; an unvouch spends a `vouch` box, no view's, and queues with neither. A spend
 from another page, or another browser, can still meet a box this page selected: the node's 409 (→ "Nothing retries").
 
