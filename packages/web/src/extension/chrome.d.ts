@@ -44,6 +44,9 @@ declare namespace chrome {
       set(items: Record<string, unknown>): Promise<void>;
       remove(keys: string | string[]): Promise<void>;
       clear(): Promise<void>;
+      // Present where the browser offers it (Chrome from 140); absent elsewhere
+      // — WEB_INTERFACE → The extension → "The contexts, and what each may hold".
+      setAccessLevel?(options: { accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }): Promise<void>;
     }
     interface OnChangedEvent {
       addListener(
