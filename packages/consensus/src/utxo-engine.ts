@@ -20,6 +20,7 @@ import {
   bytesToHex,
   hexToBytes,
   equalBytes,
+  isHex64,
 } from '@dagsocial/types';
 import { isCreditSideTx } from './coinbase-split.js';
 import type { DecayCfg, UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
@@ -1361,14 +1362,6 @@ function describeValue(v: unknown): string {
 // Transaction envelope shape — the step-0 gate
 // ---------------------------------------------------------------------------
 
-/**
- * 64 lowercase hex characters — the closed live set of ids. `computeBoxId`,
- * `computeTxId` and `computePostId` all emit `digest().subarray(0,32)` as
- * lowercase hex and nothing else, so an uppercase or short id names no box
- * that can ever exist.
- */
-const HEX64 = /^[0-9a-f]{64}$/;
-
 const ENVELOPE_REQUIRED = ['inputs', 'outputs', 'signatures', 'protocolVersion'] as const;
 
 /**
@@ -1426,7 +1419,7 @@ function checkHexKeyedByteMap(
   byteLength: number | null,
 ): UtxoResult {
   for (const key of Object.keys(map)) {
-    if (!HEX64.test(key)) {
+    if (!isHex64(key)) {
       return {
         valid: false,
         error: `Invalid tx envelope: ${field} key must be 64 lowercase hex characters, got ${describeValue(key)}`,
@@ -1547,7 +1540,7 @@ export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly 
   }
   for (let i = 0; i < inputs.length; i++) {
     const id: unknown = inputs[i];
-    if (typeof id !== 'string' || !HEX64.test(id)) {
+    if (!isHex64(id)) {
       return {
         valid: false,
         error:
@@ -1636,7 +1629,7 @@ export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly 
   // clause 2 for why an own key holding `undefined` IS absence here.
   if (tx.likeTarget !== undefined) {
     const likeTarget = tx.likeTarget;
-    if (typeof likeTarget !== 'string' || !HEX64.test(likeTarget)) {
+    if (!isHex64(likeTarget)) {
       return {
         valid: false,
         error:
