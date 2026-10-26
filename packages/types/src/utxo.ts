@@ -1384,8 +1384,9 @@ export function computeTxId(tx: UtxoTransaction): TxId {
 
 /**
  * Largest-first UTXO selection. Returns the minimal subset of boxes whose
- * combined value covers `requiredAmount`. Assumes boxes are pre-sorted by
- * value descending. Throws if the total value of all boxes is insufficient.
+ * combined value covers `requiredAmount`, taken from a copy of `boxes` sorted
+ * by value descending — boxes of equal value in the order given. The argument
+ * is never reordered. Throws if the total value of all boxes is insufficient.
  */
 export function selectBoxes<T extends { value: bigint }>(
   boxes: T[],
@@ -1393,9 +1394,10 @@ export function selectBoxes<T extends { value: bigint }>(
 ): T[] {
   if (requiredAmount <= 0n) return [];
 
+  const ordered = [...boxes].sort((a, b) => (a.value < b.value ? 1 : a.value > b.value ? -1 : 0));
   let accumulated = 0n;
   const selected: T[] = [];
-  for (const box of boxes) {
+  for (const box of ordered) {
     accumulated += box.value;
     selected.push(box);
     if (accumulated >= requiredAmount) break;
@@ -1405,5 +1407,5 @@ export function selectBoxes<T extends { value: bigint }>(
     throw new Error('Insufficient total value');
   }
 
-  return selected;
+    return selected;
 }

@@ -2448,7 +2448,7 @@ describe('selectBoxes', () => {
     expect(result).toEqual([]);
   });
 
-  it.fails('picks the largest boxes when they arrive smallest-first', async () => {
+  it('picks the largest boxes when they arrive smallest-first', async () => {
     const { selectBoxes } = await import('../src/index.js');
     const boxes = [
       { value: 10n, id: 'small' },
@@ -2461,7 +2461,7 @@ describe('selectBoxes', () => {
     expect(result).toEqual([{ value: 100n, id: 'big' }]);
   });
 
-  it.fails('keeps boxes of equal value in the order given', async () => {
+  it('keeps boxes of equal value in the order given', async () => {
     const { selectBoxes } = await import('../src/index.js');
     const boxes = [
       { value: 10n, id: 'small' },
@@ -2474,7 +2474,7 @@ describe('selectBoxes', () => {
     expect(result.map((b) => b.id)).toEqual(['first', 'second']);
   });
 
-  it.fails('leaves the array it is handed as it was', async () => {
+  it('leaves the array it is handed as it was', async () => {
     const { selectBoxes } = await import('../src/index.js');
     const boxes = [
       { value: 10n, id: 'small' },
