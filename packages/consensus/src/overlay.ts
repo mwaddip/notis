@@ -1,4 +1,5 @@
 import { isLapsedMember } from './tree-index.js';
+import { byValueDescThenId } from './tree-view.js';
 import type { UsernameRow } from './utxo-engine.js';
 import type { PostStanding, StateView } from './state-view.js';
 import { bytesToHex, hexToBytes } from '@dagsocial/types';
@@ -66,9 +67,6 @@ export class SpendOfNonLiveBoxError extends Error {
 const hex = (bytes: Uint8Array): string => bytesToHex(bytes);
 
 const byId = (a: AnyBox, b: AnyBox): number => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0);
-
-const byValueDescThenId = (a: AnyBox, b: AnyBox): number =>
-  a.value > b.value ? -1 : a.value < b.value ? 1 : byId(a, b);
 
 const likeKey = (targetPostId: string, likerId: Uint8Array): string =>
   `${targetPostId}:${hex(likerId)}`;

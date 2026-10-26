@@ -20,3 +20,12 @@ export interface TreeSession {
 export function isSentinel(key: Uint8Array): boolean {
   return key.every((byte) => byte === 0x00) || key.every((byte) => byte === 0xff);
 }
+
+/** Bytewise order of two keys, the tree's own: byte by byte, then length. */
+export function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i] !== b[i]) return a[i]! < b[i]! ? -1 : 1;
+  }
+  return a.length - b.length;
+}

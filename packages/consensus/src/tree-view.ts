@@ -51,7 +51,7 @@ import type {
   VouchEscrowBox,
 } from '@dagsocial/types';
 import type { PostStanding, StateView } from './state-view.js';
-import { isSentinel } from './tree-session.js';
+import { compareBytes, isSentinel } from './tree-session.js';
 import type { TreeLookup, TreeSession } from './tree-session.js';
 import type { UsernameRow } from './utxo-engine.js';
 
@@ -118,16 +118,12 @@ const LAPSED_IDENTITY_AT = 1; // tag ‖ b32(identityId)
 
 const idAt = (key: Uint8Array, at: number): string => bytesToHex(key.subarray(at, at + 32));
 
-/** Bytewise order of two keys. */
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) {
-    if (a[i] !== b[i]) return a[i]! < b[i]! ? -1 : 1;
-  }
-  return a.length - b.length;
-}
-
-const byValueDescThenId = (a: KarmaBox, b: KarmaBox): number =>
+/**
+ * Box order by `value` descending, then by `id` ascending — the order the
+ * tree answers an owner's karma boxes in (CONSENSUS_INTERFACE → StateView),
+ * and the composed order the overlay reads them in.
+ */
+export const byValueDescThenId = (a: AnyBox, b: AnyBox): number =>
   a.value > b.value ? -1 : a.value < b.value ? 1 : a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0;
 
 /** A box as its tree value decodes, with no key holding `undefined`. */
