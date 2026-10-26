@@ -15,6 +15,7 @@ import {
   isValidUsernameBytes,
   isBytes,
   isHex64,
+  POW_TARGET_BITS_MAX,
 } from '@dagsocial/types';
 import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash, hash32, bytesToHex, hexToBytes, computeUtxoTxRoot, computeTxId } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
@@ -200,8 +201,8 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   // fails `verifyOrderingBlockPoW`, which refuses a target it cannot expand.
   {
     field: 'powTargetBits',
-    ok: (v) => isU64Safe(v) && (v as number) <= 65536,
-    error: 'Block header powTargetBits must be an integer in [0, 65536]',
+    ok: (v) => isU64Safe(v) && (v as number) <= POW_TARGET_BITS_MAX,
+    error: `Block header powTargetBits must be an integer in [0, ${POW_TARGET_BITS_MAX}]`,
   },
   // vlqU — a consensus input: the order and future-bound rules
   // (→ verifyCreatedAtOrder, → verifyCreatedAtBound) and the difficulty
@@ -283,15 +284,15 @@ const ORDERING_TARGET_PRECISION = 320n;
 
 /**
  * The inclusive maximum acceptable ordering-block digest for `scaledBits`,
- * big-endian, 32 bytes. `null` outside `[0, 65536]`, which a caller reads as
+ * big-endian, 32 bytes. `null` outside `[0, POW_TARGET_BITS_MAX]`, which a caller reads as
  * "no digest can satisfy this" and answers `false`.
  *
  * VALIDATION_INTERFACE → orderingPowTarget. `scaledBits` is in units of 1/256
  * of a bit, so the target is `R - 1` for the unique `R` with
- * `R^256 ≤ 2^(65536 - scaledBits) < (R+1)^256`.
+ * `R^256 ≤ 2^(POW_TARGET_BITS_MAX - scaledBits) < (R+1)^256`.
  */
 export function orderingPowTarget(scaledBits: number): Uint8Array | null {
-  if (!Number.isSafeInteger(scaledBits) || scaledBits < 0 || scaledBits > 65536) return null;
+  if (!Number.isSafeInteger(scaledBits) || scaledBits < 0 || scaledBits > POW_TARGET_BITS_MAX) return null;
   const whole = scaledBits >> 8;
   const fraction = scaledBits & 255;
   let mantissa = 1n << ORDERING_TARGET_PRECISION;
