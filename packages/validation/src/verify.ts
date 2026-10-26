@@ -13,6 +13,7 @@ import {
   updateInterlinks,
   protocolVersionAt,
   isValidUsernameBytes,
+  isBytes,
 } from '@dagsocial/types';
 import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash, hash32, bytesToHex, hexToBytes, computeUtxoTxRoot, computeTxId } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
@@ -38,17 +39,6 @@ import { isDisallowedContentCodepoint } from './content-charset.js';
 /** Narrow to a non-null object. */
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
-}
-
-/**
- * Narrow to `Uint8Array` (which `Buffer` extends).
- *
- * Deliberately not `ArrayBuffer.isView`: `Buffer.from(new Uint32Array(8))`
- * copies *elements*, not bytes, so a 32-byte-but-not-Uint8Array view would
- * silently yield an 8-byte key where a 32-byte one is required.
- */
-function isBytes(v: unknown): v is Uint8Array {
-  return v instanceof Uint8Array;
 }
 
 /**
@@ -115,7 +105,7 @@ function isHex33(v: unknown): v is string {
   return typeof v === 'string' && STATE_ROOT_HEX.test(v);
 }
 
-/** A `Uint8Array` of exactly `n` bytes — type first, width second (see `isBytes`). */
+/** A `Uint8Array` of exactly `n` bytes — type first, width second (`isBytes`, `TYPES_INTERFACE → Export table`). */
 function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
   return isBytes(v) && v.length === n;
 }
