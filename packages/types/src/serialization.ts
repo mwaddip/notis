@@ -202,8 +202,8 @@ export function decodeTxPacket(bytes: Uint8Array): TxPacket {
  * on **every** block — the `bond.inviteePublicKey` failure exactly, which is why
  * `TYPES_INTERFACE` → Layout — Boxes requires each writer to be checked against
  * its field's schema type, one row at a time.
- * `verifyHeaderFieldDomains`' own table agrees:
- * `isHex32` for the four, `isBytesOfLength(v, 32)` for this one.
+ * The domains follow the same split: `isHex64` for the four,
+ * `isBytesOfLength(v, 32)` for this one.
  *
  * ## Totality
  *

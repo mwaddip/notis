@@ -38,7 +38,7 @@ import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
  *
  * This ports the reasoning in `post.ts`'s Totality note above `postFieldBytes`,
  * not a new scheme. Wire's writers throw on non-integers, negatives, and
- * anything past `MAX_SAFE_INTEGER` (`wire/src/vlq.ts:3-9`), and `postFieldBytes`
+ * anything past `MAX_SAFE_INTEGER` (WIRE_INTERFACE → "Writers throw and that is load-bearing to preserve"), and `postFieldBytes`
  * is reached with malformed posts — `@dagsocial/validation`'s `isSignablePost`
  * admits them — so a throwing writer turns a malformed post into a panic and
  * breaks the no-panic contract validation asserts (audits M-5/M-6).
@@ -64,7 +64,7 @@ export const VLQ_SENTINEL = 0xffff_ffff_ffff_ffffn;
 
 /**
  * Base-128 digit count for a `bigint` — `encodeVlqBigInt`'s loop
- * (`wire/src/vlq.ts`), counted rather than run.
+ * (WIRE_INTERFACE → BigInt VLQ), counted rather than run.
  */
 function vlqBigIntWidth(value: bigint): number {
   let n = 1;
@@ -753,10 +753,9 @@ export function firstDifference(a: Uint8Array, b: Uint8Array): number {
  * instead; both forms are total, and which applies is stated per preimage.
  *
  * **Two mint `subject` encodings are also `u32BE`, and subjects are the
- * caller's.** `coinbase` and `genesis` encode a `u32BE` selector
- * (`node/src/mint-provenance.ts`), `computeMintTxId` takes those bytes
- * opaquely, and NODE_INTERFACE → Reason and subject table is what mandates the
- * form. One exported implementation is what stops node reimplementing it and
+ * caller's.** `coinbase` and `genesis` encode a `u32BE` selector,
+ * `computeMintTxId` takes those bytes opaquely, and NODE_INTERFACE → Reason and
+ * subject table is what mandates the form. One exported implementation is what stops node reimplementing it and
  * drifting — a silent divergence would move mint txIds, and through them every
  * box id, with nothing to catch it.
  */
