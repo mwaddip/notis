@@ -16,10 +16,9 @@ reaches them.
 packages whose code it runs; `@dagsocial/avltree` is its third workspace dependency, for its types alone — the
 step-by-step verifier's, which `verifierSession` wraps (→ The tree session). **It imports no Node built-in, reads
 no Node global, carries no WASM, performs no I/O, holds no module-level state a result can depend on and reads no
-clock** — a rule that needs a number the network sets receives
-it from its caller, and a rule that needs state reads it through the interface its caller injects. Its module-level
-values are constants, the one `TextDecoder` its username reads decode through (a decode without `stream` leaves no
-state behind), and the two memos of `settlement.ts`' sizing probes, each a pure function of the era it is keyed by.
+clock** — a rule that needs a number the network sets receives it from its caller, and a rule that needs state reads
+it through the interface its caller injects. Its module-level values are constants and the two memos of
+`settlement.ts`' sizing probes, each a pure function of the era it is keyed by.
 Every signature check it makes is `validation`'s — `verifyEd25519` one transaction at a time, `verifyEd25519Batch`
 for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`) — or its caller's answer for that same check, handed
 in through `ApplyContext`'s signature checks (→ ApplyContext) and `UtxoEngineDeps.verifySignature` (→ The overlay). The
@@ -65,8 +64,9 @@ budget`) and `'none'` for anyone else. It calls `bar` once, for a member alone, 
 the network record reads no network record for a root or a non-member. The invite arm of `validateTx` answers through
 it, and so do the node's admission gate, its invite service and `GET /karma/:userId`'s `invitesAvailable`.
 
-> ⚠ **AHEAD OF CODE (2026-10-26).** The two paragraphs above, the lapsed-vouch row (→ StateView) and the one
-> `TextDecoder` (→ Place in the workspace) lead `utxo-engine.ts`, `tree-index.ts`, `overlay.ts`, `apply-block.ts` and
+> ⚠ **AHEAD OF CODE (2026-10-26).** The two paragraphs above, the lapsed-vouch row (→ StateView) and module-level
+> values holding no `TextDecoder` (→ Place in the workspace; a name's canonical string is `types`' `canonicalUsername`,
+> `TYPES_INTERFACE → Content limits`) lead `utxo-engine.ts`, `tree-index.ts`, `overlay.ts`, `apply-block.ts` and
 > `tree-view.ts`; the node's own invite arithmetic (`invites-available.ts`, `routes/utxo.ts`) moves onto
 > `availableInvites` in a later run.
 

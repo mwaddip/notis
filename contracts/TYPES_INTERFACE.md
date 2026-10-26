@@ -3190,10 +3190,17 @@ export const USERNAME_MAX_BYTES = 24;
 canonical form the state keys on is the byte-wise ASCII lowercase** (`A`–`Z` → `a`–`z`, nothing else
 touched): two names are one name when their canonical bytes are equal. The codec refuses the length
 inside `read`; `VALIDATION_INTERFACE → verifyTxStructure` refuses the alphabet; nothing normalises
-anything else. Ruled 2026-09-09 (`CONSTANTS → Format and domain`). **Two pure functions carry the
+anything else. Ruled 2026-09-09 (`CONSTANTS → Format and domain`). **Three pure functions carry the
 rule and are its only implementations**, exported from this package: `isValidUsernameBytes(name)`
-answers the length and the alphabet, and `canonicalUsernameBytes(name)` is the lowercase form — the
-validation package refuses through the first, and the node keys its records through the second.
+answers the length and the alphabet, `canonicalUsernameBytes(name)` is the lowercase form, and
+`canonicalUsername(name)` is that form as a string, decoded through this package's one `TextDecoder`
+(`utf-8`, not fatal; a decode without `stream` leaves no state) — the validation package refuses through
+the first, the node keys its records through the second, and every lookup of a name by its canonical
+string, the rules' and the node's routes' alike, reads the third.
+
+> ⚠ **AHEAD OF CODE (2026-10-26).** `canonicalUsername` leads `username.ts`; `consensus` (`apply-block.ts`,
+> `utxo-engine.ts`, `tree-view.ts`) and the node's `routes/usernames.ts` and `routes/page.ts` each decode the
+> canonical bytes themselves.
 
 The third bounds a **box** field rather than a post one, and it sits here because this section groups
 bounds by what kind of rule they are — a maximum byte length enforced at a codec boundary — not by
