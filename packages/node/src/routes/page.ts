@@ -101,13 +101,16 @@ export function isAfterError(
 
 // NODE_INTERFACE → Usernames; NODE_INTERFACE → Identity parameters: strip a
 // leading `@`, hold the rest to `isValidUsernameBytes`, and answer the
-// canonical string (TYPES_INTERFACE → "Content limits"). The caller maps the
-// failure to its own error string.
-export function parseNameParam(raw: string): { canonical: string } | { invalid: true } {
+// canonical string (TYPES_INTERFACE → "Content limits") beside the name as
+// typed (the `@` stripped, nothing else). The caller maps the failure to its
+// own error string.
+export function parseNameParam(
+  raw: string,
+): { canonical: string; name: string } | { invalid: true } {
   const rest = raw.startsWith('@') ? raw.slice(1) : raw;
   const bytes = Buffer.from(rest, 'utf8');
   if (!isValidUsernameBytes(bytes)) return { invalid: true };
-  return { canonical: canonicalUsername(bytes) };
+  return { canonical: canonicalUsername(bytes), name: rest };
 }
 
 // NODE_INTERFACE → Identity parameters;

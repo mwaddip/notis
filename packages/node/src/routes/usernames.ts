@@ -89,13 +89,11 @@ export function createRouter(deps: UsernameRouteDeps): Router {
       return;
     }
 
-    const rawParam = req.params.name!;
-    const parsed = parseNameParam(rawParam);
+    const parsed = parseNameParam(req.params.name!);
     if ('invalid' in parsed) {
       res.status(400).json({ error: 'name invalid' });
       return;
     }
-    const rawName = rawParam.startsWith('@') ? rawParam.slice(1) : rawParam;
 
     const row = deps.getUsername(parsed.canonical);
     if (!row) {
@@ -112,7 +110,7 @@ export function createRouter(deps: UsernameRouteDeps): Router {
     }
 
     if (!tx.inputs.includes(row.boxId)) {
-      res.status(400).json({ error: `Transaction does not consume ${rawName}'s box` });
+      res.status(400).json({ error: `Transaction does not consume ${parsed.name}'s box` });
       return;
     }
 
