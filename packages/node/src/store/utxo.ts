@@ -1,4 +1,5 @@
 import { getDb, prepared } from './db.js';
+import { bytesToHex } from '@dagsocial/types';
 import type { Page, PageResult, BoxKey } from './index.js';
 import type {
   AnyBox,
@@ -95,11 +96,6 @@ interface LikeAccrualExtra {
 /** Convert a hex-encoded pubkey string (from JSON extra_data) to Uint8Array. */
 function hexToPubkey(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(hex, 'hex'));
-}
-
-/** Convert a Uint8Array pubkey to a hex string for JSON extra_data storage. */
-function pubkeyToHex(pk: Uint8Array): string {
-  return Buffer.from(pk).toString('hex');
 }
 
 /**
@@ -703,7 +699,7 @@ export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.inviteePublicKey') = ?
        LIMIT 1`, true)
-    .get(pubkeyToHex(inviteePublicKey)) as UtxoRow | undefined;
+    .get(bytesToHex(inviteePublicKey)) as UtxoRow | undefined;
   return row ? (rowToBox(row) as BondBox) : null;
 }
 
@@ -757,7 +753,7 @@ export function getBondBoxesPage(
   page: Page<string>,
 ): PageResult<BondBox, string> {
   const db = getDb();
-  const hex = pubkeyToHex(inviterId);
+  const hex = bytesToHex(inviterId);
   const afterClause = page.after ? ` AND id > ?` : '';
   const params: unknown[] = [hex];
   if (page.after) params.push(page.after);
@@ -791,7 +787,7 @@ export function getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[] {
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.owner') = ?
        ORDER BY id`, true)
-    .all(pubkeyToHex(voucherId)) as UtxoRow[];
+    .all(bytesToHex(voucherId)) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as VouchEscrowBox);
 }
 
@@ -802,7 +798,7 @@ export function getVouchEscrowsForPage(
   page: { limit: number; after?: string },
 ): { rows: VouchEscrowBox[]; next: string | null; count: number } {
   const db = getDb();
-  const hex = pubkeyToHex(voucherId);
+  const hex = bytesToHex(voucherId);
   const afterClause = page.after ? ` AND id > ?` : '';
   const params: unknown[] = [hex];
   if (page.after) params.push(page.after);
@@ -842,7 +838,7 @@ export function hasActiveVouchEscrow(voucherId: Uint8Array): boolean {
        WHERE box_type = 'vouch_escrow'
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.owner') = ?`)
-    .get(pubkeyToHex(voucherId));
+    .get(bytesToHex(voucherId));
   return row !== undefined;
 }
 
@@ -884,7 +880,7 @@ export function getLikeAccrualBoxes(author: Uint8Array): LikeAccrualBox[] {
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.author') = ?
        ORDER BY id`, true)
-    .all(pubkeyToHex(author)) as UtxoRow[];
+    .all(bytesToHex(author)) as UtxoRow[];
   return rows.map((row) => rowToBox(row) as LikeAccrualBox);
 }
 
@@ -950,8 +946,8 @@ export function insertBox(box: AnyBox): void {
     case 'bond': {
       const b = box as BondBox;
       extraData = {
-        inviterId: pubkeyToHex(b.inviterId),
-        inviteePublicKey: pubkeyToHex(b.inviteePublicKey),
+        inviterId: bytesToHex(b.inviterId),
+        inviteePublicKey: bytesToHex(b.inviteePublicKey),
       } satisfies BondExtra;
       break;
     }
@@ -962,22 +958,22 @@ export function insertBox(box: AnyBox): void {
     case 'vouch': {
       const v = box as VouchBox;
       extraData = {
-        voucherId: pubkeyToHex(v.voucherId),
-        targetId: pubkeyToHex(v.targetId),
+        voucherId: bytesToHex(v.voucherId),
+        targetId: bytesToHex(v.targetId),
       } satisfies VouchExtra;
       break;
     }
     case 'vouch_escrow': {
       const v = box as VouchEscrowBox;
       extraData = {
-        owner: pubkeyToHex(v.owner),
+        owner: bytesToHex(v.owner),
         releaseAtBlock: v.releaseAtBlock,
       } satisfies VouchEscrowExtra;
       break;
     }
     case 'like_accrual': {
       const a = box as LikeAccrualBox;
-      extraData = { author: pubkeyToHex(a.author) } satisfies LikeAccrualExtra;
+      extraData = { author: bytesToHex(a.author) } satisfies LikeAccrualExtra;
       break;
     }
     // No `owner` and no per-type fields on any of the four, so the columns

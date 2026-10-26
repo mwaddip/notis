@@ -1,12 +1,9 @@
 import { getDb, prepared } from './db.js';
 import { rowToBox } from './utxo.js';
 import type { UtxoRow } from './utxo.js';
+import { bytesToHex } from '@dagsocial/types';
 import type { VouchBox } from '@dagsocial/types';
 import type { Page, PageResult } from './index.js';
-
-function pubkeyToHex(pk: Uint8Array): string {
-  return Buffer.from(pk).toString('hex');
-}
 
 /**
  * Every live vouch box for the (voucher, target) pair, ascending box id — the
@@ -18,7 +15,7 @@ export function getVouchBoxes(voucherId: Uint8Array, targetId: Uint8Array): Vouc
          AND json_extract(extra_data, '$.voucherId') = ?
          AND json_extract(extra_data, '$.targetId') = ?
        ORDER BY id`, true)
-    .all(pubkeyToHex(voucherId), pubkeyToHex(targetId)) as UtxoRow[];
+    .all(bytesToHex(voucherId), bytesToHex(targetId)) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as VouchBox);
 }
 
@@ -39,7 +36,7 @@ const VOUCH_TARGET_WHERE =
 // VOUCH_TARGET_WHERE's count is computed in one place.
 export function getVouchCountForTarget(targetId: Uint8Array): number {
   const row = prepared(getDb(), `SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}`)
-    .get(pubkeyToHex(targetId)) as { cnt: number };
+    .get(bytesToHex(targetId)) as { cnt: number };
   return row.cnt;
 }
 
@@ -48,7 +45,7 @@ export function getVouchesForTargetPage(
   page: Page<string>,
 ): PageResult<VouchBox, string> {
   const db = getDb();
-  const hex = pubkeyToHex(targetId);
+  const hex = bytesToHex(targetId);
   const afterClause = page.after ? ` AND id > ?` : '';
   const params: unknown[] = [hex];
   if (page.after) params.push(page.after);
@@ -93,7 +90,7 @@ export function getVouchesForVoucherPage(
   page: Page<string>,
 ): PageResult<VouchBox, string> {
   const db = getDb();
-  const hex = pubkeyToHex(voucherId);
+  const hex = bytesToHex(voucherId);
   const afterClause = page.after ? ` AND id > ?` : '';
   const params: unknown[] = [hex];
   if (page.after) params.push(page.after);

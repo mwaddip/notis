@@ -1,5 +1,6 @@
 import type { PostKey, BoxKey } from '../store/index.js';
 import {
+  BOX_VALUE_BOUND,
   canonicalUsername,
   isHex64,
   isValidUsernameBytes,
@@ -10,7 +11,6 @@ import {
 
 export type UsernameLookup = (nameLower: string) => { owner: string } | null;
 
-const BOX_VALUE_BOUND = 1n << 63n;
 const DECIMAL_INT = /^\d+$/;
 
 // NODE_INTERFACE → "Every list a view returns is a page"; the bounds are
