@@ -39,3 +39,16 @@ export function canonicalUsernameBytes(name: Uint8Array): Uint8Array {
   }
   return out;
 }
+
+const USERNAME_DECODER = new TextDecoder('utf-8');
+
+/**
+ * The canonical bytes as a string — a plain, non-fatal UTF-8 decode, so the
+ * answer for a valid name is its lowercase text and for any other input is
+ * what that decode answers.
+ *
+ * TYPES_INTERFACE → Content limits.
+ */
+export function canonicalUsername(name: Uint8Array): string {
+  return USERNAME_DECODER.decode(canonicalUsernameBytes(name));
+}
