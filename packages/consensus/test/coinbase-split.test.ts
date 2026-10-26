@@ -3,9 +3,7 @@
  * (MINING_INTERFACE → Coinbase Application).
  *
  * Pure arithmetic over bigints, so this suite needs no database and no block:
- * every rule here is a property of the numbers, and the block-level wiring —
- * which outputs get minted, and what the applier compares them against — is in
- * `block-apply.test.ts`.
+ * every rule here is a property of the numbers.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -142,11 +140,9 @@ describe('splitCoinbase', () => {
   // The split's half of the zero-income coinbase: nothing left to pay, which is
   // what makes the empty output list the only legal encoding under the rule that
   // no coinbase output may carry zero (MINING_INTERFACE → Coinbase Application,
-  // invariant 1). The block's half — that a block at the emission terminus
-  // carries that empty list and applies — is `emission-terminus.test.ts`. Income
-  // reaches 0 there at devnet height 5,901, which is the height that makes this
-  // function's zero case a shape a real block takes rather than only an argument
-  // it can be called with.
+  // invariant 1). Income reaches 0 at devnet height 5,901, which is the height
+  // that makes this function's zero case a shape a real block takes rather than
+  // only an argument it can be called with.
   it('leaves nothing for any slice at zero income', () => {
     const s = splitCoinbase(0n, 0n, 0n, 0);
     expect(s.treasury).toBe(0n);

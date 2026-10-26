@@ -10,8 +10,8 @@ import type { StateView } from './state-view.js';
 
 // The valuation — `effectiveKarma`, `isIdentityStale`, `owedPeriods`, `DecayCfg`
 // — is `@dagsocial/types`' (TYPES_INTERFACE → Identity record and karma
-// valuation). `decay.ts` keeps the execution: `karmaOwed`,
-// `collectPostBodyKarma`, `deriveKarmaDecay` and `commitDecayClocks` below.
+// valuation). The execution is `karmaOwed`, `collectPostBodyKarma`,
+// `deriveKarmaDecay` and `commitDecayClocks` below.
 
 /**
  * The decay an owner owes at `height` — face less effective karma, over the

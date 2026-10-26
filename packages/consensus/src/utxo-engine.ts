@@ -54,9 +54,9 @@ export interface UsernameRow {
  * true rows as its outputs and refuses every other type, which is what keeps a
  * `fee` output off the karma side with no clause naming `fee`.
  *
- * Not the set `/status` sums into `totalKarma` — that is `KARMA_SUPPLY_TYPES` in
- * `karma-supply.ts`, and no set here is defined as, spread from or derived from
- * another (NODE_INTERFACE → Three karma sets, and none derives from another).
+ * Not the set `/status` sums into `totalKarma` — that is `KARMA_SUPPLY_TYPES`,
+ * and no set here is defined as, spread from or derived from another
+ * (NODE_INTERFACE → Three karma sets, and none derives from another).
  * This one answers whether a karma spend may create the type; that one whether
  * the type's value is karma in existence; the conservation set whether it belongs
  * to the total that never changes.
@@ -147,8 +147,8 @@ export interface UtxoEngineDeps {
   getKarmaValue: (owner: Uint8Array) => bigint;
   /**
    * The decay the owner owes at `height` — `face − effectiveKarma(face, record,
-   * height, decayCfg)` over `karmaOwed` in `decay.ts`, the one implementation
-   * of the formula (NODE_INTERFACE → Karma transition rules → "Engine inputs
+   * height, decayCfg)` over `karmaOwed`, the one implementation of the formula
+   * (NODE_INTERFACE → Karma transition rules → "Engine inputs
    * the rule needs"). Block application answers it from a pre-body capture of
    * the owner's karma boxes and record, so a post that advances the activity
    * clock earlier in the body does not move the valuation this transaction
@@ -764,7 +764,7 @@ function checkTransitions(
         }
         const vouchOut = vouchOutputs[0] as VouchBox;
         // The stake is pinned at cast: a vouch is one vote and always stakes
-        // exactly VOUCH_KARMA_AMOUNT (audit F-consensus-3). Without this pin
+        // exactly VOUCH_KARMA_AMOUNT. Without this pin
         // the only bound on the stake is conservation, which permits 0n, while
         // unvouch escrows the constant regardless: a 0-value vouch matures into
         // 1 karma minted from nothing, and a 100-value vouch destroys 99.
@@ -1277,9 +1277,9 @@ export function ceilingOf(tx: UtxoTransaction): number | null {
 // ---------------------------------------------------------------------------
 
 // The consensus bound on every `value` (and `originalValue`) is the schema's
-// `u64` spec below — one table, not a separate value check alongside a type
-// table. `json-to-tx.ts`'s `assertValidBoxValue` is the HTTP-edge ergonomics
-// twin, not the consensus gate.
+// `u64` entry below — one table, not a separate value check alongside a type
+// table. The HTTP-edge check is the node's ergonomics twin, not the consensus
+// gate.
 
 /**
  * Runtime type vocabulary for output fields (field-type pin). Every `ok`
@@ -2560,7 +2560,7 @@ export function validateTx(
  * a shape that cannot exist and one that depends on every later reader
  * overwriting in the same order.
  *
- * Exported because `block-apply.ts` materializes the outputs of block-embedded
+ * Exported because the node materializes the outputs of block-embedded
  * transactions on its own path. One rule for both, so the pool path and the
  * block path cannot derive different ids for the same transaction.
  */
