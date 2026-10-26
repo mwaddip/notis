@@ -7385,6 +7385,24 @@ async function main() {
   // The payment landing on the faucet's plain /credits — the one page the
   // reader's client itself reads is fine; the whole listing is read here.
   const payment12b = await waitForFaucetPaymentBox(DEVNET_FAUCET_KEY, 1_250_000_000n, 180000);
+  // The client's own landing — the bounded poll (WEB_INTERFACE → The wallet →
+  // "Landing is the one unsolicited update, and it is bounded") reads
+  // /blocks/current every 15 s while entries are pending and reconciles the
+  // ledger on a height move. On the reconcile the pending send's entry drops,
+  // sendFlight.stage reads 'landed' and the row's `.credits-flight .stage`
+  // reads *sent* (WEB_INTERFACE → The wallet window → "The `send` row"). 12c
+  // reads this signal to enter the form on a clear flight.
+  let clientLanding12bMs = 0;
+  let clientLanding12bLanded = false;
+  if (payment12b.landed) {
+    const cl0 = Date.now();
+    while (Date.now() - cl0 < 60000) {
+      const stage = await cx10.eval(`document.querySelector('.credits-flight .stage')?.textContent?.trim() ?? null`);
+      if (stage === 'sent') { clientLanding12bLanded = true; clientLanding12bMs = Date.now() - cl0; break; }
+      await sleep(1000);
+    }
+    if (!clientLanding12bLanded) clientLanding12bMs = Date.now() - cl0;
+  }
   const resolvedOk12b = resolvedKey12b === DEVNET_FAUCET_KEY;
   const whatOk12b = promptShape12b?.[0]?.cls === 'what' && promptShape12b?.[0]?.text === 'Notis transfer';
   const amountOk12b = promptShape12b?.[1]?.cls === 'amount' && promptShape12b?.[1]?.text === '12.5 $NOTIS';
@@ -7393,8 +7411,8 @@ async function main() {
   const transferOk12b = transfer12b?.params.response.status === 200;
   const rowOk12b = rowAt2xx12b;
   record('12b',
-    noConfirm12b && resolvedOk12b && whatOk12b && amountOk12b && targetOk12b && noFeeLine12b && transferOk12b && rowOk12b && payment12b.landed && shotSaved12b,
-    `no .pf-confirm=${noConfirm12b}, resolved-key='${(resolvedKey12b ?? '').slice(0, 8)}…${(resolvedKey12b ?? '').slice(-4)}'=whole=${resolvedOk12b}, lines=${JSON.stringify((promptShape12b || []).map((l) => `${l.cls}:${l.text}`))}, transfer=${transfer12b?.params.response.status ?? 'null'}, row read 87.5 within 20 s of the 2xx=${rowOk12b}, pooled window at the row reading: ${pooledWindow12b}, payment landed on faucet /credits=${payment12b.landed} (elapsed=${(payment12b.elapsedMs / 1000).toFixed(0)}s, boxId=${(payment12b.boxId ?? '').slice(0, 12)}…, atHeight=${payment12b.atHeight ?? 'null'}), screenshot saved=${shotSaved12b}`);
+    noConfirm12b && resolvedOk12b && whatOk12b && amountOk12b && targetOk12b && noFeeLine12b && transferOk12b && rowOk12b && payment12b.landed && clientLanding12bLanded && shotSaved12b,
+    `no .pf-confirm=${noConfirm12b}, resolved-key='${(resolvedKey12b ?? '').slice(0, 8)}…${(resolvedKey12b ?? '').slice(-4)}'=whole=${resolvedOk12b}, lines=${JSON.stringify((promptShape12b || []).map((l) => `${l.cls}:${l.text}`))}, transfer=${transfer12b?.params.response.status ?? 'null'}, row read 87.5 within 20 s of the 2xx=${rowOk12b}, pooled window at the row reading: ${pooledWindow12b}, payment landed on faucet /credits=${payment12b.landed} (elapsed=${(payment12b.elapsedMs / 1000).toFixed(0)}s, boxId=${(payment12b.boxId ?? '').slice(0, 12)}…, atHeight=${payment12b.atHeight ?? 'null'}), client-side landing: .credits-flight .stage='sent' within 60 s of the node-side landing=${clientLanding12bLanded} (elapsed=${(clientLanding12bMs / 1000).toFixed(0)}s), screenshot saved=${shotSaved12b}`);
 
   // --- 12c — same extension arm, decline at the prompt. Both form inputs kept,
   // flight "send not sent.", no /credits/transfer (WEB_INTERFACE → The wallet
