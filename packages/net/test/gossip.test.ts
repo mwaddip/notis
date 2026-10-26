@@ -180,7 +180,7 @@ function signHeader(header: BlockHeader): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
-// Ordering-block topic validator — relay PoW gate (audit M-9, M-6)
+// Ordering-block topic validator — relay PoW gate
 // ---------------------------------------------------------------------------
 
 describe('ordering-block topic validator (relay PoW gate)', () => {
@@ -252,7 +252,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(1);
   });
 
-  it('rejects the same block with powNonce NaN (M-6 — pre-fix code Accepted this)', () => {
+  it('rejects the same block with powNonce NaN', () => {
     // The single-field-delta control that Accepts is the mined-nonce case
     // above.
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();

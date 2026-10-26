@@ -27,7 +27,7 @@ async function* fromChunks(chunks: Uint8Array[]): AsyncGenerator<Uint8Array> {
   for (const c of chunks) yield c;
 }
 
-describe('readStreamBounded (audit H-9)', () => {
+describe('readStreamBounded', () => {
   it('concatenates the chunks of a normal stream', async () => {
     const result = await readStreamBounded(
       fromChunks([new Uint8Array([1, 2]), new Uint8Array([3]), new Uint8Array([4, 5])]),

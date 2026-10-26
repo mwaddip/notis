@@ -60,16 +60,14 @@ export enum PenaltyKind {
 }
 
 /**
- * The score a `Misbehavior` penalty accrues. Named once beside the tier
- * (NET_INTERFACE → Peer Penalty System → "A scored tier's score is named
- * once, beside the tiers").
+ * The score a `Misbehavior` penalty accrues
+ * (NET_INTERFACE → Peer Penalty System).
  */
 export const MISBEHAVIOR_SCORE = 100;
 
 /**
- * The score a `Transient` penalty accrues. Named once beside the tier
- * (NET_INTERFACE → Peer Penalty System → "A scored tier's score is named
- * once, beside the tiers").
+ * The score a `Transient` penalty accrues
+ * (NET_INTERFACE → Peer Penalty System).
  */
 export const TRANSIENT_SCORE = 50;
 
