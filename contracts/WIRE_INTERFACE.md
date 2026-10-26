@@ -371,10 +371,15 @@ written to again; a later write never reaches an array `toBytes()` returned.
 
 ### `encodeVlqU(value: number): Uint8Array`
 
-Encodes a non-negative integer as VLQ bytes.
+Encodes a non-negative integer as VLQ bytes. **One loop per encoding:** its bytes are the ones `ByteWriter.writeVlqU`
+writes — its own precondition check answers first, with its own message, and the writer's loop produces the bytes — as
+`ByteWriter.writeVlqBigInt` writes the bytes of `encodeVlqBigInt`'s one loop.
 
 - **Precondition:** `value >= 0`, integer, `<= Number.MAX_SAFE_INTEGER`
 - **Throws:** `Error` if precondition violated
+
+> ⚠ **AHEAD OF CODE (2026-10-26).** One loop per encoding leads `vlq.ts` and `writer.ts`, where `encodeVlqU` and
+> `encodeVlqZigZag` carry their own loop and ZigZag beside the writer's, kept equal by a comment in each.
 
 ### `decodeVlqU(reader: ByteReader): number`
 
@@ -393,7 +398,8 @@ Thin wrapper: returns `reader.readVlqU()`.
 
 ### `encodeVlqZigZag(value: number): Uint8Array`
 
-ZigZag-encodes a signed integer, then VLQ-encodes.
+ZigZag-encodes a signed integer, then VLQ-encodes — the bytes `ByteWriter.writeVlqS` writes, after its own
+precondition check.
 
 - **Precondition:** integer (any sign)
 - **Throws:** `Error` if non-integer
