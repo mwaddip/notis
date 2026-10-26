@@ -8,13 +8,14 @@ import {
   HTTP_HEADERS_TIMEOUT_MS,
   HTTP_KEEP_ALIVE_TIMEOUT_MS,
   HTTP_REQUEST_TIMEOUT_MS,
+  isHex64,
   KARMA_MINIMUM,
 } from '@dagsocial/types';
 import { buildInviteTx } from './invite.js';
 import { buildCreditTransferTx } from './transfer.js';
 import { RateLimiter } from './rate-limit.js';
 import { NodeError } from './node-client.js';
-import { BadRequestError, InsufficientFundsError, HEX64 } from './tx.js';
+import { BadRequestError, InsufficientFundsError } from './tx.js';
 import type { NodeClient } from './node-client.js';
 import type { FaucetConfig } from './config.js';
 
@@ -70,7 +71,7 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
   const requested = (req: express.Request, res: express.Response): string | null => {
     const pubkey = String((req.body as { pubkey?: unknown } | undefined)?.pubkey ?? '')
       .toLowerCase();
-    if (!HEX64.test(pubkey)) {
+    if (!isHex64(pubkey)) {
       res.status(400).json({ error: 'pubkey must be 64 hex characters, an Ed25519 public key' });
       return null;
     }

@@ -1,5 +1,5 @@
 import { createPrivateKey, sign } from 'crypto';
-import { computeCandidateBoxId, computeTxId, txToJson } from '@dagsocial/types';
+import { computeCandidateBoxId, computeTxId, isHex64, txToJson } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
 
@@ -29,8 +29,6 @@ export interface BuiltTx {
    */
   readonly payment: BoxRef | null;
 }
-
-export const HEX64 = /^[0-9a-f]{64}$/;
 
 /**
  * Compute the id, sign it, and render the wire body.
@@ -100,7 +98,7 @@ export class BadRequestError extends Error {
 
 /** The recipient of any faucet transaction: 32 bytes, and never the faucet's own key. */
 export function checkRecipient(cfg: FaucetConfig, hex: string, what: string): void {
-  if (!HEX64.test(hex)) {
+  if (!isHex64(hex)) {
     throw new BadRequestError(`${what} public key must be 64 lowercase hex characters`);
   }
   if (hex === cfg.publicKeyHex) {
