@@ -2446,39 +2446,46 @@ async function verifiedFiguresSteps(cx, targetId = 'unknown') {
   }
 }
 
-// Step 21 — the balance's young → silent transition. A send to the devnet
-// faucet key produces a fresh change output on R; the young state is the
-// change box below suffixHead. After K + 1 blocks the change is proven and
-// row 6 fires — silence (WEB_INTERFACE → The extension → "The verified
-// figures", → The wallet window → "The `balance` row").
+// Step 21 — the balance row across R's own send (WEB_INTERFACE → The extension
+// → "The verified figures", → The wallet window → "The `balance` row"). The row
+// takes a new value at every 2xx of the reader's own send and every landing of
+// one. The row figure moves to the pending view's spendable sum at the 2xx —
+// read before the plain listing lands, by this node's word for a pooled window
+// (WEB_INTERFACE → The wallet → "A landing reads the plain listings, never
+// `pending=1`"). The landing on R's plain /credits produces the young change
+// box; a press reads *… $NOTIS landed since* and silence after K + 1 blocks.
 async function runFiguresStep21(cx) {
   try {
-    // Ensure the wallet window is open. If the header's control is not there
-    // (a page reopened without an identity), the step fails at once.
     const walletBtn = await cx.eval(`!!document.querySelector('[aria-label="open wallet"]')`);
     if (!walletBtn) {
       record(21, false, 'no [aria-label="open wallet"] control on the extension page — identity not loaded?');
       return;
     }
-    // Open the wallet, or raise it where it is open.
     await raiseWindow(cx, 'open wallet');
 
-    // Read the balance before the send. The row mounts before its listing
-    // lands — `—` until the read answers — so the wait is on the figure
-    // itself, with a bound. If R has no spendable, no send is possible.
+    // The pre-send balance in the row, bounded on a figure appearing.
     const figure = await waitForRow(readCreditsRow, cx,
       (r) => r.present && (r.goldText ?? '').trim() !== '', 60000);
     const goldBefore = figure.last?.goldText ?? null;
     const balanceNum = Number(goldBefore);
     if (figure.timedOut || !Number.isFinite(balanceNum) || balanceNum < 2) {
-      record(21, false, `R has too little \$NOTIS to send (gold=${JSON.stringify(goldBefore)}, figure ${figure.timedOut ? 'absent after 60 s' : 'read'}, hints=${JSON.stringify(figure.last?.allHints ?? null)}); the figures block needs a spendable balance to create the young change output`);
+      record(21, false, `R has too little \$NOTIS to send (gold=${JSON.stringify(goldBefore)}, figure ${figure.timedOut ? 'absent after 60 s' : 'read'}, hints=${JSON.stringify(figure.last?.allHints ?? null)}); the figures block needs a spendable balance for a change output`);
       return;
     }
-    // Send half the balance to the devnet faucet key — the change output is
-    // R's own new box, young until K blocks pass. The exact amount is not
-    // load-bearing; a fraction is fine.
     const sendAmount = (balanceNum / 2).toFixed(2);
     const preSendH = await currentHeight(NODE);
+
+    // R's plain /credits before the send — the box set a landing is measured
+    // against (WEB_INTERFACE → The wallet → "A landing reads the plain listings,
+    // never `pending=1`"); the whole listing is read.
+    const preCredits = await readNodeCredits(R_JSON.pubKeyHex);
+    if (preCredits === null) {
+      record(21, false, `could not read A's /credits/${R_JSON.pubKeyHex.slice(0, 8)}… before the step 21 send`);
+      return;
+    }
+    const preBoxIds = preCredits.boxIds;
+
+    const submitIdx = cx.events.length;
     await cx.waitFor(`!!document.querySelector('form.credits-form')`, 'send form 21');
     await cx.eval(`(() => {
       const form = document.querySelector('form.credits-form');
@@ -2487,8 +2494,6 @@ async function runFiguresStep21(cx) {
       inputs[1].value = ${JSON.stringify(sendAmount)};
       form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
     })()`, true);
-    // The extension arm opens a prompt window at once (the resolved-key hint
-    // appears alongside; no confirm row in the field). Approve.
     const prompt21 = await findExt('prompt.html');
     if (!prompt21) {
       record(21, false, 'no prompt window opened for the step 21 send');
@@ -2503,21 +2508,74 @@ async function runFiguresStep21(cx) {
       try { cxp.s.close(); } catch {}
     }
 
-    // Wait for the wallet's row to reflect the change output (the row updates
-    // when the send lands; the poll bound is generous — 3 minutes covers a
-    // paced miner well past the change output's height).
-    await cx.waitFor(
-      `document.querySelector('.credits-line .mono.gold')?.textContent !== ${JSON.stringify(goldBefore)}`,
-      'row updates after step 21 send', 180000);
-    const landedH21 = await currentHeight(NODE);
-    if (landedH21 === null) {
-      record(21, false, 'could not read /blocks/current after the step 21 send landed');
+    // The 2xx of /credits/transfer. The row re-reads /credits?pending=1 at the
+    // 2xx (WEB_INTERFACE → The wallet window → "The `balance` row").
+    const t2xxStart = Date.now();
+    let transfer2xx = null;
+    while (Date.now() - t2xxStart < 60000 && transfer2xx === null) {
+      const ev = cx.events.slice(submitIdx).find((e) =>
+        e.method === 'Network.responseReceived'
+        && (e.params.response.url || '').includes('/credits/transfer')
+        && e.params.response.status >= 200 && e.params.response.status < 300);
+      if (ev) transfer2xx = ev;
+      else await sleep(100);
+    }
+    if (transfer2xx === null) {
+      record(21, false, 'no 2xx of /credits/transfer within 60 s of the submit');
       return;
     }
 
-    // Assertion 1 — press the corner, read the young line. A verified tip
-    // re-reads the listings before it proves them, and a run can land after
-    // another one it followed, so the line is awaited with a bound.
+    // The row figure the 2xx re-reads — the pending view's spendable sum
+    // (WEB_INTERFACE → The wallet window → "The `balance` row"). A short bound
+    // covers the re-read's own fetch of /credits?pending=1.
+    const movedAt2xx = await waitForRow(readCreditsRow, cx,
+      (r) => r.present && (r.goldText ?? '') !== (goldBefore ?? ''), 20000);
+    const rowGold2xx = movedAt2xx.last?.goldText ?? null;
+    const rowBaseUnits = creditsBaseUnits(rowGold2xx ?? '');
+    const pending2xx = await readNodeCreditsPending(R_JSON.pubKeyHex);
+    const plainAt2xx = await readNodeCredits(R_JSON.pubKeyHex);
+    const pooledAt2xx = plainAt2xx !== null && plainAt2xx.boxIds.every((id) => preBoxIds.includes(id));
+    const rowMatchesPending = rowBaseUnits !== null && pending2xx !== null && rowBaseUnits === pending2xx.spendable;
+    const pooledWindow = pooledAt2xx ? 'open' : 'closed before a run';
+
+    // The pooled-window clause — a verifier run that lands while the plain
+    // listing lacks the spend reads the row's figure as *… $NOTIS to spend in
+    // the next block, by this node's word* (WEB_INTERFACE → The wallet window →
+    // "The `balance` row"). A reading over a short poll; a run between the 2xx
+    // and the plain listing's own landing is uncommon under a paced miner.
+    const POOLED_CLAUSE_CREDITS = /^\S.* \$NOTIS proven at block \d+ · \S.* \$NOTIS to spend in the next block, by this node's word$/;
+    let pooledClauseReading = null;
+    if (pooledAt2xx) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 3000 && pooledClauseReading === null) {
+        const r = await readCreditsRow(cx);
+        const txt = r.figHintText;
+        if (typeof txt === 'string' && POOLED_CLAUSE_CREDITS.test(txt)) {
+          const amt = creditsAmountIn(txt, / · (\d+(?:\.\d{1,8})?) \$NOTIS to spend in the next block, by this node's word$/);
+          pooledClauseReading = {
+            text: txt,
+            clauseBaseUnits: amt === null ? null : amt.toString(),
+            rowBaseUnits: rowBaseUnits?.toString() ?? null,
+            matches: amt !== null && rowBaseUnits !== null && amt === rowBaseUnits,
+          };
+        }
+        await sleep(250);
+      }
+    }
+
+    // The landing, off the plain listing — a box id outside the pre-send set
+    // (WEB_INTERFACE → The wallet → "A landing reads the plain listings, never
+    // `pending=1`").
+    const landing = await waitForCreditsLanding(R_JSON.pubKeyHex, preBoxIds, 3 * 60 * 1000);
+    const landedH21 = landing.landed ? landing.atHeight : null;
+    if (!landing.landed || landedH21 === null) {
+      record(21, false,
+        `pre-send plain /credits boxes=${preBoxIds.length}; transfer 2xx fired; row at 2xx: gold=${JSON.stringify(rowGold2xx)} base-units=${rowBaseUnits?.toString() ?? 'null'} vs pending-view spendable=${pending2xx?.spendable?.toString() ?? 'null'} (matches=${rowMatchesPending}); pooled window: ${pooledWindow}; the plain listing's change box did not land within 3 min (elapsed=${(landing.elapsedMs / 1000).toFixed(0)}s)`);
+      return;
+    }
+
+    // The young shape press (WEB_INTERFACE → The extension → "The verified
+    // figures"): the change box is a young box.
     const youngShape = /^\S.* \$NOTIS proven at block \d+ · \S.* \$NOTIS landed since$/;
     await pressCornerAndReadFigures(cx);
     const before = (await waitForRow(readCreditsRow, cx,
@@ -2529,7 +2587,6 @@ async function runFiguresStep21(cx) {
       && !before.figHintHasClay
       && youngShape.test(before.figHintText);
 
-    // Wait for the tip to reach landedH21 + K + 1 (~ 6 min at 3.4 blocks/min).
     const targetH = landedH21 + TIP_K + 1;
     const wait = await waitForNodeTip(targetH);
     const rate = wait.last !== null
@@ -2542,18 +2599,20 @@ async function runFiguresStep21(cx) {
       return;
     }
 
-    // Assertion 2 — press the corner, read silence, awaited with a bound: the
-    // line of the run before stands until the press's own run lands.
+    // The silence press — K + 1 blocks on from the landing (WEB_INTERFACE → The
+    // extension → "The verified figures").
     await pressCornerAndReadFigures(cx);
     const after = (await waitForRow(readCreditsRow, cx,
       (r) => r.present && r.figHintText === null && !r.goldHasClay, 15000)).last;
     const afterOk = after.present && after.figHintText === null && !after.goldHasClay;
 
-    record(21, beforeOk && afterOk,
-      `before press: gold=${JSON.stringify(before.goldText)} (clay=${before.goldHasClay}), figHint=${JSON.stringify(before.figHintText)} (clay=${before.figHintHasClay}), young shape ok=${beforeOk}; ` +
-      `sent ${sendAmount} \$NOTIS at h≥${preSendH}, change landed at h=${landedH21}, target h=${targetH}; ` +
-      `waited ${(wait.elapsedMs / 1000).toFixed(0)}s (~${rate} blocks/min); ` +
-      `after press: gold=${JSON.stringify(after.goldText)} (clay=${after.goldHasClay}), figHint=${JSON.stringify(after.figHintText)}, silence=${after.figHintText === null}, all-hints=${JSON.stringify(after.allHints)}`);
+    record(21, beforeOk && afterOk && rowMatchesPending,
+      `pre-send plain /credits boxes=${preBoxIds.length}; sent ${sendAmount} \$NOTIS at h≥${preSendH}; ` +
+      `transfer 2xx fired; row at 2xx: gold=${JSON.stringify(rowGold2xx)} base-units=${rowBaseUnits?.toString() ?? 'null'} vs pending-view spendable=${pending2xx?.spendable?.toString() ?? 'null'} (matches=${rowMatchesPending}); ` +
+      `pooled window at 2xx: ${pooledWindow}; pooled-clause reading=${JSON.stringify(pooledClauseReading)}; ` +
+      `change landed on plain listing at h=${landedH21} (elapsed=${(landing.elapsedMs / 1000).toFixed(0)}s), target h=${targetH}; waited ${(wait.elapsedMs / 1000).toFixed(0)}s (~${rate} blocks/min); ` +
+      `before press: gold=${JSON.stringify(before.goldText)} figHint=${JSON.stringify(before.figHintText)} shape ok=${beforeOk}; ` +
+      `after press: gold=${JSON.stringify(after.goldText)} figHint=${JSON.stringify(after.figHintText)} silence=${after.figHintText === null}`);
   } catch (e) {
     record(21, false, `error: ${e?.stack ?? String(e)}`);
   }
@@ -2561,12 +2620,14 @@ async function runFiguresStep21(cx) {
 
 // Step 24 — the rep row across R's own post (WEB_INTERFACE → The extension →
 // "The verified figures", → The profile window → "The `rep` row is the rep
-// view's `effective` alone"). Silence before the post. Every 2xx of the
-// reader's own spend re-reads /karma, so the number moves to the node's new
-// `effective` with no press. A press then proves the fresh listing, where the
-// post's change is a young box: *… landed since*. K + 1 blocks on, a verified
-// tip re-reads before it proves, and a press reads silence. R posts one root,
-// spending POST_PRICE_THREAD (5) rep.
+// view's `effective` alone"). The row takes a new value at every 2xx of the
+// reader's own spend and every landing of one. The row rep moves to the pending
+// view's `effective` at the post's 2xx — read before the plain listing lands,
+// by this node's word for a pooled window (WEB_INTERFACE → The wallet →
+// "A landing reads the plain listings, never `pending=1`"). The landing on R's
+// plain /karma lands a change box; a press reads *… rep landed since* and
+// silence after K + 1 blocks. R posts one root, spending POST_PRICE_THREAD (5)
+// rep.
 async function runFiguresStep24(cx) {
   try {
     const profileBtn = await cx.eval(`!!document.querySelector('[aria-label="open profile"]')`);
@@ -2574,7 +2635,6 @@ async function runFiguresStep24(cx) {
       record(24, false, 'no [aria-label="open profile"] control on the extension page — identity not loaded?');
       return;
     }
-    // Open the profile, or raise it where it is open.
     await raiseWindow(cx, 'open profile');
     await cx.waitFor(`!!document.querySelector('.karma-field span.mono')`, 'profile rep number 24', 30000);
 
@@ -2584,8 +2644,6 @@ async function runFiguresStep24(cx) {
     // buffer above the drain plus the post to reach the silence assertion.
     const initialRep = await cx.eval(`document.querySelector('.karma-field span.mono')?.textContent ?? null`);
     const initialRepNum = Number(initialRep);
-    // Drain over the K+1 wait — at 3 blocks per interval, that's
-    // ceil((K+1)/3) intervals × 5 rep. Plus 5 for the post. Plus KARMA_MINIMUM.
     const drainOverKPlus1 = Math.ceil((TIP_K + 1) / 3) * 5;
     const buffer = drainOverKPlus1 + 5 + 10;
     if (!Number.isFinite(initialRepNum) || initialRepNum < buffer) {
@@ -2603,10 +2661,17 @@ async function runFiguresStep24(cx) {
         `before-post assertion failed: hint=${JSON.stringify(before.hintText)} (clay=${before.hintHasClay}), mono=${JSON.stringify(before.monoText)} clay=${before.monoHasClay}`);
       return;
     }
-    // The number the post will move, and the listing it spends from as A
-    // serves it — which boxes the post can leave unspent.
     const prePostRep = before.monoText;
+
+    // R's plain /karma before the post — the box set a landing is measured
+    // against (WEB_INTERFACE → The wallet → "A landing reads the plain listings,
+    // never `pending=1`"); the whole listing is read.
     const karmaPre = await readNodeKarma();
+    if (karmaPre === null) {
+      record(24, false, `could not read A's /karma/${R_JSON.pubKeyHex.slice(0, 8)}… before the post`);
+      return;
+    }
+    const preBoxIds = karmaPre.boxIds;
 
     // Post one root through the composer. The rep policy is silent since
     // step 9, so no prompt fires — the post lands on submit alone.
@@ -2622,7 +2687,7 @@ async function runFiguresStep24(cx) {
     await cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer enabled 24', 15000);
     const postIdx = cx.events.length;
     await cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
-    // A prompt would refuse the silent policy; assert none appears and go on.
+    // A prompt refuses the silent policy; the step asserts none appears.
     await sleep(2000);
     const promptOpen24 = await findExt('prompt.html');
     if (promptOpen24) {
@@ -2630,33 +2695,78 @@ async function runFiguresStep24(cx) {
       return;
     }
 
-    // The landing re-reads /karma: the number moves off the pre-post number
-    // with no press, and it is the node's own `effective`. The profile is
-    // raised first — the composer's submission may have moved the view — and
-    // a raise reads nothing.
     await raiseWindow(cx, 'open profile');
-    const landing = await waitForRow(readKarmaField, cx,
-      (k) => k.present && k.monoText !== null && k.monoText !== prePostRep, 5 * 60 * 1000);
-    const landedH24 = await currentHeight(NODE);
-    const karmaPost = await readNodeKarma();
-    if (landing.timedOut || landedH24 === null) {
-      record(24, false,
-        `before: silence ok=${beforeOk}; posted at h>${preH24}; the number never moved off ${prePostRep} within 5 min with no press (last=${JSON.stringify(landing.last)}); A's /karma effective=${karmaPost?.effective ?? 'null'}`);
+
+    // The post's 2xx on A — the row re-reads /karma?pending=1 at it
+    // (WEB_INTERFACE → The profile window → "The `rep` row is the rep view's
+    // `effective` alone").
+    const t2xxStart = Date.now();
+    let post2xx = null;
+    while (Date.now() - t2xxStart < 60000 && post2xx === null) {
+      const ev = cx.events.slice(postIdx).find((e) =>
+        e.method === 'Network.responseReceived'
+        && /\/posts(\?|$)/.test(e.params.response.url || '')
+        && e.params.response.status >= 200 && e.params.response.status < 300);
+      if (ev) post2xx = ev;
+      else await sleep(100);
+    }
+    if (post2xx === null) {
+      record(24, false, 'no 2xx of POST /posts within 60 s of the submit');
       return;
     }
-    const numberOk = landing.last.monoText === karmaPost?.effective && landing.last.monoText !== prePostRep;
-    // A tip run in the wait — the ten-minute timer — re-reads /karma too; with
-    // none, the move is the landing's own read.
-    const tipRunsInLanding = proofRequestsSince(cx.events, postIdx).length;
-    // The run the landing's own read starts, with no press — its reading is
-    // recorded beside the step: the anchor it proves against predates the
-    // post, so the change reads as a block landed since the anchor.
-    const landingRun = await waitForFiguresRun(cx, postIdx, 30000, 2000);
-    const landingLine = await readKarmaField(cx);
 
-    // Assertion 2 — press the corner: a verified tip re-reads /karma before it
-    // proves, and the post's change is a young box — *… landed since*, the
-    // line awaited with a bound.
+    // The row rep takes the pending view's `effective` after the 2xx. A short
+    // bound covers the re-read's own fetch of /karma?pending=1.
+    const movedAt2xx = await waitForRow(readKarmaField, cx,
+      (k) => k.present && k.monoText !== null && k.monoText !== prePostRep, 20000);
+    const rowRep2xx = movedAt2xx.last?.monoText ?? null;
+    const pending2xx = await readNodeKarmaPending();
+    const plainAt2xx = await readNodeKarma();
+    const pooledAt2xx = plainAt2xx !== null && plainAt2xx.boxIds.every((id) => preBoxIds.includes(id));
+    const rowMatchesPending = rowRep2xx !== null && (pending2xx?.effective ?? null) !== null && rowRep2xx === pending2xx.effective;
+    const pooledWindow = pooledAt2xx ? 'open' : 'closed before a run';
+
+    // The pooled-window clause — a verifier run that lands while the plain
+    // listing lacks the spend reads the row's figure as *… rep to spend in the
+    // next block, by this node's word* (WEB_INTERFACE → The profile window →
+    // "The `rep` row is the rep view's `effective` alone"). A reading over a
+    // short poll; a run between the 2xx and the plain listing's landing is
+    // uncommon under a paced miner.
+    const POOLED_CLAUSE_REP = /^\S.* rep proven at block \d+ · \S.* rep to spend in the next block, by this node's word$/;
+    let pooledClauseReading = null;
+    if (pooledAt2xx) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 3000 && pooledClauseReading === null) {
+        const k = await readKarmaField(cx);
+        const txt = k.hintText;
+        if (typeof txt === 'string' && POOLED_CLAUSE_REP.test(txt)) {
+          const amt = karmaAmountIn(txt, / · (\d+) rep to spend in the next block, by this node's word$/);
+          pooledClauseReading = {
+            text: txt,
+            clauseAmount: amt === null ? null : amt.toString(),
+            rowRep: rowRep2xx,
+            matches: amt !== null && rowRep2xx !== null && amt === BigInt(rowRep2xx),
+          };
+        }
+        await sleep(250);
+      }
+    }
+
+    // The landing, off the plain listing — a box id outside the pre-post set
+    // (WEB_INTERFACE → The wallet → "A landing reads the plain listings, never
+    // `pending=1`").
+    const landing = await waitForKarmaLanding(preBoxIds, 5 * 60 * 1000);
+    if (!landing.landed) {
+      record(24, false,
+        `before: silence ok=${beforeOk}; posted at h>${preH24}; row at 2xx: rep=${JSON.stringify(rowRep2xx)} vs pending-view effective=${JSON.stringify(pending2xx?.effective ?? null)} (matches=${rowMatchesPending}); pooled window: ${pooledWindow}; the plain listing's change box did not land within 5 min (elapsed=${(landing.elapsedMs / 1000).toFixed(0)}s)`);
+      return;
+    }
+    const landedH24 = landing.atHeight;
+    const karmaPost = { effective: landing.effective, boxCount: landing.boxCount };
+    const tipRunsInLanding = proofRequestsSince(cx.events, postIdx).length;
+
+    // The young shape press (WEB_INTERFACE → The extension → "The verified
+    // figures"): the post's change is a young box.
     const youngShapeRep = /^(\d+) rep proven at block \d+ · \d+ rep landed since$/;
     await pressCornerAndReadFigures(cx);
     const during = (await waitForRow(readKarmaField, cx,
@@ -2673,16 +2783,11 @@ async function runFiguresStep24(cx) {
         ? 'proven part 0 — the post spent every karma box R held'
         : `proven part ${provenPart} — boxes the post left unspent`;
 
-    // Wait for the tip to reach landedH24 + K + 1. The rep drain over the wait
-    // is measured and reported; a drain below KARMA_MINIMUM (10) means R runs
-    // out during the wait and the row's silence would come from an empty
-    // ledger rather than a proven state.
     const targetH24 = landedH24 + TIP_K + 1;
     const wait24 = await waitForNodeTip(targetH24);
     const rate24 = wait24.last !== null
       ? ((wait24.last - landedH24) / (wait24.elapsedMs / 60000)).toFixed(2)
       : 'null';
-    // Compute the drain — three blocks per interval, five rep per interval.
     const drainOverWait = wait24.last !== null
       ? Math.floor((wait24.last - preH24) / 3) * 5
       : null;
@@ -2690,30 +2795,31 @@ async function runFiguresStep24(cx) {
     const repAfterNum = Number(repAfterWait);
     if (!wait24.reached) {
       record(24, false,
-        `before: silence ok=${beforeOk}; landing number ok=${numberOk}; during: hint=${JSON.stringify(during.hintText)} shape ok=${duringOk}; ` +
+        `before: silence ok=${beforeOk}; landing figure=${rowRep2xx} matches=${rowMatchesPending}; during: hint=${JSON.stringify(during.hintText)} shape ok=${duringOk}; ` +
         `tip did not reach ${targetH24} within ${(wait24.elapsedMs / 1000).toFixed(0)}s (last=${wait24.last}, ~${rate24} blocks/min from landed=${landedH24}, K+1=${TIP_K + 1}); ` +
         `initial rep=${initialRep}, rep after wait=${repAfterWait}, drain estimate=${drainOverWait}`);
       return;
     }
     if (Number.isFinite(repAfterNum) && repAfterNum < 5) {
       record(24, false,
-        `before: silence ok=${beforeOk}; landing number ok=${numberOk}; during: hint=${JSON.stringify(during.hintText)} shape ok=${duringOk}; ` +
+        `before: silence ok=${beforeOk}; landing figure=${rowRep2xx} matches=${rowMatchesPending}; during: hint=${JSON.stringify(during.hintText)} shape ok=${duringOk}; ` +
         `R's rep dropped below 5 during the wait: initial=${initialRep}, after=${repAfterWait}, drain estimate=${drainOverWait} rep over ${(wait24.elapsedMs / 1000).toFixed(0)}s`);
       return;
     }
 
-    // Assertion 3 — press the corner, read silence, awaited with a bound: the
-    // line of the run before stands until the press's own run lands.
+    // The silence press — K + 1 blocks on (WEB_INTERFACE → The extension →
+    // "The verified figures").
     await pressCornerAndReadFigures(cx);
     const after = (await waitForRow(readKarmaField, cx,
       (k) => k.present && k.hintText === null && !k.monoHasClay, 15000)).last;
     const afterOk = after.present && after.hintText === null && !after.monoHasClay;
 
-    record(24, beforeOk && numberOk && duringOk && afterOk,
+    record(24, beforeOk && rowMatchesPending && duringOk && afterOk,
       `before press: hint=${JSON.stringify(before.hintText)} silence=${before.hintText === null} ok=${beforeOk}, rep=${prePostRep}; ` +
-      `R's karma boxes on A before the post=${karmaPre?.boxCount ?? 'null'}, after=${karmaPost?.boxCount ?? 'null'}; ` +
-      `landed with no press by h=${landedH24} (pre=${preH24}): row=${JSON.stringify(landing.last.monoText)} vs A's effective=${JSON.stringify(karmaPost?.effective ?? null)}, moved off ${JSON.stringify(prePostRep)}, ok=${numberOk}, tip-proof requests in the wait=${tipRunsInLanding}; ` +
-      `the landing's own run (no press, ${landingRun.length} proof requests): hint=${JSON.stringify(landingLine.hintText)} clay=${landingLine.hintHasClay}; ` +
+      `R's karma boxes on A before the post=${karmaPre.boxCount}, after=${karmaPost.boxCount ?? 'null'}; ` +
+      `post 2xx fired, row re-read at the 2xx: rep=${JSON.stringify(rowRep2xx)} vs A's /karma?pending=1 effective=${JSON.stringify(pending2xx?.effective ?? null)} (matches=${rowMatchesPending}); ` +
+      `pooled window at 2xx: ${pooledWindow}; pooled-clause reading=${JSON.stringify(pooledClauseReading)}; ` +
+      `plain listing landed at h=${landedH24} (elapsed=${(landing.elapsedMs / 1000).toFixed(0)}s), karmaPost effective=${JSON.stringify(karmaPost.effective)}, tip-proof requests in the wait=${tipRunsInLanding}; ` +
       `during press: hint=${JSON.stringify(during.hintText)} shape ok=${duringOk}, ${provenSays}; ` +
       `waited to h=${wait24.last} (~${rate24} blocks/min) target=${targetH24}, elapsed=${(wait24.elapsedMs / 1000).toFixed(0)}s; ` +
       `rep initial=${initialRep} → after=${repAfterWait}, drain estimate=${drainOverWait} rep; ` +
@@ -2723,18 +2829,146 @@ async function runFiguresStep24(cx) {
   }
 }
 
-// R's /karma on A, read by the harness beside the row — the node's
-// `effective` and the key's box count (NODE_INTERFACE → UTXO queries). Null
-// when A does not answer.
+// R's plain /karma on A, read by the harness beside the row — the plain
+// listing's `effective`, box count and box ids. A landing reads the plain
+// listing (WEB_INTERFACE → The wallet → "A landing reads the plain listings,
+// never `pending=1`"). Null when A does not answer.
 async function readNodeKarma() {
   try {
     const r = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}`);
     if (!r.ok) return null;
     const j = await r.json();
-    return { effective: j.effective ?? null, boxCount: j.boxCount ?? null };
+    const boxIds = Array.isArray(j.boxes) ? j.boxes.map((b) => String(b.boxId)) : [];
+    return { effective: j.effective ?? null, boxCount: j.boxCount ?? null, boxIds };
   } catch {
     return null;
   }
+}
+
+// R's /karma on A under pending=1 — the pending view's `effective`, which the
+// `rep` row shows (WEB_INTERFACE → The profile window → "The `rep` row is the
+// rep view's `effective` alone"). The row takes a new value at every 2xx of
+// the reader's own spend and every landing of one. Null when A does not answer.
+async function readNodeKarmaPending() {
+  try {
+    const r = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return { effective: j.effective ?? null };
+  } catch {
+    return null;
+  }
+}
+
+// A key's plain /credits on A — the plain listing's boxes (id, value, locked
+// height), the box set a landing is measured against (WEB_INTERFACE → The
+// wallet → "A landing reads the plain listings, never `pending=1`"). Null when
+// A does not answer.
+async function readNodeCredits(key) {
+  try {
+    const r = await fetch(`${NODE}/credits/${key}`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const boxes = Array.isArray(j.boxes) ? j.boxes.map((b) => ({
+      boxId: String(b.boxId),
+      value: String(b.value),
+      lockedUntilBlock: typeof b.lockedUntilBlock === 'number' ? b.lockedUntilBlock : null,
+    })) : [];
+    return { boxes, boxIds: boxes.map((b) => b.boxId), total: j.total ?? null };
+  } catch {
+    return null;
+  }
+}
+
+// A key's /credits on A under pending=1, filtered by /status height for locked
+// boxes — the pending view's spendable sum, which the `balance` row shows
+// (WEB_INTERFACE → The wallet window → "The `balance` row",
+// → The wallet → "The spendable views are the node's pending view"). Base-unit
+// bigint, null when A does not answer either call.
+async function readNodeCreditsPending(key) {
+  try {
+    const r = await fetch(`${NODE}/credits/${key}?pending=1`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const sres = await fetch(`${NODE}/status`);
+    if (!sres.ok) return null;
+    const sj = await sres.json();
+    const h = typeof sj.blockHeight === 'number' ? sj.blockHeight : null;
+    if (h === null) return null;
+    let sum = 0n;
+    for (const b of (j.boxes || [])) {
+      const locked = typeof b.lockedUntilBlock === 'number' ? b.lockedUntilBlock : null;
+      if (locked !== null && locked > h) continue;
+      try { sum += BigInt(b.value); } catch { return null; }
+    }
+    return { spendable: sum, statusHeight: h };
+  } catch {
+    return null;
+  }
+}
+
+// Poll a key's plain /credits for a box of exact value — a payment landing
+// (WEB_INTERFACE → The wallet → "A landing reads the plain listings, never
+// `pending=1`"). Answers { landed: true, boxId, atHeight, elapsedMs } on a
+// match, { landed: false, elapsedMs } past the bound.
+async function waitForFaucetPaymentBox(key, baseValue, ms = 180000, pollMs = 2000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const c = await readNodeCredits(key);
+    if (c !== null) {
+      const hit = c.boxes.find((b) => {
+        try { return BigInt(b.value) === baseValue; } catch { return false; }
+      });
+      if (hit) {
+        const h = await currentHeight(NODE);
+        return { landed: true, boxId: hit.boxId, atHeight: h, elapsedMs: Date.now() - t0 };
+      }
+    }
+    await sleep(pollMs);
+  }
+  return { landed: false, elapsedMs: Date.now() - t0 };
+}
+
+// Poll a key's plain /credits for a box id outside the pre-send set — the
+// change box the reader's own send creates, read off the plain listing
+// (WEB_INTERFACE → The wallet → "A landing reads the plain listings, never
+// `pending=1`").
+async function waitForCreditsLanding(key, preBoxIds, ms = 180000, pollMs = 2000) {
+  const t0 = Date.now();
+  const pre = new Set(preBoxIds);
+  while (Date.now() - t0 < ms) {
+    const c = await readNodeCredits(key);
+    if (c !== null) {
+      const fresh = c.boxes.find((b) => !pre.has(b.boxId));
+      if (fresh) {
+        const h = await currentHeight(NODE);
+        return { landed: true, boxId: fresh.boxId, atHeight: h, elapsedMs: Date.now() - t0 };
+      }
+    }
+    await sleep(pollMs);
+  }
+  return { landed: false, elapsedMs: Date.now() - t0 };
+}
+
+// Poll R's plain /karma for a box id outside the pre-post set — the reader's
+// post lands as a change box replacing their own box, read off the plain
+// listing (WEB_INTERFACE → The wallet → "A landing reads the plain listings,
+// never `pending=1`").
+async function waitForKarmaLanding(preBoxIds, ms = 5 * 60 * 1000, pollMs = 2000) {
+  const t0 = Date.now();
+  const pre = new Set(preBoxIds);
+  while (Date.now() - t0 < ms) {
+    const k = await readNodeKarma();
+    if (k !== null) {
+      const fresh = k.boxIds.find((id) => !pre.has(id));
+      if (fresh) {
+        const h = await currentHeight(NODE);
+        return { landed: true, atHeight: h, elapsedMs: Date.now() - t0, boxCount: k.boxCount, effective: k.effective };
+      }
+    }
+    await sleep(pollMs);
+  }
+  return { landed: false, elapsedMs: Date.now() - t0 };
 }
 
 // ---- The lie arms — 22a · 22b · 22c · 22d · 22e · 23 (WEB_INTERFACE → The
@@ -7078,11 +7312,14 @@ async function main() {
   record('12a', askOk12a && grantOk12a && rowOk12a && askedAgain12a && askedBeforeRequest12a,
     `ask=${askOk12a}, stub-asked-again=${askedAgain12a} (origins[0]=${JSON.stringify(permCall12a?.origins?.[0] ?? null)}), asked-before-request=${askedBeforeRequest12a}, grant.postId=${grantEntry12a?.postId?.slice(0, 8) ?? 'null'}…, landed row='${after12a.text}'`);
 
-  // --- 12b — send 12.5 to the devnet faucet key. In the extension arm the
-  // resolved-key hint appears beneath the recipient and the prompt opens at
-  // once, no confirm row (WEB_INTERFACE → The wallet window → "The `send` row";
-  // → The extension). Approve → /credits/transfer 200 → landing → row reads
-  // 87.5 → faucet /credits has the payment.
+  // --- 12b — send 12.5 $NOTIS. In the extension arm the resolved-key hint
+  // stands beneath the recipient and the prompt opens, no confirm row
+  // (WEB_INTERFACE → The wallet window → "The `send` row", → The extension).
+  // Approve → /credits/transfer 200 → the row re-reads /credits?pending=1 and
+  // the gold figure reads 87.5 (the pending view's spendable sum) → the
+  // payment box lands on the faucet's plain /credits (WEB_INTERFACE → The
+  // wallet → "A landing reads the plain listings, never `pending=1`",
+  // → The wallet window → "The `balance` row").
   const events12bStart = cx10.events.length;
   await cx10.waitFor(`!!document.querySelector('form.credits-form')`, 'send form present');
   await cx10.eval(`(() => {
@@ -7132,19 +7369,32 @@ async function main() {
   await sleep(3000);
   const transfer12b = cx10.events.slice(events12bStart).find((e) =>
     e.method === 'Network.responseReceived' && (e.params.response.url || '').includes('/credits/transfer'));
-  await cx10.waitFor(`document.querySelector('.credits-line .mono.gold')?.textContent === '87.5'`, 'row reads 87.5 after send', 180000);
-  const faucetCredits12b = await (await fetch(`${NODE}/credits/${DEVNET_FAUCET_KEY}`)).json();
-  const paymentBox = (faucetCredits12b.boxes || []).find((b) => BigInt(b.value) === 1_250_000_000n);
+  // The row re-reads /credits?pending=1 at the 2xx: a short bound covers the
+  // re-read's own fetch, and the faucet's plain /credits is read at the row
+  // reading to tell a pooled window from one closed before the payment lands
+  // (WEB_INTERFACE → The wallet → "A landing reads the plain listings, never
+  // `pending=1`").
+  const rowAt2xx12b = await cx10.waitFor(
+    `document.querySelector('.credits-line .mono.gold')?.textContent === '87.5'`,
+    'row reads 87.5 after the 2xx', 20000).then(() => true, () => false);
+  const faucetAtRow12b = await readNodeCredits(DEVNET_FAUCET_KEY);
+  const paymentAtRow12b = faucetAtRow12b === null
+    ? null
+    : (faucetAtRow12b.boxes.find((b) => { try { return BigInt(b.value) === 1_250_000_000n; } catch { return false; } }) ?? null);
+  const pooledWindow12b = paymentAtRow12b === null ? 'open' : 'closed before a run';
+  // The payment landing on the faucet's plain /credits — the one page the
+  // reader's client itself reads is fine; the whole listing is read here.
+  const payment12b = await waitForFaucetPaymentBox(DEVNET_FAUCET_KEY, 1_250_000_000n, 180000);
   const resolvedOk12b = resolvedKey12b === DEVNET_FAUCET_KEY;
   const whatOk12b = promptShape12b?.[0]?.cls === 'what' && promptShape12b?.[0]?.text === 'Notis transfer';
   const amountOk12b = promptShape12b?.[1]?.cls === 'amount' && promptShape12b?.[1]?.text === '12.5 $NOTIS';
   const targetOk12b = promptShape12b?.[2]?.cls === 'target' && promptShape12b?.[2]?.label === 'to:' && promptShape12b?.[2]?.value === DEVNET_FAUCET_KEY;
   const noFeeLine12b = !(promptShape12b || []).some((l) => l.cls === 'fee');
   const transferOk12b = transfer12b?.params.response.status === 200;
-  const rowOk12b = await cx10.eval(`document.querySelector('.credits-line .mono.gold')?.textContent === '87.5'`);
+  const rowOk12b = rowAt2xx12b;
   record('12b',
-    noConfirm12b && resolvedOk12b && whatOk12b && amountOk12b && targetOk12b && noFeeLine12b && transferOk12b && rowOk12b && !!paymentBox && shotSaved12b,
-    `no .pf-confirm=${noConfirm12b}, resolved-key='${(resolvedKey12b ?? '').slice(0, 8)}…${(resolvedKey12b ?? '').slice(-4)}'=whole=${resolvedOk12b}, lines=${JSON.stringify((promptShape12b || []).map((l) => `${l.cls}:${l.text}`))}, transfer=${transfer12b?.params.response.status ?? 'null'}, row='87.5'=${rowOk12b}, faucet has 12.5=${!!paymentBox}, screenshot saved=${shotSaved12b}`);
+    noConfirm12b && resolvedOk12b && whatOk12b && amountOk12b && targetOk12b && noFeeLine12b && transferOk12b && rowOk12b && payment12b.landed && shotSaved12b,
+    `no .pf-confirm=${noConfirm12b}, resolved-key='${(resolvedKey12b ?? '').slice(0, 8)}…${(resolvedKey12b ?? '').slice(-4)}'=whole=${resolvedOk12b}, lines=${JSON.stringify((promptShape12b || []).map((l) => `${l.cls}:${l.text}`))}, transfer=${transfer12b?.params.response.status ?? 'null'}, row read 87.5 within 20 s of the 2xx=${rowOk12b}, pooled window at the row reading: ${pooledWindow12b}, payment landed on faucet /credits=${payment12b.landed} (elapsed=${(payment12b.elapsedMs / 1000).toFixed(0)}s, boxId=${(payment12b.boxId ?? '').slice(0, 12)}…, atHeight=${payment12b.atHeight ?? 'null'}), screenshot saved=${shotSaved12b}`);
 
   // --- 12c — same extension arm, decline at the prompt. Both form inputs kept,
   // flight "send not sent.", no /credits/transfer (WEB_INTERFACE → The wallet

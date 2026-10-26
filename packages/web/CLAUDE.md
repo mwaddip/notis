@@ -597,8 +597,9 @@ otherwise.
 Testing; no Playwright) loading the unpacked Chrome build, driving the twelve steps of the extension section
 through the real UI — the composer, the like word, the profile and wallet rows, the prompt window — the eleventh
 the wallet's faucet press asking the browser for the origin and refused, the twelfth in four measured parts (the
-same press granted and the faucet's `$NOTIS` step, a send approved at the prompt, a send declined, a send after a
-lock pressed in the profile) — **and, with `--public <origin+base>` and `--web-dist <dir>`, the four steps of links
+same press granted and the faucet's `$NOTIS` step, a send whose row figure moves to 87.5 at the transfer's 2xx —
+the pending view's spendable sum — and whose payment lands on the faucet's plain `/credits`, a send declined, a
+send after a lock pressed in the profile) — **and, with `--public <origin+base>` and `--web-dist <dir>`, the four steps of links
 into the extension**: the harness serves a web build made for that base itself (`<base>p/<64 hex>` answering the
 shell, a plain page with a same-tab and a `target="_blank"` link), refuses a shell whose `notis-public` or a manifest
 whose one match differs from `--public`, sets the preference through the settings row, and presses with
@@ -633,10 +634,15 @@ the verified-figures block** runs next, owning a B of its own (a verified tip ne
 and lies in one mode at a time: `credits-fake` (a fabricated box on R's first `/credits` page), `credits-foreign` (the
 devnet faucet's largest credit box listed under R), `credits-drop` and `karma-drop` (one box withheld from R's first
 `/credits` or `/karma` page), `credits-drop-tipplus1` (the credits drop, and `/blocks/current` answered one above the
-node's own), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a
-send's young change reads *… landed since* after a press and silence after K + 1 blocks; **24** R's post — the rep
-number the node's new `effective` with no press (the landing's run reads the bare *not checked yet*: its anchor
-predates the post, so the box the post spent is `undecided`), *… landed since* after a press, silence after K + 1; **22a** clay *the node lists … the chain does not hold*, the
+node's own), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a send —
+the gold figure moves to the sum of R's `/credits?pending=1` spendable boxes at the transfer's 2xx, a verifier run
+that lands while the plain listing lacks the spend reads *… $NOTIS to spend in the next block, by this node's
+word* with the row's figure, the change lands on R's plain `/credits`, a press reads the young shape *… landed
+since*, silence K + 1 blocks on; **24** R's post — the rep number moves to A's `/karma?pending=1` `effective` at
+the post's 2xx, a verifier run that lands while the plain listing lacks the spend reads *… rep to spend in the
+next block, by this node's word* with the row's figure, R's plain `/karma` lands a change box, a press reads
+*… rep landed since*, silence K + 1 blocks on (the anchor the landing's own run proves against predates the post,
+so the box the post spent is `undecided`); **22a** clay *the node lists … the chain does not hold*, the
 figure clay; **22b** the same line with the foreign box's own amount — the range R's boxes are read from does not
 hold another key's; **22c** clay *the chain holds … $NOTIS the node does not list*, beneath the empty state where the
 drop emptied the listing; **22d** clay *the chain holds … rep the node does not list*; **22e** the node that
