@@ -3,6 +3,7 @@ import type { OrderingBlock, ProtocolEra } from '@dagsocial/types';
 import { membershipBar, memberLikesBar, protocolVersionAt } from '@dagsocial/types';
 import { postIdsOf } from '@dagsocial/consensus';
 import type { NetworkRecord } from '../store/identity-records.js';
+import { DECIMAL_INT } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -43,8 +44,6 @@ export interface BlocksDeps {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-const DECIMAL_INT = /^\d+$/;
 
 /**
  * `:height` as a non-negative safe integer written in decimal digits alone, or
