@@ -1350,31 +1350,11 @@ export async function makeApplicableBlock(
 }
 
 /**
- * Convert a UtxoTransaction to a JSON-safe object suitable for HTTP API
- * requests.  Uint8Array fields are hex-encoded.
+ * TYPES_INTERFACE → The JSON form of a transaction: `txToJson` is the one
+ * renderer of a transaction for the HTTP edge. The suite imports it from
+ * here so every test's import keeps the same path.
  */
-export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
-  return {
-    inputs: tx.inputs,
-    outputs: tx.outputs.map((o) => {
-      const obj: Record<string, unknown> = { ...o };
-      for (const [k, v] of Object.entries(obj)) {
-        if (v instanceof Uint8Array) obj[k] = Buffer.from(v).toString('hex');
-        // Box values/amounts are bigint — the JSON API carries them as
-        // decimal strings (json-to-tx coerces them back).
-        else if (typeof v === 'bigint') obj[k] = v.toString();
-      }
-      return obj;
-    }),
-    signatures: Object.fromEntries(
-      Object.entries(tx.signatures).map(([k, v]) => [k, Buffer.from(v).toString('hex')]),
-    ),
-    protocolVersion: tx.protocolVersion,
-    // Present ⟺ the tx is a like — the JSON edge must not drop it, since it
-    // sits inside the signed bytes.
-    ...(tx.likeTarget !== undefined ? { likeTarget: tx.likeTarget } : {}),
-  };
-}
+export { txToJson } from '@dagsocial/types';
 
 /**
  * The block's settlement transaction — its LAST `utxoTxs` entry, decoded
