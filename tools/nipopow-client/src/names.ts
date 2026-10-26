@@ -1,9 +1,10 @@
 import { bytesToHex, canonicalUsernameBytes, firstDifference, isHex64, isValidUsernameBytes, usernameString } from '@dagsocial/types';
 import type { DecodedBoxCandidate } from '@dagsocial/types';
 import type { Anchor } from './boxes.js';
-import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
+import { excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import { capped, fetchJson, isRecord, NAME_READ_BYTES } from '@dagsocial/node-reads';
+import { HEX_64 } from './hex-input.js';
 import { shown } from './http.js';
 
 /**

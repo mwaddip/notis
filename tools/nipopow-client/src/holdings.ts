@@ -5,7 +5,7 @@ import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consens
 import type { HoldingKind } from '@dagsocial/consensus';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import { capped, fetchJson, isRecord, LEDGER_READ_MAX, RANGE_PAGE_READ_BYTES } from '@dagsocial/node-reads';
-import { HEX_64 } from './boxes.js';
+import { HEX_64 } from './hex-input.js';
 import { base64ToBytes, shown } from './http.js';
 export type { HoldingKind };
 
