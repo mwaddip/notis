@@ -1,7 +1,8 @@
 import {
-  readCappedJson, isHex64Lower, isRecord,
+  readCappedJson, isRecord,
   WRITE_ANSWER_READ_BYTES, REQUEST_TIMEOUT_MS,
 } from '@dagsocial/node-reads';
+import { isHex64 } from '@dagsocial/types';
 import { type Rejection, normalizeRejection } from './write';
 import { trimBase } from '../base';
 
@@ -107,7 +108,7 @@ export class FaucetClient {
 function readKarmaGrant(data: unknown): { grant: FaucetGrant } | { refusal: string } | null {
   if (!isRecord(data)) return null;
   const { txId, status, expiresAtHeight } = data;
-  if (typeof txId !== 'string' || !isHex64Lower(txId)) {
+  if (typeof txId !== 'string' || !isHex64(txId)) {
     return { refusal: 'the faucet did not name the transaction it made.' };
   }
   if (typeof expiresAtHeight !== 'number') {
@@ -119,13 +120,13 @@ function readKarmaGrant(data: unknown): { grant: FaucetGrant } | { refusal: stri
 function readCreditGrant(data: unknown): { grant: CreditGrant } | { refusal: string } | null {
   if (!isRecord(data)) return null;
   const { txId, status, expiresAtHeight, boxId } = data;
-  if (typeof txId !== 'string' || !isHex64Lower(txId)) {
+  if (typeof txId !== 'string' || !isHex64(txId)) {
     return { refusal: 'the faucet did not name the transaction it made.' };
   }
   if (typeof expiresAtHeight !== 'number') {
     return { refusal: 'the faucet did not say when its transfer expires.' };
   }
-  if (typeof boxId !== 'string' || !isHex64Lower(boxId)) {
+  if (typeof boxId !== 'string' || !isHex64(boxId)) {
     return { refusal: 'the faucet did not name the box it made.' };
   }
   return { grant: { txId, status: typeof status === 'string' ? status : 'pending', expiresAtHeight, boxId } };

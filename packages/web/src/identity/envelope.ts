@@ -2,8 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { scryptAsync } from '@noble/hashes/scrypt.js';
 import { randomBytes } from '@noble/hashes/utils.js';
-import { bytesToHex, hexToBytes, ED25519_PKCS8_PREFIX } from '@dagsocial/types';
-import { isHex64Lower } from '@dagsocial/node-reads';
+import { bytesToHex, hexToBytes, ED25519_PKCS8_PREFIX, isHex64 } from '@dagsocial/types';
 
 // The identity envelope — WEB_INTERFACE → The identity module. The stored value
 // and the exported file are one shape, so importing an encrypted file is storing
@@ -97,7 +96,7 @@ export async function seal(
   params: ScryptParams = DEFAULT_PARAMS,
 ): Promise<Envelope> {
   if (seed.length !== 32) throw new IdentityError('a seed to seal must be 32 bytes.');
-  if (!isHex64Lower(pubKeyHex)) throw new IdentityError('a public key to seal under must be 64 hex characters.');
+  if (!isHex64(pubKeyHex)) throw new IdentityError('a public key to seal under must be 64 hex characters.');
   const salt = randomBytes(16);
   const nonce = randomBytes(12);
   const key = await deriveKey(passphrase, salt, params);
@@ -148,7 +147,7 @@ export function parseFile(text: string): ParsedFile {
     throw new IdentityError('that is not an identity file.');
   }
   const o = parsed as Record<string, unknown>;
-  if (!isHex64Lower(o.pubKeyHex)) {
+  if (!isHex64(o.pubKeyHex)) {
     throw new IdentityError('the file has no valid public key.');
   }
   const pubKeyHex = o.pubKeyHex;

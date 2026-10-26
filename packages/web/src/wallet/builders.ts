@@ -12,6 +12,7 @@ import {
   VOUCH_KARMA_AMOUNT,
   USERNAME_BURN_PRICE,
   MIN_BOX_VALUE_PER_BYTE,
+  isHex64,
 } from '@dagsocial/types';
 // `selectBoxes` is kept for the credits side; the karma side tells the own
 // box from the income box, so it does not sort by value.
@@ -29,7 +30,6 @@ import type {
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
-import { isHex64Lower } from '@dagsocial/node-reads';
 import type { SpendableBox, ChangeRef } from './types';
 
 // The pure builders — WEB_INTERFACE → The wallet. Each takes the spendable view,
@@ -105,7 +105,7 @@ export class InvalidKey extends Error {
 /** Decode a foreign key, refusing with InvalidKey rather than hexToBytes'
  *  bare throw (TYPES_INTERFACE → Export table). */
 function keyBytes(hex: string, which: string): Uint8Array {
-  if (!isHex64Lower(hex)) throw new InvalidKey(which);
+  if (!isHex64(hex)) throw new InvalidKey(which);
   return hexToBytes(hex);
 }
 

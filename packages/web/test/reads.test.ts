@@ -143,7 +143,7 @@ describe("readBuildContext — the mark on each karma row", () => {
 
 describe("the /karma reader rebuilds a row with `income` of the mark's domain", () => {
   // The real NodeClient over a fake `fetch` answers the karma body the fake
-  // builds: the reader rebuilds each row of `boxes` through `isHex64Lower`
+  // builds: the reader rebuilds each row of `boxes` through `isHex64`
   // and `isBoxValue`, and `income` holds to `true` or absent — any other
   // value refuses the page (`PageError`).
   const BOX = 'ab'.repeat(32);

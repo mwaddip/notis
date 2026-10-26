@@ -1,5 +1,6 @@
+import { isHex64 } from '@dagsocial/types';
 import {
-  isHex64Lower, isNonNegSafeInt, isNonNegSafeIntOrNull, isAuthorName,
+  isNonNegSafeInt, isNonNegSafeIntOrNull, isAuthorName,
 } from '@dagsocial/node-reads';
 import type { PostStatus, WithdrawnJson } from './dto';
 
@@ -11,7 +12,7 @@ import type { PostStatus, WithdrawnJson } from './dto';
 // (WEB_INTERFACE → The extension → "Each row is taken field by field",
 // → "A checked row is taken field by field").
 
-export { isHex64Lower, isNonNegSafeInt, isNonNegSafeIntOrNull, isAuthorName };
+export { isNonNegSafeInt, isNonNegSafeIntOrNull, isAuthorName };
 
 export function isStatus(v: unknown): v is PostStatus {
   return v === 'pending' || v === 'confirmed';
@@ -22,7 +23,7 @@ export function isStatus(v: unknown): v is PostStatus {
  *  word", TYPES_INTERFACE → Content limits). */
 export function isParentRefs(v: unknown): v is string[] {
   if (!Array.isArray(v) || v.length > 1) return false;
-  for (const p of v) if (!isHex64Lower(p)) return false;
+  for (const p of v) if (!isHex64(p)) return false;
   return true;
 }
 
@@ -32,9 +33,9 @@ export function isParentRefs(v: unknown): v is string[] {
  *  "The light read", → "A checked row is taken field by field"). */
 export function readWithdrawn(raw: Record<string, unknown>): WithdrawnJson | null {
   if (raw['kind'] !== 'withdrawn') return null;
-  if (!isHex64Lower(raw['id'])) return null;
-  if (!isHex64Lower(raw['txId'])) return null;
-  if (!isHex64Lower(raw['author'])) return null;
+  if (!isHex64(raw['id'])) return null;
+  if (!isHex64(raw['txId'])) return null;
+  if (!isHex64(raw['author'])) return null;
   if (!isParentRefs(raw['parentRefs'])) return null;
   if (!isNonNegSafeInt(raw['withdrawnAtHeight'])) return null;
   if (!isNonNegSafeInt(raw['descendantCount'])) return null;

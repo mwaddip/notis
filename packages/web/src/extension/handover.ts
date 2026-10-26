@@ -1,6 +1,6 @@
 import type { Tabs } from '../tabs';
 import { K_OPEN_PREFIX } from './links';
-import { isHex64Lower } from '@dagsocial/node-reads';
+import { isHex64 } from '@dagsocial/types';
 
 // The page's half of the extension handover — WEB_INTERFACE → The extension → "Links into the extension".
 // The holder of the workspace lock asks the background for waiting threads at two moments: when
@@ -22,7 +22,7 @@ export function wrapTabs(inner: Tabs, api: typeof chrome): Tabs {
   const deliver = (raw: unknown): void => {
     if (!Array.isArray(raw)) return;
     for (const v of raw) {
-      if (!isHex64Lower(v)) continue;
+      if (!isHex64(v)) continue;
       for (const cb of listeners) cb(v);
     }
   };

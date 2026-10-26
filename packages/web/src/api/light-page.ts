@@ -1,7 +1,8 @@
+import { isHex64 } from '@dagsocial/types';
 import type { LightJson, WithdrawnJson } from './dto';
 import { PageError } from './errors';
 import {
-  isHex64Lower, isNonNegSafeInt, isNonNegSafeIntOrNull, isStatus,
+  isNonNegSafeInt, isNonNegSafeIntOrNull, isStatus,
   isParentRefs, isAuthorName, readWithdrawn,
 } from './row-fields';
 
@@ -14,7 +15,7 @@ import {
 
 function readLight(raw: Record<string, unknown>): LightJson | null {
   if (raw['kind'] !== 'light') return null;
-  if (!isHex64Lower(raw['id'])) return null;
+  if (!isHex64(raw['id'])) return null;
   if (!isParentRefs(raw['parentRefs'])) return null;
   if (!isStatus(raw['status'])) return null;
   if (!isNonNegSafeIntOrNull(raw['blockHeight'])) return null;

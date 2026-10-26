@@ -11,7 +11,7 @@
 // Their shape is `tipVerdict`'s: pure, total by itself, no exception thrown.
 
 import type { NameResult, NameStatus } from '@dagsocial/nipopow-client';
-import { isHex64Lower } from '@dagsocial/node-reads';
+import { isHex64 } from '@dagsocial/types';
 
 // The table decides every NameStatus — its type holds the union whole — and a
 // status outside it at run time reads as no check.
@@ -62,7 +62,7 @@ export function recipientVerdict(
 ): { key: string; name: string } | { refusal: string } {
   switch (result.status) {
     case 'proven':
-      if (isHex64Lower(result.owner) && typeof result.name === 'string') {
+      if (isHex64(result.owner) && typeof result.name === 'string') {
         return { key: result.owner, name: result.name };
       }
       break;

@@ -7,9 +7,10 @@
 // does not name is not carried.
 
 import {
-  isHex64Lower, isNonNegSafeInt, isNonNegSafeIntOrNull, isBoxValue, isSum,
+  isNonNegSafeInt, isNonNegSafeIntOrNull, isBoxValue, isSum,
   isAuthorName, isRecord, parsePage,
 } from '@dagsocial/node-reads';
+import { isHex64 } from '@dagsocial/types';
 import type {
   StatusResult, BlockCurrent, KarmaResult, KarmaBoxRow, CreditsResult,
   CreditBoxRow, VouchesTargetResult, VouchesVoucherResult, VouchCooldownsResult,
@@ -68,7 +69,7 @@ export function readBlockCurrent(data: unknown): BlockCurrent | null {
   if (!isRecord(data)) return null;
   const { height, hash } = data;
   if (!isNonNegSafeInt(height)) return null;
-  if (hash !== null && !isHex64Lower(hash)) return null;
+  if (hash !== null && !isHex64(hash)) return null;
   return { height, hash };
 }
 
@@ -79,8 +80,8 @@ export function readUsername(data: unknown): UsernameResult | null {
   if (!isRecord(data)) return null;
   const { name, owner, boxId, claimedAtBlock } = data;
   if (name === null || !isAuthorName(name)) return null;
-  if (!isHex64Lower(owner)) return null;
-  if (!isHex64Lower(boxId)) return null;
+  if (!isHex64(owner)) return null;
+  if (!isHex64(boxId)) return null;
   if (!isNonNegSafeInt(claimedAtBlock)) return null;
   return { name, owner, boxId, claimedAtBlock };
 }
@@ -92,7 +93,7 @@ export function readUsername(data: unknown): UsernameResult | null {
 function readKarmaBox(raw: unknown): KarmaBoxRow | null {
   if (!isRecord(raw)) return null;
   const { boxId, value, income } = raw;
-  if (!isHex64Lower(boxId)) return null;
+  if (!isHex64(boxId)) return null;
   if (!isBoxValue(value)) return null;
   // The mark's domain is `true` or absent (TYPES_INTERFACE → KarmaBox); any
   // other value — `false`, a number, a string, `null` — is a refused answer,
@@ -106,7 +107,7 @@ function readKarmaBox(raw: unknown): KarmaBoxRow | null {
 function readCreditBox(raw: unknown): CreditBoxRow | null {
   if (!isRecord(raw)) return null;
   const { boxId, value, lockedUntilBlock } = raw;
-  if (!isHex64Lower(boxId)) return null;
+  if (!isHex64(boxId)) return null;
   if (!isBoxValue(value)) return null;
   if (lockedUntilBlock === undefined) return { boxId, value };
   if (!isNonNegSafeInt(lockedUntilBlock)) return null;
@@ -116,8 +117,8 @@ function readCreditBox(raw: unknown): CreditBoxRow | null {
 function readVouchByTarget(raw: unknown): VouchesTargetResult['vouches'][number] | null {
   if (!isRecord(raw)) return null;
   const { voucherId, targetId, voucherName, targetName } = raw;
-  if (!isHex64Lower(voucherId)) return null;
-  if (!isHex64Lower(targetId)) return null;
+  if (!isHex64(voucherId)) return null;
+  if (!isHex64(targetId)) return null;
   if (!isAuthorName(voucherName)) return null;
   if (!isAuthorName(targetName)) return null;
   return { voucherId, targetId, voucherName, targetName };
@@ -126,11 +127,11 @@ function readVouchByTarget(raw: unknown): VouchesTargetResult['vouches'][number]
 function readVouchByVoucher(raw: unknown): VouchesVoucherResult['vouches'][number] | null {
   if (!isRecord(raw)) return null;
   const { boxId, value, createdAtBlock, voucherId, targetId, voucherName, targetName } = raw;
-  if (!isHex64Lower(boxId)) return null;
+  if (!isHex64(boxId)) return null;
   if (!isBoxValue(value)) return null;
   if (!isNonNegSafeInt(createdAtBlock)) return null;
-  if (!isHex64Lower(voucherId)) return null;
-  if (!isHex64Lower(targetId)) return null;
+  if (!isHex64(voucherId)) return null;
+  if (!isHex64(targetId)) return null;
   if (!isAuthorName(voucherName)) return null;
   if (!isAuthorName(targetName)) return null;
   return { boxId, value, createdAtBlock, voucherId, targetId, voucherName, targetName };
@@ -139,7 +140,7 @@ function readVouchByVoucher(raw: unknown): VouchesVoucherResult['vouches'][numbe
 function readVouchCooldown(raw: unknown): VouchCooldownsResult['cooldowns'][number] | null {
   if (!isRecord(raw)) return null;
   const { boxId, value, releaseAtBlock } = raw;
-  if (!isHex64Lower(boxId)) return null;
+  if (!isHex64(boxId)) return null;
   if (!isBoxValue(value)) return null;
   if (!isNonNegSafeInt(releaseAtBlock)) return null;
   return { boxId, value, releaseAtBlock };
@@ -148,10 +149,10 @@ function readVouchCooldown(raw: unknown): VouchCooldownsResult['cooldowns'][numb
 function readBondRow(raw: unknown): BondsResult['bonds'][number] | null {
   if (!isRecord(raw)) return null;
   const { id, value, inviterId, inviteePublicKey, inviterName, inviteeName } = raw;
-  if (!isHex64Lower(id)) return null;
+  if (!isHex64(id)) return null;
   if (!isBoxValue(value)) return null;
-  if (!isHex64Lower(inviterId)) return null;
-  if (!isHex64Lower(inviteePublicKey)) return null;
+  if (!isHex64(inviterId)) return null;
+  if (!isHex64(inviteePublicKey)) return null;
   if (!isAuthorName(inviterName)) return null;
   if (!isAuthorName(inviteeName)) return null;
   return { id, value, inviterId, inviteePublicKey, inviterName, inviteeName };
@@ -183,7 +184,7 @@ export function readKarmaResult(data: unknown, limit: number): KarmaResult | nul
     lifetimeLikesReceived, memberSinceBlock, memberBar, memberVouches,
     memberLikes, invitesUsed, member, invitesAvailable, height,
   } = data;
-  if (!isHex64Lower(userId)) return null;
+  if (!isHex64(userId)) return null;
   if (!isSum(total)) return null;
   if (!isSum(effective)) return null;
   if (!isNonNegSafeInt(boxCount)) return null;
@@ -213,7 +214,7 @@ export function readCreditsResult(data: unknown, limit: number): CreditsResult |
   const boxes = mapRows(page.rows, readCreditBox);
   if (boxes === null) return null;
   const { userId, total, boxCount } = data;
-  if (!isHex64Lower(userId)) return null;
+  if (!isHex64(userId)) return null;
   if (!isSum(total)) return null;
   if (!isNonNegSafeInt(boxCount)) return null;
   return { userId, total, boxes, boxCount, next: page.next };
@@ -273,7 +274,7 @@ export function readBondsResult(data: unknown, limit: number): BondsResult | nul
 export function readPostResult(data: unknown, withTx: boolean): PostResult | null {
   if (!isRecord(data)) return null;
   const confirmedAuthor = data['confirmedAuthor'];
-  if (confirmedAuthor !== null && !isHex64Lower(confirmedAuthor)) return null;
+  if (confirmedAuthor !== null && !isHex64(confirmedAuthor)) return null;
   const kind = data['kind'];
   let row: PostJson | WithdrawnJson | null;
   if (kind === 'withdrawn') row = readWithdrawnRow(data);

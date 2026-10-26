@@ -2,8 +2,8 @@ import { NodeClient, PageError, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, KARMA_MINIMUM, LIKE_KARMA_COST, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
-import { KARMA_LISTING_MAX, LEDGER_READ_MAX, isHex64Lower } from '@dagsocial/node-reads';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, KARMA_MINIMUM, LIKE_KARMA_COST, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex, isHex64 } from '@dagsocial/types';
+import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readWholeList } from './api/whole-list';
 import { decrementBoxId } from './wallet/box-id';
 import type { UtxoTransaction } from '@dagsocial/types';
@@ -846,7 +846,7 @@ export class App {
       window.addEventListener('popstate', (e) => {
         if (!this.standalone) return;
         const id = e.state?.id;
-        if (isHex64Lower(id)) {
+        if (isHex64(id)) {
           this.standaloneReroot(id);
         }
       });
