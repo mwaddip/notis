@@ -549,9 +549,6 @@ every proven box is real and the key's, and a node that withholds a box from its
 clay on a run it answers the anchor's own height to and proves the tip's range under, and muted on every other —
 *not checked yet*, or *the node served no proof for …* where it serves none.
 
-> ⚠ **AHEAD OF CODE (2026-10-25).** The run over the plain listings read beside the views, and the line's *to spend in the next
-> block* clause, lead `src/app.ts` and `src/model/figures-line.ts`, which prove the listing the row shows.
-
 **The verified names.** The extension proves every handle it shows, and every handle it sends to, against the state the
 verified chain committed — the figures' anchor, their proofs and their order. **A check** is `proveName` of
 `@dagsocial/nipopow-client` over a claim: a **label** — a key and the name a row carries beside it — or a **typed
@@ -974,9 +971,6 @@ one.
   and a rejection or an expiry reports in the feed's report line, where `↻` reports. Reply and withdraw are
   not on a feed card: the composer and the confirm row live inside a pane. The author-posts window's cards
   follow the feed card (→ The author window).
-
-  > ⚠ **AHEAD OF CODE (2026-10-25).** A press at the floor answering the floor's line leads `src/app.ts`'s `pressLike` and
-  > `likePost`, which move the count and send.
 
 - **A row the reader opened under a card outlasts a redraw of its list.** Three rows mount under a card's meta at the
   reader's press: the unlock form a locked `like` or `withdraw` asks for (→ The identity module) and the withdraw
@@ -1490,12 +1484,6 @@ a spend's inputs, gate it and fill the `rep` and `balance` rows, and the extensi
 (→ The extension → "The verified figures"). **There are two views, one per ledger:** the rep view is `/karma`'s and
 the credits view `/credits`'s, so a send's change is never offered to a post, nor a post's to a send.
 
-> ⚠ **AHEAD OF CODE (2026-10-25).** The reads under `pending=1`, the spendable views as the node's, the pending ledger that
-> chooses no input and holds no input or change, the floor held before a signature, the spends run one at a time, a rejection worded by the node's
-> message and a landing read off the plain listings lead `src/wallet/reads.ts`, `src/wallet/ledger.ts`,
-> `src/wallet/submit.ts`, `src/api/client.ts` and `src/app.ts`, which read the plain listings, build on the ledger's
-> predicted change, check no floor but the vouch's, run spends side by side and word a like's 409 as already liked.
-
 **The rep view holds two boxes at most, and every karma builder tells them apart.** The reader's **own
 box** is their unmarked karma box — a pooled output to the reader is unmarked (`NODE_INTERFACE → Karma transition
 rules → "No karma output carries the mark"`), so the change of the reader's latest pooled spend is the own box;
@@ -1792,10 +1780,6 @@ number is the rep view's `effective` in every state; a row every box of which pr
 plain listing's `effective`, and whose number is that `effective`, reads exactly as it reads on the web. **A card by the
 loaded key reads `· you`** after the prefix, muted ink, text only.
 
-> ⚠ **AHEAD OF CODE (2026-10-25).** The invite form shown and bounded by the floor, and the `rep` row on the rep view, lead
-> `src/app.ts`'s `canAffordMinBond` and the row's reads and `src/view/profile.ts`'s invite form, which read the plain
-> `effective` against the minimum bond, bound the bond by the network alone and re-read the row at a landing only.
-
 ### The wallet window *(write surface)*
 
 **`@wallet`** — an `@`-window like `@profile`, opened from the header's `wallet` control (→ The profile window) by
@@ -1832,9 +1816,6 @@ no figure stands to turn clay. Gold still means credits: the figure
 gives up the colour only while the node's own proof of it fails, as the corner's height does on `refused`. The figure is
 the credits view's spendable sum in every state; a balance every box of which proved, and whose figure is the plain
 listing's spendable sum, reads exactly as it reads on the web.
-
-> ⚠ **AHEAD OF CODE (2026-10-25).** The `balance` row on the credits view, re-read at a send's 2xx, leads `src/app.ts`'s
-> `/credits` reads, which read the plain listing.
 
 **The `send` row** stands while a box is spendable, and while a send's own line stands — its flight, the pending
 line, *sent* — so a send of the whole balance still reads its ending. The
@@ -1957,9 +1938,6 @@ the node being read, so it can stand before one does. A 202 without a numeric `e
 above. The relayed refusals map as the rep step's do, except a 400 — credits repeat, so it is not the
 once-per-key rule: *the faucet refused that key: <message>*.
 
-> ⚠ **AHEAD OF CODE (2026-10-25).** The rep step on the rep view's `boxCount` and both grants reconciled off the plain listings
-> lead `src/app.ts`; the step and both reconciles read the one plain listing.
-
 ### The username row *(username surface)*
 
 **A name is claimed and burned from the profile window, in one row whose place follows the name** — above `key`
@@ -1995,9 +1973,6 @@ or burn stands (→ The wallet); a 404 is *holding none*, and a read not yet ans
   open to anyone again, and your free claim returns.* with `burn` and `keep`, focus on `keep`, Esc and `keep`
   restoring the word — and the question's `burn` signs, the unlock form in the question's place first when the
   identity is locked. The name and its box are resolved at the press (→ The wallet).
-
-  > ⚠ **AHEAD OF CODE (2026-10-25).** `burn`'s gate at the floor and its title lead `src/app.ts`'s `canAffordBurn` and
-  > `src/view/profile.ts`, which gate at `USERNAME_BURN_PRICE`.
 
 **The flight ends in the row.** A rejection reads *claim rejected:* or *burn rejected:* and the node's refusal
 as a sentence — *that name is taken.*, *this key already holds a name.*, *that name is not 1 to M letters,
@@ -2086,9 +2061,6 @@ vouch, one line each: *"vouching comes with membership"*, *"your stake from an u
 block N"*, *"this is you"*, and while the rep view's `effective` is under `VOUCH_MIN_BALANCE` *"the last N rep is for
 posting"*, `N` being `KARMA_MINIMUM` (→ The wallet → "The floor is the client's to know"). With no identity loaded the window is the
 read surface exactly — key, name, endorsers, posts, and no `your vouch` row.
-
-> ⚠ **AHEAD OF CODE (2026-10-25).** The floor's reason in the `your vouch` row leads `src/app.ts`'s `yourVouchFor`, which
-> reads *vouching needs N rep held* off the plain `effective`.
 
 **The author-posts window — `@posts:<64hex>`** — opened from `posts`, placed by the same rule (from the
 feed, the author window takes the first column and the posts the next), raised when open, persisted.
@@ -2225,9 +2197,6 @@ client that expects to announce itself first is built against an endpoint that d
   `effective` does not cover disables `post` and says so, so the reader never spends a rejection to learn
   what the client already knew; every other rep spend is held to the floor before it signs (→ The wallet → "The
   floor is the client's to know"). *(write surface)*
-
-  > ⚠ **AHEAD OF CODE (2026-10-25).** The composer's affordability on the rep view's `effective` leads `src/app.ts`'s
-  > `readAffordability`, which sums the face of the ledger's spendable view.
 
 - **The client reads the protocol era; it never holds one.** `GET /status` → `protocolVersion` is the
   era at `blockHeight + 1`, and the field is in every id preimage, so a client learns the era before
