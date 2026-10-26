@@ -477,7 +477,6 @@ export function applyBlockWithdrawal(
   state: BlockOverlay,
   bw: BlockWithdrawal,
   height: number,
-  withdrawnThisBlock: Set<string>,
 ): { ok: true } | { ok: false; reason: string } {
   const { postWithdraw } = bw;
   const postId = postWithdraw.postId;
@@ -492,19 +491,15 @@ export function applyBlockWithdrawal(
     };
   }
 
+  // `withdrawPost` sets the standing in the overlay, so a second withdrawal
+  // of the same post in the block reads `getPostStanding` as `'withdrawn'`
+  // and is refused here.
   if (state.getPostStanding(postId) !== 'live') {
     return {
       ok: false,
       reason: `Block ${height}: postWithdraw ${postId} targets an already-withdrawn or unknown post`,
     };
   }
-  if (withdrawnThisBlock.has(postId)) {
-    return {
-      ok: false,
-      reason: `Block ${height}: duplicate postWithdraw for ${postId} in the same block`,
-    };
-  }
-  withdrawnThisBlock.add(postId);
 
   state.withdrawPost(postId);
   return { ok: true };
@@ -723,10 +718,9 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   }
 
   // 8b. Process withdrawal transactions from this block.
-  const withdrawnThisBlock = new Set<string>();
   const blockWithdrawals = withdrawalsOf(block, (postId) => state.getTopologyAuthor(postId));
   for (const bw of blockWithdrawals) {
-    const result = applyBlockWithdrawal(state, bw, height, withdrawnThisBlock);
+    const result = applyBlockWithdrawal(state, bw, height);
     if (!result.ok) return reject(result.reason);
   }
 
