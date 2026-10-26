@@ -682,8 +682,7 @@ export function computeMintTxId(
  * to content alone is what makes `stored.id === computeBoxId(stored)` hold **by
  * construction** for every box in the UTXO set, checkable by any light client,
  * indexer or AVL prover. A content-only hash cannot: it would cover whatever
- * block application mutates, and a stored box would stop matching its own id —
- * audit M-11.
+ * block application mutates, and a stored box would stop matching its own id.
  *
  * Takes one argument, and must keep taking one: a second argument would mean the
  * box no longer carries what its id derives from.

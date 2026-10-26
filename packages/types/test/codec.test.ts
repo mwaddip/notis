@@ -60,7 +60,7 @@ const SENTINEL_HEX = 'ffffffffffffffffff01';
 const ID32 = '00'.repeat(32);
 
 // ---------------------------------------------------------------------------
-// Totality — audits M-5/M-6, the property the whole layer exists to preserve
+// Totality (TYPES_INTERFACE → Totality), the property the whole layer exists to preserve
 // ---------------------------------------------------------------------------
 
 describe('total writers never throw', () => {

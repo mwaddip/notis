@@ -57,9 +57,8 @@ export interface Post {
 // length-prefixed, so no two distinct commits share one encoding. Numeric
 // fields are encoded, never stringified — an undelimited `String(n)`
 // concatenation collides, since (a=5, b=23) and (52, 3) both yield
-// …"5""23"… == …"52""3"…, one encoding for two posts. That is the defect
-// audit M-1 closed, and injectivity is the property every later dialect
-// change has had to preserve.
+// …"5""23"… == …"52""3"…, one encoding for two posts. Injectivity is the
+// property every dialect change preserves.
 //
 // ⛔ Injectivity is required here even though the post id no longer reads these
 // bytes (TYPES_INTERFACE → Canonical field encoding). They are the post's
@@ -128,8 +127,8 @@ export function computeContentHash(content: string): Uint8Array {
  * - `vlqU` is **total**. `vlqU`'s sentinel guards `protocolVersion` alone,
  *   and an out-of-domain version encodes to a value the strict-equality
  *   version check refuses — the sentinel never reaches a rule as a meaning.
- *   Audits M-5/M-6, and the property the no-panic contract in
- *   `@dagsocial/validation` rests on.
+ *   This is the property the no-panic contract in `@dagsocial/validation`
+ *   rests on.
  * - `b32` — `contentHash`, `author`, every `parentRefs` entry — **throws**.
  *   A fixed-width field's wire domain *is* its encodable domain, so it has
  *   no unreachable sentinel; padding or truncating a 31-byte value to 32

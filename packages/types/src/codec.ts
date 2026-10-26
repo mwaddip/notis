@@ -41,7 +41,7 @@ import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
  * anything past `MAX_SAFE_INTEGER` (WIRE_INTERFACE → "Writers throw and that is load-bearing to preserve"), and `postFieldBytes`
  * is reached with malformed posts — `@dagsocial/validation`'s `isSignablePost`
  * admits them — so a throwing writer turns a malformed post into a panic and
- * breaks the no-panic contract validation asserts (audits M-5/M-6).
+ * breaks the no-panic contract validation asserts.
  *
  * The sentinel is unreachable from a well-formed field because the encodable
  * `number` domain is the non-negative safe integers, topping out at 2^53−1.
@@ -741,14 +741,14 @@ export function firstDifference(a: Uint8Array, b: Uint8Array): number {
  *
  * Deliberately *total*: a value outside the encodable domain writes the
  * all-ones sentinel rather than throwing, so a malformed value can never turn
- * id derivation into a panic on untrusted input (audit M-5). The encodable
+ * id derivation into a panic on untrusted input. The encodable
  * domain excludes the sentinel itself, so a well-formed value never collides
  * with a malformed one.
  *
  * ⛔ **`computePostId` hashes one, and its totality is the reason.** A post id is
  * derived from `(txId, index)` on the light-client path, from fields an attacker
- * supplies — so a throwing writer there would turn id derivation into a panic,
- * which is exactly what audit M-5 closed for the numeric fields.
+ * supplies — so a throwing writer there would turn id derivation into a panic;
+ * the numeric fields are total.
  * `computeCandidateBoxId`'s `index` and `computeMintTxId`'s `height` are `vlqU`
  * instead; both forms are total, and which applies is stated per preimage.
  *

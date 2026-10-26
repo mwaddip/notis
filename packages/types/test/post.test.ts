@@ -140,7 +140,7 @@ describe('post identity', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Canonical field encoding (audit M-1)
+// Canonical field encoding (TYPES_INTERFACE → Canonical field encoding)
 // ---------------------------------------------------------------------------
 
 /**
