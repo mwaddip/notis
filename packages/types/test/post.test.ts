@@ -144,7 +144,7 @@ describe('post identity', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * The pre-M-1 encoding, kept verbatim so every test below can be shown to be
+ * The unprefixed decimal-text encoding, kept verbatim so every test below can be shown to be
  * non-vacuous: each case that passes under the canonical encoding is asserted
  * to have *failed* under this one.
  */
@@ -216,7 +216,7 @@ const GOLDEN_PREIMAGE =
   '01' +                                                     // vlqU protocolVersion
   '00';                                                      // enum8 type = regular
 
-describe('canonical field encoding (M-1)', () => {
+describe('canonical field encoding', () => {
   it('golden vector: preimage is the exact positional layout', () => {
     const pre = postFieldBytes(GOLDEN_COMMIT);
     expect(Buffer.from(pre).toString('hex')).toBe(GOLDEN_PREIMAGE);
@@ -297,7 +297,7 @@ describe('canonical field encoding (M-1)', () => {
     // field is length-prefixed, the ref array is counted, and the trailing
     // `type` is a fixed-width enum8 (TYPES_INTERFACE → Canonical field
     // encoding). `protocolVersion` is the sole VLQ field, so a two-VLQ
-    // concatenation collision (the M-1 defect class) is structurally absent.
+    // concatenation collision is structurally absent.
     // Distinct versions encode distinctly.
     const a = { ...GOLDEN_COMMIT, protocolVersion: 5 };
     const b = { ...GOLDEN_COMMIT, protocolVersion: 52 };

@@ -584,8 +584,7 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * Identity and Mint Provenance).
  *
  * The discriminant is semantic, never positional: deriving it from journal
- * position would put ordering back into *identity*, which is the failure
- * class M-12 closed for the AVL feed.
+ * position would put ordering into *identity*, which an id must not depend on.
  *
  * Subject bytes are the caller's (NODE_INTERFACE → Reason and subject table);
  * this package never sees a postId.
@@ -748,7 +747,7 @@ export interface BoxCandidate {
  * plus the provenance that gives it identity.
  *
  * `txId`/`index` are **required**, which is what makes "has an id but no
- * provenance" — the M-11 state — unrepresentable rather than merely discouraged.
+ * provenance" unrepresentable rather than merely discouraged.
  * A producer that forgets provenance is a compile error.
  *
  * `id` stays optional: producers build the candidate-plus-provenance object and
@@ -1274,8 +1273,9 @@ export interface UtxoTransaction {
  * - `inputs` and `outputs` carry `arr()`'s count prefix. Concatenated without
  *   one, two different output lists could produce identical bytes, since
  *   `canonicalBoxBytes` is variable-length.
- * - `protocolVersion` is `vlqU`. As unprefixed decimal text it would be the
- *   exact M-1 collision pattern, one struct over.
+ * - `protocolVersion` is `vlqU`. As unprefixed decimal text it would collide
+ *   as unprefixed numeric fields do (TYPES_INTERFACE → Canonical field
+ *   encoding), one struct over.
  * - `likeTarget` presence is `opt()`'s 0/1 tag, which needs no in-band marker
  *   that a neighbouring field could forge, and preserves the `!== undefined`
  *   distinction — an empty-string target hashes differently from absence.

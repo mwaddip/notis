@@ -225,7 +225,7 @@ describe('boxes', () => {
     });
 
     it('is DETERMINED by the provenance on the box', () => {
-      // An id that ignored its own provenance would be the M-11 id: a box that
+      // An id that ignored its own provenance would be a content-only id: a box that
       // hashes the same bare or materialized, so "predictable at signing time"
       // and "honest about the stored box" stop being the same value.
       //
@@ -1274,7 +1274,7 @@ describe('u32BE', () => {
   });
 
   it('is total: out-of-domain input takes the sentinel rather than throwing', () => {
-    // M-5 no-panic contract. Light clients derive ids from attacker-supplied
+    // The no-panic contract (TYPES_INTERFACE → Totality). Light clients derive ids from attacker-supplied
     // fields, so a throw here is a denial-of-service, not a validation error.
     const bad: number[] = [-1, 1.5, NaN, Infinity, -Infinity, 2 ** 32, Number.MAX_SAFE_INTEGER];
     for (const n of bad) {
@@ -1392,7 +1392,7 @@ describe('computeCandidateBoxId', () => {
   });
 
   it('a stored box re-derives its own id — honesty is structural', () => {
-    // M-11 stated as an invariant: `stored.id === computeBoxId(stored)`. Under
+    // The invariant `stored.id === computeBoxId(stored)` (TYPES_INTERFACE → BoxId). Under
     // the content hash this could not hold once apply mutated `createdAtBlock`.
     for (const [candidate, index] of [
       [GOLDEN_KARMA_CANDIDATE, 0],
@@ -1424,7 +1424,7 @@ describe('computeCandidateBoxId', () => {
     expect(computeCandidateBoxId(c, computeTxId(GOLDEN_TX), 0)).toHaveLength(64);
   });
 
-  it('does not throw on an unencodable index (M-5 no-panic)', () => {
+  it('does not throw on an unencodable index (no-panic contract)', () => {
     // Total, in post.ts's shape: out-of-domain numbers take the sentinel rather
     // than turning id derivation into a panic on untrusted input.
     const c = makeKarmaBox();
@@ -1826,7 +1826,7 @@ describe('computeMintTxId', () => {
     expect(() => computeMintTxId(MINT_GOLDEN_GENESIS_PROOF, 1, 'genesis', undefined as unknown as Uint8Array)).not.toThrow();
   });
 
-  it('does not throw on an unencodable height (M-5 no-panic)', () => {
+  it('does not throw on an unencodable height (no-panic contract)', () => {
     for (const bad of [-1, 1.5, NaN, Infinity]) {
       expect(() => computeMintTxId(MINT_GOLDEN_GENESIS_PROOF, bad, 'genesis', GOLDEN_OWNER)).not.toThrow();
     }
@@ -1880,7 +1880,7 @@ describe('computeMintTxId', () => {
       .not.toBe(computeMintTxId(MINT_GOLDEN_GENESIS_PROOF, 1, 'genesis', MINT_GOLDEN_SUBJECT));
   });
 
-  it('an undefined payload does not throw (M-5 no-panic)', () => {
+  it('an undefined payload does not throw (no-panic contract)', () => {
     // `writeLp`'s no-panic contract reaches the genesisProof field too: a
     // non-byte-view writes the sentinel as its length prefix and no payload,
     // so a light client fed an undefined profile value cannot panic here.

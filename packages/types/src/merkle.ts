@@ -13,7 +13,7 @@ export function leafHash(domain: string, data: Uint8Array): Uint8Array {
 }
 
 /**
- * Domain tag prefixed to every internal Merkle node (L-9).
+ * Domain tag prefixed to every internal Merkle node (TYPES_INTERFACE → Merkle primitives).
  *
  * `leafHash` prefixes its input with `utf8(domain + "\0")`, so every leaf
  * preimage begins with the first byte of a domain string. The **two** live
