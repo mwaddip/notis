@@ -1,5 +1,6 @@
 import {
   interlinkRoot,
+  isHex64,
   MAX_INTERLINKS,
 } from '@dagsocial/types';
 import type { BlockHeader, ProtocolEra } from '@dagsocial/types';
@@ -168,7 +169,7 @@ export function verifyProof(
     const ph = allPoPow[i]!;
     if (!Array.isArray(ph.interlinks)) return fail('interlinks', i);
     if (ph.interlinks.length > MAX_INTERLINKS) return fail('interlinks', i);
-    if (!ph.interlinks.every(e => typeof e === 'string' && /^[0-9a-f]{64}$/.test(e))) {
+    if (!ph.interlinks.every(isHex64)) {
       return fail('interlinks', i);
     }
     try {
