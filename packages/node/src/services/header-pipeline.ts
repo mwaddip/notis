@@ -969,7 +969,3 @@ export function resetPipelineForTests(): void {
   scoredLighter.clear();
 }
 
-/** Internal helper for cases that argue work bounds. */
-export function headerWork(header: BlockHeader): bigint {
-  return workOrZero(header.powTargetBits);
-}

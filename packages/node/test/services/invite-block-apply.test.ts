@@ -328,8 +328,14 @@ describe('the invite at block application', () => {
     expect(utxo.getKarmaValue(invitee.userId)).toBe(FIXTURE_BOND_KARMA);
     // … and the pool paid for it, exactly.
     expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - FIXTURE_BOND_KARMA);
-    // The bond is live: it waits for its deadline.
-    expect(utxo.getBondFor(invitee.userId)).not.toBeNull();
+    // The bond is live: it waits for its deadline. The settlement reads bonds
+    // through `getBondsInvitedAt` (NODE_INTERFACE → UTXO → `getBondsInvitedAt`),
+    // the carry-forward leg.
+    const bondsForInvitee = utxo
+      .getBondsInvitedAt(height, 100)
+      .filter((b) => Buffer.from(b.inviteePublicKey).toString('hex')
+        === Buffer.from(invitee.userId).toString('hex'));
+    expect(bondsForInvitee).toHaveLength(1);
     // The inviter paid the bond and nothing else.
     expect(utxo.getKarmaValue(inviter.userId)).toBe(10n);
 
@@ -1172,7 +1178,15 @@ describe('the invite at block application — decay adjacency', () => {
     // The settlement granted, and the grant started the clock.
     expect(utxo.getKarmaValue(invitee.userId)).toBe(inviteeBefore + bondValue);
     expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(invitedAtBlock);
-    const bond = utxo.getBondFor(invitee.userId)!;
+    // The settlement reads bonds through `getBondsInvitedAt`
+    // (NODE_INTERFACE → UTXO → `getBondsInvitedAt`); the invitee's record
+    // carries `invitedAtBlock`, so the one bond for this invitee rides the
+    // range (0, invitedAtBlock].
+    const bond = utxo
+      .getBondsInvitedAt(invitedAtBlock, 100)
+      .find((b) => Buffer.from(b.inviteePublicKey).toString('hex')
+        === Buffer.from(invitee.userId).toString('hex'))!;
+    expect(bond).toBeDefined();
 
     // Five likes in one block → floor(5 / 5) = 1 karma vested at the deadline.
     // Build the posts chained through the grant's change — one unmarked

@@ -44,7 +44,7 @@ describe('atomic writes', () => {
 
   it('insertPost atomically writes dag_posts and dag_parent_refs', async () => {
     const { initDb, getDb } = await importDbFresh();
-    const { insertPost, getParentRefs } = await importPostsFresh();
+    const { insertPost } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -61,7 +61,14 @@ describe('atomic writes', () => {
     expect(postRow).toBeDefined();
     expect(postRow!.id).toBe(postId);
 
-    expect(getParentRefs(postId)).toEqual(refs);
+    // `insertPost` writes `dag_parent_refs` beside `dag_posts` in one transaction
+    // (NODE_INTERFACE → Posts DAG, insertPost): the parent rows the recursive
+    // CTE walks are present (NODE_INTERFACE → Posts DAG, getAncestorsNearest).
+    const parentRows = db
+      .prepare('SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')
+      .all(postId) as Array<{ parent_id: string }>;
+    expect(new Set(parentRows.map((r) => r.parent_id))).toEqual(new Set(refs));
+    expect(parentRows).toHaveLength(refs.length);
   });
 
   it('insertPost that throws inside transaction rolls back completely', async () => {
@@ -199,8 +206,8 @@ describe('atomic writes', () => {
   });
 
   it('deletePendingPost atomically removes post and parent refs', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, deletePendingPost, getPost, getParentRefs } = await importPostsFresh();
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, deletePendingPost, getPost } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -212,6 +219,13 @@ describe('atomic writes', () => {
     deletePendingPost(postId);
 
     expect(getPost(postId)).toBeNull();
-    expect(getParentRefs(postId)).toEqual([]);
+    // `deletePendingPost` clears `dag_parent_refs` beside `dag_posts` in one
+    // transaction (NODE_INTERFACE → Posts DAG, deletePendingPost): no row the
+    // recursive CTE could walk through (NODE_INTERFACE → Posts DAG,
+    // getAncestorsNearest).
+    const parentRows = getDb()
+      .prepare('SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')
+      .all(postId);
+    expect(parentRows).toEqual([]);
   });
 });

@@ -685,12 +685,17 @@ describe('full-pipeline', () => {
       .get() as { id: string };
     expect(storedBond).toBeDefined();
 
-    // The pairing RESOLVES the way block application resolves it: the invitee
-    // key names exactly one live bond, with no provenance walk.
+    // The pairing resolves the way block application resolves it: the invitee
+    // key names exactly one live bond, with no provenance walk. The API read
+    // `getBondBoxesPage` (NODE_INTERFACE → UTXO → `getBondBoxesPage`) lists
+    // the inviter's unspent bonds; the one bond names this invitee.
     const bondBox = deps.getBox(storedBond.id) as BondBox;
     expect(Buffer.from(bondBox.inviteePublicKey).toString('hex'))
       .toBe(Buffer.from(invitee).toString('hex'));
-    expect(utxo.getBondFor(invitee)!.id).toBe(storedBond.id);
+    const inviterBonds = utxo
+      .getBondBoxesPage(inviter.userId, { limit: 10 })
+      .rows;
+    expect(inviterBonds.find((b) => b.id === storedBond.id)).toBeDefined();
 
     // ⛔ **And the settlement paid the invitee out of the POOL**, in the same
     // block — one bond, one grant, with a named source and a named sink

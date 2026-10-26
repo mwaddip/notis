@@ -365,10 +365,4 @@ export function getPendingPostAuthor(postId: string): Uint8Array | null {
   return row ? new Uint8Array(row.author) : null;
 }
 
-export function getParentRefs(postId: string): string[] {
-  const rows = prepared(getDb(), 'SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')
-    .all(postId) as Array<{ parent_id: string }>;
-  return rows.map((r) => r.parent_id);
-}
-
 

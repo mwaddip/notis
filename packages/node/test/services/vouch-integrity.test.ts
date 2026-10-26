@@ -54,7 +54,6 @@ import {
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
   hasActiveVouchEscrow as storeHasActiveVouchEscrow,
-  getBondFor,
   getVouchBox as storeGetVouchBox,
   putIdentityRecord as storePutIdentityRecord,
   getNetworkRecord as storeGetNetworkRecord,
@@ -501,7 +500,12 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     expect(created.valid).toBe(true);
     applyTx(deps, createTx, created.computedOutputs!, 1);
 
-    const bond = getBondFor(invitee.pub)!;
+    // The bond output is the second output of `buildInviteCreate`
+    // (K(100) → K(75) + Bond(25)); `applyTx` writes `computedOutputs` through
+    // `deps.getBox` (CONSENSUS_INTERFACE → "StateView"), the read the engine
+    // uses for every box lookup.
+    const bondId = created.computedOutputs![1]!.id!;
+    const bond = deps.getBox(bondId) as BondBox;
     expect(bond).not.toBeNull();
 
     for (const signer of [inviter, invitee]) {

@@ -63,8 +63,7 @@ interface GenesisProofExtra {
 
 interface BondExtra {
   inviterId: string;          // hex-encoded pubkey in JSON (Uint8Array in code)
-  inviteePublicKey: string;   // hex-encoded pubkey — names the paired invite, and
-                              // what `getBondFor` and the settlement sweep join on
+  inviteePublicKey: string;   // hex-encoded pubkey — names the paired invite
 }
 
 interface VouchExtra {
@@ -682,25 +681,6 @@ export function getRentEligibleCreditBoxes(
     box: rowToBox(row) as CreditBox,
     ...provenanceOf(row),
   }));
-}
-
-/**
- * The bond naming this invitee, or null.
- *
- * `inviteePublicKey` IS the pairing — a key is invited at most once, so this
- * names exactly one live bond. `LIMIT 1` is safe for that reason and not by
- * hope: the invite transition bars a key that already holds an identity record,
- * and block application bars a second bond for a key within one block
- * (NODE_INTERFACE → Legal box transitions).
- */
-export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
-  const row = prepared(getDb(), `SELECT * FROM utxo_boxes
-       WHERE box_type = 'bond'
-         AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.inviteePublicKey') = ?
-       LIMIT 1`, true)
-    .get(bytesToHex(inviteePublicKey)) as UtxoRow | undefined;
-  return row ? (rowToBox(row) as BondBox) : null;
 }
 
 /**

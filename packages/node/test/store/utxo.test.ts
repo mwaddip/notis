@@ -32,7 +32,6 @@ async function importUtxoFresh() {
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
-    getBondFor: (inviteePublicKey: Uint8Array) => BondBox | null;
     insertBox: (box: AnyBox) => void;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
     BoxNotLiveError: new (boxId: string) => Error & { readonly boxId: string };
@@ -279,37 +278,6 @@ describe('utxo store', () => {
     expect(boxes[0]!.id! < boxes[1]!.id!).toBe(true);
   });
 
-
-  // --- getBondFor resolves a bond by the invitee key ------------------------
-
-  it('getBondFor resolves the bond naming a key', async () => {
-    // ⛔ **The invitee key IS the pairing, and the bond is the only box in
-    // it** — an address is invited once ever, so it names exactly one live bond
-    // and no box id or output index is needed (ARCHITECTURE → Invite System).
-    const { initDb } = await importDbFresh();
-    const { insertBox, getBondFor, consumeBox } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const invitee = uid('the-invitee');
-    const other = uid('someone-else');
-
-    const bond = makeBondBox({ inviterId: uid('alice'), inviteePublicKey: invitee });
-    Object.assign(bond, fixtureProvenance(bond, 1));
-    bond.id = computeBoxId(bond);
-    insertBox(bond);
-
-    expect(getBondFor(invitee)!.id).toBe(bond.id);
-
-    // A key with no bond resolves to nothing rather than to someone else's.
-    expect(getBondFor(other)).toBeNull();
-
-    // Unspent-only: the probation-deadline settlement consumes the bond, and
-    // from that point the key names none.
-    consumeBox(bond.id!, 7);
-    expect(getBondFor(invitee)).toBeNull();
-  });
 
   // --- getBondBoxesPage returns unspent bonds ---------------------------------
 
