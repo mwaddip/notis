@@ -4,7 +4,6 @@ import {
   computeCandidateBoxId,
   selectBoxes,
   boxRecordBytes,
-  bytesToHex,
   hexToBytes,
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
@@ -426,26 +425,6 @@ export function buildBurn(ctx: RepBuildContext, held: { boxId: string }): BuiltT
   return finish(tx, changeBox, change, ctx.height);
 }
 
-/**
- * Render a signed transaction for the node's JSON edge — the inverse of its
- * `jsonToTx` (WEB_INTERFACE → Writes). Values cross as decimal strings, binary
- * fields as hex, converted by the value's type rather than a hand-kept field
- * list. A `post`, a `likeTarget` and a `postWithdraw` are carried when present,
- * because each sits inside the signed bytes.
- */
-export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    inputs: tx.inputs,
-    outputs: tx.outputs.map(boxToJson),
-    signatures: Object.fromEntries(Object.entries(tx.signatures).map(([k, v]) => [k, bytesToHex(v)])),
-    protocolVersion: tx.protocolVersion,
-  };
-  if (tx.likeTarget !== undefined) body.likeTarget = tx.likeTarget;
-  if (tx.post !== undefined) body.post = postToJson(tx.post);
-  if (tx.postWithdraw !== undefined) body.postWithdraw = { postId: tx.postWithdraw.postId };
-  return body;
-}
-
 // ---------------------------------------------------------------------------
 
 /** The reader's own and income box from the view, each the first found
@@ -530,21 +509,3 @@ function finish(
   return { tx, txId, change: changeRef };
 }
 
-function boxToJson(box: AnyBoxCandidate): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(box).map(([k, v]) => [
-      k,
-      v instanceof Uint8Array ? bytesToHex(v) : typeof v === 'bigint' ? v.toString() : v,
-    ]),
-  );
-}
-
-function postToJson(commit: PostCommit): Record<string, unknown> {
-  return {
-    contentHash: bytesToHex(commit.contentHash),
-    author: bytesToHex(commit.author),
-    parentRefs: commit.parentRefs,
-    protocolVersion: commit.protocolVersion,
-    type: commit.type,
-  };
-}
