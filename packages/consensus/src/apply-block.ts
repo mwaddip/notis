@@ -295,20 +295,13 @@ export function applyQueuedTx(
   } | null = null;
   if (item.tx.likeTarget !== undefined) {
     const targetPostId = item.tx.likeTarget;
-    // Confirmed ⟺ the view answers an author (NODE_INTERFACE → Block
-    // Topology → "Block application reads the record, through the tree
-    // view"), and that author — never dag_posts.author — is who the like
-    // credits: placeholder rows carry a zeroed author, and a like on a
-    // confirmed but content-less post must credit the recorded author.
-    const author = state.getTopologyAuthor(targetPostId);
-    if (author === null) {
-      return {
-        ok: false,
-        reason:
-          `Rejected block height=${height}: like tx ${item.txId} targets ` +
-          `unconfirmed post ${targetPostId}`,
-      };
-    }
+    // The view answers an author (NODE_INTERFACE → Block Topology → "Block
+    // application reads the record, through the tree view") — never
+    // `dag_posts.author`. The like arm of `validateTx` refuses a target
+    // whose `getTopologyAuthor` is null with "Like target TARGET is not
+    // confirmed, so it names no author", so by the time this re-read runs
+    // the author stands.
+    const author = state.getTopologyAuthor(targetPostId)!;
     const authorHex = bytesToHex(author);
     // NODE_INTERFACE → Karma transition rules: a like targets a live post
     // only — a placeholder is live (credits the view's recorded author).
