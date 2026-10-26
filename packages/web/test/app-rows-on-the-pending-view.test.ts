@@ -163,7 +163,7 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('the rep row reads the pending view', () => {
-  it('a profile open fires /karma with pending=1 — control: a read did fire', async () => {
+  it('a profile open fires /karma — one of the reader\'s own reads carries `pending`, one plain stands beside it under the figures verifier', async () => {
     setNode('https://a.example');
     const h = harness();
     await flush();
@@ -171,8 +171,9 @@ describe('the rep row reads the pending view', () => {
     inner.openProfile();
     await flush();
     const own = h.karmaReads.filter((r) => r.key === PUB);
-    expect(own.length).toBeGreaterThan(0); // control
-    expect(own[0]!.pending).toBe(true);
+    expect(own.length).toBeGreaterThan(0); // control: a read did fire
+    expect(own.some((r) => r.pending)).toBe(true);
+    expect(own.some((r) => !r.pending)).toBe(true); // the plain beside the view, under the harness's verifier
   });
 
   it('the number the row renders is the pending view\'s `effective`', async () => {
@@ -197,7 +198,7 @@ describe('the rep row reads the pending view', () => {
 });
 
 describe('the balance row reads the pending view', () => {
-  it('a wallet open fires /credits with pending=1 — control: a read did fire', async () => {
+  it('a wallet open fires /credits — one of the reader\'s own reads carries `pending`, one plain stands beside it under the figures verifier', async () => {
     setNode('https://a.example');
     const h = harness();
     await flush();
@@ -205,8 +206,9 @@ describe('the balance row reads the pending view', () => {
     inner.openWallet();
     await flush();
     const own = h.creditsReads.filter((r) => r.key === PUB);
-    expect(own.length).toBeGreaterThan(0); // control
-    expect(own[0]!.pending).toBe(true);
+    expect(own.length).toBeGreaterThan(0); // control: a read did fire
+    expect(own.some((r) => r.pending)).toBe(true);
+    expect(own.some((r) => !r.pending)).toBe(true); // the plain beside the view, under the harness's verifier
   });
 });
 

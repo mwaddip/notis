@@ -3480,14 +3480,11 @@ export class App {
     const order = this.beginRead();
     const plainStamp = this.listingStamp();
     const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
-    // The view's /karma fires first so the rep row's listing read lands
-    // before the plain listing — `app-rows-on-the-pending-view.test.ts >
-    // "a profile open fires /karma with pending=1"` asserts the first
-    // /karma request carries `pending=1`. The plain promise never rejects
-    // — a plain failure resolves to null so Promise.all's throw-on-
-    // rejection does not propagate the plain's error and the floating
-    // catch the view's failure would need goes with it.
-    const viewPromise = this.readOwnKarma(cur.pubKeyHex);
+    // The plain promise never rejects — a plain failure resolves to `null`
+    // so `Promise.all`'s throw-on-rejection stays what fires on a view (or
+    // vouch, or escrow, or bonds, or name) read's rejection, atomic with
+    // the batch (WEB_INTERFACE → The wallet → "a failed read leaves the
+    // last-known state; the next ↻ retries").
     const plainPromise: Promise<KarmaResult | null> = this.figuresVerifier !== null
       ? this.readOwnKarmaPlain(cur.pubKeyHex).then((k) => k, () => null)
       : Promise.resolve(null);
@@ -3495,7 +3492,7 @@ export class App {
     let karmaPlain: KarmaResult | null = null;
     try {
       const [karma, status, vouched, escrow, bonds, ownName, plain] = await Promise.all([
-        viewPromise,
+        this.readOwnKarma(cur.pubKeyHex),
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
