@@ -288,8 +288,9 @@ export function castCountFromBytes(bytes: Uint8Array): number {
  * (the AVL key it was read at names it; no id rides the value itself, per
  * `boxRecordBytes` — TYPES_INTERFACE → Layout — Boxes).
  *
- * Refuses a record tag (`IDENTITY_RECORD_TAG` through `CAST_COUNT_TAG`) with its own message; every other tag
- * goes through `boxRecordFromBytes`, the one box-record decoder, unchanged.
+ * Refuses a record tag (`IDENTITY_RECORD_TAG` through `CAST_COUNT_TAG`) with
+ * its own message; every other tag goes through `boxRecordFromBytes`, the one
+ * box-record decoder, unchanged.
  *
  * @throws {Error} if the value's first byte is a record tag
  * @throws {ReaderError} if `boxRecordFromBytes` refuses the value
