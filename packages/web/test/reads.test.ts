@@ -1,14 +1,13 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readBuildContext, readCreditContext } from '../src/wallet/reads';
-import { PendingLedger } from '../src/wallet/ledger';
 import { NodeClient, PageError } from '../src/api/client';
 import type { Api } from '../src/api/client';
 import type { KarmaResult, KarmaBoxRow, StatusResult, CreditsResult, CreditBoxRow } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 import { jsonResponse } from './honest-page';
 
-// The order WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key` following `next`, then `GET /status`" states — /karma fully paged, THEN /status —
+// The order WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key?pending=1` following `next`, then `GET /status`" states — /karma fully paged, THEN /status —
 // is embodied here, not at call sites; the fake records call order so the
 // test can see it.
 
@@ -46,31 +45,20 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-describe('readBuildContext — WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key` following `next`, then `GET /status`"', () => {
+describe('readBuildContext — WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key?pending=1` following `next`, then `GET /status`"', () => {
   it('reads /karma to the end of next, THEN /status, and assembles the context', async () => {
     const pages = [
       karmaPage([{ boxId: 'b1', value: '100' }], 'k1'),
       karmaPage([{ boxId: 'b2', value: '50' }], null),
     ];
-    const ctx = await readBuildContext(fakeReads(pages), new PendingLedger(AUTHOR), AUTHOR);
+    const ctx = await readBuildContext(fakeReads(pages), AUTHOR);
     // Every karma call precedes the single status call.
     expect(calls).toEqual([`karma(${AUTHOR},after=null)`, `karma(${AUTHOR},after=k1)`, 'status']);
-    // Box values crossed as bigint; no pending entries, so both are spendable.
+    // The spendable view is the node's listing directly.
     expect(ctx.spendable).toEqual([{ boxId: 'b1', value: 100n }, { boxId: 'b2', value: 50n }]);
     expect(ctx.height).toBe(5333);
     expect(ctx.era).toBe(1);
     expect(ctx.author).toBe(AUTHOR);
-  });
-
-  it('the ledger removes a pending input and adds the predicted change', async () => {
-    const ledger = new PendingLedger(AUTHOR);
-    ledger.add({
-      txId: 't1', kind: 'post', postId: 'p1', inputs: ['b1'],
-      change: { boxId: 'chg', value: 95n, createdAtBlock: 5333 }, expiresAtHeight: 6053, submittedAtHeight: 5333,
-    });
-    const pages = [karmaPage([{ boxId: 'b1', value: '100' }, { boxId: 'b2', value: '50' }], null)];
-    const ctx = await readBuildContext(fakeReads(pages), ledger, AUTHOR);
-    expect(ctx.spendable).toEqual([{ boxId: 'b2', value: 50n }, { boxId: 'chg', value: 95n }]);
   });
 });
 
@@ -105,7 +93,7 @@ describe('readCreditContext — WEB_INTERFACE → The wallet ("A send reads the 
       creditsPage([{ boxId: 'c1', value: '100' }], 'k1'),
       creditsPage([{ boxId: 'c2', value: '50' }], null),
     ];
-    const ctx = await readCreditContext(fakeCreditReads(pages), new PendingLedger(AUTHOR), AUTHOR);
+    const ctx = await readCreditContext(fakeCreditReads(pages), AUTHOR);
     expect(calls).toEqual([`credits(${AUTHOR},after=null)`, `credits(${AUTHOR},after=k1)`, 'status']);
     expect(ctx.spendable).toEqual([{ boxId: 'c1', value: 100n }, { boxId: 'c2', value: 50n }]);
   });
@@ -118,7 +106,7 @@ describe('readCreditContext — WEB_INTERFACE → The wallet ("A send reads the 
       { boxId: 'c3', value: '25', lockedUntilBlock: 5334 }, // one past — dropped (client is conservative by one)
       { boxId: 'c4', value: '12', lockedUntilBlock: 1 },    // deep past — kept
     ], null)];
-    const ctx = await readCreditContext(fakeCreditReads(pages), new PendingLedger(AUTHOR), AUTHOR);
+    const ctx = await readCreditContext(fakeCreditReads(pages), AUTHOR);
     expect(ctx.spendable.map((b) => b.boxId)).toEqual(['c1', 'c2', 'c4']);
   });
 });
@@ -145,7 +133,7 @@ describe("readBuildContext — the mark on each karma row", () => {
       ],
       null,
     )];
-    const ctx = await readBuildContext(fakeReads(pages), new PendingLedger(AUTHOR), AUTHOR);
+    const ctx = await readBuildContext(fakeReads(pages), AUTHOR);
     expect(ctx.spendable).toEqual([
       { boxId: '00'.repeat(32), value: 50n },
       { boxId: '11'.repeat(32), value: 100n, income: true },
@@ -167,7 +155,7 @@ describe("the /karma reader rebuilds a row with `income` of the mark's domain", 
 
   const readFor = async (): Promise<unknown> => {
     const client = new NodeClient(() => '');
-    return readBuildContext(client, new PendingLedger(AUTHOR), AUTHOR);
+    return readBuildContext(client, AUTHOR);
   };
 
   it('income: false — any value but true — refuses the page', async () => {
@@ -181,4 +169,34 @@ describe("the /karma reader rebuilds a row with `income` of the mark's domain", 
       await expect(readFor()).rejects.toBeInstanceOf(PageError);
     });
   }
+});
+
+// WEB_INTERFACE → The wallet → "The spendable views are the node's pending view":
+// `readBuildContext` asks `/karma/:key?pending=1`; `readCreditContext` asks
+// `/credits/:key?pending=1`. The fake karma/credits record whether a read
+// passes `{ pending: true }`, so a case can assert the view a read asks.
+describe('readBuildContext asks the pending view', () => {
+  it('karma is asked with { pending: true }', async () => {
+    const seen: boolean[] = [];
+    const reads: Pick<Api, 'karma' | 'status'> = {
+      karma: async (_k, _p, opts) => { seen.push(opts?.pending === true); return karmaPage([], null); },
+      status: async () => statusResult(),
+    };
+    await readBuildContext(reads, AUTHOR);
+    expect(seen.length).toBeGreaterThan(0); // control: karma was asked
+    expect(seen.every((p) => p === true)).toBe(true);
+  });
+});
+
+describe('readCreditContext asks the pending view', () => {
+  it('credits is asked with { pending: true }', async () => {
+    const seen: boolean[] = [];
+    const reads: Pick<Api, 'credits' | 'status'> = {
+      credits: async (_k, _p, opts) => { seen.push(opts?.pending === true); return creditsPage([], null); },
+      status: async () => statusResult(),
+    };
+    await readCreditContext(reads, AUTHOR);
+    expect(seen.length).toBeGreaterThan(0); // control: credits was asked
+    expect(seen.every((p) => p === true)).toBe(true);
+  });
 });

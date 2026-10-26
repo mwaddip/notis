@@ -221,7 +221,7 @@ describe('the App identity control', () => {
   it('a restored ledger with a pending entry starts the poll on mount', () => {
     vi.useFakeTimers();
     const ledger = new PendingLedger(KEY);
-    ledger.add({ txId: 'cc'.repeat(32), kind: 'grant', postId: KEY, inputs: [], expiresAtHeight: 6100, submittedAtHeight: 6000 });
+    ledger.add({ txId: 'cc'.repeat(32), kind: 'grant', postId: KEY, expiresAtHeight: 6100, submittedAtHeight: 6000 });
     const h = harness(ledger);
     expect(h.drive.pollTimer).not.toBeNull(); // the poll runs while the ledger holds an entry
   });
@@ -524,7 +524,7 @@ describe('a faucet grant records the tip read at the press', () => {
     held.karma!({ txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 1e15 });
     await asked;
     expect(h.drive.ledger.all()).toEqual([
-      { txId: 'cc'.repeat(32), kind: 'grant', postId: KEY, inputs: [], submittedAtHeight: tip, expiresAtHeight: tip + MEMPOOL_EXPIRY_BLOCKS },
+      { txId: 'cc'.repeat(32), kind: 'grant', postId: KEY, submittedAtHeight: tip, expiresAtHeight: tip + MEMPOOL_EXPIRY_BLOCKS },
     ]);
   });
 
@@ -543,7 +543,7 @@ describe('a faucet grant records the tip read at the press', () => {
     held.credits!({ txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 1e15, boxId: 'dd'.repeat(32) });
     await asked;
     expect(h.drive.ledger.all()).toEqual([
-      { txId: 'cc'.repeat(32), kind: 'creditGrant', postId: 'dd'.repeat(32), inputs: [], submittedAtHeight: tip, expiresAtHeight: tip + MEMPOOL_EXPIRY_BLOCKS },
+      { txId: 'cc'.repeat(32), kind: 'creditGrant', postId: 'dd'.repeat(32), submittedAtHeight: tip, expiresAtHeight: tip + MEMPOOL_EXPIRY_BLOCKS },
     ]);
   });
 });

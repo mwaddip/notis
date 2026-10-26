@@ -51,7 +51,7 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
 
 function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
   return {
-    identity: null, backedUp: false, karma: null, grant: null,
+    identity: null, backedUp: false, karma: null, karmaPlain: null, grant: null,
     invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
     ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
     nameClay: () => false,

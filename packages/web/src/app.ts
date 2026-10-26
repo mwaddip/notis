@@ -2,7 +2,7 @@ import { NodeClient, PageError, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, KARMA_MINIMUM, LIKE_KARMA_COST, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
 import { KARMA_LISTING_MAX, LEDGER_READ_MAX, isHex64Lower } from '@dagsocial/node-reads';
 import { readWholeList } from './api/whole-list';
 import { decrementBoxId } from './wallet/box-id';
@@ -34,6 +34,7 @@ import {
 import type { PendingEntry, EntryOutcome } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
+import { FlowQueue } from './wallet/queue';
 import { identity as identitySingleton } from './identity/identity';
 import { profileBody, type ProfileBody } from './view/profile';
 import {
@@ -122,11 +123,18 @@ function download(filename: string, text: string): void {
   a.click();
 }
 
+// WEB_INTERFACE → The wallet → "A rejection's words follow the node's message,
+// never its status alone": the pool's box conflict reads one sentence on every
+// rep surface. Each copy matches the node's box-conflict message first, then
+// its own patterns.
+const BOX_CONFLICT_RE = /^Input [0-9a-f]{64} is already spent by a pending transaction$/i;
+const BOX_CONFLICT_LINE = 'that rep is still tied up in a spend that has not landed.';
+
 // A rejection in the voice register — say what happened, never a status code
 // (HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way.
 function postRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
-  if (r.status === 409) return 'that rep is still tied up in a post that has not landed.';
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   if (r.status === 503) return 'the node is full right now.';
   if (/karma/i.test(r.message)) return 'not enough rep to post right now.';
   return 'the node said: ' + r.message.toLowerCase();
@@ -134,7 +142,8 @@ function postRejectionCopy(r: Rejection): string {
 
 function likeRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
-  if (r.status === 409) return 'you have already liked this post';
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
+  if (/already liked/i.test(r.message)) return 'you have already liked this post';
   if (/karma/i.test(r.message)) return 'not enough rep';
   return r.message.toLowerCase();
 }
@@ -144,6 +153,7 @@ function likeRejectionCopy(r: Rejection): string {
  *  client-side refusal (status 0) already reads that way. */
 function vouchRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   const m = r.message.toLowerCase();
   if (/member/.test(m)) return 'only members can vouch';
   if (/self|yourself/.test(m)) return "you can't vouch for yourself";
@@ -156,6 +166,7 @@ function vouchRejectionCopy(r: Rejection): string {
 /** An invite rejection in the voice register (HOUSE_STYLE → Voice). */
 function inviteRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   const m = r.message.toLowerCase();
   if (/already|holds|account|record|exist/.test(m)) return 'that key already holds an account';
   if (/no invites|available/.test(m)) return 'no invites available right now';
@@ -170,10 +181,14 @@ function inviteRejectionCopy(r: Rejection): string {
  *  reads that way. */
 function withdrawRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
-  if (r.status === 409) return 'that rep box is still tied up in a transaction that has not landed';
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   if (r.status === 503) return "the node's pool is full right now";
   const m = r.message.toLowerCase();
   if (/earlier block|not confirmed/.test(m)) return 'this post has not landed yet';
+  // The node's own pending withdrawal — a different thing from a withdrawn
+  // post (WEB_INTERFACE → The withdraw control: the node's known refusals
+  // mapped to sentences).
+  if (/withdrawal.*already pending/.test(m)) return 'a withdrawal of this post is already pending.';
   if (/already/.test(m)) return 'this post is already withdrawn';
   if (/author/.test(m)) return 'only the author can withdraw this post';
   return 'the node said: ' + m;
@@ -201,6 +216,7 @@ function notSignedCopy(kind: 'locked' | 'declined' | 'refused', reason: string, 
  *  HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way. */
 function usernameRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   if (r.status === 503) return "the node's pool is full right now.";
   const m = r.message.toLowerCase();
   if (/name invalid|invalid name/.test(m)) return `that name is not 1 to ${USERNAME_MAX_BYTES} letters, digits or _.`;
@@ -243,7 +259,7 @@ interface ListingStamp {
 /** The pieces of the reader's own state, each held with the order the read that
  *  answered it began in: the two listings, /status, the vouch set with its
  *  escrow, the bonds and the reader's own name. */
-type ReaderPiece = 'karma' | 'credits' | 'status' | 'vouches' | 'bonds' | 'name';
+type ReaderPiece = 'karma' | 'karmaPlain' | 'credits' | 'creditsPlain' | 'status' | 'vouches' | 'bonds' | 'name';
 
 export class App {
   private state: AppState;
@@ -297,6 +313,13 @@ export class App {
   // nowhere else (WEB_INTERFACE → The workspace → "A window's body stands while
   // the window is open").
   private bodies = new Map<string, HeldBody>();
+  // Two queues: a rep queue (post / like / withdraw / vouch / invite / claim /
+  // burn) and a send queue; an unvouch queues with neither (WEB_INTERFACE →
+  // The wallet → "The reader's spends run one at a time, per ledger"). A press
+  // captures `readerGen` and enqueues; at the turn, a moved generation runs
+  // nothing — the queue returns 'cancelled' — and the pump moves on.
+  private repQueue = new FlowQueue();
+  private sendQueue = new FlowQueue();
   // Targets the reader pressed like on, shown liked at once and reverted on a
   // rejection or expiry (WEB_INTERFACE → The wallet).
   private optimisticLikes = new Set<string>();
@@ -360,12 +383,20 @@ export class App {
   private figuresGen = 0;
   private figuresInFlight = false;
   private figuresDirty = false;
-  // The loaded key's /karma with the stamp its read began under — read at
-  // identity load, the profile window's open and its ↻, every landing of the
-  // reader's own transaction and, in the extension, every verified tip — and a
-  // faucet grant in flight or one that lapsed; both feed the profile window's ctx.
+  // The loaded key's /karma?pending=1 — the rep view, read at identity load,
+  // the profile window's open and its ↻, each 2xx of the reader's own rep
+  // spend and every landing of one, and in the extension every verified tip
+  // (WEB_INTERFACE → The profile window → "The `rep` row is the rep view's
+  // `effective` alone"); the row shows its `effective`.
   private profileKarma: KarmaResult | null = null;
-  private profileKarmaStamp: ListingStamp | null = null;
+  // The plain /karma listing read beside the view where the App holds a
+  // figures verifier, or where the tick has a grant standing — the listing
+  // the verified-figures run proves and the row's line reads for `plainShown`
+  // and `boxCount` (WEB_INTERFACE → The extension → "The verified figures",
+  // → The wallet → "A landing reads the plain listings, never `pending=1`").
+  // Null in a build with no verifier until a grant's reconcile reads it.
+  private profileKarmaPlain: KarmaResult | null = null;
+  private profileKarmaPlainStamp: ListingStamp | null = null;
   private grantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   // The reader's own state is what the node answers for the loaded key; an
   // identity change and a change of the reading node drop it whole
@@ -480,7 +511,14 @@ export class App {
   // identity owes before that send — which the row draws into whichever form
   // stands (→ "The `send` row").
   private walletCredits: CreditsResult | null = null;
-  private walletCreditsStamp: ListingStamp | null = null;
+  // The plain /credits listing read beside the view where the App holds a
+  // figures verifier, or where the tick has a credits grant standing — the
+  // listing the verified-figures run proves and the balance line reads for
+  // `plainShown` and `boxCount` (WEB_INTERFACE → The extension → "The
+  // verified figures", → The wallet → "A landing reads the plain listings,
+  // never `pending=1`").
+  private walletCreditsPlain: CreditsResult | null = null;
+  private walletCreditsPlainStamp: ListingStamp | null = null;
   private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   private sendFlight: Flight | null = null;
   private sendCheck: string | null = null;
@@ -950,6 +988,7 @@ export class App {
       identity: this.idm.current(),
       backedUp: this.idm.backedUp(),
       karma: this.profileKarma,
+      karmaPlain: this.profileKarmaPlain,
       grant: this.grantView,
       member: this.isMember(),
       author: this.authorData,
@@ -957,7 +996,12 @@ export class App {
       invite: ((): { bondMin: string; bondMax: string; probationBlocks: number } | null => {
         const nn = networkNumbers(BUILD_NETWORK, this.state.status);
         if (nn === null) return null;
-        return { bondMin: nn.inviteBondMin, bondMax: nn.inviteBondMax, probationBlocks: nn.inviteProbationBlocks };
+        // The form's `max` is the lesser of the network's and
+        // `effective − KARMA_MINIMUM` (WEB_INTERFACE → The profile window →
+        // "The `invites` row"). Where no karma has been read, the network's
+        // own max stands.
+        const bondMax = this.inviteBondMaxForForm() ?? nn.inviteBondMax;
+        return { bondMin: nn.inviteBondMin, bondMax, probationBlocks: nn.inviteProbationBlocks };
       })(),
       canAffordMinBond: this.canAffordMinBond(),
       bonds: this.bondsView,
@@ -976,6 +1020,7 @@ export class App {
       // filter reads (WEB_INTERFACE → The wallet).
       status: this.state.status,
       credits: this.walletCredits,
+      creditsPlain: this.walletCreditsPlain,
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
       pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
@@ -1015,28 +1060,43 @@ export class App {
     return this.withdrawFlights.get(postId) ?? null;
   }
 
-  /** The spendable view is non-empty — the courtesy gate the withdraw button reads,
-   *  from the wallet's view the App already holds; the node's refusal is the truth
-   *  (WEB_INTERFACE → The withdraw control). */
+  /** The profile's `/karma` listing is non-empty — the courtesy gate the
+   *  withdraw button reads, directly off `profileKarma.boxes`; the node's
+   *  refusal is the truth (WEB_INTERFACE → The withdraw control). */
   private canSignWithdraw(): boolean {
-    if (this.profileKarma === null) return false;
-    const confirmed = this.profileKarma.boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
-    return this.ledger.spendable(confirmed).length > 0;
+    return this.profileKarma !== null && this.profileKarma.boxes.length > 0;
   }
 
-  /** The spendable view covers the minimum bond — a courtesy that shows the invite
-   *  form only when it can be filled; the effective balance is the proxy, the
-   *  node's refusal the truth (WEB_INTERFACE → The profile window). */
+  /** The invite form is shown while the floor would stand over the minimum
+   *  bond — WEB_INTERFACE → The wallet → "The floor is the client's to know",
+   *  → The profile window → "The `invites` row". */
   private canAffordMinBond(): boolean {
     if (this.profileKarma === null) return false;
     const nn = networkNumbers(BUILD_NETWORK, this.state.status);
     if (nn === null) return false;
-    return BigInt(this.profileKarma.effective) >= BigInt(nn.inviteBondMin);
+    return BigInt(this.profileKarma.effective) - BigInt(nn.inviteBondMin) >= KARMA_MINIMUM;
   }
 
+  /** `burn` is enabled while the floor would stand over USERNAME_BURN_PRICE
+   *  (WEB_INTERFACE → The wallet → "The floor is the client's to know",
+   *  → The username row). */
   private canAffordBurn(): boolean {
     if (this.profileKarma === null) return false;
-    return BigInt(this.profileKarma.effective) >= USERNAME_BURN_PRICE;
+    return BigInt(this.profileKarma.effective) - USERNAME_BURN_PRICE >= KARMA_MINIMUM;
+  }
+
+  /** The invite form's bond `max`: the lesser of the network's and
+   *  `effective − KARMA_MINIMUM` — WEB_INTERFACE → The profile window →
+   *  "The `invites` row". `null` when nothing stands to compute from, mirroring
+   *  the `invite` ctx being null. */
+  private inviteBondMaxForForm(): string | null {
+    if (this.profileKarma === null) return null;
+    const nn = networkNumbers(BUILD_NETWORK, this.state.status);
+    if (nn === null) return null;
+    const headroom = BigInt(this.profileKarma.effective) - KARMA_MINIMUM;
+    const networkMax = BigInt(nn.inviteBondMax);
+    const lesser = headroom < networkMax ? headroom : networkMax;
+    return lesser.toString();
   }
 
   /** Whether the handle a key and a name render as reads clay — the check held
@@ -2352,37 +2412,48 @@ export class App {
   }
 
   /** Re-read /credits and move the balance in place — the wallet window's
-   *  opening, by a press or restored at boot, and its ↻, and the re-read an
-   *  identity or node change and a verified tip owe while the window is open
-   *  (WEB_INTERFACE → The wallet window). An answer for the node or the key
-   *  before writes nothing. */
+   *  opening, by a press or restored at boot, and its ↻, each 2xx of the
+   *  reader's own send, and the re-read an identity or node change and a
+   *  verified tip owe while the window is open (WEB_INTERFACE → The wallet
+   *  window). The view fills the balance row; where the App holds a figures
+   *  verifier, a plain read of /credits stands beside the view and fills
+   *  `walletCreditsPlain` for the verified-figures run (→ The extension →
+   *  "The verified figures"). An answer for the node or the key before
+   *  writes nothing. A failed view read leaves the last-known state (the
+   *  next ↻ retries), and a failed plain read leaves the plain listing as it
+   *  stands. */
   private async refreshWalletCredits(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
     const gen = this.readerGen;
-    const stamp = this.listingStamp();
     const order = this.beginRead();
-    let credits: CreditsResult;
-    try {
-      credits = await this.readOwnCredits(cur.pubKeyHex);
-    } catch {
-      return; // a failed read leaves the last-known state; the next ↻ retries
-    }
+    const plainStamp = this.listingStamp();
+    const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
+    const outcomes = await Promise.allSettled(
+      this.figuresVerifier !== null
+        ? [this.readOwnCredits(cur.pubKeyHex), this.readOwnCreditsPlain(cur.pubKeyHex)]
+        : [this.readOwnCredits(cur.pubKeyHex)],
+    );
     if (gen !== this.readerGen) return;
-    this.takeCredits(credits, stamp, order);
+    const viewOutcome = outcomes[0];
+    if (viewOutcome.status === 'fulfilled') {
+      this.takeCredits(viewOutcome.value, order);
+    }
+    const plainOutcome = outcomes[1];
+    if (plainOutcome !== undefined && plainOutcome.status === 'fulfilled') {
+      this.takeCreditsPlain(plainOutcome.value, plainStamp, plainOrder);
+    }
   }
 
   /** Take a /credits listing as the balance row's, beside the stamp its read
-   *  began under — unless the held listing's read began later (newerRead): the
-   *  balance moves in its slot (HOUSE_STYLE → Motion) and the figures run
-   *  follows (WEB_INTERFACE → The extension → "The verified figures"). Answers
-   *  whether it took. */
-  private takeCredits(credits: CreditsResult, stamp: ListingStamp, order: number): boolean {
+   *  — unless the held listing's read began later (newerRead): the balance
+   *  moves in its slot (HOUSE_STYLE → Motion). Answers whether it took. */
+  private takeCredits(credits: CreditsResult, order: number): boolean {
     if (!this.newerRead('credits', order)) return false;
     this.walletCredits = credits;
-    this.walletCreditsStamp = stamp;
     this.renderCreditsRowInPlace();
-    this.startFigures();
+    // The view read fills the row; the plain read is the one a figures run
+    // reads and `takeCreditsPlain` triggers.
     return true;
   }
 
@@ -2760,7 +2831,8 @@ export class App {
     this.endSendPress();
     this.lastPolledHeight = 0;
     this.profileKarma = null;
-    this.profileKarmaStamp = null;
+    this.profileKarmaPlain = null;
+    this.profileKarmaPlainStamp = null;
     this.state.status = null;
     this.vouched.clear();
     this.escrowHeldUntil = null;
@@ -2771,7 +2843,8 @@ export class App {
     this.ownName = null;
     this.ownNameLoaded = false;
     this.walletCredits = null;
-    this.walletCreditsStamp = null;
+    this.walletCreditsPlain = null;
+    this.walletCreditsPlainStamp = null;
     this.heldRead.clear();
     // The figures describe the listings dropped here. A run in flight for them
     // is dropped by its older generation, and the flags clear beside the
@@ -2819,44 +2892,86 @@ export class App {
     return this.loadMembershipState();
   }
 
-  /** Re-read /karma and move the rep row in place — the first read a verified tip
-   *  owes (WEB_INTERFACE → The extension → "The verified figures"). An answer
+  /** Re-read /karma and move the rep row in place — each 2xx of a rep spend,
+   *  and the first read a verified tip owes (WEB_INTERFACE → The extension →
+   *  "The verified figures", → The profile window → "The `rep` row is the rep
+   *  view's `effective` alone"). The view fills the rep row; where the App
+   *  holds a figures verifier, a plain read of /karma stands beside the view
+   *  and fills `profileKarmaPlain` for the verified-figures run. An answer
    *  for the node or the key before writes nothing. */
   private async refreshOwnKarma(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
     const gen = this.readerGen;
-    const stamp = this.listingStamp();
     const order = this.beginRead();
-    let karma: KarmaResult;
-    try {
-      karma = await this.readOwnKarma(cur.pubKeyHex);
-    } catch {
-      return; // a failed read leaves the last-known state; the next read retries
-    }
+    const plainStamp = this.listingStamp();
+    const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
+    const outcomes = await Promise.allSettled(
+      this.figuresVerifier !== null
+        ? [this.readOwnKarma(cur.pubKeyHex), this.readOwnKarmaPlain(cur.pubKeyHex)]
+        : [this.readOwnKarma(cur.pubKeyHex)],
+    );
     if (gen !== this.readerGen) return;
-    this.takeKarma(karma, stamp, order);
+    const viewOutcome = outcomes[0];
+    if (viewOutcome.status === 'fulfilled') {
+      this.takeKarma(viewOutcome.value, order);
+    }
+    const plainOutcome = outcomes[1];
+    if (plainOutcome !== undefined && plainOutcome.status === 'fulfilled') {
+      this.takeKarmaPlain(plainOutcome.value, plainStamp, plainOrder);
+    }
   }
 
-  /** Hold a /karma listing as the rep row's, beside the stamp its read began
-   *  under — unless the held listing's read began later (newerRead). Answers
-   *  whether it took. */
-  private holdKarma(karma: KarmaResult, stamp: ListingStamp, order: number): boolean {
+  /** Hold a /karma listing as the rep row's — unless the held listing's read
+   *  began later (newerRead). Answers whether it took. */
+  private holdKarma(karma: KarmaResult, order: number): boolean {
     if (!this.newerRead('karma', order)) return false;
     this.profileKarma = karma;
-    this.profileKarmaStamp = stamp;
     return true;
   }
 
   /** Take a /karma listing as the rep row's: its height feeds the tip the gates
    *  read (bumpTip) whichever listing the row holds, then it is held
    *  (holdKarma), the number moves in its slot (HOUSE_STYLE → Motion) and the
-   *  figures run follows (WEB_INTERFACE → The extension → "The verified
-   *  figures"). Answers whether it took. */
-  private takeKarma(karma: KarmaResult, stamp: ListingStamp, order: number): boolean {
+   *  figures run follows if the plain listing stands beside the view
+   *  (WEB_INTERFACE → The extension → "The verified figures"). Answers
+   *  whether it took. */
+  private takeKarma(karma: KarmaResult, order: number): boolean {
     this.bumpTip(karma.height);
-    if (!this.holdKarma(karma, stamp, order)) return false;
+    if (!this.holdKarma(karma, order)) return false;
     this.renderProfileKarma();
+    // The view read fills the row; the plain read is the one a figures run
+    // reads and `takeKarmaPlain` triggers (WEB_INTERFACE → The extension →
+    // "The verified figures").
+    return true;
+  }
+
+  /** Hold a plain /karma listing beside the view — the one the verified-
+   *  figures run proves and the rep line reads for `plainShown` and
+   *  `boxCount` (WEB_INTERFACE → The extension → "The verified figures").
+   *  The row re-renders so the line reads the fresh plain figure, and the
+   *  figures run follows (startFigures reads the plain field). Answers
+   *  whether it took — a held answer whose read began later keeps its
+   *  place (newerRead). */
+  private takeKarmaPlain(karma: KarmaResult, stamp: ListingStamp, order: number): boolean {
+    if (!this.newerRead('karmaPlain', order)) return false;
+    this.profileKarmaPlain = karma;
+    this.profileKarmaPlainStamp = stamp;
+    this.renderProfileKarma();
+    this.startFigures();
+    return true;
+  }
+
+  /** Hold a plain /credits listing beside the view — the one the verified-
+   *  figures run proves and the balance line reads for `plainShown` and
+   *  `boxCount` (WEB_INTERFACE → The extension → "The verified figures").
+   *  The balance row re-renders so the line reads the fresh plain figure, and
+   *  the figures run follows (startFigures reads the plain field). */
+  private takeCreditsPlain(credits: CreditsResult, stamp: ListingStamp, order: number): boolean {
+    if (!this.newerRead('creditsPlain', order)) return false;
+    this.walletCreditsPlain = credits;
+    this.walletCreditsPlainStamp = stamp;
+    this.renderCreditsRowInPlace();
     this.startFigures();
     return true;
   }
@@ -2909,7 +3024,6 @@ export class App {
       txId: res.txId,
       kind: 'grant',
       postId: cur.pubKeyHex, // the key the grant was asked for; a grant has no post
-      inputs: [],
       expiresAtHeight: res.expiresAtHeight,
       submittedAtHeight: askedAt,
     });
@@ -3017,9 +3131,10 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     try {
-      const ctx = await readBuildContext(this.client, this.ledger, cur.pubKeyHex);
-      const total = ctx.spendable.reduce((sum, b) => sum + b.value, 0n);
-      this.composers.get(key)?.setAffordable(total >= price);
+      const ctx = await readBuildContext(this.client, cur.pubKeyHex);
+      // WEB_INTERFACE → The wallet → "The floor is the client's to know":
+      // the composer's `post` reads the view's `effective`, not the face.
+      this.composers.get(key)?.setAffordable(ctx.effective >= price);
     } catch {
       // The spendable view could not be read; the foot says so and post stays
       // disabled, rather than a disabled button with no reason.
@@ -3078,9 +3193,20 @@ export class App {
       this.renderForParent(parentId);
       this.focusOpener(parentId);
     };
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitPostFlow({ ...this.submitDeps(), onSigned, onCachePost: this.cachePostFromSubmit(text) }, text, parentId);
+      const r = await this.repQueue.enqueue(
+        () => submitPostFlow({ ...this.submitDeps(), onSigned, onCachePost: this.cachePostFromSubmit(text) }, text, parentId),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' }; // node change: end as a decline (onSigned never fired)
+      } else {
+        result = r;
+      }
     } catch {
       // A transport failure. Before the sign — a pre-sign read threw and
       // onSigned never fired — the composer is still open with its text; after
@@ -3137,7 +3263,19 @@ export class App {
     sub.expiresAtHeight = null;
     sub.blockHeight = null;
     this.renderForParent(sub.parentId);
-    await this.flight(sub, () => submitPostFlow({ ...this.submitDeps(), onCachePost: this.cachePostFromSubmit(sub.content) }, sub.content, sub.parentId));
+    const pressGen = this.readerGen;
+    await this.flight(sub, async () => {
+      const r = await this.repQueue.enqueue(
+        () => submitPostFlow({ ...this.submitDeps(), onCachePost: this.cachePostFromSubmit(sub.content) }, sub.content, sub.parentId),
+        () => this.readerGen === pressGen,
+      );
+      // A key or node change in the wait: `flight` reads this `declined` as
+      // the notSigned arm and returns the card to *expired* with `try again`
+      // still offered — a key change clears `state.submissions` through
+      // `onIdentityChange` beforehand, which hides even that.
+      if (r === 'cancelled') return { ok: false, notSigned: 'declined' as const, reason: '' } as const;
+      return r;
+    });
   }
 
   /** Drive a submission's flight from a `try again`. notSigned there has no
@@ -3178,6 +3316,10 @@ export class App {
       sub.postId = result.entry.postId;
       sub.expiresAtHeight = result.entry.expiresAtHeight;
       this.startPoll();
+      // WEB_INTERFACE → The profile window → "The `rep` row is the rep view's
+      // `effective` alone" — the row takes a new value at every 2xx of the
+      // reader's own spend.
+      void this.refreshOwnKarma();
     } else {
       sub.stage = 'rejected';
       sub.reason = postRejectionCopy(result.rejection);
@@ -3188,15 +3330,37 @@ export class App {
   private async likePost(postId: string): Promise<void> {
     const cur = this.idm.current();
     if (cur === null || this.optimisticLikes.has(postId)) return;
+    // The floor against the row's number before the overlay — WEB_INTERFACE
+    // → The wallet → "`like` stays live at the floor": a press the row's
+    // number refuses answers the floor's line and moves no count. A null
+    // `profileKarma` (no karma read has landed) hands the press to the
+    // flow's own check.
+    if (this.profileKarma !== null && BigInt(this.profileKarma.effective) - LIKE_KARMA_COST < KARMA_MINIMUM) {
+      this.setReportForPost(postId, `like not sent: the last ${KARMA_MINIMUM} rep is for posting.`);
+      this.renderRegionsForPost(postId);
+      if (this.feedHasPost(postId)) this.renderFeed();
+      return;
+    }
     // The reader did it — show liked and move the count at once (WEB_INTERFACE →
     // The wallet). A number that moves in direct response to the reader's own
     // click is not the ticking readout the motion contract bans.
     this.optimisticLikes.add(postId);
     this.renderRegionsForPost(postId);
     this.renderFeedPost(postId);
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitLikeFlow(this.submitDeps(), postId);
+      const r = await this.repQueue.enqueue(
+        () => submitLikeFlow(this.submitDeps(), postId),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' }; // node change: end as a decline
+      } else {
+        result = r;
+      }
     } catch {
       this.optimisticLikes.delete(postId);
       this.setReportForPost(postId, "like rejected: can't reach the node right now.");
@@ -3206,6 +3370,7 @@ export class App {
     }
     if (result.ok) {
       this.startPoll();
+      void this.refreshOwnKarma();
       return;
     }
     this.optimisticLikes.delete(postId);
@@ -3228,9 +3393,20 @@ export class App {
     if (this.withdrawFlights.has(postId) || pendingWithdrawTargets(this.ledger.all()).has(postId)) return;
     this.withdrawFlights.set(postId, { stage: 'submitting' });
     this.renderRegionsForPost(postId);
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitWithdrawFlow(this.submitDeps(), postId);
+      const r = await this.repQueue.enqueue(
+        () => submitWithdrawFlow(this.submitDeps(), postId),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press (withdrawFlights cleared)
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.withdrawFlights.delete(postId);
       this.setReportForPost(postId, "withdraw rejected: can't reach the node right now.");
@@ -3242,6 +3418,7 @@ export class App {
     this.withdrawFlights.delete(postId);
     if (result.ok) {
       this.startPoll();
+      void this.refreshOwnKarma();
     } else if ('rejection' in result) {
       this.setReportForPost(postId, 'withdraw rejected: ' + withdrawRejectionCopy(result.rejection));
     } else {
@@ -3330,7 +3507,8 @@ export class App {
       return { kind: 'reason', text: `your stake from an unvouch is held until block ${this.escrowHeldUntil}` };
     }
     if (this.profileKarma !== null && BigInt(this.profileKarma.effective) < VOUCH_MIN_BALANCE) {
-      return { kind: 'reason', text: `vouching needs ${VOUCH_MIN_BALANCE} rep held` };
+      // WEB_INTERFACE → The author window — the floor's one sentence.
+      return { kind: 'reason', text: `the last ${KARMA_MINIMUM} rep is for posting` };
     }
     const v = this.vouched.get(key);
     if (v) return { kind: 'vouched', sinceBlock: v.createdAtBlock, cooldownBlocks };
@@ -3349,24 +3527,32 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     const gen = this.readerGen;
-    const stamp = this.listingStamp();
     const order = this.beginRead();
+    const plainStamp = this.listingStamp();
+    const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
+    // The plain promise resolves to `null` on failure, so `Promise.all`
+    // rejects only on a view, vouch, escrow, bonds or name read, and a
+    // failed read leaves the last-known state.
+    const plainPromise: Promise<KarmaResult | null> = this.figuresVerifier !== null
+      ? this.readOwnKarmaPlain(cur.pubKeyHex).then((k) => k, () => null)
+      : Promise.resolve(null);
     let karmaTaken = false;
+    let karmaPlain: KarmaResult | null = null;
     try {
-      const [karma, status, vouched, escrow, bonds, ownName] = await Promise.all([
+      const [karma, status, vouched, escrow, bonds, ownName, plain] = await Promise.all([
         this.readOwnKarma(cur.pubKeyHex),
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
         this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT }),
         this.client.usernameByOwner(cur.pubKeyHex),
+        plainPromise,
       ]);
       if (gen !== this.readerGen) return;
-      karmaTaken = this.holdKarma(karma, stamp, order);
-      // vouchCooldownBlocks + the bond range for the invites row
+      this.bumpTip(karma.height);
+      karmaTaken = this.holdKarma(karma, order);
       if (this.newerRead('status', order)) this.state.status = status;
       this.bumpTip(status.blockHeight);
-      this.bumpTip(karma.height);
       if (this.newerRead('vouches', order)) {
         this.vouched = vouched;
         this.escrowHeldUntil = escrow;
@@ -3376,26 +3562,44 @@ export class App {
         this.ownName = ownName;
         this.ownNameLoaded = true;
       }
+      karmaPlain = plain;
     } catch {
       return; // a failed read leaves the last-known state; the ↻ retries
     }
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
-    // A fresh karma listing triggers a figures verifier run
-    // (WEB_INTERFACE → The extension → "The verified figures").
-    if (karmaTaken) this.startFigures();
+    if (karmaPlain !== null) {
+      // Holding the plain re-renders the rep row and triggers the figures run.
+      this.takeKarmaPlain(karmaPlain, plainStamp, plainOrder);
+    } else if (karmaTaken) {
+      // No plain read owed, or it failed — the view's write still triggers a
+      // figures run attempt (which skips without a plain listing standing).
+      this.startFigures();
+    }
   }
 
-  /** Read the whole /credits for a key, following `next` to the end. The
-   *  spendable view is the whole page; a landing needs to see every box the
-   *  node has (WEB_INTERFACE → "Paging is keyset, never offset"). `total` is
-   *  the identity's total on every page, so the first page's value stands. */
+  /** Read the whole /credits for a key, following `next` to the end — the
+   *  pending view the balance row shows (WEB_INTERFACE → The wallet → "The
+   *  spendable views are the node's pending view"). `total` is the identity's
+   *  total on every page, so the first page's value stands. */
   private async readOwnCredits(key: string): Promise<CreditsResult> {
+    return this.readCreditsFor(key, { pending: true });
+  }
+
+  /** Read the whole plain /credits for a key — the listing the verified-
+   *  figures run proves and the balance line reads for `plainShown`
+   *  and `boxCount` (WEB_INTERFACE → The extension → "The verified figures",
+   *  → The wallet → "A landing reads the plain listings, never `pending=1`"). */
+  private async readOwnCreditsPlain(key: string): Promise<CreditsResult> {
+    return this.readCreditsFor(key, undefined);
+  }
+
+  private async readCreditsFor(key: string, opts: { pending: true } | undefined): Promise<CreditsResult> {
     let first: CreditsResult | null = null;
     const boxes = await readWholeList<CreditsResult['boxes'][number], CreditsResult>({
       readPage: async (page) => {
-        const answer = await this.client.credits(key, page);
+        const answer = await this.client.credits(key, page, opts);
         if (first === null) first = answer;
         return answer;
       },
@@ -3408,18 +3612,31 @@ export class App {
     return { userId: captured.userId, total: captured.total, boxes, boxCount: boxes.length, next: null };
   }
 
-  /** Read the whole /karma for a key, following `next` to the end
-   *  (WEB_INTERFACE → "Paging is keyset, never offset"). The row's number is
-   *  the first page's `effective`; the figures verifier will prove the whole
-   *  listing (WEB_INTERFACE → The extension → "The verified figures"). Every
-   *  field but `boxes` / `boxCount` / `next` is the identity's, the same on
-   *  every page (NODE_INTERFACE → UTXO queries), so the first page's values
-   *  stand. */
+  /** Read the whole /karma for a key, following `next` to the end — the
+   *  pending view the rep row shows (WEB_INTERFACE → The wallet → "The
+   *  spendable views are the node's pending view", → The profile window →
+   *  "The `rep` row is the rep view's `effective` alone"). Every field but
+   *  `boxes` / `boxCount` / `next` is the identity's, the same on every page
+   *  (NODE_INTERFACE → UTXO queries), so the first page's values stand. */
   private async readOwnKarma(key: string): Promise<KarmaResult> {
+    return this.readKarmaFor(key, { pending: true });
+  }
+
+  /** Read the whole plain /karma for a key — the listing the verified-figures
+   *  run proves and the rep line reads for `plainShown` and `boxCount`
+   *  (WEB_INTERFACE → The extension → "The verified figures", → The wallet
+   *  → "A landing reads the plain listings, never `pending=1`"). The grant
+   *  reconcile also reads it — the plain listing is what a landing lists
+   *  (WEB_INTERFACE → The faucet step). */
+  private async readOwnKarmaPlain(key: string): Promise<KarmaResult> {
+    return this.readKarmaFor(key, undefined);
+  }
+
+  private async readKarmaFor(key: string, opts: { pending: true } | undefined): Promise<KarmaResult> {
     let first: KarmaResult | null = null;
     const boxes = await readWholeList<KarmaResult['boxes'][number], KarmaResult>({
       readPage: async (page) => {
-        const answer = await this.client.karma(key, page);
+        const answer = await this.client.karma(key, page, opts);
         if (first === null) first = answer;
         return answer;
       },
@@ -3507,9 +3724,20 @@ export class App {
     const d = this.authorData.get(key);
     if (d) d.flight = { stage: 'submitting' };
     this.renderRegionsFor(authorWindowId(key));
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitVouchFlow(this.submitDeps(), key);
+      const r = await this.repQueue.enqueue(
+        () => submitVouchFlow(this.submitDeps(), key),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.optimisticVouches.delete(key);
       if (d) d.flight = { stage: 'rejected', reason: "vouch rejected: can't reach the node right now." };
@@ -3520,6 +3748,7 @@ export class App {
       this.optimisticVouches.delete(key);
       if (d) d.flight = { stage: 'submitted' };
       this.startPoll();
+      void this.refreshOwnKarma();
     } else {
       this.optimisticVouches.delete(key);
       const reason = 'rejection' in result
@@ -3794,9 +4023,20 @@ export class App {
     if (cur === null) return;
     this.inviteFlight = { stage: 'submitting' };
     this.renderInvitesRowInPlace();
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitInviteFlow(this.submitDeps(), inviteeKey, bond);
+      const r = await this.repQueue.enqueue(
+        () => submitInviteFlow(this.submitDeps(), inviteeKey, bond),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.inviteFlight = { stage: 'rejected', reason: "invite rejected: can't reach the node right now." };
       this.renderInvitesRowInPlace();
@@ -3805,6 +4045,7 @@ export class App {
     if (result.ok) {
       this.inviteFlight = { stage: 'submitted' };
       this.startPoll();
+      void this.refreshOwnKarma();
     } else {
       const reason = 'rejection' in result
         ? 'invite rejected: ' + inviteRejectionCopy(result.rejection)
@@ -3850,9 +4091,20 @@ export class App {
     this.usernameInFlight = { kind: 'claim', name };
     this.usernameFlight = { stage: 'submitting' };
     this.renderUsernameRowInPlace();
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitClaimFlow(this.submitDeps(), name);
+      const r = await this.repQueue.enqueue(
+        () => submitClaimFlow(this.submitDeps(), name),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.usernameInFlight = null;
       this.usernameFlight = { stage: 'rejected', reason: "claim rejected: can't reach the node right now." };
@@ -3863,6 +4115,7 @@ export class App {
     if (result.ok) {
       this.usernameFlight = null;
       this.startPoll();
+      void this.refreshOwnKarma();
     } else {
       const reason = 'rejection' in result
         ? 'claim rejected: ' + usernameRejectionCopy(result.rejection)
@@ -3880,9 +4133,20 @@ export class App {
     this.usernameInFlight = { kind: 'burn', name };
     this.usernameFlight = { stage: 'submitting' };
     this.renderUsernameRowInPlace();
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitBurnFlow(this.submitDeps());
+      const r = await this.repQueue.enqueue(
+        () => submitBurnFlow(this.submitDeps()),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.usernameInFlight = null;
       this.usernameFlight = { stage: 'rejected', reason: "burn rejected: can't reach the node right now." };
@@ -3893,6 +4157,7 @@ export class App {
     if (result.ok) {
       this.usernameFlight = null;
       this.startPoll();
+      void this.refreshOwnKarma();
     } else {
       const reason = 'rejection' in result
         ? 'burn rejected: ' + usernameRejectionCopy(result.rejection)
@@ -4112,9 +4377,20 @@ export class App {
     if (cur === null) return;
     this.sendFlight = { stage: 'submitting' };
     this.renderCreditsRowInPlace();
+    const pressGen = this.readerGen;
+    const pressKey = cur.pubKeyHex;
     let result;
     try {
-      result = await submitSendFlow(this.submitDeps(), toHex, toName, amount);
+      const r = await this.sendQueue.enqueue(
+        () => submitSendFlow(this.submitDeps(), toHex, toName, amount),
+        () => this.readerGen === pressGen,
+      );
+      if (r === 'cancelled') {
+        if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
+        result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else {
+        result = r;
+      }
     } catch {
       this.sendFlight = { stage: 'rejected', reason: "send rejected: can't reach the node right now." };
       this.renderCreditsRowInPlace();
@@ -4128,6 +4404,10 @@ export class App {
       this.dropSendAnswer();
       this.wallet()?.resetSend();
       this.startPoll();
+      // WEB_INTERFACE → The wallet window → "The `balance` row" — the figure
+      // takes a new value at every 2xx of the reader's own send while the
+      // wallet window is open.
+      if (openSet(this.state.workspace).has('@wallet')) void this.refreshWalletCredits();
     } else if ('rejection' in result) {
       this.sendFlight = { stage: 'rejected', reason: 'send rejected: ' + result.rejection.message };
     } else {
@@ -4182,7 +4462,6 @@ export class App {
       txId: res.txId,
       kind: 'creditGrant',
       postId: res.boxId, // a credits grant's subject is the box id the faucet named
-      inputs: [],
       expiresAtHeight: res.expiresAtHeight,
       submittedAtHeight: askedAt,
     });
@@ -4476,27 +4755,28 @@ export class App {
   // under an older generation is dropped.
 
   /** Start a figures verifier run, or drop the trigger. Runs only when the App
-   *  holds every input the tool needs, and proves only a listing read after the
-   *  anchor it is proven against — one read before it may name a box spent
-   *  since, which the chain rightly no longer holds. Object identity of
-   *  `profileKarma` and `walletCredits` is the "listing moved" check — every
-   *  write assigns a fresh object from readOwnKarma / readOwnCredits, so a
-   *  captured pair identical to the field pair is the pair the run proved. */
+   *  holds every input the tool needs — the plain listings read beside the
+   *  views — and proves only a plain listing read after the anchor it is
+   *  proven against (WEB_INTERFACE → The extension → "The verified figures").
+   *  Object identity of `profileKarmaPlain` and `walletCreditsPlain` is the
+   *  "listing moved" check — every write assigns a fresh object from
+   *  readOwnKarmaPlain / readOwnCreditsPlain, so a captured pair identical to
+   *  the field pair is the pair the run proved. */
   private startFigures(): void {
     if (this.figuresVerifier === null) return;
     const cur = this.idm.current();
     if (cur === null) return;
     const anchor = this.tipAnchor;
     if (anchor === null) return;
-    const capturedKarma = this.profileKarma;
-    if (capturedKarma === null || !this.readAfterAnchor(this.profileKarmaStamp)) return;
+    const capturedKarma = this.profileKarmaPlain;
+    if (capturedKarma === null || !this.readAfterAnchor(this.profileKarmaPlainStamp)) return;
     if (this.figuresInFlight) {
       this.figuresDirty = true;
       return;
     }
-    const capturedCredits = this.walletCredits;
-    // A credits listing not read after the current anchor is passed as not
-    // read — never as an empty one, under which every box the key holds
+    const capturedCredits = this.walletCreditsPlain;
+    // A credits plain listing not read after the current anchor is passed as
+    // not read — never as an empty one, under which every box the key holds
     // would read `unlisted` (WEB_INTERFACE → The extension → "A listing
     // not read after the current anchor is handed to the run as not read").
     const listing: Listing = {
@@ -4505,7 +4785,7 @@ export class App {
         height: capturedKarma.height,
         effective: capturedKarma.effective,
       },
-      credits: capturedCredits !== null && this.readAfterAnchor(this.walletCreditsStamp)
+      credits: capturedCredits !== null && this.readAfterAnchor(this.walletCreditsPlainStamp)
         ? { boxes: capturedCredits.boxes }
         : null,
     };
@@ -4516,10 +4796,10 @@ export class App {
       (result) => {
         if (gen !== this.figuresGen) return;
         this.figuresInFlight = false;
-        if (this.profileKarma !== capturedKarma || this.walletCredits !== capturedCredits) {
-          // The listing moved during the run — the result belongs to the
-          // listing that has passed; run again against the one the App now
-          // holds. The dirty flag is cleared implicitly by the fresh call.
+        if (this.profileKarmaPlain !== capturedKarma || this.walletCreditsPlain !== capturedCredits) {
+          // The plain listing moved during the run — the result belongs to the
+          // listing that has passed; run again against the one the App holds.
+          // The dirty flag is cleared implicitly by the fresh call.
           this.figuresDirty = false;
           this.startFigures();
           return;
@@ -4781,8 +5061,8 @@ export class App {
    *  pointer are lost even where the pixels match. Every landing of the reader's
    *  own transaction re-reads the listing it changed, once per tick however many
    *  land in it, and a grant is decided on that same read (WEB_INTERFACE → The
-   *  profile window → "The `rep` row is the `effective` number alone", → The
-   *  wallet window → "The `balance` row", → The faucet step). A read that
+   *  profile window → "The `rep` row is the rep view's `effective` alone",
+   *  → The wallet window → "The `balance` row", → The faucet step). A read that
    *  answers after the reader's own state dropped ends the tick, writing nothing;
    *  a piece a read begun after the tick's own already answered keeps that
    *  answer (newerRead), and the tick still decides its entries on its own read. */
@@ -4979,15 +5259,39 @@ export class App {
       }
     }
 
-    // The tick's one /karma read: the listing every karma-side landing changed,
-    // and the faucet grant's landing signal — `boxCount` risen (WEB_INTERFACE →
-    // The faucet step). Read after every landing above was observed, so it holds
-    // what they spent; a failed read keeps a grant pending and the rep row's last
-    // listing, and the next tick or ↻ reads again.
+    // The tick's /karma reads: the plain listing reconciles grants and feeds
+    // the figures run (WEB_INTERFACE → The wallet → "A landing reads the
+    // plain listings, never `pending=1`"); the view fills the rep row once a
+    // landing moves it (→ The profile window → "The `rep` row is the rep
+    // view's `effective` alone"). The plain is read first so the view read
+    // follows a landing — a grant that cannot reconcile is pending; a failed
+    // plain read keeps a grant pending and ends the tick's karma reads.
     const grants = entries.filter((e) => e.kind === 'grant');
     let karmaTaken = false;
-    if (cur !== null && (karmaLanded || grants.length > 0)) {
-      const stamp = this.listingStamp();
+    const needPlainKarma = grants.length > 0 || (this.figuresVerifier !== null && karmaLanded);
+    if (cur !== null && needPlainKarma) {
+      const plainStamp = this.listingStamp();
+      const plainOrder = this.beginRead();
+      let karmaPlainR: KarmaResult | null = null;
+      try {
+        karmaPlainR = await this.readOwnKarmaPlain(cur.pubKeyHex);
+      } catch {
+        karmaPlainR = null;
+      }
+      if (gen !== this.readerGen) return;
+      if (karmaPlainR !== null) {
+        for (const entry of grants) {
+          const outcome = reconcileGrant(entry, karmaPlainR, tip);
+          if (outcome === 'pending') continue;
+          this.ledger.remove(entry.txId);
+          this.grantView = outcome === 'landed' ? null : { state: 'expired', atHeight: entry.expiresAtHeight };
+          if (outcome === 'landed') karmaLanded = true;
+          grantSettled = true;
+        }
+        this.takeKarmaPlain(karmaPlainR, plainStamp, plainOrder);
+      }
+    }
+    if (cur !== null && karmaLanded) {
       const order = this.beginRead();
       let karma: KarmaResult | null = null;
       try {
@@ -4996,26 +5300,39 @@ export class App {
         karma = null;
       }
       if (gen !== this.readerGen) return;
-      if (karma !== null) {
-        for (const entry of grants) {
-          const outcome = reconcileGrant(entry, karma, tip);
-          if (outcome === 'pending') continue;
-          this.ledger.remove(entry.txId);
-          this.grantView = outcome === 'landed' ? null : { state: 'expired', atHeight: entry.expiresAtHeight };
-          if (outcome === 'landed') karmaLanded = true;
-          grantSettled = true;
-        }
-        if (karmaLanded) karmaTaken = this.takeKarma(karma, stamp, order);
-      }
+      if (karma !== null) karmaTaken = this.takeKarma(karma, order);
     }
 
-    // The tick's one /credits read of the reader's own key: the listing a send's
-    // landing changed, and the credits grant's landing signal — the box the
-    // faucet named, listed (WEB_INTERFACE → The faucet step, → The wallet).
+    // The tick's /credits reads: the plain listing reconciles credit grants
+    // and feeds the figures run (WEB_INTERFACE → The wallet → "A landing
+    // reads the plain listings, never `pending=1`"); the view fills the
+    // balance row once a landing moves it.
     const creditGrants = entries.filter((e) => e.kind === 'creditGrant');
     let creditsTaken = false;
-    if (cur !== null && (creditsLanded || creditGrants.length > 0)) {
-      const stamp = this.listingStamp();
+    const needPlainCredits = creditGrants.length > 0 || (this.figuresVerifier !== null && creditsLanded);
+    if (cur !== null && needPlainCredits) {
+      const plainStamp = this.listingStamp();
+      const plainOrder = this.beginRead();
+      let creditsPlainR: CreditsResult | null = null;
+      try {
+        creditsPlainR = await this.readOwnCreditsPlain(cur.pubKeyHex);
+      } catch {
+        creditsPlainR = null;
+      }
+      if (gen !== this.readerGen) return;
+      if (creditsPlainR !== null) {
+        for (const entry of creditGrants) {
+          const outcome = reconcileCreditGrant(entry, creditsPlainR, tip);
+          if (outcome === 'pending') continue;
+          this.ledger.remove(entry.txId);
+          this.creditGrantView = outcome === 'landed' ? null : { state: 'expired', atHeight: entry.expiresAtHeight };
+          if (outcome === 'landed') creditsLanded = true;
+          creditsChanged = true;
+        }
+        this.takeCreditsPlain(creditsPlainR, plainStamp, plainOrder);
+      }
+    }
+    if (cur !== null && creditsLanded) {
       const order = this.beginRead();
       let credits: CreditsResult | null = null;
       try {
@@ -5024,17 +5341,7 @@ export class App {
         credits = null;
       }
       if (gen !== this.readerGen) return;
-      if (credits !== null) {
-        for (const entry of creditGrants) {
-          const outcome = reconcileCreditGrant(entry, credits, tip);
-          if (outcome === 'pending') continue;
-          this.ledger.remove(entry.txId);
-          this.creditGrantView = outcome === 'landed' ? null : { state: 'expired', atHeight: entry.expiresAtHeight };
-          if (outcome === 'landed') creditsLanded = true;
-          creditsChanged = true;
-        }
-        if (creditsLanded) creditsTaken = this.takeCredits(credits, stamp, order);
-      }
+      if (credits !== null) creditsTaken = this.takeCredits(credits, order);
     }
 
     // A landed card changes colour and nothing else; the geometry is identical.

@@ -144,6 +144,13 @@ export interface RenderCtx {
   identity: { pubKeyHex: string; locked: boolean } | null;
   backedUp: boolean;
   karma: KarmaResult | null;
+  // The plain /karma listing read beside the view where the App holds a
+  // figures verifier — the listing the verified-figures run proves and the
+  // row's line reads through `plainShown` and `boxCount`. Null in a build
+  // with no verifier and before the first plain read lands
+  // (WEB_INTERFACE → The extension → "The verified figures",
+  // → The wallet → "A landing reads the plain listings, never `pending=1`").
+  karmaPlain: KarmaResult | null;
   grant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   // Membership actions (WEB_INTERFACE → The identity display).
   member: boolean;
@@ -152,8 +159,8 @@ export interface RenderCtx {
   author: Map<string, AuthorWindowData>;
   authorPosts: Map<string, FeedState>;
   // The profile's invites row (WEB_INTERFACE → The profile window). The bond
-  // range and probation from /status, whether the spendable covers the minimum,
-  // the reader's standing bonds, and the invite flight.
+  // range and probation from /status, whether the floor would stand over the
+  // minimum bond, the reader's standing bonds, and the invite flight.
   invite: { bondMin: string; bondMax: string; probationBlocks: number } | null;
   canAffordMinBond: boolean;
   bonds: BondsResult | null;
@@ -189,6 +196,13 @@ export interface RenderCtx {
   // wallet).
   status: StatusResult | null;
   credits: CreditsResult | null;
+  // The plain /credits listing read beside the view where the App holds a
+  // figures verifier — the listing the verified-figures run proves and the
+  // balance line reads through `plainShown` and `boxCount`. Null in a build
+  // with no verifier and before the first plain read lands
+  // (WEB_INTERFACE → The extension → "The verified figures",
+  // → The wallet → "A landing reads the plain listings, never `pending=1`").
+  creditsPlain: CreditsResult | null;
   creditGrant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   sendFlight: Flight | null;
   pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;

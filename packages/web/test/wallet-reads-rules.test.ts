@@ -2,7 +2,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PAGE_LIMIT_MAX } from '@dagsocial/types';
 import { readBuildContext, readCreditContext } from '../src/wallet/reads';
-import { PendingLedger } from '../src/wallet/ledger';
 import { NodeClient, PageError } from '../src/api/client';
 import { jsonResponse } from './honest-page';
 import { karmaResult } from './karma-fixture';
@@ -83,7 +82,7 @@ describe('readBuildContext — the /karma whole-list is bounded by two boxes', (
     // could serve, but the whole-list rule refuses the listing (two is the
     // protocol's maximum).
     expect(calls).toHaveLength(0); // control: no request has left yet
-    const run = readBuildContext(new NodeClient(() => ''), new PendingLedger(AUTHOR), AUTHOR);
+    const run = readBuildContext(new NodeClient(() => ''), AUTHOR);
     await expect(run).rejects.toBeInstanceOf(PageError);
   });
 });
@@ -112,7 +111,7 @@ describe('readCreditContext — the credits whole-list is bounded by LEDGER_READ
       status: () => statusBody(),
     });
     expect(calls).toHaveLength(0); // control
-    const run = readCreditContext(new NodeClient(() => ''), new PendingLedger(AUTHOR), AUTHOR);
+    const run = readCreditContext(new NodeClient(() => ''), AUTHOR);
     await expect(run).rejects.toBeInstanceOf(PageError);
     // ⌈10000 / 100⌉ + 1 = 101 at the ceiling (and in practice fewer: the loop
     // refuses on the first page that stands at the bound with a next).
@@ -145,7 +144,7 @@ describe('the whole-list rules refuse a repeat and a duplicate key', () => {
       status: () => statusBody(),
     });
     expect(calls).toHaveLength(0); // control
-    const run = readCreditContext(new NodeClient(() => ''), new PendingLedger(AUTHOR), AUTHOR);
+    const run = readCreditContext(new NodeClient(() => ''), AUTHOR);
     await expect(run).rejects.toBeInstanceOf(PageError);
     const creditsCalls = calls.filter((c) => c.url.pathname.startsWith('/credits/'));
     expect(creditsCalls.length).toBeLessThanOrEqual(3);
@@ -175,7 +174,7 @@ describe('the whole-list rules refuse a repeat and a duplicate key', () => {
       status: () => statusBody(),
     });
     expect(calls).toHaveLength(0); // control
-    const run = readCreditContext(new NodeClient(() => ''), new PendingLedger(AUTHOR), AUTHOR);
+    const run = readCreditContext(new NodeClient(() => ''), AUTHOR);
     await expect(run).rejects.toBeInstanceOf(PageError);
   });
 });

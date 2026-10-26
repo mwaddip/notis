@@ -1,4 +1,4 @@
-import { encodeTx, hexToBytes } from '@dagsocial/types';
+import { encodeTx, hexToBytes, KARMA_MINIMUM, LIKE_KARMA_COST, POST_PRICE_THREAD, POST_PRICE_REPLY, USERNAME_BURN_PRICE, VOUCH_MIN_BALANCE } from '@dagsocial/types';
 import type { UtxoTransaction, NetworkType } from '@dagsocial/types';
 import { LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readBuildContext, readCreditContext } from './reads';
@@ -11,6 +11,19 @@ import type { BuildContext } from './builders';
 import type { PendingEntry } from './types';
 import type { Api } from '../api/client';
 import type { VouchesVoucherResult } from './../api/dto';
+
+// WEB_INTERFACE → The wallet → "The floor is the client's to know" — the one
+// sentence a judged flow refuses with when the rule bites. `N` is
+// KARMA_MINIMUM, the floor the contract names.
+const FLOOR_REASON = `the last ${KARMA_MINIMUM} rep is for posting`;
+
+/** The notSigned-refused answer for a judged flow whose own read answered an
+ *  `effective` the rule refuses — nothing signed, nothing sent, as a refused
+ *  signature does (WEB_INTERFACE → The wallet → "A like, a vouch, an invite
+ *  or a burn the rule refuses ends as a refused signature does"). */
+function flooredRefusal(): { ok: false; notSigned: 'refused'; reason: string } {
+  return { ok: false, notSigned: 'refused', reason: FLOOR_REASON };
+}
 import type {
   WriteClient, Rejection, PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult, SendSubmitResult,
 } from '../api/write';
@@ -18,14 +31,16 @@ import { isRejection } from '../api/write';
 
 // The submit orchestration — the one path from a composer press or a like to
 // the node: resolve the confirmed author, read the spendable view and the era
-// (WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key` following `next`, then `GET /status`"),
+// (WEB_INTERFACE → The wallet → "Reads before a write, in this order: `GET /karma/:key?pending=1` following `next`, then `GET /status`"),
 // build the transaction, sign it, POST it, and on a 2xx add the ledger entry
-// and answer the entry the ledger holds. A 2xx is recorded whether or not its
-// body carries `expiresAtHeight`; the ledger bounds the expiry it holds by the
-// height the transaction was built at (WEB_INTERFACE → The wallet → "A pending
-// entry's expiry is the client's, and a node's answer can only bring it sooner").
-// Nothing retries (WEB_INTERFACE → "Nothing retries"): a rejection comes
-// straight back for the caller to show.
+// and answer the entry the ledger holds. The ledger holds no input and no
+// change (WEB_INTERFACE → The wallet → "An entry holds no input and no
+// change"): the spendable views are the node's pending view. A 2xx is recorded
+// whether or not its body carries `expiresAtHeight`; the ledger bounds the
+// expiry it holds by the height the transaction was built at (WEB_INTERFACE →
+// The wallet → "A pending entry's expiry is the client's, and a node's answer
+// can only bring it sooner"). Nothing retries (WEB_INTERFACE → "Nothing retries"):
+// a rejection comes straight back for the caller to show.
 
 /** The four things a sign attempt can end in (WEB_INTERFACE → The identity
  *  module). The in-page module answers `signature`, `locked` or `refused` and
@@ -135,7 +150,13 @@ export async function submitPostFlow(
     parent = { id: parentId, authorHex: p.confirmedAuthor };
   }
 
-  const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
+  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective`, read from the view's first page — the
+  // same rule the composer holds (WEB_INTERFACE → The wallet → "The floor is
+  // the client's to know"): a post refused is a client refusal, not a
+  // notSigned ("a post the rule refuses is a client refusal").
+  const price = parent ? POST_PRICE_REPLY : POST_PRICE_THREAD;
+  if (ctx.effective < price) return clientRejection('not enough rep to post right now.');
   // The composer checks affordability first, but the spendable view is re-read
   // here and can have moved; a shortfall comes back as one rejection shape, not a
   // bare throw the app would have to special-case.
@@ -166,8 +187,6 @@ export async function submitPostFlow(
     txId: built.txId,
     kind: 'post',
     postId: body.postId, // the node's own id — authoritative, never derived here
-    inputs: built.tx.inputs,
-    ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
@@ -189,7 +208,11 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
     return clientRejection('that post has no confirmed author to like.');
   }
 
-  const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
+  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective` — a like leaves KARMA_MINIMUM standing
+  // (WEB_INTERFACE → The wallet → "The floor is the client's to know"); a
+  // like refused ends as a refused signature does.
+  if (ctx.effective - LIKE_KARMA_COST < KARMA_MINIMUM) return flooredRefusal();
   let built;
   try {
     built = buildLike(ctx, targetId, target.confirmedAuthor);
@@ -208,8 +231,6 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
     txId: built.txId,
     kind: 'like',
     postId: targetId, // a like has no post id of its own; its target
-    inputs: built.tx.inputs,
-    ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
@@ -223,7 +244,11 @@ export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Prom
   const id = deps.identity.current();
   if (id === null) throw new Error('submitVouchFlow: no identity loaded');
 
-  const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
+  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective` — a vouch leaves KARMA_MINIMUM standing
+  // over its stake (WEB_INTERFACE → The wallet → "The floor is the client's
+  // to know"); a vouch refused ends as a refused signature does.
+  if (ctx.effective < VOUCH_MIN_BALANCE) return flooredRefusal();
   let built;
   try {
     built = buildVouch(ctx, targetKey);
@@ -242,8 +267,6 @@ export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Prom
     txId: built.txId,
     kind: 'vouch',
     postId: targetKey, // the identity vouched for
-    inputs: built.tx.inputs,
-    ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
@@ -291,7 +314,6 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
     txId: built.txId,
     kind: 'unvouch',
     postId: targetKey, // the identity unvouched — its box the one input
-    inputs: built.tx.inputs,
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
@@ -304,7 +326,11 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
   const id = deps.identity.current();
   if (id === null) throw new Error('submitInviteFlow: no identity loaded');
 
-  const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
+  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective` — an invite leaves KARMA_MINIMUM standing
+  // over the bond (WEB_INTERFACE → The wallet → "The floor is the client's
+  // to know"); an invite refused ends as a refused signature does.
+  if (ctx.effective - bond < KARMA_MINIMUM) return flooredRefusal();
   let built;
   try {
     built = buildInvite(ctx, inviteeKey, bond);
@@ -323,8 +349,6 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
     txId: built.txId,
     kind: 'invite',
     postId: inviteeKey, // the key invited
-    inputs: built.tx.inputs,
-    ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
@@ -338,7 +362,7 @@ export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Prom
   const id = deps.identity.current();
   if (id === null) throw new Error('submitWithdrawFlow: no identity loaded');
 
-  const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
+  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
   let built;
   try {
     built = buildWithdraw(ctx, postId);
@@ -356,8 +380,6 @@ export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Prom
     txId: built.txId,
     kind: 'withdraw',
     postId, // the post the withdrawal empties
-    inputs: built.tx.inputs,
-    ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
@@ -369,7 +391,7 @@ export async function submitClaimFlow(deps: SubmitDeps, name: string): Promise<S
   const id = deps.identity.current();
   if (id === null) throw new Error('submitClaimFlow: no identity loaded');
 
-  const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
+  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
   let built;
   try {
     built = buildClaim(ctx, name);
@@ -387,8 +409,6 @@ export async function submitClaimFlow(deps: SubmitDeps, name: string): Promise<S
     txId: built.txId,
     kind: 'claim',
     postId: name,
-    inputs: built.tx.inputs,
-    ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
@@ -405,7 +425,11 @@ export async function submitBurnFlow(deps: SubmitDeps): Promise<SubmitResult<Bur
   const held = await deps.reads.usernameByOwner(id.pubKeyHex);
   if (held === null) return clientRejection('this key holds no name.');
 
-  const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
+  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective` — a burn leaves KARMA_MINIMUM standing
+  // over USERNAME_BURN_PRICE (WEB_INTERFACE → The wallet → "The floor is the
+  // client's to know"); a burn refused ends as a refused signature does.
+  if (ctx.effective - USERNAME_BURN_PRICE < KARMA_MINIMUM) return flooredRefusal();
   let built;
   try {
     built = buildBurn(ctx, { boxId: held.boxId });
@@ -423,8 +447,6 @@ export async function submitBurnFlow(deps: SubmitDeps): Promise<SubmitResult<Bur
     txId: built.txId,
     kind: 'burn',
     postId: held.name,
-    inputs: built.tx.inputs,
-    ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   });
@@ -446,7 +468,7 @@ export async function submitSendFlow(
   const id = deps.identity.current();
   if (id === null) throw new Error('submitSendFlow: no identity loaded');
 
-  const ctx = await readCreditContext(deps.reads, deps.ledger, id.pubKeyHex);
+  const ctx = await readCreditContext(deps.reads, id.pubKeyHex);
   let built;
   try {
     built = buildSend(ctx, toHex, amount);
@@ -473,8 +495,6 @@ export async function submitSendFlow(
     txId: built.txId,
     kind: 'send',
     postId: toHex, // a send's subject is the recipient's key
-    inputs: built.tx.inputs,
-    ...(built.change ? { change: built.change } : {}),
     send: { toHex, toName, amount, boxId: built.paymentBoxId },
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,

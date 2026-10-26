@@ -259,7 +259,6 @@ describe('the App status corner — a timer independent of the bounded poll', ()
     h.ledger.add({
       kind: 'post', txId: 'tt'.repeat(32), postId: 'pp'.repeat(32),
       submittedAtHeight: 6000, expiresAtHeight: 6720,
-      inputs: [],
     });
     // Manually start the poll (in production a submit path does this).
     (h.app as unknown as { startPoll(): void }).startPoll();

@@ -304,6 +304,7 @@ describe('createFiguresVerifier — a run ends', () => {
       verdict: { kind: 'verified', nodes: 2, height: 500 },
       result,
       shown: 0n,
+      plainShown: 0n,
       suffixHeight: 481,
       boxCount: 1,
       height: 500,

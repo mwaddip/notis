@@ -15,6 +15,7 @@ import {
   BelowFloor,
   InvalidKey,
   type BuildContext,
+  type RepBuildContext,
 } from '../src/wallet/builders';
 import {
   VOUCH_KARMA_AMOUNT, USERNAME_BURN_PRICE, MIN_BOX_VALUE_PER_BYTE, LIKE_KARMA_COST,
@@ -103,7 +104,7 @@ function toHex(bytes: Uint8Array): string {
   return s;
 }
 
-const ctx = (): BuildContext => ({ spendable: [{ boxId: BOX_ID, value: 227n }], height: 5000, era: 1, author: PUB });
+const ctx = (): RepBuildContext => ({ spendable: [{ boxId: BOX_ID, value: 227n }], height: 5000, era: 1, author: PUB, effective: 227n });
 
 describe('builders — frozen against independent vectors', () => {
   it('a root post matches the frozen txId and change box, and pays POST_PRICE_THREAD', () => {
@@ -571,11 +572,11 @@ describe('send builder — frozen vectors', () => {
 const OWN_BOX = '77'.repeat(32);
 const INC_BOX = '88'.repeat(32);
 
-function twoBoxCtx(own: bigint | null, income: bigint | null): BuildContext {
+function twoBoxCtx(own: bigint | null, income: bigint | null): RepBuildContext {
   const spendable: Array<{ boxId: string; value: bigint; income?: true }> = [];
   if (own !== null) spendable.push({ boxId: OWN_BOX, value: own });
   if (income !== null) spendable.push({ boxId: INC_BOX, value: income, income: true });
-  return { spendable: spendable as BuildContext['spendable'], height: 5000, era: 1, author: PUB };
+  return { spendable: spendable as BuildContext['spendable'], height: 5000, era: 1, author: PUB, effective: 0n };
 }
 
 describe('builders — the own box is named first, the income box only when it must', () => {
@@ -657,7 +658,7 @@ describe('builders — the own box is named first, the income box only when it m
     expect(c.change?.value).toBe(50n);
   });
 
-  it('a pending spend moves the own box: the next build names the predicted change', () => {
+  it('a pending spend moves the own box: the next build names the unmarked change box', () => {
     // A prior like took the own box of value 50 and emitted a change of 49
     // (unmarked) beside the still-unspent income box of 100. The next like
     // (cost 1) names the change alone, since it covers.
@@ -666,7 +667,7 @@ describe('builders — the own box is named first, the income box only when it m
       { boxId: INC_BOX, value: 100n, income: true },
       { boxId: CHG, value: 49n },
     ] as BuildContext['spendable'];
-    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB }, TARGET_ID, PARENT_AUTHOR);
+    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB, effective: 149n } satisfies RepBuildContext, TARGET_ID, PARENT_AUTHOR);
     expect(built.tx.inputs).toEqual([CHG]);
     expect(built.tx.inputs).not.toContain(INC_BOX);
   });
@@ -679,16 +680,16 @@ describe('builders — the own box is named first, the income box only when it m
       { boxId: INC_BOX, value: 100n, income: true },
       { boxId: TINY, value: 1n },
     ] as BuildContext['spendable'];
-    const built = buildPost({ spendable, height: 5000, era: 1, author: PUB }, 'x');
+    const built = buildPost({ spendable, height: 5000, era: 1, author: PUB, effective: 101n } satisfies RepBuildContext, 'x');
     expect(built.tx.inputs).toEqual([TINY, INC_BOX]);
   });
 
-  it('a pending spend that took the income box leaves the view holding the predicted change alone', () => {
+  it('a pending spend that took the income box leaves the view holding the unmarked change box alone', () => {
     // Both own and income are spent by the prior entry; the view carries one
     // unmarked change. The next build names it, and the output is unmarked.
     const CHG = 'aa'.repeat(32);
     const spendable = [{ boxId: CHG, value: 49n }] as BuildContext['spendable'];
-    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB }, TARGET_ID, PARENT_AUTHOR);
+    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB, effective: 49n } satisfies RepBuildContext, TARGET_ID, PARENT_AUTHOR);
     expect(built.tx.inputs).toEqual([CHG]);
     const karmaOuts = built.tx.outputs.filter((o) => o.boxType === 'karma');
     expect(karmaOuts).toHaveLength(1);

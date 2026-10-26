@@ -8,7 +8,7 @@
 //
 // The rows are the contract's, the first that holds — WEB_INTERFACE →
 // The extension → "The verified figures", → The wallet window → "The `balance`
-// row", → The profile window → "The `rep` row is the `effective` number
+// row", → The profile window → "The `rep` row is the rep view's `effective`
 // alone". The voice is copied from the contract, never rephrased; a node is
 // never named.
 //
@@ -37,27 +37,36 @@ export interface FiguresLineInput {
   /** null: no run has returned yet — row 2. Otherwise the result the
    *  App holds beside `anchor`. */
   result: FiguresResult | null;
-  /** The figure the row renders — the balance row's spendable sum in base
-   *  units, the rep row's `effective` number. Row 7 fires when the proven
-   *  figure equals this. */
+  /** The figure the row renders — the pending view's spendable sum in base
+   *  units, the pending view's `effective` number (WEB_INTERFACE → The
+   *  wallet → "The spendable views are the node's pending view"). */
   shown: bigint;
+  /** The plain listing's figure — the plain karma listing's `effective` the
+   *  valuation reproduces, the plain credits listing's spendable sum at the
+   *  row's height. The last clause of row 8 names `shown` beside this when
+   *  the two differ (WEB_INTERFACE → The extension → "The verified figures"
+   *  — "where the row's figure is not the plain listing's, *… · 75 $NOTIS to
+   *  spend in the next block, by this node's word*"), and row 7's silence
+   *  reads `everyProven && proven === plainShown && shown === plainShown`. */
+  plainShown: bigint;
   /** The anchor's suffixHead.header.height — the height the row's proven
    *  figure was proven at, named in *proven at block N*. Null under rows that
    *  never mention it. */
   suffixHeight: number | null;
-  /** The row's own listing count — an empty listing reads the ledger's own
-   *  facts under rows 3 to 6 and reads silence under row 7. For the
-   *  wallet row this is `credits.boxCount`; for the rep row,
-   *  `karma.boxCount`. */
+  /** The plain listing's own count — the ledger's own facts speak under rows
+   *  3 to 6; silence under row 7 reads where the plain is empty and the view
+   *  is empty too. For the wallet row this is the plain `credits.boxCount`;
+   *  for the rep row, the plain `karma.boxCount`. */
   boxCount: number;
   /** The live tip height — the same the balance line's spendable filter reads
    *  (WEB_INTERFACE → The wallet). The credits proven figure is computed at
-   *  this height, so an unchanged state reproduces the row's own number. */
+   *  this height, so an unchanged state reproduces the plain listing's own
+   *  spendable sum. */
   height: number;
 }
 
 export function figuresLine(input: FiguresLineInput): FiguresLine {
-  const { ledger, verdict, result, shown, suffixHeight, boxCount, height } = input;
+  const { ledger, verdict, result, shown, plainShown, suffixHeight, boxCount, height } = input;
 
   // Row 1 — the build has no verifier, so the row reads as it does on the
   // web: nothing beneath the figure.
@@ -173,11 +182,12 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
   }
 
   // Row 7's empty-listing arm — the run read the ranges and no box is
-  // `unlisted` or `undecided`: an empty listing is silence here (the faucet
-  // step and the words standing read as they do without a verifier). The
-  // listed-box arm sits below, where `everyProven` and `proven === shown`
-  // decide.
-  if (boxCount === 0) return null;
+  // `unlisted` or `undecided`: an empty plain listing is silence here only
+  // when the view is empty too (WEB_INTERFACE → The extension → "The
+  // verified figures" — "nothing over an empty listing whose ranges the run
+  // read with no box `unlisted` or `undecided`, its view empty too"). An
+  // empty plain beside a non-empty view fires row 8 with the clause alone.
+  if (boxCount === 0 && shown === 0n) return null;
 
   // The proven figure P.
   // For credits: the balance line's rule over the proven credit boxes at the
@@ -199,21 +209,32 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
     proven = result.karma.effective ?? 0n;
   }
 
-  // Row 7's listed-box arm — every listed box proved and the proven figure
-  // equals the row's own number: silence is the green.
+  // Row 7's listed-box arm — every listed box proved, the valuation
+  // reproduces the plain listing's `effective`, and the row's figure is the
+  // plain listing's own: silence is the green (WEB_INTERFACE → The extension
+  // → "The verified figures" — "nothing when every listed box is `proven`,
+  // the valuation equals the plain listing's `effective` and the row's
+  // figure is the plain listing's own").
   const everyProven = listedBoxes.length > 0 && listedBoxes.every((b) => b.status === 'proven');
-  if (everyProven && proven === shown) return null;
+  if (everyProven && proven === plainShown && shown === plainShown) return null;
 
   // Row 8 — otherwise: *P proven at block H*, with the `young` and
-  // `unchecked` clauses only when their sums are above zero, joined by ` · `.
-  // When neither clause fires and the figure differs from `shown`,
-  // *P proven at block H* alone — the rep-after-decay case, where the
-  // record's clocks moved.
-  const p = ledger === 'credits'
-    ? `${formatCredits(proven)} $NOTIS`
-    : `${proven.toString()} rep`;
-  const h = suffixHeight === null ? '' : String(suffixHeight);
-  const clauses = [`${p} proven at block ${h}`];
+  // `unchecked` clauses only when their sums are above zero, and last — where
+  // the row figure differs from the plain listing's — *F to spend in the next
+  // block, by this node's word* names the row figure beside the proven amount
+  // (WEB_INTERFACE → The extension → "The verified figures" — "and last,
+  // where the row's figure is not the plain listing's, *… · 75 $NOTIS to
+  // spend in the next block, by this node's word*"). An empty plain listing
+  // beside a non-empty view yields the clause alone — no listed box to prove,
+  // no proven-at-block lead.
+  const clauses: string[] = [];
+  if (boxCount > 0) {
+    const p = ledger === 'credits'
+      ? `${formatCredits(proven)} $NOTIS`
+      : `${proven.toString()} rep`;
+    const h = suffixHeight === null ? '' : String(suffixHeight);
+    clauses.push(`${p} proven at block ${h}`);
+  }
   if (sums.young > 0n) {
     const y = ledger === 'credits'
       ? `${formatCredits(sums.young)} $NOTIS`
@@ -225,6 +246,12 @@ export function figuresLine(input: FiguresLineInput): FiguresLine {
       ? `${formatCredits(sums.unchecked)} $NOTIS`
       : `${sums.unchecked.toString()} rep`;
     clauses.push(`${u} not checked yet`);
+  }
+  if (shown !== plainShown) {
+    const f = ledger === 'credits'
+      ? `${formatCredits(shown)} $NOTIS`
+      : `${shown.toString()} rep`;
+    clauses.push(`${f} to spend in the next block, by this node's word`);
   }
   return { text: clauses.join(' · '), weight: 'muted' };
 }

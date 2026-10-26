@@ -152,15 +152,26 @@ function harness(entries: PendingEntry[], opts: Parameters<typeof fakeNode>[0]):
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 const SEND = (boxId: string): PendingEntry => ({
-  txId: 'ab'.repeat(32), kind: 'send', postId: REC, inputs: ['11'.repeat(32)],
+  txId: 'ab'.repeat(32), kind: 'send', postId: REC,
   expiresAtHeight: 5_000, submittedAtHeight: 1_000,
   send: { toHex: REC, toName: null, amount: AMOUNT, boxId },
 });
 
 const INVITE = (invitee: string): PendingEntry => ({
-  txId: 'cd'.repeat(32), kind: 'invite', postId: invitee, inputs: ['22'.repeat(32)],
+  txId: 'cd'.repeat(32), kind: 'invite', postId: invitee,
   expiresAtHeight: 5_000, submittedAtHeight: 1_000,
 });
+
+const GRANT: PendingEntry = {
+  txId: 'ef'.repeat(32), kind: 'grant', postId: ME,
+  expiresAtHeight: 5_000, submittedAtHeight: 1_000,
+};
+
+const CREDIT_GRANT_BOX = 'bc'.repeat(32);
+const CREDIT_GRANT: PendingEntry = {
+  txId: '13'.repeat(32), kind: 'creditGrant', postId: CREDIT_GRANT_BOX,
+  expiresAtHeight: 5_000, submittedAtHeight: 1_000,
+};
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
@@ -203,11 +214,14 @@ describe('a pending send lands through the one page the payment box would open',
     // Control: the row's flight reads 'landed'.
     expect(h.drive.sendFlight?.stage).toBe('landed');
     // The rule: exactly ONE /credits request for the recipient — the one
-    // page named with after=<amount>:<id-1> and limit=1.
+    // page named with after=<amount>:<id-1> and limit=1, and no `pending=1`
+    // (WEB_INTERFACE → The wallet → "A landing reads the plain listings,
+    // never `pending=1`").
     const recipientReqs = h.requests.filter((r) => r.path === `/credits/${REC}`);
     expect(recipientReqs).toHaveLength(1);
     expect(recipientReqs[0]!.url.searchParams.get('after')).toBe(`${AMOUNT.toString()}:${PAY_BOX_LESS_ONE}`);
     expect(recipientReqs[0]!.url.searchParams.get('limit')).toBe('1');
+    expect(recipientReqs[0]!.url.searchParams.get('pending')).toBeNull();
   });
 
   it('a recipient holding both (amount, id-1) and (amount, id): the one page answers (amount, id), landed', async () => {
@@ -384,5 +398,44 @@ describe('a failed /invites read decides no invite', () => {
     expect(h.requests.some((r) => r.path === `/invites/${ME}`)).toBe(true); // control
     expect(h.ledger.all().some((e) => e.kind === 'invite')).toBe(true);
     expect(h.drive.inviteFlight?.stage).not.toBe('expired');
+  });
+});
+
+// WEB_INTERFACE → The wallet → "A landing reads the plain listings, never
+// `pending=1`" — the tick's /karma and /credits reads carry no `pending`
+// query. The faucet grants ride the ledger so the tick runs; the plain
+// listing is what the landings read.
+describe('the tick reads the plain listings', () => {
+  it('with a faucet grant standing, the tick\'s /karma/<key> request carries no pending query', async () => {
+    const heightBox = { value: 1_000 };
+    const h = harness([GRANT], { blockHeight: () => heightBox.value });
+    await flush();
+    const karmaBefore = h.requests.filter((r) => r.path === `/karma/${ME}`).length;
+    heightBox.value = 1_001;
+    await h.drive.pollTick();
+    await flush();
+    const karmaReqs = h.requests.filter((r) => r.path === `/karma/${ME}`);
+    expect(karmaReqs.length).toBeGreaterThan(karmaBefore); // control: the tick read /karma
+    for (const r of karmaReqs) {
+      expect(r.url.searchParams.get('pending')).toBeNull();
+    }
+  });
+
+  it('with a creditGrant standing, the tick\'s /credits/<key> request carries no pending query', async () => {
+    const heightBox = { value: 1_000 };
+    const h = harness([CREDIT_GRANT], {
+      blockHeight: () => heightBox.value,
+      credits: (key) => ({ status: 200, body: creditsBody(key, [], null) }),
+    });
+    await flush();
+    const creditsBefore = h.requests.filter((r) => r.path === `/credits/${ME}`).length;
+    heightBox.value = 1_001;
+    await h.drive.pollTick();
+    await flush();
+    const creditsReqs = h.requests.filter((r) => r.path === `/credits/${ME}`);
+    expect(creditsReqs.length).toBeGreaterThan(creditsBefore); // control: the tick read /credits
+    for (const r of creditsReqs) {
+      expect(r.url.searchParams.get('pending')).toBeNull();
+    }
   });
 });

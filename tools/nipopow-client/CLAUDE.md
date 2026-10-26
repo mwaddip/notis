@@ -48,7 +48,7 @@ chain the proof committed. Bytes in, verdict out, exit.
 `proveRange`, `proveName`, `checkPosts`, `verifierProfile` and their types, re-exports with no side effect at import. **The web
 client's extension build is the library's caller**: its tip verifier runs `resolveTip` in the page with
 the browser's `fetch` (`WEB_INTERFACE → The extension → "The verified tip"`), and its figures verifier
-runs `proveFigures` after every verified tip against the listing the rows rendered
+runs `proveFigures` after every verified tip against the plain listings read beside the views the rows render
 (`WEB_INTERFACE → The extension → "The verified figures"`). Each `NodeTipResult` carries two fields a
 caller decides on without parsing a sentence: **`refuseCode`** — `unreachable` · `too-short` (the route's
 documented 404, by its JSON `error`) · `http` · `invalid` · `null` — and **`behind`** — the blocks from

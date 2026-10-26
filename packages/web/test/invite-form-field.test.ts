@@ -42,6 +42,7 @@ function memberCtx(over: Partial<ProfileCtx> = {}): ProfileCtx {
     identity: { pubKeyHex: KEY, locked: false },
     backedUp: false,
     karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 2, memberSinceBlock: 5 }),
+    karmaPlain: null,
     grant: null,
     invite: INVITE_PARAMS,
     canAffordMinBond: true,

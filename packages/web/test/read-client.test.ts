@@ -89,6 +89,20 @@ describe('read client — karma', () => {
     expect(calls[1]).toBe('/karma/key1?limit=100&after=boxkey');
     expect(calls[1]).not.toContain('viewer');
   });
+
+  // WEB_INTERFACE → The wallet → "The spendable views are the node's pending view".
+  // `{ pending: true }` adds `pending=1`; the plain listing a landing reads carries none.
+  it('karma and credits add pending=1 under { pending: true }, carry none without', async () => {
+    const c = client();
+    await c.karma('key1', { limit: 100 });
+    expect(calls[0]).toBe('/karma/key1?limit=100');
+    await c.karma('key1', { limit: 100 }, { pending: true });
+    expect(calls[1]).toBe('/karma/key1?limit=100&pending=1');
+    await c.credits('key1', { limit: 100 });
+    expect(calls[2]).toBe('/credits/key1?limit=100');
+    await c.credits('key1', { limit: 100 }, { pending: true });
+    expect(calls[3]).toBe('/credits/key1?limit=100&pending=1');
+  });
 });
 
 describe('read client — the membership arms', () => {

@@ -113,11 +113,12 @@ async function main() {
   const deps = {
     reads: new NodeClient(() => API),
     write: new WriteClient(() => API),
-    // This process has no transaction pending, so the spendable view is the
-    // confirmed boxes — the ledger's view with no entry (WEB_INTERFACE → The
-    // wallet); `add` answers the entry as the ledger holds it, its expiry bounded,
-    // and the flow answers that entry.
-    ledger: { spendable: (confirmed) => confirmed, add: heldEntry },
+    // The spendable view the flow reads is the node's `pending=1` listing
+    // directly (WEB_INTERFACE → The wallet → "The spendable views are the
+    // node's pending view"); the ledger holds no input and no change and
+    // chooses no input. `add` answers the entry as the ledger holds it, its
+    // expiry bounded, and the flow answers that entry.
+    ledger: { add: heldEntry },
     // Raw Ed25519 over the transaction id — the signature the identity module
     // makes (WEB_INTERFACE → The identity module).
     identity: {

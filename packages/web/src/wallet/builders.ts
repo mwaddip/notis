@@ -111,12 +111,24 @@ function keyBytes(hex: string, which: string): Uint8Array {
 }
 
 /** The reads a builder is fed — the spendable view, the height every output
- *  declares, the era to sign, and the author's own key. */
+ *  declares, the era to sign, and the author's own key. Shared by a send and
+ *  the unvouch; the judged rep flows extend it with `effective`
+ *  (WEB_INTERFACE → The wallet → "The floor is the client's to know"). */
 export interface BuildContext {
   spendable: SpendableBox[];
   height: number;
   era: number;
   author: string; // own pubKeyHex
+}
+
+/** The rep-side context: the base fields plus the rep view's `effective` from
+ *  the first page `readBuildContext` reads. Each judged flow holds its spend
+ *  to the rule against `effective` before it builds
+ *  (WEB_INTERFACE → The wallet → "The floor is the client's to know"). A
+ *  send and the unvouch take `BuildContext` and so cannot read `effective` by
+ *  mistake. */
+export interface RepBuildContext extends BuildContext {
+  effective: bigint;
 }
 
 /** An unsigned transaction, its id, and the change box the ledger predicts. */
@@ -135,7 +147,7 @@ export interface ReplyParent {
 }
 
 /** Build a root post or a reply. A parent makes it a reply. */
-export function buildPost(ctx: BuildContext, content: string, parent?: ReplyParent): BuiltTx {
+export function buildPost(ctx: RepBuildContext, content: string, parent?: ReplyParent): BuiltTx {
   const price = parent ? POST_PRICE_REPLY : POST_PRICE_THREAD;
   const { selected, change } = selectKarmaInputs(ctx.spendable, price);
 
@@ -173,7 +185,7 @@ export function buildPost(ctx: BuildContext, content: string, parent?: ReplyPare
 /** Build a like: karma in, change out, one marker of LIKE_KARMA_COST to the
  *  target's confirmedAuthor, `likeTarget` set. The node demands exactly one
  *  signature; this builder adds no output that would need a second. */
-export function buildLike(ctx: BuildContext, targetId: string, targetAuthorHex: string): BuiltTx {
+export function buildLike(ctx: RepBuildContext, targetId: string, targetAuthorHex: string): BuiltTx {
   const { selected, change } = selectKarmaInputs(ctx.spendable, LIKE_KARMA_COST);
 
   const outputs: AnyBoxCandidate[] = [accrualBox(LIKE_KARMA_COST, targetAuthorHex, ctx.height)];
@@ -195,7 +207,7 @@ export function buildLike(ctx: BuildContext, targetId: string, targetAuthorHex: 
 /** Build a vouch: karma in, change out, one `vouch` box of VOUCH_KARMA_AMOUNT to
  *  the target. `voucherId` is the reader's own key, `targetId` the identity
  *  vouched for (WEB_INTERFACE → The wallet). */
-export function buildVouch(ctx: BuildContext, targetHex: string): BuiltTx {
+export function buildVouch(ctx: RepBuildContext, targetHex: string): BuiltTx {
   const { selected, change } = selectKarmaInputs(ctx.spendable, VOUCH_KARMA_AMOUNT);
 
   const vouch: CandidateOf<VouchBox> = {
@@ -249,7 +261,7 @@ export function buildUnvouch(
 /** Build an invite: karma in, change out, one `bond` box of the chosen amount to
  *  the invitee. `inviterId` is the reader's own key, `inviteePublicKey` the pasted
  *  key (WEB_INTERFACE → The wallet). InsufficientKarma names the bond. */
-export function buildInvite(ctx: BuildContext, inviteeHex: string, bond: bigint): BuiltTx {
+export function buildInvite(ctx: RepBuildContext, inviteeHex: string, bond: bigint): BuiltTx {
   const { selected, change } = selectKarmaInputs(ctx.spendable, bond);
 
   const bondBox: CandidateOf<BondBox> = {
@@ -280,7 +292,7 @@ export function buildInvite(ctx: BuildContext, inviteeHex: string, bond: bigint)
  *  transfer whose single output is the entry's change (WEB_INTERFACE → The
  *  withdraw control). An empty spendable view throws InsufficientKarma, because
  *  the transaction needs one box to spend. */
-export function buildWithdraw(ctx: BuildContext, postId: string): BuiltTx {
+export function buildWithdraw(ctx: RepBuildContext, postId: string): BuiltTx {
   const spent = singleKarmaInput(ctx.spendable);
   if (spent === null) throw new InsufficientKarma(1n, 0n);
 
@@ -305,7 +317,7 @@ export function buildWithdraw(ctx: BuildContext, postId: string): BuiltTx {
  *  where they hold no own box — one karma output of its value at index 0,
  *  the entry's change, and one `username` box of `value: 0n` (WEB_INTERFACE →
  *  The wallet). An empty view throws InsufficientKarma. */
-export function buildClaim(ctx: BuildContext, name: string): BuiltTx {
+export function buildClaim(ctx: RepBuildContext, name: string): BuiltTx {
   const spent = singleKarmaInput(ctx.spendable);
   if (spent === null) throw new InsufficientKarma(1n, 0n);
 
@@ -397,7 +409,7 @@ export function buildSend(ctx: BuildContext, toHex: string, amount: bigint): Bui
 /** Build a burn: karma for USERNAME_BURN_PRICE and the reader's name box in,
  *  karma change at index 0 when any, one `karma_price` of USERNAME_BURN_PRICE
  *  (WEB_INTERFACE → The wallet, NODE_INTERFACE → Username transition rules). */
-export function buildBurn(ctx: BuildContext, held: { boxId: string }): BuiltTx {
+export function buildBurn(ctx: RepBuildContext, held: { boxId: string }): BuiltTx {
   const { selected, change } = selectKarmaInputs(ctx.spendable, USERNAME_BURN_PRICE);
 
   const outputs: AnyBoxCandidate[] = [];
@@ -439,9 +451,8 @@ export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
 /** The reader's own and income box from the view, each the first found
  *  under its mark; WEB_INTERFACE → The wallet → "The rep view holds two boxes
  *  at most, and every karma builder tells them apart". The own box is the
- *  unmarked karma box, or the predicted change of the reader's latest pending
- *  spend (`SpendableBox.income` is never carried by the ledger's own
- *  constructed change). */
+ *  reader's unmarked karma box — a pooled output to the reader is unmarked,
+ *  so the change of the reader's latest pooled spend is the own box. */
 function ownAndIncome(spendable: SpendableBox[]): { own: SpendableBox | null; income: SpendableBox | null } {
   let own: SpendableBox | null = null;
   let income: SpendableBox | null = null;

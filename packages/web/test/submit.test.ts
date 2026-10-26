@@ -46,7 +46,12 @@ function statusResult(): StatusResult {
   };
 }
 function karmaResult(boxes: KarmaBoxRow[]): KarmaResult {
-  return karmaFixture({ userId: PUB, boxes, boxCount: boxes.length, height: 6000 });
+  // Default `effective` to the boxes' face so the floor rule reads a fresh
+  // view with no pending spend; a case that drives a split hands its own
+  // KarmaResult (WEB_INTERFACE → The wallet → "The floor is the client's to
+  // know").
+  const effective = boxes.reduce((sum, b) => sum + BigInt(b.value), 0n).toString();
+  return karmaFixture({ userId: PUB, boxes, boxCount: boxes.length, height: 6000, effective });
 }
 const FULL_BOXES: KarmaBoxRow[] = [{ boxId: BOX_ID, value: '227' }];
 function postResult(id: string, confirmedAuthor: string | null): PostResult {
@@ -265,11 +270,14 @@ describe('submitLikeFlow', () => {
     expect(ledger.size).toBe(0);
   });
 
-  it('an empty spendable view refuses a like in the voice register', async () => {
+  it('an empty spendable view refuses a like at the floor, as a refused signature does', async () => {
+    // WEB_INTERFACE → The wallet → "The floor is the client's to know" — an
+    // empty view answers `effective = 0`, which the floor rule refuses before
+    // the build.
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitLikeFlow(deps, TARGET_ID);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to like right now.' } });
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the last 10 rep is for posting' });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -294,8 +302,8 @@ describe('each press reads the view afresh', () => {
     const NEW = '88'.repeat(32);
     const ledger = new PendingLedger(PUB);
     const karmaPages: KarmaResult[] = [
-      karmaFixture({ userId: PUB, boxes: [{ boxId: OLD, value: '227' }], boxCount: 1, height: 6000 }),
-      karmaFixture({ userId: PUB, boxes: [{ boxId: NEW, value: '227' }], boxCount: 1, height: 6000 }),
+      karmaFixture({ userId: PUB, boxes: [{ boxId: OLD, value: '227' }], boxCount: 1, height: 6000, effective: '227' }),
+      karmaFixture({ userId: PUB, boxes: [{ boxId: NEW, value: '227' }], boxCount: 1, height: 6000, effective: '227' }),
     ];
     let readIx = 0;
     const freshReads: Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> = {
@@ -418,11 +426,14 @@ describe('submitVouchFlow', () => {
     expect(ledger.size).toBe(0);
   });
 
-  it('an empty spendable view refuses a vouch in the voice register', async () => {
+  it('an empty spendable view refuses a vouch at the floor, as a refused signature does', async () => {
+    // WEB_INTERFACE → The wallet → "The floor is the client's to know" — an
+    // empty view answers `effective = 0`, which the floor rule refuses before
+    // the build.
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity, network: null };
     const res = await submitVouchFlow(deps, VOUCH_TARGET);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to vouch right now.' } });
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the last 10 rep is for posting' });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -453,8 +464,7 @@ describe('submitUnvouchFlow', () => {
     expect(outputs).toHaveLength(1);
     expect(outputs[0]!.boxType).toBe('vouch_escrow');
     expect(outputs.some((o) => o.boxType === 'karma')).toBe(false);
-    expect(res.entry).toMatchObject({ kind: 'unvouch', postId: VOUCH_TARGET, inputs: [VOUCH_BOX] });
-    expect(res.entry.change).toBeUndefined();
+    expect(res.entry).toMatchObject({ kind: 'unvouch', postId: VOUCH_TARGET });
   });
 
   it('a pair already gone re-reports withdrawn before any write', async () => {
@@ -496,11 +506,14 @@ describe('submitInviteFlow', () => {
     expect(ledger.all().map((e) => e.kind)).toEqual(['invite']);
   });
 
-  it('a spendable view below the bond refuses in the voice register', async () => {
+  it('a spendable view below the bond + the floor refuses an invite at the floor, as a refused signature does', async () => {
+    // WEB_INTERFACE → The wallet → "The floor is the client's to know" — an
+    // invite leaves KARMA_MINIMUM standing over the bond; 50 rep against a
+    // 100 bond refuses before the build.
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '50' }]), write: write(), ledger, identity, network: null };
     const res = await submitInviteFlow(deps, INVITEE, 100n);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to cover the bond right now.' } });
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the last 10 rep is for posting' });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -534,10 +547,8 @@ describe('submitWithdrawFlow', () => {
     const outputs = writeCalls[0]!.tx.outputs as Array<Record<string, unknown>>;
     expect(outputs).toHaveLength(1);
     expect(outputs[0]).toMatchObject({ boxType: 'karma', value: '227', owner: PUB });
-    // The entry carries the body's expiresAtHeight and the output box as change.
+    // The entry carries the body's expiresAtHeight and the heights.
     expect(res.entry).toMatchObject({ kind: 'withdraw', postId: TARGET_ID, expiresAtHeight: 6720, submittedAtHeight: 6000 });
-    expect(res.entry.change?.value).toBe(227n);
-    expect(res.entry.inputs).toEqual([BOX_ID]);
     expect(ledger.all().map((e) => e.kind)).toEqual(['withdraw']);
   });
 
@@ -640,12 +651,15 @@ describe('submitBurnFlow', () => {
     expect(ledger.size).toBe(0);
   });
 
-  it('a spendable view below the price refuses in the voice register', async () => {
+  it('a spendable view below USERNAME_BURN_PRICE + the floor refuses a burn at the floor, as a refused signature does', async () => {
+    // WEB_INTERFACE → The wallet → "The floor is the client's to know" — a
+    // burn leaves KARMA_MINIMUM standing over USERNAME_BURN_PRICE; 5 rep
+    // refuses before the build.
     heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '5' }]), write: write(), ledger, identity, network: null };
     const res = await submitBurnFlow(deps);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to burn right now.' } });
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the last 10 rep is for posting' });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -1196,4 +1210,136 @@ describe('submitPostFlow over the extension proxy and background', () => {
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the extension did not answer' });
   }, 3000);
+});
+
+// ---------------------------------------------------------------------------
+// WEB_INTERFACE → The wallet → "The spendable views are the node's pending
+// view". A rep spend's reads before the write are `/karma/:key?pending=1`
+// pages following `next`, then `/status`; a send's the same over
+// `/credits/:key?pending=1`. The spendable boxes are the node's answer;
+// the ledger chooses no input and holds no input or change.
+// ---------------------------------------------------------------------------
+
+/** A reads fake that records every call: for karma and credits, whether the
+ *  caller asked `{ pending: true }` or not. */
+function readsRecording(
+  requests: string[],
+  confirmedAuthor: string | null = PARENT_AUTHOR,
+  karmaBoxes: KarmaBoxRow[] = FULL_BOXES,
+  creditBoxes: CreditBoxRow[] = [],
+): Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> {
+  return {
+    karma: async (_k, _p, opts) => {
+      requests.push(opts?.pending ? 'karma?pending=1' : 'karma');
+      return karmaResult(karmaBoxes);
+    },
+    credits: async (_k, _p, opts) => {
+      requests.push(opts?.pending ? 'credits?pending=1' : 'credits');
+      return creditsResult(creditBoxes);
+    },
+    status: async () => { requests.push('status'); return statusResult(); },
+    post: async (id, viewer) => { postReads.push({ id, viewer }); return postResult(id, confirmedAuthor); },
+    vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+    usernameByOwner: async () => heldName,
+  };
+}
+
+describe('the reads before a write are the node\'s pending view', () => {
+  it('a like\'s reads are /karma/:key?pending=1 then /status, no plain /karma', async () => {
+    const requests: string[] = [];
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: readsRecording(requests), write: write(), ledger, identity, network: null };
+    const res = await submitLikeFlow(deps, TARGET_ID);
+    expect(res.ok).toBe(true);
+    // Control: both reads happened.
+    expect(requests).toContain('status');
+    expect(requests.some((r) => r.startsWith('karma'))).toBe(true);
+    // The rule: pending=1 asked, plain /karma never.
+    expect(requests).toEqual(['karma?pending=1', 'status']);
+  });
+
+  it('a send\'s reads are /credits/:key?pending=1 then /status, no plain /credits', async () => {
+    const requests: string[] = [];
+    const ledger = new PendingLedger(PUB);
+    const CREDIT_BOX: CreditBoxRow = { boxId: '55'.repeat(32), value: '10000000000' };
+    const deps: SubmitDeps = {
+      reads: readsRecording(requests, PARENT_AUTHOR, FULL_BOXES, [CREDIT_BOX]),
+      write: write(), ledger, identity, network: null,
+    };
+    const res = await submitSendFlow(deps, '44'.repeat(32), null, 1_250_000_000n);
+    expect(res.ok).toBe(true);
+    // Control.
+    expect(requests).toContain('status');
+    expect(requests.some((r) => r.startsWith('credits'))).toBe(true);
+    // The rule: pending=1 asked, plain /credits never.
+    expect(requests).toEqual(['credits?pending=1', 'status']);
+  });
+});
+
+describe('the spendable view is the node\'s, not the ledger\'s', () => {
+  it('a pending like holds no input in the ledger; the box the node\'s pending view lists is the next like\'s input', async () => {
+    const X = '77'.repeat(32); // the box the node's pending view lists
+    const ledger = new PendingLedger(PUB);
+    ledger.add({
+      txId: 't1', kind: 'like', postId: 'ab'.repeat(32),
+      expiresAtHeight: 6720, submittedAtHeight: 6000,
+    });
+    // The ledger holds no input: the spendable view is the node's answer.
+    const deps: SubmitDeps = {
+      reads: reads(PARENT_AUTHOR, [{ boxId: X, value: '227' }]),
+      write: write(), ledger, identity, network: null,
+    };
+    const res = await submitLikeFlow(deps, TARGET_ID);
+    expect(res.ok).toBe(true);
+    // The next like's one input is X — the box the node's pending view listed.
+    expect(writeCalls[0]!.tx.inputs).toEqual([X]);
+  });
+});
+
+describe('a pending entry holds no input and no change', () => {
+  it('a like\'s entry has no inputs key and no change key after a 2xx', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
+    const res = await submitLikeFlow(deps, TARGET_ID);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Control: the entry was recorded.
+    expect(res.entry.kind).toBe('like');
+    // The rule: no inputs, no change on the entry.
+    expect('inputs' in res.entry).toBe(false);
+    expect('change' in res.entry).toBe(false);
+  });
+
+  // WEB_INTERFACE → The wallet: a stored entry carrying `inputs` and `change`
+  // restores through `parseStoredEntry`, which requires neither and reads
+  // neither.
+  it('a stored ledger whose entries carry inputs and change restores every entry', () => {
+    localStorage.setItem('notis.pending.' + PUB, JSON.stringify([
+      { txId: 'ta', kind: 'post', postId: 'pa', inputs: ['x'],
+        change: { boxId: 'c', value: '222', createdAtBlock: 5000 },
+        expiresAtHeight: 5720, submittedAtHeight: 5000 },
+      { txId: 'tb', kind: 'like', postId: 'ea'.repeat(16), inputs: ['y'],
+        expiresAtHeight: 5720, submittedAtHeight: 5000 },
+    ]));
+    const ledger = new PendingLedger(PUB);
+    expect(ledger.all().map((e) => e.txId)).toEqual(['ta', 'tb']);
+  });
+});
+
+// WEB_INTERFACE → The wallet → "An entry holds no input and no change":
+// the shape holds for every flow. The like case already pins the rule in the
+// `a pending entry holds no input and no change` block above; the withdraw
+// case here, with a change the current builder predicts (the single karma
+// output), fails pre-rule on both the `change` and the `inputs` key.
+describe('a withdraw entry holds no input and no change', () => {
+  it('a withdraw\'s entry has no inputs key and no change key after a 2xx', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity, network: null };
+    const res = await submitWithdrawFlow(deps, TARGET_ID);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.entry.kind).toBe('withdraw'); // control
+    expect('inputs' in res.entry).toBe(false);
+    expect('change' in res.entry).toBe(false);
+  });
 });

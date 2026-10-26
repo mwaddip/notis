@@ -101,7 +101,7 @@ background takes every message but `arrived` and `offered` from the extension's 
 the bridge runs in a web page's process. **The credits
 send** (`WEB_INTERFACE → The wallet window`, `→ The wallet`, `→ The faucet step`): the `@wallet` window's `balance`
 and `send` rows — the balance in gold, a send to a key or an `@handle` resolved at the press, the confirm row, the
-flight in the row, the row standing while a send's own line stands — on a `buildSend` frozen like the others, the ledger's two views split by kind; the faucet's `$NOTIS` step
+flight in the row, the row standing while a send's own line stands — on a `buildSend` frozen like the others, the spendable view the node's `pending=1` listing; the faucet's `$NOTIS` step
 beside the rep step; a credits amount is $NOTIS on the face and base units on the wire, through one module the
 extension's prompt reads too.
 
@@ -287,8 +287,15 @@ expiry is the ledger's own — the build height plus `MEMPOOL_EXPIRY_BLOCKS`, so
 (`WEB_INTERFACE → The wallet`).
 
 **The pending ledger is per identity** — `notis.pending.<pubKeyHex>`, rebuilt at once on an identity
-change; a second key never sees the first's predicted change. A faucet grant rides it as a `grant` entry
-so the bounded poll runs while it stands.
+change; a per-identity key keeps one key's entries from another. The ledger holds the reader's own
+submissions for what they draw — the pending card, the like overlay, each flight's stage line and the
+bounded poll — and nothing more: an entry holds no input and no change, so the ledger chooses no input
+and gates no spend. The spendable views are the node's `pending=1` listings, read before every write
+(`WEB_INTERFACE → The wallet`). A faucet grant rides the ledger as a `grant` entry so the bounded poll
+runs while it stands. The reader's spends run one at a time per ledger: a rep queue (post / like /
+withdraw / vouch / invite / claim / burn) and a send queue; an unvouch queues with neither. A press
+waiting its turn belongs to the key and the node of the press — a key change takes the press's step
+with everything the old key had standing, a node change ends it as a decline ends one.
 
 ⛔ **The reader's identity file — kept outside the repo — never enters the repo, a test, a commit, a
 log or a report:** not the file, not its path in code, not its passphrase, not any value from it. It is
@@ -411,34 +418,41 @@ Ed25519 through `@noble/curves` and hashes through `@dagsocial/types`' `hash32`,
 — the binding check and the proof's write steps are its only proof.
 
 **The verified figures** (`WEB_INTERFACE → The extension → "The verified figures"`, `→ The profile window`, `→ The
-wallet window`): the extension proves the reader's rep and balance against the verified chain. A tip run answers
-`{ verdict, anchor }` — the reading node's own verified `tip` and `suffixHead`, under `verified` alone —
-and `src/extension/figures-verifier.ts` (`createFiguresVerifier`) runs `proveFigures` of `@dagsocial/nipopow-client`
-over the listings the rows show: the identity record at `suffixHead` under `identityKey`, each ledger's range at
-`suffixHead` and again at `tip` — `GET /api/v1/range/:kind/:owner`, page by page, each page replayed by
-`consensus`' `holdingsPage` over the node's proof — then `/blocks/current`; **a listed box is `proven` only when the
-key holds it at both heights, in the ledger it was listed under, with the listing's value and lock** — the range
-fixes its owner and its type — **a box the key holds that the listing lacks is `unlisted`** where no block landed
-since the anchor **and `undecided` where one did**, a tip the node has since replaced makes the ledger's read
-`stale`, and each ledger carries the status of its own read (`holdings`); rep is valued by
-`effectiveKarma` of `@dagsocial/types` — the node's own function — at the listing's height, taken only from the
-anchor's tip to `heightAfter`. **A run proves a listing
-read after its anchor and never one read before it**: every read of the reader's own listing is stamped at its start
-with the anchor sequence, a verified tip reads `/karma` (and `/credits` with the wallet open) before it proves, and a
-listing not read after the current anchor goes to the run as not read (`null`, never empty), its row reading *not
-checked yet*. **The reader's own
-state is re-read, never predicted**: a landing of the reader's own transaction re-reads the listing it changed, a node
-or identity change drops the reader's state and reads it again (`dropReaderState` / `rereadReaderState`), and **no
-answer overwrites a newer one** — `readerGen` drops a read across a node or identity change, `readsBegun` /
-`newerRead` keep the answer of the latest-begun read per piece, every continuation page continues the page it was
-asked for, a refresh lands on the rows standing as it lands, and `withdrawnSeen` — a withdrawal is final — keeps a
-withdrawn post out of every write of rows. `src/model/figures-line.ts` (`figuresLine`, pure) turns a result into the
-row's line: nothing when every box proved (silence is the green), muted for what could not be proven yet, **clay with
-the figure clay** when a proof did not verify, the node lists what the chain does not hold, or the chain holds what
-the node did not list; **muted *not checked yet* where the run cannot decide** — an `undecided` box, a `stale`
-read — never silence; **an empty listing takes the same lines**, beneath the faucet step or the words standing
-there, since that the key holds nothing is a claim the range decides. The numbers update in
-their slots whenever a read brings a new one (`HOUSE_STYLE → Motion`). The web build is handed no figures verifier, and
+wallet window`): the extension proves the reader's rep and balance against the verified chain. **The rep row's number
+is `/karma?pending=1`'s `effective` and the balance row's figure is `/credits?pending=1`'s spendable sum** — the
+views, the `remaining` admission the node judges a spend against; **the plain listings `/karma` and `/credits` are
+read beside the views and the verified-figures run proves them** (`→ The profile window → "The `rep` row is the rep
+view's `effective` alone"`, `→ The wallet window → "The `balance` row"`, `→ The wallet → "A landing reads the plain
+listings, never `pending=1`"`). A tip run answers `{ verdict, anchor }` — the reading node's own verified `tip` and
+`suffixHead`, under `verified` alone — and `src/extension/figures-verifier.ts` (`createFiguresVerifier`) runs
+`proveFigures` of `@dagsocial/nipopow-client` over the plain listings: the identity record at `suffixHead` under
+`identityKey`, each ledger's range at `suffixHead` and again at `tip` — `GET /api/v1/range/:kind/:owner`, page by
+page, each page replayed by `consensus`' `holdingsPage` over the node's proof — then `/blocks/current`; **a listed
+box is `proven` only when the key holds it at both heights, in the ledger it was listed under, with the listing's
+value and lock** — the range fixes its owner and its type — **a box the key holds that the listing lacks is
+`unlisted`** where no block landed since the anchor **and `undecided` where one did**, a tip the node has since
+replaced makes the ledger's read `stale`, and each ledger carries the status of its own read (`holdings`); rep is
+valued by `effectiveKarma` of `@dagsocial/types` — the node's own function — at the listing's height, taken only
+from the anchor's tip to `heightAfter`. **A run proves a plain listing read after its anchor and never one read
+before it**: every read of the reader's own plain listing is stamped at its start with the anchor sequence, a
+verified tip reads `/karma` (and `/credits` with the wallet open) **as a view beside a plain** before it proves, and
+a plain listing not read after the current anchor goes to the run as not read (`null`, never empty), its row reading
+*not checked yet*. **The reader's own state is re-read, never predicted**: a landing of the reader's own transaction
+re-reads the listing it changed, a node or identity change drops the reader's state and reads it again
+(`dropReaderState` / `rereadReaderState`), and **no answer overwrites a newer one** — `readerGen` drops a read
+across a node or identity change, `readsBegun` / `newerRead` keep the answer of the latest-begun read per piece,
+every continuation page continues the page it was asked for, a refresh lands on the rows standing as it lands, and
+`withdrawnSeen` — a withdrawal is final — keeps a withdrawn post out of every write of rows.
+`src/model/figures-line.ts` (`figuresLine`, pure) takes the row figure (`shown`, the view's) and the plain figure
+(`plainShown`, the plain listing's) and turns a result into the row's line: nothing when every box proved and the
+valuation reproduces the plain figure and the row figure is the plain figure (silence is the green), muted for what
+could not be proven yet, **clay with the figure clay** when a proof did not verify, the node lists what the chain
+does not hold, or the chain holds what the node did not list; **muted *not checked yet* where the run cannot
+decide** — an `undecided` box, a `stale` read — never silence; **where the row figure is not the plain listing's,
+*… · F to spend in the next block, by this node's word* names the row figure beside the proven amount, last among
+the row-8 clauses, and an empty plain listing beside a non-empty view yields that clause alone**; **an empty listing
+takes the same lines**, beneath the faucet step or the words standing there, since that the key holds nothing is a
+claim the range decides. The numbers update in their slots whenever a read brings a new one (`HOUSE_STYLE → Motion`). The web build is handed no figures verifier, and
 `build-release.sh` refuses `api/v1/proof` and `api/v1/range` in its assets beside `nipopow/proof`. **The run is total**: a node's answer of
 any shape ends in a status, never a thrown run — and `NodeClient`'s reads answer a page not held to `parsePage`, and
 an answer not of its route's shape, as `PageError`, taken where a non-2xx's `ApiError` is. **A run ends**: `createFiguresVerifier` hands
@@ -583,8 +597,9 @@ otherwise.
 Testing; no Playwright) loading the unpacked Chrome build, driving the twelve steps of the extension section
 through the real UI — the composer, the like word, the profile and wallet rows, the prompt window — the eleventh
 the wallet's faucet press asking the browser for the origin and refused, the twelfth in four measured parts (the
-same press granted and the faucet's `$NOTIS` step, a send approved at the prompt, a send declined, a send after a
-lock pressed in the profile) — **and, with `--public <origin+base>` and `--web-dist <dir>`, the four steps of links
+same press granted and the faucet's `$NOTIS` step, a send whose row figure moves to 87.5 at the transfer's 2xx —
+the pending view's spendable sum — and whose payment lands on the faucet's plain `/credits`, a send declined, a
+send after a lock pressed in the profile) — **and, with `--public <origin+base>` and `--web-dist <dir>`, the four steps of links
 into the extension**: the harness serves a web build made for that base itself (`<base>p/<64 hex>` answering the
 shell, a plain page with a same-tab and a `target="_blank"` link), refuses a shell whose `notis-public` or a manifest
 whose one match differs from `--public`, sets the preference through the settings row, and presses with
@@ -619,10 +634,15 @@ the verified-figures block** runs next, owning a B of its own (a verified tip ne
 and lies in one mode at a time: `credits-fake` (a fabricated box on R's first `/credits` page), `credits-foreign` (the
 devnet faucet's largest credit box listed under R), `credits-drop` and `karma-drop` (one box withheld from R's first
 `/credits` or `/karma` page), `credits-drop-tipplus1` (the credits drop, and `/blocks/current` answered one above the
-node's own), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a
-send's young change reads *… landed since* after a press and silence after K + 1 blocks; **24** R's post — the rep
-number the node's new `effective` with no press (the landing's run reads the bare *not checked yet*: its anchor
-predates the post, so the box the post spent is `undecided`), *… landed since* after a press, silence after K + 1; **22a** clay *the node lists … the chain does not hold*, the
+node's own), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a send —
+the gold figure moves to the sum of R's `/credits?pending=1` spendable boxes at the transfer's 2xx, a verifier run
+that lands while the plain listing lacks the spend reads *… $NOTIS to spend in the next block, by this node's
+word* with the row's figure, the change lands on R's plain `/credits`, a press reads the young shape *… landed
+since*, silence K + 1 blocks on; **24** R's post — the rep number moves to A's `/karma?pending=1` `effective` at
+the post's 2xx, a verifier run that lands while the plain listing lacks the spend reads *… rep to spend in the
+next block, by this node's word* with the row's figure, R's plain `/karma` lands a change box, a press reads
+*… rep landed since*, silence K + 1 blocks on (the anchor the landing's own run proves against predates the post,
+so the box the post spent is `undecided`); **22a** clay *the node lists … the chain does not hold*, the
 figure clay; **22b** the same line with the foreign box's own amount — the range R's boxes are read from does not
 hold another key's; **22c** clay *the chain holds … $NOTIS the node does not list*, beneath the empty state where the
 drop emptied the listing; **22d** clay *the chain holds … rep the node does not list*; **22e** the node that

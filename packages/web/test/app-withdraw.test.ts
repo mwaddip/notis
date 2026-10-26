@@ -44,7 +44,7 @@ const tomb = (id: string, parentRefs: string[], descendantCount = 0): PostResult
 
 type WithdrawResp = { kind: 'ok' } | { kind: 'throw' } | { kind: 'reject'; rejection?: Rejection };
 
-function harness(resp: WithdrawResp = { kind: 'ok' }) {
+function harness(resp: WithdrawResp = { kind: 'ok' }, karmaBoxes: Array<{ boxId: string; value: string }> = [{ boxId: BOX, value: '227' }]) {
   const signCalls: string[] = [];
   let listener: ((id: { pubKeyHex: string } | null) => void) | null = null;
   const identity: AppIdentity = {
@@ -70,7 +70,14 @@ function harness(resp: WithdrawResp = { kind: 'ok' }) {
   const nodeThreads = new Map<string, ThreadResult>();
   let feedPosts: PostJson[] = [];
 
-  const karma: KarmaResult = karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX, value: '227' }], boxCount: 1, height: 6001 });
+  const karma: KarmaResult = karmaResult({
+    userId: PUB,
+    total: karmaBoxes.reduce((s, b) => s + BigInt(b.value), 0n).toString(),
+    effective: karmaBoxes.reduce((s, b) => s + BigInt(b.value), 0n).toString(),
+    boxes: karmaBoxes,
+    boxCount: karmaBoxes.length,
+    height: 6001,
+  });
   const fakeApi: Api = {
     feed: async (): Promise<FeedResult> => ({ posts: feedPosts, next: null, pending: [], pendingCount: 0 }),
     thread: async (id) => nodeThreads.get(id) ?? null,
@@ -267,13 +274,26 @@ describe('the App withdraw flight', () => {
     [{ status: 400, message: 'Post is not confirmed in an earlier block' }, 'this post has not landed yet'],
     [{ status: 400, message: 'Post is already withdrawn or unknown' }, 'this post is already withdrawn'],
     [{ status: 400, message: "Invalid postWithdraw transaction: PostWithdraw post x is not authored by the karma input's owner" }, 'only the author can withdraw this post'],
-    [{ status: 409, message: 'conflict' }, 'that rep box is still tied up in a transaction that has not landed'],
     [{ status: 503, message: 'mempool full' }, "the node's pool is full right now"],
   ] as [Rejection, string][])('maps the node refusal %o into the voice register', async (rejection, copy) => {
     const h = harness({ kind: 'reject', rejection });
     const { P } = await ownRootOpen(h);
     await h.drive.withdrawPost(P);
     expect(h.panes.querySelector('.region')?.textContent).toContain('withdraw rejected: ' + copy);
+  });
+
+  // WEB_INTERFACE → The wallet → "A rejection's words follow the node's
+  // message, never its status alone": the pool's box conflict reads the
+  // floor sentence on every rep surface.
+  it('maps the pool\'s box conflict (409 Input ... is already spent by a pending transaction) to the floor sentence', async () => {
+    const rejection: Rejection = {
+      status: 409,
+      message: `Input ${'77'.repeat(32)} is already spent by a pending transaction`,
+    };
+    const h = harness({ kind: 'reject', rejection });
+    const { P } = await ownRootOpen(h);
+    await h.drive.withdrawPost(P);
+    expect(h.panes.querySelector('.region')?.textContent).toContain('withdraw rejected: that rep is still tied up in a spend that has not landed.');
   });
 
   it('a landing drops the post from an open @posts window and re-renders it without its ↻', async () => {
@@ -407,5 +427,26 @@ describe("the App withdraw landing settles the post's own submission card", () =
     await h.drive.refreshThread(P);
     expect(h.drive.state.threads.get(P)!.descendants.filter((r) => r.id === NEW).length).toBe(1);
     expect(h.panes.querySelectorAll('.card.depth-1 .withdrawn').length).toBe(1);
+  });
+});
+
+// WEB_INTERFACE → The withdraw control → "The client withholds one gate: a key with no rep box cannot sign a withdrawal". The control reads `profileKarma.boxes.length > 0`; an empty listing renders `withdraw` disabled with the title *needs one rep box to sign with; this key has none*.
+describe('the withdraw control reads the /karma listing for its gate', () => {
+  it('an empty /karma listing renders `withdraw` disabled with its title', async () => {
+    const h = harness({ kind: 'ok' }, []); // the reader holds no rep box
+    await ownRootOpen(h);
+    const wb = h.panes.querySelector('.meta .withdraw-ctl') as HTMLButtonElement | null;
+    expect(wb).not.toBeNull();
+    expect(wb!.disabled).toBe(true);
+    expect(wb!.title).toBe('needs one rep box to sign with; this key has none');
+  });
+
+  it('control: a /karma listing holding one box renders `withdraw` enabled', async () => {
+    const h = harness(); // the harness default: one box
+    await ownRootOpen(h);
+    const wb = h.panes.querySelector('.meta .withdraw-ctl') as HTMLButtonElement | null;
+    expect(wb).not.toBeNull();
+    expect(wb!.disabled).toBe(false);
+    expect(wb!.title).toBe('');
   });
 });

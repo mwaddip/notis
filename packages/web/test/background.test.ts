@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { encodeTx, computeTxId, computeContentHash, bytesToHex, hexToBytes, generateKeyPair } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { buildPost, buildLike, buildSend, type BuildContext } from '../src/wallet/builders';
+import { buildPost, buildLike, buildSend, type RepBuildContext } from '../src/wallet/builders';
 import { install } from '../src/extension/background';
 import { fakeChrome, fakeLockManager, freshFixture, type FakeChrome } from './fake-chrome';
 import type { SignRecord, Message, SignAnswer } from '../src/extension/protocol';
@@ -23,12 +23,13 @@ const BOX = '11'.repeat(32);
 const TARGET_POST = 'dd'.repeat(32);
 const AUTHOR = 'bb'.repeat(32);
 
-function ctx(pubKeyHex: string): BuildContext {
+function ctx(pubKeyHex: string): RepBuildContext {
   return {
     spendable: [{ boxId: BOX, value: 227n }],
     height: 6000,
     era: 1,
     author: pubKeyHex,
+    effective: 227n,
   };
 }
 

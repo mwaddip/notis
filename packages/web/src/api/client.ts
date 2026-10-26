@@ -86,8 +86,13 @@ export interface Api {
   post(id: string, viewer?: string, withTx?: boolean): Promise<PostResult | null>;
   status(): Promise<StatusResult>;
   currentBlock(): Promise<BlockCurrent>;
-  karma(key: string, page: Page): Promise<KarmaResult>;
-  credits(key: string, page: Page): Promise<CreditsResult>;
+  /** `{ pending: true }` adds `pending=1` to the query — the pending view
+   *  (NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view,
+   *  as admission spends from it", WEB_INTERFACE → The wallet → "The spendable
+   *  views are the node's pending view"). The plain listing stays what a
+   *  landing reads. */
+  karma(key: string, page: Page, opts?: { pending: true }): Promise<KarmaResult>;
+  credits(key: string, page: Page, opts?: { pending: true }): Promise<CreditsResult>;
   // The membership reads — GETs, none viewer-bearing (WEB_INTERFACE → The author
   // window, → The profile window). Keyset-paged like `karma`.
   vouchesByTarget(key: string, page: Page): Promise<VouchesTargetResult>;
@@ -214,20 +219,26 @@ export class NodeClient implements Api {
   }
 
   // The spendable view's confirmed boxes, paged by `next`. No viewer — a balance
-  // read is keyed by the identity in the path, not by a viewer query.
-  async karma(key: string, page: Page): Promise<KarmaResult> {
+  // read is keyed by the identity in the path, not by a viewer query. `{ pending: true }`
+  // adds `pending=1` to the query — the pending view (WEB_INTERFACE → The wallet
+  // → "The spendable views are the node's pending view").
+  async karma(key: string, page: Page, opts?: { pending: true }): Promise<KarmaResult> {
     const limit = askedLimit(page);
     const data = await this.read(
-      this.url(`/karma/${encodeURIComponent(key)}`, { limit, after: page.after ?? undefined }),
+      this.url(`/karma/${encodeURIComponent(key)}`, {
+        limit, after: page.after ?? undefined, pending: opts?.pending ? 1 : undefined,
+      }),
       LISTING_PAGE_READ_BYTES,
     );
     return this.rebuild(data, (d) => readKarmaResult(d, limit));
   }
 
-  async credits(key: string, page: Page): Promise<CreditsResult> {
+  async credits(key: string, page: Page, opts?: { pending: true }): Promise<CreditsResult> {
     const limit = askedLimit(page);
     const data = await this.read(
-      this.url(`/credits/${encodeURIComponent(key)}`, { limit, after: page.after ?? undefined }),
+      this.url(`/credits/${encodeURIComponent(key)}`, {
+        limit, after: page.after ?? undefined, pending: opts?.pending ? 1 : undefined,
+      }),
       LISTING_PAGE_READ_BYTES,
     );
     return this.rebuild(data, (d) => readCreditsResult(d, limit));

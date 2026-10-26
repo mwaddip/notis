@@ -257,10 +257,10 @@ function harness(entries: PendingEntry[] = []): Harness {
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-const GRANT: PendingEntry = { txId: 'e1'.repeat(32), kind: 'grant', postId: ME, inputs: [], expiresAtHeight: 5000, submittedAtHeight: 1060 };
-const CREDIT_GRANT: PendingEntry = { txId: 'e2'.repeat(32), kind: 'creditGrant', postId: B2, inputs: [], expiresAtHeight: 5000, submittedAtHeight: 1060 };
+const GRANT: PendingEntry = { txId: 'e1'.repeat(32), kind: 'grant', postId: ME, expiresAtHeight: 5000, submittedAtHeight: 1060 };
+const CREDIT_GRANT: PendingEntry = { txId: 'e2'.repeat(32), kind: 'creditGrant', postId: B2, expiresAtHeight: 5000, submittedAtHeight: 1060 };
 const SEND: PendingEntry = {
-  txId: 'e3'.repeat(32), kind: 'send', postId: X, inputs: [B1], expiresAtHeight: 5000, submittedAtHeight: 1060,
+  txId: 'e3'.repeat(32), kind: 'send', postId: X, expiresAtHeight: 5000, submittedAtHeight: 1060,
   send: { toHex: X, toName: null, amount: 100000000n, boxId: 'e4'.repeat(32) },
 };
 
@@ -448,7 +448,7 @@ describe('every other loop that follows `next` ends at a page with no `next`', (
   it('the reads before a rep write (readBuildContext) — one request, then PageError', async () => {
     const h = fakeNode();
     h.on('karma', capped(() => without(karmaPage(ME, [B1], null), 'next'), karmaPage(ME, [], null)));
-    await expect(readBuildContext(new NodeClient(() => ''), new PendingLedger(ME), ME)).rejects.toBeInstanceOf(PageError);
+    await expect(readBuildContext(new NodeClient(() => ''), ME)).rejects.toBeInstanceOf(PageError);
     expect(h.count('karma', ME)).toBe(1);
   });
 
@@ -467,7 +467,7 @@ describe('every other loop that follows `next` ends at a page with no `next`', (
   it('the reads before a send (readCreditContext) — one request, then PageError', async () => {
     const h = fakeNode();
     h.on('credits', capped(() => without(creditsPage(ME, [B1], null), 'next'), creditsPage(ME, [], null)));
-    await expect(readCreditContext(new NodeClient(() => ''), new PendingLedger(ME), ME)).rejects.toBeInstanceOf(PageError);
+    await expect(readCreditContext(new NodeClient(() => ''), ME)).rejects.toBeInstanceOf(PageError);
     expect(h.count('credits', ME)).toBe(1);
   });
 

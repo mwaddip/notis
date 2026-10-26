@@ -183,7 +183,7 @@ function harness(opts: { layout?: string; verifiers?: boolean; entries?: Array<{
   for (const [i, e] of (opts.entries ?? []).entries()) {
     ledger.add({
       txId: (i + 1).toString(16).padStart(2, '0').repeat(32), kind: e.kind, postId: e.postId,
-      inputs: [], expiresAtHeight: 5000, submittedAtHeight: 1060,
+      expiresAtHeight: 5000, submittedAtHeight: 1060,
     });
   }
   const figuresCalls: FigureCall[] = [];
@@ -303,6 +303,9 @@ describe('the newest read of a listing wins', () => {
     await h.drive.loadMembershipState();
     await flush();
 
+    // Both the view and the plain /karma reads start — the refresh reads
+    // the plain beside the view (WEB_INTERFACE → The extension → "The
+    // verified figures"). Both are held.
     h.node.setHold((m) => m === 'karma');
     const early = h.drive.refreshProfileKarma();
     await flush();
@@ -316,7 +319,7 @@ describe('the newest read of a listing wins', () => {
     expect(h.figuresCalls).toHaveLength(1);
     expect(karmaIds(h.figuresCalls[0]!)).toEqual([K2]);
 
-    h.node.held[0]!.release();
+    for (const held of h.node.held) held.release();
     await early;
     await flush();
     expect(repNumber()).toBe('214');
@@ -360,6 +363,8 @@ describe('the newest read of a listing wins', () => {
     await h.drive.refreshWalletCredits();
     await flush();
 
+    // Both the view and the plain /credits reads start under the refresh —
+    // the plain beside the view. Both are held.
     h.node.setHold((m) => m === 'credits');
     const early = h.drive.refreshWalletCredits();
     await flush();
@@ -372,7 +377,7 @@ describe('the newest read of a listing wins', () => {
     expect(h.figuresCalls).toHaveLength(1);
     expect(h.figuresCalls[0]!.listing.credits).toBeNull();
 
-    h.node.held[0]!.release();
+    for (const held of h.node.held) held.release();
     await early;
     await flush();
     expect(gold()).toBe('7');

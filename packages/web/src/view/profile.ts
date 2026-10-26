@@ -4,7 +4,7 @@ import { readHex64 } from '../hex64';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { markHandle } from './name-handle';
-import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, isValidUsernameBytes } from '@dagsocial/types';
+import { INVITE_BOND_VEST_PER_LIKES, KARMA_MINIMUM, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, isValidUsernameBytes } from '@dagsocial/types';
 import { figuresLine } from '../model/figures-line';
 import type { FiguresView, WindowBody } from '../model/state';
 import type { TipVerdict } from '../model/tip-verdict';
@@ -63,11 +63,12 @@ export interface ProfileHandlers {
 export interface ProfileCtx {
   identity: { pubKeyHex: string; locked: boolean } | null;
   backedUp: boolean;
-  karma: KarmaResult | null; // the loaded key's /karma, once read
+  karma: KarmaResult | null; // the loaded key's /karma?pending=1 — the rep view (WEB_INTERFACE → The wallet)
+  karmaPlain: KarmaResult | null; // the loaded key's /karma plain — read beside the view for a verifier run
   grant: GrantView | null; // a faucet grant in flight, or one that lapsed
   // The invites row (WEB_INTERFACE → The profile window).
   invite: { bondMin: string; bondMax: string; probationBlocks: number } | null; // from /status
-  canAffordMinBond: boolean;   // the spendable covers the minimum bond
+  canAffordMinBond: boolean;   // the floor would stand over the minimum bond (effective − inviteBondMin ≥ KARMA_MINIMUM)
   bonds: BondsResult | null;   // the reader's standing bonds
   inviteFlight: Flight | null; // the invite in the row
   // The username row (WEB_INTERFACE → The username row).
@@ -79,8 +80,8 @@ export interface ProfileCtx {
   canSignClaim: boolean;
   canAffordBurn: boolean;
   // The extension's verified-figures run — WEB_INTERFACE → The extension →
-  // "The verified figures", → The profile window → "The `rep` row is the
-  // `effective` number alone". `verdict === undefined` when the build has no
+  // "The verified figures", → The profile window → "The `rep` row is the rep
+  // view's `effective` alone". `verdict === undefined` when the build has no
   // verifier, `null` while none has returned; `figures` is null until a run's
   // result lands. The pure `figuresLine` reads the three fields together and
   // the karma field renders the muted line beneath the number, adding `clay`
@@ -568,10 +569,10 @@ function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, ctx: Pr
       field.appendChild(el('span', 'inkmute', 'no rep yet.'));
     }
   }
-  // `k.height` is the listing's height — the figures line uses it only when a
-  // listed credit box carries a lock; here boxCount is 0, so the value is not
-  // read on this path. `shown` is 0n, with no mono number to turn clay.
-  appendKarmaFiguresLine(field, ctx, 0, k.height);
+  // `k.height` is the view's height — the figures line uses it only when a
+  // listed credit box carries a lock. `shown` is 0n (an empty view's), with
+  // no mono number to turn clay. The plain listing is read inside the helper.
+  appendKarmaFiguresLine(field, ctx, k.height);
 }
 
 /** Append the verified-figures line beneath the karma field — a `div.hint`,
@@ -583,16 +584,22 @@ function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, ctx: Pr
 function appendKarmaFiguresLine(
   field: HTMLElement,
   ctx: ProfileCtx,
-  boxCount: number,
   height: number,
 ): void {
+  // The plain listing is the one the verified-figures run proves; its
+  // `effective` and `boxCount` are what the line reads (WEB_INTERFACE →
+  // The extension → "The verified figures"). Null before the plain read
+  // lands — the pure line reads `boxCount: 0` and `plainShown: 0n` then,
+  // which is silence under an empty-plain-and-empty-view branch.
+  const plain = ctx.karmaPlain;
   const fLine = figuresLine({
     ledger: 'karma',
     verdict: ctx.verdict,
     result: ctx.figures?.result ?? null,
     shown: 0n,
+    plainShown: plain === null ? 0n : BigInt(plain.effective),
     suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
-    boxCount,
+    boxCount: plain === null ? 0 : plain.boxCount,
     height,
   });
   if (fLine === null) return;
@@ -603,24 +610,27 @@ function appendKarmaFiguresLine(
 }
 
 /** The row's label counts what the number counts, so the number stands alone —
- *  the effective view, the value every sufficiency check on the node reads, never
- *  the face total (WEB_INTERFACE → The profile window → "The `rep` row is the
- *  `effective` number alone"). In the extension, one muted line beneath the
- *  number says what the verified-figures run could not prove, and under the
- *  full rule the number and the line are clay (→ "The verified figures").
- *  The number stays the live `effective` in every state; the line describes
- *  it, and never replaces it. */
+ *  the rep view's `effective`, the `remaining` admission the node judges every
+ *  rep spend against, never the face total and never the plain listing's
+ *  `effective` (WEB_INTERFACE → The profile window → "The `rep` row is the
+ *  rep view's `effective` alone"). In the extension, one muted line beneath
+ *  the number says what the verified-figures run could not prove, and under
+ *  the full rule the number and the line are clay (→ "The verified
+ *  figures"). The number stays the view's `effective` in every state; the
+ *  line describes it, and never replaces it. */
 function balance(field: HTMLElement, k: KarmaResult, ctx: ProfileCtx): void {
   const monoSpan = mono(k.effective);
   field.append(monoSpan);
+  const plain = ctx.karmaPlain;
   const fLine = figuresLine({
     ledger: 'karma',
     verdict: ctx.verdict,
     result: ctx.figures?.result ?? null,
     shown: BigInt(k.effective),
+    plainShown: plain === null ? 0n : BigInt(plain.effective),
     suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
-    boxCount: k.boxCount,
-    height: k.height,
+    boxCount: plain === null ? 0 : plain.boxCount,
+    height: plain === null ? k.height : plain.height,
   });
   if (fLine !== null) {
     const hint = el('div', 'hint');
@@ -860,7 +870,9 @@ function usernameRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow
       const burn = el('button', 'word', 'burn') as HTMLButtonElement;
       if (!ctx.canAffordBurn) {
         burn.disabled = true;
-        burn.title = `a burn costs ${USERNAME_BURN_PRICE} rep; this key has less`;
+        // WEB_INTERFACE → The username row — the title names the price and
+        // the floor the burn's gate holds.
+        burn.title = `a burn costs ${USERNAME_BURN_PRICE} rep, and the last ${KARMA_MINIMUM} rep is for posting; this key has less`;
       }
       burn.addEventListener('click', openQuestion);
       line.appendChild(burn);

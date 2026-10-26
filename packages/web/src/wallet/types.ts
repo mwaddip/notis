@@ -5,18 +5,20 @@
  *  `/karma` row carries no `createdAtBlock`, which is why the read order matters
  *  (WEB_INTERFACE → The wallet). The mark follows a `/karma` row through the
  *  parse: `true` on the owner's income box, absent on their own box
- *  (TYPES_INTERFACE → KarmaBox). A credit box and a pending karma change
- *  carry no mark — the mark is the settlement's to make, and a karma output
- *  of a user transaction never carries it. */
+ *  (TYPES_INTERFACE → KarmaBox). A credit box carries no mark — the mark is
+ *  the settlement's to make, and a karma output of a user transaction never
+ *  carries it. */
 export interface SpendableBox {
   boxId: string;
   value: bigint;
   income?: true;
 }
 
-/** A predicted change box: the id the node will assign it, its value, and the
- *  height it was declared at — held so a later transaction can chain onto it and
- *  so a landed post's change is recognised in `/karma`. */
+/** The change box a builder predicts for its transaction: the id the node will
+ *  assign it, its value, and the height the transaction declares it at. The
+ *  builders' output type for a karma spend holds one; the ledger holds no
+ *  input and no change (WEB_INTERFACE → The wallet → "An entry holds no input
+ *  and no change"). */
 export interface ChangeRef {
   boxId: string;
   value: bigint;
@@ -43,16 +45,13 @@ export interface SendRef {
  *  body; for a like the target post; for a vouch and an unvouch the target key;
  *  for an invite the invitee key; for a withdrawal the post it empties; for a
  *  faucet karma grant the key the grant was asked for; for a faucet credits
- *  grant the box id the faucet named — both grants have no post and carry
- *  `inputs: []` and no `change`, so they are inert in the spendable view
- *  (WEB_INTERFACE → The faucet step). A send's `postId` is
- *  the recipient's key. An unvouch's one input is a `vouch` box, not a karma
- *  box, so the spendable view ignores it, and it has no change. A withdrawal's
- *  one karma input is spent and its equal-value output is the entry's `change`,
- *  so the spendable view stays whole while it is pending (WEB_INTERFACE → The
- *  withdraw control). `submittedAtHeight` is the height the transaction was built
- *  at — for a faucet grant the highest tip the client had read when it asked —
- *  and `expiresAtHeight` is the ledger's: that height plus `MEMPOOL_EXPIRY_BLOCKS`,
+ *  grant the box id the faucet named. A send's `postId` is the recipient's key.
+ *  An entry holds no input and no change (WEB_INTERFACE → The wallet → "An
+ *  entry holds no input and no change"): the spendable views are the node's
+ *  pending view, so the ledger chooses no input and gates no spend.
+ *  `submittedAtHeight` is the height the transaction was built at — for a
+ *  faucet grant the highest tip the client had read when it asked — and
+ *  `expiresAtHeight` is the ledger's: that height plus `MEMPOOL_EXPIRY_BLOCKS`,
  *  or the answered height when that is a block height below it (WEB_INTERFACE →
  *  The wallet → "A pending entry's expiry is the client's, and a node's answer
  *  can only bring it sooner"). */
@@ -60,8 +59,6 @@ export interface PendingEntry {
   txId: string;
   kind: EntryKind;
   postId: string;
-  inputs: string[];
-  change?: ChangeRef;
   send?: SendRef;
   expiresAtHeight: number;
   submittedAtHeight: number;

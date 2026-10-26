@@ -308,7 +308,7 @@ subtraction first and over both halves — a box a pooled entry already spends i
 confirmed or pending. ⛔ **The subtraction answers as the pending-spend conflict, never as an absent
 box**: for a box a pooled entry spends the view throws `PendingSpendConflictError` (409) where
 `validateTx` reads the input, so every write route's 409 is reachable and a client can tell a box tied
-up in the pool from one spent on chain (`WEB_INTERFACE → The wallet`, the pending ledger's 409); `null` is the
+up in the pool from one spent on chain (`WEB_INTERFACE → The wallet → "Nothing retries"`); `null` is the
 answer for a box that exists nowhere. **Three point reads**, in that order: the box's `mempool_inputs` row, present
 being the conflict; the confirmed set; the box's `mempool_outputs` row, with the bytes of the entry it names, decoded
 for that one box (→ Schema). **Submission's `getBox`, and nothing else's.** The HTTP routes validate against

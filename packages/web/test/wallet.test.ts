@@ -76,8 +76,8 @@ function creditsResult(over: Partial<CreditsResult> = {}): CreditsResult {
 }
 
 function ctx(over: Partial<WalletCtx> = {}): WalletCtx {
-  return {
-    identity: null, status: null, credits: null, creditGrant: null,
+  const merged = {
+    identity: null, status: null, credits: null, creditsPlain: null, creditGrant: null,
     sendFlight: null, pendingSend: null, sendCheck: null, sendAnswer: null,
     // The web arm's default — the confirm row stands. The extension arm's
     // tests override this to false and cover the flow the prompt confirms
@@ -88,7 +88,17 @@ function ctx(over: Partial<WalletCtx> = {}): WalletCtx {
     // both (WEB_INTERFACE → The extension → "The verified figures").
     verdict: undefined, figures: null,
     ...over,
-  };
+  } as WalletCtx;
+  // Where the override hands `credits` without a `creditsPlain`, the plain
+  // listing defaults to the view's — the state the extension holds the
+  // moment the view and the plain read land matching: no pending spend, so
+  // the two spendable sums agree (WEB_INTERFACE → The extension → "The
+  // verified figures"). A test that drives shown ≠ plain hands
+  // `creditsPlain` explicitly.
+  if (!('creditsPlain' in over) && merged.credits !== null) {
+    merged.creditsPlain = merged.credits;
+  }
+  return merged;
 }
 
 function creditsCtx(over: Partial<WalletCtx> = {}): WalletCtx {

@@ -2,16 +2,17 @@ import { readStore, writeStore } from '../prefs';
 import { isWithdrawn } from '../api/dto';
 import { heldEntry } from './expiry';
 import type { PostJson, WithdrawnJson, KarmaResult, UsernameResult, CreditsResult } from '../api/dto';
-import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome, SendRef, UnboundedEntry } from './types';
+import type { PendingEntry, EntryOutcome, SendRef, UnboundedEntry } from './types';
 
-// The persisted pending ledger and the spendable view over it
-// (WEB_INTERFACE → The wallet). A reload that forgot the ledger would re-spend a
-// box the node holds pending and receive a 409 for a failure the reader never
-// saw, so it is persisted, bigints as decimal strings.
+// The persisted pending ledger holds the reader's own submissions, for what
+// they draw (WEB_INTERFACE → The wallet → "The pending ledger holds the
+// reader's own submissions, for what they draw"); it chooses no input and
+// gates no spend, which the node's pending views do. A reload that forgot the
+// ledger would lose the pending cards, the like overlay, each flight's stage
+// line and the bounded poll, so it is persisted, bigints as decimal strings.
 //
 // ⛔ Keyed by the identity that owns the entries — `notis.pending.<pubKeyHex>`.
-// One browser ledger shared across keys would let a second identity try to spend
-// the first's predicted change; a per-identity key keeps them apart.
+// A per-identity key keeps one key's entries from another.
 
 export const PENDING_KEY_PREFIX = 'notis.pending.';
 
@@ -54,33 +55,6 @@ export class PendingLedger {
    *  node's mempool never accepted (WEB_INTERFACE → "Nothing retries"). */
   remove(txId: string): void {
     if (this.entries.delete(txId)) this.persist();
-  }
-
-  /**
-   * The spendable view: confirmed boxes, minus the inputs of the client's own
-   * pending transactions, plus their predicted change — a box (confirmed or a
-   * predicted change) is spendable exactly when no pending transaction names it
-   * as an input, so a change already chained into a later pending transaction
-   * drops out too.
-   *
-   * `side` splits the view (WEB_INTERFACE → The wallet: "There are two views
-   * over one ledger"): a `send` entry's inputs and change are credit boxes and
-   * count on the credits side only, a `creditGrant` counts on neither, every
-   * other kind on the karma side only. A send's change is never offered to a
-   * post, nor a post's change to a send.
-   */
-  spendable(confirmed: SpendableBox[], side: 'karma' | 'credits' = 'karma'): SpendableBox[] {
-    const spent = new Set<string>();
-    const changes: SpendableBox[] = [];
-    for (const e of this.entries.values()) {
-      if (e.kind === 'creditGrant') continue;              // inputs [], no change — inert
-      const isSend = e.kind === 'send';
-      if (isSend && side !== 'credits') continue;
-      if (!isSend && side !== 'karma') continue;
-      for (const id of e.inputs) spent.add(id);
-      if (e.change) changes.push({ boxId: e.change.boxId, value: e.change.value });
-    }
-    return [...confirmed, ...changes].filter((b) => !spent.has(b.boxId));
   }
 
   private persist(): void {
@@ -283,11 +257,6 @@ export function pendingSendEntries(entries: PendingEntry[]): Array<{ toHex: stri
 // Persisted shape — bigints as decimal strings.
 // ---------------------------------------------------------------------------
 
-interface StoredChange {
-  boxId: string;
-  value: string;
-  createdAtBlock: number;
-}
 interface StoredSend {
   toHex: string;
   toName: string | null;
@@ -298,8 +267,6 @@ interface StoredEntry {
   txId: string;
   kind: PendingEntry['kind'];
   postId: string;
-  inputs: string[];
-  change?: StoredChange;
   send?: StoredSend;
   expiresAtHeight: number;
   submittedAtHeight: number;
@@ -310,8 +277,6 @@ function toStored(e: PendingEntry): StoredEntry {
     txId: e.txId,
     kind: e.kind,
     postId: e.postId,
-    inputs: e.inputs,
-    ...(e.change ? { change: { boxId: e.change.boxId, value: e.change.value.toString(), createdAtBlock: e.change.createdAtBlock } } : {}),
     ...(e.send ? { send: { toHex: e.send.toHex, toName: e.send.toName, amount: e.send.amount.toString(), boxId: e.send.boxId } } : {}),
     expiresAtHeight: e.expiresAtHeight,
     submittedAtHeight: e.submittedAtHeight,
@@ -327,7 +292,10 @@ const KNOWN_KINDS: ReadonlySet<PendingEntry['kind']> = new Set<PendingEntry['kin
  *  restore() can drop the whole ledger rather than load a partial one.
  *  `submittedAtHeight` need only be a number, and the stored `expiresAtHeight`
  *  is not checked at all: restore holds both through the bound, which takes
- *  any shape. */
+ *  any shape. The function reads neither `inputs` nor `change` — the ledger
+ *  holds no input and no change (WEB_INTERFACE → The wallet → "An entry holds
+ *  no input and no change") — and accepts a stored entry carrying either, so
+ *  a browser holding one keeps its pending state. */
 function parseStoredEntry(v: unknown): UnboundedEntry {
   if (typeof v !== 'object' || v === null) throw new Error('entry is not an object');
   const o = v as Record<string, unknown>;
@@ -335,18 +303,7 @@ function parseStoredEntry(v: unknown): UnboundedEntry {
   if (typeof o.kind !== 'string' || !KNOWN_KINDS.has(o.kind as PendingEntry['kind'])) {
     throw new Error('entry has an unknown kind');
   }
-  if (!Array.isArray(o.inputs) || !o.inputs.every((x) => typeof x === 'string')) throw new Error('entry inputs are not strings');
   if (typeof o.submittedAtHeight !== 'number') throw new Error('entry submittedAtHeight is not a number');
-  let change: ChangeRef | undefined;
-  if (o.change !== undefined) {
-    const c = o.change;
-    if (typeof c !== 'object' || c === null) throw new Error('entry change is not an object');
-    const co = c as Record<string, unknown>;
-    if (typeof co.boxId !== 'string' || typeof co.value !== 'string' || typeof co.createdAtBlock !== 'number') {
-      throw new Error('entry change has a malformed field');
-    }
-    change = { boxId: co.boxId, value: BigInt(co.value), createdAtBlock: co.createdAtBlock };
-  }
   let send: SendRef | undefined;
   if (o.send !== undefined) {
     const s = o.send;
@@ -366,8 +323,6 @@ function parseStoredEntry(v: unknown): UnboundedEntry {
     txId: o.txId,
     kind: o.kind as PendingEntry['kind'],
     postId: o.postId,
-    inputs: o.inputs as string[],
-    ...(change ? { change } : {}),
     ...(send ? { send } : {}),
     expiresAtHeight: o.expiresAtHeight,
     submittedAtHeight: o.submittedAtHeight,
