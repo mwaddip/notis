@@ -3480,11 +3480,9 @@ export class App {
     const order = this.beginRead();
     const plainStamp = this.listingStamp();
     const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
-    // The plain promise never rejects — a plain failure resolves to `null`
-    // so `Promise.all`'s throw-on-rejection stays what fires on a view (or
-    // vouch, or escrow, or bonds, or name) read's rejection, atomic with
-    // the batch (WEB_INTERFACE → The wallet → "a failed read leaves the
-    // last-known state; the next ↻ retries").
+    // The plain promise resolves to `null` on failure, so `Promise.all`
+    // rejects only on a view, vouch, escrow, bonds or name read, and a
+    // failed read leaves the last-known state.
     const plainPromise: Promise<KarmaResult | null> = this.figuresVerifier !== null
       ? this.readOwnKarmaPlain(cur.pubKeyHex).then((k) => k, () => null)
       : Promise.resolve(null);
