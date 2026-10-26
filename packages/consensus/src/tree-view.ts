@@ -29,6 +29,7 @@ import {
   postRecordFromBytes,
   rangeStart,
   typeRange,
+  usernameString,
   vouchPairBoxId,
   vouchPairKey,
   vouchPairRange,
@@ -454,7 +455,7 @@ class TreeView implements TreeStateView {
 function rowOf(box: UsernameBox, claimedAtBlock: number): UsernameRow {
   return {
     nameLower: canonicalUsername(box.name),
-    name: new TextDecoder('utf-8').decode(box.name),
+    name: usernameString(box.name),
     owner: bytesToHex(box.owner),
     boxId: box.id!,
     claimedAtBlock,

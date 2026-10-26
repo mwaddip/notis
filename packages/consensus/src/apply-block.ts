@@ -2,6 +2,7 @@ import {
   EMPTY_IDENTITY_RECORD,
   canonicalUsername,
   computeTxId,
+  usernameString,
   decodeTx,
   encodeTx,
   MAX_BLOCK_COST,
@@ -439,7 +440,7 @@ export function applyQueuedTx(
     const u = usernameOut as UsernameBox;
     state.putUsername({
       nameLower: canonicalUsername(u.name),
-      name: new TextDecoder('utf-8').decode(u.name),
+      name: usernameString(u.name),
       owner: bytesToHex(u.owner),
       boxId: usernameOut.id!,
       claimedAtBlock: height,
