@@ -1757,9 +1757,12 @@ export class NetNode {
 
   private sendToPeer(peerId: string, data: Uint8Array): Promise<void> {
     if (!this.libp2p) return Promise.resolve();
-    const peer = this.libp2p.getPeers().find((p) => p.toString() === peerId);
-    if (!peer) {
-      console.warn(`[net] sendToPeer: peer ${peerId} not found in libp2p.getPeers() (have ${this.libp2p.getPeers().length} peers)`);
+    const libp2p = this.libp2p;
+    let peer;
+    try {
+      peer = connectedPeer(libp2p, peerId);
+    } catch {
+      console.warn(`[net] sendToPeer: peer ${peerId} not found in libp2p.getPeers() (have ${libp2p.getPeers().length} peers)`);
       return Promise.resolve();
     }
 
