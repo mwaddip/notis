@@ -703,6 +703,13 @@ describe('verifyHeaderChain', () => {
       expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
     });
 
+    it('malformed anchor vector — one entry in uppercase hex → interlinks at index 0', () => {
+      const badAnchor = { ...anchor, interlinks: [anchor.interlinks[0]!.toUpperCase(), ...anchor.interlinks.slice(1)] };
+      const headers = mineChain(anchor, 1);
+      const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
+    });
+
     it('malformed anchor vector — too many entries → interlinks at index 0', () => {
       const tooMany = Array.from({ length: 258 }, () => 'aa'.repeat(32));
       const badAnchor = { ...anchor, interlinks: tooMany };

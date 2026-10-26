@@ -1015,6 +1015,15 @@ describe('verifyOrderingBlockStructure', () => {
     expect(verifyOrderingBlockStructure(block).valid).toBe(false);
   });
 
+  it('rejects a utxoTxId in uppercase hex, with the stated message', () => {
+    const block = makeValidBlock();
+    block.utxoTxTree.utxoTxIds = [SETTLEMENT_ID.toUpperCase()];
+    expect(verifyOrderingBlockStructure(block)).toEqual({
+      valid: false,
+      error: 'Ordering block utxoTxId must be 64 lowercase hex characters',
+    });
+  });
+
   it('rejects block missing utxoTxTree.utxoTxIds', () => {
     const block = {
       ...makeValidBlock(),
