@@ -1,4 +1,5 @@
 import {
+  EMPTY_IDENTITY_RECORD,
   canonicalUsernameBytes,
   computeTxId,
   decodeTx,
@@ -846,19 +847,11 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     acc.preBlockRecords.set(inviteeHex, null);
     acc.membershipTouched.add(inviteeHex);
     state.putIdentityRecord(invitee, {
+      ...(after ?? EMPTY_IDENTITY_RECORD),
       lastActivityBlock: after?.lastActivityBlock ?? height,
-      lastDecayBlock: after?.lastDecayBlock ?? 0,
       invitedAtBlock: height,
-      // Carried through rather than written, and it is always 0 here: a legal
-      // invitee is not an account yet, so it has never held karma, never posted
-      // and never been liked. The read is what keeps that a consequence of the
-      // bar rather than an assumption this line makes.
-      lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
       memberSinceBlock: conferred ? height : (after?.memberSinceBlock ?? 0),
       memberBar: conferred ? 0 : (after?.memberBar ?? 0),
-      memberVouches: after?.memberVouches ?? 0,
-      memberLikes: after?.memberLikes ?? 0n,
-      invitesUsed: after?.invitesUsed ?? 0,
     });
   }
 
@@ -891,18 +884,11 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     // Re-read here, after every earlier write of the block, so none is lost; a
     // missing record means maximally stale ({0, 0}), never "skip this author".
     const after = state.getIdentityRecord(author);
+    const base = after ?? EMPTY_IDENTITY_RECORD;
     state.putIdentityRecord(author, {
-      lastActivityBlock: after?.lastActivityBlock ?? 0,
-      lastDecayBlock: after?.lastDecayBlock ?? 0,
-      // Carried through: the grant path owns it, and an author being paid for
-      // likes in the same block they were invited is reachable.
-      invitedAtBlock: after?.invitedAtBlock ?? 0,
-      lifetimeLikesReceived: (after?.lifetimeLikesReceived ?? 0n) + received,
-      memberSinceBlock: after?.memberSinceBlock ?? 0,
-      memberBar: after?.memberBar ?? 0,
-      memberVouches: after?.memberVouches ?? 0,
-      memberLikes: (after?.memberLikes ?? 0n) + BigInt(acc.memberLikesPerAuthor.get(authorHex) ?? 0),
-      invitesUsed: after?.invitesUsed ?? 0,
+      ...base,
+      lifetimeLikesReceived: base.lifetimeLikesReceived + received,
+      memberLikes: base.memberLikes + BigInt(acc.memberLikesPerAuthor.get(authorHex) ?? 0),
     });
   }
 
@@ -999,15 +985,8 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
 function advanceActivityClock(state: BlockOverlay, owner: Uint8Array, height: number): void {
   const existing = state.getIdentityRecord(owner);
   state.putIdentityRecord(owner, {
+    ...(existing ?? EMPTY_IDENTITY_RECORD),
     lastActivityBlock: height,
-    lastDecayBlock: existing?.lastDecayBlock ?? 0,
-    invitedAtBlock: existing?.invitedAtBlock ?? 0,
-    lifetimeLikesReceived: existing?.lifetimeLikesReceived ?? 0n,
-    memberSinceBlock: existing?.memberSinceBlock ?? 0,
-    memberBar: existing?.memberBar ?? 0,
-    memberVouches: existing?.memberVouches ?? 0,
-    memberLikes: existing?.memberLikes ?? 0n,
-    invitesUsed: existing?.invitesUsed ?? 0,
   });
 }
 

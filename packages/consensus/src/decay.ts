@@ -1,4 +1,5 @@
 import {
+  EMPTY_IDENTITY_RECORD,
   bytesToHex,
   effectiveKarma,
   isIdentityStale,
@@ -207,15 +208,8 @@ export function commitDecayClocks(
   for (const plan of plans) {
     const record = deps.getIdentityRecord(plan.owner);
     deps.putIdentityRecord(plan.owner, {
-      lastActivityBlock: record?.lastActivityBlock ?? 0,
+      ...(record ?? EMPTY_IDENTITY_RECORD),
       lastDecayBlock: currentHeight,
-      invitedAtBlock: record?.invitedAtBlock ?? 0,
-      lifetimeLikesReceived: record?.lifetimeLikesReceived ?? 0n,
-      memberSinceBlock: record?.memberSinceBlock ?? 0,
-      memberBar: record?.memberBar ?? 0,
-      memberVouches: record?.memberVouches ?? 0,
-      memberLikes: record?.memberLikes ?? 0n,
-      invitesUsed: record?.invitesUsed ?? 0,
     });
   }
 }
