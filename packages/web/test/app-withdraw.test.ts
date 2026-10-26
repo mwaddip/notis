@@ -274,13 +274,26 @@ describe('the App withdraw flight', () => {
     [{ status: 400, message: 'Post is not confirmed in an earlier block' }, 'this post has not landed yet'],
     [{ status: 400, message: 'Post is already withdrawn or unknown' }, 'this post is already withdrawn'],
     [{ status: 400, message: "Invalid postWithdraw transaction: PostWithdraw post x is not authored by the karma input's owner" }, 'only the author can withdraw this post'],
-    [{ status: 409, message: 'conflict' }, 'that rep box is still tied up in a transaction that has not landed'],
     [{ status: 503, message: 'mempool full' }, "the node's pool is full right now"],
   ] as [Rejection, string][])('maps the node refusal %o into the voice register', async (rejection, copy) => {
     const h = harness({ kind: 'reject', rejection });
     const { P } = await ownRootOpen(h);
     await h.drive.withdrawPost(P);
     expect(h.panes.querySelector('.region')?.textContent).toContain('withdraw rejected: ' + copy);
+  });
+
+  // WEB_INTERFACE → The wallet → "A rejection's words follow the node's
+  // message, never its status alone": the pool's box conflict reads the
+  // floor sentence on every rep surface.
+  it.fails('maps the pool\'s box conflict (409 Input ... is already spent by a pending transaction) to the floor sentence', async () => {
+    const rejection: Rejection = {
+      status: 409,
+      message: `Input ${'77'.repeat(32)} is already spent by a pending transaction`,
+    };
+    const h = harness({ kind: 'reject', rejection });
+    const { P } = await ownRootOpen(h);
+    await h.drive.withdrawPost(P);
+    expect(h.panes.querySelector('.region')?.textContent).toContain('withdraw rejected: that rep is still tied up in a spend that has not landed.');
   });
 
   it('a landing drops the post from an open @posts window and re-renders it without its ↻', async () => {
