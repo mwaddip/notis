@@ -65,9 +65,11 @@ export function getVouchesForTargetPage(
 }
 
 /**
- * Unspent vouch boxes whose voucher's identity record fails member() —
- * ascending box id, at most `limit`. The settlement's lapse leg
- * (NODE_INTERFACE → The settlement transaction).
+ * Unspent vouch boxes whose voucher's identity record is a lapsed member —
+ * `memberSinceBlock > 0 ∧ memberVouches < memberBar` (CONSENSUS_INTERFACE →
+ * What it holds → "Membership is one predicate"), ascending box id, at most
+ * `limit`. The settlement's lapse leg (NODE_INTERFACE → The settlement
+ * transaction; NODE_INTERFACE → Vouch escrows → `getLapsedVouches`).
  */
 export function getLapsedVouches(limit: number): VouchBox[] {
   const db = getDb();
@@ -76,7 +78,8 @@ export function getLapsedVouches(limit: number): VouchBox[] {
          ON ir.identity_id = unhex(json_extract(u.extra_data, '$.voucherId'))
        WHERE u.box_type = 'vouch'
          AND u.spent_at_block IS NULL
-         AND NOT (ir.member_since_block > 0 AND ir.member_vouches >= ir.member_bar)
+         AND ir.member_since_block > 0
+         AND ir.member_vouches < ir.member_bar
        ORDER BY u.id
        LIMIT ?`, true)
     .all(limit) as UtxoRow[];

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { seedProvenance, uid } from '../helpers.js';
-import type { VouchEscrowBox, BondBox } from '@dagsocial/types';
+import type { VouchEscrowBox, BondBox, VouchBox } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers (module-level singleton state resets between tests)
@@ -9,8 +9,9 @@ import type { VouchEscrowBox, BondBox } from '@dagsocial/types';
 async function importAll() {
   const db = await import('../../src/store/db.js');
   const utxo = await import('../../src/store/utxo.js');
+  const vouchQueries = await import('../../src/store/vouch-queries.js');
   const identityRecords = await import('../../src/store/identity-records.js');
-  return { ...db, ...utxo, ...identityRecords };
+  return { ...db, ...utxo, ...vouchQueries, ...identityRecords };
 }
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,21 @@ function makeBondBox(
     inviteePublicKey,
   };
   return seedProvenance<BondBox>(candidate, 1, nonce);
+}
+
+function makeVouchBox(
+  voucherId: Uint8Array,
+  targetId: Uint8Array,
+  nonce = 0,
+): VouchBox {
+  const candidate = {
+    boxType: 'vouch' as const,
+    value: 1n,
+    createdAtBlock: 1,
+    voucherId,
+    targetId,
+  };
+  return seedProvenance<VouchBox>(candidate, 1, nonce);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,3 +206,65 @@ describe('getVouchEscrowsReleasableAt — order and limit', () => {
   });
 });
 
+
+describe('getLapsedVouches — lapsed-member predicate', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
+
+  // CONSENSUS_INTERFACE → What it holds → "Membership is one predicate" —
+  // isLapsedMember(record) = memberSinceBlock > 0 ∧ NOT isMember(record), i.e.
+  // the record has crossed the floor once and now falls short.
+  it('lists an unspent vouch whose voucher is a lapsed member', async () => {
+    const s = await importAll();
+    s.initDb(':memory:');
+
+    const voucher = uid('lapsed-voucher');
+    const target = uid('lapsed-target');
+
+    s.putIdentityRecord(voucher, {
+      invitedAtBlock: 1,
+      lastActivityBlock: 1,
+      lastDecayBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 5,
+      memberBar: 3,
+      memberVouches: 1,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+    const vouch = makeVouchBox(voucher, target, 1);
+    s.insertBox(vouch);
+
+    const lapsed = s.getLapsedVouches(10);
+    expect(lapsed).toHaveLength(1);
+    expect(lapsed[0]!.id).toBe(vouch.id);
+  });
+
+  // A record with memberSinceBlock = 0 never joined, so it cannot have lapsed
+  // (CONSENSUS_INTERFACE → What it holds → "Membership is one predicate"); the
+  // settlement's lapse leg must not sweep a vouch whose voucher is not even a
+  // former member.
+  it('ignores a vouch whose voucher has memberSinceBlock 0 and too few vouches', async () => {
+    const s = await importAll();
+    s.initDb(':memory:');
+
+    const voucher = uid('never-member-voucher');
+    const target = uid('never-member-target');
+
+    s.putIdentityRecord(voucher, {
+      invitedAtBlock: 1,
+      lastActivityBlock: 1,
+      lastDecayBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 3,
+      memberVouches: 1,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+    const vouch = makeVouchBox(voucher, target, 1);
+    s.insertBox(vouch);
+
+    expect(s.getLapsedVouches(10)).toHaveLength(0);
+  });
+});
