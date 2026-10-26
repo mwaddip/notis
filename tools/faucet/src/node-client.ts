@@ -1,4 +1,4 @@
-import { PAGE_LIMIT_MAX } from '@dagsocial/types';
+import { PAGE_LIMIT_MAX, isHex64 } from '@dagsocial/types';
 import {
   fetchJson,
   isRecord,
@@ -7,7 +7,6 @@ import {
   LISTING_PAGE_READ_BYTES,
   WRITE_ANSWER_READ_BYTES,
   REQUEST_TIMEOUT_MS,
-  isHex64Lower,
   isNonNegSafeInt,
   isBoxValue,
   isSum,
@@ -155,7 +154,7 @@ export class HttpNodeClient implements NodeClient {
     const out: WireBox[] = [];
     for (const b of raw) {
       if (!isRecord(b)) throw new NodeError(502, 'a listing row is not an object');
-      if (!isHex64Lower(b['boxId'])) throw new NodeError(502, 'a listing row has no 64-hex box id');
+      if (!isHex64(b['boxId'])) throw new NodeError(502, 'a listing row has no 64-hex box id');
       if (!isBoxValue(b['value'])) throw new NodeError(502, 'a listing row has a box value out of its domain');
       const lock = b['lockedUntilBlock'];
       if (lock !== undefined && !isNonNegSafeInt(lock)) {
