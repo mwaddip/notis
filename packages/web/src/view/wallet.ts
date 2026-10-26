@@ -1,4 +1,4 @@
-import { el, shortHex, endForm, setText } from '../dom';
+import { el, mono, shortHex, endForm, setText } from '../dom';
 import { prefs } from '../prefs';
 import { readHex64 } from '../hex64';
 import { unlockForm } from './passphrase';
@@ -109,10 +109,6 @@ function row(label: string): { row: HTMLElement; field: HTMLElement } {
   const field = el('div', 'field');
   r.appendChild(field);
   return { row: r, field };
-}
-
-function mono(text: string): HTMLElement {
-  return el('span', 'mono', text);
 }
 
 /** The wallet window's body: `update` draws it from the state as it stands,
