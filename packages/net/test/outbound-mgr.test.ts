@@ -54,10 +54,6 @@ describe('OutboundManager', () => {
     expect(mgr.pickCandidate(15, NONE)).toBeNull();
   });
 
-  it('returns bootstrap peers', () => {
-    expect(mgr.getBootstrapPeers()).toEqual(['/ip4/10.0.0.1/tcp/9000']);
-  });
-
   it('returns candidate from PeerDb in fill phase', () => {
     db.record({
       address: '/ip4/1.2.3.4/tcp/9000',

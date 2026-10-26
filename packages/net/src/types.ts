@@ -164,8 +164,6 @@ export interface NetValidators {
   // functions through; net calls them, it does not implement them.
   verifyProtocolVersion: (declared: number, height: number, schedule: readonly ProtocolEra[]) => boolean;
   verifyTxProtocolVersion: (tx: UtxoTransaction, height: number, schedule: readonly ProtocolEra[]) => boolean;
-  verifyContentLimits: (content: string) => { valid: boolean; error?: string };
-  verifyParentRefsCount: (refs: string[]) => { valid: boolean; error?: string };
   verifyTxStructure: (tx: UtxoTransaction) => { valid: boolean; error?: string };
   // Every entry of the signature map verifies over the transaction's id
   // (VALIDATION_INTERFACE → verifyTxSignatures). The tx topic validator reads

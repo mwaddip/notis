@@ -68,8 +68,8 @@ import { OutboundManager } from './outbound-mgr.js';
 import { decodeFrame, KNOWN_FRAME_MAGICS } from './frame.js';
 import {
   buildHandshakeFrame,
+  decodeHandshakeBody,
   handshakePenalty,
-  parseHandshakeBody,
   validateHandshake,
 } from './handshake.js';
 import type { HandshakeResult } from './handshake.js';
@@ -1331,7 +1331,7 @@ export class NetNode {
           return;
         }
 
-        const result = validateHandshake(parseHandshakeBody(body), era);
+        const result = validateHandshake(decodeHandshakeBody(body), era);
         if (!result.ok || !result.msg) {
           // Contract: the stream closes either way, but the ban does not —
           // malformed input is banned permanently, an unsupported version is
@@ -1736,7 +1736,7 @@ export class NetNode {
     }
     const body = decoded.body;
 
-    const result = validateHandshake(parseHandshakeBody(body), this.currentEra());
+    const result = validateHandshake(decodeHandshakeBody(body), this.currentEra());
     if (!result.ok) {
       console.warn(`[net] outbound handshake with ${peerId} rejected: ${result.error}`);
       const outHsPenKind = handshakePenalty(result.rejection);

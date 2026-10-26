@@ -7,8 +7,6 @@ import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyOrderingBlockStructure,
@@ -19,7 +17,7 @@ import {
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
 import { HANDSHAKE_PROTOCOL } from '../src/sync.js';
-import { buildHandshakeFrame, decodeHandshakeBody, parseHandshakeBody, validateHandshake } from '../src/handshake.js';
+import { buildHandshakeFrame, decodeHandshakeBody, validateHandshake } from '../src/handshake.js';
 import type { HandshakeResult } from '../src/handshake.js';
 import { decodeFrame } from '../src/frame.js';
 import { PeerState, PenaltyKind } from '../src/types.js';
@@ -47,8 +45,6 @@ const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyOrderingBlockStructure,
@@ -412,7 +408,7 @@ describe('inbound handshake handler — our own reply', () => {
 
     expect(written).toHaveLength(1);
     const frame = decodeFrame(MAGIC, written[0]!);
-    const raw = parseHandshakeBody(frame.body);
+    const raw = decodeHandshakeBody(frame.body);
     // Our reply declares PROTOCOL_VERSION, which covers era PROTOCOL_VERSION.
     const result = validateHandshake(raw, PROTOCOL_VERSION);
     expect(result.ok).toBe(true);

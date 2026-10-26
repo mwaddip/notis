@@ -41,7 +41,6 @@ export {
   decodeHandshakeBody,
   handshakeCodec,
   handshakePenalty,
-  parseHandshakeBody,
   validateHandshake,
 } from './handshake.js';
 export type { HandshakeMsg, HandshakeRejection, HandshakeResult } from './handshake.js';

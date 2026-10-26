@@ -138,9 +138,4 @@ export class OutboundManager {
 
     return candidates[0]!.address;
   }
-
-  /** Seed addresses to dial when below minPeers. */
-  getBootstrapPeers(): string[] {
-    return this.config.bootstrapPeers;
-  }
 }

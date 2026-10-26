@@ -5,7 +5,6 @@ import {
   decodeHandshakePayload,
   handshakeCodec,
   handshakePenalty,
-  parseHandshakeBody,
   validateHandshake,
 } from '@dagsocial/net';
 import {
@@ -88,7 +87,7 @@ describe('handshake', () => {
       const decoded = decodeHandshakePayload(MAGIC_TESTNET, frame);
       expect(decoded.kind).toBe('framed');
       if (decoded.kind === 'reject') return;
-      expect(validateHandshake(parseHandshakeBody(decoded.body), 1).ok).toBe(true);
+      expect(validateHandshake(decodeHandshakeBody(decoded.body), 1).ok).toBe(true);
     });
 
     it('rejects a frame from the wrong network', () => {
@@ -256,10 +255,6 @@ describe('handshake', () => {
   });
 
   describe('positional boundary', () => {
-    it('returns null from parseHandshakeBody on garbage bytes', () => {
-      expect(parseHandshakeBody(new Uint8Array([0xff, 0xff, 0xff, 0xff]))).toBeNull();
-    });
-
     it('rejects a null body in validateHandshake', () => {
       expect(validateHandshake(null, 1).ok).toBe(false);
     });

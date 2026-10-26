@@ -142,16 +142,6 @@ export function decodeHandshakeBody(body: Uint8Array): HandshakeMsg | null {
   }
 }
 
-/**
- * Decode a handshake body through the positional codec.
- *
- * Returns a `HandshakeMsg` on success or `null` on malformed input. Pass the
- * result to `validateHandshake` to check version support.
- */
-export function parseHandshakeBody(body: Uint8Array): unknown {
-  return decodeHandshakeBody(body);
-}
-
 function reject(
   error: string,
   rejection: HandshakeRejection = 'malformed',
