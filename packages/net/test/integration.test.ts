@@ -588,9 +588,17 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
       capabilities: [],
     });
 
-    // Five misbehaviors cross the 500-point threshold.
-    for (let i = 0; i < 5; i++) {
-      internalsB.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, aId, 'test');
+    // Five misbehaviors at one instant cross the 500-point threshold.
+    // `Date.now` holds across the five calls so the decay reads zero between
+    // them; libp2p's own timers run on the real clock, so the pin is restored
+    // straight after.
+    {
+      const at = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(at);
+      for (let i = 0; i < 5; i++) {
+        internalsB.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, aId, 'test');
+      }
+      clock.mockRestore();
     }
     // NET_INTERFACE → "A ban ends the connection": the ban hangs up every
     // connection to the peer. The hang-up is asynchronous.
@@ -663,9 +671,17 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     expect(nodeA.getConnectedPeers()).toContain(bId);
 
     const peerMgrA = (nodeA as unknown as Internals).peerMgr;
-    // Five misbehaviors cross the 500-point threshold.
-    for (let i = 0; i < 5; i++) {
-      peerMgrA.recordPenaltyKind(PenaltyKind.Misbehavior, bId, 'test');
+    // Five misbehaviors at one instant cross the 500-point threshold.
+    // `Date.now` holds across the five calls so the decay reads zero between
+    // them; libp2p's own timers run on the real clock, so the pin is restored
+    // straight after.
+    {
+      const at = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(at);
+      for (let i = 0; i < 5; i++) {
+        peerMgrA.recordPenaltyKind(PenaltyKind.Misbehavior, bId, 'test');
+      }
+      clock.mockRestore();
     }
     await new Promise((r) => setTimeout(r, 1500));
 
