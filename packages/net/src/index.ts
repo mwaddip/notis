@@ -7,7 +7,7 @@ export {
 export type { HandshakePayload } from './node.js';
 export { PeerManager, MAX_TRACKED_BANS, MAX_TRACKED_SCORES } from './peer-mgr.js';
 export type { PeerBanHooks } from './peer-mgr.js';
-export { SYNC_PROTOCOL } from './sync.js';
+export { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from './sync.js';
 export {
   gossipTopics,
   gossipMessageId,

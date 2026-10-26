@@ -27,6 +27,7 @@ import {
   GOSSIP_SEEN_WINDOW_MS,
 } from './gossip.js';
 import {
+  HANDSHAKE_PROTOCOL,
   SYNC_PROTOCOL,
   requestHeaders,
   requestBlocks,
@@ -1235,7 +1236,7 @@ export class NetNode {
   private registerHandshakeHandler(libp2p: Libp2p): void {
     const magic = this.config.magic;
 
-    libp2p.handle('/dagsocial/handshake/1', async (stream, connection) => {
+    libp2p.handle(HANDSHAKE_PROTOCOL, async (stream, connection) => {
       const peerId = connection.remotePeer.toString();
       const connId = connection.id;
       // NET_INTERFACE → Validation → "A stream write is bounded in time as
@@ -1695,7 +1696,7 @@ export class NetNode {
     // connection it opened": the stream opens on this connection, not on
     // whichever one libp2p's dial queue picks.
     const data = await oneRoundTrip(
-      (signal) => conn.newStream('/dagsocial/handshake/1', { signal }),
+      (signal) => conn.newStream(HANDSHAKE_PROTOCOL, { signal }),
       buildHandshakeFrame(magic, ourMsg),
       this.config,
       1,

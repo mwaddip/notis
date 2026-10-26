@@ -18,6 +18,7 @@ import {
   verifyPostBody,
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
+import { HANDSHAKE_PROTOCOL } from '../src/sync.js';
 import { buildHandshakeFrame, decodeHandshakeBody, parseHandshakeBody, validateHandshake } from '../src/handshake.js';
 import type { HandshakeResult } from '../src/handshake.js';
 import { decodeFrame } from '../src/frame.js';
@@ -115,7 +116,7 @@ function makeHandshakeHarness(opts: {
   internals.peerDb = peerDb;
   internals.libp2p = {
     handle: (protocol: string, cb: StreamHandler, options?: HandleOptions) => {
-      if (protocol === '/dagsocial/handshake/1') {
+      if (protocol === HANDSHAKE_PROTOCOL) {
         captured = cb;
         registrationOptions = options;
       }
