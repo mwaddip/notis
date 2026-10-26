@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   EMPTY_IDENTITY_RECORD,
   ED25519_PKCS8_PREFIX,
+  POW_TARGET_BITS_MAX,
   bytesToHex,
   effectiveKarma,
   generateKeyPair,
@@ -124,5 +125,11 @@ describe('ED25519_PKCS8_PREFIX', () => {
     expect(bytesToHex(secretKey.subarray(0, ED25519_PKCS8_PREFIX.length / 2))).toBe(
       ED25519_PKCS8_PREFIX,
     );
+  });
+});
+
+describe('POW_TARGET_BITS_MAX', () => {
+  it('is 256 bits in 1/256-bit units', () => {
+    expect(POW_TARGET_BITS_MAX).toBe(256 * 256);
   });
 });

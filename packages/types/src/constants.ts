@@ -295,7 +295,8 @@ export const MIN_FEE_RATE_PER_BYTE = 0n;
 export const MIN_BOX_VALUE_PER_BYTE = 156n;        // consensus — credit outputs only
 export const STORAGE_RENT_PER_BYTE = 605_378n;     // consensus — charged once per period
 
-// Ordering block PoW — difficulty in units of 1/256 of a bit, domain [0, 65536]
+// Ordering block PoW — difficulty in units of 1/256 of a bit, domain
+// [0, POW_TARGET_BITS_MAX]
 // (VALIDATION_INTERFACE → orderingPowTarget).
 //
 // The anchor's bits — block 1's target, and the yardstick every superblock level
@@ -317,6 +318,11 @@ export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;
 export const RETARGET_HALFLIFE_BLOCKS = 288;
 /** The future bound on `createdAt`, in ms. MINING_INTERFACE → Header timestamp rules. */
 export const MAX_FUTURE_DRIFT_MS = 600_000;
+/**
+ * 256 bits in 1/256-bit units, `256 * 256` — the top of `powTargetBits`'
+ * domain `[0, POW_TARGET_BITS_MAX]` (TYPES_INTERFACE → Ordering block PoW).
+ */
+export const POW_TARGET_BITS_MAX = 65_536;
 
 /**
  * The `prevBlockHash` a height-1 block carries: 32 zero bytes as 64 hex
