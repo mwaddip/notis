@@ -2908,8 +2908,9 @@ user transaction spends an escrow (`BLOCK_APPLICATION_ONLY`).
 
 ⚠ **The lapse leg reads PRE-BODY state too, and its predicate is the record's.** The settlement
 of height `h` consumes **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** of the unspent `vouch` boxes
-whose `voucherId` fails `member(voucher)` — `memberSinceBlock > 0 ∧ memberVouches ≥ memberBar` on
-the identity record — in the state the block builds on, **voucher by voucher, each voucher's vouches in target
+whose `voucherId` is a lapsed member — an identity record with `memberSinceBlock > 0` that fails
+`member(voucher)`, `memberSinceBlock > 0 ∧ memberVouches ≥ memberBar` (`isLapsedMember`, `CONSENSUS_INTERFACE → What
+it holds`) — in the state the block builds on, **voucher by voucher, each voucher's vouches in target
 order** — the tree's `lapsed` and `vouchPair` walks (`CONSENSUS_INTERFACE → The tree view`), so the leg reads no more
 of the tree than its limit takes, and a voucher's place in the order is its key's — and emits for each one a
 `VouchEscrowBox` of the vouch's value to the voucher with `releaseAtBlock = vouch.createdAtBlock +
@@ -4060,10 +4061,6 @@ effects like any other box's (→ Block Journal); no bespoke side-records exist.
 | `getVouchEscrowsForPage(voucherId, page)` | `(UserId, Page<string>) => { rows: VouchEscrowBox[], next: string \| null, count: number }` — the API's cooldown page (`GET /vouches?voucher=X&cooldowns=1`): the same set, ascending `id` strictly after `after`, on the escrow-owner index; `count` over the whole set |
 | `getVouchEscrowsReleasableAt(height, limit)` | `(number, number) => VouchEscrowBox[]` — every unspent `vouch_escrow` with `releaseAtBlock <= height`, **ascending `(releaseAtBlock, box id)`**, capped at `limit`. The store's answer to the settlement's escrow-leg read (§The settlement transaction), for the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
 | `getLapsedVouches(limit)` | `(number) => VouchBox[]` — the unspent `vouch` boxes whose `voucherId`'s identity record is a lapsed member (`memberSinceBlock > 0` and failing `member(voucher)` — `isLapsedMember`, `CONSENSUS_INTERFACE → What it holds`), **ascending box id**, at most `limit`. The store's answer to the settlement's lapse-leg read, in its own order — the shadow run compares it with the tree's as a set; the rules read the tree's, voucher by voucher (§The settlement transaction) |
-
-> ⚠ **AHEAD OF CODE (2026-10-26).** `getLapsedVouches`' row leads `store/vouch-queries.ts`, whose query tests
-> `NOT member`; the Posts DAG and UTXO tables carry no `getParentRefs` and no `getBondFor`, which `store/posts.ts`,
-> `store/utxo.ts` and the store's barrel still export.
 
 ⛔ **A block-application effect keyed on node-local SQL that no committed root
 covers is a fork waiting to happen** (§the settlement transaction's determinism
