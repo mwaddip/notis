@@ -329,8 +329,8 @@ describe('the invite at block application', () => {
     // … and the pool paid for it, exactly.
     expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - FIXTURE_BOND_KARMA);
     // The bond is live: it waits for its deadline. The settlement reads bonds
-    // through `getBondsInvitedAt` (NODE_INTERFACE → UTXO → `getBondsInvitedAt`),
-    // the carry-forward leg.
+    // through `getBondsInvitedAt` (NODE_INTERFACE → UTXO), the carry-forward
+    // leg.
     const bondsForInvitee = utxo
       .getBondsInvitedAt(height, 100)
       .filter((b) => Buffer.from(b.inviteePublicKey).toString('hex')
@@ -1179,9 +1179,8 @@ describe('the invite at block application — decay adjacency', () => {
     expect(utxo.getKarmaValue(invitee.userId)).toBe(inviteeBefore + bondValue);
     expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(invitedAtBlock);
     // The settlement reads bonds through `getBondsInvitedAt`
-    // (NODE_INTERFACE → UTXO → `getBondsInvitedAt`); the invitee's record
-    // carries `invitedAtBlock`, so the one bond for this invitee rides the
-    // range (0, invitedAtBlock].
+    // (NODE_INTERFACE → UTXO); the invitee's record carries `invitedAtBlock`,
+    // so the one bond for this invitee rides the range (0, invitedAtBlock].
     const bond = utxo
       .getBondsInvitedAt(invitedAtBlock, 100)
       .find((b) => Buffer.from(b.inviteePublicKey).toString('hex')

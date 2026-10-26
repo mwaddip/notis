@@ -69,7 +69,7 @@ export function getVouchesForTargetPage(
  * `memberSinceBlock > 0 ∧ memberVouches < memberBar` (CONSENSUS_INTERFACE →
  * What it holds → "Membership is one predicate"), ascending box id, at most
  * `limit`. The settlement's lapse leg (NODE_INTERFACE → The settlement
- * transaction; NODE_INTERFACE → Vouch escrows → `getLapsedVouches`).
+ * transaction; NODE_INTERFACE → Vouch escrows).
  */
 export function getLapsedVouches(limit: number): VouchBox[] {
   const db = getDb();

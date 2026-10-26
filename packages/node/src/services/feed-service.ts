@@ -201,8 +201,8 @@ function withdrawnToJson(
  * TYPES_INTERFACE → One transaction of a body).
  *
  * A page's rows arrive in block order (`ORDER BY block_height, block_index`,
- * NODE_INTERFACE → Posts DAG → `queryPostsPage`), so rows that share a height
- * reuse the last bytes read; a
+ * NODE_INTERFACE → Posts DAG), so rows that share a height reuse the last
+ * bytes read; a
  * thread's ancestors, descendants and pending each arrive sorted inside their
  * own list, so each list reads one body per distinct height. **Pending bytes
  * come from the pool, confirmed from the stored body**: a pending row's bytes

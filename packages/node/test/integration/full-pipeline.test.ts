@@ -687,8 +687,8 @@ describe('full-pipeline', () => {
 
     // The pairing resolves the way block application resolves it: the invitee
     // key names exactly one live bond, with no provenance walk. The API read
-    // `getBondBoxesPage` (NODE_INTERFACE → UTXO → `getBondBoxesPage`) lists
-    // the inviter's unspent bonds; the one bond names this invitee.
+    // `getBondBoxesPage` (NODE_INTERFACE → UTXO) lists the inviter's unspent
+    // bonds; the one bond names this invitee.
     const bondBox = deps.getBox(storedBond.id) as BondBox;
     expect(Buffer.from(bondBox.inviteePublicKey).toString('hex'))
       .toBe(Buffer.from(invitee).toString('hex'));
