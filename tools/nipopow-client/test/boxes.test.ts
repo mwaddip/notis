@@ -18,7 +18,7 @@ import {
   singleKeyAnswerFromProver,
   twoHeightNode,
 } from './helpers.js';
-import { decayCfgFor, effectiveKarma } from '@dagsocial/types';
+import { decayCfgFor, effectiveKarma, EMPTY_IDENTITY_RECORD } from '@dagsocial/types';
 import type { IdentityRecord, UserId } from '@dagsocial/types';
 
 // WEB_INTERFACE → The extension → "The verified figures" — proveFigures reads
@@ -44,17 +44,7 @@ const RECORD_KEY = identityProofKeyHex(USER_BYTES);
 const SUFFIX_H = 100;
 const TIP_H = 119;
 
-const NEVER_ACTIVE_RECORD: IdentityRecord = {
-  lastActivityBlock: 0,
-  lastDecayBlock: 0,
-  invitedAtBlock: 0,
-  lifetimeLikesReceived: 0n,
-  memberSinceBlock: 0,
-  memberBar: 0,
-  memberVouches: 0,
-  memberLikes: 0n,
-  invitesUsed: 0,
-};
+const NEVER_ACTIVE_RECORD: IdentityRecord = { ...EMPTY_IDENTITY_RECORD };
 
 // The record stands in both heights' fixtures; stale clocks keep decay out of
 // the valuation except in the dedicated decay case.
