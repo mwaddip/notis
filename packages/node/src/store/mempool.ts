@@ -22,7 +22,7 @@ import {
   computeTxId,
   computePostId,
   utxoTxTreeByteLength,
-  canonicalUsernameBytes,
+  canonicalUsername,
 } from '@dagsocial/types';
 import { isCreditSideTx } from '@dagsocial/consensus';
 import { settlementMarginalBytes } from '@dagsocial/consensus';
@@ -485,8 +485,7 @@ export function gateMetadata(tx: UtxoTransaction): GateMetadata {
       meta.vouchTarget = Buffer.from((output as VouchBox).targetId).toString('hex');
     } else if (output.boxType === 'username' && meta.usernameLower === null) {
       const nameBytes = (output as UsernameBox).name;
-      const canonical = canonicalUsernameBytes(nameBytes);
-      meta.usernameLower = Buffer.from(canonical).toString('utf8');
+      meta.usernameLower = canonicalUsername(nameBytes);
       meta.usernameClaimant = Buffer.from((output as UsernameBox).owner).toString('hex');
     }
   }

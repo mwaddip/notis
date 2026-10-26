@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { UtxoTransaction, UsernameBox } from '@dagsocial/types';
-import { canonicalUsernameBytes, isValidUsernameBytes } from '@dagsocial/types';
+import { canonicalUsername, isValidUsernameBytes, usernameString } from '@dagsocial/types';
 import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
 import { admitWriteTx } from '../services/admit-tx.js';
 import { getNet } from '../services/net-instance.js';
@@ -74,7 +74,7 @@ export function createRouter(deps: UsernameRouteDeps): Router {
       const pooledOut = (pooledTx.outputs ?? []).find(
         (o): o is UsernameBox => o.boxType === 'username',
       )!;
-      const nameAsTyped = Buffer.from(pooledOut.name).toString('utf8');
+      const nameAsTyped = usernameString(pooledOut.name);
       res.status(200).json({ status: 'pending', txId, expiresAtHeight, name: nameAsTyped });
     } catch (err) {
       respondError(res, err, 'POST /usernames', 'message');
@@ -97,7 +97,7 @@ export function createRouter(deps: UsernameRouteDeps): Router {
       return;
     }
 
-    const canonical = Buffer.from(canonicalUsernameBytes(nameBytes)).toString('utf8');
+    const canonical = canonicalUsername(nameBytes);
     const row = deps.getUsername(canonical);
     if (!row) {
       res.status(404).json({ error: 'Name not held' });
@@ -150,7 +150,7 @@ export function createRouter(deps: UsernameRouteDeps): Router {
       return;
     }
 
-    const canonical = Buffer.from(canonicalUsernameBytes(nameBytes)).toString('utf8');
+    const canonical = canonicalUsername(nameBytes);
     const row = deps.getUsername(canonical);
     if (!row) {
       res.status(404).json({ error: 'Name not held' });

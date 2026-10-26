@@ -1,8 +1,8 @@
 import type { PostKey, BoxKey } from '../store/index.js';
 import {
+  canonicalUsername,
   isHex64,
   isValidUsernameBytes,
-  canonicalUsernameBytes,
   PAGE_LIMIT_DEFAULT,
   PAGE_LIMIT_MAX,
   BATCH_READ_MAX,
@@ -116,7 +116,7 @@ export function resolveIdentityParam(
     if (!isValidUsernameBytes(bytes)) {
       return { error: 'malformed identity parameter', status: 400 };
     }
-    const canonical = Buffer.from(canonicalUsernameBytes(bytes)).toString('utf8');
+    const canonical = canonicalUsername(bytes);
     const row = getUsername(canonical);
     if (!row) return { error: 'unknown handle', status: 404 };
     return { hex: row.owner };
