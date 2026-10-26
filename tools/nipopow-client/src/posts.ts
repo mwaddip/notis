@@ -20,6 +20,7 @@ import {
   computeTxId,
   decodeTx,
   hexToBytes,
+  isHex64,
 } from '@dagsocial/types';
 import type { PostType, UtxoTransaction } from '@dagsocial/types';
 import { verifyEd25519, verifyEd25519Batch, verifyPostBody } from '@dagsocial/validation';
@@ -60,7 +61,6 @@ export interface CheckDeps {
   verifyOne: (signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array) => boolean;
 }
 
-const HEX_64 = /^[0-9a-f]{64}$/;
 const POST_TYPES: readonly PostType[] = ['regular', 'profile'];
 
 /**
@@ -177,15 +177,15 @@ function checkRow(row: unknown): RowOutcome {
   // commit is checked against is a malformed row, since the commit cannot be
   // weighed against a field whose shape is wrong.
   const rowId = row['id'];
-  if (typeof rowId !== 'string' || !HEX_64.test(rowId)) {
+  if (typeof rowId !== 'string' || !isHex64(rowId)) {
     return unbound('malformed', `malformed: row id is ${shown(rowId)}`);
   }
   const rowTxId = row['txId'];
-  if (typeof rowTxId !== 'string' || !HEX_64.test(rowTxId)) {
+  if (typeof rowTxId !== 'string' || !isHex64(rowTxId)) {
     return unbound('malformed', `malformed: row txId is ${shown(rowTxId)}`);
   }
   const rowAuthor = row['author'];
-  if (typeof rowAuthor !== 'string' || !HEX_64.test(rowAuthor)) {
+  if (typeof rowAuthor !== 'string' || !isHex64(rowAuthor)) {
     return unbound('malformed', `malformed: row author is ${shown(rowAuthor)}`);
   }
   const rowParentRefs = row['parentRefs'];
@@ -193,12 +193,12 @@ function checkRow(row: unknown): RowOutcome {
     return unbound('malformed', `malformed: row parentRefs is ${shown(rowParentRefs)}`);
   }
   for (const ref of rowParentRefs) {
-    if (typeof ref !== 'string' || !HEX_64.test(ref)) {
+    if (typeof ref !== 'string' || !isHex64(ref)) {
       return unbound('malformed', `malformed: a parent ref is ${shown(ref)}`);
     }
   }
   const rowContentHash = row['contentHash'];
-  if (typeof rowContentHash !== 'string' || !HEX_64.test(rowContentHash)) {
+  if (typeof rowContentHash !== 'string' || !isHex64(rowContentHash)) {
     return unbound('malformed', `malformed: row contentHash is ${shown(rowContentHash)}`);
   }
   const rowType = row['type'];

@@ -1,4 +1,5 @@
 import {
+  isHex64,
   profileFor,
   NETWORK_PROFILES,
   RETARGET_HALFLIFE_BLOCKS,
@@ -75,7 +76,7 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   if (argv[0] === 'post') {
     const id = argv[1];
     if (id === undefined) throw new ConfigError('post requires an id');
-    if (!/^[0-9a-f]{64}$/.test(id)) throw new ConfigError('post id must be 64 lowercase hex chars');
+    if (!isHex64(id)) throw new ConfigError('post id must be 64 lowercase hex chars');
     post = id;
     flagsStart = 2;
   }
@@ -95,7 +96,7 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
     } else if (arg === '--user') {
       const v = argv[++i];
       if (v === undefined) throw new ConfigError('--user requires a value');
-      if (!/^[0-9a-f]{64}$/.test(v)) throw new ConfigError('--user must be 64 lowercase hex chars');
+      if (!isHex64(v)) throw new ConfigError('--user must be 64 lowercase hex chars');
       user = v;
     } else if (arg === '--allow-single') {
       allowSingle = true;
