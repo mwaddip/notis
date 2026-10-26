@@ -658,7 +658,7 @@ describe('builders — the own box is named first, the income box only when it m
     expect(c.change?.value).toBe(50n);
   });
 
-  it('a pending spend moves the own box: the next build names the predicted change', () => {
+  it('a pending spend moves the own box: the next build names the unmarked change box', () => {
     // A prior like took the own box of value 50 and emitted a change of 49
     // (unmarked) beside the still-unspent income box of 100. The next like
     // (cost 1) names the change alone, since it covers.
@@ -684,7 +684,7 @@ describe('builders — the own box is named first, the income box only when it m
     expect(built.tx.inputs).toEqual([TINY, INC_BOX]);
   });
 
-  it('a pending spend that took the income box leaves the view holding the predicted change alone', () => {
+  it('a pending spend that took the income box leaves the view holding the unmarked change box alone', () => {
     // Both own and income are spent by the prior entry; the view carries one
     // unmarked change. The next build names it, and the output is unmarked.
     const CHG = 'aa'.repeat(32);

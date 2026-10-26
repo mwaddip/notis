@@ -613,12 +613,12 @@ describe('profile window — no standing row for any tier', () => {
 
 describe('profile window — the karma field and the faucet step', () => {
   // WEB_INTERFACE → "The `rep` row is the rep view's `effective` alone"
-  it('the rep row reads the effective number alone, with and without a decay gap', () => {
+  it('the rep row reads the rep view\'s effective, with and without a decay gap', () => {
     // No gap — the row's label says what the number counts, so no unit follows it.
     const flush = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '227' }) })), 'rep')!;
     expect(flush.querySelector('.mono')!.textContent).toBe('227');
     expect(flush.textContent).toBe('227'); // no ' rep', no ' effective · N held'
-    // A decay gap — still the effective number alone, never `held`.
+    // A decay gap — the rep view's effective, never `held`.
     const decayed = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '200' }) })), 'rep')!;
     expect(decayed.querySelector('.mono')!.textContent).toBe('200');
     expect(decayed.textContent).toBe('200');
@@ -1539,10 +1539,10 @@ describe('profile — Esc in a passphrase form cancels that form and reaches not
 // ---------------------------------------------------------------------------
 // The verified-figures line beneath the rep number (WEB_INTERFACE → The
 // extension → "The verified figures", → The profile window → "The `rep` row
-// is the `effective` number alone"). These tests pin the row's plumbing: the
-// hint element renders under the mono number, and under the full rule (row 4)
-// the mono span gains `.clay` alongside the hint. The number stays the live
-// `effective` in every state.
+// is the rep view's `effective` alone"). These tests pin the row's plumbing:
+// the hint element renders under the mono number, and under the full rule
+// (row 4) the mono span gains `.clay` alongside the hint. The number is the
+// rep view's `effective` in every state.
 // ---------------------------------------------------------------------------
 
 const EMPTY_SUMS: LedgerSums = { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n };

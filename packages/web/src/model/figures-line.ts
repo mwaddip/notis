@@ -8,7 +8,7 @@
 //
 // The rows are the contract's, the first that holds — WEB_INTERFACE →
 // The extension → "The verified figures", → The wallet window → "The `balance`
-// row", → The profile window → "The `rep` row is the `effective` number
+// row", → The profile window → "The `rep` row is the rep view's `effective`
 // alone". The voice is copied from the contract, never rephrased; a node is
 // never named.
 //

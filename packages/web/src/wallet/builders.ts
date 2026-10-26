@@ -451,9 +451,8 @@ export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
 /** The reader's own and income box from the view, each the first found
  *  under its mark; WEB_INTERFACE → The wallet → "The rep view holds two boxes
  *  at most, and every karma builder tells them apart". The own box is the
- *  unmarked karma box, or the predicted change of the reader's latest pending
- *  spend (`SpendableBox.income` is never carried by the ledger's own
- *  constructed change). */
+ *  reader's unmarked karma box — a pooled output to the reader is unmarked,
+ *  so the change of the reader's latest pooled spend is the own box. */
 function ownAndIncome(spendable: SpendableBox[]): { own: SpendableBox | null; income: SpendableBox | null } {
   let own: SpendableBox | null = null;
   let income: SpendableBox | null = null;

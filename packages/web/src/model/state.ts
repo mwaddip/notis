@@ -159,8 +159,8 @@ export interface RenderCtx {
   author: Map<string, AuthorWindowData>;
   authorPosts: Map<string, FeedState>;
   // The profile's invites row (WEB_INTERFACE → The profile window). The bond
-  // range and probation from /status, whether the spendable covers the minimum,
-  // the reader's standing bonds, and the invite flight.
+  // range and probation from /status, whether the floor would stand over the
+  // minimum bond, the reader's standing bonds, and the invite flight.
   invite: { bondMin: string; bondMax: string; probationBlocks: number } | null;
   canAffordMinBond: boolean;
   bonds: BondsResult | null;

@@ -190,7 +190,7 @@ describe('PendingLedger — persistence and removal', () => {
   it('two identities never see each other\'s entries', () => {
     const KEY2 = 'bb'.repeat(32);
     new PendingLedger(KEY).add(postEntry);
-    // A ledger for a second key sees none of the first's predicted change.
+    // A ledger for a second key sees none of the first's entries.
     const b = new PendingLedger(KEY2);
     expect(b.size).toBe(0);
     b.add({ ...postEntry, txId: 'other' });
@@ -418,11 +418,10 @@ describe('the username reconciles', () => {
 });
 
 // --------------------------------------------------------------------------
-// The credits-side split — WEB_INTERFACE → The wallet ("There are two views
-// over one ledger"): a `send` entry's inputs and change count on the credits
-// side only, a `creditGrant` on neither, every other kind on the karma side
-// only. A send's change is never offered to a post, nor a post's change to a
-// send.
+// The credits-side split — WEB_INTERFACE → The wallet ("There are two views,
+// one per ledger"): a `send` entry rides the credits-side ledger, a
+// `creditGrant` on neither, every other kind on the karma-side ledger. A
+// send's change is never offered to a post, nor a post's change to a send.
 // --------------------------------------------------------------------------
 
 const RECIPIENT = '99'.repeat(32);

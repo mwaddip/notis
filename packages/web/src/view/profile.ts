@@ -68,7 +68,7 @@ export interface ProfileCtx {
   grant: GrantView | null; // a faucet grant in flight, or one that lapsed
   // The invites row (WEB_INTERFACE → The profile window).
   invite: { bondMin: string; bondMax: string; probationBlocks: number } | null; // from /status
-  canAffordMinBond: boolean;   // the spendable covers the minimum bond
+  canAffordMinBond: boolean;   // the floor would stand over the minimum bond (effective − inviteBondMin ≥ KARMA_MINIMUM)
   bonds: BondsResult | null;   // the reader's standing bonds
   inviteFlight: Flight | null; // the invite in the row
   // The username row (WEB_INTERFACE → The username row).

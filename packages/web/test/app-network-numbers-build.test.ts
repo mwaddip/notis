@@ -251,10 +251,11 @@ describe('WEB_INTERFACE → Invariants → "A per-network number is read, never 
 });
 
 describe('WEB_INTERFACE → Invariants → "A per-network number is read, never assumed" — the invite form', () => {
-  // The `@profile` window renders the invite form when the karma loaded holds a
-  // member with an invite available and rep that covers the minimum bond
-  // (WEB_INTERFACE → The profile window → "The `invites` row"); the default
-  // bond and the input's `min`/`max` are written from the one place.
+  // The `@profile` window renders the invite form when the karma loaded holds
+  // a member with an invite available and effective − inviteBondMin ≥
+  // KARMA_MINIMUM (WEB_INTERFACE → The profile window → "The `invites` row");
+  // the default bond and the input's `min`/`max` are written from the one
+  // place.
   it('with no `notis-network` meta, the invite form\'s default bond and `min`/`max` read from `/status`', async () => {
     const { panes, drive } = await harness({ metaNetwork: null });
     drive.openProfile();

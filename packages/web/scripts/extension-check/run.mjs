@@ -2560,13 +2560,13 @@ async function runFiguresStep21(cx) {
 }
 
 // Step 24 — the rep row across R's own post (WEB_INTERFACE → The extension →
-// "The verified figures", → The profile window → "The `rep` row is the
-// `effective` number alone"). Silence before the post. The post's landing
-// re-reads /karma, so the number moves to the node's new `effective` with no
-// press. A press then proves the fresh listing, where the post's change is a
-// young box: *… landed since*. K + 1 blocks on, a verified tip re-reads before
-// it proves, and a press reads silence. R posts one root, spending
-// POST_PRICE_THREAD (5) rep.
+// "The verified figures", → The profile window → "The `rep` row is the rep
+// view's `effective` alone"). Silence before the post. Every 2xx of the
+// reader's own spend re-reads /karma, so the number moves to the node's new
+// `effective` with no press. A press then proves the fresh listing, where the
+// post's change is a young box: *… landed since*. K + 1 blocks on, a verified
+// tip re-reads before it proves, and a press reads silence. R posts one root,
+// spending POST_PRICE_THREAD (5) rep.
 async function runFiguresStep24(cx) {
   try {
     const profileBtn = await cx.eval(`!!document.querySelector('[aria-label="open profile"]')`);

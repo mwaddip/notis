@@ -21,7 +21,7 @@ import type { TipVerdict } from '../src/model/tip-verdict';
 // the run empty while its row, on screen, reads *not checked yet*. Every landing
 // of the reader's own transaction re-reads the listing it changed, once per tick
 // however many land in it, in every build (→ The profile window → "The `rep`
-// row is the `effective` number alone").
+// row is the rep view's `effective` alone").
 
 const ME = 'aa'.repeat(32);
 const X = 'cd'.repeat(32);
