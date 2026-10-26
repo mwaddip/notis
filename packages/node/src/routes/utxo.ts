@@ -7,7 +7,7 @@ import type {
   DecayCfg,
   IdentityRecord,
 } from '@dagsocial/types';
-import { effectiveKarma, membershipBar } from '@dagsocial/types';
+import { effectiveKarma, EMPTY_IDENTITY_RECORD, membershipBar } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { availableInvites, isMember } from '@dagsocial/consensus';
@@ -124,6 +124,10 @@ export function createRouter(deps: UtxoDeps): Router {
       : 0;
 
     const karmaRows = pageResult.rows as KarmaBox[];
+    // TYPES_INTERFACE → Identity record and karma valuation: the record of
+    // an identity no block has written values as every field 0 and the two
+    // bigint counters 0n.
+    const r = record ?? EMPTY_IDENTITY_RECORD;
     res.json({
       userId: Buffer.from(userIdBytes).toString('hex'),
       total: total.toString(),
@@ -141,15 +145,15 @@ export function createRouter(deps: UtxoDeps): Router {
       })),
       boxCount: pageResult.count,
       next: pageResult.next ? formatKey('box', pageResult.next) : null,
-      lastActivityBlock: record?.lastActivityBlock ?? 0,
-      lastDecayBlock: record?.lastDecayBlock ?? 0,
-      lifetimeLikesReceived: (record?.lifetimeLikesReceived ?? 0n).toString(),
-      memberSinceBlock: record?.memberSinceBlock ?? 0,
-      memberBar: record?.memberBar ?? 0,
-      memberVouches: record?.memberVouches ?? 0,
-      memberLikes: (record?.memberLikes ?? 0n).toString(),
-      invitesUsed: record?.invitesUsed ?? 0,
-      invitedAtBlock: record?.invitedAtBlock ?? 0,
+      lastActivityBlock: r.lastActivityBlock,
+      lastDecayBlock: r.lastDecayBlock,
+      lifetimeLikesReceived: r.lifetimeLikesReceived.toString(),
+      memberSinceBlock: r.memberSinceBlock,
+      memberBar: r.memberBar,
+      memberVouches: r.memberVouches,
+      memberLikes: r.memberLikes.toString(),
+      invitesUsed: r.invitesUsed,
+      invitedAtBlock: r.invitedAtBlock,
       member: memberFlag,
       invitesAvailable,
       height,

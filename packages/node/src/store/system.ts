@@ -1,4 +1,4 @@
-import { BOX_VALUE_BOUND, computeBoxId, SYSTEM_KARMA_INITIAL, FAUCET_CREDITS_INITIAL } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, computeBoxId, EMPTY_IDENTITY_RECORD, SYSTEM_KARMA_INITIAL, FAUCET_CREDITS_INITIAL } from '@dagsocial/types';
 import type {
   KarmaBox,
   CreditBox,
@@ -110,15 +110,9 @@ export function ensureSystemKarmaBox(
   // block is height 1. It has received no likes either: genesis mints boxes,
   // and only per-block like settlement moves the counter.
   putIdentityRecord(box.owner, {
+    ...EMPTY_IDENTITY_RECORD,
     lastActivityBlock: genesisHeight,
-    lastDecayBlock: 0,
-    invitedAtBlock: 0,
-    lifetimeLikesReceived: 0n,
     memberSinceBlock: genesisHeight,
-    memberBar: 0,
-    memberVouches: 0,
-    memberLikes: 0n,
-    invitesUsed: 0,
   });
   return box;
 }
@@ -324,15 +318,9 @@ export function seedGenesisCommittee(
     granted += box.value;
 
     putIdentityRecord(member, {
+      ...EMPTY_IDENTITY_RECORD,
       lastActivityBlock: genesisHeight,
-      lastDecayBlock: 0,
-      invitedAtBlock: 0,
-      lifetimeLikesReceived: 0n,
       memberSinceBlock: genesisHeight,
-      memberBar: 0,
-      memberVouches: 0,
-      memberLikes: 0n,
-      invitesUsed: 0,
     });
   }
 
