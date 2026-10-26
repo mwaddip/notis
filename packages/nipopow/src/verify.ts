@@ -67,7 +67,8 @@ export function verifyProof(
 
   // Rule 1: shape — m and k equal params.m and params.k, each at least 1;
   // prefix non-empty; suffixTail.length === k − 1 (NIPOPOW_INTERFACE → verifyProof)
-  // Per-element shape checks so that null/non-object never throws (M-5)
+  // Per-element shape checks: a null or non-object element answers a verdict, never throws
+  // (NIPOPOW_INTERFACE → verifyProof)
   try {
     if (!Number.isInteger(params.m) || params.m < 1) return fail('shape');
     if (!Number.isInteger(params.k) || params.k < 1) return fail('shape');
@@ -163,8 +164,8 @@ export function verifyProof(
   }
 
   // Rule 4: every PoPowHeader — interlinkRoot
-  // Shape-check the vector before interlinkRoot sees it (M-5: interlinkRoot
-  // throws on a malformed vector; a verdict, never a throw)
+  // Shape-check the vector before interlinkRoot sees it: interlinkRoot throws on a
+  // malformed vector, and verifyProof answers a verdict (NIPOPOW_INTERFACE → verifyProof)
   for (let i = 0; i < allPoPow.length; i++) {
     const ph = allPoPow[i]!;
     if (!Array.isArray(ph.interlinks)) return fail('interlinks', i);
