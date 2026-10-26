@@ -1384,8 +1384,8 @@ export function computeTxId(tx: UtxoTransaction): TxId {
 
 /**
  * Largest-first UTXO selection. Returns the minimal subset of boxes whose
- * combined value covers `requiredAmount`, taken from a copy of `boxes` sorted
- * by value descending — boxes of equal value in the order given. The argument
+ * combined value covers `requiredAmount`, taken from `boxes` sorted into a new
+ * array by value descending — boxes of equal value in the order given. The argument
  * is never reordered. Throws if the total value of all boxes is insufficient.
  */
 export function selectBoxes<T extends { value: bigint }>(

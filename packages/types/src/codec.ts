@@ -113,7 +113,7 @@ function isEncodableVlqS(n: unknown): n is number {
 /**
  * True for a real byte view — `Uint8Array`, not merely array-like
  * (TYPES_INTERFACE → Export table). Deliberately not `ArrayBuffer.isView`: a
- * `Uint32Array` of 8 elements passes that and copies into 8 bytes where 32 are
+ * `Uint32Array` of 8 elements passes that and reads as 8 bytes where 32 are
  * required.
  */
 export function isBytes(v: unknown): v is Uint8Array {

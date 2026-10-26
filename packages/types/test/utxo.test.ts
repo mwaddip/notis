@@ -2474,7 +2474,7 @@ describe('selectBoxes', () => {
     expect(result.map((b) => b.id)).toEqual(['first', 'second']);
   });
 
-  it('leaves the array it is handed as it was', async () => {
+  it('leaves the array it is handed unchanged', async () => {
     const { selectBoxes } = await import('../src/index.js');
     const boxes = [
       { value: 10n, id: 'small' },
