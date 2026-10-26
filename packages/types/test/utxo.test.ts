@@ -2447,6 +2447,47 @@ describe('selectBoxes', () => {
     const result = selectBoxes([], 0n);
     expect(result).toEqual([]);
   });
+
+  it.fails('picks the largest boxes when they arrive smallest-first', async () => {
+    const { selectBoxes } = await import('../src/index.js');
+    const boxes = [
+      { value: 10n, id: 'small' },
+      { value: 50n, id: 'med' },
+      { value: 100n, id: 'big' },
+    ];
+    // Control: the boxes cover the amount, so the call returns.
+    const result = selectBoxes(boxes, 80n);
+    expect(result.reduce((sum, b) => sum + b.value, 0n) >= 80n).toBe(true);
+    expect(result).toEqual([{ value: 100n, id: 'big' }]);
+  });
+
+  it.fails('keeps boxes of equal value in the order given', async () => {
+    const { selectBoxes } = await import('../src/index.js');
+    const boxes = [
+      { value: 10n, id: 'small' },
+      { value: 50n, id: 'first' },
+      { value: 50n, id: 'second' },
+    ];
+    // Control: the boxes cover the amount, so the call returns.
+    const result = selectBoxes(boxes, 100n);
+    expect(result.reduce((sum, b) => sum + b.value, 0n) >= 100n).toBe(true);
+    expect(result.map((b) => b.id)).toEqual(['first', 'second']);
+  });
+
+  it.fails('leaves the array it is handed as it was', async () => {
+    const { selectBoxes } = await import('../src/index.js');
+    const boxes = [
+      { value: 10n, id: 'small' },
+      { value: 50n, id: 'med' },
+      { value: 100n, id: 'big' },
+    ];
+    const before = [...boxes];
+    const result = selectBoxes(boxes, 80n);
+    // Control: the same array, the same elements in the same order.
+    expect(boxes).toHaveLength(before.length);
+    expect(boxes.map((b) => b.id)).toEqual(before.map((b) => b.id));
+    expect(result.map((b) => b.id)).toEqual(['big']);
+  });
 });
 
 /**
