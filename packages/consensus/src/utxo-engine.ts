@@ -84,7 +84,7 @@ const KARMA_TRANSITION_VERDICT: Record<AnyBox['boxType'], boolean> = {
  * The box types a karma spend may create — derived from
  * `KARMA_TRANSITION_VERDICT`'s true rows, in declaration order.
  */
-export const KARMA_TRANSITION_TYPES: ReadonlyArray<AnyBox['boxType']> = Object.freeze(
+const KARMA_TRANSITION_TYPES: ReadonlyArray<AnyBox['boxType']> = Object.freeze(
   (Object.keys(KARMA_TRANSITION_VERDICT) as AnyBox['boxType'][])
     .filter((k) => KARMA_TRANSITION_VERDICT[k]),
 );
