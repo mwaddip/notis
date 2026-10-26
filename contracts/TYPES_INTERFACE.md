@@ -3193,14 +3193,18 @@ inside `read`; `VALIDATION_INTERFACE → verifyTxStructure` refuses the alphabet
 anything else. Ruled 2026-09-09 (`CONSTANTS → Format and domain`). **Three pure functions carry the
 rule and are its only implementations**, exported from this package: `isValidUsernameBytes(name)`
 answers the length and the alphabet, `canonicalUsernameBytes(name)` is the lowercase form, and
-`canonicalUsername(name)` is that form as a string, decoded through this package's one `TextDecoder`
-(`utf-8`, not fatal; a decode without `stream` leaves no state) — the validation package refuses through
-the first, the node keys its records through the second, and every lookup of a name by its canonical
-string, the rules' and the node's routes' alike, reads the third.
+`canonicalUsername(name)` is that form as a string — the validation package refuses through the first,
+the node keys its records through the second, and every lookup of a name by its canonical string, the
+rules' and the node's routes' alike, reads the third. **A name's bytes become a string in one place:**
+`usernameString(name)`, through this package's one `TextDecoder` (`utf-8`, not fatal; a decode without
+`stream` leaves no state), and `canonicalUsername(name)` is `usernameString(canonicalUsernameBytes(name))`.
+The display form as typed — the rules' name rows, the node's answers, the light client's and the web
+client's names — reads `usernameString`.
 
-> ⚠ **AHEAD OF CODE (2026-10-26).** `canonicalUsername` leads `username.ts`; `consensus` (`apply-block.ts`,
-> `utxo-engine.ts`, `tree-view.ts`) and the node's `routes/usernames.ts` and `routes/page.ts` each decode the
-> canonical bytes themselves.
+> ⚠ **AHEAD OF CODE (2026-10-26).** `usernameString` leads `username.ts`, where `canonicalUsername` decodes on its
+> own; `consensus` (`apply-block.ts`, `tree-view.ts`) decodes the display form with a decoder of its own, the node
+> (`routes/usernames.ts`, `routes/page.ts`, `store/mempool.ts`) both forms with `Buffer`, and the light client
+> (`names.ts`) and the web client (`extension/policy.ts`) the display form with their own decoders.
 
 The third bounds a **box** field rather than a post one, and it sits here because this section groups
 bounds by what kind of rule they are — a maximum byte length enforced at a codec boundary — not by
