@@ -18,27 +18,27 @@ const BOX_CONFLICT: Rejection = {
 const BOX_CONFLICT_LINE = 'that rep is still tied up in a spend that has not landed.';
 
 describe('the pool\'s box conflict reads the floor sentence on every rep surface', () => {
-  it.fails('post reads the box-conflict sentence', () => {
+  it('post reads the box-conflict sentence', () => {
     expect(_rejectionCopiesForTests.post(BOX_CONFLICT)).toBe(BOX_CONFLICT_LINE);
   });
 
-  it.fails('like reads the box-conflict sentence', () => {
+  it('like reads the box-conflict sentence', () => {
     expect(_rejectionCopiesForTests.like(BOX_CONFLICT)).toBe(BOX_CONFLICT_LINE);
   });
 
-  it.fails('vouch reads the box-conflict sentence', () => {
+  it('vouch reads the box-conflict sentence', () => {
     expect(_rejectionCopiesForTests.vouch(BOX_CONFLICT)).toBe(BOX_CONFLICT_LINE);
   });
 
-  it.fails('invite reads the box-conflict sentence', () => {
+  it('invite reads the box-conflict sentence', () => {
     expect(_rejectionCopiesForTests.invite(BOX_CONFLICT)).toBe(BOX_CONFLICT_LINE);
   });
 
-  it.fails('withdraw reads the box-conflict sentence', () => {
+  it('withdraw reads the box-conflict sentence', () => {
     expect(_rejectionCopiesForTests.withdraw(BOX_CONFLICT)).toBe(BOX_CONFLICT_LINE);
   });
 
-  it.fails('a claim reads the box-conflict sentence', () => {
+  it('a claim reads the box-conflict sentence', () => {
     // The claim and the burn share `usernameRejectionCopy`; both routes read
     // the box-conflict words first (WEB_INTERFACE → The username row).
     expect(_rejectionCopiesForTests.username(BOX_CONFLICT)).toBe(BOX_CONFLICT_LINE);
@@ -46,7 +46,7 @@ describe('the pool\'s box conflict reads the floor sentence on every rep surface
 });
 
 describe('a like the node already holds reads from the node\'s own words', () => {
-  it.fails('like answered 400 Already liked this post reads *you have already liked this post*', () => {
+  it('like answered 400 Already liked this post reads *you have already liked this post*', () => {
     const alreadyLiked: Rejection = { status: 400, message: 'Already liked this post' };
     expect(_rejectionCopiesForTests.like(alreadyLiked)).toBe('you have already liked this post');
   });

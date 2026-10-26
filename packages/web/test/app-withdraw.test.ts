@@ -285,7 +285,7 @@ describe('the App withdraw flight', () => {
   // WEB_INTERFACE → The wallet → "A rejection's words follow the node's
   // message, never its status alone": the pool's box conflict reads the
   // floor sentence on every rep surface.
-  it.fails('maps the pool\'s box conflict (409 Input ... is already spent by a pending transaction) to the floor sentence', async () => {
+  it('maps the pool\'s box conflict (409 Input ... is already spent by a pending transaction) to the floor sentence', async () => {
     const rejection: Rejection = {
       status: 409,
       message: `Input ${'77'.repeat(32)} is already spent by a pending transaction`,

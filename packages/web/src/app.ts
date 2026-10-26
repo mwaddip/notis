@@ -123,11 +123,18 @@ function download(filename: string, text: string): void {
   a.click();
 }
 
+// WEB_INTERFACE → The wallet → "A rejection's words follow the node's message,
+// never its status alone": the pool's box conflict reads one sentence on every
+// rep surface. Each copy matches the node's box-conflict message first, then
+// its own patterns.
+const BOX_CONFLICT_RE = /^Input [0-9a-f]{64} is already spent by a pending transaction$/i;
+const BOX_CONFLICT_LINE = 'that rep is still tied up in a spend that has not landed.';
+
 // A rejection in the voice register — say what happened, never a status code
 // (HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way.
 function postRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
-  if (r.status === 409) return 'that rep is still tied up in a post that has not landed.';
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   if (r.status === 503) return 'the node is full right now.';
   if (/karma/i.test(r.message)) return 'not enough rep to post right now.';
   return 'the node said: ' + r.message.toLowerCase();
@@ -135,7 +142,8 @@ function postRejectionCopy(r: Rejection): string {
 
 function likeRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
-  if (r.status === 409) return 'you have already liked this post';
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
+  if (/already liked/i.test(r.message)) return 'you have already liked this post';
   if (/karma/i.test(r.message)) return 'not enough rep';
   return r.message.toLowerCase();
 }
@@ -145,6 +153,7 @@ function likeRejectionCopy(r: Rejection): string {
  *  client-side refusal (status 0) already reads that way. */
 function vouchRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   const m = r.message.toLowerCase();
   if (/member/.test(m)) return 'only members can vouch';
   if (/self|yourself/.test(m)) return "you can't vouch for yourself";
@@ -157,6 +166,7 @@ function vouchRejectionCopy(r: Rejection): string {
 /** An invite rejection in the voice register (HOUSE_STYLE → Voice). */
 function inviteRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   const m = r.message.toLowerCase();
   if (/already|holds|account|record|exist/.test(m)) return 'that key already holds an account';
   if (/no invites|available/.test(m)) return 'no invites available right now';
@@ -171,7 +181,7 @@ function inviteRejectionCopy(r: Rejection): string {
  *  reads that way. */
 function withdrawRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
-  if (r.status === 409) return 'that rep box is still tied up in a transaction that has not landed';
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   if (r.status === 503) return "the node's pool is full right now";
   const m = r.message.toLowerCase();
   if (/earlier block|not confirmed/.test(m)) return 'this post has not landed yet';
@@ -215,6 +225,7 @@ export const _rejectionCopiesForTests = {
  *  HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way. */
 function usernameRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
+  if (BOX_CONFLICT_RE.test(r.message)) return BOX_CONFLICT_LINE;
   if (r.status === 503) return "the node's pool is full right now.";
   const m = r.message.toLowerCase();
   if (/name invalid|invalid name/.test(m)) return `that name is not 1 to ${USERNAME_MAX_BYTES} letters, digits or _.`;
