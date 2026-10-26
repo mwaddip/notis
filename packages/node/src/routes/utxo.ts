@@ -7,10 +7,10 @@ import type {
   DecayCfg,
   IdentityRecord,
 } from '@dagsocial/types';
-import { effectiveKarma, membershipBar } from '@dagsocial/types';
+import { effectiveKarma, EMPTY_IDENTITY_RECORD, membershipBar } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
-import { isMember, isRoot } from '@dagsocial/consensus';
+import { availableInvites, isMember } from '@dagsocial/consensus';
 import type { NetworkRecord } from '../store/identity-records.js';
 import type { Page, PageResult, BoxKey } from '../store/index.js';
 import { getNet } from '../services/net-instance.js';
@@ -111,18 +111,23 @@ export function createRouter(deps: UtxoDeps): Router {
     }
 
     const memberFlag = record !== null && isMember(record);
-    let invitesAvailable: number | null = 0;
-    if (record) {
-      if (isRoot(record)) {
-        invitesAvailable = null;
-      } else if (isMember(record)) {
-        const nr = deps.getNetworkRecord();
-        const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
-        invitesAvailable = Math.max(0, Math.floor(record.memberVouches / d) - record.invitesUsed);
-      }
-    }
+    // CONSENSUS_INTERFACE → What it holds → "Who may invite, and how many, is
+    // one function": `null` for a root, the number clamped at `0` for a
+    // member, `0` for anyone else.
+    const budget = availableInvites(
+      record,
+      () => membershipBar(deps.getNetworkRecord().memberCount, deps.membershipBarMultiplier),
+    );
+    const invitesAvailable: number | null =
+      budget === 'root' ? null
+      : typeof budget === 'number' ? Math.max(0, budget)
+      : 0;
 
     const karmaRows = pageResult.rows as KarmaBox[];
+    // TYPES_INTERFACE → Identity record and karma valuation: the record of
+    // an identity no block has written values as every field 0 and the two
+    // bigint counters 0n.
+    const r = record ?? EMPTY_IDENTITY_RECORD;
     res.json({
       userId: Buffer.from(userIdBytes).toString('hex'),
       total: total.toString(),
@@ -140,15 +145,15 @@ export function createRouter(deps: UtxoDeps): Router {
       })),
       boxCount: pageResult.count,
       next: pageResult.next ? formatKey('box', pageResult.next) : null,
-      lastActivityBlock: record?.lastActivityBlock ?? 0,
-      lastDecayBlock: record?.lastDecayBlock ?? 0,
-      lifetimeLikesReceived: (record?.lifetimeLikesReceived ?? 0n).toString(),
-      memberSinceBlock: record?.memberSinceBlock ?? 0,
-      memberBar: record?.memberBar ?? 0,
-      memberVouches: record?.memberVouches ?? 0,
-      memberLikes: (record?.memberLikes ?? 0n).toString(),
-      invitesUsed: record?.invitesUsed ?? 0,
-      invitedAtBlock: record?.invitedAtBlock ?? 0,
+      lastActivityBlock: r.lastActivityBlock,
+      lastDecayBlock: r.lastDecayBlock,
+      lifetimeLikesReceived: r.lifetimeLikesReceived.toString(),
+      memberSinceBlock: r.memberSinceBlock,
+      memberBar: r.memberBar,
+      memberVouches: r.memberVouches,
+      memberLikes: r.memberLikes.toString(),
+      invitesUsed: r.invitesUsed,
+      invitedAtBlock: r.invitedAtBlock,
       member: memberFlag,
       invitesAvailable,
       height,

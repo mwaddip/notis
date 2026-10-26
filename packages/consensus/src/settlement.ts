@@ -1,66 +1,38 @@
 /**
- * The block's one settlement transaction — where every protocol effect happens,
- * and the only spender of the karma pool and the emission box
- * (NODE_INTERFACE → the settlement transaction).
+ * The block's one settlement transaction — where every protocol effect
+ * happens, and the only spender of the emission, treasury, karma pool and
+ * backer pool boxes (NODE_INTERFACE → The settlement transaction). The
+ * Consumes and Emits lists stand there whole.
  *
  * ⛔ **IT IS THE LAST ENTRY IN `utxoTxIds`, AND THAT IS HOW IT IS IDENTIFIED.**
  * Position is already committed — `utxoTxIds` order is normative and
- * `computeUtxoTxRoot` lays its leaves in it — so structural validation finds it
- * with no UTXO set at all. `@dagsocial/validation` owns the structural half
- * (`verifyOrderingBlockStructure` refuses a body with no last entry); what the
- * settlement *contains* is consensus and is this module's.
- *
- * ## What it consumes and emits
- *
- * | | |
- * |---|---|
- * | Consumes | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every credited author · the `BondBox` of every bond settling at this height · every `VouchEscrowBox` at or past its `releaseAtBlock` in pre-body state · the karma boxes decay charges |
- * | Emits | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · the vested part of each settling bond · each released escrow's value back to its owner · like payouts and carry successors · decay replacements |
+ * `computeUtxoTxRoot` lays its leaves in it — so structural validation finds
+ * it with no UTXO set at all. `@dagsocial/validation` owns the structural half
+ * (`verifyOrderingBlockStructure` refuses a body with no last entry); what
+ * the settlement *contains* is consensus and is this module's.
  *
  * ⛔ **The emission box is spent on EVERY block** (TYPES_INTERFACE →
  * EmissionBox), because the forfeited inclusion bonus returns to it even when
- * the schedule owes nothing. The treasury box and the pool are spent only when
- * this block's effects touch them. A block that draws nothing from the pool
- * leaves the pool's id alone, which is what keeps a leaf from churning through
- * the AVL tree on every block for no state change.
+ * the schedule owes nothing. The treasury, backer pool and karma pool boxes
+ * are spent only when this block's effects touch them. A block that draws
+ * nothing from the pool leaves the pool's id alone, which is what keeps a
+ * leaf from churning through the AVL tree on every block for no state change.
  *
- * ⛔ **ITS INPUTS ARE DERIVED, NOT SERIALIZED**, and the enumeration order is
- * the one the block already fixes: the three protocol boxes in the fixed order
- * above, then the fee boxes in **committed transaction order**, and within a
- * transaction in output order. Nothing is sorted and nothing is read from a
- * table without a stated total order — the three protocol getters are
- * `ORDER BY id LIMIT 1`.
+ * ⛔ **The input list and the output list are consensus — leg by leg, in the
+ * order the contract states** (NODE_INTERFACE → The settlement transaction →
+ * "The two orders are consensus"). The four protocol boxes are read by their
+ * own `StateView` getters, each the first live box of its type by id
+ * (CONSENSUS_INTERFACE → StateView), and no derivation reads a table without
+ * a stated total order.
  *
- * ## ⛔ EVERY FIELD IS DERIVED OR PRODUCER-CHOSEN-AND-CONSTRAINED. NONE IS NEITHER.
- *
- * (NODE_INTERFACE → Determinism is this mechanism's whole risk — but it is
- * determinism of the VERDICT, not of the bytes.) A verifier **cannot** rebuild a
- * byte-identical settlement: `?miner=` makes the coinbase's payout key the
- * producer's, and it reaches a verifier only as an output of the very
- * transaction being checked. So the property that has to hold is that every
- * verifier reaches the same VERDICT — and a field that is neither recomputed nor
- * constrained is one a producer sets freely while the block still validates.
- *
- * | Field | |
- * |---|---|
- * | `inputs` | **derived**, element-wise and in order |
- * | emission / treasury / pool successors | **derived** — presence and value |
- * | the karma grants | **derived** — one per bond, its owner and its amount |
- * | the credit outputs | **producer's**, constrained: they sum to the miner's slice, each carries the scheduled maturity lock, none holds `0`, and no other box type is admitted |
- * | `signatures` | constrained — **must be empty**; no key authorizes a settlement |
- * | `protocolVersion` | constrained — exact |
- * | `likeTarget`, `post` | constrained — **must be absent** |
- *
- * ⚠ **Output ORDER is the producer's and is deliberately unconstrained.** It
- * moves the transaction id, every output's `index` and so every box id — but the
- * output multiset is pinned above, so no ordering carries value that another does
- * not. It is committed in `utxoTxRoot` like everything else, and every node
- * applies the order the block states.
- *
- * ⚠ **Determinism is still the risk, one level in.** What must agree across
- * nodes is the *derivation*: two honest nodes deriving different input orders
- * reject each other's blocks. That is why every ordering above is one the block
- * or a stated `ORDER BY` fixes.
+ * ⛔ **Every field is derived or producer-chosen-and-constrained, never
+ * neither** (NODE_INTERFACE → Determinism is this mechanism's whole risk).
+ * The one producer-chosen input is the coinbase's payout key,
+ * which comes from `?miner=` on the template request and reaches a verifier
+ * only as an output of the very transaction being checked; the credit
+ * outputs it emits are constrained — they sum to the miner's slice, each
+ * carries the scheduled maturity lock, none holds `0`, and no other box type
+ * is admitted. Every other field, output ordering included, is derived.
  */
 
 import {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isValidUsernameBytes, canonicalUsernameBytes, USERNAME_MAX_BYTES } from '../src/index.js';
+import { isValidUsernameBytes, canonicalUsernameBytes, canonicalUsername, usernameString, USERNAME_MAX_BYTES } from '../src/index.js';
 
 describe('isValidUsernameBytes', () => {
   it('accepts a 1-byte lowercase name', () => {
@@ -78,5 +78,29 @@ describe('canonicalUsernameBytes', () => {
     const input = new Uint8Array([0x2e, 0x41]);
     const expected = new Uint8Array([0x2e, 0x61]);
     expect(canonicalUsernameBytes(input)).toEqual(expected);
+  });
+});
+
+describe('canonicalUsername', () => {
+  it('answers the lowercase string of a mixed-case valid name', () => {
+    expect(canonicalUsername(new TextEncoder().encode('Alice_01'))).toBe('alice_01');
+  });
+
+  it('answers what a non-fatal utf-8 decode of the canonical bytes answers for an invalid byte', () => {
+    const name = new Uint8Array([0x41, 0xff, 0x42]);
+    expect(canonicalUsername(name)).toBe(
+      new TextDecoder('utf-8').decode(canonicalUsernameBytes(name)),
+    );
+  });
+});
+
+describe('usernameString', () => {
+  it('answers a mixed-case valid name unchanged', () => {
+    expect(usernameString(new TextEncoder().encode('Alice_01'))).toBe('Alice_01');
+  });
+
+  it('answers what a non-fatal utf-8 decode of the bytes answers for an invalid byte', () => {
+    const name = new Uint8Array([0x41, 0xff, 0x42]);
+    expect(usernameString(name)).toBe(new TextDecoder('utf-8').decode(name));
   });
 });

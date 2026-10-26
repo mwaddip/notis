@@ -1285,7 +1285,19 @@ recompute the hash and check the signature.
 | `computeTxId(tx)` | `(UtxoTransaction) => TxId` | Transaction id over candidates |
 | `computeMintTxId(genesisProof, height, reason, subject)` | `(Uint8Array, number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding; everything else is a settlement output with an ordinary id. `genesisProof` is the chain's genesis proof payload (→ Mint identity); `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
 | `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (a browser mirror, a light client) assert against the encoder that computes ids, not a lookalike |
-| `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — a greedy prefix of the **given** order until `requiredAmount` is covered; throws when the boxes' total falls short. **Precondition: the caller supplies boxes sorted by value descending** — the function imposes no order of its own, so its determinism is exactly its caller's. A transaction-builder helper (the faucet's invite and transfer builders are the consumers); no block-application path calls it |
+| `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — the boxes ordered by value descending, boxes of equal value in the order given, then the shortest prefix of that order whose total covers `requiredAmount`; throws when the boxes' total falls short. **The order is the function's own**, so a caller sorts nothing and hands the boxes as it holds them; the argument is not reordered. A transaction-builder helper (the web client's and the faucet's builders are the consumers); no block-application path calls it |
+
+### The JSON form of a transaction
+
+**`txToJson(tx)` is the one renderer of a transaction for the node's HTTP edge** — `(UtxoTransaction) =>
+Record<string, unknown>`, the `tx` of the `{ tx }` body every write route reads (`NODE_INTERFACE → "A write request's
+transaction is checked whole before anything reads it"`). `inputs` as given; each output as its own fields, a byte
+field as lowercase hex and a `bigint` as its decimal string, every other value as it is; each signature as lowercase
+hex under its key; `protocolVersion`. `likeTarget`, `post` (`contentHash` and `author` as hex, `parentRefs`,
+`protocolVersion`, `type`) and `postWithdraw` (`{ postId }`) are carried when the transaction holds them, and no key
+when it does not — each sits inside the signed bytes, so a renderer that dropped one would send a transaction whose id
+the node computes differently. The web client, the faucet and the e2e suite render through it; nothing in the packages
+the node runs calls it.
 
 ---
 
@@ -1349,6 +1361,7 @@ its cfg through it; a client builds the same from `profileFor(network)` — neve
 | `identityRecordBytes(record)` | `(IdentityRecord) => Uint8Array` | The tree value — see Layout — IdentityRecord |
 | `identityRecordFromBytes(bytes)` | `(Uint8Array) => IdentityRecord` | Inverse of `identityRecordBytes`, with the four-part boundary check (→ The boundary check); a first byte other than `IDENTITY_RECORD_TAG` is refused as `invalid-tag` |
 | `IDENTITY_RECORD_TAG` | `0x80` | Field 1 of the layout — the record discriminator among the tree's entity kinds (`NODE_INTERFACE → Entity kinds`) |
+| `EMPTY_IDENTITY_RECORD` | `Readonly<IdentityRecord>` | The record of an identity no block has written: every field `0`, the two `bigint` counters `0n`, frozen. The valuation values a `null` record as it, and every writer that builds a record over one it may not find starts from it |
 | `decayCfgFor(profile)` | `(NetworkProfile) => DecayCfg` | The one derivation of the valuation's four numbers |
 | `isIdentityStale(record, height, staleThresholdBlocks)` | `(IdentityRecord \| null, number, number) => boolean` | `stale` above |
 | `owedPeriods(record, height, decayIntervalBlocks)` | `(IdentityRecord \| null, number, number) => number` | `owedPeriods` above — no clamp at zero: the caller skips `<= 0`, and a negative says a clock ran ahead of the chain |
@@ -2669,6 +2682,8 @@ bytes with provenance appended — for its tree value (→ Canonical encoding); 
 | `bytesToHex(bytes)` | `(Uint8Array) => string` | Lowercase hex, two characters a byte — the codec's own conversion, and the one hex encoder in the packages the browser runs. Total |
 | `hexToBytes(hex)` | `(string) => Uint8Array` | Its inverse, strict: even length and `[0-9a-f]` only, or it throws — never the partial decode `Buffer.from(hex, 'hex')` answers. A caller holding hex it did not produce checks it first, so a refusal there is a verdict, not a throw |
 | `equalBytes(a, b)` | `(Uint8Array, Uint8Array) => boolean` | Equal lengths and equal bytes |
+| `isBytes(v)` | `(unknown) => v is Uint8Array` | `v instanceof Uint8Array` — a real byte view, deliberately not `ArrayBuffer.isView`: a `Uint32Array` of 8 elements would pass that and copy into 8 bytes where 32 are required. The byte test of every check that takes bytes from a caller |
+| `isHex64(v)` | `(unknown) => v is string` | 64 characters of `[0-9a-f]` — the one spelling of a 32-byte id or key on the HTTP edge (`NODE_INTERFACE → "Hex is lowercase"`). The test every package that reads such a string applies before decoding it |
 
 
 ### How a dispatch decays this contract, and why nothing catches it
@@ -3167,10 +3182,16 @@ export const USERNAME_MAX_BYTES = 24;
 canonical form the state keys on is the byte-wise ASCII lowercase** (`A`–`Z` → `a`–`z`, nothing else
 touched): two names are one name when their canonical bytes are equal. The codec refuses the length
 inside `read`; `VALIDATION_INTERFACE → verifyTxStructure` refuses the alphabet; nothing normalises
-anything else. Ruled 2026-09-09 (`CONSTANTS → Format and domain`). **Two pure functions carry the
+anything else. Ruled 2026-09-09 (`CONSTANTS → Format and domain`). **Three pure functions carry the
 rule and are its only implementations**, exported from this package: `isValidUsernameBytes(name)`
-answers the length and the alphabet, and `canonicalUsernameBytes(name)` is the lowercase form — the
-validation package refuses through the first, and the node keys its records through the second.
+answers the length and the alphabet, `canonicalUsernameBytes(name)` is the lowercase form, and
+`canonicalUsername(name)` is that form as a string — the validation package refuses through the first,
+the node keys its records through the second, and every lookup of a name by its canonical string, the
+rules' and the node's routes' alike, reads the third. **A name's bytes become a string in one place:**
+`usernameString(name)`, through this package's one `TextDecoder` (`utf-8`, not fatal; a decode without
+`stream` leaves no state), and `canonicalUsername(name)` is `usernameString(canonicalUsernameBytes(name))`.
+The display form as typed — the rules' name rows, the node's answers, the light client's and the web
+client's names — reads `usernameString`.
 
 The third bounds a **box** field rather than a post one, and it sits here because this section groups
 bounds by what kind of rule they are — a maximum byte length enforced at a codec boundary — not by
@@ -3392,6 +3413,12 @@ The record shapes are exported beside their codecs: `NetworkRecord { memberCount
 `HolderRecord { claimAvailable, boxId | null }`, `PostRecord { author, height, standing }` — a box id as 64 lowercase
 hex, an author as 32 raw bytes.
 
+**Every tag is exported by name**, in the table's order: `IDENTITY_RECORD_TAG` (`0x80`), `NETWORK_RECORD_TAG`,
+`NAME_RECORD_TAG`, `HOLDER_RECORD_TAG`, `POST_RECORD_TAG`, `LIKE_MARKER_TAG`, `INDEX_MARKER_TAG`, `VOUCH_PAIR_TAG`,
+`CAST_COUNT_TAG` (`0x88`); `LIKE_MARKER` and `INDEX_MARKER` are the one-byte values of their tags. A reader that tells
+the kinds apart by the first byte — `boxFromRecordBytes`' refusal, the node's tree endpoint — reads these names, never
+the numbers.
+
 ### PoW
 
 Ordering-block PoW is the consensus PoW; its constants are
@@ -3556,6 +3583,7 @@ A mechanism that needs either brings its own parameter with its own reader.
 ```typescript
 export const MEMPOOL_EXPIRY_BLOCKS = 720;          // local — blocks before mempool entries expire (~12h)
 export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';  // SPKI wrapper stripped from raw keys
+export const ED25519_PKCS8_PREFIX = '302e020100300506032b657004220420';  // RFC 8410 PKCS8 wrapper ahead of a raw seed
 ```
 
 ### HTTP view bounds
@@ -3629,7 +3657,13 @@ export const ORDERING_BLOCK_POW_TARGET_BITS = 5984;     // 23.375 bits — a 60s
 export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;    // 9 whole bits — the resolution floor
 export const RETARGET_HALFLIFE_BLOCKS = 288;            // the ASERT halflife, in ideal intervals (MINING_INTERFACE → Difficulty Schedule)
 export const MAX_FUTURE_DRIFT_MS = 600_000;             // 10 min — the future bound on createdAt (MINING_INTERFACE → Header timestamp rules)
+export const POW_TARGET_BITS_MAX = 65_536;              // 256 bits in 1/256-bit units — the top of powTargetBits' domain
 ```
+
+**`POW_TARGET_BITS_MAX` is the unit's own bound**, `256 × 256`: a target of 256 bits is the whole digest space, so
+`[0, POW_TARGET_BITS_MAX]` is every value `powTargetBits` can mean (`VALIDATION_INTERFACE → orderingPowTarget`). The
+header field's range check, `orderingPowTarget`'s domain and the node's check of a profile's ceiling read it; a
+profile's ceiling of `65536` is a value the profile chooses (`CONSTANTS → Ordering-block PoW`), not this bound.
 
 **`RETARGET_HALFLIFE_BLOCKS` is the mechanic's own number and universal** — the reference's ratio of
 halflife to block time (BCH: 172 800 s at 600 s), stated in blocks so a profile's `orderingBlockIdealMs`
@@ -3652,9 +3686,9 @@ of test blocks inside sixteen whole bits, and the divergence is load-bearing rat
 ⚠ **Both are in units of 1/256 of a bit** — `VALIDATION_INTERFACE → orderingPowTarget`. Divide by 256
 to read them as whole bits.
 
-**The floor is nine bits rather than the four it was, and that is not a rescale.** `blockWork` stops
+**The floor is nine whole bits, the first whole bit at which `blockWork` resolves.** `blockWork` stops
 resolving below 2180 — a 1/256-bit step there buys zero additional work — so a chain admitted beneath
-that line retargets without moving the quantity fork choice selects on. 2304 is the first whole bit
+that line would retarget without moving the quantity fork choice selects on. 2304 is the first whole bit
 above it.
 
 ### Interlinks

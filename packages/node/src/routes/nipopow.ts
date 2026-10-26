@@ -7,8 +7,7 @@ import {
   MissingStoredBlockError,
   failStopIfCorruptChain,
 } from '../services/corrupt-state.js';
-
-const DECIMAL_INT = /^\d+$/;
+import { DECIMAL_INT } from '../decimal-int.js';
 
 // NODE_INTERFACE → Nipopow prover → "The route caches its answer."
 const NIPOPOW_PROOF_CACHE_ENTRIES = 4;

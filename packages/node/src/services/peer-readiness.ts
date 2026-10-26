@@ -11,7 +11,7 @@ import { getNet } from './net-instance.js';
  * Under `Date.now()` a backward step larger than the remainder means the
  * subtraction never reaches the window, so a node with no Active peer withholds
  * templates **for ever** — and says nothing, because 404 is also the ordinary
- * absent-template answer and `miner.mjs` retries it with no give-up count. A
+ * absent-template answer and the miner retries it with no give-up count. A
  * forward step opens the gate on the first poll with zero peers, which is the
  * stranding the gate exists to prevent.
  *
@@ -29,9 +29,9 @@ const now = (): number => performance.now();
  *
  * **The duration is derived from net's re-dial cadence, not chosen.** A failed
  * initial bootstrap dial gets its next attempt on the outbound manager's tick,
- * which is 30s (`net/src/node.ts` → the `setInterval` in `start`, measured at
- * 30.02s on a three-node devnet). A window below that gives up before making a
- * second attempt, which on devnet means mining ~180 blocks alone and never being
+ * which is 30s (NET_INTERFACE → "The tick is fixed, and two cadences are
+ * sized against it"). A window below that gives up before making a second
+ * attempt, which on devnet means mining ~180 blocks alone and never being
  * able to rejoin — the precise failure this gate exists to prevent. 45s spans
  * one tick with margin for the dial and handshake, and stops short of a second
  * so a node that is genuinely alone starts inside a minute.
@@ -81,8 +81,8 @@ let discovery: Discovery | null = null;
 let sawPeer = false;
 
 /**
- * Record that a peer completed the handshake. Wired to `net.onPeerActive` in
- * `index.ts`; also set by `isPeerReady` when it finds one, so a caller driving
+ * Record that a peer completed the handshake. Wired to `net.onPeerActive`
+ * at startup; also set by `isPeerReady` when it finds one, so a caller driving
  * readiness without an event source still observes arrivals.
  */
 export function notePeerMet(): void {
@@ -136,9 +136,10 @@ export function enterDiscovery(bootstrapPeerCount: number): void {
  * Whether the node has met its peers, or has finished looking.
  *
  * Gates template *serving* (`MINING_INTERFACE` → "The peer-readiness gate"). The
- * bound it protects is journal retention: `block-apply.ts` purges journals below
- * `height - maxReorgDepth`, so a node that mines past that depth alone has no
- * journal to revert and can never rejoin a mesh it later meets.
+ * bound it protects is journal retention: block application purges journals
+ * below `height - maxReorgDepth` (NODE_INTERFACE → Block Journal), so a node
+ * that mines past that depth alone has no journal to revert and can never
+ * rejoin a mesh it later meets.
  *
  * **Readiness is not latched** (`MINING_INTERFACE` → "The peer-readiness gate"),
  * and the window is what carries that rather than the peer clause alone. A

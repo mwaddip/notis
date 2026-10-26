@@ -1,4 +1,4 @@
-import { el, shortHex, endForm, setText } from '../dom';
+import { el, mono, shortHex, endForm, setText } from '../dom';
 import { prefs } from '../prefs';
 import { readHex64 } from '../hex64';
 import { unlockForm, setPassphraseForm } from './passphrase';
@@ -6,7 +6,7 @@ import { stageLine, type Flight } from './card';
 import { markHandle } from './name-handle';
 import { INVITE_BOND_VEST_PER_LIKES, KARMA_MINIMUM, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, isValidUsernameBytes } from '@dagsocial/types';
 import { figuresLine } from '../model/figures-line';
-import type { FiguresView, WindowBody } from '../model/state';
+import type { FiguresView, GrantView, WindowBody } from '../model/state';
 import type { TipVerdict } from '../model/tip-verdict';
 import type { KarmaResult, BondsResult, UsernameResult } from '../api/dto';
 import type { Origin } from '../model/workspace';
@@ -34,9 +34,6 @@ import type { Origin } from '../model/workspace';
 //
 // The window declares the narrow shapes it reads and calls; the App's RenderCtx and
 // Handlers satisfy them structurally, so there is one contract, not two.
-
-/** How the faucet grant reads while it stands or after it lapses. */
-export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: number };
 
 export interface ProfileHandlers {
   // identity operations
@@ -96,10 +93,6 @@ function row(label: string): { row: HTMLElement; field: HTMLElement } {
   const field = el('div', 'field');
   r.appendChild(field);
   return { row: r, field };
-}
-
-function mono(text: string): HTMLElement {
-  return el('span', 'mono', text);
 }
 
 /** One row of the window: its node, and the draw of it from the state handed

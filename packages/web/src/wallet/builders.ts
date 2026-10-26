@@ -4,7 +4,6 @@ import {
   computeCandidateBoxId,
   selectBoxes,
   boxRecordBytes,
-  bytesToHex,
   hexToBytes,
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
@@ -13,6 +12,7 @@ import {
   VOUCH_KARMA_AMOUNT,
   USERNAME_BURN_PRICE,
   MIN_BOX_VALUE_PER_BYTE,
+  isHex64,
 } from '@dagsocial/types';
 // `selectBoxes` is kept for the credits side; the karma side tells the own
 // box from the income box, so it does not sort by value.
@@ -30,7 +30,6 @@ import type {
   VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
-import { isHex64Lower } from '@dagsocial/node-reads';
 import type { SpendableBox, ChangeRef } from './types';
 
 // The pure builders — WEB_INTERFACE → The wallet. Each takes the spendable view,
@@ -106,7 +105,7 @@ export class InvalidKey extends Error {
 /** Decode a foreign key, refusing with InvalidKey rather than hexToBytes'
  *  bare throw (TYPES_INTERFACE → Export table). */
 function keyBytes(hex: string, which: string): Uint8Array {
-  if (!isHex64Lower(hex)) throw new InvalidKey(which);
+  if (!isHex64(hex)) throw new InvalidKey(which);
   return hexToBytes(hex);
 }
 
@@ -354,10 +353,9 @@ export function buildClaim(ctx: RepBuildContext, name: string): BuiltTx {
  *  reconcile can look for it on the recipient's `/credits`. */
 export function buildSend(ctx: BuildContext, toHex: string, amount: bigint): BuiltTx & { paymentBoxId: string } {
   const spendable = ctx.spendable;
-  const sorted = [...spendable].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-  const total = sorted.reduce((sum, b) => sum + b.value, 0n);
+  const total = spendable.reduce((sum, b) => sum + b.value, 0n);
   if (total < amount) throw new InsufficientCredits(amount, total);
-  const selected = selectBoxes(sorted, amount);
+  const selected = selectBoxes(spendable, amount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const change = selectedTotal - amount;
 
@@ -424,26 +422,6 @@ export function buildBurn(ctx: RepBuildContext, held: { boxId: string }): BuiltT
     protocolVersion: ctx.era,
   };
   return finish(tx, changeBox, change, ctx.height);
-}
-
-/**
- * Render a signed transaction for the node's JSON edge — the inverse of its
- * `jsonToTx` (WEB_INTERFACE → Writes). Values cross as decimal strings, binary
- * fields as hex, converted by the value's type rather than a hand-kept field
- * list. A `post`, a `likeTarget` and a `postWithdraw` are carried when present,
- * because each sits inside the signed bytes.
- */
-export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    inputs: tx.inputs,
-    outputs: tx.outputs.map(boxToJson),
-    signatures: Object.fromEntries(Object.entries(tx.signatures).map(([k, v]) => [k, bytesToHex(v)])),
-    protocolVersion: tx.protocolVersion,
-  };
-  if (tx.likeTarget !== undefined) body.likeTarget = tx.likeTarget;
-  if (tx.post !== undefined) body.post = postToJson(tx.post);
-  if (tx.postWithdraw !== undefined) body.postWithdraw = { postId: tx.postWithdraw.postId };
-  return body;
 }
 
 // ---------------------------------------------------------------------------
@@ -530,21 +508,3 @@ function finish(
   return { tx, txId, change: changeRef };
 }
 
-function boxToJson(box: AnyBoxCandidate): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(box).map(([k, v]) => [
-      k,
-      v instanceof Uint8Array ? bytesToHex(v) : typeof v === 'bigint' ? v.toString() : v,
-    ]),
-  );
-}
-
-function postToJson(commit: PostCommit): Record<string, unknown> {
-  return {
-    contentHash: bytesToHex(commit.contentHash),
-    author: bytesToHex(commit.author),
-    parentRefs: commit.parentRefs,
-    protocolVersion: commit.protocolVersion,
-    type: commit.type,
-  };
-}

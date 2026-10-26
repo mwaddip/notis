@@ -224,7 +224,7 @@ export function subscribeTopics(
     try {
       const domains = validators.verifyHeaderFieldDomains(header);
       if (!domains.valid) {
-        peerMgr.recordPenalty('misbehavior', peerId, 100, domains.error ?? 'invalid ordering block header');
+        peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, domains.error ?? 'invalid ordering block header');
         return TopicValidatorResult.Reject;
       }
       if (!validators.verifyProtocolVersion(header.protocolVersion, header.height, schedule)) {
@@ -240,13 +240,13 @@ export function subscribeTopics(
       }
       // NET_INTERFACE → Consensus parameters net enforces
       if (header.powTargetBits < floorBits) {
-        peerMgr.recordPenalty('misbehavior', peerId, 100, 'ordering block below the network floor');
+        peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, 'ordering block below the network floor');
         return TopicValidatorResult.Reject;
       }
       if (!validators.verifyOrderingBlockPoW(header)) {
         // A zero-work block dies at the first hop, not re-gossiped mesh-wide
         // (NET_INTERFACE → Stage 1).
-        peerMgr.recordPenalty('misbehavior', peerId, 100, 'ordering block PoW invalid');
+        peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, 'ordering block PoW invalid');
         return TopicValidatorResult.Reject;
       }
       // NET_INTERFACE → Stage 1 →
@@ -278,7 +278,7 @@ export function subscribeTopics(
       // NET_INTERFACE → Peer Penalty System: an ordering block's validator
       // signature that does not verify is a `misbehavior` row.
       if (!validators.verifyValidatorSignature(header, validatorSignature)) {
-        peerMgr.recordPenalty('misbehavior', peerId, 100, 'ordering block validator signature invalid');
+        peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, 'ordering block validator signature invalid');
         return TopicValidatorResult.Reject;
       }
       // The body — a second decode whose throw is ProtocolViolation.
@@ -296,16 +296,15 @@ export function subscribeTopics(
       const block: OrderingBlock = { header, utxoTxTree, validatorSignature };
       const vr = validators.verifyOrderingBlockStructure(block);
       if (!vr.valid) {
-        peerMgr.recordPenalty('misbehavior', peerId, 100, vr.error ?? 'invalid ordering block');
+        peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, vr.error ?? 'invalid ordering block');
         return TopicValidatorResult.Reject;
       }
       // NET_INTERFACE → Stage 1 →
       // "A worked header is forwarded with the body its root commits"
       if (!validators.verifyUtxoTxRoot(block)) {
-        peerMgr.recordPenalty(
-          'misbehavior',
+        peerMgr.recordPenaltyKind(
+          PenaltyKind.Misbehavior,
           peerId,
-          100,
           "ordering block body is not the one the header's root commits",
         );
         return TopicValidatorResult.Reject;
@@ -351,7 +350,7 @@ export function subscribeTopics(
     try {
       const vr = validators.verifyTxStructure(tx);
       if (!vr.valid) {
-        peerMgr.recordPenalty('misbehavior', peerId, 100, vr.error ?? 'invalid tx');
+        peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, vr.error ?? 'invalid tx');
         return TopicValidatorResult.Reject;
       }
       // NET_INTERFACE → Stage 1 →
@@ -365,14 +364,14 @@ export function subscribeTopics(
       const hasPost = tx.post !== undefined;
       const hasContent = content !== undefined;
       if (hasPost !== hasContent) {
-        peerMgr.recordPenalty('misbehavior', peerId, 100,
+        peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId,
           hasPost ? 'post without body' : 'body without post');
         return TopicValidatorResult.Reject;
       }
       if (hasPost && hasContent) {
         const bv = validators.verifyPostBody(content, tx.post!.contentHash);
         if (!bv.valid) {
-          peerMgr.recordPenalty('misbehavior', peerId, 100, bv.error ?? 'post body verification failed');
+          peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, bv.error ?? 'post body verification failed');
           return TopicValidatorResult.Reject;
         }
       }
@@ -401,7 +400,7 @@ export function subscribeTopics(
       // "A transaction's signatures are checked at Stage 1":
       // last, because it is the dearest — 1.1–1.7 ms per signature.
       if (!validators.verifyTxSignatures(tx)) {
-        peerMgr.recordPenalty('misbehavior', peerId, 100, 'tx signature invalid');
+        peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, 'tx signature invalid');
         return TopicValidatorResult.Reject;
       }
       return TopicValidatorResult.Accept;

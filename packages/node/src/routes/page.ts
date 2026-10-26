@@ -1,16 +1,16 @@
 import type { PostKey, BoxKey } from '../store/index.js';
 import {
+  BOX_VALUE_BOUND,
+  canonicalUsername,
+  isHex64,
   isValidUsernameBytes,
-  canonicalUsernameBytes,
   PAGE_LIMIT_DEFAULT,
   PAGE_LIMIT_MAX,
   BATCH_READ_MAX,
 } from '@dagsocial/types';
+import { DECIMAL_INT } from '../decimal-int.js';
 
 export type UsernameLookup = (nameLower: string) => { owner: string } | null;
-
-const BOX_VALUE_BOUND = 1n << 63n;
-const DECIMAL_INT = /^\d+$/;
 
 // NODE_INTERFACE → "Every list a view returns is a page"; the bounds are
 // `@dagsocial/types`' (TYPES_INTERFACE → HTTP view bounds).
@@ -55,7 +55,7 @@ export function parseAfter(
         return { error: 'after must be <value>:<boxId> (value is a decimal integer)' };
       }
       // NODE_INTERFACE → HTTP API → "Hex is lowercase"
-      if (!/^[0-9a-f]{64}$/.test(idStr)) {
+      if (!isHex64(idStr)) {
         return { error: 'after must be <value>:<boxId> (boxId is 64 lowercase hex characters)' };
       }
       const value = BigInt(valStr);
@@ -66,7 +66,7 @@ export function parseAfter(
     }
     case 'id': {
       // NODE_INTERFACE → HTTP API → "Hex is lowercase"
-      if (!/^[0-9a-f]{64}$/.test(raw)) {
+      if (!isHex64(raw)) {
         return { error: 'after must be 64 lowercase hex characters' };
       }
       return raw;
@@ -99,23 +99,36 @@ export function isAfterError(
   return v !== null && typeof v === 'object' && 'error' in v && !('blockHeight' in v) && !('value' in v);
 }
 
+// NODE_INTERFACE → Usernames; NODE_INTERFACE → Identity parameters: strip a
+// leading `@`, hold the rest to `isValidUsernameBytes`, and answer the
+// canonical string (TYPES_INTERFACE → "Content limits") beside the name as
+// typed (the `@` stripped, nothing else). The caller maps the failure to its
+// own error string.
+export function parseNameParam(
+  raw: string,
+): { canonical: string; name: string } | { invalid: true } {
+  const rest = raw.startsWith('@') ? raw.slice(1) : raw;
+  const bytes = Buffer.from(rest, 'utf8');
+  if (!isValidUsernameBytes(bytes)) return { invalid: true };
+  return { canonical: canonicalUsername(bytes), name: rest };
+}
+
 // NODE_INTERFACE → Identity parameters;
 // NODE_INTERFACE → HTTP API → "Hex is lowercase"
 export function resolveIdentityParam(
   value: string,
   getUsername: UsernameLookup,
 ): { hex: string } | { error: string; status: number } {
-  if (/^[0-9a-f]{64}$/.test(value)) {
-    return { hex: value };
+  const v: unknown = value;
+  if (isHex64(v)) {
+    return { hex: v };
   }
   if (value.startsWith('@')) {
-    const rest = value.slice(1);
-    const bytes = Buffer.from(rest, 'utf8');
-    if (!isValidUsernameBytes(bytes)) {
+    const parsed = parseNameParam(value);
+    if ('invalid' in parsed) {
       return { error: 'malformed identity parameter', status: 400 };
     }
-    const canonical = Buffer.from(canonicalUsernameBytes(bytes)).toString('utf8');
-    const row = getUsername(canonical);
+    const row = getUsername(parsed.canonical);
     if (!row) return { error: 'unknown handle', status: 404 };
     return { hex: row.owner };
   }
@@ -176,7 +189,7 @@ export function parseBatchIds(body: unknown): string[] | { error: string } {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of ids) {
-    if (typeof raw !== 'string' || !/^[0-9a-f]{64}$/.test(raw)) {
+    if (!isHex64(raw)) {
       return { error: 'ids must be 64 lowercase hex characters' };
     }
     if (seen.has(raw)) return { error: 'ids must not repeat' };

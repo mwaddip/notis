@@ -12,6 +12,7 @@ import {
   vouchPairValue,
 } from '@dagsocial/types';
 import type { AnyBox, IdentityRecord } from '@dagsocial/types';
+import { isMember } from './utxo-engine.js';
 
 /**
  * The index entries a box places beside its own key (CONSENSUS_INTERFACE → The
@@ -71,9 +72,10 @@ export function indexEntriesOfBox(
 
 /**
  * The record half of the `lapsed` entry's condition (CONSENSUS_INTERFACE → The
- * index entries): a member — `memberSinceBlock > 0` — whose vouches fell below
- * the bar. The other half is a cast count held.
+ * index entries): a member — `memberSinceBlock > 0` — whose record fails
+ * `isMember` (CONSENSUS_INTERFACE → What it holds → "Membership is one
+ * predicate"). The other half is a cast count held.
  */
 export function isLapsedMember(record: IdentityRecord | null): boolean {
-  return record !== null && record.memberSinceBlock > 0 && record.memberVouches < record.memberBar;
+  return record !== null && record.memberSinceBlock > 0 && !isMember(record);
 }

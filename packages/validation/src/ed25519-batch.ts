@@ -2,7 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import type { EdwardsPoint } from '@noble/curves/abstract/edwards.js';
 import { bytesToNumberLE } from '@noble/curves/utils.js';
 import { sha512 } from '@noble/hashes/sha2.js';
-import { bytesToHex } from '@dagsocial/types';
+import { bytesToHex, isBytes } from '@dagsocial/types';
 import { verifyEd25519 } from './verify.js';
 
 /** One signature a batch checks: the 64-byte signature, the signed message and the raw 32-byte key. */
@@ -23,11 +23,6 @@ const BATCH_DOMAIN = 'dagsocial/ed25519-batch/1';
 const BATCH_COEFFICIENT_BYTES = 16;
 
 const DOMAIN_BYTES = Uint8Array.from(BATCH_DOMAIN, (ch) => ch.charCodeAt(0));
-
-/** The byte test `verifyEd25519` applies to each argument (VALIDATION_INTERFACE → Acceptance criterion). */
-function isBytes(v: unknown): v is Uint8Array {
-  return v instanceof Uint8Array;
-}
 
 /** A signature of 64 bytes, a message of bytes and a key of 32 — the shape every entry passes first. */
 function hasEntryShape(entry: unknown): entry is Ed25519BatchEntry {

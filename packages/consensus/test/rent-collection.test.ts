@@ -150,12 +150,12 @@ function exactRentOutputs(inputs: CreditBox[]): AnyBoxCandidate[] {
 }
 
 // ---------------------------------------------------------------------------
-// validateTx: the three findings, written against the contract's verdict and
-// red against today's rule — flipped to `it` as the rule lands.
+// validateTx: refusals over past-period rent collection, written against the
+// contract's verdict.
 // ---------------------------------------------------------------------------
 
-describe('validateTx — the three findings the rule retires', () => {
-  it('C-5: a past-period victim box co-spent with the attacker\'s fresh box, attacker-signed → REFUSE', () => {
+describe('validateTx — past-period rent-collection refusals', () => {
+  it('a past-period box co-spent with another owner\'s fresh box, that other owner\'s signature alone → REFUSE', () => {
     const victimBox = creditBox(victim.userId, 50_000_000n, PAST, 1);
     const attackerBox = creditBox(attacker.userId, 1_000_000n, FRESH, 2);
     const tx = makeTx(
@@ -166,7 +166,7 @@ describe('validateTx — the three findings the rule retires', () => {
     expect(validateTx(depsOver([victimBox, attackerBox]), tx, H).valid).toBe(false);
   });
 
-  it('C-5b: two past-period boxes of one owner and one value, unsigned, one successor to another owner → REFUSE', () => {
+  it('two past-period boxes of one owner and one value, unsigned, one successor to another owner → REFUSE', () => {
     const v1 = creditBox(victim.userId, 50_000_000n, PAST, 3);
     const v2 = creditBox(victim.userId, 50_000_000n, PAST, 4);
     const c1 = chargeFor(v1);
@@ -182,7 +182,7 @@ describe('validateTx — the three findings the rule retires', () => {
     expect(validateTx(depsOver([v1, v2]), tx, H).valid).toBe(false);
   });
 
-  it('C-5c: an unsigned rent collection with a successor carrying lockedUntilBlock → REFUSE', () => {
+  it('an unsigned rent collection with a successor carrying lockedUntilBlock → REFUSE', () => {
     const v = creditBox(victim.userId, 50_000_000n, PAST, 5);
     const c = chargeFor(v);
     const tx = makeTx(
@@ -209,7 +209,7 @@ describe('validateTx — the three findings the rule retires', () => {
 // - inputs: one past · one fresh · two past of one owner · two past of two
 //   owners · two past of one owner and one value · one past + one fresh · one
 //   past that cannot cover its charge
-// - signature map: empty · every owner · the fresh box's owner only (C-5) · a
+// - signature map: empty · every owner · the fresh box's owner only · a
 //   stranger alone · every owner + a stranger
 // - outputs: exact rent · successor to another owner (whole value with and
 //   without a fee, and the exact-rent-shape value) · locked successor ·
@@ -222,7 +222,7 @@ describe('validateTx — the three findings the rule retires', () => {
 //   the ordinary-transfer accept cases: a non-empty map puts every input on
 //   OWNER_SIGNATURE, past or fresh, so the arm is the same.
 // - "two past-period inputs, successor to another owner on only one of them"
-//   is folded into C-5b: the refusal is the same multiset argument the
+//   is folded into the duplicate-successor cell: the refusal is the same multiset argument the
 //   single-input "successor to another owner" case asserts.
 // ---------------------------------------------------------------------------
 
@@ -488,9 +488,10 @@ describe('validateTx — a non-empty map is an ordinary credit transfer', () => 
   });
 
   it('non-empty map but a required owner\'s signature is missing → REFUSE at auth', () => {
-    // C-5's shape: attacker signs their fresh box, victim's past-period box
-    // carries no signature. The non-empty map puts every input on the ordinary
-    // transfer rule and the victim's owner key is unaccounted for.
+    // The fresh-only signature shape: the co-spender signs their fresh box,
+    // the victim's past-period box carries no signature. The non-empty map
+    // puts every input on the ordinary transfer rule and the victim's owner
+    // key is unaccounted for.
     const victimBox = creditBox(victim.userId, 50_000_000n, PAST, 26);
     const attackerBox = creditBox(attacker.userId, 1_000_000n, FRESH, 27);
     const tx = makeTx(
@@ -535,7 +536,7 @@ describe('validateTx — a non-empty map is an ordinary credit transfer', () => 
 });
 
 // ---------------------------------------------------------------------------
-// applyBlock: each finding carried in a block body, applied over a view that
+// applyBlock: each refusal carried in a block body, applied over a view that
 // seeds the past-period boxes and the four protocol boxes the settlement
 // reads.
 // ---------------------------------------------------------------------------
@@ -566,8 +567,8 @@ function applyRejected(txs: UtxoTransaction[], inputs: CreditBox[]): string | un
   return result.ok ? undefined : result.reason;
 }
 
-describe('applyBlock — the three findings refused in a block', () => {
-  it('C-5: a block carrying the mixed co-spend attack → REFUSED', () => {
+describe('applyBlock — past-period rent-collection refusals in a block', () => {
+  it('a block carrying the mixed co-spend attack → REFUSED', () => {
     const victimBox = creditBox(victim.userId, 50_000_000n, PAST, 30);
     const attackerBox = creditBox(attacker.userId, 1_000_000n, FRESH, 31);
     const tx = makeTx(
@@ -579,7 +580,7 @@ describe('applyBlock — the three findings refused in a block', () => {
     expect(reason).toContain(`Missing or invalid owner signature for box ${victimBox.id}`);
   });
 
-  it('C-5b: a block carrying the duplicate-successor attack → REFUSED', () => {
+  it('a block carrying the duplicate-successor attack → REFUSED', () => {
     const v1 = creditBox(victim.userId, 50_000_000n, PAST, 32);
     const v2 = creditBox(victim.userId, 50_000_000n, PAST, 33);
     const c1 = chargeFor(v1);
@@ -596,7 +597,7 @@ describe('applyBlock — the three findings refused in a block', () => {
     expect(reason).toContain('failed re-validation');
   });
 
-  it('C-5c: a block carrying a rent successor with lockedUntilBlock → REFUSED', () => {
+  it('a block carrying a rent successor with lockedUntilBlock → REFUSED', () => {
     const v = creditBox(victim.userId, 50_000_000n, PAST, 34);
     const c = chargeFor(v);
     const tx = makeTx(

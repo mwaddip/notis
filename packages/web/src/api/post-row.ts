@@ -1,7 +1,7 @@
-import { MAX_CONTENT_BYTES } from '@dagsocial/types';
+import { MAX_CONTENT_BYTES, isHex64 } from '@dagsocial/types';
 import type { PostJson, PostType, WithdrawnJson } from './dto';
 import {
-  isHex64Lower, isNonNegSafeInt, isNonNegSafeIntOrNull, isStatus,
+  isNonNegSafeInt, isNonNegSafeIntOrNull, isStatus,
   isParentRefs, isAuthorName, readWithdrawn,
 } from './row-fields';
 
@@ -39,10 +39,10 @@ function isContent(v: unknown): v is string | null {
 export function readBoundRow(row: unknown): PostJson | null {
   if (typeof row !== 'object' || row === null || Array.isArray(row)) return null;
   const raw = row as Record<string, unknown>;
-  if (!isHex64Lower(raw['id'])) return null;
-  if (!isHex64Lower(raw['txId'])) return null;
-  if (!isHex64Lower(raw['contentHash'])) return null;
-  if (!isHex64Lower(raw['author'])) return null;
+  if (!isHex64(raw['id'])) return null;
+  if (!isHex64(raw['txId'])) return null;
+  if (!isHex64(raw['contentHash'])) return null;
+  if (!isHex64(raw['author'])) return null;
   if (!isParentRefs(raw['parentRefs'])) return null;
   if (!isContent(raw['content'])) return null;
   if (!isNonNegSafeInt(raw['protocolVersion'])) return null;

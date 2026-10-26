@@ -1,6 +1,6 @@
-import { checkBlockCost } from '@dagsocial/consensus';
+import { availableInvites, checkBlockCost } from '@dagsocial/consensus';
 import type { UtxoResult } from '@dagsocial/consensus';
-import { computeTxId, decodeTx, encodeTx, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
+import { computeTxId, decodeTx, encodeTx, membershipBar, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
   assertPoolAdmits,
@@ -21,7 +21,6 @@ import { getIdentityRecord, getNetworkRecord } from '../store/index.js';
 import { config } from '../config.js';
 import { ClientError } from './client-error.js';
 import { costAlone, marginalCost } from './cost-estimate.js';
-import { availableInvites } from './invites-available.js';
 
 /**
  * Thrown when a credit transaction's fee rate is beneath this node's floor.
@@ -153,8 +152,10 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
     // refusal, named by the invite service for the diagnosis.
     const inviterBytes = new Uint8Array(Buffer.from(meta.inviteInviter, 'hex'));
     const record = getIdentityRecord(inviterBytes);
-    const nr = getNetworkRecord();
-    const available = availableInvites(record, nr.memberCount, config.membershipBarMultiplier);
+    const available = availableInvites(
+      record,
+      () => membershipBar(getNetworkRecord().memberCount, config.membershipBarMultiplier),
+    );
     if (typeof available === 'number'
         && countPendingInvites(meta.inviteInviter) >= available) {
       throw new ClientError('Every invite this member has is already pending', 400);

@@ -1,5 +1,5 @@
 /**
- * Intentional, client-safe rejection (audit L-12).
+ * Intentional, client-safe rejection.
  *
  * Services throw this for rejections whose message is *meant* for the caller
  * ("Already liked this post", "Cannot vouch for yourself"). Route handlers

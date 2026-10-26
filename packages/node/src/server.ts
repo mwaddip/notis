@@ -43,6 +43,7 @@ import {
   HTTP_KEEP_ALIVE_TIMEOUT_MS,
   HTTP_CHECK_INTERVAL_MS,
   HTTP_CONNECTIONS_MAX,
+  isHex64,
 } from '@dagsocial/types';
 
 // NODE_INTERFACE → "A body the parser refuses is the client's error"; CONSTANTS
@@ -377,7 +378,7 @@ export function createApp(config: Config): express.Express {
 
     const postId = req.params['id']!;
     // NODE_INTERFACE → HTTP API → "Hex is lowercase"
-    if (!/^[0-9a-f]{64}$/.test(postId)) {
+    if (!isHex64(postId)) {
       res.status(400).json({ error: 400, reason: 'id must be 64 lowercase hex characters' });
       return;
     }
@@ -419,15 +420,15 @@ export function createApp(config: Config): express.Express {
 
   // Admission's `held` and `owed` are the spend rule's engine inputs
   // (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule needs"),
-  // written once in `services/karma-admission.ts` and wired here as the
-  // engine's `getKarmaValue` and `getKarmaOwed`; `handleRelayedTx` wires the
-  // same two readers from the same module.
+  // written once by the karma-admission service and wired here as the engine's
+  // `getKarmaValue` and `getKarmaOwed`; `handleRelayedTx` wires the same two
+  // readers from the same module.
   // ⛔ **Every `getBox` below is `getBoxWithPending`, and that is an admission
   // convenience, not a consensus one.** These deps reach submission services
-  // only. Block application takes its `getBox` from a direct store import
-  // (`block-apply.ts`), so nothing here can reach it — and nothing here may be
-  // given to it: a block's inputs must resolve against the confirmed set alone,
-  // or what a block may spend would depend on one node's unshared pool.
+  // only. Block application takes its `getBox` from a direct store import, so
+  // nothing here can reach it — and nothing here may be given to it: a block's
+  // inputs must resolve against the confirmed set alone, or what a block may
+  // spend would depend on one node's unshared pool.
   //
   // Submission needs the wider view because a transaction that spends the change
   // box of one still in the pool is ordinary — the client chains rather than
@@ -603,7 +604,8 @@ export function createApp(config: Config): express.Express {
   );
 
   // Mining — /mining. A miner node is by definition one that serves templates,
-  // so the role alone decides the surface (audit M-7).
+  // so the role alone decides the surface
+  // (MINING_INTERFACE → Invariants, item 8).
   if (config.nodeRole === 'miner') {
     app.use(
       '/mining',

@@ -9,7 +9,6 @@ import {
   buildClaim,
   buildBurn,
   buildSend,
-  txToJson,
   InsufficientKarma,
   InsufficientCredits,
   BelowFloor,
@@ -19,7 +18,7 @@ import {
 } from '../src/wallet/builders';
 import {
   VOUCH_KARMA_AMOUNT, USERNAME_BURN_PRICE, MIN_BOX_VALUE_PER_BYTE, LIKE_KARMA_COST,
-  computeCandidateBoxId,
+  computeCandidateBoxId, txToJson,
   type UtxoTransaction, type CandidateOf, type CreditBox,
 } from '@dagsocial/types';
 

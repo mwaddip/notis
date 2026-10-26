@@ -27,6 +27,7 @@ import {
   GOSSIP_SEEN_WINDOW_MS,
 } from './gossip.js';
 import {
+  HANDSHAKE_PROTOCOL,
   SYNC_PROTOCOL,
   requestHeaders,
   requestBlocks,
@@ -67,8 +68,8 @@ import { OutboundManager } from './outbound-mgr.js';
 import { decodeFrame, KNOWN_FRAME_MAGICS } from './frame.js';
 import {
   buildHandshakeFrame,
+  decodeHandshakeBody,
   handshakePenalty,
-  parseHandshakeBody,
   validateHandshake,
 } from './handshake.js';
 import type { HandshakeResult } from './handshake.js';
@@ -1235,7 +1236,7 @@ export class NetNode {
   private registerHandshakeHandler(libp2p: Libp2p): void {
     const magic = this.config.magic;
 
-    libp2p.handle('/dagsocial/handshake/1', async (stream, connection) => {
+    libp2p.handle(HANDSHAKE_PROTOCOL, async (stream, connection) => {
       const peerId = connection.remotePeer.toString();
       const connId = connection.id;
       // NET_INTERFACE → Validation → "A stream write is bounded in time as
@@ -1330,7 +1331,7 @@ export class NetNode {
           return;
         }
 
-        const result = validateHandshake(parseHandshakeBody(body), era);
+        const result = validateHandshake(decodeHandshakeBody(body), era);
         if (!result.ok || !result.msg) {
           // Contract: the stream closes either way, but the ban does not —
           // malformed input is banned permanently, an unsupported version is
@@ -1695,7 +1696,7 @@ export class NetNode {
     // connection it opened": the stream opens on this connection, not on
     // whichever one libp2p's dial queue picks.
     const data = await oneRoundTrip(
-      (signal) => conn.newStream('/dagsocial/handshake/1', { signal }),
+      (signal) => conn.newStream(HANDSHAKE_PROTOCOL, { signal }),
       buildHandshakeFrame(magic, ourMsg),
       this.config,
       1,
@@ -1735,7 +1736,7 @@ export class NetNode {
     }
     const body = decoded.body;
 
-    const result = validateHandshake(parseHandshakeBody(body), this.currentEra());
+    const result = validateHandshake(decodeHandshakeBody(body), this.currentEra());
     if (!result.ok) {
       console.warn(`[net] outbound handshake with ${peerId} rejected: ${result.error}`);
       const outHsPenKind = handshakePenalty(result.rejection);
@@ -1756,9 +1757,12 @@ export class NetNode {
 
   private sendToPeer(peerId: string, data: Uint8Array): Promise<void> {
     if (!this.libp2p) return Promise.resolve();
-    const peer = this.libp2p.getPeers().find((p) => p.toString() === peerId);
-    if (!peer) {
-      console.warn(`[net] sendToPeer: peer ${peerId} not found in libp2p.getPeers() (have ${this.libp2p.getPeers().length} peers)`);
+    const libp2p = this.libp2p;
+    let peer;
+    try {
+      peer = connectedPeer(libp2p, peerId);
+    } catch {
+      console.warn(`[net] sendToPeer: peer ${peerId} not found in libp2p.getPeers() (have ${libp2p.getPeers().length} peers)`);
       return Promise.resolve();
     }
 
@@ -1984,7 +1988,7 @@ export class NetNode {
    */
   penalizePeer(peerId: string, kind: 'misbehavior' | 'transient', reason: string): void {
     if (kind === 'misbehavior') {
-      this.peerMgr.recordPenalty('misbehavior', peerId, 100, reason);
+      this.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, reason);
     } else {
       this.peerMgr.recordPenaltyKind(PenaltyKind.Transient, peerId, reason);
     }
@@ -2111,13 +2115,13 @@ export class NetNode {
         try {
           content = decodePostBody(mod.data);
         } catch {
-          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+          this.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId,
             `post body decode failed for ${mod.id}`);
           continue;
         }
         const vr = this.validators.verifyPostBody(content, commitment);
         if (!vr.valid) {
-          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+          this.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId,
             `post body commitment mismatch for ${mod.id}`);
           continue;
         }

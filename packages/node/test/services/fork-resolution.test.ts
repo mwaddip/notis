@@ -1324,9 +1324,9 @@ describe('reorg', () => {
   });
 
   // -------------------------------------------------------------------------
-  // A full mempool must not abort a reorg (audit M-8). Re-insertion is
-  // bookkeeping; letting MempoolFullError escape would roll back the whole
-  // chain switch — mempool pressure turning into a consensus-liveness failure.
+  // A full mempool must not abort a reorg. Re-insertion is bookkeeping;
+  // letting MempoolFullError escape would roll back the whole chain switch —
+  // mempool pressure turning into a consensus-liveness failure.
   // -------------------------------------------------------------------------
   it('drops re-inserted entries and still completes the reorg when the pool is full', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1506,8 +1506,8 @@ describe('reorg abort', () => {
     // The competing height-2 block is built after height 1 and before the
     // originals at 2 and 3, because a hand-built block's `stateRoot` commits to
     // the state its body produces *from the state standing when it is built*
-    // (H-6). Post-revert that is exactly the fork state, so building it here is
-    // what makes it applicable there.
+    // (NODE_INTERFACE → Post-block stateRoot). Post-revert that is exactly
+    // the fork state, so building it here is what makes it applicable there.
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);

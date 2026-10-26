@@ -13,8 +13,6 @@ import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyHeaderFieldDomains,
@@ -39,8 +37,6 @@ const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyOrderingBlockStructure,
@@ -592,7 +588,18 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
       capabilities: [],
     });
 
-    internalsB.peerMgr.recordPenalty('misbehavior', aId, 500, 'test');
+    // Five misbehaviors at one instant cross the 500-point threshold.
+    // `Date.now` holds across the five calls so the decay reads zero between
+    // them; libp2p's own timers run on the real clock, so the pin is restored
+    // straight after.
+    {
+      const at = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(at);
+      for (let i = 0; i < 5; i++) {
+        internalsB.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, aId, 'test');
+      }
+      clock.mockRestore();
+    }
     // NET_INTERFACE → "A ban ends the connection": the ban hangs up every
     // connection to the peer. The hang-up is asynchronous.
     expect(nodeB.getConnectedPeers()).not.toContain(aId);
@@ -663,9 +670,19 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     const bId = nodeB.peerId();
     expect(nodeA.getConnectedPeers()).toContain(bId);
 
-    (nodeA as unknown as Internals).peerMgr.recordPenalty(
-      'misbehavior', bId, 500, 'test',
-    );
+    const peerMgrA = (nodeA as unknown as Internals).peerMgr;
+    // Five misbehaviors at one instant cross the 500-point threshold.
+    // `Date.now` holds across the five calls so the decay reads zero between
+    // them; libp2p's own timers run on the real clock, so the pin is restored
+    // straight after.
+    {
+      const at = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(at);
+      for (let i = 0; i < 5; i++) {
+        peerMgrA.recordPenaltyKind(PenaltyKind.Misbehavior, bId, 'test');
+      }
+      clock.mockRestore();
+    }
     await new Promise((r) => setTimeout(r, 1500));
 
     expect(nodeA.libp2pNode?.getConnections()).toHaveLength(0);

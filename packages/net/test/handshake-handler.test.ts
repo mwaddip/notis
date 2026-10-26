@@ -7,8 +7,6 @@ import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyOrderingBlockStructure,
@@ -18,7 +16,8 @@ import {
   verifyPostBody,
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
-import { buildHandshakeFrame, decodeHandshakeBody, parseHandshakeBody, validateHandshake } from '../src/handshake.js';
+import { HANDSHAKE_PROTOCOL } from '../src/sync.js';
+import { buildHandshakeFrame, decodeHandshakeBody, validateHandshake } from '../src/handshake.js';
 import type { HandshakeResult } from '../src/handshake.js';
 import { decodeFrame } from '../src/frame.js';
 import { PeerState, PenaltyKind } from '../src/types.js';
@@ -46,8 +45,6 @@ const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyOrderingBlockStructure,
@@ -115,7 +112,7 @@ function makeHandshakeHarness(opts: {
   internals.peerDb = peerDb;
   internals.libp2p = {
     handle: (protocol: string, cb: StreamHandler, options?: HandleOptions) => {
-      if (protocol === '/dagsocial/handshake/1') {
+      if (protocol === HANDSHAKE_PROTOCOL) {
         captured = cb;
         registrationOptions = options;
       }
@@ -411,7 +408,7 @@ describe('inbound handshake handler — our own reply', () => {
 
     expect(written).toHaveLength(1);
     const frame = decodeFrame(MAGIC, written[0]!);
-    const raw = parseHandshakeBody(frame.body);
+    const raw = decodeHandshakeBody(frame.body);
     // Our reply declares PROTOCOL_VERSION, which covers era PROTOCOL_VERSION.
     const result = validateHandshake(raw, PROTOCOL_VERSION);
     expect(result.ok).toBe(true);

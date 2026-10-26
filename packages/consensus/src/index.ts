@@ -8,6 +8,7 @@ export {
   ceilingOf,
   isMember,
   isRoot,
+  availableInvites,
 } from './utxo-engine.js';
 export type { UtxoEngineDeps, UtxoResult, UsernameRow } from './utxo-engine.js';
 

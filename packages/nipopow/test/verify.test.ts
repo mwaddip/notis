@@ -185,6 +185,26 @@ describe('verifyProof', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toMatch(/interlinks|anchor/);
     });
+
+    it('refuses an uppercase interlink as interlinks', () => {
+      const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
+      const head = proof.suffixHead;
+      const last = head.interlinks.length - 1;
+      expect(last).toBeGreaterThan(0);
+      head.interlinks[last] = head.interlinks[last]!.toUpperCase();
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
+      expect(result).toMatchObject({ ok: false, reason: 'interlinks' });
+    });
+
+    it('refuses a short interlink as interlinks', () => {
+      const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
+      const head = proof.suffixHead;
+      const last = head.interlinks.length - 1;
+      expect(last).toBeGreaterThan(0);
+      head.interlinks[last] = head.interlinks[last]!.slice(0, 62);
+      const result = verifyProof(proof, { m: proof.m, k: proof.k }, profile);
+      expect(result).toMatchObject({ ok: false, reason: 'interlinks' });
+    });
   });
 
   describe('heights', () => {

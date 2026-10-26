@@ -1,4 +1,4 @@
-import { encodeVlqBigInt, encodeVlqZigZagBigInt } from './vlq.js';
+import { encodeVlqBigInt, encodeVlqZigZagBigInt, zigZag } from './vlq.js';
 
 export class ByteWriter {
   // One buffer, doubled when a write would overrun it:
@@ -39,7 +39,7 @@ export class ByteWriter {
       throw new Error('writeVlqU: value exceeds safe integer range');
     }
     // Arithmetic, not bitwise: `&`/`>>>` coerce to 32 bits, which silently
-    // mis-encodes every value at or above 2^32. Keep in sync with encodeVlqU.
+    // mis-encodes every value at or above 2^32.
     let v = value;
     while (v >= 0x80) {
       this.writeU8((v % 128) + 0x80);
@@ -52,23 +52,18 @@ export class ByteWriter {
     if (!Number.isInteger(value)) {
       throw new Error(`writeVlqS: not an integer: ${value}`);
     }
-    // ZigZag, arithmetic rather than `(v << 1) ^ (v >> 31)`: the bitwise form is
-    // 32-bit and corrupts anything outside ±2^31. Doubling can push a large
-    // magnitude past the safe-integer range — writeVlqU then rejects it loudly
-    // instead of truncating. Keep in sync with encodeVlqZigZag.
-    const zz = value >= 0 ? value * 2 : -value * 2 - 1;
+    const zz = zigZag(value);
     this.writeVlqU(zz);
   }
 
   /**
    * Writes an unsigned VLQ from a `bigint` over the full u64 range.
    *
-   * Delegates to `encodeVlqBigInt` rather than carrying its own loop. The
-   * `number` pair above duplicates its loop and keeps the two in sync by
-   * comment; that is the existing shape and is left alone, but it is not the
-   * shape to extend into a path whose bytes are consensus — box ids, tx ids,
-   * post ids, Merkle roots and the `stateRoot` all ride on these. One loop
-   * cannot drift from itself.
+   * Delegates to `encodeVlqBigInt` rather than carrying its own loop: each
+   * encoding has one loop, the `number` one in `writeVlqU` and this one in
+   * `encodeVlqBigInt` (`WIRE_INTERFACE → encodeVlqU(value: number): Uint8Array`).
+   * Its bytes are consensus — box ids, tx ids, post ids, Merkle roots and the
+   * `stateRoot` all ride on them.
    *
    * - **Throws:** `Error` if negative or above `2^64 - 1`
    */

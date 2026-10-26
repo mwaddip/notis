@@ -359,20 +359,6 @@ describe('posts store', () => {
     expect(after && 'blockIndex' in after ? after.blockIndex : undefined).toBe(3);
   });
 
-  it('getParentRefs returns array of parent IDs', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, getParentRefs } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    const refs3 = ['a1'.repeat(32), 'b2'.repeat(32), 'c3'.repeat(32)];
-    const { commit, content } = makeCommit({ parentRefs: refs3 });
-    insertPost(fixturePostId(commit), fixtureTxId(commit), commit, content);
-
-    const refs = getParentRefs(fixturePostId(commit));
-    expect(refs).toEqual(refs3);
-  });
-
   it('getSubtreePage returns committed descendants (multi-level)', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, confirmPost, getSubtreePage } = await importPostsFresh();

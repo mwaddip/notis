@@ -1,6 +1,6 @@
 // WEB_INTERFACE → The way into the workspace — the lock and the channel.
 
-import { isHex64Lower } from '@dagsocial/node-reads';
+import { isHex64 } from '@dagsocial/types';
 
 export interface Tabs {
   claim(): Promise<boolean>;
@@ -23,7 +23,7 @@ export function createTabs(): Tabs {
   if (ch) {
     ch.addEventListener('message', (e) => {
       const id = e.data?.id;
-      if (isHex64Lower(id) && holding) {
+      if (isHex64(id) && holding) {
         for (const cb of listeners) cb(id);
       }
     });

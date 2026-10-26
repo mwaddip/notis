@@ -10,7 +10,7 @@ import { MempoolFullError } from '../store/mempool.js';
 export type ClientErrorBody = 'status+reason' | 'message';
 
 /**
- * The route error policy in one place (audit L-12, M-8).
+ * The route error policy in one place.
  *
  * - `ClientError` — an intentional, client-safe rejection: its message is
  *   returned with the status the service chose (400/403/409).

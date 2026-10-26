@@ -420,9 +420,9 @@ describe('validateAndApplyTx', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 5. Karma value non-conservation rejected (audit C-1)
+  // 5. Karma value non-conservation rejected.
   // -------------------------------------------------------------------------
-  it('rejects karma value non-conservation (audit C-1)', () => {
+  it('rejects karma value non-conservation', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
     // Output claims 120 from a 100 input — 20 karma minted from nothing.
@@ -787,7 +787,7 @@ describe('validateAndApplyTx', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 13. Value conservation (audit C-1, L-11)
+  // 13. Value conservation
   //
   // sum(inputs) == sum(outputs) across the transaction as a whole — one total
   // per side, not per box type (NODE_INTERFACE → `validateTx` step 7). A user
@@ -849,12 +849,12 @@ describe('validateAndApplyTx', () => {
     });
   });
 
-  describe('value conservation (audit C-1, L-11)', () => {
+  describe('value conservation', () => {
     it('rejects self-signed K(v) -> K(v) + K(2) (mints karma from nothing)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-      // The C-1 exploit: the change box keeps the full balance while a second
-      // box conjures 2 more karma.
+      // The non-conservation exploit: the change box keeps the full balance
+      // while a second box conjures 2 more karma.
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n,
@@ -918,9 +918,9 @@ describe('validateAndApplyTx', () => {
     });
 
     // -----------------------------------------------------------------------
-    // L-11 — box `value` must be a non-negative integer. The rule moved from
-    // `checkOutputValues` into the step-4 schema (field-type pin), so the
-    // rejection is shape-worded now; the bound is the same.
+    // Box `value` must be a non-negative integer (TYPES_INTERFACE → "Box
+    // value domain"). The rejection is shape-worded, through step-4's
+    // schema (field-type pin).
     //
     // ⚠ **The malformed value is stamped AFTER signing**, here and in the
     // balancing case below. `computeTxId` has no encoding for a `value` outside
@@ -984,7 +984,7 @@ describe('validateAndApplyTx', () => {
         ownerPrivKey,
         ownerPubKey,
       );
-      // −5 stamped after signing — see the note above the L-11 loop.
+      // −5 stamped after signing — see the note above the loop.
       Object.assign(tx.outputs[1]!, { value: -5 });
       const result = validateAndApplyTx(deps, tx, 10);
 
@@ -1274,7 +1274,7 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toBeUndefined();
     });
 
-    it('rejects an invite that does not debit the change box (audit C-1)', () => {
+    it('rejects an invite that does not debit the change box', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
       // The transition arm pins the bond's value but nothing there requires the
@@ -1591,12 +1591,12 @@ describe('validateAndApplyTx', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 14. The bond sweep (audit H-2), closed by construction
+  // 14. The bond sweep, closed by construction
   //
-  // The attack was a mixed-input "cancel shape" — the attacker's own KarmaBox
-  // alongside the uncommitted BondBox — sweeping both into their own karma with
-  // no inviter signature. It needed a mixed-type input combination, which
-  // `validateTx` step 3 permitted for exactly two shapes.
+  // The sweep would be a mixed-input "cancel shape" — the attacker's own
+  // KarmaBox alongside the uncommitted BondBox — sweeping both into their
+  // own karma with no inviter signature. It needs a mixed-type input
+  // combination.
   //
   // ⛔ **Both preconditions fail twice over**: every legal shape is single-type
   // and step 3 admits no exception, and a bond input is refused by authorization
@@ -1604,7 +1604,7 @@ describe('validateAndApplyTx', () => {
   // sweep is enumerated here rather than assumed unreachable, because "step 3
   // admits no exceptions" is a claim a future arm could quietly reverse.
   // ---------------------------------------------------------------------------
-  describe('the bond sweep (audit H-2)', () => {
+  describe('the bond sweep', () => {
     it('rejects the 2-input sweep, attacker-signed', () => {
       const inviterKeys = generateKeyPairSync('ed25519');
       const inviterPubKey = rawPublicKey(inviterKeys.publicKey);

@@ -1,4 +1,4 @@
-import { el, shortHex, endForm } from '../dom';
+import { el, mono, shortHex, endForm } from '../dom';
 import { withheldLine } from './withheld-line';
 import { unlockForm } from './passphrase';
 import { card, stageLine, listCardOpts } from './card';
@@ -33,10 +33,6 @@ function row(label: string): { row: HTMLElement; field: HTMLElement } {
   r.appendChild(field);
   return { row: r, field };
 }
-function mono(text: string): HTMLElement {
-  return el('span', 'mono', text);
-}
-
 /** The your-vouch row's state, computed by the App (WEB_INTERFACE → The author
  *  window). `null` with no identity loaded — the row is absent. */
 export type YourVouch =

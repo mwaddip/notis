@@ -1,9 +1,10 @@
-import { bytesToHex, canonicalUsernameBytes, firstDifference, isValidUsernameBytes } from '@dagsocial/types';
+import { bytesToHex, canonicalUsernameBytes, firstDifference, isHex64, isValidUsernameBytes, usernameString } from '@dagsocial/types';
 import type { DecodedBoxCandidate } from '@dagsocial/types';
 import type { Anchor } from './boxes.js';
-import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
+import { excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
-import { capped, fetchJson, isHex64Lower, isRecord, NAME_READ_BYTES } from '@dagsocial/node-reads';
+import { capped, fetchJson, isRecord, NAME_READ_BYTES } from '@dagsocial/node-reads';
+import { HEX_64 } from './hex-input.js';
 import { shown } from './http.js';
 
 /**
@@ -84,7 +85,7 @@ export async function proveName(
   }
   const answer = isRecord(lookup.data) ? lookup.data : {};
   const answeredBoxId = answer['boxId'];
-  if (!isHex64Lower(answeredBoxId)) {
+  if (!isHex64(answeredBoxId)) {
     return unanswered('unproven', `unproven: the lookup's boxId is not 64 hex: ${shown(answeredBoxId)}`);
   }
   const boxId = answeredBoxId;
@@ -151,7 +152,7 @@ function checkName(
   // TYPES_INTERFACE → Content limits — the codec bounds a name's length and
   // checks none of its bytes; the alphabet is consensus's check, which this
   // tool does not run on a proven box, so a refusal names it through `capped`.
-  const name = new TextDecoder().decode(candidate.name);
+  const name = usernameString(candidate.name);
   if ('key' in claim) {
     const key = claim.key.toLowerCase();
     if (owner !== key) {

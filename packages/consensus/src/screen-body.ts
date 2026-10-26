@@ -175,12 +175,11 @@ function runPass(
   // of it applies — and so is one whose transaction failed the pre-loop
   // gates, which `withdrawalsOf` picks up by decoded shape rather than by
   // envelope.
-  const withdrawnThisBlock = new Set<string>();
   for (const bw of withdrawalsOf(survivorsBlock, (postId) => state.getTopologyAuthor(postId))) {
     const index = indexByTxId.get(bw.txId);
     if (index === undefined) continue;
     if (refusedThisPass.has(index)) continue;
-    const result = applyBlockWithdrawal(state, bw, height, withdrawnThisBlock);
+    const result = applyBlockWithdrawal(state, bw, height);
     if (!result.ok) {
       refused.set(index, { index, reason: result.reason });
       survivors.delete(index);

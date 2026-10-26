@@ -7,8 +7,6 @@ import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyHeaderFieldDomains,
@@ -73,8 +71,6 @@ const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyOrderingBlockStructure,
@@ -134,7 +130,7 @@ function makeHarness(
     opts.headerStanding ?? (() => null),
     opts.nowMs ?? Date.now);
 
-  const penaltySpy = vi.spyOn(peerMgr, 'recordPenalty');
+  const penaltySpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
   return { topicValidators, peerMgr, penaltySpy, karmaMembers };
 }
 
@@ -184,7 +180,7 @@ function signHeader(header: BlockHeader): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
-// Ordering-block topic validator — relay PoW gate (audit M-9, M-6)
+// Ordering-block topic validator — relay PoW gate
 // ---------------------------------------------------------------------------
 
 describe('ordering-block topic validator (relay PoW gate)', () => {
@@ -251,12 +247,12 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledTimes(1);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'ordering block PoW invalid',
+      PenaltyKind.Misbehavior, peer.id, 'ordering block PoW invalid',
     );
     expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(1);
   });
 
-  it('rejects the same block with powNonce NaN (M-6 — pre-fix code Accepted this)', () => {
+  it('rejects the same block with powNonce NaN', () => {
     // The single-field-delta control that Accepts is the mined-nonce case
     // above.
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
@@ -280,11 +276,11 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
 
     expect(() => decodeOrderingBlock(encoded)).toThrow(ReaderError);
 
-    const banSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const banSpy = penaltySpy;
     const result = validate(peer, { data: encoded });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(penaltySpy).not.toHaveBeenCalledWith(PenaltyKind.Misbehavior, expect.anything(), expect.anything());
     expect(banSpy).toHaveBeenCalledWith(
       PenaltyKind.ProtocolViolation, peer.id, expect.stringContaining('malformed ordering block'),
     );
@@ -319,11 +315,11 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
       valid: false, error: 'Ordering block invalid height',
     });
 
-    const banSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const banSpy = penaltySpy;
     const result = validate(peer, { data: encodeOrderingBlock(block) });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(penaltySpy).not.toHaveBeenCalledWith(PenaltyKind.Misbehavior, expect.anything(), expect.anything());
     expect(banSpy).toHaveBeenCalledWith(
       PenaltyKind.ProtocolViolation, peer.id, expect.stringContaining('malformed ordering block'),
     );
@@ -380,7 +376,7 @@ describe('tx topic validator — the post membership gate', () => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(members);
     const validate = topicValidators.get(topics.tx)!;
     const peer = newPeer(peerMgr);
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const result = validate(peer, { data: encodeTxPacket(tx, content) });
     return { result, peer, peerMgr, penaltySpy, kindSpy };
   };
@@ -461,7 +457,7 @@ describe('tx topic validator — the post membership gate', () => {
     const { result, peer, penaltySpy } = validatePacket(tx, longContent, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, expect.stringContaining('Content'),
+      PenaltyKind.Misbehavior, peer.id, expect.stringContaining('Content'),
     );
   });
 
@@ -500,7 +496,7 @@ describe('tx topic validator — the post membership gate', () => {
     const { result, peer, penaltySpy } = validatePacket(postTx, undefined, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'post without body',
+      PenaltyKind.Misbehavior, peer.id, 'post without body',
     );
   });
 
@@ -509,7 +505,7 @@ describe('tx topic validator — the post membership gate', () => {
     const { result, peer, penaltySpy } = validatePacket(plainTx, 'orphan body', new Set());
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'body without post',
+      PenaltyKind.Misbehavior, peer.id, 'body without post',
     );
   });
 
@@ -517,7 +513,7 @@ describe('tx topic validator — the post membership gate', () => {
     const { result, peer, penaltySpy } = validatePacket(postTx, 'wrong content', new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, expect.stringContaining('hash'),
+      PenaltyKind.Misbehavior, peer.id, expect.stringContaining('hash'),
     );
   });
 
@@ -543,7 +539,7 @@ describe('tx topic validator — the post membership gate', () => {
     const { result, peer, penaltySpy } = validatePacket(tx, 'wrong content', new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, expect.stringContaining('parent ref'),
+      PenaltyKind.Misbehavior, peer.id, expect.stringContaining('parent ref'),
     );
   });
 });
@@ -594,7 +590,7 @@ describe("tx topic validator — a transaction's signatures are checked at Stage
 
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, expect.stringContaining('signature'),
+      PenaltyKind.Misbehavior, peer.id, expect.stringContaining('signature'),
     );
   });
 
@@ -649,7 +645,7 @@ describe("tx topic validator — a fault of this node's is no peer's", () => {
       const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([authorHex]), {
         chainHeight: () => { throw new Error('chain height explosion'); },
       });
-      const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+      const kindSpy = penaltySpy;
       const validate = topicValidators.get(topics.tx)!;
       const peer = newPeer(peerMgr);
       const result = validate(peer, { data: encodeTxPacket(tx, CONTENT) });
@@ -966,7 +962,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), { schedule: twoEra });
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const result = validate(peer, { data: encodeOrderingBlock(block) });
     return { result, peer, peerMgr, penaltySpy, kindSpy };
   };
@@ -977,7 +973,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     });
     const validate = topicValidators.get(topics.tx)!;
     const peer = newPeer(peerMgr);
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const result = validate(peer, { data: encodeTxPacket(tx, content) });
     return { result, peer, peerMgr, penaltySpy, kindSpy };
   };
@@ -986,14 +982,14 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     const { result, peer, penaltySpy, kindSpy } = runBlock(vBlock(H, 1));
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('era 2'));
-    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(penaltySpy).not.toHaveBeenCalledWith(PenaltyKind.Misbehavior, expect.anything(), expect.anything());
   });
 
   it('rejects block H-1 declaring era 2 (era at H-1 is 1)', () => {
     const { result, peer, penaltySpy, kindSpy } = runBlock(vBlock(H - 1, 2));
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('era 1'));
-    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(penaltySpy).not.toHaveBeenCalledWith(PenaltyKind.Misbehavior, expect.anything(), expect.anything());
   });
 
   // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state records nothing":
@@ -1034,7 +1030,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     validate(peer, { data });
     expect(peerMgr.isBanned(peer.id)).toBe(true);  // 50 + 50 = 100 >= 75
 
-    expect(penaltySpy).not.toHaveBeenCalled();      // never the misbehavior path
+    expect(penaltySpy).not.toHaveBeenCalledWith(PenaltyKind.Misbehavior, expect.anything(), expect.anything());      // never the misbehavior path
   });
 
   it('a structurally invalid block is still misbehavior (100), not Transient', () => {
@@ -1066,7 +1062,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     const result = validate(peer, { data: encodeOrderingBlock(bad) });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith('misbehavior', peer.id, 100, expect.anything());
+    expect(penaltySpy).toHaveBeenCalledWith(PenaltyKind.Misbehavior, peer.id, expect.anything());
   });
 });
 
@@ -1125,7 +1121,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
 
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'ordering block below the network floor',
+      PenaltyKind.Misbehavior, peer.id, 'ordering block below the network floor',
     );
   });
 
@@ -1150,7 +1146,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     });
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
 
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
     const result = validate(peer, { data: encodeOrderingBlock(block) });
@@ -1203,7 +1199,7 @@ describe('ordering-block topic validator — network floor and schedule', () => 
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledTimes(1);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'ordering block below the network floor',
+      PenaltyKind.Misbehavior, peer.id, 'ordering block below the network floor',
     );
   });
 
@@ -1363,12 +1359,12 @@ describe('gossip topic validators weigh raw.length before decoding', () => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
 
     const result = validate(peer, { data: overBoundBlockBytes() });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(penaltySpy).not.toHaveBeenCalledWith(PenaltyKind.Misbehavior, expect.anything(), expect.anything());
     expect(kindSpy).toHaveBeenCalledWith(
       PenaltyKind.ProtocolViolation,
       peer.id,
@@ -1411,12 +1407,12 @@ describe('gossip topic validators weigh raw.length before decoding', () => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([authorHex]));
     const validate = topicValidators.get(topics.tx)!;
     const peer = newPeer(peerMgr);
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
 
     const result = validate(peer, { data: encoded });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(penaltySpy).not.toHaveBeenCalledWith(PenaltyKind.Misbehavior, expect.anything(), expect.anything());
     expect(kindSpy).toHaveBeenCalledWith(
       PenaltyKind.ProtocolViolation,
       peer.id,
@@ -1427,10 +1423,10 @@ describe('gossip topic validators weigh raw.length before decoding', () => {
   it('a message of exactly MAX_ORDERING_BLOCK_BYTES is not refused as over its bound', () => {
     // Whatever the validator then answers, the ProtocolViolation it may fire is
     // not the length-weigh one: the length check is `>` and equal passes.
-    const { topicValidators, peerMgr } = makeHarness();
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness();
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
 
     validate(peer, { data: new Uint8Array(MAX_ORDERING_BLOCK_BYTES) });
 
@@ -1442,10 +1438,10 @@ describe('gossip topic validators weigh raw.length before decoding', () => {
   });
 
   it('a message of exactly MAX_TX_PACKET_BYTES is not refused as over its bound', () => {
-    const { topicValidators, peerMgr } = makeHarness();
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness();
     const validate = topicValidators.get(topics.tx)!;
     const peer = newPeer(peerMgr);
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
 
     validate(peer, { data: new Uint8Array(MAX_TX_PACKET_BYTES) });
 
@@ -1591,7 +1587,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
       headerStanding: () => 'held',
     });
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
@@ -1608,7 +1604,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
       headerStanding: () => 'refused',
     });
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
@@ -1633,7 +1629,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
       nowMs: () => now,
     });
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
@@ -1668,7 +1664,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
 
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, expect.stringContaining('validator signature'),
+      PenaltyKind.Misbehavior, peer.id, expect.stringContaining('validator signature'),
     );
   });
 
@@ -1681,16 +1677,16 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     const bytes = assembleFrame(unmined, undecodableBodyBytes(), signature);
 
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     const result = validate(peer, { data: bytes });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(kindSpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalledWith(PenaltyKind.ProtocolViolation, expect.anything(), expect.anything());
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'ordering block PoW invalid',
+      PenaltyKind.Misbehavior, peer.id, 'ordering block PoW invalid',
     );
   });
 
@@ -1716,14 +1712,14 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     const bytes = w.toBytes();
 
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     const result = validate(peer, { data: bytes });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(penaltySpy).not.toHaveBeenCalledWith(PenaltyKind.Misbehavior, expect.anything(), expect.anything());
     expect(kindSpy).toHaveBeenCalledWith(
       PenaltyKind.ProtocolViolation,
       peer.id,
@@ -1735,14 +1731,14 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
     const bytes = assembleFrame(minedHeader, undecodableBodyBytes(), minedSignature);
 
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
     const result = validate(peer, { data: bytes });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(penaltySpy).not.toHaveBeenCalledWith(PenaltyKind.Misbehavior, expect.anything(), expect.anything());
     expect(kindSpy).toHaveBeenCalledWith(
       PenaltyKind.ProtocolViolation,
       peer.id,
@@ -1758,7 +1754,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
         throw new Error('provider explosion');
       },
     });
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
@@ -1779,7 +1775,7 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
         throw new Error('standing provider explosion');
       },
     });
-    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const kindSpy = penaltySpy;
     const validate = topicValidators.get(topics.orderingBlock)!;
     const peer = newPeer(peerMgr);
 

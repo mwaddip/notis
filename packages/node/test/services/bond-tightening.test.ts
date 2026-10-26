@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Bond transitions — audit F-consensus-1, closed by construction.
+// Bond transitions, closed by construction.
 //
 // A `BondBox` has no user-transaction shape at all: no user transition names
 // one as an input, so `checkAuthorization` refuses a bond input at step 6
@@ -77,7 +77,7 @@ function addSignature(tx: UtxoTransaction, keys: TestKeys): void {
   );
 }
 
-describe('bond transitions (audit F-consensus-1)', () => {
+describe('bond transitions', () => {
   let db: Database.Database;
   let inviter: TestKeys;
   let invitee: TestKeys;

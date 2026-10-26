@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Content character policy — pinned Unicode codepoint table (audit M-4)
+// Content character policy — pinned Unicode codepoint table
 // ---------------------------------------------------------------------------
 //
 // `verifyContentCharacters` is a **consensus Stage-1 check**: every node must

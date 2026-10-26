@@ -1,11 +1,7 @@
 // ---------------------------------------------------------------------------
-// P2-B phase 2 — vouch integrity + the born-committed bond (audit
-// F-consensus-3, B6, and two holes found deriving the phase: the unpinned
-// voucherId and the invite-create arm).
+// Vouch integrity + the born-committed bond.
 //
-// Every attack below was first written in its ACCEPTANCE form and run against
-// HEAD, where all of them passed — these are transactions the engine used to
-// accept, not hypothetical shapes. Each keeps its own reachability note.
+// Each attack below has a reachability note; each keeps its own.
 //
 // Each attack is paired with a non-vacuity control: the same transaction
 // differing only in the field the new rule pins, proving the rejection
@@ -54,7 +50,6 @@ import {
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
   hasActiveVouchEscrow as storeHasActiveVouchEscrow,
-  getBondFor,
   getVouchBox as storeGetVouchBox,
   putIdentityRecord as storePutIdentityRecord,
   getNetworkRecord as storeGetNetworkRecord,
@@ -252,9 +247,9 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   }
 
   // -------------------------------------------------------------------------
-  // V1 — the stake is unpinned in both directions (audit F-consensus-3).
-  // `checkOutputValues` permits 0n and conservation is the only other bound,
-  // while the unvouch escrow writes the CONSTANT: a 0-value vouch matures
+  // V1 — the stake must be pinned in both directions. `checkOutputValues`
+  // permits 0n and conservation is the only other bound, while the unvouch
+  // escrow writes the CONSTANT: without the pins, a 0-value vouch matures
   // into 1 karma minted from nothing, a 100-value vouch destroys 99.
   // -------------------------------------------------------------------------
 
@@ -501,7 +496,12 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     expect(created.valid).toBe(true);
     applyTx(deps, createTx, created.computedOutputs!, 1);
 
-    const bond = getBondFor(invitee.pub)!;
+    // The bond output is the second output of `buildInviteCreate`
+    // (K(100) → K(75) + Bond(25)); `applyTx` writes `computedOutputs` through
+    // `deps.getBox` (CONSENSUS_INTERFACE → "StateView"), the read the engine
+    // uses for every box lookup.
+    const bondId = created.computedOutputs![1]!.id!;
+    const bond = deps.getBox(bondId) as BondBox;
     expect(bond).not.toBeNull();
 
     for (const signer of [inviter, invitee]) {

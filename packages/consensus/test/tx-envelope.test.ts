@@ -46,3 +46,28 @@ describe('checkTxEnvelope is total over a post that is not an object', () => {
     refusedNaming(envelope({ post: 'x', protocolVersion: 2 }), 'protocolVersion');
   });
 });
+
+describe('checkTxEnvelope holds every id and key to lowercase hex', () => {
+  const UPPER = 'A'.repeat(64);
+
+  it('refuses a signature key spelled in uppercase, naming signatures', () => {
+    refusedNaming(envelope({ signatures: { [UPPER]: new Uint8Array(64) } }), 'signatures key must be 64 lowercase hex');
+  });
+
+  it('refuses an input id spelled in uppercase, naming inputs[0]', () => {
+    refusedNaming(envelope({ inputs: [UPPER] }), 'inputs[0] must be 64 lowercase hex');
+  });
+
+  it('refuses a like target spelled in uppercase, naming likeTarget', () => {
+    refusedNaming(envelope({ likeTarget: UPPER }), 'likeTarget must be 64 lowercase hex');
+  });
+
+  it('refuses a like target of 63 characters', () => {
+    refusedNaming(envelope({ likeTarget: HEX_A.slice(1) }), 'likeTarget must be 64 lowercase hex');
+  });
+
+  it('takes a lowercase signature key, input id and like target past those clauses', () => {
+    const result = outcome(envelope({ signatures: { [HEX_A]: new Uint8Array(64) }, likeTarget: HEX_A }));
+    expect(JSON.stringify(result)).not.toContain('must be 64 lowercase hex');
+  });
+});

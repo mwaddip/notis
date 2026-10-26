@@ -3,10 +3,10 @@ import type { PeerRecord, PeerStorage } from '@dagsocial/net';
 import { MAX_CAPABILITY_CODE } from '@dagsocial/net';
 
 /**
- * Persistence behind net's PeerStorage seam (audit L-14): the peers table
- * mirrors net's PeerRecord one-to-one, keyed by address. Net must not depend
- * on SQLite, so this module implements the seam and index.ts hands it to
- * NetNode at construction.
+ * Persistence behind net's PeerStorage seam: the peers table mirrors net's
+ * PeerRecord one-to-one, keyed by address. Net must not depend on SQLite,
+ * so this module implements the seam and the node hands it to NetNode at
+ * construction.
  */
 
 /**

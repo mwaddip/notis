@@ -143,7 +143,7 @@ describe('stateRoot verification (P3 acceptance)', () => {
     expect(honest.header.stateRoot).not.toBe(preDigest);
   });
 
-  it('rejects a block that carries the pre-block digest (the H-6 regression)', async () => {
+  it('rejects a block that carries the pre-block digest', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();

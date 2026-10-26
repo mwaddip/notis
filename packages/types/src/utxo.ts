@@ -584,8 +584,7 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * Identity and Mint Provenance).
  *
  * The discriminant is semantic, never positional: deriving it from journal
- * position would put ordering back into *identity*, which is the failure
- * class M-12 closed for the AVL feed.
+ * position would put ordering into *identity*, which an id must not depend on.
  *
  * Subject bytes are the caller's (NODE_INTERFACE → Reason and subject table);
  * this package never sees a postId.
@@ -682,8 +681,7 @@ export function computeMintTxId(
  * to content alone is what makes `stored.id === computeBoxId(stored)` hold **by
  * construction** for every box in the UTXO set, checkable by any light client,
  * indexer or AVL prover. A content-only hash cannot: it would cover whatever
- * block application mutates, and a stored box would stop matching its own id —
- * audit M-11.
+ * block application mutates, and a stored box would stop matching its own id.
  *
  * Takes one argument, and must keep taking one: a second argument would mean the
  * box no longer carries what its id derives from.
@@ -749,7 +747,7 @@ export interface BoxCandidate {
  * plus the provenance that gives it identity.
  *
  * `txId`/`index` are **required**, which is what makes "has an id but no
- * provenance" — the M-11 state — unrepresentable rather than merely discouraged.
+ * provenance" unrepresentable rather than merely discouraged.
  * A producer that forgets provenance is a compile error.
  *
  * `id` stays optional: producers build the candidate-plus-provenance object and
@@ -1275,8 +1273,9 @@ export interface UtxoTransaction {
  * - `inputs` and `outputs` carry `arr()`'s count prefix. Concatenated without
  *   one, two different output lists could produce identical bytes, since
  *   `canonicalBoxBytes` is variable-length.
- * - `protocolVersion` is `vlqU`. As unprefixed decimal text it would be the
- *   exact M-1 collision pattern, one struct over.
+ * - `protocolVersion` is `vlqU`. As unprefixed decimal text it would collide
+ *   as unprefixed numeric fields do (TYPES_INTERFACE → Canonical field
+ *   encoding), one struct over.
  * - `likeTarget` presence is `opt()`'s 0/1 tag, which needs no in-band marker
  *   that a neighbouring field could forge, and preserves the `!== undefined`
  *   distinction — an empty-string target hashes differently from absence.
@@ -1384,8 +1383,9 @@ export function computeTxId(tx: UtxoTransaction): TxId {
 
 /**
  * Largest-first UTXO selection. Returns the minimal subset of boxes whose
- * combined value covers `requiredAmount`. Assumes boxes are pre-sorted by
- * value descending. Throws if the total value of all boxes is insufficient.
+ * combined value covers `requiredAmount`, taken from `boxes` sorted into a new
+ * array by value descending — boxes of equal value in the order given. The argument
+ * is never reordered. Throws if the total value of all boxes is insufficient.
  */
 export function selectBoxes<T extends { value: bigint }>(
   boxes: T[],
@@ -1393,9 +1393,10 @@ export function selectBoxes<T extends { value: bigint }>(
 ): T[] {
   if (requiredAmount <= 0n) return [];
 
+  const ordered = [...boxes].sort((a, b) => (a.value < b.value ? 1 : a.value > b.value ? -1 : 0));
   let accumulated = 0n;
   const selected: T[] = [];
-  for (const box of boxes) {
+  for (const box of ordered) {
     accumulated += box.value;
     selected.push(box);
     if (accumulated >= requiredAmount) break;

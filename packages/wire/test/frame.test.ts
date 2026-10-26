@@ -94,7 +94,7 @@ describe('encodeFrame / decodeFrame', () => {
     expect(readerErrorCode(() => decodeFrame(TEST_MAGIC, truncated, blake2b256))).toBe('truncated');
   });
 
-  describe('unsigned magic assembly (audit L-15)', () => {
+  describe('unsigned magic assembly', () => {
     // These exercise the `>>> 0` in decodeFrame: assembled with a bare signed
     // `<<` chain, any magic >= 0x80000000 is negative and never compares equal,
     // so decodeFrame would throw on the CORRECT magic in the accept case below.

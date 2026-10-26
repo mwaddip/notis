@@ -498,6 +498,48 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
     expect(createInvite(depsR2, txR2, 2).status).toBe('pending');
   });
 
+  // The gate reads D(N) from the live network record: a member whose
+  // pending bonds have reached ⌊memberVouches / D(N)⌋ has no budget left,
+  // and the next invite is refused (CONSENSUS_INTERFACE → What it holds →
+  // "Who may invite, and how many, is one function"; ARCHITECTURE →
+  // Membership — D(N) = max(1, icbrt(k·N))).
+  it("a member with memberVouches = D(N) and one pending bond: the second invite is refused", async () => {
+    // N = 8, k = 1 ⇒ D(N) = max(1, icbrt(8)) = 2.
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 8)').run();
+    const member = makeKey();
+    seedMember(member.pub, { memberVouches: 2, invitesUsed: 0 });
+    const km = seedKarma(member.pub, 500n, 50);
+    const invitee1 = makeKey();
+    const invitee2 = makeKey();
+    const txM1: UtxoTransaction = {
+      inputs: [km.id],
+      outputs: [
+        { boxType: 'karma', value: km.value - FIXTURE_BOND_KARMA, createdAtBlock: 0, owner: member.pub } as CandidateOf<KarmaBox>,
+        { boxType: 'bond', value: FIXTURE_BOND_KARMA, createdAtBlock: 0, inviterId: member.pub, inviteePublicKey: invitee1.pub } as CandidateOf<BondBox>,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(txM1, member.priv, member.hex);
+    expect(createInvite(makeDeps(), txM1, 2).status).toBe('pending');
+
+    const change1 = materializeOutput(txM1.outputs[0]!, computeTxId(txM1), 0) as KarmaBox;
+    const txM2: UtxoTransaction = {
+      inputs: [change1.id!],
+      outputs: [
+        { boxType: 'karma', value: change1.value - FIXTURE_BOND_KARMA, createdAtBlock: 0, owner: member.pub } as CandidateOf<KarmaBox>,
+        { boxType: 'bond', value: FIXTURE_BOND_KARMA, createdAtBlock: 0, inviterId: member.pub, inviteePublicKey: invitee2.pub } as CandidateOf<BondBox>,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(txM2, member.priv, member.hex);
+    let caught: Error | null = null;
+    try { createInvite(makeDeps(), txM2, 2); } catch (err) { caught = err as Error; }
+    expect(caught).not.toBeNull();
+    expect(caught!.message).toBe('Every invite this member has is already pending');
+  });
+
   // -------------------------------------------------------------------------
   // One pending withdrawal per post.
   // -------------------------------------------------------------------------

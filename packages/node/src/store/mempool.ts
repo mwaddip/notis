@@ -22,7 +22,7 @@ import {
   computeTxId,
   computePostId,
   utxoTxTreeByteLength,
-  canonicalUsernameBytes,
+  canonicalUsername,
 } from '@dagsocial/types';
 import { isCreditSideTx } from '@dagsocial/consensus';
 import { settlementMarginalBytes } from '@dagsocial/consensus';
@@ -200,17 +200,17 @@ function rowToEntry(row: MempoolRow): PoolEntry {
   };
 }
 
-// The one source of the default pool capacity. config.ts imports this
-// constant so the application layer's parse and the storage layer's bound
-// share one literal (ARCHITECTURE → Package boundaries).
+// The one source of the default pool capacity. The configuration module
+// imports this constant so the application layer's parse and the storage
+// layer's bound share one literal (ARCHITECTURE → Package boundaries).
 export const DEFAULT_MAX_MEMPOOL_ENTRIES = 10000;
 
 let maxEntries = DEFAULT_MAX_MEMPOOL_ENTRIES;
 
 /**
- * Set the pool capacity. Called once at startup from `index.ts` with the
- * parsed `config.maxMempoolEntries` (MEMPOOL_INTERFACE → Size cap — reject,
- * never evict).
+ * Set the pool capacity. Called once at startup with the parsed
+ * `config.maxMempoolEntries` (MEMPOOL_INTERFACE → Size cap — reject, never
+ * evict).
  */
 export function setMempoolCap(n: number): void {
   if (!Number.isSafeInteger(n) || n <= 0) {
@@ -485,8 +485,7 @@ export function gateMetadata(tx: UtxoTransaction): GateMetadata {
       meta.vouchTarget = Buffer.from((output as VouchBox).targetId).toString('hex');
     } else if (output.boxType === 'username' && meta.usernameLower === null) {
       const nameBytes = (output as UsernameBox).name;
-      const canonical = canonicalUsernameBytes(nameBytes);
-      meta.usernameLower = Buffer.from(canonical).toString('utf8');
+      meta.usernameLower = canonicalUsername(nameBytes);
       meta.usernameClaimant = Buffer.from((output as UsernameBox).owner).toString('hex');
     }
   }
@@ -649,7 +648,7 @@ export function setCostEstimate(rowid: number, costEstimate: number): void {
 }
 
 // ---------------------------------------------------------------------------
-// Correctness gates (audit M-8)
+// Correctness gates (MEMPOOL_INTERFACE → Correctness gates)
 //
 // SQL over the gate-metadata columns — never a bounded scan. A gate that
 // decodes `getPendingEntries(N)` per request cannot see an entry past row N,

@@ -18,10 +18,10 @@ export { StrictBatchAVLVerifier } from './strict-verifier.js'
 // Nodes loaded on first access.
 export { lazyRoot, type LoadNode } from './lazy-nodes.js'
 
-// Passed through from @ergots/avltree: types, constructors, codec, the batch
-// functions, versioned-storage, the error class.
+// Passed through from @ergots/avltree (AVLTREE_INTERFACE → What it holds): the
+// persistent prover, versioned storage, the node type and its constructors, the
+// codec and the lookup verifier.
 export {
-  AvlVerifyError,
   PersistentBatchAVLProver,
   deserializeNode,
   label,
@@ -29,20 +29,8 @@ export {
   newLabel,
   newLeaf,
   serializeNode,
-  verifyAvlBatch,
-  verifyAvlBatchPartial,
   verifyAvlLookup,
   type AvlNode,
   type AvlTreeConfig,
-  type AvlVerifyErrorCode,
-  type AvlVerifyFailReason,
-  type Balance,
-  type InternalNode,
-  type LabelNode,
-  type LeafNode,
-  type Operation,
-  type OperationResult,
-  type VerifyAvlBatchPartialResult,
-  type VerifyAvlBatchResult,
   type VersionedAVLStorage,
 } from '@ergots/avltree'

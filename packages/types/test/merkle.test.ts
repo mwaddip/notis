@@ -12,12 +12,12 @@ function blake2b256(...parts: Uint8Array[]): Uint8Array {
   return new Uint8Array(h.digest().subarray(0, 32));
 }
 
-/** The pre-L-9 untagged internal-node hash — kept only to prove it was forgeable. */
+/** The untagged internal-node hash, kept only to prove it is forgeable. */
 function untaggedNodeHash(left: Uint8Array, right: Uint8Array): Uint8Array {
   return blake2b256(left, right);
 }
 
-/** Untagged buildMerkleRoot, mirroring the pre-L-9 tree shape exactly. */
+/** Untagged buildMerkleRoot, mirroring the untagged tree shape exactly. */
 function untaggedMerkleRoot(leaves: Uint8Array[]): Uint8Array {
   if (leaves.length === 0) return new Uint8Array(32);
   let level = leaves;
@@ -83,7 +83,7 @@ describe('nodeHash', () => {
   });
 });
 
-describe('leaf/node domain separation (L-9)', () => {
+describe('leaf/node domain separation', () => {
   // A leaf preimage is `utf8(domain + "\0") ‖ data`. Pick a data length that
   // makes the whole preimage exactly 64 bytes, then split it in half: without a
   // node tag, that pair of halves hashes to the very same digest as the leaf, so
@@ -195,7 +195,7 @@ describe('buildMerkleRoot', () => {
     expect(root).toEqual(expectedRoot);
   });
 
-  it('roots differ from the pre-L-9 untagged tree (vacuity guard)', () => {
+  it('roots differ from the untagged tree (vacuity guard)', () => {
     for (const count of [2, 3, 4, 5, 8]) {
       const leaves = Array.from({ length: count }, (_, i) =>
         leafHash('subblock', new Uint8Array([i, i + 1, i + 2, i + 3])),

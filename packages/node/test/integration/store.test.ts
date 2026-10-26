@@ -8,7 +8,6 @@ import {
   getMissingBodies,
   queryPostsPage,
   confirmPost,
-  getParentRefs,
   getSubtreePage,
   isLivePost,
 } from '../../src/store/posts.js';
@@ -123,17 +122,6 @@ describe('posts store (integration)', () => {
 
     const after = getPost(postId);
     expect(after && 'status' in after && after.status).toBe('confirmed');
-  });
-
-  it('getParentRefs returns correct parent IDs', () => {
-    const suffix = Date.now().toString(16).padStart(16, '0').slice(-16);
-    const refs = ['a1'.repeat(24) + suffix, 'b2'.repeat(24) + suffix];
-
-    const { commit, content } = makeCommit({ parentRefs: refs });
-    const postId = fixturePostId(commit);
-    insertPost(postId, fixtureTxId(commit), commit, content);
-
-    expect(getParentRefs(postId)).toEqual(refs);
   });
 
   it('getSubtreePage returns committed descendants across levels', () => {

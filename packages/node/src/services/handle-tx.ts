@@ -27,7 +27,7 @@ import { admissionHeld, admissionOwed, relayGetOwnKarmaBoxIds } from './karma-ad
 import { ClientError } from './client-error.js';
 
 /**
- * The gossip registration's transaction handler, passed by `index.ts` to
+ * The gossip registration's transaction handler, wired at startup to
  * `net.onTx` (NODE_INTERFACE → Relay handlers): validates the relayed
  * transaction read-only, then admits it — for a post transaction, with the
  * packet's body as the pending row in the same store transaction.
@@ -47,8 +47,7 @@ export function handleRelayedTx(
 ): boolean {
   // Admission's `held` and `owed` are the spend rule's engine inputs
   // (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule
-  // needs"), the one implementation the HTTP routes' deps literal also wires
-  // (`server.ts`).
+  // needs"), the one implementation the HTTP routes' deps literal also wires.
   const decayCfg = {
     staleThresholdBlocks: config.karmaStaleThresholdBlocks,
     decayIntervalBlocks: config.karmaDecayIntervalBlocks,

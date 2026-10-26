@@ -1094,7 +1094,7 @@ describe('block-apply journal recording', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 12. The escrow release journals through the box primitives (H-7 retired)
+  // 12. The escrow release journals through the box primitives
   // -----------------------------------------------------------------------
 
   it('the settlement returns a matured escrow as karma', async () => {
@@ -1552,10 +1552,10 @@ describe('block-apply embedded tx re-validation', () => {
   // `getKarmaValue` is a consensus input and MUST sum across boxes rather than
   // read one (NODE_INTERFACE → Store Interface): `getKarmaBox` is `LIMIT 1` with no
   // `ORDER BY`, so a single-box read makes the verdict a function of SQLite's
-  // physical row order — M-12's class. The unit suite exercises the gate only
-  // through a test-local deps stub, so the *production* wiring is unpinned
-  // there: mutating the block path's read from summed to single-box left every
-  // unit test green until these two were written.
+  // physical row order. The unit suite exercises the gate only through a
+  // test-local deps stub, so the *production* wiring is unpinned there:
+  // mutating the block path's read from summed to single-box left every unit
+  // test green until these two were written.
   //
   // They run a vouch cast through the real block pipeline, where deps come from
   // the store, and the fixture makes summed-vs-single observable: the voucher's
@@ -1941,8 +1941,7 @@ describe('block-apply mint provenance', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Height-deterministic difficulty + coinbase maturity, enforced at apply
-// (audit M-2, M-3)
+// Height-deterministic difficulty + coinbase maturity, enforced at apply.
 // ---------------------------------------------------------------------------
 
 describe('block-apply consensus schedules', () => {
@@ -1961,7 +1960,7 @@ describe('block-apply consensus schedules', () => {
   });
 
   // -----------------------------------------------------------------------
-  // M-2: powTargetBits must equal the schedule (the anchor at height 1)
+  // `powTargetBits` must equal the schedule (the anchor at height 1).
   // -----------------------------------------------------------------------
 
   it('rejects a block whose powTargetBits is below the schedule', async () => {
@@ -2004,7 +2003,7 @@ describe('block-apply consensus schedules', () => {
   });
 
   // -----------------------------------------------------------------------
-  // M-3: every coinbase lock must equal height + config.creditMinerRewardDelay
+  // Every coinbase lock must equal height + config.creditMinerRewardDelay.
   // -----------------------------------------------------------------------
 
   it('rejects a block whose coinbase output is unlocked', async () => {
@@ -2074,7 +2073,7 @@ describe('block-apply consensus schedules', () => {
   });
 
   // -----------------------------------------------------------------------
-  // H-1: the block must be signed by the key its validatorId names
+  // The block must be signed by the key its `validatorId` names.
   // -----------------------------------------------------------------------
 
   it('rejects a block whose validator signature is corrupted', async () => {
@@ -2127,8 +2126,8 @@ describe('block-apply consensus schedules', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    // The H-1 attack in full: the forger does the (testnet-cheap) PoW and
-    // publishes under another validator's identity. Every other check passes —
+    // The forger does the (testnet-cheap) PoW and publishes under another
+    // validator's identity. Every other check passes —
     // the block is internally consistent, on-schedule, and correctly mined.
     // Only the signature ties block production to the key that claims it.
     const forger = makeTestIdentity();
@@ -2360,10 +2359,10 @@ describe('block-apply consensus schedules', () => {
 });
 
 // ---------------------------------------------------------------------------
-// H-3: consensus-carried post authorship
+// Consensus-carried post authorship.
 // ---------------------------------------------------------------------------
 
-describe('block-apply H-3 post authorship', () => {
+describe('block-apply post authorship', () => {
   beforeEach(async () => {
     vi.resetModules();
   });
@@ -2389,9 +2388,9 @@ describe('block-apply H-3 post authorship', () => {
   // of `applyOrderingBlock` — ahead of the entry-vs-post comparison against
   // `realParents` that these tests exist for. A
   // two-ref fixture is therefore rejected for its COUNT, so the three
-  // `toBe(false)` cases below would keep passing with the H-3 comparison
-  // deleted entirely. Only the control fails loudly; the rest fail silently, so
-  // the width is what keeps them honest.
+  // `toBe(false)` cases below would keep passing with the authorship
+  // comparison deleted entirely. Only the control fails loudly; the rest fail
+  // silently, so the width is what keeps them honest.
 
   it('accepts a block whose entry matches the local post (control)', async () => {
     const db = await importDb();
@@ -2704,7 +2703,8 @@ describe('block-apply funnel totality', () => {
 
   // A post may be withdrawn once (NODE_INTERFACE → Withdrawal transactions).
   // Both fixtures name the rejection they expect: a bare `toBe(false)` on this
-  // cluster can pass for the wrong reason, as the H-3 note above records.
+  // cluster can pass for the wrong reason, as the authorship note above
+  // records.
 
   function makePostWithdrawTxForKarma(author: TestIdentity, postId: string, karma: KarmaBox, atHeight: number): UtxoTransaction {
     const tx: UtxoTransaction = {

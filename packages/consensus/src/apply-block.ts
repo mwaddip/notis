@@ -1,6 +1,8 @@
 import {
-  canonicalUsernameBytes,
+  EMPTY_IDENTITY_RECORD,
+  canonicalUsername,
   computeTxId,
+  usernameString,
   decodeTx,
   encodeTx,
   MAX_BLOCK_COST,
@@ -44,12 +46,6 @@ import {
   validateTx,
 } from './utxo-engine.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
-
-// A username's canonical bytes are `[a-z0-9_]` — a strict subset of ASCII
-// (TYPES_INTERFACE → Content limits) — so `TextDecoder` and a partial-decode
-// reader answer the same string, and the raw, uncanonicalized name is the
-// same domain (TYPES_INTERFACE → UsernameBox).
-const USERNAME_DECODER = new TextDecoder('utf-8');
 
 /** What the block did, returned instead of written (CONSENSUS_INTERFACE → BlockEffects). */
 export interface BlockEffects {
@@ -294,20 +290,13 @@ export function applyQueuedTx(
   } | null = null;
   if (item.tx.likeTarget !== undefined) {
     const targetPostId = item.tx.likeTarget;
-    // Confirmed ⟺ the view answers an author (NODE_INTERFACE → Block
-    // Topology → "Block application reads the record, through the tree
-    // view"), and that author — never dag_posts.author — is who the like
-    // credits: placeholder rows carry a zeroed author, and a like on a
-    // confirmed but content-less post must credit the recorded author.
-    const author = state.getTopologyAuthor(targetPostId);
-    if (author === null) {
-      return {
-        ok: false,
-        reason:
-          `Rejected block height=${height}: like tx ${item.txId} targets ` +
-          `unconfirmed post ${targetPostId}`,
-      };
-    }
+    // The view answers an author (NODE_INTERFACE → Block Topology → "Block
+    // application reads the record, through the tree view") — never
+    // `dag_posts.author`. The like arm of `validateTx` refuses a target
+    // whose `getTopologyAuthor` is null with "Like target TARGET is not
+    // confirmed, so it names no author", so by the time this re-read runs
+    // the author stands.
+    const author = state.getTopologyAuthor(targetPostId)!;
     const authorHex = bytesToHex(author);
     // NODE_INTERFACE → Karma transition rules: a like targets a live post
     // only — a placeholder is live (credits the view's recorded author).
@@ -449,10 +438,9 @@ export function applyQueuedTx(
   const usernameOut = item.outputs.find(o => o.boxType === 'username');
   if (usernameOut) {
     const u = usernameOut as UsernameBox;
-    const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
     state.putUsername({
-      nameLower: canonical,
-      name: USERNAME_DECODER.decode(u.name),
+      nameLower: canonicalUsername(u.name),
+      name: usernameString(u.name),
       owner: bytesToHex(u.owner),
       boxId: usernameOut.id!,
       claimedAtBlock: height,
@@ -462,8 +450,7 @@ export function applyQueuedTx(
   // consumed it (capturedUsernameInput, captured above).
   if (capturedUsernameInput) {
     const u = capturedUsernameInput as UsernameBox;
-    const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
-    state.deleteUsername(canonical);
+    state.deleteUsername(canonicalUsername(u.name));
   }
 
   // The transaction itself rides the effects, for the node to return to its
@@ -483,7 +470,6 @@ export function applyBlockWithdrawal(
   state: BlockOverlay,
   bw: BlockWithdrawal,
   height: number,
-  withdrawnThisBlock: Set<string>,
 ): { ok: true } | { ok: false; reason: string } {
   const { postWithdraw } = bw;
   const postId = postWithdraw.postId;
@@ -498,19 +484,15 @@ export function applyBlockWithdrawal(
     };
   }
 
+  // `withdrawPost` sets the standing in the overlay, so a second withdrawal
+  // of the same post in the block reads `getPostStanding` as `'withdrawn'`
+  // and is refused here.
   if (state.getPostStanding(postId) !== 'live') {
     return {
       ok: false,
       reason: `Block ${height}: postWithdraw ${postId} targets an already-withdrawn or unknown post`,
     };
   }
-  if (withdrawnThisBlock.has(postId)) {
-    return {
-      ok: false,
-      reason: `Block ${height}: duplicate postWithdraw for ${postId} in the same block`,
-    };
-  }
-  withdrawnThisBlock.add(postId);
 
   state.withdrawPost(postId);
   return { ok: true };
@@ -729,10 +711,9 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   }
 
   // 8b. Process withdrawal transactions from this block.
-  const withdrawnThisBlock = new Set<string>();
   const blockWithdrawals = withdrawalsOf(block, (postId) => state.getTopologyAuthor(postId));
   for (const bw of blockWithdrawals) {
-    const result = applyBlockWithdrawal(state, bw, height, withdrawnThisBlock);
+    const result = applyBlockWithdrawal(state, bw, height);
     if (!result.ok) return reject(result.reason);
   }
 
@@ -846,19 +827,11 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     acc.preBlockRecords.set(inviteeHex, null);
     acc.membershipTouched.add(inviteeHex);
     state.putIdentityRecord(invitee, {
+      ...(after ?? EMPTY_IDENTITY_RECORD),
       lastActivityBlock: after?.lastActivityBlock ?? height,
-      lastDecayBlock: after?.lastDecayBlock ?? 0,
       invitedAtBlock: height,
-      // Carried through rather than written, and it is always 0 here: a legal
-      // invitee is not an account yet, so it has never held karma, never posted
-      // and never been liked. The read is what keeps that a consequence of the
-      // bar rather than an assumption this line makes.
-      lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
       memberSinceBlock: conferred ? height : (after?.memberSinceBlock ?? 0),
       memberBar: conferred ? 0 : (after?.memberBar ?? 0),
-      memberVouches: after?.memberVouches ?? 0,
-      memberLikes: after?.memberLikes ?? 0n,
-      invitesUsed: after?.invitesUsed ?? 0,
     });
   }
 
@@ -891,18 +864,11 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     // Re-read here, after every earlier write of the block, so none is lost; a
     // missing record means maximally stale ({0, 0}), never "skip this author".
     const after = state.getIdentityRecord(author);
+    const base = after ?? EMPTY_IDENTITY_RECORD;
     state.putIdentityRecord(author, {
-      lastActivityBlock: after?.lastActivityBlock ?? 0,
-      lastDecayBlock: after?.lastDecayBlock ?? 0,
-      // Carried through: the grant path owns it, and an author being paid for
-      // likes in the same block they were invited is reachable.
-      invitedAtBlock: after?.invitedAtBlock ?? 0,
-      lifetimeLikesReceived: (after?.lifetimeLikesReceived ?? 0n) + received,
-      memberSinceBlock: after?.memberSinceBlock ?? 0,
-      memberBar: after?.memberBar ?? 0,
-      memberVouches: after?.memberVouches ?? 0,
-      memberLikes: (after?.memberLikes ?? 0n) + BigInt(acc.memberLikesPerAuthor.get(authorHex) ?? 0),
-      invitesUsed: after?.invitesUsed ?? 0,
+      ...base,
+      lifetimeLikesReceived: base.lifetimeLikesReceived + received,
+      memberLikes: base.memberLikes + BigInt(acc.memberLikesPerAuthor.get(authorHex) ?? 0),
     });
   }
 
@@ -937,7 +903,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       const current = state.getIdentityRecord(id);
       if (!current) continue;
 
-      const wasMember = pre !== null && pre.memberSinceBlock > 0 && pre.memberVouches >= pre.memberBar;
+      const wasMember = pre !== null && isMember(pre);
 
       if (current.memberSinceBlock === 0 &&
           current.memberVouches >= D &&
@@ -999,15 +965,8 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
 function advanceActivityClock(state: BlockOverlay, owner: Uint8Array, height: number): void {
   const existing = state.getIdentityRecord(owner);
   state.putIdentityRecord(owner, {
+    ...(existing ?? EMPTY_IDENTITY_RECORD),
     lastActivityBlock: height,
-    lastDecayBlock: existing?.lastDecayBlock ?? 0,
-    invitedAtBlock: existing?.invitedAtBlock ?? 0,
-    lifetimeLikesReceived: existing?.lifetimeLikesReceived ?? 0n,
-    memberSinceBlock: existing?.memberSinceBlock ?? 0,
-    memberBar: existing?.memberBar ?? 0,
-    memberVouches: existing?.memberVouches ?? 0,
-    memberLikes: existing?.memberLikes ?? 0n,
-    invitesUsed: existing?.invitesUsed ?? 0,
   });
 }
 

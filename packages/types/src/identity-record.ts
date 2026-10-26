@@ -92,6 +92,24 @@ export interface IdentityRecord {
 export const IDENTITY_RECORD_TAG = 0x80;
 
 /**
+ * The record of an identity no block has written: every field `0`, the two
+ * `bigint` counters `0n`, frozen (TYPES_INTERFACE → Identity record and karma
+ * valuation). The valuation reads a `null` record as it, and a writer that
+ * builds a record over one it may not find starts from it.
+ */
+export const EMPTY_IDENTITY_RECORD: Readonly<IdentityRecord> = Object.freeze({
+  lastActivityBlock: 0,
+  lastDecayBlock: 0,
+  invitedAtBlock: 0,
+  lifetimeLikesReceived: 0n,
+  memberSinceBlock: 0,
+  memberBar: 0,
+  memberVouches: 0,
+  memberLikes: 0n,
+  invitesUsed: 0,
+});
+
+/**
  * The identity record's AVL value — TYPES_INTERFACE → Layout — IdentityRecord.
  *
  * **The tag is field 1 of the layout, not a wrapper around it**, exactly as

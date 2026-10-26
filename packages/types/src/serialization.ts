@@ -34,6 +34,7 @@ import {
   equalBytes,
   firstDifference,
   hexToBytes,
+  isHex64,
   lpByteLength,
   readArr,
   readBytesN,
@@ -201,8 +202,8 @@ export function decodeTxPacket(bytes: Uint8Array): TxPacket {
  * on **every** block — the `bond.inviteePublicKey` failure exactly, which is why
  * `TYPES_INTERFACE` → Layout — Boxes requires each writer to be checked against
  * its field's schema type, one row at a time.
- * `verifyHeaderFieldDomains`' own table agrees:
- * `isHex32` for the four, `isBytesOfLength(v, 32)` for this one.
+ * The domains follow the same split: `isHex64` for the four,
+ * `isBytesOfLength(v, 32)` for this one.
  *
  * ## Totality
  *
@@ -376,7 +377,7 @@ export function utxoTxTreeByteLength(t: UtxoTxTree): number {
  * `txId` that is not 64 lowercase hex returns `null`.
  */
 export function utxoTxBytesIn(treeBytes: Uint8Array, txId: TxId): Uint8Array | null {
-  if (typeof txId !== 'string' || !/^[0-9a-f]{64}$/.test(txId)) return null;
+  if (!isHex64(txId)) return null;
   // One decode of the wanted id to its 32 raw bytes, up front; the walk
   // allocates nothing per id after this.
   const wantedBytes = hexToBytes(txId);

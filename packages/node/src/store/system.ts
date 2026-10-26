@@ -1,4 +1,4 @@
-import { BOX_VALUE_BOUND, computeBoxId, SYSTEM_KARMA_INITIAL, FAUCET_CREDITS_INITIAL } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, computeBoxId, EMPTY_IDENTITY_RECORD, isHex64, SYSTEM_KARMA_INITIAL, FAUCET_CREDITS_INITIAL } from '@dagsocial/types';
 import type {
   KarmaBox,
   CreditBox,
@@ -46,13 +46,13 @@ import {
 /**
  * The height a genesis mint commits to.
  *
- * A synthetic mint txId commits to a height and 0 is not one a block ever
- * settles at (`genesis-state.ts` → `GENESIS_HEIGHT`), so the genesis seeder's
- * own height — always 0, since seeding requires an empty store — is raised to
- * the first real one. Every seeder below takes its height through here: the
- * value reaches `mintTxIdFor`, so it is inside the box id, and three sites
- * spelling out the same clamp is three chances for one of them to stop
- * agreeing.
+ * A synthetic mint txId commits to a height (NODE_INTERFACE → Box Identity
+ * and Mint Provenance) and 0 is not one a block ever settles at, so the
+ * genesis seeder's own height — always 0, since seeding requires an empty
+ * store — is raised to the first real one. Every seeder below takes its
+ * height through here: the value reaches `mintTxIdFor`, so it is inside the
+ * box id, and three sites spelling out the same clamp is three chances for
+ * one of them to stop agreeing.
  */
 function genesisMintHeight(currentHeight: number): number {
   return currentHeight > 0 ? currentHeight : 1;
@@ -110,15 +110,9 @@ export function ensureSystemKarmaBox(
   // block is height 1. It has received no likes either: genesis mints boxes,
   // and only per-block like settlement moves the counter.
   putIdentityRecord(box.owner, {
+    ...EMPTY_IDENTITY_RECORD,
     lastActivityBlock: genesisHeight,
-    lastDecayBlock: 0,
-    invitedAtBlock: 0,
-    lifetimeLikesReceived: 0n,
     memberSinceBlock: genesisHeight,
-    memberBar: 0,
-    memberVouches: 0,
-    memberLikes: 0n,
-    invitesUsed: 0,
   });
   return box;
 }
@@ -324,15 +318,9 @@ export function seedGenesisCommittee(
     granted += box.value;
 
     putIdentityRecord(member, {
+      ...EMPTY_IDENTITY_RECORD,
       lastActivityBlock: genesisHeight,
-      lastDecayBlock: 0,
-      invitedAtBlock: 0,
-      lifetimeLikesReceived: 0n,
       memberSinceBlock: genesisHeight,
-      memberBar: 0,
-      memberVouches: 0,
-      memberLikes: 0n,
-      invitesUsed: 0,
     });
   }
 
@@ -444,7 +432,7 @@ export function validateBackerTable(
   let weightSum = 0n;
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!;
-    if (r.key.length !== 64 || !/^[0-9a-f]{64}$/.test(r.key)) {
+    if (!isHex64(r.key)) {
       throw new Error(`Backer table row ${i}: key "${r.key}" is not 64 hex chars`);
     }
     if (r.key <= prev) {

@@ -1,7 +1,6 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { computeTxId, decodeTx, computeContentHash, bytesToHex, hexToBytes, generateKeyPair } from '@dagsocial/types';
+import { computeTxId, decodeTx, computeContentHash, bytesToHex, hexToBytes, generateKeyPair, isHex64 } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { isHex64Lower } from '@dagsocial/node-reads';
 import { seal, open, parseFile, IdentityError, type Envelope } from '../identity/envelope';
 import {
   isMessage, isSignRecord, REFUSED_UNKNOWN,
@@ -178,7 +177,7 @@ async function discardDraft(api: typeof chrome): Promise<'ok'> {
 async function create(api: typeof chrome, passphrase: string): Promise<{ pubKeyHex: string } | { error: string }> {
   const draftGet = await api.storage.session.get(K_DRAFT);
   const d = draftGet[K_DRAFT] as { pubKeyHex?: unknown; seedHex?: unknown } | undefined;
-  if (!d || !isHex64Lower(d.pubKeyHex) || !isHex64Lower(d.seedHex)) {
+  if (!d || !isHex64(d.pubKeyHex) || !isHex64(d.seedHex)) {
     return { error: 'no drafted key to create.' };
   }
   const seed = hexToBytes(d.seedHex);
@@ -570,7 +569,7 @@ async function readIdentitySeed(api: typeof chrome, envPubKeyHex: string): Promi
  *  its public key is not the envelope's (WEB_INTERFACE → "The contexts, and
  *  what each may hold"). */
 function identitySeed(raw: unknown, envPubKeyHex: string): Uint8Array | null {
-  if (!isHex64Lower(raw)) return null;
+  if (!isHex64(raw)) return null;
   const seed = hexToBytes(raw);
   const pub = bytesToHex(ed25519.getPublicKey(seed));
   return pub === envPubKeyHex ? seed : null;

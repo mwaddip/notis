@@ -12,12 +12,13 @@ reaches them.
 
 ## Place in the workspace
 
-**Above `@dagsocial/types` and `@dagsocial/validation`, below `@dagsocial/node`.** Those two are its only workspace
-dependencies. **It imports no Node built-in, reads no Node global, carries no WASM, performs no I/O, holds no
-module-level state a result can depend on and reads no clock** — a rule that needs a number the network sets receives
-it from its caller, and a rule that needs state reads it through the interface its caller injects. Its module-level
-values are constants, the two `TextDecoder`s its username reads decode through (a decode without `stream` leaves no
-state behind), and the two memos of `settlement.ts`' sizing probes, each a pure function of the era it is keyed by.
+**Above `@dagsocial/types` and `@dagsocial/validation`, below `@dagsocial/node`.** Those two are the workspace
+packages whose code it runs; `@dagsocial/avltree` is its third workspace dependency, for its types alone — the
+step-by-step verifier's, which `verifierSession` wraps (→ The tree session). **It imports no Node built-in, reads
+no Node global, carries no WASM, performs no I/O, holds no module-level state a result can depend on and reads no
+clock** — a rule that needs a number the network sets receives it from its caller, and a rule that needs state reads
+it through the interface its caller injects. Its module-level values are constants and the two memos of
+`settlement.ts`' sizing probes, each a pure function of the era it is keyed by.
 Every signature check it makes is `validation`'s — `verifyEd25519` one transaction at a time, `verifyEd25519Batch`
 for a block's body (`VALIDATION_INTERFACE → Acceptance criterion`) — or its caller's answer for that same check, handed
 in through `ApplyContext`'s signature checks (→ ApplyContext) and `UtxoEngineDeps.verifySignature` (→ The overlay). The
@@ -30,7 +31,7 @@ browser runs it as it is written (`ARCHITECTURE → Package boundaries`), held t
 | `apply-block` | `applyBlock` | `NODE_INTERFACE → "Apply funnel: validation and mutation phases"` — the mutation phase, whole | `StateView`, through the overlay |
 | `overlay` | — (`HolderRecord`, the shape its holder mutations carry) | this contract's `The overlay` | `StateView` |
 | `state-view` | — (`StateView`, `ApplyContext`) | this contract's `StateView` and `ApplyContext` | — |
-| `utxo-engine` | `validateTx` · `applyTx` · `checkTxEnvelope` · `checkOutputShape` · `checkSettlementOutputShape` · `materializeOutput` · `ceilingOf` · `isMember` · `isRoot` | `NODE_INTERFACE → validateTx` · `→ Legal box transitions` · `→ Transaction envelope shape` · `→ Output shape` · `→ Spend timing` · `→ Validity ceiling` | `UtxoEngineDeps` |
+| `utxo-engine` | `validateTx` · `applyTx` · `checkTxEnvelope` · `checkOutputShape` · `checkSettlementOutputShape` · `materializeOutput` · `ceilingOf` · `isMember` · `isRoot` · `availableInvites` | `NODE_INTERFACE → validateTx` · `→ Legal box transitions` · `→ Transaction envelope shape` · `→ Output shape` · `→ Spend timing` · `→ Validity ceiling` | `UtxoEngineDeps` |
 | `settlement` | `buildBlockSettlement` · `buildSettlement` · `bondOutputOf` · `settlementMarginalBytes` · `decayLegMaxBytes` | `NODE_INTERFACE → The settlement transaction` | `StateView` (the build) · `SettlementDeps` |
 | `decay` | `deriveKarmaDecay` · `commitDecayClocks` · `karmaOwed` | `NODE_INTERFACE → Karma decay` · `→ Karma transition rules` | `DecayDeps` |
 | `coinbase-split` | `computeBlockReward` · `splitCoinbase` · `isCreditSideTx` | `MINING_INTERFACE → Emission Schedule` · `→ Coinbase Application` | none |
@@ -49,6 +50,19 @@ Beside them the barrel exports the types a caller builds their arguments and rea
 `TreeStateView`, `TreeWrite`, `HoldingKind`, `HoldingsPage`, and the two shapes the store shares (`StateView` below).
 **The export list is what the node's source, the light client's and the suites call, not a promise** — a helper
 nothing there calls leaves the barrel, and one a caller needs joins it with its caller.
+
+**Membership is one predicate.** `isMember(record)` is `memberSinceBlock > 0 ∧ memberVouches ≥ memberBar`
+(`ARCHITECTURE → Membership`), and every reading of membership in the package — the vouch and invite arms, the like
+counters, the membership pass's pre-block standing — calls it. `isLapsedMember(record)` is a record with
+`memberSinceBlock > 0` that fails it: the `lapsed` index entry's condition (→ The index entries), the lapsed-vouch read's
+(→ StateView) and the overlay's guard over that read (→ The overlay) — one predicate for all three.
+
+**Who may invite, and how many, is one function.** `availableInvites(record, bar)` — `(IdentityRecord | null, () =>
+number) => 'no-record' | 'root' | 'none' | number` — answers `'no-record'` where there is no record, `'root'` for a root
+(uncapped, `ARCHITECTURE → Roots`), `⌊memberVouches / bar()⌋ − invitesUsed` for a member (`ARCHITECTURE → The invite
+budget`) and `'none'` for anyone else. It calls `bar` once, for a member alone, so a caller that reads the bar from
+the network record reads no network record for a root or a non-member. The invite arm of `validateTx` answers through
+it, and so do the node's admission gate, its invite service and `GET /karma/:userId`'s `invitesAvailable`.
 
 ## Applying a block
 
@@ -171,7 +185,7 @@ block's proof and a light client's over a page's (→ The tree session), the sam
 | an author's like accrual boxes | every live `like_accrual` box naming the author | `id` | the `accrualOf ‖ author` range |
 | the bonds invited by a height | live bonds whose invitee's record holds `invitedAtBlock ≤ h` — the height of the block that created the bond, so never `0` | `(invitedAtBlock, id)`, a limit | the `bondDue` range while the key's height `≤ h` |
 | the escrows releasable at a height | live escrows with `releaseAtBlock ≤ h` | `(releaseAtBlock, id)`, a limit | the `escrowDue` range while the key's height `≤ h` |
-| the lapsed vouches | live vouch boxes whose voucher fails `member()` | `(voucher, target)`, a limit | the `lapsed` range — the lapsed members holding a live vouch — and for each its `vouchPair ‖ voucher` range |
+| the lapsed vouches | live vouch boxes whose voucher is a lapsed member (`isLapsedMember`, → The index entries) | `(voucher, target)`, a limit | the `lapsed` range — the lapsed members holding a live vouch — and for each its `vouchPair ‖ voucher` range |
 | a post's author | the author, or none | — | `post ‖ postId` |
 | a post's confirmation height | the height, or none | — | `post ‖ postId` |
 | a post's standing | `'live'` · `'withdrawn'` · `'none'` | — | `post ‖ postId` — absent is `'none'` |

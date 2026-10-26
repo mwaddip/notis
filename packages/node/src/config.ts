@@ -3,11 +3,14 @@ import {
   TREE_KEY_LENGTH,
   MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  POW_TARGET_BITS_MAX,
   decayCfgFor,
+  isHex64,
   profileFor,
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType, ProtocolEra } from '@dagsocial/types';
 import { DEFAULT_MAX_MEMPOOL_ENTRIES } from './store/mempool.js';
+import { DECIMAL_INT } from './decimal-int.js';
 
 export interface Config {
   port: number;
@@ -23,7 +26,7 @@ export interface Config {
   /**
    * The parameter table `networkType` selects, resolved once at load and frozen.
    * The consensus fields below are copied from it so consumers keep one flat
-   * config surface; `index.ts` reads `magic` off it for the wire layer.
+   * config surface; the node reads `magic` off it for the wire layer.
    */
   profile: NetworkProfile;
   nodeRole: 'server' | 'miner';
@@ -182,7 +185,8 @@ export function loadConfig(): Readonly<Config> {
     // a value above `MAX_BLOCK_BODY_BYTES` as "as much as the rules allow"
     // — a node cannot raise its own consensus bound by asking. A fixture-
     // assembled `Config` does not pass through here, so the producer clamps
-    // again where it spends the budget (`block-creator.ts`).
+    // again where it spends the budget (MINING_INTERFACE → Template and
+    // submit → "Packing to the budget").
     blockBodyBudgetBytes: Math.min(
       readWholeNumber('BLOCK_BODY_BUDGET_BYTES', MAX_BLOCK_BODY_BYTES, { floor: 1 }),
       MAX_BLOCK_BODY_BYTES,
@@ -306,7 +310,7 @@ function readWholeNumber(
 ): number {
   const raw = process.env[name];
   if (raw === undefined) return defaultValue;
-  if (!/^\d+$/.test(raw)) {
+  if (!DECIMAL_INT.test(raw)) {
     throw new Error(`Invalid ${name} "${raw}" — must be decimal digits only`);
   }
   const parsed = Number(raw);
@@ -389,7 +393,7 @@ function assertProofWindowWithinProofHistory(cfg: Config): void {
 /**
  * The difficulty band is refused at load, never clamped.
  * NODE_INTERFACE → Configuration: `floorBits >= ORDERING_BLOCK_POW_TARGET_FLOOR`,
- * `floorBits <= anchorBits <= ceilingBits`, `ceilingBits <= 65536`,
+ * `floorBits <= anchorBits <= ceilingBits`, `ceilingBits <= POW_TARGET_BITS_MAX`,
  * `idealMs > 0`. Each comparison is negated so `NaN` refuses.
  */
 function assertOrderingTargetAboveFloor(cfg: Config): void {
@@ -412,10 +416,10 @@ function assertOrderingTargetAboveFloor(cfg: Config): void {
         `"${net}" is below anchorBits ${cfg.orderingBlockPowTargetBits}`,
     );
   }
-  if (!(cfg.orderingBlockPowTargetCeilingBits <= 65536)) {
+  if (!(cfg.orderingBlockPowTargetCeilingBits <= POW_TARGET_BITS_MAX)) {
     throw new Error(
       `orderingBlockPowTargetCeilingBits ${cfg.orderingBlockPowTargetCeilingBits} for network ` +
-        `"${net}" exceeds 65536`,
+        `"${net}" exceeds ${POW_TARGET_BITS_MAX}`,
     );
   }
   if (!(cfg.orderingBlockIdealMs > 0)) {
@@ -441,9 +445,9 @@ function assertOrderingTargetAboveFloor(cfg: Config): void {
  * **Non-empty, and that half is not pedantry.** An empty payload still encodes
  * cleanly, to the same `030000` on every network, so a profile that supplied one
  * would seed a proof box byte-identical to another network's — removing one of
- * the things that keeps two genesis roots apart. `network.test.ts` requires one or more pairs of the same profile
- * strings; the two guards state one rule between them, so the fail-stop must not
- * be the permissive one.
+ * the things that keeps two genesis roots apart. The suite requires every
+ * profile pair to disagree on this string too; the two guards state one rule
+ * between them, so the fail-stop must not be the permissive one.
  *
  * ⚠ **This is not the payload BOUND.** How long a payload may be is a decode
  * rule and belongs beside the encoder in `@dagsocial/types`; this asserts only
@@ -491,7 +495,7 @@ function assertInviteBondRangeInhabited(cfg: Config): void {
 function assertFaucetPublicKeyWellFormed(cfg: Config): void {
   const faucetKey = cfg.profile.faucetPublicKey;
   if (faucetKey === undefined) return;
-  if (!/^[0-9a-f]{64}$/.test(faucetKey)) {
+  if (!isHex64(faucetKey)) {
     throw new Error(
       `Invalid faucetPublicKey for network "${cfg.networkType}" — must be 64 ` +
         'lowercase hex characters, an Ed25519 public key',
@@ -503,7 +507,7 @@ function assertFaucetPublicKeyWellFormed(cfg: Config): void {
  * A miner node serves the coinbase payout override (`?miner=`) over HTTP, so the
  * bearer secret is load-bearing — there is no unauthenticated mode. A miner
  * without a secret fails at startup rather than opening the endpoints
- * (MINING_INTERFACE → Invariants, item 8; audit M-7).
+ * (MINING_INTERFACE → Invariants, item 8).
  */
 function assertMiningAuthConfigured(cfg: Config): void {
   if (cfg.nodeRole !== 'miner') return;

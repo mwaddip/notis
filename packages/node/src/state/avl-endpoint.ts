@@ -1,9 +1,17 @@
 import type { Express, Request, Response } from 'express';
 import {
+  CAST_COUNT_TAG,
+  HOLDER_RECORD_TAG,
   IDENTITY_RECORD_TAG,
   INDEX_MARKER,
+  INDEX_MARKER_TAG,
   LIKE_MARKER,
+  LIKE_MARKER_TAG,
+  NAME_RECORD_TAG,
+  NETWORK_RECORD_TAG,
+  POST_RECORD_TAG,
   TREE_KEY_LENGTH,
+  VOUCH_PAIR_TAG,
   boxFromRecordBytes,
   bytesToHex,
   castCountFromBytes,
@@ -28,6 +36,7 @@ import {
   InconsistentStateTreeError,
   failStopIfCorruptChain,
 } from '../services/corrupt-state.js';
+import { DECIMAL_INT } from '../decimal-int.js';
 
 /** The five kinds `/api/v1/range` serves — one each per range (CONSENSUS_INTERFACE → The holdings page). */
 const HOLDING_KINDS = Object.freeze({
@@ -59,10 +68,10 @@ const BOX_ID_AT = 1;
 /**
  * The value's kind by its first byte — the discriminators of NODE_INTERFACE →
  * Entity kinds — decoded over `types`' codecs (TYPES_INTERFACE → Layout — tree
- * records): a box below `0x80`, its id the one its key carries; the record
- * kinds from `0x80`; the index kinds — the marker, a vouch pair's box id, a cast
- * count — as `index`. A byte outside every kind is a throw, which the route
- * answers as a 500.
+ * records): a box below `IDENTITY_RECORD_TAG`, its id the one its key carries;
+ * the record kinds from `IDENTITY_RECORD_TAG` through `POST_RECORD_TAG`; the
+ * index kinds — the marker, a vouch pair's box id, a cast count — as `index`.
+ * A byte outside every kind is a throw, which the route answers as a 500.
  */
 function decodeValue(key: Uint8Array, bytes: Uint8Array): DecodedValue {
   if (bytes.length === 0) throw new Error('an empty tree value');
@@ -74,23 +83,23 @@ function decodeValue(key: Uint8Array, bytes: Uint8Array): DecodedValue {
   switch (tag) {
     case IDENTITY_RECORD_TAG:
       return { kind: 'record', value: jsonSafeFields({ ...identityRecordFromBytes(bytes) }) };
-    case 0x81:
+    case NETWORK_RECORD_TAG:
       return { kind: 'network', value: jsonSafeFields({ ...networkRecordFromBytes(bytes) }) };
-    case 0x82:
+    case NAME_RECORD_TAG:
       return { kind: 'username', value: jsonSafeFields({ ...nameRecordFromBytes(bytes) }) };
-    case 0x83:
+    case HOLDER_RECORD_TAG:
       return { kind: 'holder', value: jsonSafeFields({ ...holderRecordFromBytes(bytes) }) };
-    case 0x84:
+    case POST_RECORD_TAG:
       return { kind: 'post', value: jsonSafeFields({ ...postRecordFromBytes(bytes) }) };
-    case 0x85:
+    case LIKE_MARKER_TAG:
       if (!equalBytes(bytes, LIKE_MARKER)) throw new Error('a like record is its marker alone');
       return { kind: 'like', value: {} };
-    case 0x86:
+    case INDEX_MARKER_TAG:
       if (!equalBytes(bytes, INDEX_MARKER)) throw new Error('an index entry is its marker alone');
       return { kind: 'index', value: {} };
-    case 0x87:
+    case VOUCH_PAIR_TAG:
       return { kind: 'index', value: { boxId: bytesToHex(vouchPairBoxId(bytes)) } };
-    case 0x88:
+    case CAST_COUNT_TAG:
       return { kind: 'index', value: { count: castCountFromBytes(bytes) } };
     default:
       throw new Error(`a tree value with no kind: tag 0x${tag.toString(16)}`);
@@ -154,7 +163,7 @@ function resolveHeight(
   if (atHeightRaw === undefined) {
     return { ok: true, atHeight: liveHeight, stateRoot: liveVersion, restore: null };
   }
-  if (typeof atHeightRaw !== 'string' || !/^\d+$/.test(atHeightRaw)) {
+  if (typeof atHeightRaw !== 'string' || !DECIMAL_INT.test(atHeightRaw)) {
     res.status(400).json({ error: 'atHeight must be a non-negative integer' });
     return { ok: false };
   }
@@ -371,7 +380,7 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
       // ask past the safe-integer range. `0` and the empty string stay
       // refused (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
       // route").
-      if (typeof limitRaw !== 'string' || !/^\d+$/.test(limitRaw) || /^0+$/.test(limitRaw)) {
+      if (typeof limitRaw !== 'string' || !DECIMAL_INT.test(limitRaw) || /^0+$/.test(limitRaw)) {
         res.status(400).json({ error: 'limit must be a positive integer' });
         return;
       }
@@ -423,9 +432,9 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
       }
       if (err instanceof TreeInconsistencyError) {
         // The tree contradicts itself under the route's read — local
-        // corruption, as `services/cost-estimate.ts` reads it; never a verdict
-        // on the request (NODE_INTERFACE → "A tree that contradicts itself
-        // under a route's read is local corruption").
+        // corruption, never a verdict on the request (NODE_INTERFACE → "A
+        // tree that contradicts itself under a route's read is local
+        // corruption").
         failStopIfCorruptChain(
           new InconsistentStateTreeError('GET /api/v1/range', resolved.atHeight, err),
         );

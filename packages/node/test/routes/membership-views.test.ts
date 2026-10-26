@@ -285,6 +285,23 @@ describe('/karma/:userId membership fields', () => {
     // (NODE_INTERFACE → UTXO queries).
     expect(typeof data.invitesAvailable).toBe('number');
   });
+
+  // The budget is clamped at 0: a member whose invitesUsed exceeds
+  // ⌊memberVouches / D(N)⌋ reads invitesAvailable 0, not a negative number
+  // (NODE_INTERFACE → UTXO queries).
+  it('a member whose budget is spent reads invitesAvailable 0, clamped', async () => {
+    const spent = makeKeys();
+    seedKarma(spent.pub, 100n, 6);
+    putIdentityRecord(spent.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 3, memberBar: 0, memberVouches: 0, memberLikes: 0n,
+      invitesUsed: 1,
+    });
+    const { data } = await karmaRequest(`/karma/${spent.hex}`);
+    expect(data.member).toBe(true);
+    expect(data.invitesAvailable).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

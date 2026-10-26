@@ -1,5 +1,4 @@
 // NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"
-import type { KarmaPage } from '../http.js';
 import type { BoxRef } from './render.js';
 
 // A karma spend names the own box, the income box only when the own box does
@@ -30,14 +29,4 @@ export function selectKarmaInputs(boxes: readonly BoxRef[], spend: bigint): BoxR
     throw new Error(`owner karma insufficient: have ${have}, need ${spend}`);
   }
   return [o, i];
-}
-
-// NODE_INTERFACE → UTXO queries — a karma box carries `income: true` when it is
-// the owner's income box and no such key when it is their own.
-export function toKarmaBoxRefs(karma: KarmaPage): BoxRef[] {
-  return karma.boxes.map((b) => (
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true as const }
-      : { boxId: b.boxId, value: BigInt(b.value) }
-  ));
 }

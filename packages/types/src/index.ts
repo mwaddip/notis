@@ -60,8 +60,10 @@ export {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   RETARGET_HALFLIFE_BLOCKS,
   MAX_FUTURE_DRIFT_MS,
+  POW_TARGET_BITS_MAX,
   GENESIS_PREV_BLOCK_HASH,
   ED25519_SPKI_PREFIX,
+  ED25519_PKCS8_PREFIX,
   USERNAME_MAX_BYTES,
   USERNAME_BURN_PRICE,
   LEVEL_CAP,
@@ -158,7 +160,7 @@ export type {
 } from './utxo.js';
 
 // Usernames — TYPES_INTERFACE → Content limits
-export { isValidUsernameBytes, canonicalUsernameBytes } from './username.js';
+export { isValidUsernameBytes, canonicalUsernameBytes, canonicalUsername, usernameString } from './username.js';
 
 // Membership — TYPES_INTERFACE → Membership; ARCHITECTURE → Membership
 export { icbrt, membershipBar, memberLikesBar } from './membership.js';
@@ -172,6 +174,7 @@ export {
   identityRecordBytes,
   identityRecordFromBytes,
   IDENTITY_RECORD_TAG,
+  EMPTY_IDENTITY_RECORD,
 } from './identity-record.js';
 export type { IdentityRecord } from './identity-record.js';
 
@@ -248,6 +251,14 @@ export {
   holderRecordFromBytes,
   postRecordBytes,
   postRecordFromBytes,
+  NETWORK_RECORD_TAG,
+  NAME_RECORD_TAG,
+  HOLDER_RECORD_TAG,
+  POST_RECORD_TAG,
+  LIKE_MARKER_TAG,
+  INDEX_MARKER_TAG,
+  VOUCH_PAIR_TAG,
+  CAST_COUNT_TAG,
   LIKE_MARKER,
   INDEX_MARKER,
   vouchPairValue,
@@ -293,6 +304,8 @@ export {
   bytesToHex,
   hexToBytes,
   equalBytes,
+  isBytes,
+  isHex64,
   writeU8OrThrow,
   readU8,
   writeVlqU,
@@ -342,3 +355,6 @@ export {
   decodeTx,
 } from './serialization.js';
 export type { TxPacket } from './serialization.js';
+
+// The JSON form of a transaction — TYPES_INTERFACE → The JSON form of a transaction
+export { txToJson } from './tx-json.js';

@@ -13,6 +13,9 @@ import {
   updateInterlinks,
   protocolVersionAt,
   isValidUsernameBytes,
+  isBytes,
+  isHex64,
+  POW_TARGET_BITS_MAX,
 } from '@dagsocial/types';
 import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash, hash32, bytesToHex, hexToBytes, computeUtxoTxRoot, computeTxId } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
@@ -21,7 +24,7 @@ import type { Ed25519BatchEntry } from './ed25519-batch.js';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
 // ---------------------------------------------------------------------------
-// Input guards (audit M-5, M-6)
+// Input guards
 // ---------------------------------------------------------------------------
 //
 // Every exported verify* function receives objects straight off the wire, so
@@ -41,19 +44,8 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Narrow to `Uint8Array` (which `Buffer` extends).
- *
- * Deliberately not `ArrayBuffer.isView`: `Buffer.from(new Uint32Array(8))`
- * copies *elements*, not bytes, so a 32-byte-but-not-Uint8Array view would
- * silently yield an 8-byte key where a 32-byte one is required.
- */
-function isBytes(v: unknown): v is Uint8Array {
-  return v instanceof Uint8Array;
-}
-
-/**
  * Guard for every value that reaches `BigInt(...)` + `writeBigUInt64LE`, and for
- * bit-count arguments (audit M-6).
+ * bit-count arguments.
  *
  * ⛔ **`HEADER_DOMAIN`'s `powNonce` row is the load-bearing one, and it is a
  * search variable an attacker varies against a target.** Its header writer is
@@ -73,49 +65,22 @@ function isU64Safe(v: unknown): v is number {
 }
 
 /**
- * A `PostId` as it appears in `parentRefs`: exactly 64 lowercase hex
- * characters, the output shape of `computePostId`'s `.toString('hex')`.
- *
- * Lowercase, not case-insensitive: uppercase hex decodes to the same 32 bytes,
- * so accepting both would make `hexToBytes` non-injective at the codec boundary
- * — two distinct in-memory posts encoding to one preimage, which is the
- * malleability the M-1 encoding exists to close.
- */
-const POST_ID_HEX = /^[0-9a-f]{64}$/;
-
-/**
- * The `b32` string domain: exactly 64 lowercase hex characters.
- *
- * One predicate over `POST_ID_HEX` rather than a second regex, because it is
- * the same domain reached from a different field. Every 32-byte value that
- * stays a hex `string` in memory and crosses the wire as raw bytes lands here
- * — post ids, the roots, `prevBlockHash`, tx ids, the consensus-carried
- * `author`. `codec.ts`'s `hexToBytesExact` is the function on the other side
- * and its accepted set is exactly this one, deliberately: a domain narrower
- * than the writer's leaves a reachable throw, and a domain wider than the
- * writer's is a check that rejects nothing.
- */
-function isHex32(v: unknown): v is string {
-  return typeof v === 'string' && POST_ID_HEX.test(v);
-}
-
-/**
  * `stateRoot`'s domain — **66** characters, not 64.
  *
  * The AVL+ digest is 33 bytes (`EMPTY_STATE_ROOT = '00'.repeat(33)`), so it is
- * `b33` on the wire and `POST_ID_HEX` is the wrong width for it. The extra byte
+ * `b33` on the wire and `isHex64` is the wrong width for it. The extra byte
  * is the root node's height, carried inside the digest; it is not a 32-byte
  * hash with a spare byte, so there is no "close enough" reading under which the
  * 64-char form is acceptable.
  */
 const STATE_ROOT_HEX = /^[0-9a-f]{66}$/;
 
-/** `stateRoot`'s domain as a predicate — the `b33` counterpart to `isHex32`. */
+/** `stateRoot`'s domain as a predicate — the `b33` counterpart to `isHex64`. */
 function isHex33(v: unknown): v is string {
   return typeof v === 'string' && STATE_ROOT_HEX.test(v);
 }
 
-/** A `Uint8Array` of exactly `n` bytes — type first, width second (see `isBytes`). */
+/** A `Uint8Array` of exactly `n` bytes — type first, width second (`isBytes`, `TYPES_INTERFACE → Export table`). */
 function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
   return isBytes(v) && v.length === n;
 }
@@ -153,7 +118,7 @@ export function verifyPostCommitDomains(commit: unknown): { valid: boolean; erro
     return { valid: false, error: 'Post parentRefs must be an array' };
   }
   for (const ref of commit.parentRefs) {
-    if (typeof ref !== 'string' || !POST_ID_HEX.test(ref)) {
+    if (typeof ref !== 'string' || !isHex64(ref)) {
       return { valid: false, error: 'Post parentRef must be 64 lowercase hex characters' };
     }
   }
@@ -175,7 +140,7 @@ export function verifyPostCommitDomains(commit: unknown): { valid: boolean; erro
 
 export function verifyPostWithdrawCommitDomains(commit: unknown): { valid: boolean; error?: string } {
   if (!isObject(commit)) return { valid: false, error: 'PostWithdrawCommit is not an object' };
-  if (!isHex32(commit.postId)) {
+  if (!isHex64(commit.postId)) {
     return { valid: false, error: 'PostWithdrawCommit postId must be 64 lowercase hex characters' };
   }
   return { valid: true };
@@ -223,8 +188,8 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   { field: 'protocolVersion', ok: isU64Safe, error: 'Block header protocolVersion must be a non-negative safe integer' },
   { field: 'height', ok: isU64Safe, error: 'Block header height must be a non-negative safe integer' },
   // b32 — 32 bytes carried as hex in memory
-  { field: 'prevBlockHash', ok: isHex32, error: 'Block header prevBlockHash must be 64 lowercase hex characters' },
-  { field: 'utxoTxRoot', ok: isHex32, error: 'Block header utxoTxRoot must be 64 lowercase hex characters' },
+  { field: 'prevBlockHash', ok: isHex64, error: 'Block header prevBlockHash must be 64 lowercase hex characters' },
+  { field: 'utxoTxRoot', ok: isHex64, error: 'Block header utxoTxRoot must be 64 lowercase hex characters' },
   // b33 — the AVL+ digest carries a height byte, so 66 characters, not 64
   { field: 'stateRoot', ok: isHex33, error: 'Block header stateRoot must be 66 lowercase hex characters' },
   // b32 — already bytes, so type before width (a 32-char string is not 32 bytes)
@@ -236,18 +201,18 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   // fails `verifyOrderingBlockPoW`, which refuses a target it cannot expand.
   {
     field: 'powTargetBits',
-    ok: (v) => isU64Safe(v) && (v as number) <= 65536,
-    error: 'Block header powTargetBits must be an integer in [0, 65536]',
+    ok: (v) => isU64Safe(v) && (v as number) <= POW_TARGET_BITS_MAX,
+    error: `Block header powTargetBits must be an integer in [0, ${POW_TARGET_BITS_MAX}]`,
   },
   // vlqU — a consensus input: the order and future-bound rules
   // (→ verifyCreatedAtOrder, → verifyCreatedAtBound) and the difficulty
   // schedule (→ asertTargetBits) read it.
   { field: 'createdAt', ok: isU64Safe, error: 'Block header createdAt must be a non-negative safe integer' },
   // b32 — the interlink vector's commitment (TYPES_INTERFACE → Interlink vector)
-  { field: 'interlinkRoot', ok: isHex32, error: 'Block header interlinkRoot must be 64 lowercase hex characters' },
+  { field: 'interlinkRoot', ok: isHex64, error: 'Block header interlinkRoot must be 64 lowercase hex characters' },
   // b32 — hash32 of the block's AVL+ proof (NODE_INTERFACE → The block proof); last, so no
   // earlier field's number depends on it (TYPES_INTERFACE → Layout — Block)
-  { field: 'adProofsRoot', ok: isHex32, error: 'Block header adProofsRoot must be 64 lowercase hex characters' },
+  { field: 'adProofsRoot', ok: isHex64, error: 'Block header adProofsRoot must be 64 lowercase hex characters' },
 ];
 
 /**
@@ -319,15 +284,15 @@ const ORDERING_TARGET_PRECISION = 320n;
 
 /**
  * The inclusive maximum acceptable ordering-block digest for `scaledBits`,
- * big-endian, 32 bytes. `null` outside `[0, 65536]`, which a caller reads as
+ * big-endian, 32 bytes. `null` outside `[0, POW_TARGET_BITS_MAX]`, which a caller reads as
  * "no digest can satisfy this" and answers `false`.
  *
  * VALIDATION_INTERFACE → orderingPowTarget. `scaledBits` is in units of 1/256
  * of a bit, so the target is `R - 1` for the unique `R` with
- * `R^256 ≤ 2^(65536 - scaledBits) < (R+1)^256`.
+ * `R^256 ≤ 2^(POW_TARGET_BITS_MAX - scaledBits) < (R+1)^256`.
  */
 export function orderingPowTarget(scaledBits: number): Uint8Array | null {
-  if (!Number.isSafeInteger(scaledBits) || scaledBits < 0 || scaledBits > 65536) return null;
+  if (!Number.isSafeInteger(scaledBits) || scaledBits < 0 || scaledBits > POW_TARGET_BITS_MAX) return null;
   const whole = scaledBits >> 8;
   const fraction = scaledBits & 255;
   let mantissa = 1n << ORDERING_TARGET_PRECISION;
@@ -566,7 +531,7 @@ export function verifyTxSignatures(
   if (!isObject(map) || Array.isArray(map)) return false;
   const rawEntries = Object.entries(map);
   for (const [key] of rawEntries) {
-    if (!isHex32(key)) return false;
+    if (!isHex64(key)) return false;
   }
   let txId: string;
   try {
@@ -627,7 +592,7 @@ export function verifyValidatorSignature(header: BlockHeader, signature: Uint8Ar
  * height (`protocolVersionAt` answers `null`) and when `declared` is anything but
  * that integer.
  *
- * Total (M-5): `protocolVersionAt` iterates the schedule (TYPES_INTERFACE →
+ * Total: `protocolVersionAt` iterates the schedule (TYPES_INTERFACE →
  * Version), so a non-array or an ill-formed schedule throws there — the call is
  * guarded and any throw is read as "no era", never escapes. No check in this
  * package reads `PROTOCOL_VERSION`.
@@ -657,7 +622,7 @@ export function verifyProtocolVersion(
  * the post-id preimage, so a commit declaring a version other than its
  * transaction's would mint a second identity for one post.
  *
- * Total (M-5): reached straight off gossip, so a non-object `tx` or a `post`
+ * Total: reached straight off gossip, so a non-object `tx` or a `post`
  * that is not an object is `false`, never a throw.
  */
 export function verifyTxProtocolVersion(
@@ -703,7 +668,7 @@ const CONTENT_CHAR_ERROR =
  *
  * Consults only the static table — never a runtime `\p{...}` escape — so the
  * verdict is identical on every node regardless of the Unicode data version its
- * Node/V8 build ships (audit M-4).
+ * Node/V8 build ships (VALIDATION_INTERFACE → verifyContentCharacters).
  */
 export function verifyContentCharacters(content: string): { valid: boolean; error?: string } {
   if (typeof content !== 'string') return { valid: false, error: CONTENT_CHAR_ERROR };
@@ -837,7 +802,7 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
   // `[0, 2^64)` (`canonicalBoxBytes`), and a `signatures` key or 64-byte value
   // of the same shape (TYPES_INTERFACE → Totality). None of them has an
   // unreachable sentinel to collapse onto, which is why the writer throws
-  // instead. The no-panic rule (Postconditions — No-panic M-5) decides the
+  // instead. The no-panic rule (VALIDATION_INTERFACE → Postconditions) decides the
   // shape: a transaction that cannot be encoded cannot be stored, mined or
   // relayed, so the throw is a rejection and not an escape.
   let encoded: Uint8Array;
@@ -939,7 +904,7 @@ export function verifyOrderingBlockStructure(
   // the stated rejection the apply path requires (NODE_INTERFACE → Ordering
   // block apply-time authorization).
   for (const id of block.utxoTxTree.utxoTxIds) {
-    if (!isHex32(id)) {
+    if (!isHex64(id)) {
       return {
         valid: false,
         error: 'Ordering block utxoTxId must be 64 lowercase hex characters',
@@ -1023,7 +988,7 @@ export function verifyUtxoTxRoot(block: OrderingBlock): boolean {
   const header = (block as { header: unknown }).header;
   if (!isObject(header)) return false;
   const root = header.utxoTxRoot;
-  if (!isHex32(root)) return false;
+  if (!isHex64(root)) return false;
   const tree = (block as { utxoTxTree: unknown }).utxoTxTree;
   if (!isObject(tree)) return false;
   const ids = tree.utxoTxIds;
@@ -1031,7 +996,7 @@ export function verifyUtxoTxRoot(block: OrderingBlock): boolean {
   if (!Array.isArray(ids)) return false;
   if (!Array.isArray(txs)) return false;
   if (ids.length !== txs.length) return false;
-  for (const id of ids) if (!isHex32(id)) return false;
+  for (const id of ids) if (!isHex64(id)) return false;
   for (const tx of txs) if (!isBytes(tx)) return false;
   return computeUtxoTxRoot({ utxoTxIds: ids, utxoTxs: txs }) === root;
 }
@@ -1041,12 +1006,12 @@ export function verifyUtxoTxRoot(block: OrderingBlock): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Validate that a target UserId for a vouch is a well-formed 32-byte
- * Ed25519 public key.  Does NOT check whether the identity exists on-chain
- * — vouching for unknown public keys is allowed.
+ * The form of a vouch's target key: a `Uint8Array` (`isBytes`) of 32 bytes,
+ * not every byte zero (VALIDATION_INTERFACE → isValidVouchTarget). Reads no
+ * state — whether the key holds an identity record is not asked here.
  */
 export function isValidVouchTarget(userId: Uint8Array): boolean {
-  if (!(userId instanceof Uint8Array)) return false;
+  if (!isBytes(userId)) return false;
   if (userId.length !== 32) return false;
   let allZero = true;
   for (let i = 0; i < 32; i++) {
@@ -1068,7 +1033,7 @@ export function isValidVouchTarget(userId: Uint8Array): boolean {
 //
 // A consumer therefore absorbs an *absence* — it does not learn the header
 // domain, call a predicate, or decide what well-formed means. This extends the
-// contract's no-panic rule (M-5) to two functions the `verify*` naming
+// contract's no-panic rule (VALIDATION_INTERFACE → Postconditions) to two functions the `verify*` naming
 // convention does not reach: one with no `false` to return says so with `null`.
 
 /**
@@ -1100,7 +1065,7 @@ export function computePowHash(header: BlockHeader): Uint8Array | null {
 /**
  * The 32-byte digest a header's nonce produced — the bytes `meetsPowTarget`
  * compares against the target. `null` on exactly the inputs `computePowHash`
- * refuses (M-5/M-6); never throws.
+ * refuses; never throws.
  */
 export function powHit(header: BlockHeader): Uint8Array | null {
   const preimage = computePowHash(header);
@@ -1226,7 +1191,7 @@ export function verifyHeaderChain(
   // Validate anchor interlinks before entering the loop.
   if (!Array.isArray(anchor.interlinks) ||
       anchor.interlinks.length > MAX_INTERLINKS ||
-      anchor.interlinks.some(e => !isHex32(e)) ||
+      anchor.interlinks.some(e => !isHex64(e)) ||
       (anchor.interlinks.length === 0 && anchor.height !== 0)) {
     return { ok: false, index: 0, reason: 'interlinks' };
   }

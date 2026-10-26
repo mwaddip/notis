@@ -79,10 +79,11 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const { materializeOutput } = await import('@dagsocial/consensus');
     const { computeCandidateBoxId } = await import('@dagsocial/types');
 
-    // Inverted by phase G3b. This asserted that attaching provenance must NOT
-    // move an id — the load-bearing invariant for every phase *before* G, since
-    // ids had to stay put while producers moved over. From G3b on the opposite
-    // is required: an id that ignored its own provenance would be the M-11 id.
+    // Attaching provenance moves the id: the id derives from the box's own
+    // creating transaction (TYPES_INTERFACE → BoxId; NODE_INTERFACE → Box
+    // Identity and Mint Provenance). An id that ignored its own provenance
+    // would let two byte-identical outputs of one transaction collide on the
+    // `utxo_boxes.id` primary key.
     const candidate = creditCandidate(100n, user(0xb1));
     const materialized = materializeOutput(candidate, TX_ID, 3);
 

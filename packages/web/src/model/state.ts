@@ -10,6 +10,11 @@ import type { BoundPost, ResolveEnd } from './post-resolve';
 import type { ReportCount } from './feed-reconcile';
 export type { Anchor };
 
+/** How a faucet grant reads while it stands or after it lapses — the rep grant
+ *  in the profile window, the $NOTIS grant in the wallet window
+ *  (WEB_INTERFACE → The faucet step). */
+export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: number };
+
 /** What the App holds when a figures verifier run has returned — the tool's
  *  full result and the anchor it was proven against. The anchor's
  *  `suffixHead.header.height` is the height the *proven at block N* clause

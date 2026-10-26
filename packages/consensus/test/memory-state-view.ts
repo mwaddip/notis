@@ -216,15 +216,18 @@ export class MemoryStateView implements StateView {
   }
 
   /**
-   * The live vouches whose voucher's record fails `member()`, voucher by voucher
-   * and each voucher's in target order (CONSENSUS_INTERFACE → StateView).
+   * The live vouches whose voucher is a lapsed member — `memberSinceBlock > 0`
+   * and `memberVouches < memberBar` — voucher by voucher and each voucher's in
+   * target order (CONSENSUS_INTERFACE → What it holds → "Membership is one
+   * predicate"). The reference states the predicate itself, independent of the
+   * rules' `isLapsedMember`.
    */
   getLapsedVouches(limit: number): VouchBox[] {
     const pairOf = (b: VouchBox): string => `${hex(b.voucherId)}${hex(b.targetId)}`;
     return this.live<VouchBox>((b) => {
       if (b.boxType !== 'vouch') return false;
       const voucher = this.getIdentityRecord(b.voucherId);
-      return voucher !== null && !(voucher.memberSinceBlock > 0 && voucher.memberVouches >= voucher.memberBar);
+      return voucher !== null && voucher.memberSinceBlock > 0 && voucher.memberVouches < voucher.memberBar;
     })
       .sort((a, b) => (pairOf(a) < pairOf(b) ? -1 : pairOf(a) > pairOf(b) ? 1 : idOrder(a, b)))
       .slice(0, limit);

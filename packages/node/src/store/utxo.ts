@@ -1,4 +1,5 @@
 import { getDb, prepared } from './db.js';
+import { bytesToHex } from '@dagsocial/types';
 import type { Page, PageResult, BoxKey } from './index.js';
 import type {
   AnyBox,
@@ -62,8 +63,7 @@ interface GenesisProofExtra {
 
 interface BondExtra {
   inviterId: string;          // hex-encoded pubkey in JSON (Uint8Array in code)
-  inviteePublicKey: string;   // hex-encoded pubkey — names the paired invite, and
-                              // what `getBondFor` and the settlement sweep join on
+  inviteePublicKey: string;   // hex-encoded pubkey — names the paired invite
 }
 
 interface VouchExtra {
@@ -95,11 +95,6 @@ interface LikeAccrualExtra {
 /** Convert a hex-encoded pubkey string (from JSON extra_data) to Uint8Array. */
 function hexToPubkey(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(hex, 'hex'));
-}
-
-/** Convert a Uint8Array pubkey to a hex string for JSON extra_data storage. */
-function pubkeyToHex(pk: Uint8Array): string {
-  return Buffer.from(pk).toString('hex');
 }
 
 /**
@@ -689,25 +684,6 @@ export function getRentEligibleCreditBoxes(
 }
 
 /**
- * The bond naming this invitee, or null.
- *
- * `inviteePublicKey` IS the pairing — a key is invited at most once, so this
- * names exactly one live bond. `LIMIT 1` is safe for that reason and not by
- * hope: the invite transition bars a key that already holds an identity record,
- * and block application bars a second bond for a key within one block
- * (NODE_INTERFACE → Legal box transitions).
- */
-export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
-  const row = prepared(getDb(), `SELECT * FROM utxo_boxes
-       WHERE box_type = 'bond'
-         AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.inviteePublicKey') = ?
-       LIMIT 1`, true)
-    .get(pubkeyToHex(inviteePublicKey)) as UtxoRow | undefined;
-  return row ? (rowToBox(row) as BondBox) : null;
-}
-
-/**
  * Every live bond whose invitee's grant applied at exactly `invitedAtBlock`.
  *
  * **Takes the invite height, not the settle height**, so this function knows
@@ -725,8 +701,7 @@ export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
  * settles for free in one block. **Two guards hold that shut and either alone
  * suffices**: the `invited_at_block > 0` predicate here and the caller's early
  * return. They are the same rule written twice rather than two independent
- * checks, which is why `invite-block-apply.test.ts` has to remove both before
- * its case fails.
+ * checks.
  */
 /**
  * Unspent bonds whose invitee's `invited_at_block` is in `(0, maxInvitedAt]`,
@@ -757,7 +732,7 @@ export function getBondBoxesPage(
   page: Page<string>,
 ): PageResult<BondBox, string> {
   const db = getDb();
-  const hex = pubkeyToHex(inviterId);
+  const hex = bytesToHex(inviterId);
   const afterClause = page.after ? ` AND id > ?` : '';
   const params: unknown[] = [hex];
   if (page.after) params.push(page.after);
@@ -791,7 +766,7 @@ export function getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[] {
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.owner') = ?
        ORDER BY id`, true)
-    .all(pubkeyToHex(voucherId)) as UtxoRow[];
+    .all(bytesToHex(voucherId)) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as VouchEscrowBox);
 }
 
@@ -802,7 +777,7 @@ export function getVouchEscrowsForPage(
   page: { limit: number; after?: string },
 ): { rows: VouchEscrowBox[]; next: string | null; count: number } {
   const db = getDb();
-  const hex = pubkeyToHex(voucherId);
+  const hex = bytesToHex(voucherId);
   const afterClause = page.after ? ` AND id > ?` : '';
   const params: unknown[] = [hex];
   if (page.after) params.push(page.after);
@@ -842,7 +817,7 @@ export function hasActiveVouchEscrow(voucherId: Uint8Array): boolean {
        WHERE box_type = 'vouch_escrow'
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.owner') = ?`)
-    .get(pubkeyToHex(voucherId));
+    .get(bytesToHex(voucherId));
   return row !== undefined;
 }
 
@@ -884,7 +859,7 @@ export function getLikeAccrualBoxes(author: Uint8Array): LikeAccrualBox[] {
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.author') = ?
        ORDER BY id`, true)
-    .all(pubkeyToHex(author)) as UtxoRow[];
+    .all(bytesToHex(author)) as UtxoRow[];
   return rows.map((row) => rowToBox(row) as LikeAccrualBox);
 }
 
@@ -950,8 +925,8 @@ export function insertBox(box: AnyBox): void {
     case 'bond': {
       const b = box as BondBox;
       extraData = {
-        inviterId: pubkeyToHex(b.inviterId),
-        inviteePublicKey: pubkeyToHex(b.inviteePublicKey),
+        inviterId: bytesToHex(b.inviterId),
+        inviteePublicKey: bytesToHex(b.inviteePublicKey),
       } satisfies BondExtra;
       break;
     }
@@ -962,22 +937,22 @@ export function insertBox(box: AnyBox): void {
     case 'vouch': {
       const v = box as VouchBox;
       extraData = {
-        voucherId: pubkeyToHex(v.voucherId),
-        targetId: pubkeyToHex(v.targetId),
+        voucherId: bytesToHex(v.voucherId),
+        targetId: bytesToHex(v.targetId),
       } satisfies VouchExtra;
       break;
     }
     case 'vouch_escrow': {
       const v = box as VouchEscrowBox;
       extraData = {
-        owner: pubkeyToHex(v.owner),
+        owner: bytesToHex(v.owner),
         releaseAtBlock: v.releaseAtBlock,
       } satisfies VouchEscrowExtra;
       break;
     }
     case 'like_accrual': {
       const a = box as LikeAccrualBox;
-      extraData = { author: pubkeyToHex(a.author) } satisfies LikeAccrualExtra;
+      extraData = { author: bytesToHex(a.author) } satisfies LikeAccrualExtra;
       break;
     }
     // No `owner` and no per-type fields on any of the four, so the columns

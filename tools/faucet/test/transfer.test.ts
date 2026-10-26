@@ -76,6 +76,11 @@ describe('buildCreditTransferTx', () => {
       .toThrow(/64 lowercase hex/);
   });
 
+  it('refuses an uppercase recipient key', () => {
+    expect(() => buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], recipient.toUpperCase(), 512, ERA))
+      .toThrow(/64 lowercase hex/);
+  });
+
   it('refuses a recipient that is the faucet itself', () => {
     expect(() => buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], pubHex, 512, ERA))
       .toThrow(/itself/i);

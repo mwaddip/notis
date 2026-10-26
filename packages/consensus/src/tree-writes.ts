@@ -23,6 +23,7 @@ import {
 import type { AnyBox, BondBox, HolderRecord, IdentityRecord, NetworkRecord } from '@dagsocial/types';
 import type { BlockEffects } from './apply-block.js';
 import { indexEntriesOfBox, isLapsedMember } from './tree-index.js';
+import { compareBytes } from './tree-session.js';
 import { TreeInconsistencyError } from './tree-view.js';
 import type { TreeStateView } from './tree-view.js';
 import type { UsernameRow } from './utxo-engine.js';
@@ -304,11 +305,3 @@ function ordered(writes: TreeWrite[], caller: string): TreeWrite[] {
   return writes.sort((a, b) => TAG_RANK[a.tag] - TAG_RANK[b.tag] || compareBytes(a.key, b.key));
 }
 
-/** Bytewise order of two keys. */
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) {
-    if (a[i] !== b[i]) return a[i]! < b[i]! ? -1 : 1;
-  }
-  return a.length - b.length;
-}

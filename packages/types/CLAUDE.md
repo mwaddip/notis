@@ -26,7 +26,7 @@ merkle, positional serialization, protocol constants, the hash/id helpers (`comp
 (`identityRecordBytes`, `effectiveKarma`; the tree key is `identityKey`, in `tree-keys.ts`).
 **Pure functions only** — no I/O, no state.
 
-- **Owns:** `src/*` (post, post-withdraw, block, utxo, identity, codec, merkle, serialization, interlinks, membership, network, constants, identity-record, karma-valuation, index).
+- **Owns:** `src/*` (post, post-withdraw, block, utxo, identity, codec, merkle, serialization, interlinks, membership, network, constants, identity-record, karma-valuation, tx-json, index).
 - **Does NOT own:** node logic, networking, stateless validation, wire codec. Depends on `@dagsocial/wire`,
   `@noble/hashes` and `@noble/curves`, and on nothing Node — no built-in, no global: the browser runs it as it is
   written (`ARCHITECTURE → Package boundaries`). A consumer needs a change? It comes back through the main session.

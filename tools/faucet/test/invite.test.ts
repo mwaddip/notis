@@ -153,6 +153,11 @@ describe('buildInviteTx', () => {
       .toThrow(/64 lowercase hex/);
   });
 
+  it('refuses an uppercase invitee key', () => {
+    expect(() => buildInviteTx(cfg, [{ boxId: B1, value: 400n }], invitee.toUpperCase(), 512, ERA))
+      .toThrow(/64 lowercase hex/);
+  });
+
   // ⛔ An invite naming the faucet itself would name a key that already holds an
   // identity record; the node refuses it, and so does the builder.
   it('refuses an invitee that is the faucet itself', () => {

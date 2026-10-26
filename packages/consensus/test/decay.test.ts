@@ -15,9 +15,7 @@ import type { IdentityRecord, KarmaBox } from '@dagsocial/types';
 /**
  * The decay execution — `deriveKarmaDecay` reads the identity record and the
  * pre-body karma projection and returns per-owner plans, `commitDecayClocks`
- * writes the clocks back (NODE_INTERFACE → Karma decay). End-to-end
- * equivalence is checked against frozen captures in `decay-golden.test.ts`;
- * these are the unit-level statements of the plan and the clock write.
+ * writes the clocks back (NODE_INTERFACE → Karma decay).
  */
 
 const OWNER = new Uint8Array(32).fill(0xaa);
@@ -59,8 +57,8 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
 }
 
 // The pure-piece tests — `isIdentityStale`, `owedPeriods`, `effectiveKarma` —
-// live in `@dagsocial/types`' `karma-valuation.test.ts`. The execution-level
-// tests below drive the deps and the plan.
+// live in `@dagsocial/types`. The execution tests below drive the deps and
+// the plan.
 
 // ---------------------------------------------------------------------------
 // deriveKarmaDecay

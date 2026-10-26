@@ -11,6 +11,7 @@ import {
   hexToBytes,
   identityKey,
   identityRecordFromBytes,
+  isHex64,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -27,7 +28,6 @@ import {
   KARMA_LISTING_MAX,
   capped,
   fetchJson,
-  isHex64Lower,
   isNonNegSafeInt,
   isRecord,
   isSum,
@@ -261,7 +261,7 @@ function validateListedRows(rows: unknown[], ledger: 'karma' | 'credit'): Valida
       return { ok: false, reason: `a listed row is not an object: ${shown(r)}` };
     }
     const id = r['boxId'];
-    if (!isHex64Lower(id)) {
+    if (!isHex64(id)) {
       return { ok: false, reason: `a listed row's boxId is not 64 lowercase hex: ${shown(id)}` };
     }
     const value = r['value'];
@@ -862,12 +862,6 @@ function isBlockHeight(v: unknown): v is number {
   return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 }
 
-/** The hex check for client input — a 64-char string, case-insensitive, since
- *  the caller may supply the key as the row shows it; the client lowercases
- *  it where the chain is read against (TYPES_INTERFACE → Identity). The hex of
- *  a node's answer takes `isHex64Lower` of `@dagsocial/node-reads`
- *  (NODE_INTERFACE → HTTP API → "Hex is lowercase"). */
-export const HEX_64 = /^[0-9a-f]{64}$/i;
 const DECIMAL = /^[0-9]+$/;
 
 type ListedBoxCheck = { ok: true; listed: ListedBox } | { ok: false; verdict: string };
@@ -882,7 +876,7 @@ type ListedBoxCheck = { ok: true; listed: ListedBox } | { ok: false; verdict: st
 function checkListedBox(listed: unknown, named: Set<string>): ListedBoxCheck {
   if (!isRecord(listed)) return { ok: false, verdict: `the listed box is not an object: ${shown(listed)}` };
   const rawBoxId = listed['boxId'];
-  if (!isHex64Lower(rawBoxId)) {
+  if (!isHex64(rawBoxId)) {
     return { ok: false, verdict: `the listed boxId is not 64 hex: ${shown(rawBoxId)}` };
   }
   const boxId = rawBoxId;

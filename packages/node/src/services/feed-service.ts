@@ -200,8 +200,9 @@ function withdrawnToJson(
  * (NODE_INTERFACE → Posts → "The creating transaction rides a post row";
  * TYPES_INTERFACE → One transaction of a body).
  *
- * A page's rows arrive in block order (`ORDER BY block_height, block_index` in
- * `store/posts.ts`), so rows that share a height reuse the last bytes read; a
+ * A page's rows arrive in block order (`ORDER BY block_height, block_index`,
+ * NODE_INTERFACE → Posts DAG), so rows that share a height reuse the last
+ * bytes read; a
  * thread's ancestors, descendants and pending each arrive sorted inside their
  * own list, so each list reads one body per distinct height. **Pending bytes
  * come from the pool, confirmed from the stored body**: a pending row's bytes
@@ -233,7 +234,7 @@ class TxBytesResolver {
    * `utxoTxBytesIn` cannot read (`ReaderError`), is a stored chain that will
    * not read — raised as `UnreadableStoredBlockError`, the same class
    * `rowToOrderingBlock` promotes for a stored body whose bytes do not decode
-   * (store/ordering.ts → `createOrderingBlock`'s provenance claim).
+   * (NODE_INTERFACE → "Stored bytes: peer bytes are never stored").
    */
   confirmed(postId: string, blockHeight: number, txId: string): string {
     if (this.lastHeight !== blockHeight) {

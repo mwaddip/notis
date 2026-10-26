@@ -29,7 +29,7 @@ caller supplies. The browser runs it as it is written (`ARCHITECTURE → Package
 | `verifier` | `BatchAVLVerifier` — the step-by-step verifier with the neighbor lookup | `performLookupWithNeighbors`; → The depth guard |
 | `strict-verifier` | `StrictBatchAVLVerifier` | → The strict verifier |
 | `lazy-nodes` | `lazyRoot` (`LoadNode`) | → Nodes loaded on first access |
-| the barrel | `PersistentBatchAVLProver`, `VersionedAVLStorage`, `AvlNode` and the node types, `AvlTreeConfig`, `Operation`, `label`, `newLeaf`, `newInternal`, `serializeNode`, `deserializeNode`, `verifyAvlLookup`, `AvlVerifyError` and its codes | nothing — `@ergots/avltree`'s own, passed through |
+| the barrel | `PersistentBatchAVLProver`, `VersionedAVLStorage`, `AvlNode`, `AvlTreeConfig`, `label`, `newLeaf`, `newInternal`, `newLabel`, `serializeNode`, `deserializeNode`, `verifyAvlLookup` | nothing — `@ergots/avltree`'s own, passed through |
 
 **The export list is what the workspace's source and suites call, not a promise** — a name nothing calls leaves the
 barrel, and one a caller needs joins it with its caller.

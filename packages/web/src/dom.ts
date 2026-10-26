@@ -8,6 +8,11 @@ export function el(tag: string, cls?: string | null, txt?: string | null): HTMLE
   return n;
 }
 
+/** A span in the mono face. */
+export function mono(text: string): HTMLElement {
+  return el('span', 'mono', text);
+}
+
 /** A muted line whose leading number is the only part in mono, in both surfaces. */
 export function reportNode(text: string): HTMLElement {
   const rep = el('div', 'report');

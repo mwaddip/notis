@@ -2,8 +2,8 @@ import { NodeClient, PageError, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, KARMA_MINIMUM, LIKE_KARMA_COST, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
-import { KARMA_LISTING_MAX, LEDGER_READ_MAX, isHex64Lower } from '@dagsocial/node-reads';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, KARMA_MINIMUM, LIKE_KARMA_COST, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex, isHex64 } from '@dagsocial/types';
+import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readWholeList } from './api/whole-list';
 import { decrementBoxId } from './wallet/box-id';
 import type { UtxoTransaction } from '@dagsocial/types';
@@ -57,7 +57,7 @@ import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
   type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier, type PostsVerifier,
-  type PostCache, type CachedThread, type HeldPost, type PostResolver, type WindowBody,
+  type PostCache, type CachedThread, type HeldPost, type PostResolver, type WindowBody, type GrantView,
 } from './model/state';
 import type { BoundPost, ResolveEnd } from './model/post-resolve';
 import { decideMove, type ScreenEntry } from './history';
@@ -519,7 +519,7 @@ export class App {
   // never `pending=1`").
   private walletCreditsPlain: CreditsResult | null = null;
   private walletCreditsPlainStamp: ListingStamp | null = null;
-  private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
+  private creditGrantView: GrantView | null = null;
   private sendFlight: Flight | null = null;
   private sendCheck: string | null = null;
   private sendAnswer: SendAnswer | null = null;
@@ -846,7 +846,7 @@ export class App {
       window.addEventListener('popstate', (e) => {
         if (!this.standalone) return;
         const id = e.state?.id;
-        if (isHex64Lower(id)) {
+        if (isHex64(id)) {
           this.standaloneReroot(id);
         }
       });

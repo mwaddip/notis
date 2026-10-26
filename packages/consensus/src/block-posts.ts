@@ -13,7 +13,7 @@ export interface BlockPost {
  *
  * ⛔ **One derivation, used by the forward pass and by every inverse.** The
  * journal's rollback un-confirms exactly what apply confirmed, so both must read
- * the same list; a second derivation is free to disagree (audit H-3).
+ * the same list; a second derivation is free to disagree.
  *
  * ⛔ **The id comes from the transaction, never from the post.**
  * `computePostId(txId, index)` takes no `Post`, so a block cannot carry a post id

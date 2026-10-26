@@ -236,7 +236,8 @@ try {
 // sequence, so its return already IS the bootstrap-completion signal — a peer
 // reached is Active by now. What the window covers is what completion leaves
 // unfinished: a dial that failed, whose next attempt is on net's 30s outbound
-// tick (`services/peer-readiness.ts` sizes the window from that cadence).
+// tick (the peer-readiness window sizes to that cadence,
+// NET_INTERFACE → "The tick is fixed, and two cadences are sized against it").
 // Marking from here rather than from process start is what keeps the window
 // bounding dial time and not store opening, AVL bootstrap or genesis seeding.
 enterDiscovery(config.bootstrapPeers.length);
@@ -296,7 +297,7 @@ server.on('listening', () => {
   console.log(`DAGsocial node listening on :${config.port}`);
 });
 
-// 6. Block application (server role) — delegated to block-apply.ts
+// 6. Block application (server role) — the block-apply service
 // ---------------------------------------------------------------------------
 
 // 7. Graceful shutdown

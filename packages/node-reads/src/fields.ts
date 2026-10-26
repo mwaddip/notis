@@ -1,22 +1,16 @@
 // WEB_INTERFACE → Reading a node's answer → "Every answer is rebuilt from
 // its own fields" — each node field is held to its type by a total predicate:
-// an id 64 lowercase hex, a height or a count a non-negative safe integer, a
-// box value a canonical decimal string in `[0, 2⁶³)`
+// an id 64 lowercase hex (`isHex64` of `@dagsocial/types`), a height or a
+// count a non-negative safe integer, a box value a canonical decimal string in
+// `[0, 2⁶³)`
 // (TYPES_INTERFACE → Box value domain), a sum a non-negative decimal string,
 // a name `null` or a well-formed one (TYPES_INTERFACE → Content limits).
 
 import { isValidUsernameBytes } from '@dagsocial/types';
 
-const HEX64 = /^[0-9a-f]{64}$/;
 const CANONICAL_NON_NEG_DECIMAL = /^(0|[1-9][0-9]*)$/;
 const TWO_POW_63 = 1n << 63n;
 const utf8 = new TextEncoder();
-
-/** Lowercase hex of 64 characters — a post id, a transaction id, a key, a
- *  box id, a block hash (NODE_INTERFACE → HTTP API → "Hex is lowercase"). */
-export function isHex64Lower(v: unknown): v is string {
-  return typeof v === 'string' && HEX64.test(v);
-}
 
 /** A non-negative safe integer — a height or a count. */
 export function isNonNegSafeInt(v: unknown): v is number {

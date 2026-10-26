@@ -94,6 +94,11 @@ describe('loadConfig', () => {
       .toThrow(/64 lowercase hex/);
   });
 
+  it('refuses an uppercase public key', () => {
+    expect(() => loadConfig(env({ FAUCET_PUBLIC_KEY: pubHex.toUpperCase() })))
+      .toThrow(/64 lowercase hex/);
+  });
+
   it('refuses an unknown network', () => {
     expect(() => loadConfig(env({ NETWORK_TYPE: 'staging' })))
       .toThrow(/NETWORK_TYPE/);

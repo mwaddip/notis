@@ -1,4 +1,5 @@
 import { ByteReader } from './reader.js';
+import { ByteWriter } from './writer.js';
 
 export function encodeVlqU(value: number): Uint8Array {
   if (!Number.isInteger(value) || value < 0) {
@@ -7,33 +8,30 @@ export function encodeVlqU(value: number): Uint8Array {
   if (value > Number.MAX_SAFE_INTEGER) {
     throw new Error('encodeVlqU: value exceeds safe integer range');
   }
-  // Arithmetic, not bitwise: `&`/`>>>` coerce to 32 bits, which silently
-  // mis-encodes every value at or above 2^32. Keep in sync with
-  // ByteWriter.writeVlqU.
-  const out: number[] = [];
-  let v = value;
-  while (v >= 0x80) {
-    out.push((v % 128) + 0x80);
-    v = Math.floor(v / 128);
-  }
-  out.push(v);
-  return new Uint8Array(out);
+  const w = new ByteWriter();
+  w.writeVlqU(value);
+  return w.toBytes();
 }
 
 export function decodeVlqU(reader: ByteReader): number {
   return reader.readVlqU();
 }
 
+/**
+ * The ZigZag map of an integer onto a non-negative one, in arithmetic rather
+ * than `(v << 1) ^ (v >> 31)`: the bitwise form is 32-bit and corrupts anything
+ * outside ±2^31. Doubling can push a large magnitude past the safe-integer
+ * range, which the unsigned encoders then reject.
+ */
+export function zigZag(value: number): number {
+  return value >= 0 ? value * 2 : -value * 2 - 1;
+}
+
 export function encodeVlqZigZag(value: number): Uint8Array {
   if (!Number.isInteger(value)) {
     throw new Error('encodeVlqZigZag: value must be an integer');
   }
-  // ZigZag, arithmetic rather than `(v << 1) ^ (v >> 31)`: the bitwise form is
-  // 32-bit and corrupts anything outside ±2^31. Doubling can push a large
-  // magnitude past the safe-integer range — encodeVlqU then rejects it loudly
-  // instead of truncating. Keep in sync with ByteWriter.writeVlqS.
-  const zz = value >= 0 ? value * 2 : -value * 2 - 1;
-  return encodeVlqU(zz);
+  return encodeVlqU(zigZag(value));
 }
 
 export function decodeVlqZigZag(reader: ByteReader): number {
@@ -54,7 +52,8 @@ const I64_MAX = 2n ** 63n - 1n;
  * extracted from — so the `number` path above and this one are two views of one
  * encoding, not two encodings. Over the overlapping domain `[0, 2^53-1]` they
  * are byte-identical, which is what makes adding a path safe rather than a
- * fork; `test/vlq-bigint.test.ts` pins that at the boundaries.
+ * fork; the equivalence pins in the wire suite hold it at the boundaries
+ * (`WIRE_INTERFACE → BigInt VLQ`).
  *
  * Bitwise operators are correct here where they are not in the `number` path:
  * BigInt `&` and `>>` are arbitrary-precision and never coerce to 32 bits.

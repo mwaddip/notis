@@ -43,7 +43,7 @@ pull request runs the full gate, the slow tree included** — `.github/workflows
 
 Ten packages, in dependency order:
 
-- `@dagsocial/types` — data structures, base58, positional codecs, hashing, protocol constants. **Pure functions only.**
+- `@dagsocial/types` — data structures, positional codecs, hashing, protocol constants. **Pure functions only.**
 - `@dagsocial/node-reads` — reading the node's HTTP answers, for every client: the capped reader under one request
   deadline, each route's byte cap, the field checks an answer is held to, the text a node's string is shown as, and
   the whole-list bound. Depends on `types` alone; runs in the browser as written.

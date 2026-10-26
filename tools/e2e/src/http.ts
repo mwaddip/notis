@@ -148,21 +148,6 @@ export interface WithdrawnResponse {
   authorName: string | null;
 }
 
-// NODE_INTERFACE → Posts → "A light row is a post's id and the node's word"
-export interface LightJson {
-  kind: 'light';
-  id: string;
-  parentRefs: string[];
-  status: string;
-  blockHeight: number | null;
-  blockIndex: number | null;
-  blockCreatedAt: number | null;
-  likeCount: number;
-  descendantCount: number;
-  authorName: string | null;
-  likedByViewer: boolean | null;
-}
-
 export type GetPostResponse = PostResponse | WithdrawnResponse;
 
 export function isPost(p: GetPostResponse): p is PostResponse {

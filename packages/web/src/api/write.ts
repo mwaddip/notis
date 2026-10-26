@@ -9,9 +9,10 @@
 // caller to act on (WEB_INTERFACE → "Nothing retries").
 
 import {
-  readCappedJson, isHex64Lower, isRecord, isAuthorName,
+  readCappedJson, isRecord, isAuthorName,
   WRITE_ANSWER_READ_BYTES, REQUEST_TIMEOUT_MS,
 } from '@dagsocial/node-reads';
+import { isHex64 } from '@dagsocial/types';
 import { trimBase } from '../base';
 
 /** `POST /posts` 2xx — the node's own postId is authoritative, never derived here. */
@@ -115,8 +116,8 @@ function clientRefusal(message: string): Rejection {
 function readPostResult(data: unknown): PostSubmitResult | null {
   if (!isRecord(data)) return null;
   const { postId, txId, status, expiresAtHeight } = data;
-  if (!isHex64Lower(postId)) return null;
-  if (!isHex64Lower(txId)) return null;
+  if (!isHex64(postId)) return null;
+  if (!isHex64(txId)) return null;
   if (typeof status !== 'string') return null;
   if (typeof expiresAtHeight !== 'number') return null;
   return { postId, txId, status, expiresAtHeight };
@@ -125,7 +126,7 @@ function readPostResult(data: unknown): PostSubmitResult | null {
 function readBoundedResult(data: unknown): LikeSubmitResult | null {
   if (!isRecord(data)) return null;
   const { txId, status, expiresAtHeight } = data;
-  if (!isHex64Lower(txId)) return null;
+  if (!isHex64(txId)) return null;
   if (typeof status !== 'string') return null;
   if (typeof expiresAtHeight !== 'number') return null;
   return { txId, status, expiresAtHeight };
@@ -134,27 +135,27 @@ function readBoundedResult(data: unknown): LikeSubmitResult | null {
 function readInviteResult(data: unknown): InviteSubmitResult | null {
   if (!isRecord(data)) return null;
   const { txId, status, expiresAtHeight, bondBoxId } = data;
-  if (!isHex64Lower(txId)) return null;
+  if (!isHex64(txId)) return null;
   if (typeof status !== 'string') return null;
   if (typeof expiresAtHeight !== 'number') return null;
-  if (!isHex64Lower(bondBoxId)) return null;
+  if (!isHex64(bondBoxId)) return null;
   return { txId, status, expiresAtHeight, bondBoxId };
 }
 
 function readWithdrawResult(data: unknown): WithdrawSubmitResult | null {
   if (!isRecord(data)) return null;
   const { txId, status, expiresAtHeight, postId } = data;
-  if (!isHex64Lower(txId)) return null;
+  if (!isHex64(txId)) return null;
   if (typeof status !== 'string') return null;
   if (typeof expiresAtHeight !== 'number') return null;
-  if (!isHex64Lower(postId)) return null;
+  if (!isHex64(postId)) return null;
   return { txId, status, expiresAtHeight, postId };
 }
 
 function readClaimResult(data: unknown): ClaimSubmitResult | null {
   if (!isRecord(data)) return null;
   const { txId, status, expiresAtHeight, name } = data;
-  if (!isHex64Lower(txId)) return null;
+  if (!isHex64(txId)) return null;
   if (typeof status !== 'string') return null;
   if (typeof expiresAtHeight !== 'number') return null;
   if (name === null || !isAuthorName(name)) return null;

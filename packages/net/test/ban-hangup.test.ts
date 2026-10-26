@@ -3,8 +3,6 @@ import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyOrderingBlockStructure,
@@ -27,8 +25,6 @@ const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyTxProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
   verifyTxStructure,
   verifyTxSignatures,
   verifyOrderingBlockStructure,
@@ -79,7 +75,7 @@ describe('a ban hangs up the peer and tells the sync machine', () => {
 
   it('a permanent ban hangs up the connection and drops the retained claim', () => {
     const { pm, hangUp, sm, conns } = makeHarness();
-    pm.recordPenalty('permanent', 'peer1', 0, 'test');
+    pm.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'test');
 
     expect(hangUp).toHaveBeenCalledTimes(1);
     expect(hangUp).toHaveBeenCalledWith(conns[0]!.remotePeer);
@@ -91,7 +87,10 @@ describe('a ban hangs up the peer and tells the sync machine', () => {
   it('a temporal ban at the threshold hangs up the connection', () => {
     const { pm, hangUp, sm } = makeHarness();
     vi.spyOn(Date, 'now').mockReturnValue(0);
-    pm.recordPenalty('misbehavior', 'peer1', 500, 'test');
+    // Five misbehaviors at the same instant cross the 500-point threshold.
+    for (let i = 0; i < 5; i++) {
+      pm.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'test');
+    }
 
     expect(hangUp).toHaveBeenCalledTimes(1);
     expect(pm.isBanned('peer1')).toBe(true);
@@ -154,7 +153,7 @@ describe('a ban hangs up the peer and tells the sync machine', () => {
     pm.setPeerAddress('peer1', ADDR);
 
     deleteThrows = true;
-    pm.recordPenalty('permanent', 'peer1', 0, 'test');
+    pm.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'test');
 
     expect(hangUp).toHaveBeenCalledTimes(1);
     warnSpy.mockRestore();

@@ -1,4 +1,4 @@
-import { el, shortHex, endForm, setText } from '../dom';
+import { el, mono, shortHex, endForm, setText } from '../dom';
 import { prefs } from '../prefs';
 import { readHex64 } from '../hex64';
 import { unlockForm } from './passphrase';
@@ -7,7 +7,7 @@ import { isValidUsernameBytes } from '@dagsocial/types';
 import { formatCredits, parseCredits } from '../model/credits';
 import { spendableCreditBoxes, lockedCreditSummary } from '../wallet/reads';
 import { figuresLine } from '../model/figures-line';
-import type { FiguresView, WindowBody } from '../model/state';
+import type { FiguresView, GrantView, WindowBody } from '../model/state';
 import type { TipVerdict } from '../model/tip-verdict';
 import type { CreditsResult, StatusResult } from '../api/dto';
 
@@ -44,10 +44,6 @@ export type SendRecipient = { key: string } | { name: string };
  *  holds while a locked identity owes the unlock before that send
  *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
 export type SendAnswer = { refusal: string } | { key: string; unlock: HTMLElement | null };
-
-/** How a $NOTIS faucet grant reads while it stands or after it lapses
- *  (WEB_INTERFACE → The faucet step). */
-export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: number };
 
 export interface WalletHandlers {
   // The send form (WEB_INTERFACE → The wallet window → "The `send` row").
@@ -113,10 +109,6 @@ function row(label: string): { row: HTMLElement; field: HTMLElement } {
   const field = el('div', 'field');
   r.appendChild(field);
   return { row: r, field };
-}
-
-function mono(text: string): HTMLElement {
-  return el('span', 'mono', text);
 }
 
 /** The wallet window's body: `update` draws it from the state as it stands,

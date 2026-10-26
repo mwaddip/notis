@@ -33,6 +33,7 @@ import {
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
   putIdentityRecord as storePutIdentityRecord,
+  deleteIdentityRecord as storeDeleteIdentityRecord,
   consumeBox as storeConsumeBox,
   getPendingEntries,
   getVouchBox as storeGetVouchBox,
@@ -543,5 +544,40 @@ describe('invites service', () => {
     const result = validateTx(deps, tx, 5);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('non-conservation');
+  });
+
+  // The three service refusals the invite arm names when the inviter is not
+  // eligible — the pool's view of membership (CONSENSUS_INTERFACE → What it
+  // holds → "Who may invite, and how many, is one function").
+
+  it('createInvite refuses an inviter with no identity record', () => {
+    storeDeleteIdentityRecord(inviterPubKey);
+    const karma = createKarmaBox(inviterId, 100n, 1);
+    const tx = buildCreateTx(karma, inviteePubKey);
+    expect(() => createInvite(deps, tx, 5)).toThrow('Inviter holds no identity record');
+  });
+
+  it('createInvite refuses an inviter who is neither a root nor a member', () => {
+    storePutIdentityRecord(inviterPubKey, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    const karma = createKarmaBox(inviterId, 100n, 1);
+    const tx = buildCreateTx(karma, inviteePubKey);
+    expect(() => createInvite(deps, tx, 5)).toThrow('Only a root or a member may invite');
+  });
+
+  it('createInvite refuses a member whose invite budget is spent, naming vouches, D and used', () => {
+    storePutIdentityRecord(inviterPubKey, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 3, memberBar: 1,
+      memberVouches: 1, memberLikes: 0n, invitesUsed: 1,
+    });
+    const karma = createKarmaBox(inviterId, 100n, 1);
+    const tx = buildCreateTx(karma, inviteePubKey);
+    expect(() => createInvite(deps, tx, 5)).toThrow(
+      'No invites available (vouches: 1, D: 1, used: 1)',
+    );
   });
 });

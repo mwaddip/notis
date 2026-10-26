@@ -15,11 +15,12 @@ import {
   VOUCH_KARMA_AMOUNT,
   membershipBar,
   isValidUsernameBytes,
-  canonicalUsernameBytes,
+  canonicalUsername,
   BACKER_UNSTAKE_MIN_PCT,
   bytesToHex,
   hexToBytes,
   equalBytes,
+  isHex64,
 } from '@dagsocial/types';
 import { isCreditSideTx } from './coinbase-split.js';
 import type { DecayCfg, UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
@@ -54,9 +55,9 @@ export interface UsernameRow {
  * true rows as its outputs and refuses every other type, which is what keeps a
  * `fee` output off the karma side with no clause naming `fee`.
  *
- * Not the set `/status` sums into `totalKarma` — that is `KARMA_SUPPLY_TYPES` in
- * `karma-supply.ts`, and no set here is defined as, spread from or derived from
- * another (NODE_INTERFACE → Three karma sets, and none derives from another).
+ * Not the set `/status` sums into `totalKarma` — that is `KARMA_SUPPLY_TYPES`,
+ * and no set here is defined as, spread from or derived from another
+ * (NODE_INTERFACE → Three karma sets, and none derives from another).
  * This one answers whether a karma spend may create the type; that one whether
  * the type's value is karma in existence; the conservation set whether it belongs
  * to the total that never changes.
@@ -84,7 +85,7 @@ const KARMA_TRANSITION_VERDICT: Record<AnyBox['boxType'], boolean> = {
  * The box types a karma spend may create — derived from
  * `KARMA_TRANSITION_VERDICT`'s true rows, in declaration order.
  */
-export const KARMA_TRANSITION_TYPES: ReadonlyArray<AnyBox['boxType']> = Object.freeze(
+const KARMA_TRANSITION_TYPES: ReadonlyArray<AnyBox['boxType']> = Object.freeze(
   (Object.keys(KARMA_TRANSITION_VERDICT) as AnyBox['boxType'][])
     .filter((k) => KARMA_TRANSITION_VERDICT[k]),
 );
@@ -104,6 +105,25 @@ export function isMember(record: IdentityRecord): boolean {
  */
 export function isRoot(record: IdentityRecord): boolean {
   return record.memberSinceBlock > 0 && record.memberBar === 0 && record.invitedAtBlock === 0;
+}
+
+/**
+ * Who may invite, and how many (CONSENSUS_INTERFACE → What it holds → "Who
+ * may invite, and how many, is one function"; ARCHITECTURE → The invite
+ * budget). `'no-record'` where there is no record, `'root'` for a root
+ * (uncapped — ARCHITECTURE → Roots), `⌊memberVouches / bar()⌋ − invitesUsed`
+ * for a member, and `'none'` for anyone else. `bar` is called once, for a
+ * member alone — a caller that reads the bar from the network record reads
+ * no network record for a root, a non-member or a key with no record.
+ */
+export function availableInvites(
+  record: IdentityRecord | null,
+  bar: () => number,
+): 'no-record' | 'root' | 'none' | number {
+  if (record === null) return 'no-record';
+  if (isRoot(record)) return 'root';
+  if (!isMember(record)) return 'none';
+  return Math.floor(record.memberVouches / bar()) - record.invitesUsed;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,8 +148,8 @@ export interface UtxoEngineDeps {
   getKarmaValue: (owner: Uint8Array) => bigint;
   /**
    * The decay the owner owes at `height` — `face − effectiveKarma(face, record,
-   * height, decayCfg)` over `karmaOwed` in `decay.ts`, the one implementation
-   * of the formula (NODE_INTERFACE → Karma transition rules → "Engine inputs
+   * height, decayCfg)` over `karmaOwed`, the one implementation of the formula
+   * (NODE_INTERFACE → Karma transition rules → "Engine inputs
    * the rule needs"). Block application answers it from a pre-body capture of
    * the owner's karma boxes and record, so a post that advances the activity
    * clock earlier in the body does not move the valuation this transaction
@@ -282,11 +302,6 @@ function verifyGuardSignature(
     ? verifySignature(signature, txHash, pubKey)
     : verifyEd25519(signature, txHash, pubKey);
 }
-
-// A username's canonical bytes are `[a-z0-9_]` — a strict subset of ASCII
-// (TYPES_INTERFACE → Content limits) — so `TextDecoder` and a partial-decode
-// reader answer the same string.
-const USERNAME_DECODER = new TextDecoder('utf-8');
 
 /**
  * Check legal box transitions for a given set of inputs and outputs.
@@ -561,7 +576,7 @@ function checkTransitions(
         if (bytesToHex(uOut.owner) !== inputOwnerHex) {
           return { valid: false, error: 'Claim: username owner must match the karma inputs\' owner' };
         }
-        const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(uOut.name));
+        const canonical = canonicalUsername(uOut.name);
         const existing = deps.getUsername(canonical);
         if (existing !== null) {
           return { valid: false, error: 'name taken' };
@@ -750,7 +765,7 @@ function checkTransitions(
         }
         const vouchOut = vouchOutputs[0] as VouchBox;
         // The stake is pinned at cast: a vouch is one vote and always stakes
-        // exactly VOUCH_KARMA_AMOUNT (audit F-consensus-3). Without this pin
+        // exactly VOUCH_KARMA_AMOUNT. Without this pin
         // the only bound on the stake is conservation, which permits 0n, while
         // unvouch escrows the constant regardless: a 0-value vouch matures into
         // 1 karma minted from nothing, and a 100-value vouch destroys 99.
@@ -910,30 +925,32 @@ function checkTransitions(
           };
         }
         // NODE_INTERFACE → Bond transition rules: only a root or a member with
-        // an invite available creates a bond.
+        // an invite available creates a bond. The budget is one function
+        // (CONSENSUS_INTERFACE → What it holds → "Who may invite, and how
+        // many, is one function"), and the bar it computed is kept for the
+        // refusal message rather than read twice.
         const inviterRecord = deps.getIdentityRecord(bondOut.inviterId);
-        if (!inviterRecord) {
+        let d: number | null = null;
+        const avail = availableInvites(inviterRecord, () => {
+          d = membershipBar(deps.getNetworkRecord().memberCount, deps.membershipBarMultiplier);
+          return d;
+        });
+        if (avail === 'no-record') {
           return {
             valid: false,
             error: `Inviter holds no identity record`,
           };
         }
-        if (isRoot(inviterRecord)) {
-          // Roots have no budget check — bounded by bond karma alone.
-        } else if (isMember(inviterRecord)) {
-          const nr = deps.getNetworkRecord();
-          const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
-          const available = Math.floor(inviterRecord.memberVouches / d) - inviterRecord.invitesUsed;
-          if (available < 1) {
-            return {
-              valid: false,
-              error: `Inviter has no invites available (vouches: ${inviterRecord.memberVouches}, D: ${d}, used: ${inviterRecord.invitesUsed})`,
-            };
-          }
-        } else {
+        if (avail === 'none') {
           return {
             valid: false,
             error: `Only a root or a member may invite`,
+          };
+        }
+        if (avail !== 'root' && avail < 1) {
+          return {
+            valid: false,
+            error: `Inviter has no invites available (vouches: ${inviterRecord!.memberVouches}, D: ${d!}, used: ${inviterRecord!.invitesUsed})`,
           };
         }
       }
@@ -1261,9 +1278,9 @@ export function ceilingOf(tx: UtxoTransaction): number | null {
 // ---------------------------------------------------------------------------
 
 // The consensus bound on every `value` (and `originalValue`) is the schema's
-// `u64` spec below — one table, not a separate value check alongside a type
-// table. `json-to-tx.ts`'s `assertValidBoxValue` is the HTTP-edge ergonomics
-// twin, not the consensus gate.
+// `u64` entry below — one table, not a separate value check alongside a type
+// table. The HTTP-edge check is the node's ergonomics twin, not the consensus
+// gate.
 
 /**
  * Runtime type vocabulary for output fields (field-type pin). Every `ok`
@@ -1345,14 +1362,6 @@ function describeValue(v: unknown): string {
 // Transaction envelope shape — the step-0 gate
 // ---------------------------------------------------------------------------
 
-/**
- * 64 lowercase hex characters — the closed live set of ids. `computeBoxId`,
- * `computeTxId` and `computePostId` all emit `digest().subarray(0,32)` as
- * lowercase hex and nothing else, so an uppercase or short id names no box
- * that can ever exist.
- */
-const HEX64 = /^[0-9a-f]{64}$/;
-
 const ENVELOPE_REQUIRED = ['inputs', 'outputs', 'signatures', 'protocolVersion'] as const;
 
 /**
@@ -1410,7 +1419,7 @@ function checkHexKeyedByteMap(
   byteLength: number | null,
 ): UtxoResult {
   for (const key of Object.keys(map)) {
-    if (!HEX64.test(key)) {
+    if (!isHex64(key)) {
       return {
         valid: false,
         error: `Invalid tx envelope: ${field} key must be 64 lowercase hex characters, got ${describeValue(key)}`,
@@ -1531,7 +1540,7 @@ export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly 
   }
   for (let i = 0; i < inputs.length; i++) {
     const id: unknown = inputs[i];
-    if (typeof id !== 'string' || !HEX64.test(id)) {
+    if (!isHex64(id)) {
       return {
         valid: false,
         error:
@@ -1620,7 +1629,7 @@ export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly 
   // clause 2 for why an own key holding `undefined` IS absence here.
   if (tx.likeTarget !== undefined) {
     const likeTarget = tx.likeTarget;
-    if (typeof likeTarget !== 'string' || !HEX64.test(likeTarget)) {
+    if (!isHex64(likeTarget)) {
       return {
         valid: false,
         error:
@@ -2544,7 +2553,7 @@ export function validateTx(
  * a shape that cannot exist and one that depends on every later reader
  * overwriting in the same order.
  *
- * Exported because `block-apply.ts` materializes the outputs of block-embedded
+ * Exported because the node materializes the outputs of block-embedded
  * transactions on its own path. One rule for both, so the pool path and the
  * block path cannot derive different ids for the same transaction.
  */

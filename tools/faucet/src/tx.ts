@@ -1,6 +1,6 @@
 import { createPrivateKey, sign } from 'crypto';
-import { computeCandidateBoxId, computeTxId } from '@dagsocial/types';
-import type { AnyBoxCandidate, UtxoTransaction } from '@dagsocial/types';
+import { computeCandidateBoxId, computeTxId, isHex64, txToJson } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
 
 /**
@@ -29,8 +29,6 @@ export interface BuiltTx {
    */
   readonly payment: BoxRef | null;
 }
-
-export const HEX64 = /^[0-9a-f]{64}$/;
 
 /**
  * Compute the id, sign it, and render the wire body.
@@ -71,60 +69,6 @@ function refFromIndex(tx: UtxoTransaction, txId: string, index: number | null): 
 }
 
 /**
- * Render a transaction for the node's JSON edge — the inverse of its `jsonToTx`.
- *
- * ⚠ **`bigint` and `Uint8Array` both have to be converted**: the first throws in
- * `JSON.stringify` and the second serialises as an index-keyed object. Values
- * cross as decimal strings and binary fields as hex, which is what `convertBox`
- * reads back.
- *
- * ⛔ **Fields are converted by their VALUE's type, not by name.** A renderer
- * holding its own list of binary fields is a second copy of the node's, and the
- * two would have to be kept in agreement by hand.
- *
- * ⚠ **Throws on a `likeTarget` or a `post`.** The faucet builds neither, and a
- * field silently dropped here would leave the node recomputing a different id
- * from the one the signature covers.
- */
-export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
-  if (tx.likeTarget !== undefined || tx.post !== undefined) {
-    throw new Error('the faucet builds no likes and no posts, and this renderer carries neither');
-  }
-  return {
-    inputs: tx.inputs,
-    outputs: tx.outputs.map(boxToJson),
-    signatures: Object.fromEntries(
-      Object.entries(tx.signatures).map(([k, v]) => [k, Buffer.from(v).toString('hex')]),
-    ),
-    protocolVersion: tx.protocolVersion,
-  };
-}
-
-function boxToJson(box: AnyBoxCandidate): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(box).map(([key, value]) => [
-      key,
-      value instanceof Uint8Array
-        ? Buffer.from(value).toString('hex')
-        : typeof value === 'bigint'
-          ? value.toString()
-          : value,
-    ]),
-  );
-}
-
-/**
- * The boxes to select from, in the order `selectBoxes` requires.
- *
- * ⚠ **The sort discharges `selectBoxes`' stated precondition** — it documents
- * that its input is pre-sorted by value descending — rather than guarding
- * against a caller. A precondition met two modules away is met by accident.
- */
-export function valueDescending(boxes: readonly BoxRef[]): BoxRef[] {
-  return [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-}
-
-/**
  * The faucet cannot cover a grant out of what it holds.
  *
  * ⚠ **Its own state, not the caller's mistake.** The faucet draws down as it
@@ -154,7 +98,7 @@ export class BadRequestError extends Error {
 
 /** The recipient of any faucet transaction: 32 bytes, and never the faucet's own key. */
 export function checkRecipient(cfg: FaucetConfig, hex: string, what: string): void {
-  if (!HEX64.test(hex)) {
+  if (!isHex64(hex)) {
     throw new BadRequestError(`${what} public key must be 64 lowercase hex characters`);
   }
   if (hex === cfg.publicKeyHex) {

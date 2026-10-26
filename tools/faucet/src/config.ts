@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { createPrivateKey, createPublicKey } from 'crypto';
-import { NETWORK_PROFILES, profileFor } from '@dagsocial/types';
+import { NETWORK_PROFILES, isHex64, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 
 export interface FaucetConfig {
@@ -14,7 +14,6 @@ export interface FaucetConfig {
   readonly rateLimitPerHour: number;
 }
 
-const HEX64 = /^[0-9a-f]{64}$/;
 const DECIMAL = /^[0-9]+$/;
 
 /**
@@ -46,7 +45,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): FaucetConfig {
   const profile = profileFor(networkType);
 
   const publicKeyHex = req(env, 'FAUCET_PUBLIC_KEY');
-  if (!HEX64.test(publicKeyHex)) {
+  if (!isHex64(publicKeyHex)) {
     throw new Error('FAUCET_PUBLIC_KEY must be 64 lowercase hex characters, an Ed25519 public key');
   }
 

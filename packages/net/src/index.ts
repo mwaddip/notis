@@ -7,7 +7,7 @@ export {
 export type { HandshakePayload } from './node.js';
 export { PeerManager, MAX_TRACKED_BANS, MAX_TRACKED_SCORES } from './peer-mgr.js';
 export type { PeerBanHooks } from './peer-mgr.js';
-export { SYNC_PROTOCOL } from './sync.js';
+export { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from './sync.js';
 export {
   gossipTopics,
   gossipMessageId,
@@ -41,7 +41,6 @@ export {
   decodeHandshakeBody,
   handshakeCodec,
   handshakePenalty,
-  parseHandshakeBody,
   validateHandshake,
 } from './handshake.js';
 export type { HandshakeMsg, HandshakeRejection, HandshakeResult } from './handshake.js';
@@ -77,13 +76,14 @@ export type { PeerStorage } from './peerdb.js';
 export {
   PeerState,
   PenaltyKind,
+  MISBEHAVIOR_SCORE,
+  TRANSIENT_SCORE,
 } from './types.js';
 export type {
   NetConfig,
   NetValidators,
   Peer,
   PeerRecord,
-  PenaltyType,
   PeerMetadata,
   GetPeersMsg,
   PeerEntryMsg,

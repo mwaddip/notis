@@ -3,9 +3,8 @@ import {
   KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type { BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
-import { materializeOutput, validateTx } from '@dagsocial/consensus';
+import { availableInvites, materializeOutput, validateTx } from '@dagsocial/consensus';
 import { admitWriteTx } from './admit-tx.js';
-import { availableInvites } from './invites-available.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import { ClientError } from './client-error.js';
 
@@ -59,10 +58,15 @@ export function createInvite(
       // ---- 0. The inviter is a root, or a member with an invite available --
       // The number both the gate (MEMPOOL_INTERFACE → Correctness gates) and
       // this service read is `availableInvites`, one definition — a pure
-      // function the service hands its `deps` reads and admission the store's.
+      // function the service hands its `deps` reads and admission the store's
+      // (CONSENSUS_INTERFACE → What it holds → "Who may invite, and how many,
+      // is one function").
       const inviterRecord = deps.getIdentityRecord(karmaInput.owner);
-      const nr = deps.getNetworkRecord();
-      const available = availableInvites(inviterRecord, nr.memberCount, deps.membershipBarMultiplier);
+      let d = 0;
+      const available = availableInvites(inviterRecord, () => {
+        d = membershipBar(deps.getNetworkRecord().memberCount, deps.membershipBarMultiplier);
+        return d;
+      });
       if (available === 'no-record') {
         throw new ClientError('Inviter holds no identity record');
       }
@@ -70,7 +74,6 @@ export function createInvite(
         throw new ClientError('Only a root or a member may invite');
       }
       if (typeof available === 'number' && available < 1) {
-        const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
         throw new ClientError(
           `No invites available (vouches: ${inviterRecord!.memberVouches}, ` +
           `D: ${d}, used: ${inviterRecord!.invitesUsed})`,

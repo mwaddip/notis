@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import type { UtxoTransaction, UsernameBox } from '@dagsocial/types';
-import { canonicalUsernameBytes, isValidUsernameBytes } from '@dagsocial/types';
+import { isValidUsernameBytes, usernameString } from '@dagsocial/types';
 import type { UtxoEngineDeps, UtxoResult } from '@dagsocial/consensus';
 import { admitWriteTx } from '../services/admit-tx.js';
 import { getNet } from '../services/net-instance.js';
 import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
-import { resolveIdentityParam, isResolveError } from './page.js';
+import { parseNameParam, resolveIdentityParam, isResolveError } from './page.js';
 import type { UsernameRow } from '../store/usernames.js';
 
 // NODE_INTERFACE → Usernames
@@ -74,7 +74,7 @@ export function createRouter(deps: UsernameRouteDeps): Router {
       const pooledOut = (pooledTx.outputs ?? []).find(
         (o): o is UsernameBox => o.boxType === 'username',
       )!;
-      const nameAsTyped = Buffer.from(pooledOut.name).toString('utf8');
+      const nameAsTyped = usernameString(pooledOut.name);
       res.status(200).json({ status: 'pending', txId, expiresAtHeight, name: nameAsTyped });
     } catch (err) {
       respondError(res, err, 'POST /usernames', 'message');
@@ -89,16 +89,13 @@ export function createRouter(deps: UsernameRouteDeps): Router {
       return;
     }
 
-    let rawName = req.params.name!;
-    if (rawName.startsWith('@')) rawName = rawName.slice(1);
-    const nameBytes = Buffer.from(rawName, 'utf8');
-    if (!isValidUsernameBytes(nameBytes)) {
+    const parsed = parseNameParam(req.params.name!);
+    if ('invalid' in parsed) {
       res.status(400).json({ error: 'name invalid' });
       return;
     }
 
-    const canonical = Buffer.from(canonicalUsernameBytes(nameBytes)).toString('utf8');
-    const row = deps.getUsername(canonical);
+    const row = deps.getUsername(parsed.canonical);
     if (!row) {
       res.status(404).json({ error: 'Name not held' });
       return;
@@ -113,7 +110,7 @@ export function createRouter(deps: UsernameRouteDeps): Router {
     }
 
     if (!tx.inputs.includes(row.boxId)) {
-      res.status(400).json({ error: `Transaction does not consume ${rawName}'s box` });
+      res.status(400).json({ error: `Transaction does not consume ${parsed.name}'s box` });
       return;
     }
 
@@ -142,16 +139,12 @@ export function createRouter(deps: UsernameRouteDeps): Router {
 
   // GET /usernames/:name
   router.get('/:name', (req, res) => {
-    let rawName = req.params.name!;
-    if (rawName.startsWith('@')) rawName = rawName.slice(1);
-    const nameBytes = Buffer.from(rawName, 'utf8');
-    if (!isValidUsernameBytes(nameBytes)) {
+    const parsed = parseNameParam(req.params.name!);
+    if ('invalid' in parsed) {
       res.status(400).json({ error: 'name invalid' });
       return;
     }
-
-    const canonical = Buffer.from(canonicalUsernameBytes(nameBytes)).toString('utf8');
-    const row = deps.getUsername(canonical);
+    const row = deps.getUsername(parsed.canonical);
     if (!row) {
       res.status(404).json({ error: 'Name not held' });
       return;

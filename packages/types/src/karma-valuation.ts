@@ -12,34 +12,7 @@
 
 import { KARMA_DECAY_AMOUNT, KARMA_MINIMUM } from './constants.js';
 import type { NetworkProfile } from './network.js';
-import type { IdentityRecord } from './identity-record.js';
-
-/**
- * The clock of an identity that has no record at all.
- *
- * Every path that puts karma in a key's hands writes one — the invite grant,
- * and genesis explicitly (NODE_INTERFACE → Bond transition rules) — so an
- * owner holding karma with no record should be unreachable. It is still a
- * total function's job to say what happens if one appears, and "never
- * observed active" is the honest reading: maximally stale, decaying from
- * height 0.
- *
- * The alternative — skipping record-less owners — is the more dangerous
- * failure: it exempts an identity from decay permanently, and does so silently.
- * Over-charging by a fraction of an interval is recoverable; a karma balance
- * that can never decay is an economic hole.
- */
-const NEVER_ACTIVE: IdentityRecord = {
-  lastActivityBlock: 0,
-  lastDecayBlock: 0,
-  invitedAtBlock: 0,
-  lifetimeLikesReceived: 0n,
-  memberSinceBlock: 0,
-  memberBar: 0,
-  memberVouches: 0,
-  memberLikes: 0n,
-  invitesUsed: 0,
-};
+import { EMPTY_IDENTITY_RECORD, type IdentityRecord } from './identity-record.js';
 
 /**
  * The four numbers the valuation reads — the two per-network timescales from
@@ -92,7 +65,7 @@ export function isIdentityStale(
   thresholdBlocks: number,
 ): boolean {
   if (currentHeight <= thresholdBlocks) return false;
-  const clock = record ?? NEVER_ACTIVE;
+  const clock = record ?? EMPTY_IDENTITY_RECORD;
   return currentHeight - clock.lastActivityBlock >= thresholdBlocks;
 }
 
@@ -114,7 +87,7 @@ export function owedPeriods(
   currentHeight: number,
   intervalBlocks: number,
 ): number {
-  const clock = record ?? NEVER_ACTIVE;
+  const clock = record ?? EMPTY_IDENTITY_RECORD;
   const clockStart = Math.max(clock.lastActivityBlock, clock.lastDecayBlock);
   return Math.floor((currentHeight - clockStart) / intervalBlocks);
 }

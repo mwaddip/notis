@@ -1,4 +1,5 @@
 import type { UtxoTransaction } from '@dagsocial/types';
+import { isHex64 } from '@dagsocial/types';
 import {
   getPost,
   isLivePost,
@@ -12,9 +13,6 @@ import { ClientError } from './client-error.js';
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
-/** A like target is a post id: 64 lowercase hex characters. */
-const LIKE_TARGET_RE = /^[0-9a-f]{64}$/;
 
 /**
  * Cast a like on a target post (NODE_INTERFACE → Likes).
@@ -50,7 +48,7 @@ export function castLike(
     () => {
       // ---- 1. Extract and validate likeTarget ----
       const likeTarget = tx.likeTarget;
-      if (likeTarget === undefined || !LIKE_TARGET_RE.test(likeTarget)) {
+      if (!isHex64(likeTarget)) {
         throw new ClientError(
           'likeTarget missing or malformed: expected a 64-char hex post id',
         );

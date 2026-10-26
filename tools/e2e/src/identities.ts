@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, createPrivateKey, createPublicKey } from 'crypto';
-import { NETWORK_PROFILES } from '@dagsocial/types';
+import { ED25519_PKCS8_PREFIX, NETWORK_PROFILES } from '@dagsocial/types';
 
 export interface Identity {
   publicKeyHex: string;
@@ -37,14 +37,12 @@ export const DEVNET_FAUCET: Identity = (() => {
   return { publicKeyHex, publicKey: pubBytes, secretKey };
 })();
 
-const PKCS8_PREFIX = '302e020100300506032b657004220420';
-
 function deriveBackerIdentity(label: string, expectedWeight: bigint): Identity {
   const seed = createHash('blake2b512')
     .update(Buffer.from(label))
     .digest()
     .subarray(0, 32);
-  const secretKey = Buffer.from(PKCS8_PREFIX + seed.toString('hex'), 'hex');
+  const secretKey = Buffer.from(ED25519_PKCS8_PREFIX + seed.toString('hex'), 'hex');
   const privKey = createPrivateKey({ key: secretKey, format: 'der', type: 'pkcs8' });
   const pubDer = createPublicKey(privKey).export({ format: 'der', type: 'spki' });
   const pubBytes = new Uint8Array(pubDer.subarray(-32));

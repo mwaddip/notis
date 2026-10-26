@@ -380,7 +380,7 @@
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
       ],
       "bytes": "020000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-      "note": "The count is what makes concatenated variable-length elements injective — the defect audit M-1 closed."
+      "note": "The count is what makes concatenated variable-length elements injective."
     },
     {
       "name": "arr/of-vlqU",
