@@ -36,6 +36,7 @@ import {
   InconsistentStateTreeError,
   failStopIfCorruptChain,
 } from '../services/corrupt-state.js';
+import { DECIMAL_INT } from '../decimal-int.js';
 
 /** The five kinds `/api/v1/range` serves — one each per range (CONSENSUS_INTERFACE → The holdings page). */
 const HOLDING_KINDS = Object.freeze({
@@ -162,7 +163,7 @@ function resolveHeight(
   if (atHeightRaw === undefined) {
     return { ok: true, atHeight: liveHeight, stateRoot: liveVersion, restore: null };
   }
-  if (typeof atHeightRaw !== 'string' || !/^\d+$/.test(atHeightRaw)) {
+  if (typeof atHeightRaw !== 'string' || !DECIMAL_INT.test(atHeightRaw)) {
     res.status(400).json({ error: 'atHeight must be a non-negative integer' });
     return { ok: false };
   }
@@ -379,7 +380,7 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
       // ask past the safe-integer range. `0` and the empty string stay
       // refused (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
       // route").
-      if (typeof limitRaw !== 'string' || !/^\d+$/.test(limitRaw) || /^0+$/.test(limitRaw)) {
+      if (typeof limitRaw !== 'string' || !DECIMAL_INT.test(limitRaw) || /^0+$/.test(limitRaw)) {
         res.status(400).json({ error: 'limit must be a positive integer' });
         return;
       }

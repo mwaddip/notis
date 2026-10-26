@@ -8,12 +8,9 @@ import {
   PAGE_LIMIT_MAX,
   BATCH_READ_MAX,
 } from '@dagsocial/types';
+import { DECIMAL_INT } from '../decimal-int.js';
 
 export type UsernameLookup = (nameLower: string) => { owner: string } | null;
-
-// NODE_INTERFACE → Blocks ("`:height` as a non-negative safe integer written in
-// decimal digits alone"); every route's decimal test reads this one regex.
-export const DECIMAL_INT = /^\d+$/;
 
 // NODE_INTERFACE → "Every list a view returns is a page"; the bounds are
 // `@dagsocial/types`' (TYPES_INTERFACE → HTTP view bounds).

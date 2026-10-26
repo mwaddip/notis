@@ -10,6 +10,7 @@ import {
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType, ProtocolEra } from '@dagsocial/types';
 import { DEFAULT_MAX_MEMPOOL_ENTRIES } from './store/mempool.js';
+import { DECIMAL_INT } from './decimal-int.js';
 
 export interface Config {
   port: number;
@@ -309,7 +310,7 @@ function readWholeNumber(
 ): number {
   const raw = process.env[name];
   if (raw === undefined) return defaultValue;
-  if (!/^\d+$/.test(raw)) {
+  if (!DECIMAL_INT.test(raw)) {
     throw new Error(`Invalid ${name} "${raw}" — must be decimal digits only`);
   }
   const parsed = Number(raw);
