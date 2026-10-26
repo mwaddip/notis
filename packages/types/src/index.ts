@@ -346,3 +346,6 @@ export {
   decodeTx,
 } from './serialization.js';
 export type { TxPacket } from './serialization.js';
+
+// The JSON form of a transaction — TYPES_INTERFACE → The JSON form of a transaction
+export { txToJson } from './tx-json.js';
