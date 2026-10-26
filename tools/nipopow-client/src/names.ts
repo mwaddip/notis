@@ -1,4 +1,4 @@
-import { bytesToHex, canonicalUsernameBytes, firstDifference, isValidUsernameBytes } from '@dagsocial/types';
+import { bytesToHex, canonicalUsernameBytes, firstDifference, isValidUsernameBytes, usernameString } from '@dagsocial/types';
 import type { DecodedBoxCandidate } from '@dagsocial/types';
 import type { Anchor } from './boxes.js';
 import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
@@ -151,7 +151,7 @@ function checkName(
   // TYPES_INTERFACE → Content limits — the codec bounds a name's length and
   // checks none of its bytes; the alphabet is consensus's check, which this
   // tool does not run on a proven box, so a refusal names it through `capped`.
-  const name = new TextDecoder().decode(candidate.name);
+  const name = usernameString(candidate.name);
   if ('key' in claim) {
     const key = claim.key.toLowerCase();
     if (owner !== key) {
