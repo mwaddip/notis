@@ -10,7 +10,7 @@ import type {
 import { effectiveKarma, membershipBar } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
-import { isMember, isRoot } from '@dagsocial/consensus';
+import { availableInvites, isMember } from '@dagsocial/consensus';
 import type { NetworkRecord } from '../store/identity-records.js';
 import type { Page, PageResult, BoxKey } from '../store/index.js';
 import { getNet } from '../services/net-instance.js';
@@ -111,16 +111,17 @@ export function createRouter(deps: UtxoDeps): Router {
     }
 
     const memberFlag = record !== null && isMember(record);
-    let invitesAvailable: number | null = 0;
-    if (record) {
-      if (isRoot(record)) {
-        invitesAvailable = null;
-      } else if (isMember(record)) {
-        const nr = deps.getNetworkRecord();
-        const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
-        invitesAvailable = Math.max(0, Math.floor(record.memberVouches / d) - record.invitesUsed);
-      }
-    }
+    // CONSENSUS_INTERFACE → What it holds → "Who may invite, and how many, is
+    // one function": `null` for a root, the number clamped at `0` for a
+    // member, `0` for anyone else.
+    const budget = availableInvites(
+      record,
+      () => membershipBar(deps.getNetworkRecord().memberCount, deps.membershipBarMultiplier),
+    );
+    const invitesAvailable: number | null =
+      budget === 'root' ? null
+      : typeof budget === 'number' ? Math.max(0, budget)
+      : 0;
 
     const karmaRows = pageResult.rows as KarmaBox[];
     res.json({
