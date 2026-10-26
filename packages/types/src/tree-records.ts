@@ -39,7 +39,8 @@ export interface NetworkRecord {
   memberCount: number;
 }
 
-const NETWORK_RECORD_TAG = 0x81;
+/** The first byte of the network record — `TYPES_INTERFACE → Layout — tree records`. */
+export const NETWORK_RECORD_TAG = 0x81;
 
 const NETWORK_RECORD: StructCodec<NetworkRecord> = {
   name: 'networkRecord',
@@ -76,7 +77,8 @@ export interface NameRecord {
   claimedAtBlock: number;
 }
 
-const NAME_RECORD_TAG = 0x82;
+/** The first byte of a name record — `TYPES_INTERFACE → Layout — tree records`. */
+export const NAME_RECORD_TAG = 0x82;
 
 const NAME_RECORD: StructCodec<NameRecord> = {
   name: 'nameRecord',
@@ -116,7 +118,8 @@ export interface HolderRecord {
   boxId: string | null; // 64-char lowercase hex, or absent
 }
 
-const HOLDER_RECORD_TAG = 0x83;
+/** The first byte of a holder record — `TYPES_INTERFACE → Layout — tree records`. */
+export const HOLDER_RECORD_TAG = 0x83;
 
 const HOLDER_RECORD: StructCodec<HolderRecord> = {
   name: 'holderRecord',
@@ -157,7 +160,8 @@ export interface PostRecord {
   standing: 'live' | 'withdrawn';
 }
 
-const POST_RECORD_TAG = 0x84;
+/** The first byte of a post record — `TYPES_INTERFACE → Layout — tree records`. */
+export const POST_RECORD_TAG = 0x84;
 
 const POST_RECORD: StructCodec<PostRecord> = {
   name: 'postRecord',
@@ -203,14 +207,20 @@ export function postRecordFromBytes(bytes: Uint8Array): PostRecord {
 // Like record and index entry — single-byte markers, no further fields
 // ---------------------------------------------------------------------------
 
-export const LIKE_MARKER = Uint8Array.of(0x85);
-export const INDEX_MARKER = Uint8Array.of(0x86);
+/** The first byte of a like record — `TYPES_INTERFACE → Layout — tree records`. */
+export const LIKE_MARKER_TAG = 0x85;
+/** The first byte of an index entry — `TYPES_INTERFACE → Layout — tree records`. */
+export const INDEX_MARKER_TAG = 0x86;
+
+export const LIKE_MARKER = Uint8Array.of(LIKE_MARKER_TAG);
+export const INDEX_MARKER = Uint8Array.of(INDEX_MARKER_TAG);
 
 // ---------------------------------------------------------------------------
 // Vouch-pair value — u8(0x87) ‖ b32(boxId)
 // ---------------------------------------------------------------------------
 
-const VOUCH_PAIR_TAG = 0x87;
+/** The first byte of a vouch-pair entry — `TYPES_INTERFACE → Layout — tree records`. */
+export const VOUCH_PAIR_TAG = 0x87;
 
 const VOUCH_PAIR_VALUE: StructCodec<Uint8Array> = {
   name: 'vouchPairValue',
@@ -244,7 +254,8 @@ export function vouchPairBoxId(value: Uint8Array): Uint8Array {
 // row itself is absent rather than stored as zero.
 // ---------------------------------------------------------------------------
 
-const CAST_COUNT_TAG = 0x88;
+/** The first byte of a cast count — `TYPES_INTERFACE → Layout — tree records`. */
+export const CAST_COUNT_TAG = 0x88;
 
 const CAST_COUNT: StructCodec<number> = {
   name: 'castCount',
