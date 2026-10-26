@@ -1,6 +1,6 @@
 import { sign, createPrivateKey } from 'crypto';
-import { computeTxId, computeCandidateBoxId } from '@dagsocial/types';
-import type { UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
+import { computeTxId, computeCandidateBoxId, txToJson } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 
 // NODE_INTERFACE → UTXO queries — `income: true` marks the owner's income box
@@ -29,41 +29,4 @@ export function signAndRender(identity: Identity, tx: UtxoTransaction): BuiltTx 
   }));
 
   return { txId, json: txToJson(signed), outputs };
-}
-
-function txToJson(tx: UtxoTransaction): Record<string, unknown> {
-  const result: Record<string, unknown> = {
-    inputs: tx.inputs,
-    outputs: tx.outputs.map(boxToJson),
-    signatures: Object.fromEntries(
-      Object.entries(tx.signatures).map(([k, v]) => [k, Buffer.from(v).toString('hex')]),
-    ),
-    protocolVersion: tx.protocolVersion,
-  };
-  if (tx.likeTarget !== undefined) {
-    result['likeTarget'] = tx.likeTarget;
-  }
-  if (tx.post !== undefined) {
-    result['post'] = convertValue(tx.post);
-  }
-  if (tx.postWithdraw !== undefined) {
-    result['postWithdraw'] = convertValue(tx.postWithdraw);
-  }
-  return result;
-}
-
-function convertValue(value: unknown): unknown {
-  if (value instanceof Uint8Array) return Buffer.from(value).toString('hex');
-  if (typeof value === 'bigint') return value.toString();
-  if (Array.isArray(value)) return value.map(convertValue);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value).map(([k, v]) => [k, convertValue(v)]),
-    );
-  }
-  return value;
-}
-
-function boxToJson(box: AnyBoxCandidate): Record<string, unknown> {
-  return convertValue(box) as Record<string, unknown>;
 }
