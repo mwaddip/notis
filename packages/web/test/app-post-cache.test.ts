@@ -322,7 +322,7 @@ function signTx(content: string): { signedTx: UtxoTransaction; txId: string; aut
   const pub = ed25519.getPublicKey(sk);
   const authorHex = bytesToHex(pub);
   const built = buildPost(
-    { spendable: [{ boxId: 'bb'.repeat(32), value: POST_PRICE_THREAD }], height: 10, era: 1, author: authorHex },
+    { spendable: [{ boxId: 'bb'.repeat(32), value: POST_PRICE_THREAD }], height: 10, era: 1, author: authorHex, effective: POST_PRICE_THREAD },
     content,
   );
   // The sign step attaches the signature to the tx itself (submit.ts' signBody).

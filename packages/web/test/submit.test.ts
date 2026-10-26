@@ -46,7 +46,12 @@ function statusResult(): StatusResult {
   };
 }
 function karmaResult(boxes: KarmaBoxRow[]): KarmaResult {
-  return karmaFixture({ userId: PUB, boxes, boxCount: boxes.length, height: 6000 });
+  // Default `effective` to the boxes' face so the floor rule reads a fresh
+  // view with no pending spend; a case that drives a split hands its own
+  // KarmaResult (WEB_INTERFACE → The wallet → "The floor is the client's to
+  // know").
+  const effective = boxes.reduce((sum, b) => sum + BigInt(b.value), 0n).toString();
+  return karmaFixture({ userId: PUB, boxes, boxCount: boxes.length, height: 6000, effective });
 }
 const FULL_BOXES: KarmaBoxRow[] = [{ boxId: BOX_ID, value: '227' }];
 function postResult(id: string, confirmedAuthor: string | null): PostResult {
@@ -265,11 +270,14 @@ describe('submitLikeFlow', () => {
     expect(ledger.size).toBe(0);
   });
 
-  it('an empty spendable view refuses a like in the voice register', async () => {
+  it('an empty spendable view refuses a like at the floor, as a refused signature does', async () => {
+    // WEB_INTERFACE → The wallet → "The floor is the client's to know" — an
+    // empty view answers `effective = 0`, which the floor rule refuses before
+    // the build.
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(okPost, okLike), ledger, identity, network: null };
     const res = await submitLikeFlow(deps, TARGET_ID);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to like right now.' } });
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the last 10 rep is for posting' });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -294,8 +302,8 @@ describe('each press reads the view afresh', () => {
     const NEW = '88'.repeat(32);
     const ledger = new PendingLedger(PUB);
     const karmaPages: KarmaResult[] = [
-      karmaFixture({ userId: PUB, boxes: [{ boxId: OLD, value: '227' }], boxCount: 1, height: 6000 }),
-      karmaFixture({ userId: PUB, boxes: [{ boxId: NEW, value: '227' }], boxCount: 1, height: 6000 }),
+      karmaFixture({ userId: PUB, boxes: [{ boxId: OLD, value: '227' }], boxCount: 1, height: 6000, effective: '227' }),
+      karmaFixture({ userId: PUB, boxes: [{ boxId: NEW, value: '227' }], boxCount: 1, height: 6000, effective: '227' }),
     ];
     let readIx = 0;
     const freshReads: Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> = {
@@ -418,11 +426,14 @@ describe('submitVouchFlow', () => {
     expect(ledger.size).toBe(0);
   });
 
-  it('an empty spendable view refuses a vouch in the voice register', async () => {
+  it('an empty spendable view refuses a vouch at the floor, as a refused signature does', async () => {
+    // WEB_INTERFACE → The wallet → "The floor is the client's to know" — an
+    // empty view answers `effective = 0`, which the floor rule refuses before
+    // the build.
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity, network: null };
     const res = await submitVouchFlow(deps, VOUCH_TARGET);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to vouch right now.' } });
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the last 10 rep is for posting' });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -495,11 +506,14 @@ describe('submitInviteFlow', () => {
     expect(ledger.all().map((e) => e.kind)).toEqual(['invite']);
   });
 
-  it('a spendable view below the bond refuses in the voice register', async () => {
+  it('a spendable view below the bond + the floor refuses an invite at the floor, as a refused signature does', async () => {
+    // WEB_INTERFACE → The wallet → "The floor is the client's to know" — an
+    // invite leaves KARMA_MINIMUM standing over the bond; 50 rep against a
+    // 100 bond refuses before the build.
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '50' }]), write: write(), ledger, identity, network: null };
     const res = await submitInviteFlow(deps, INVITEE, 100n);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to cover the bond right now.' } });
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the last 10 rep is for posting' });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -637,12 +651,15 @@ describe('submitBurnFlow', () => {
     expect(ledger.size).toBe(0);
   });
 
-  it('a spendable view below the price refuses in the voice register', async () => {
+  it('a spendable view below USERNAME_BURN_PRICE + the floor refuses a burn at the floor, as a refused signature does', async () => {
+    // WEB_INTERFACE → The wallet → "The floor is the client's to know" — a
+    // burn leaves KARMA_MINIMUM standing over USERNAME_BURN_PRICE; 5 rep
+    // refuses before the build.
     heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '5' }]), write: write(), ledger, identity, network: null };
     const res = await submitBurnFlow(deps);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to burn right now.' } });
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'the last 10 rep is for posting' });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });

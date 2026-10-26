@@ -29,6 +29,7 @@ function ctx(pubKeyHex: string): BuildContext {
     height: 6000,
     era: 1,
     author: pubKeyHex,
+    effective: 227n,
   };
 }
 

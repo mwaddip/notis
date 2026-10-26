@@ -30,6 +30,7 @@ function ctx(spendableValue = 227n): BuildContext {
     height: 6000,
     era: 1,
     author: SIGNER,
+    effective: 0n,
   };
 }
 
@@ -185,6 +186,7 @@ describe('summarise — the derived summary matches the transaction shape', () =
       height: 6000,
       era: 1,
       author: SIGNER,
+      effective: 0n,
     };
     const { tx } = buildPost(twoInputCtx, 'a thread');
     expect(tx.inputs).toHaveLength(2);
@@ -200,6 +202,7 @@ describe('summarise — the derived summary matches the transaction shape', () =
       height: 5000,
       era: 1,
       author: SIGNER,
+      effective: 0n,
     };
     const { tx } = buildSend(sendCtx, TARGET_KEY, 1_250_000_000n);
     expect(summarise(roundtrip(tx), SIGNER)).toEqual({

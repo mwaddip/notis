@@ -1,4 +1,4 @@
-import { encodeTx, hexToBytes } from '@dagsocial/types';
+import { encodeTx, hexToBytes, KARMA_MINIMUM, LIKE_KARMA_COST, POST_PRICE_THREAD, POST_PRICE_REPLY, USERNAME_BURN_PRICE, VOUCH_MIN_BALANCE } from '@dagsocial/types';
 import type { UtxoTransaction, NetworkType } from '@dagsocial/types';
 import { LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readBuildContext, readCreditContext } from './reads';
@@ -11,6 +11,19 @@ import type { BuildContext } from './builders';
 import type { PendingEntry } from './types';
 import type { Api } from '../api/client';
 import type { VouchesVoucherResult } from './../api/dto';
+
+// WEB_INTERFACE → The wallet → "The floor is the client's to know" — the one
+// sentence a judged flow refuses with when the rule bites. `N` is
+// KARMA_MINIMUM, the floor the contract names.
+const FLOOR_REASON = `the last ${KARMA_MINIMUM} rep is for posting`;
+
+/** The notSigned-refused answer for a judged flow whose own read answered an
+ *  `effective` the rule refuses — nothing signed, nothing sent, as a refused
+ *  signature does (WEB_INTERFACE → The wallet → "A like, a vouch, an invite
+ *  or a burn the rule refuses ends as a refused signature does"). */
+function flooredRefusal(): { ok: false; notSigned: 'refused'; reason: string } {
+  return { ok: false, notSigned: 'refused', reason: FLOOR_REASON };
+}
 import type {
   WriteClient, Rejection, PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult, SendSubmitResult,
 } from '../api/write';
@@ -138,6 +151,12 @@ export async function submitPostFlow(
   }
 
   const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective`, read from the view's first page — the
+  // same rule the composer holds (WEB_INTERFACE → The wallet → "The floor is
+  // the client's to know"): a post refused is a client refusal, not a
+  // notSigned ("a post the rule refuses is a client refusal").
+  const price = parent ? POST_PRICE_REPLY : POST_PRICE_THREAD;
+  if (ctx.effective < price) return clientRejection('not enough rep to post right now.');
   // The composer checks affordability first, but the spendable view is re-read
   // here and can have moved; a shortfall comes back as one rejection shape, not a
   // bare throw the app would have to special-case.
@@ -190,6 +209,10 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
   }
 
   const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective` — a like leaves KARMA_MINIMUM standing
+  // (WEB_INTERFACE → The wallet → "The floor is the client's to know"); a
+  // like refused ends as a refused signature does.
+  if (ctx.effective - LIKE_KARMA_COST < KARMA_MINIMUM) return flooredRefusal();
   let built;
   try {
     built = buildLike(ctx, targetId, target.confirmedAuthor);
@@ -222,6 +245,10 @@ export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Prom
   if (id === null) throw new Error('submitVouchFlow: no identity loaded');
 
   const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective` — a vouch leaves KARMA_MINIMUM standing
+  // over its stake (WEB_INTERFACE → The wallet → "The floor is the client's
+  // to know"); a vouch refused ends as a refused signature does.
+  if (ctx.effective < VOUCH_MIN_BALANCE) return flooredRefusal();
   let built;
   try {
     built = buildVouch(ctx, targetKey);
@@ -266,11 +293,16 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
   const status = await deps.reads.status();
   const nn = networkNumbers(deps.network, status);
   if (nn === null) return clientRejection('cannot read the network numbers.');
+  // The unvouch spends a `vouch` box, not karma, and the rule names no floor
+  // for it — the context's `effective` is set to 0n to satisfy the type and
+  // read by no flow (WEB_INTERFACE → The wallet → "An unvouch spends a
+  // `vouch` box, no view's").
   const ctx: BuildContext = {
     spendable: [],
     height: status.blockHeight,
     era: status.protocolVersion,
     author: id.pubKeyHex,
+    effective: 0n,
   };
   const built = buildUnvouch(
     ctx,
@@ -300,6 +332,10 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
   if (id === null) throw new Error('submitInviteFlow: no identity loaded');
 
   const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective` — an invite leaves KARMA_MINIMUM standing
+  // over the bond (WEB_INTERFACE → The wallet → "The floor is the client's
+  // to know"); an invite refused ends as a refused signature does.
+  if (ctx.effective - bond < KARMA_MINIMUM) return flooredRefusal();
   let built;
   try {
     built = buildInvite(ctx, inviteeKey, bond);
@@ -395,6 +431,10 @@ export async function submitBurnFlow(deps: SubmitDeps): Promise<SubmitResult<Bur
   if (held === null) return clientRejection('this key holds no name.');
 
   const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+  // The floor against `effective` — a burn leaves KARMA_MINIMUM standing
+  // over USERNAME_BURN_PRICE (WEB_INTERFACE → The wallet → "The floor is the
+  // client's to know"); a burn refused ends as a refused signature does.
+  if (ctx.effective - USERNAME_BURN_PRICE < KARMA_MINIMUM) return flooredRefusal();
   let built;
   try {
     built = buildBurn(ctx, { boxId: held.boxId });

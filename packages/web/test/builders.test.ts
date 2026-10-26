@@ -103,7 +103,7 @@ function toHex(bytes: Uint8Array): string {
   return s;
 }
 
-const ctx = (): BuildContext => ({ spendable: [{ boxId: BOX_ID, value: 227n }], height: 5000, era: 1, author: PUB });
+const ctx = (): BuildContext => ({ spendable: [{ boxId: BOX_ID, value: 227n }], height: 5000, era: 1, author: PUB, effective: 227n });
 
 describe('builders — frozen against independent vectors', () => {
   it('a root post matches the frozen txId and change box, and pays POST_PRICE_THREAD', () => {
@@ -507,7 +507,7 @@ const SEND_TWO_PAYMENT = '912c1839ce7f0f35c6e1c2a147b3d36b3fb621a97224c8169bdef2
 
 describe('send builder — frozen vectors', () => {
   it('12.5 $NOTIS from a 100 box: change at 0, payment at 1, no fee', () => {
-    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 10_000_000_000n }], height: 5000, era: 1, author: PUB };
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 10_000_000_000n }], height: 5000, era: 1, author: PUB, effective: 0n };
     const built = buildSend(ctx, RECIPIENT, 1_250_000_000n);
     expect(built.txId).toBe(SEND_MAIN_TXID);
     expect(built.change).toEqual({ boxId: SEND_MAIN_CHANGE, value: 8_750_000_000n, createdAtBlock: 5000 });
@@ -528,7 +528,7 @@ describe('send builder — frozen vectors', () => {
   });
 
   it('an exact spend emits the payment alone — no change, payment at index 0', () => {
-    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 1_250_000_000n }], height: 5000, era: 1, author: PUB };
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 1_250_000_000n }], height: 5000, era: 1, author: PUB, effective: 0n };
     const built = buildSend(ctx, RECIPIENT, 1_250_000_000n);
     expect(built.txId).toBe(SEND_EXACT_TXID);
     expect(built.change).toBeNull();
@@ -547,7 +547,7 @@ describe('send builder — frozen vectors', () => {
       spendable: [
         { boxId: CREDIT_BOX, value: 1_000_000_000n },
         { boxId: CREDIT_BOX_2, value: 500_000_000n },
-      ], height: 5000, era: 1, author: PUB,
+      ], height: 5000, era: 1, author: PUB, effective: 0n,
     };
     const built = buildSend(ctx, RECIPIENT, 1_400_000_000n);
     expect(built.txId).toBe(SEND_TWO_TXID);
@@ -575,7 +575,7 @@ function twoBoxCtx(own: bigint | null, income: bigint | null): BuildContext {
   const spendable: Array<{ boxId: string; value: bigint; income?: true }> = [];
   if (own !== null) spendable.push({ boxId: OWN_BOX, value: own });
   if (income !== null) spendable.push({ boxId: INC_BOX, value: income, income: true });
-  return { spendable: spendable as BuildContext['spendable'], height: 5000, era: 1, author: PUB };
+  return { spendable: spendable as BuildContext['spendable'], height: 5000, era: 1, author: PUB, effective: 0n };
 }
 
 describe('builders — the own box is named first, the income box only when it must', () => {
@@ -666,7 +666,7 @@ describe('builders — the own box is named first, the income box only when it m
       { boxId: INC_BOX, value: 100n, income: true },
       { boxId: CHG, value: 49n },
     ] as BuildContext['spendable'];
-    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB }, TARGET_ID, PARENT_AUTHOR);
+    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB, effective: 149n }, TARGET_ID, PARENT_AUTHOR);
     expect(built.tx.inputs).toEqual([CHG]);
     expect(built.tx.inputs).not.toContain(INC_BOX);
   });
@@ -679,7 +679,7 @@ describe('builders — the own box is named first, the income box only when it m
       { boxId: INC_BOX, value: 100n, income: true },
       { boxId: TINY, value: 1n },
     ] as BuildContext['spendable'];
-    const built = buildPost({ spendable, height: 5000, era: 1, author: PUB }, 'x');
+    const built = buildPost({ spendable, height: 5000, era: 1, author: PUB, effective: 101n }, 'x');
     expect(built.tx.inputs).toEqual([TINY, INC_BOX]);
   });
 
@@ -688,7 +688,7 @@ describe('builders — the own box is named first, the income box only when it m
     // unmarked change. The next build names it, and the output is unmarked.
     const CHG = 'aa'.repeat(32);
     const spendable = [{ boxId: CHG, value: 49n }] as BuildContext['spendable'];
-    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB }, TARGET_ID, PARENT_AUTHOR);
+    const built = buildLike({ spendable, height: 5000, era: 1, author: PUB, effective: 49n }, TARGET_ID, PARENT_AUTHOR);
     expect(built.tx.inputs).toEqual([CHG]);
     const karmaOuts = built.tx.outputs.filter((o) => o.boxType === 'karma');
     expect(karmaOuts).toHaveLength(1);
@@ -719,12 +719,12 @@ describe('builders — the own box is named first, the income box only when it m
 
 describe('send builder — refusals', () => {
   it('InvalidKey when the recipient is not 64 lowercase hex', () => {
-    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500n }], height: 5000, era: 1, author: PUB };
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500n }], height: 5000, era: 1, author: PUB, effective: 0n };
     expect(() => buildSend(ctx, BAD_KEY, 100n)).toThrow(InvalidKey);
   });
 
   it('InsufficientCredits when the spendable view cannot cover the amount', () => {
-    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500n }], height: 5000, era: 1, author: PUB };
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500n }], height: 5000, era: 1, author: PUB, effective: 0n };
     expect(() => buildSend(ctx, RECIPIENT, 100_000_000_000n)).toThrow(InsufficientCredits);
     try {
       buildSend(ctx, RECIPIENT, 100_000_000_000n);
@@ -738,7 +738,7 @@ describe('send builder — refusals', () => {
   it('BelowFloor payment when the amount is one base unit', () => {
     // Selecting one big box, sending 1 base unit — the payment record is at
     // least a few dozen bytes, and MIN_BOX_VALUE_PER_BYTE is 156, so 1n < floor.
-    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 1_000_000_000n }], height: 5000, era: 1, author: PUB };
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 1_000_000_000n }], height: 5000, era: 1, author: PUB, effective: 0n };
     expect(() => buildSend(ctx, RECIPIENT, 1n)).toThrow(BelowFloor);
     try {
       buildSend(ctx, RECIPIENT, 1n);
@@ -751,7 +751,7 @@ describe('send builder — refusals', () => {
 
   it('BelowFloor change when the leftover is one base unit', () => {
     // Selecting a 500_000_001 box and sending 500_000_000 leaves a change of 1n.
-    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500_000_001n }], height: 5000, era: 1, author: PUB };
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500_000_001n }], height: 5000, era: 1, author: PUB, effective: 0n };
     expect(() => buildSend(ctx, RECIPIENT, 500_000_000n)).toThrow(BelowFloor);
     try {
       buildSend(ctx, RECIPIENT, 500_000_000n);

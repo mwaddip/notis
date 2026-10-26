@@ -176,7 +176,7 @@ describe('a judged flow holds its spend to the floor before it signs', () => {
   // rule — one rep either side of it, so a case fails on an off-by-KARMA_MINIMUM gate.
   // A `notSigned: 'refused'` answer with the floor sentence implies the flow
   // signed nothing and POSTed nothing — the result's shape is the whole claim.
-  it.fails('like at effective = KARMA_MINIMUM: refused with the floor sentence, nothing signed, nothing POSTed', async () => {
+  it('like at effective = KARMA_MINIMUM: refused with the floor sentence, nothing signed, nothing POSTed', async () => {
     const deps = depsOf(karmaView(BIG_BOX, KARMA_MINIMUM));
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect({ res, signs: signCalls.length, writes: writeCalls.length })
@@ -190,7 +190,7 @@ describe('a judged flow holds its spend to the floor before it signs', () => {
   });
 
   // Vouch: effective ≥ VOUCH_MIN_BALANCE. The pair sits either side.
-  it.fails('vouch at effective = VOUCH_MIN_BALANCE − 1: refused with the floor sentence, nothing signed, nothing POSTed', async () => {
+  it('vouch at effective = VOUCH_MIN_BALANCE − 1: refused with the floor sentence, nothing signed, nothing POSTed', async () => {
     const deps = depsOf(karmaView(BIG_BOX, VOUCH_MIN_BALANCE - 1n));
     const res = await submitVouchFlow(deps, VOUCH_TARGET);
     expect({ res, signs: signCalls.length, writes: writeCalls.length })
@@ -205,7 +205,7 @@ describe('a judged flow holds its spend to the floor before it signs', () => {
 
   // Invite: effective − bond ≥ KARMA_MINIMUM. The pair sits around a stated
   // bond — one rep either side of `effective = bond + KARMA_MINIMUM`.
-  it.fails('invite at effective = bond + KARMA_MINIMUM − 1: refused with the floor sentence, nothing signed, nothing POSTed', async () => {
+  it('invite at effective = bond + KARMA_MINIMUM − 1: refused with the floor sentence, nothing signed, nothing POSTed', async () => {
     const bond = 5n;
     const deps = depsOf(karmaView(BIG_BOX, bond + KARMA_MINIMUM - 1n));
     const res = await submitInviteFlow(deps, INVITEE, bond);
@@ -222,7 +222,7 @@ describe('a judged flow holds its spend to the floor before it signs', () => {
 
   // Burn: effective − USERNAME_BURN_PRICE ≥ KARMA_MINIMUM. The reader holds a
   // name, so the burn flow's `usernameByOwner` answers it.
-  it.fails('burn at effective = USERNAME_BURN_PRICE + KARMA_MINIMUM − 1: refused with the floor sentence, nothing signed, nothing POSTed', async () => {
+  it('burn at effective = USERNAME_BURN_PRICE + KARMA_MINIMUM − 1: refused with the floor sentence, nothing signed, nothing POSTed', async () => {
     heldName = { name: 'Alice', boxId: USERNAME_BOX, owner: PUB, claimedAtBlock: 5000 };
     const deps = depsOf(karmaView(BIG_BOX, USERNAME_BURN_PRICE + KARMA_MINIMUM - 1n));
     const res = await submitBurnFlow(deps);
@@ -240,7 +240,7 @@ describe('a judged flow holds its spend to the floor before it signs', () => {
   // Post: effective ≥ POST_PRICE_THREAD. The face covers the price, the
   // view's `effective` does not — the client refusal, as the composer makes
   // one; the face/effective split is the point.
-  it.fails('post at effective below the price while the face covers it: client refusal, nothing POSTed', async () => {
+  it('post at effective below the price while the face covers it: client refusal, nothing POSTed', async () => {
     const faceAboveThreadPrice: KarmaBoxRow[] = [{ boxId: BOX_ID, value: '1000' }];
     const deps = depsOf(karmaView(faceAboveThreadPrice, POST_PRICE_THREAD - 1n));
     const res = await submitPostFlow(deps, 'a thread', null);

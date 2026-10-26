@@ -1,7 +1,7 @@
 import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import type { Api } from '../api/client';
 import { readWholeList } from '../api/whole-list';
-import type { BuildContext } from './builders';
+import type { BuildContext, SendBuildContext } from './builders';
 import type { SpendableBox } from './types';
 import type { CreditBoxRow, KarmaBoxRow } from '../api/dto';
 
@@ -18,8 +18,18 @@ export async function readBuildContext(
   reads: Pick<Api, 'karma' | 'status'>,
   author: string,
 ): Promise<BuildContext> {
+  // The first page carries the view's `effective` — the number the floor is
+  // held against (WEB_INTERFACE → The wallet → "The floor is the client's to
+  // know"). KARMA_LISTING_MAX is 2 and PAGE_LIMIT_MAX reads up to 100 rows a
+  // page, so the first page carries every box; the whole-list wrapper refuses
+  // past the bound either way.
+  let effective: bigint | null = null;
   const boxes = await readWholeList<KarmaBoxRow, Awaited<ReturnType<Api['karma']>>>({
-    readPage: (page) => reads.karma(author, page, { pending: true }),
+    readPage: async (page) => {
+      const answer = await reads.karma(author, page, { pending: true });
+      if (effective === null) effective = BigInt(answer.effective);
+      return answer;
+    },
     pick: (answer) => ({ rows: answer.boxes, next: answer.next }),
     keyOf: (b) => b.boxId,
     bound: KARMA_LISTING_MAX,
@@ -42,6 +52,7 @@ export async function readBuildContext(
     height: status.blockHeight,
     era: status.protocolVersion,
     author,
+    effective: effective ?? 0n,
   };
 }
 
@@ -85,7 +96,7 @@ export function lockedCreditSummary(
 export async function readCreditContext(
   reads: Pick<Api, 'credits' | 'status'>,
   author: string,
-): Promise<BuildContext> {
+): Promise<SendBuildContext> {
   const rows = await readWholeList<CreditBoxRow, Awaited<ReturnType<Api['credits']>>>({
     readPage: (page) => reads.credits(author, page, { pending: true }),
     pick: (answer) => ({ rows: answer.boxes, next: answer.next }),

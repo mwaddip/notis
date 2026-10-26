@@ -111,12 +111,23 @@ function keyBytes(hex: string, which: string): Uint8Array {
 }
 
 /** The reads a builder is fed — the spendable view, the height every output
- *  declares, the era to sign, and the author's own key. */
-export interface BuildContext {
+ *  declares, the era to sign, and the author's own key. The send side ends
+ *  here; the rep side extends it with `effective`
+ *  (WEB_INTERFACE → The wallet → "The floor is the client's to know"). */
+export interface SendBuildContext {
   spendable: SpendableBox[];
   height: number;
   era: number;
   author: string; // own pubKeyHex
+}
+
+/** The rep-side context: the send-side fields plus the rep view's `effective`
+ *  from the first page `readBuildContext` reads. Each judged flow holds its
+ *  spend to the rule against `effective` before it builds
+ *  (WEB_INTERFACE → The wallet → "The floor is the client's to know"). A send
+ *  takes `SendBuildContext` and so cannot read `effective` by mistake. */
+export interface BuildContext extends SendBuildContext {
+  effective: bigint;
 }
 
 /** An unsigned transaction, its id, and the change box the ledger predicts. */
@@ -340,7 +351,7 @@ export function buildClaim(ctx: BuildContext, name: string): BuiltTx {
  *  reader learning it from a rejection. An exact spend emits the payment alone.
  *  `paymentBoxId` is the predicted id of the payment output, so the ledger's
  *  reconcile can look for it on the recipient's `/credits`. */
-export function buildSend(ctx: BuildContext, toHex: string, amount: bigint): BuiltTx & { paymentBoxId: string } {
+export function buildSend(ctx: SendBuildContext, toHex: string, amount: bigint): BuiltTx & { paymentBoxId: string } {
   const spendable = ctx.spendable;
   const sorted = [...spendable].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
   const total = sorted.reduce((sum, b) => sum + b.value, 0n);
