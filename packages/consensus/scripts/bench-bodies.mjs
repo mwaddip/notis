@@ -14,6 +14,8 @@
 // TypeScript, which Node 22.18 and later imports with its types stripped.
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
 import {
+  ED25519_PKCS8_PREFIX,
+  EMPTY_IDENTITY_RECORD,
   EMPTY_STATE_ROOT,
   MAX_BLOCK_BODY_BYTES,
   MAX_BLOCK_COST,
@@ -58,7 +60,7 @@ const hex = (bytes) => Buffer.from(bytes).toString('hex');
 const seed32 = (label) =>
   new Uint8Array(createHash('sha512').update(`dagsocial/bench/${label}`).digest().subarray(0, 32));
 
-const PKCS8_ED25519_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
+const PKCS8_ED25519_PREFIX = Buffer.from(ED25519_PKCS8_PREFIX, 'hex');
 
 /** An Ed25519 key pair from a fixed seed. */
 function keyPair(label) {
@@ -387,18 +389,7 @@ const vouch = (voucherId, targetId) =>
   ({ boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: HEIGHT, voucherId, targetId });
 
 /** An identity record with every field zero but the ones given. */
-const identityRecord = (fields) => ({
-  lastActivityBlock: 0,
-  lastDecayBlock: 0,
-  invitedAtBlock: 0,
-  lifetimeLikesReceived: 0n,
-  memberSinceBlock: 0,
-  memberBar: 0,
-  memberVouches: 0,
-  memberLikes: 0n,
-  invitesUsed: 0,
-  ...fields,
-});
+const identityRecord = (fields) => ({ ...EMPTY_IDENTITY_RECORD, ...fields });
 
 /**
  * `vouchers` vouches for one target (NODE_INTERFACE → Vouch transition rules), one a voucher. Each voucher is a
