@@ -108,28 +108,35 @@ describe('PeerManager', () => {
     mgr.recordPenalty('misbehavior', 'peer1', 100, 'second');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(200);
 
-    // Decay is lazy — a zero-score probe forces it without adding pressure.
+    // One interval since the last penalty: 200 − 100 (decay) + 100 = 200.
     vi.spyOn(Date, 'now').mockReturnValue(config.penaltySafeIntervalMs);
-    mgr.recordPenalty('misbehavior', 'peer1', 0, 'probe');
-    expect((mgr as any).scores.get('peer1').penaltyScore).toBe(100);
+    mgr.recordPenalty('misbehavior', 'peer1', 100, 'at one interval');
+    expect((mgr as any).scores.get('peer1').penaltyScore).toBe(200);
 
+    // Another interval since the last penalty: 200 − 100 + 100 = 200.
     vi.spyOn(Date, 'now').mockReturnValue(2 * config.penaltySafeIntervalMs);
-    mgr.recordPenalty('misbehavior', 'peer1', 0, 'probe');
-    expect((mgr as any).scores.get('peer1').penaltyScore).toBe(0);
+    mgr.recordPenalty('misbehavior', 'peer1', 100, 'at two intervals');
+    expect((mgr as any).scores.get('peer1').penaltyScore).toBe(200);
 
-    // Ten further intervals on a zero score: floored at 0, never negative.
+    // Ten intervals since the last penalty: max(0, 200 − 1000) + 100 = 100.
+    // Without the floor the subtraction lands at −800 and the score at −700.
     vi.spyOn(Date, 'now').mockReturnValue(12 * config.penaltySafeIntervalMs);
-    mgr.recordPenalty('misbehavior', 'peer1', 0, 'probe');
-    expect((mgr as any).scores.get('peer1').penaltyScore).toBe(0);
+    mgr.recordPenalty('misbehavior', 'peer1', 100, 'at twelve intervals');
+    expect((mgr as any).scores.get('peer1').penaltyScore).toBe(100);
   });
 
   it('decay is proportional, not stepwise: half an interval drains half', () => {
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(0);
-    mgr.recordPenalty('misbehavior', 'peer1', 200, 'seed');
+    // Two misbehaviors seed the score at 200.
+    mgr.recordPenalty('misbehavior', 'peer1', 100, 'first');
+    mgr.recordPenalty('misbehavior', 'peer1', 100, 'second');
+    // Half an interval since the last penalty: 200 − 50 (proportional decay)
+    // + 100 = 250. Stepwise decay drains nothing in half an interval
+    // (Math.floor(0.5) · 100 = 0) and the score lands at 300.
     vi.spyOn(Date, 'now').mockReturnValue(config.penaltySafeIntervalMs / 2);
-    mgr.recordPenalty('misbehavior', 'peer1', 0, 'probe');
-    expect((mgr as any).scores.get('peer1').penaltyScore).toBe(150);
+    mgr.recordPenalty('misbehavior', 'peer1', 100, 'at half an interval');
+    expect((mgr as any).scores.get('peer1').penaltyScore).toBe(250);
   });
 
   it('break-even: one MisbehaviorPenalty per interval holds steady, never bans', () => {
