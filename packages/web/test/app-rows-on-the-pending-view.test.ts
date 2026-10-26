@@ -9,6 +9,7 @@ import type { BlockCurrent, FeedResult, KarmaResult, StatusResult, CreditsResult
 import { karmaResult } from './karma-fixture';
 import { setNode } from '../src/prefs';
 import type { Anchor, FiguresResult, Listing } from '@dagsocial/nipopow-client';
+import type { BlockHeader } from '@dagsocial/types';
 import type { TipVerdict } from '../src/model/tip-verdict';
 
 // The row's figure is the view's; the valuation reproduces the plain
@@ -54,8 +55,25 @@ function creditsWith(pub: string, value: string): CreditsResult {
   };
 }
 
-// anchor fixtures stay for the figures / tip verifiers the harness holds —
-// a test that drives a tip run brings its own anchor.
+function fakeHeader(height: number): BlockHeader {
+  return {
+    protocolVersion: 1,
+    height,
+    prevBlockHash: '00'.repeat(32),
+    utxoTxRoot: '00'.repeat(32),
+    stateRoot: '11'.repeat(32),
+    validatorId: new Uint8Array(32),
+    powNonce: 0,
+    powTargetBits: 0x1d00ffff,
+    createdAt: 0,
+    interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
+  };
+}
+
+function anchorFor(h: number): Anchor {
+  return { tip: fakeHeader(h), suffixHead: { header: fakeHeader(h - 19), interlinks: [] } };
+}
 
 interface KarmaRead { key: string; pending: boolean }
 interface CreditsRead { key: string; pending: boolean }
@@ -241,5 +259,166 @@ describe('a web build (no verifier) reads no plain listing beside the view', () 
     expect(own.length).toBeGreaterThan(0); // control
     expect(own.every((r) => r.pending)).toBe(true);
     expect(own.filter((r) => !r.pending).length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The verified-figures line reads the plain listing's figure and boxCount,
+// never the view's: the clause names the view beside the proven amount, and
+// an empty plain beside a non-empty view yields the clause alone.
+// WEB_INTERFACE → The extension → "The verified figures", → The profile
+// window → "The `rep` row is the rep view's `effective` alone", → The wallet
+// window → "The `balance` row".
+// ---------------------------------------------------------------------------
+
+const RUN_H = 6001;
+const PROVEN_H = RUN_H - 19; // suffixHead.header.height
+
+function karmaProvenAtHeight(effective: string): KarmaResult {
+  return karmaResult({
+    userId: PUB,
+    total: effective,
+    effective,
+    boxes: [{ boxId: BOX_K, value: effective }],
+    boxCount: 1,
+    height: 5990,
+    member: true,
+    memberSinceBlock: 100,
+  });
+}
+
+function karmaEmpty(): KarmaResult {
+  return karmaResult({
+    userId: PUB,
+    total: '0',
+    effective: '0',
+    boxes: [],
+    boxCount: 0,
+    height: 5990,
+    member: true,
+    memberSinceBlock: 100,
+  });
+}
+
+function emptyLedgerSums(): { proven: bigint; young: bigint; unchecked: bigint; absent: bigint; unlisted: bigint; undecided: bigint } {
+  return { proven: 0n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n };
+}
+
+function karmaProvenResult(value: bigint): FiguresResult {
+  return {
+    boxes: [{ boxId: BOX_K, boxClass: 'karma', value, lockedUntilBlock: null, status: 'proven', verdict: '' }],
+    record: { status: 'absent' },
+    karma: { ...emptyLedgerSums(), proven: value, effective: value, holdings: 'read', holdingsVerdict: null },
+    credits: { ...emptyLedgerSums(), holdings: 'read', holdingsVerdict: null },
+    heightAfter: RUN_H,
+    failed: false,
+  };
+}
+
+function creditsProvenResult(value: bigint): FiguresResult {
+  return {
+    boxes: [{ boxId: BOX_C, boxClass: 'credit', value, lockedUntilBlock: null, status: 'proven', verdict: '' }],
+    record: { status: 'absent' },
+    karma: { ...emptyLedgerSums(), effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { ...emptyLedgerSums(), proven: value, holdings: 'read', holdingsVerdict: null },
+    heightAfter: RUN_H,
+    failed: false,
+  };
+}
+
+function karmaEmptyResult(): FiguresResult {
+  return {
+    boxes: [],
+    record: { status: 'absent' },
+    karma: { ...emptyLedgerSums(), effective: 0n, holdings: 'read', holdingsVerdict: null },
+    credits: { ...emptyLedgerSums(), holdings: 'read', holdingsVerdict: null },
+    heightAfter: RUN_H,
+    failed: false,
+  };
+}
+
+function repRow(): Element | null {
+  for (const r of document.querySelectorAll('.winbody .row')) {
+    const label = r.querySelector('label');
+    if (label?.textContent === 'rep') return r.querySelector('.field');
+  }
+  return null;
+}
+
+async function resolveTipThenFigures(h: Harness, result: FiguresResult): Promise<void> {
+  h.tipRuns[0]!.resolve({ verdict: { kind: 'verified', nodes: 2, height: RUN_H }, anchor: anchorFor(RUN_H), chain: null });
+  await flush();
+  // The tip resolver fires refreshOwnKarma (and refreshWalletCredits with
+  // the wallet open), whose plain lands trigger `startFigures`. If a plain
+  // read lands while a run is in flight (the two refreshes run in
+  // parallel), the run's resolver kicks a fresh run. Resolve each queued
+  // call in order and let the chain settle on the one that holds every
+  // plain listing fresh.
+  for (let i = 0; i < h.figuresCalls.length; i++) {
+    h.figuresCalls[i]!.resolve(result);
+    await flush();
+  }
+}
+
+describe('the verified-figures line reads the plain listing, not the view', () => {
+  it('rep: plain `effective` 87 with one proven box, view `effective` 82 — mono reads 82, hint names 82 beside the proven amount', async () => {
+    setNode('https://a.example');
+    const h = harness({
+      karmaView: () => karmaProvenAtHeight('82'),
+      karmaPlain: () => karmaProvenAtHeight('87'),
+    });
+    await flush();
+    const inner = h.app as unknown as { openProfile(): void };
+    inner.openProfile();
+    await flush();
+    await resolveTipThenFigures(h, karmaProvenResult(87n));
+
+    const field = repRow();
+    expect(field).not.toBeNull(); // control: the rep row drew
+    expect(field!.querySelector('.mono')!.textContent).toBe('82');
+    const hint = field!.querySelector<HTMLElement>('.hint');
+    expect(hint).not.toBeNull(); // control: the line stands
+    expect(hint!.textContent).toBe(`87 rep proven at block ${PROVEN_H} · 82 rep to spend in the next block, by this node's word`);
+  });
+
+  it('balance, wallet open: plain one 87.5 $NOTIS box proven, view one 75 $NOTIS box — the gold figure reads 75, the hint names 75 beside the proven amount', async () => {
+    setNode('https://a.example');
+    const h = harness({
+      creditsView: () => creditsWith(PUB, '7500000000'),
+      creditsPlain: () => creditsWith(PUB, '8750000000'),
+    });
+    await flush();
+    const inner = h.app as unknown as { openProfile(): void; openWallet(): void };
+    inner.openProfile();
+    inner.openWallet();
+    await flush();
+    await resolveTipThenFigures(h, creditsProvenResult(8_750_000_000n));
+
+    const gold = document.querySelector<HTMLElement>('.credits-line .mono.gold');
+    expect(gold).not.toBeNull(); // control: the gold figure drew
+    expect(gold!.textContent).toBe('75');
+    const hint = document.querySelector<HTMLElement>('.credits-line .hint');
+    expect(hint).not.toBeNull(); // control: the line stands
+    expect(hint!.textContent).toBe(`87.5 $NOTIS proven at block ${PROVEN_H} · 75 $NOTIS to spend in the next block, by this node's word`);
+  });
+
+  it('rep: plain listing empty, view one box with `effective` 5 — the hint reads the clause alone', async () => {
+    setNode('https://a.example');
+    const h = harness({
+      karmaView: () => karmaProvenAtHeight('5'),
+      karmaPlain: () => karmaEmpty(),
+    });
+    await flush();
+    const inner = h.app as unknown as { openProfile(): void };
+    inner.openProfile();
+    await flush();
+    await resolveTipThenFigures(h, karmaEmptyResult());
+
+    const field = repRow();
+    expect(field).not.toBeNull(); // control: the rep row drew
+    expect(field!.querySelector('.mono')!.textContent).toBe('5');
+    const hint = field!.querySelector<HTMLElement>('.hint');
+    expect(hint).not.toBeNull(); // control: the line stands
+    expect(hint!.textContent).toBe("5 rep to spend in the next block, by this node's word");
   });
 });
