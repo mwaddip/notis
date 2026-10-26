@@ -378,9 +378,6 @@ writes — its own precondition check answers first, with its own message, and t
 - **Precondition:** `value >= 0`, integer, `<= Number.MAX_SAFE_INTEGER`
 - **Throws:** `Error` if precondition violated
 
-> ⚠ **AHEAD OF CODE (2026-10-26).** One loop per encoding leads `vlq.ts` and `writer.ts`, where `encodeVlqU` and
-> `encodeVlqZigZag` carry their own loop and ZigZag beside the writer's, kept equal by a comment in each.
-
 ### `decodeVlqU(reader: ByteReader): number`
 
 Thin wrapper: returns `reader.readVlqU()`.

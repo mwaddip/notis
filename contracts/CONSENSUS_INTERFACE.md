@@ -64,12 +64,6 @@ budget`) and `'none'` for anyone else. It calls `bar` once, for a member alone, 
 the network record reads no network record for a root or a non-member. The invite arm of `validateTx` answers through
 it, and so do the node's admission gate, its invite service and `GET /karma/:userId`'s `invitesAvailable`.
 
-> ⚠ **AHEAD OF CODE (2026-10-26).** The two paragraphs above, the lapsed-vouch row (→ StateView) and module-level
-> values holding no `TextDecoder` (→ Place in the workspace; a name's canonical string is `types`' `canonicalUsername`,
-> `TYPES_INTERFACE → Content limits`) lead `utxo-engine.ts`, `tree-index.ts`, `overlay.ts`, `apply-block.ts` and
-> `tree-view.ts`; the node's own invite arithmetic (`invites-available.ts`, `routes/utxo.ts`) moves onto
-> `availableInvites` in a later run.
-
 ## Applying a block
 
 ```ts

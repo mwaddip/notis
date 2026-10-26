@@ -34,11 +34,6 @@ caller supplies. The browser runs it as it is written (`ARCHITECTURE → Package
 **The export list is what the workspace's source and suites call, not a promise** — a name nothing calls leaves the
 barrel, and one a caller needs joins it with its caller.
 
-> ⚠ **AHEAD OF CODE (2026-10-26).** The barrel row leads `src/index.ts`, which also passes through
-> `verifyAvlBatch`, `verifyAvlBatchPartial`, `AvlVerifyError`, its code and reason types, `InternalNode`,
-> `LabelNode`, `LeafNode`, `Balance`, `Operation`, `OperationResult` and the two batch result types — names no
-> source, suite, bench or script in the workspace imports from `@dagsocial/avltree`.
-
 ## Neighbor lookups
 
 A neighbor lookup is a `Lookup` that also answers the keys either side of the one asked:

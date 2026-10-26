@@ -1287,10 +1287,6 @@ recompute the hash and check the signature.
 | `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (a browser mirror, a light client) assert against the encoder that computes ids, not a lookalike |
 | `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — the boxes ordered by value descending, boxes of equal value in the order given, then the shortest prefix of that order whose total covers `requiredAmount`; throws when the boxes' total falls short. **The order is the function's own**, so a caller sorts nothing and hands the boxes as it holds them; the argument is not reordered. A transaction-builder helper (the web client's and the faucet's builders are the consumers); no block-application path calls it |
 
-> ⚠ **AHEAD OF CODE (2026-10-26).** `selectBoxes` ordering its own input and `txToJson` (→ The JSON form of a
-> transaction) lead `utxo.ts` and a `types` module that does not exist yet; the web client's, the faucet's and the e2e
-> suite's own renderers and sorts are what they replace.
-
 ### The JSON form of a transaction
 
 **`txToJson(tx)` is the one renderer of a transaction for the node's HTTP edge** — `(UtxoTransaction) =>
@@ -2689,10 +2685,6 @@ bytes with provenance appended — for its tree value (→ Canonical encoding); 
 | `isBytes(v)` | `(unknown) => v is Uint8Array` | `v instanceof Uint8Array` — a real byte view, deliberately not `ArrayBuffer.isView`: a `Uint32Array` of 8 elements would pass that and copy into 8 bytes where 32 are required. The byte test of every check that takes bytes from a caller |
 | `isHex64(v)` | `(unknown) => v is string` | 64 characters of `[0-9a-f]` — the one spelling of a 32-byte id or key on the HTTP edge (`NODE_INTERFACE → "Hex is lowercase"`). The test every package that reads such a string applies before decoding it |
 
-> ⚠ **AHEAD OF CODE (2026-10-26).** `isBytes`, `isHex64`, `EMPTY_IDENTITY_RECORD` (→ Identity record and karma
-> valuation) and `ED25519_PKCS8_PREFIX` (→ Mempool and encoding) lead `codec.ts`, `identity-record.ts` and
-> `constants.ts`; each replaces a private or per-package copy.
-
 
 ### How a dispatch decays this contract, and why nothing catches it
 
@@ -3201,11 +3193,6 @@ rules' and the node's routes' alike, reads the third. **A name's bytes become a 
 The display form as typed — the rules' name rows, the node's answers, the light client's and the web
 client's names — reads `usernameString`.
 
-> ⚠ **AHEAD OF CODE (2026-10-26).** `usernameString` leads `username.ts`, where `canonicalUsername` decodes on its
-> own; `consensus` (`apply-block.ts`, `tree-view.ts`) decodes the display form with a decoder of its own, the node
-> (`routes/usernames.ts`, `routes/page.ts`, `store/mempool.ts`) both forms with `Buffer`, and the light client
-> (`names.ts`) and the web client (`extension/policy.ts`) the display form with their own decoders.
-
 The third bounds a **box** field rather than a post one, and it sits here because this section groups
 bounds by what kind of rule they are — a maximum byte length enforced at a codec boundary — not by
 which structure carries them. The `### Genesis` block below holds the genesis *economics*, none of
@@ -3431,9 +3418,6 @@ hex, an author as 32 raw bytes.
 `CAST_COUNT_TAG` (`0x88`); `LIKE_MARKER` and `INDEX_MARKER` are the one-byte values of their tags. A reader that tells
 the kinds apart by the first byte — `boxFromRecordBytes`' refusal, the node's tree endpoint — reads these names, never
 the numbers.
-
-> ⚠ **AHEAD OF CODE (2026-10-26).** The exported tags lead `tree-records.ts`, which keeps all but
-> `IDENTITY_RECORD_TAG` private, and the node's `state/avl-endpoint.ts`, which writes `0x81`–`0x88`.
 
 ### PoW
 
@@ -3680,9 +3664,6 @@ export const POW_TARGET_BITS_MAX = 65_536;              // 256 bits in 1/256-bit
 `[0, POW_TARGET_BITS_MAX]` is every value `powTargetBits` can mean (`VALIDATION_INTERFACE → orderingPowTarget`). The
 header field's range check, `orderingPowTarget`'s domain and the node's check of a profile's ceiling read it; a
 profile's ceiling of `65536` is a value the profile chooses (`CONSTANTS → Ordering-block PoW`), not this bound.
-
-> ⚠ **AHEAD OF CODE (2026-10-26).** `POW_TARGET_BITS_MAX` leads `constants.ts`; `validation`'s `verify.ts` and the
-> node's `config.ts` write `65536` where they read it.
 
 **`RETARGET_HALFLIFE_BLOCKS` is the mechanic's own number and universal** — the reference's ratio of
 halflife to block time (BCH: 172 800 s at 600 s), stated in blocks so a profile's `orderingBlockIdealMs`

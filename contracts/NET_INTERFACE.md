@@ -1107,11 +1107,6 @@ producing call site, and **`PeerManager.recordPenaltyKind(kind, peerId, reason)`
 penalty**. A scored tier's score is named once, beside the tiers (`MISBEHAVIOR_SCORE` 100, `TRANSIENT_SCORE` 50), and no
 call site states a number.
 
-> ⚠ **AHEAD OF CODE (2026-10-26).** The one entry and the named scores lead `peer-mgr.ts`, `gossip.ts` and `node.ts`,
-> where a second entry, `recordPenalty(type, peerId, score, reason)` with `PenaltyType` `'misbehavior' | 'permanent'`,
-> takes the score `100` at a dozen call sites and `'permanent'` at none; and `HANDSHAKE_PROTOCOL` (→ Stream Protocols)
-> leads `node.ts`, which writes the handshake's id at its handle and its dial.
-
 Accumulated score >= threshold → temporal ban for `temporalBanDuration`.
 
 ### Accrual and decay (audit L-13)
