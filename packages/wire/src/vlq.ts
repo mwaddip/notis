@@ -52,7 +52,8 @@ const I64_MAX = 2n ** 63n - 1n;
  * extracted from — so the `number` path above and this one are two views of one
  * encoding, not two encodings. Over the overlapping domain `[0, 2^53-1]` they
  * are byte-identical, which is what makes adding a path safe rather than a
- * fork; `test/vlq-bigint.test.ts` pins that at the boundaries.
+ * fork; the equivalence pins in the wire suite hold it at the boundaries
+ * (`WIRE_INTERFACE → BigInt VLQ`).
  *
  * Bitwise operators are correct here where they are not in the `number` path:
  * BigInt `&` and `>>` are arbitrary-precision and never coerce to 32 bits.

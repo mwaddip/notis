@@ -61,8 +61,9 @@ export class ByteWriter {
    *
    * Delegates to `encodeVlqBigInt` rather than carrying its own loop: each
    * encoding has one loop, the `number` one in `writeVlqU` and this one in
-   * `encodeVlqBigInt` (`WIRE_INTERFACE → encodeVlqU`). Its bytes are consensus —
-   * box ids, tx ids, post ids, Merkle roots and the `stateRoot` all ride on them.
+   * `encodeVlqBigInt` (`WIRE_INTERFACE → encodeVlqU(value: number): Uint8Array`).
+   * Its bytes are consensus — box ids, tx ids, post ids, Merkle roots and the
+   * `stateRoot` all ride on them.
    *
    * - **Throws:** `Error` if negative or above `2^64 - 1`
    */

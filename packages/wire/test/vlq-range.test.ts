@@ -10,15 +10,15 @@ import {
 } from '@dagsocial/wire';
 
 /**
- * L-8 regression suite: VLQ must cover its full documented range [0, 2^53-1].
+ * VLQ covers its full documented range [0, 2^53-1] (`WIRE_INTERFACE → encodeVlqU(value: number): Uint8Array`).
  *
- * The pre-fix encoders used `v & 0x7f` / `v >>>= 7`, which coerce to 32 bits and
- * silently corrupted every value at or above 2^32 (2^32 encoded as `80 00`, i.e.
- * zero). The `legacy*` helpers below reproduce that arithmetic verbatim so these
- * tests fail loudly if the bitwise form is ever reinstated.
+ * A bitwise encoder (`v & 0x7f` / `v >>>= 7`) coerces to 32 bits and silently
+ * corrupts every value at or above 2^32 (2^32 encodes as `80 00`, i.e. zero).
+ * The `legacy*` helpers below reproduce that arithmetic verbatim so these tests
+ * fail loudly if a bitwise form is ever written.
  */
 
-/** The pre-fix (32-bit) unsigned encoder — kept only to prove it was broken. */
+/** The 32-bit bitwise unsigned encoder — held to show the bitwise form corrupts. */
 function legacyEncodeVlqU(value: number): Uint8Array {
   const out: number[] = [];
   let v = value;
@@ -30,7 +30,7 @@ function legacyEncodeVlqU(value: number): Uint8Array {
   return new Uint8Array(out);
 }
 
-/** The pre-fix (32-bit) ZigZag transform — kept only to prove it was broken. */
+/** The 32-bit bitwise ZigZag transform — held to show the bitwise form corrupts. */
 function legacyZigZag(value: number): number {
   return ((value << 1) ^ (value >> 31)) >>> 0;
 }
@@ -43,7 +43,7 @@ const LARGE_UNSIGNED = [
   Number.MAX_SAFE_INTEGER,
 ];
 
-describe('VLQ unsigned — full [0, 2^53-1] range (L-8)', () => {
+describe('VLQ unsigned — full [0, 2^53-1] range', () => {
   it('round-trips values at and above 2^32', () => {
     for (const v of LARGE_UNSIGNED) {
       const reader = new ByteReader(encodeVlqU(v));
@@ -105,7 +105,7 @@ describe('VLQ unsigned — full [0, 2^53-1] range (L-8)', () => {
   });
 });
 
-describe('VLQ unsigned — reader bounds (L-8)', () => {
+describe('VLQ unsigned — reader bounds', () => {
   it('rejects an encoding whose value exceeds the safe-integer range', () => {
     // Nine 0x7f-payload bytes => 2^63-1, far past 2^53-1.
     const bytes = new Uint8Array([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f]);
@@ -142,7 +142,7 @@ describe('VLQ unsigned — reader bounds (L-8)', () => {
   });
 });
 
-describe('VLQ ZigZag — beyond ±2^31 (L-8)', () => {
+describe('VLQ ZigZag — beyond ±2^31', () => {
   const LARGE_SIGNED = [
     2 ** 31,
     -(2 ** 31),
@@ -179,7 +179,7 @@ describe('VLQ ZigZag — beyond ±2^31 (L-8)', () => {
     }
   });
 
-  it('keeps the pre-fix encoding for the range where it was correct', () => {
+  it('agrees with the 32-bit bitwise form below 2^32', () => {
     for (const v of [0, 1, -1, 127, -127, 1000, -1000, 2 ** 30, -(2 ** 31)]) {
       expect(encodeVlqZigZag(v)).toEqual(encodeVlqU(legacyZigZag(v)));
     }
