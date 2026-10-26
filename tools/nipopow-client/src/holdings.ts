@@ -5,6 +5,7 @@ import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consens
 import type { HoldingKind } from '@dagsocial/consensus';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import { capped, fetchJson, isRecord, LEDGER_READ_MAX, RANGE_PAGE_READ_BYTES } from '@dagsocial/node-reads';
+import { HEX_64 } from './boxes.js';
 import { base64ToBytes, shown } from './http.js';
 export type { HoldingKind };
 
@@ -14,7 +15,6 @@ const AVL_CFG = { keyLength: TREE_KEY_LENGTH, valueLengthOpt: null } as const;
  *  characters. The caller supplies the key; the client lowercases it where
  *  the chain is read against (TYPES_INTERFACE → Identity). */
 const OWNER_HEX_LEN = 64;
-const OWNER_HEX = /^[0-9a-f]{64}$/i;
 
 /** A well-formed `stateRoot` is the 33-byte AVL+ digest in 64 lowercase hex
  *  characters plus the one balance byte — the shape the header carries
@@ -75,7 +75,7 @@ export async function proveRange(
 ): Promise<RangeResult> {
   // An `owner` that is not 64 hex is a client-side refusal — nothing is asked
   // (as `proveName` refuses a label whose key is not 64 hex).
-  if (typeof owner !== 'string' || !OWNER_HEX.test(owner)) {
+  if (typeof owner !== 'string' || !HEX_64.test(owner)) {
     return { ok: false, status: 'unproven', verdict: `owner is not ${OWNER_HEX_LEN} hex: ${shown(owner)}` };
   }
   const ownerLower = owner.toLowerCase();
