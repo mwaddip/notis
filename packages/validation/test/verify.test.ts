@@ -2440,6 +2440,7 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     ['63 hex chars', 'a'.repeat(63), '63 chars'],
     ['65 hex chars', 'a'.repeat(65), '65 chars'],
     ['64 chars with one non-hex', 'a'.repeat(63) + 'g', '64 chars'],
+    ['64 uppercase hex chars', 'A'.repeat(64), '64 chars'],
     ['0x-prefixed', '0x' + 'a'.repeat(62), '64 chars'],
     ['64 chars of whitespace padding', ' '.repeat(2) + 'a'.repeat(62), '64 chars'],
   ])('rejects a parentRef that is %s', (_label, ref, seenByWriter) => {
