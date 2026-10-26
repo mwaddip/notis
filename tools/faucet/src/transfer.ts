@@ -1,7 +1,7 @@
 import { selectBoxes } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
-import { InsufficientFundsError, checkRecipient, signAndRender, valueDescending } from './tx.js';
+import { InsufficientFundsError, checkRecipient, signAndRender } from './tx.js';
 import type { BoxRef, BuiltTx } from './tx.js';
 
 /**
@@ -17,7 +17,7 @@ import type { BoxRef, BuiltTx } from './tx.js';
  */
 export function buildCreditTransferTx(
   cfg: FaucetConfig,
-  boxes: readonly BoxRef[],
+  boxes: BoxRef[],
   toHex: string,
   height: number,
   protocolVersion: number,
@@ -35,7 +35,7 @@ export function buildCreditTransferTx(
     );
   }
 
-  const selected = selectBoxes(valueDescending(boxes), cfg.creditAmount);
+  const selected = selectBoxes(boxes, cfg.creditAmount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const changeValue = selectedTotal - cfg.creditAmount;
 

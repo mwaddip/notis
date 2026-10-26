@@ -71,17 +71,6 @@ function refFromIndex(tx: UtxoTransaction, txId: string, index: number | null): 
 }
 
 /**
- * The boxes to select from, in the order `selectBoxes` requires.
- *
- * ⚠ **The sort discharges `selectBoxes`' stated precondition** — it documents
- * that its input is pre-sorted by value descending — rather than guarding
- * against a caller. A precondition met two modules away is met by accident.
- */
-export function valueDescending(boxes: readonly BoxRef[]): BoxRef[] {
-  return [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-}
-
-/**
  * The faucet cannot cover a grant out of what it holds.
  *
  * ⚠ **Its own state, not the caller's mistake.** The faucet draws down as it
