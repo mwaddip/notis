@@ -228,6 +228,7 @@ Units of 1/256 of a bit (`VALIDATION_INTERFACE → orderingPowTarget`).
 | `ORDERING_BLOCK_POW_TARGET_FLOOR` | `2304` | 9 whole bits — the resolution floor every profile floor must clear | consensus | the first whole bit above 2180, beneath which a 1/256-bit step buys zero work and difficulty moves while `cumulativeWork` does not | DERIVED | `VALIDATION_INTERFACE → blockWork / cumulativeWork` |
 | `RETARGET_HALFLIFE_BLOCKS` | `288` | the ASERT halflife in ideal intervals — 4.8 h at 60 s | consensus | the reference's ratio of halflife to block time (BCH: 172 800 s / 600 s); the response time constant is ≈ 1.44 halflives, ~7 h to a halving of hashrate | PROVISIONAL | `MINING_INTERFACE → Difficulty Schedule` |
 | `MAX_FUTURE_DRIFT_MS` | `600_000` | 10 min — the future bound on `createdAt` | policy | an absolute schedule caps what a lying or fast clock buys at `skew / ideal` = 10 blocks ever; a slow honest clock bounces blocks for at most that long | PROVISIONAL | `MINING_INTERFACE → Header timestamp rules` |
+| `POW_TARGET_BITS_MAX` | `65_536` | 256 bits — the top of `powTargetBits`' domain | consensus | 256 × 256: a target of 256 bits is the whole digest space | DOMAIN | `TYPES_INTERFACE → Ordering block PoW` |
 
 ### Interlinks
 
@@ -457,7 +458,7 @@ check can tell an omission from an exclusion.
 | `VLQ_SENTINEL` | the all-ones sentinel a total writer emits out of domain — `TYPES_INTERFACE → Serialization` |
 | `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
 | `MODIFIER_POST_BODY` | the modifier type id — `NET_INTERFACE → ModifierRequest` |
-| `IDENTITY_RECORD_TAG` | field 1 of the identity record's AVL value, `0x80` — a layout discriminator, not a tunable — `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's key tags are `TREE_TAG`'s (`TYPES_INTERFACE → The tree keys`) |
+| `IDENTITY_RECORD_TAG`, `NETWORK_RECORD_TAG`, `NAME_RECORD_TAG`, `HOLDER_RECORD_TAG`, `POST_RECORD_TAG`, `LIKE_MARKER_TAG`, `INDEX_MARKER_TAG`, `VOUCH_PAIR_TAG`, `CAST_COUNT_TAG` | the first byte of each tree value that is not a box, `0x80`–`0x88` — layout discriminators, not tunables — `TYPES_INTERFACE → Layout — tree records`, the identity record's `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's key tags are `TREE_TAG`'s (`TYPES_INTERFACE → The tree keys`) |
 | `GET_PEERS_INTERVAL_MS`, `OUTBOUND_TICK_INTERVAL_MS` | local cadences — `NET_INTERFACE → Outbound Manager` |
 | `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId`, `bootstrapPeers`, `backerTable` | identity fields — non-numeric, listed for completeness |
 
