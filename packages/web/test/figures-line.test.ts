@@ -53,53 +53,23 @@ function result(over: Partial<FiguresResult> = {}): FiguresResult {
 }
 
 // A minimal input builder — the tests pass what row they test. `plainShown`
-// defaults from the result so a test that specifies a result's valuation
-// reads it as the plain figure the valuation reproduces: for karma, the
-// plain's `effective` is `result.karma.effective`; for credits, the plain's
-// spendable sum is the sum of listed credit boxes' values at `height`,
-// which the test's result commits to. A test that drives shown != plain
-// overrides `plainShown` directly.
+// defaults to `shown` (the row's figure is the plain listing's — nothing
+// pooled); a test that drives shown != plain hands `plainShown` explicitly.
 function input(over: Partial<FiguresLineInput>): FiguresLineInput {
   const over2 = over as Partial<FiguresLineInput> & { plainShown?: bigint };
-  const ledger = over2.ledger ?? 'credits';
   const shown = over2.shown ?? 0n;
-  const result = over2.result ?? null;
-  const height = over2.height ?? 10000;
-  let plainShown: bigint;
-  if (over2.plainShown !== undefined) {
-    plainShown = over2.plainShown;
-  } else if (ledger === 'karma') {
-    plainShown = result?.karma.effective ?? shown;
-  } else {
-    // credits: default plainShown to the sum of listed credit boxes at
-    // `height` (the spendable rule), so an unchanged state reproduces
-    // shown and no "to spend" clause fires.
-    let s = 0n;
-    if (result !== null) {
-      for (const b of result.boxes) {
-        if (b.boxClass !== 'credit') continue;
-        if (b.status === 'unlisted' || b.status === 'undecided') continue;
-        if (b.lockedUntilBlock !== null && b.lockedUntilBlock > height) continue;
-        s += b.value;
-      }
-      if (s === 0n) s = shown; // no boxes in the result's listed set → preserve silence
-    } else {
-      s = shown;
-    }
-    plainShown = s;
-  }
   return {
-    ledger,
+    ledger: over2.ledger ?? 'credits',
     // `verdict: undefined` has the ledger meaning of row 1 (a build with no
     // verifier), so a `verdict` key in the override passes its value through
     // — null and undefined alike — and only an absent key reads as null.
     verdict: 'verdict' in over2 ? over2.verdict : null,
-    result,
+    result: over2.result ?? null,
     shown,
-    plainShown,
+    plainShown: over2.plainShown ?? shown,
     suffixHeight: over2.suffixHeight ?? 9005,
     boxCount: over2.boxCount ?? 1,
-    height,
+    height: over2.height ?? 10000,
   };
 }
 
@@ -488,24 +458,21 @@ describe('figuresLine — row 8: young / unchecked remainders and the rep-decaye
     });
   });
 
-  it('karma: rep after decay moved — the plain listing valued at 87, the row\'s view at 100 — the clause names the view beside the proven amount', () => {
+  it('karma: rep after decay moved (proven < shown, no young, no unchecked) → "P rep proven at block H" alone', () => {
     // A record whose clocks moved between the anchor and the live read — the
-    // proven face is 100, decay valued it at 87, and the row shows the view's
-    // 100 while the plain listing's `effective` is 87. The valuation of 87
-    // reproduces the plain figure; the view's 100 differs from the plain, so
-    // the clause fires last.
+    // proven face is 100, decay valued it at 87, and the row shows the live
+    // effective 100 (an unchanged listing). The proven figure is
+    // `karma.effective` = 87, below `shown` = 100, and no young/unchecked
+    // stands.
     const r = result({
       boxes: [box({ boxClass: 'karma', status: 'proven', value: 100n })],
       karma: { proven: 100n, young: 0n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 87n, holdings: 'read', holdingsVerdict: null },
     });
     const line = figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 100n }));
-    expect(line).toEqual({
-      text: "87 rep proven at block 9005 · 100 rep to spend in the next block, by this node's word",
-      weight: 'muted',
-    });
+    expect(line).toEqual({ text: '87 rep proven at block 9005', weight: 'muted' });
   });
 
-  it('karma: proven + young — the row\'s view at 92 differs from the plain figure 87, the clause reads last', () => {
+  it('karma: proven + young → muted "P rep proven at block H · Y rep landed since"', () => {
     const r = result({
       boxes: [
         box({ boxClass: 'karma', status: 'proven', value: 87n }),
@@ -514,10 +481,7 @@ describe('figuresLine — row 8: young / unchecked remainders and the rep-decaye
       karma: { proven: 87n, young: 5n, unchecked: 0n, absent: 0n, unlisted: 0n, undecided: 0n, effective: 87n, holdings: 'read', holdingsVerdict: null },
     });
     const line = figuresLine(input({ ledger: 'karma', verdict: VERIFIED, result: r, shown: 92n }));
-    expect(line).toEqual({
-      text: "87 rep proven at block 9005 · 5 rep landed since · 92 rep to spend in the next block, by this node's word",
-      weight: 'muted',
-    });
+    expect(line).toEqual({ text: '87 rep proven at block 9005 · 5 rep landed since', weight: 'muted' });
   });
 
   it('credits: a proven credit box locked past `height` is not spendable — leaves P out and fires row 8', () => {
@@ -878,7 +842,7 @@ describe('figuresLine — the row figure differs from the plain listing figure',
     });
     const line = figuresLine(input({
       ledger: 'karma', verdict: VERIFIED, result: r,
-      shown: 82n, boxCount: 1,
+      shown: 82n, plainShown: 87n, boxCount: 1,
     }));
     expect(line).toEqual({
       text: "87 rep proven at block 9005 · 82 rep to spend in the next block, by this node's word",
@@ -893,7 +857,7 @@ describe('figuresLine — the row figure differs from the plain listing figure',
     });
     const line = figuresLine(input({
       ledger: 'credits', verdict: VERIFIED, result: r,
-      shown: 7_500_000_000n, boxCount: 1,
+      shown: 7_500_000_000n, plainShown: 8_750_000_000n, boxCount: 1,
     }));
     expect(line).toEqual({
       text: "87.5 $NOTIS proven at block 9005 · 75 $NOTIS to spend in the next block, by this node's word",
@@ -909,9 +873,12 @@ describe('figuresLine — the row figure differs from the plain listing figure',
       ],
       karma: { ...emptyKarma, proven: 87n, young: 5n, effective: 87n },
     });
+    // The plain listing lists both boxes — its `effective` reads 92 (87 proven
+    // + 5 young, nothing pooled); the row shows the view's 82 (a pending
+    // spend sits in the view).
     const line = figuresLine(input({
       ledger: 'karma', verdict: VERIFIED, result: r,
-      shown: 82n, boxCount: 1,
+      shown: 82n, plainShown: 92n, boxCount: 1,
     }));
     expect(line).toEqual({
       text: "87 rep proven at block 9005 · 5 rep landed since · 82 rep to spend in the next block, by this node's word",
@@ -923,7 +890,7 @@ describe('figuresLine — the row figure differs from the plain listing figure',
     const r = result({ karma: { ...emptyKarma, effective: 0n } });
     const line = figuresLine(input({
       ledger: 'karma', verdict: VERIFIED, result: r,
-      shown: 5n, boxCount: 0,
+      shown: 5n, plainShown: 0n, boxCount: 0,
     }));
     expect(line).toEqual({
       text: "5 rep to spend in the next block, by this node's word",
