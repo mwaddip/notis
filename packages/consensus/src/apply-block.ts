@@ -937,7 +937,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
       const current = state.getIdentityRecord(id);
       if (!current) continue;
 
-      const wasMember = pre !== null && pre.memberSinceBlock > 0 && pre.memberVouches >= pre.memberBar;
+      const wasMember = pre !== null && isMember(pre);
 
       if (current.memberSinceBlock === 0 &&
           current.memberVouches >= D &&

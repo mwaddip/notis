@@ -1,4 +1,4 @@
-import { isMember } from './utxo-engine.js';
+import { isLapsedMember } from './tree-index.js';
 import type { UsernameRow } from './utxo-engine.js';
 import type { PostStanding, StateView } from './state-view.js';
 import { bytesToHex, hexToBytes } from '@dagsocial/types';
@@ -341,18 +341,18 @@ export class BlockOverlay implements StateView {
   }
 
   /**
-   * The set is the live vouch boxes whose voucher's record fails `member()`, so a
-   * vouch spent, a vouch inserted by such a voucher, or a record written across
-   * `member()` writes into it.
+   * The set is the live vouch boxes whose voucher's record is a lapsed member
+   * (CONSENSUS_INTERFACE → The index entries), so a vouch spent, a vouch
+   * inserted by such a voucher, or a record written across `isLapsedMember`
+   * writes into it.
    */
   getLapsedVouches(limit: number): VouchBox[] {
-    const lapsed = (record: IdentityRecord | null): boolean => record !== null && !isMember(record);
     this.throwIfWritten(
       'getLapsedVouches',
       this.ofType(this.spentByType, 'vouch').length > 0 ||
         this.ofType(this.insertedByType, 'vouch').some((box) =>
-          lapsed(this.getIdentityRecord((box as VouchBox).voucherId))) ||
-        this.recordWritesMove(lapsed),
+          isLapsedMember(this.getIdentityRecord((box as VouchBox).voucherId))) ||
+        this.recordWritesMove(isLapsedMember),
     );
     return this.view.getLapsedVouches(limit);
   }
