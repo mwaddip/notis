@@ -57,7 +57,7 @@ import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState, type FiguresView,
   type TipVerifier, type TipRun, type FiguresVerifier, type NamesVerifier, type PostsVerifier,
-  type PostCache, type CachedThread, type HeldPost, type PostResolver, type WindowBody,
+  type PostCache, type CachedThread, type HeldPost, type PostResolver, type WindowBody, type GrantView,
 } from './model/state';
 import type { BoundPost, ResolveEnd } from './model/post-resolve';
 import { decideMove, type ScreenEntry } from './history';
@@ -519,7 +519,7 @@ export class App {
   // never `pending=1`").
   private walletCreditsPlain: CreditsResult | null = null;
   private walletCreditsPlainStamp: ListingStamp | null = null;
-  private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
+  private creditGrantView: GrantView | null = null;
   private sendFlight: Flight | null = null;
   private sendCheck: string | null = null;
   private sendAnswer: SendAnswer | null = null;

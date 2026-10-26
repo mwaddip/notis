@@ -7,7 +7,7 @@ import { isValidUsernameBytes } from '@dagsocial/types';
 import { formatCredits, parseCredits } from '../model/credits';
 import { spendableCreditBoxes, lockedCreditSummary } from '../wallet/reads';
 import { figuresLine } from '../model/figures-line';
-import type { FiguresView, WindowBody } from '../model/state';
+import type { FiguresView, GrantView, WindowBody } from '../model/state';
 import type { TipVerdict } from '../model/tip-verdict';
 import type { CreditsResult, StatusResult } from '../api/dto';
 
@@ -44,10 +44,6 @@ export type SendRecipient = { key: string } | { name: string };
  *  holds while a locked identity owes the unlock before that send
  *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
 export type SendAnswer = { refusal: string } | { key: string; unlock: HTMLElement | null };
-
-/** How a $NOTIS faucet grant reads while it stands or after it lapses
- *  (WEB_INTERFACE → The faucet step). */
-export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: number };
 
 export interface WalletHandlers {
   // The send form (WEB_INTERFACE → The wallet window → "The `send` row").

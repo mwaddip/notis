@@ -6,7 +6,7 @@ import { stageLine, type Flight } from './card';
 import { markHandle } from './name-handle';
 import { INVITE_BOND_VEST_PER_LIKES, KARMA_MINIMUM, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, isValidUsernameBytes } from '@dagsocial/types';
 import { figuresLine } from '../model/figures-line';
-import type { FiguresView, WindowBody } from '../model/state';
+import type { FiguresView, GrantView, WindowBody } from '../model/state';
 import type { TipVerdict } from '../model/tip-verdict';
 import type { KarmaResult, BondsResult, UsernameResult } from '../api/dto';
 import type { Origin } from '../model/workspace';
@@ -34,9 +34,6 @@ import type { Origin } from '../model/workspace';
 //
 // The window declares the narrow shapes it reads and calls; the App's RenderCtx and
 // Handlers satisfy them structurally, so there is one contract, not two.
-
-/** How the faucet grant reads while it stands or after it lapses. */
-export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: number };
 
 export interface ProfileHandlers {
   // identity operations
