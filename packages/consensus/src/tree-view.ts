@@ -5,6 +5,7 @@ import {
   boxFromRecordBytes,
   boxKey,
   bytesToHex,
+  canonicalUsername,
   canonicalUsernameBytes,
   castCountFromBytes,
   castCountKey,
@@ -451,10 +452,9 @@ class TreeView implements TreeStateView {
 
 /** A name's row from its box and its record (CONSENSUS_INTERFACE → The tree view). */
 function rowOf(box: UsernameBox, claimedAtBlock: number): UsernameRow {
-  const decoder = new TextDecoder('utf-8');
   return {
-    nameLower: decoder.decode(canonicalUsernameBytes(box.name)),
-    name: decoder.decode(box.name),
+    nameLower: canonicalUsername(box.name),
+    name: new TextDecoder('utf-8').decode(box.name),
     owner: bytesToHex(box.owner),
     boxId: box.id!,
     claimedAtBlock,

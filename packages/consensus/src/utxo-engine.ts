@@ -15,7 +15,7 @@ import {
   VOUCH_KARMA_AMOUNT,
   membershipBar,
   isValidUsernameBytes,
-  canonicalUsernameBytes,
+  canonicalUsername,
   BACKER_UNSTAKE_MIN_PCT,
   bytesToHex,
   hexToBytes,
@@ -302,11 +302,6 @@ function verifyGuardSignature(
     : verifyEd25519(signature, txHash, pubKey);
 }
 
-// A username's canonical bytes are `[a-z0-9_]` — a strict subset of ASCII
-// (TYPES_INTERFACE → Content limits) — so `TextDecoder` and a partial-decode
-// reader answer the same string.
-const USERNAME_DECODER = new TextDecoder('utf-8');
-
 /**
  * Check legal box transitions for a given set of inputs and outputs.
  * Assumes all inputs have the same boxType (`validateTx` step 4 pins it).
@@ -580,7 +575,7 @@ function checkTransitions(
         if (bytesToHex(uOut.owner) !== inputOwnerHex) {
           return { valid: false, error: 'Claim: username owner must match the karma inputs\' owner' };
         }
-        const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(uOut.name));
+        const canonical = canonicalUsername(uOut.name);
         const existing = deps.getUsername(canonical);
         if (existing !== null) {
           return { valid: false, error: 'name taken' };

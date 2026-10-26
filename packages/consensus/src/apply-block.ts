@@ -1,6 +1,6 @@
 import {
   EMPTY_IDENTITY_RECORD,
-  canonicalUsernameBytes,
+  canonicalUsername,
   computeTxId,
   decodeTx,
   encodeTx,
@@ -45,12 +45,6 @@ import {
   validateTx,
 } from './utxo-engine.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
-
-// A username's canonical bytes are `[a-z0-9_]` — a strict subset of ASCII
-// (TYPES_INTERFACE → Content limits) — so `TextDecoder` and a partial-decode
-// reader answer the same string, and the raw, uncanonicalized name is the
-// same domain (TYPES_INTERFACE → UsernameBox).
-const USERNAME_DECODER = new TextDecoder('utf-8');
 
 /** What the block did, returned instead of written (CONSENSUS_INTERFACE → BlockEffects). */
 export interface BlockEffects {
@@ -443,10 +437,9 @@ export function applyQueuedTx(
   const usernameOut = item.outputs.find(o => o.boxType === 'username');
   if (usernameOut) {
     const u = usernameOut as UsernameBox;
-    const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
     state.putUsername({
-      nameLower: canonical,
-      name: USERNAME_DECODER.decode(u.name),
+      nameLower: canonicalUsername(u.name),
+      name: new TextDecoder('utf-8').decode(u.name),
       owner: bytesToHex(u.owner),
       boxId: usernameOut.id!,
       claimedAtBlock: height,
@@ -456,8 +449,7 @@ export function applyQueuedTx(
   // consumed it (capturedUsernameInput, captured above).
   if (capturedUsernameInput) {
     const u = capturedUsernameInput as UsernameBox;
-    const canonical = USERNAME_DECODER.decode(canonicalUsernameBytes(u.name));
-    state.deleteUsername(canonical);
+    state.deleteUsername(canonicalUsername(u.name));
   }
 
   // The transaction itself rides the effects, for the node to return to its
