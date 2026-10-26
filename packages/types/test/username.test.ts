@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isValidUsernameBytes, canonicalUsernameBytes, canonicalUsername, USERNAME_MAX_BYTES } from '../src/index.js';
+import { isValidUsernameBytes, canonicalUsernameBytes, canonicalUsername, usernameString, USERNAME_MAX_BYTES } from '../src/index.js';
 
 describe('isValidUsernameBytes', () => {
   it('accepts a 1-byte lowercase name', () => {
@@ -91,5 +91,16 @@ describe('canonicalUsername', () => {
     expect(canonicalUsername(name)).toBe(
       new TextDecoder('utf-8').decode(canonicalUsernameBytes(name)),
     );
+  });
+});
+
+describe('usernameString', () => {
+  it('answers a mixed-case valid name unchanged', () => {
+    expect(usernameString(new TextEncoder().encode('Alice_01'))).toBe('Alice_01');
+  });
+
+  it('answers what a non-fatal utf-8 decode of the bytes answers for an invalid byte', () => {
+    const name = new Uint8Array([0x41, 0xff, 0x42]);
+    expect(usernameString(name)).toBe(new TextDecoder('utf-8').decode(name));
   });
 });

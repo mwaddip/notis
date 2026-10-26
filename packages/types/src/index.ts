@@ -160,7 +160,7 @@ export type {
 } from './utxo.js';
 
 // Usernames — TYPES_INTERFACE → Content limits
-export { isValidUsernameBytes, canonicalUsernameBytes, canonicalUsername } from './username.js';
+export { isValidUsernameBytes, canonicalUsernameBytes, canonicalUsername, usernameString } from './username.js';
 
 // Membership — TYPES_INTERFACE → Membership; ARCHITECTURE → Membership
 export { icbrt, membershipBar, memberLikesBar } from './membership.js';
