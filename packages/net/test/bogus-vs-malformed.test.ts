@@ -61,7 +61,7 @@ describe('bogus vs malformed distinction', () => {
     vi.spyOn(Date, 'now').mockReturnValue(0);
 
     // Simulate a well-formed message with invalid content (e.g., empty post)
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'empty content');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'empty content');
 
     expect(mgr.isBanned('peer1')).toBe(false);
     expect(mgr.getPeerCount()).toBe(1); // peer still tracked
@@ -133,7 +133,7 @@ describe('bogus vs malformed distinction', () => {
     expect(mgr.isBanned('peer1')).toBe(true);
 
     // Subsequent bogus penalties are no-ops (peer already removed)
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'empty content');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'empty content');
     expect(mgr.getPeerCount()).toBe(0);
     expect(mgr.getPeerMetadata('peer1')).toBeNull();
   });

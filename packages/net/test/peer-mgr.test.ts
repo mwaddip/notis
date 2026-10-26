@@ -30,7 +30,7 @@ describe('PeerManager', () => {
   });
 
   it('does not add banned peers', () => {
-    mgr.recordPenalty('permanent', 'peer1', 0, 'test');
+    mgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'test');
     mgr.addPeer(makePeer('peer1'));
     expect(mgr.getPeerCount()).toBe(0);
   });
@@ -45,9 +45,9 @@ describe('PeerManager', () => {
     mgr.addPeer(makePeer('peer1'));
     // Override safe interval
     vi.spyOn(Date, 'now').mockReturnValue(0);
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'bad message');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'bad message');
     vi.spyOn(Date, 'now').mockReturnValue(config.penaltySafeIntervalMs + 1);
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'bad message again');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'bad message again');
     // Peer should still be tracked (not banned yet at 200 < 500)
     expect(mgr.getPeerCount()).toBe(1);
   });
@@ -56,15 +56,17 @@ describe('PeerManager', () => {
     mgr.addPeer(makePeer('peer1'));
     // Same instant, so no decay window straddles the threshold crossing.
     vi.spyOn(Date, 'now').mockReturnValue(0);
-    mgr.recordPenalty('misbehavior', 'peer1', 499, 'bad');
-    mgr.recordPenalty('misbehavior', 'peer1', 1, 'one more');
+    // Five misbehaviors cross the 500-point threshold.
+    for (let i = 0; i < 5; i++) {
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', `bad ${i}`);
+    }
     expect(mgr.getPeerCount()).toBe(0);
     expect(mgr.isBanned('peer1')).toBe(true);
   });
 
   it('permanent penalty bans instantly regardless of score', () => {
     mgr.addPeer(makePeer('peer1'));
-    mgr.recordPenalty('permanent', 'peer1', 0, 'wrong magic');
+    mgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'wrong magic');
     expect(mgr.isBanned('peer1')).toBe(true);
     expect(mgr.getPeerCount()).toBe(0);
   });
@@ -82,7 +84,7 @@ describe('PeerManager', () => {
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(1_000);
     for (let i = 0; i < 5; i++) {
-      mgr.recordPenalty('misbehavior', 'peer1', 100, `invalid gossip ${i}`);
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', `invalid gossip ${i}`);
     }
     expect(mgr.isBanned('peer1')).toBe(true);
     expect(mgr.getPeerCount()).toBe(0);
@@ -92,7 +94,7 @@ describe('PeerManager', () => {
     mgr.addPeer(makePeer('peer1'));
     for (let i = 0; i < 5; i++) {
       vi.spyOn(Date, 'now').mockReturnValue(i * 2 * config.penaltySafeIntervalMs);
-      mgr.recordPenalty('misbehavior', 'peer1', 100, `sporadic ${i}`);
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', `sporadic ${i}`);
     }
     expect(mgr.isBanned('peer1')).toBe(false);
     expect(mgr.getPeerCount()).toBe(1);
@@ -104,24 +106,24 @@ describe('PeerManager', () => {
   it('decays the score by 100 per elapsed interval, flooring at 0', () => {
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(0);
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'first');
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'second');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'first');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'second');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(200);
 
     // One interval since the last penalty: 200 − 100 (decay) + 100 = 200.
     vi.spyOn(Date, 'now').mockReturnValue(config.penaltySafeIntervalMs);
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'at one interval');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'at one interval');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(200);
 
     // Another interval since the last penalty: 200 − 100 + 100 = 200.
     vi.spyOn(Date, 'now').mockReturnValue(2 * config.penaltySafeIntervalMs);
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'at two intervals');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'at two intervals');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(200);
 
     // Ten intervals since the last penalty: max(0, 200 − 1000) + 100 = 100.
     // Without the floor the subtraction lands at −800 and the score at −700.
     vi.spyOn(Date, 'now').mockReturnValue(12 * config.penaltySafeIntervalMs);
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'at twelve intervals');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'at twelve intervals');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(100);
   });
 
@@ -129,13 +131,13 @@ describe('PeerManager', () => {
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(0);
     // Two misbehaviors seed the score at 200.
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'first');
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'second');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'first');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'second');
     // Half an interval since the last penalty: 200 − 50 (proportional decay)
     // + 100 = 250. Stepwise decay drains nothing in half an interval
     // (Math.floor(0.5) · 100 = 0) and the score lands at 300.
     vi.spyOn(Date, 'now').mockReturnValue(config.penaltySafeIntervalMs / 2);
-    mgr.recordPenalty('misbehavior', 'peer1', 100, 'at half an interval');
+    mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'at half an interval');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(250);
   });
 
@@ -143,7 +145,7 @@ describe('PeerManager', () => {
     mgr.addPeer(makePeer('peer1'));
     for (let i = 0; i < 20; i++) {
       vi.spyOn(Date, 'now').mockReturnValue(i * config.penaltySafeIntervalMs);
-      mgr.recordPenalty('misbehavior', 'peer1', 100, `steady ${i}`);
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', `steady ${i}`);
     }
     expect(mgr.isBanned('peer1')).toBe(false);
     expect(mgr.getPeerCount()).toBe(1);
@@ -155,7 +157,7 @@ describe('PeerManager', () => {
     // Net +50 per penalty after the first: 100, 150, … 500 on the 9th.
     for (let i = 0; i < 9; i++) {
       vi.spyOn(Date, 'now').mockReturnValue(i * (config.penaltySafeIntervalMs / 2));
-      mgr.recordPenalty('misbehavior', 'peer1', 100, `pressure ${i}`);
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', `pressure ${i}`);
     }
     expect(mgr.isBanned('peer1')).toBe(true);
     expect(mgr.getPeerCount()).toBe(0);
@@ -164,7 +166,10 @@ describe('PeerManager', () => {
   it('temporal ban expires', () => {
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(0);
-    mgr.recordPenalty('misbehavior', 'peer1', 500, 'ban');
+    // Five misbehaviors cross the 500-point threshold.
+    for (let i = 0; i < 5; i++) {
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'ban');
+    }
     expect(mgr.isBanned('peer1')).toBe(true);
 
     // Fast-forward past ban duration
@@ -177,7 +182,10 @@ describe('PeerManager', () => {
   it('a temporal ban removes the metadata (NET_INTERFACE → Peer State Machine)', () => {
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(0);
-    mgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+    // Five misbehaviors cross the 500-point threshold.
+    for (let i = 0; i < 5; i++) {
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'threshold crossed');
+    }
     expect(mgr.isBanned('peer1')).toBe(true);
     expect(mgr.getPeerMetadata('peer1')).toBeNull();
     expect(mgr.isPeerActive('peer1')).toBe(false);
@@ -274,14 +282,14 @@ describe('PeerManager', () => {
       mgr.addPeer(makePeer('peer1'));
       vi.spyOn(Date, 'now').mockReturnValue(0);
       for (let i = 0; i < 4; i++) {
-        mgr.recordPenalty('misbehavior', 'peer1', 100, 'four misbehaviours');
+        mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'four misbehaviours');
       }
       expect(mgr.isBanned('peer1')).toBe(false);
 
       mgr.removePeer('peer1');
       mgr.addPeer(makePeer('peer1'));
 
-      mgr.recordPenalty('misbehavior', 'peer1', 100, 'one more inside the interval');
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'one more inside the interval');
       expect(mgr.isBanned('peer1')).toBe(true);
     });
 
@@ -294,7 +302,7 @@ describe('PeerManager', () => {
       mgr.addPeer(makePeer('peer1'));
       vi.spyOn(Date, 'now').mockReturnValue(0);
       for (let i = 0; i < 4; i++) {
-        mgr.recordPenalty('misbehavior', 'peer1', 100, 'four misbehaviours');
+        mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'four misbehaviours');
       }
       expect(mgr.isBanned('peer1')).toBe(false);
 
@@ -302,9 +310,9 @@ describe('PeerManager', () => {
       vi.spyOn(Date, 'now').mockReturnValue(2 * config.penaltySafeIntervalMs);
       mgr.addPeer(makePeer('peer1'));
 
-      mgr.recordPenalty('misbehavior', 'peer1', 100, 'after two intervals');
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'after two intervals');
       expect(mgr.isBanned('peer1')).toBe(false);
-      mgr.recordPenalty('misbehavior', 'peer1', 100, 'and one more at once');
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'and one more at once');
       expect(mgr.isBanned('peer1')).toBe(false);
     });
 
@@ -314,7 +322,7 @@ describe('PeerManager', () => {
     // once 1_024 fresh scored entries sit above it in the map — so its
     // reconnect starts fresh at 0 and one 100 does not ban. The control
     // sits beside it: a peer re-scored inside the fill run keeps its score,
-    // so its final 400 points cross the threshold.
+    // so the four misbehaviors beside the kept 200 cross the threshold.
     it('the oldest score is dropped past the cap; a peer re-scored inside the run keeps its score', () => {
       // All penalties at t=0 so decay never contributes a fraction — only
       // the LRU-by-insertion-order mechanic separates victim from kept.
@@ -324,35 +332,37 @@ describe('PeerManager', () => {
       // of the map as the oldest entry.
       mgr.addPeer(makePeer('victim'));
       for (let i = 0; i < 4; i++) {
-        mgr.recordPenalty('misbehavior', 'victim', 100, 'victim seed');
+        mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'victim', 'victim seed');
       }
       mgr.removePeer('victim');
 
       // Kept: at 100, stays connected throughout. Re-scored once inside
       // the run so its entry is re-inserted later than victim's.
       mgr.addPeer(makePeer('kept'));
-      mgr.recordPenalty('misbehavior', 'kept', 100, 'seed the kept peer');
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'kept', 'seed the kept peer');
 
       // Fill 1_024 fresh entries so victim is the LRU. Halfway through,
-      // re-score the kept peer by 0 points so its entry moves to MRU —
-      // eviction then catches victim first.
+      // re-score the kept peer so its entry moves to MRU — eviction then
+      // catches victim first.
       for (let i = 0; i < 1_024; i++) {
         mgr.addPeer(makePeer(`noise-${i}`));
-        mgr.recordPenalty('misbehavior', `noise-${i}`, 100, 'fill');
+        mgr.recordPenaltyKind(PenaltyKind.Misbehavior, `noise-${i}`, 'fill');
         if (i === 512) {
-          mgr.recordPenalty('misbehavior', 'kept', 0, 'bump kept to MRU');
+          mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'kept', 'bump kept to MRU');
         }
       }
 
-      // Control: a peer re-scored inside the run keeps its score, so +400
-      // crosses the 500 threshold.
-      mgr.recordPenalty('misbehavior', 'kept', 400, 'kept pressure');
+      // Control: a peer re-scored inside the run keeps its score, so four
+      // misbehaviors on top of the kept 200 cross the 500 threshold at 600.
+      for (let i = 0; i < 4; i++) {
+        mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'kept', 'kept pressure');
+      }
       expect(mgr.isBanned('kept')).toBe(true);
 
       // Victim reconnects: its score was dropped from the map, so one
-      // 100 starts at zero and lands 100 — well under 500.
+      // misbehavior starts at zero and lands 100 — well under 500.
       mgr.addPeer(makePeer('victim'));
-      mgr.recordPenalty('misbehavior', 'victim', 100, 'victim return');
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'victim', 'victim return');
       expect(mgr.isBanned('victim')).toBe(false);
     });
 
@@ -364,10 +374,10 @@ describe('PeerManager', () => {
     it('a penalty against a peer not connected records nothing — the next connection starts fresh', () => {
       vi.spyOn(Date, 'now').mockReturnValue(0);
       for (let i = 0; i < 4; i++) {
-        mgr.recordPenalty('misbehavior', 'ghost', 100, 'nothing to accrue to');
+        mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'ghost', 'nothing to accrue to');
       }
       mgr.addPeer(makePeer('ghost'));
-      mgr.recordPenalty('misbehavior', 'ghost', 100, 'first on reconnect');
+      mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'ghost', 'first on reconnect');
       expect(mgr.isBanned('ghost')).toBe(false);
     });
   });
@@ -418,12 +428,12 @@ describe('PeerManager', () => {
       expect(pairMgr.getPeerMetadata('ghost')).toBeNull();
     });
 
-    it("permanent ban via recordPenalty('permanent') propagates despite the metadata delete (ordering trap)", () => {
+    it('permanent ban on a wrong-magic refusal propagates despite the metadata delete (ordering trap)', () => {
       const { pairMgr, peerDb, calls } = makeBanPair();
       trackPeer(pairMgr, peerDb, 'peer1', ADDR);
       trackPeer(pairMgr, peerDb, 'peer2', OTHER);
 
-      pairMgr.recordPenalty('permanent', 'peer1', 0, 'wrong magic');
+      pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'wrong magic');
 
       // This path deletes the metadata — propagation only happens if the
       // address was read before that delete, so this assertion fails if the
@@ -438,7 +448,7 @@ describe('PeerManager', () => {
       expect(recent).toContain(OTHER);
     });
 
-    it('permanent ban via recordPenaltyKind(ProtocolViolation) propagates despite the metadata delete (ordering trap)', () => {
+    it('permanent ban on a malformed-Peers refusal propagates despite the metadata delete (ordering trap)', () => {
       const { pairMgr, peerDb, calls } = makeBanPair();
       trackPeer(pairMgr, peerDb, 'peer1', ADDR);
       trackPeer(pairMgr, peerDb, 'peer2', OTHER);
@@ -460,7 +470,10 @@ describe('PeerManager', () => {
       trackPeer(pairMgr, peerDb, 'peer2', OTHER);
 
       vi.spyOn(Date, 'now').mockReturnValue(1_000);
-      pairMgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+      // Five misbehaviors cross the 500-point threshold.
+      for (let i = 0; i < 5; i++) {
+        pairMgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'threshold crossed');
+      }
 
       expect(pairMgr.isBanned('peer1')).toBe(true);
       expect(calls.ban).toBe(1);
@@ -476,7 +489,10 @@ describe('PeerManager', () => {
       trackPeer(pairMgr, peerDb, 'peer1', ADDR);
 
       vi.spyOn(Date, 'now').mockReturnValue(1_000);
-      pairMgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+      // Five misbehaviors cross the 500-point threshold.
+      for (let i = 0; i < 5; i++) {
+        pairMgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'threshold crossed');
+      }
       expect(peerDb.isBanned(ADDR)).toBe(true);
 
       // Control: one ms before expiry, both surfaces stay banned
@@ -497,7 +513,10 @@ describe('PeerManager', () => {
       trackPeer(pairMgr, peerDb, 'peer1', ADDR);
 
       vi.spyOn(Date, 'now').mockReturnValue(1_000);
-      pairMgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+      // Five misbehaviors cross the 500-point threshold.
+      for (let i = 0; i < 5; i++) {
+        pairMgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'threshold crossed');
+      }
       // Disconnect during the ban window: metadata is deleted, the ban is not.
       // The BanEntry carries the address, so expiry can still unban it.
       pairMgr.removePeer('peer1');
@@ -518,7 +537,7 @@ describe('PeerManager', () => {
       expect(calls.ban).toBe(0);
 
       // Never added at all (the works-even-if-never-added permanent path)
-      pairMgr.recordPenalty('permanent', 'ghost', 0, 'never added');
+      pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'ghost', 'never added');
       expect(pairMgr.isBanned('ghost')).toBe(true);
       expect(calls.ban).toBe(0);
     });
@@ -552,7 +571,10 @@ describe('PeerManager', () => {
       trackPeer(pairMgr, peerDb, 'peer1', ADDR);
 
       vi.spyOn(Date, 'now').mockReturnValue(1_000);
-      pairMgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+      // Five misbehaviors cross the 500-point threshold.
+      for (let i = 0; i < 5; i++) {
+        pairMgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'threshold crossed');
+      }
       expect(pairMgr.extendBan('peer1', OTHER)).toBe(true);
       expect(peerDb.isBanned(OTHER)).toBe(true);
 
@@ -580,7 +602,7 @@ describe('PeerManager', () => {
       expect(calls.ban).toBe(1);
 
       // Never added at all (the works-even-if-never-added permanent path).
-      pairMgr.recordPenalty('permanent', 'ghost', 0, 'never added');
+      pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'ghost', 'never added');
       expect(calls.ban).toBe(1);
       expect(pairMgr.extendBan('ghost', OTHER)).toBe(true);
       expect(calls.ban).toBe(2);
@@ -599,22 +621,26 @@ describe('PeerManager', () => {
         onBanned: (peerId) => banned.push(peerId),
       });
 
-      // permanent via recordPenalty
+      // One ProtocolViolation on a tracked peer: the hook fires once.
       trackPeer(pairMgr, peerDb, 'peer1', ADDR);
-      pairMgr.recordPenalty('permanent', 'peer1', 0, 'wrong magic');
+      pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'wrong magic');
       expect(banned).toEqual(['peer1']);
 
-      // permanent via recordPenaltyKind(ProtocolViolation)
+      // One more ProtocolViolation on a different tracked peer: the hook fires once more.
       trackPeer(pairMgr, peerDb, 'peer2', OTHER);
       pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer2', 'malformed');
       expect(banned).toEqual(['peer1', 'peer2']);
 
-      // temporal via score threshold
+      // Temporal ban via the score threshold: four misbehaviors leave the
+      // peer under the threshold (banned stays unchanged); the fifth crosses
+      // it and the hook fires.
       trackPeer(pairMgr, peerDb, 'peer3', '/ip4/51.15.0.3/tcp/4001');
       vi.spyOn(Date, 'now').mockReturnValue(0);
-      pairMgr.recordPenalty('misbehavior', 'peer3', 499, 'pressure');
+      for (let i = 0; i < 4; i++) {
+        pairMgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer3', 'pressure');
+      }
       expect(banned).toEqual(['peer1', 'peer2']);
-      pairMgr.recordPenalty('misbehavior', 'peer3', 1, 'threshold');
+      pairMgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer3', 'threshold');
       expect(banned).toEqual(['peer1', 'peer2', 'peer3']);
     });
 
@@ -634,7 +660,10 @@ describe('PeerManager', () => {
       // expiry: no fire
       pairMgr.addPeer(makePeer('peer2'));
       vi.spyOn(Date, 'now').mockReturnValue(0);
-      pairMgr.recordPenalty('misbehavior', 'peer2', 500, 'threshold');
+      // Five misbehaviors cross the 500-point threshold.
+      for (let i = 0; i < 5; i++) {
+        pairMgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer2', 'threshold');
+      }
       expect(banned).toEqual(['peer1', 'peer2']);
       vi.spyOn(Date, 'now').mockReturnValue(config.temporalBanDurationMs + 1);
       expect(pairMgr.isBanned('peer2')).toBe(false);
@@ -661,7 +690,10 @@ describe('PeerManager', () => {
       // Tracked and scored, but never declared an address.
       pairMgr.addPeer(makePeer('peer1'));
       vi.spyOn(Date, 'now').mockReturnValue(1_000);
-      pairMgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+      // Five misbehaviors cross the 500-point threshold.
+      for (let i = 0; i < 5; i++) {
+        pairMgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'threshold crossed');
+      }
       expect(pairMgr.isBanned('peer1')).toBe(true);
       expect(calls.ban).toBe(0); // seeded empty — nothing to propagate yet
 

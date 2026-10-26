@@ -77,13 +77,14 @@ export type { PeerStorage } from './peerdb.js';
 export {
   PeerState,
   PenaltyKind,
+  MISBEHAVIOR_SCORE,
+  TRANSIENT_SCORE,
 } from './types.js';
 export type {
   NetConfig,
   NetValidators,
   Peer,
   PeerRecord,
-  PenaltyType,
   PeerMetadata,
   GetPeersMsg,
   PeerEntryMsg,

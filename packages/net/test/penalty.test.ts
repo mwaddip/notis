@@ -162,11 +162,11 @@ describe('NetNode.penalizePeer', () => {
 
   it('misbehavior reaches the manager with the stated reason', () => {
     const { net, peerMgr } = setup();
-    const spy = vi.spyOn(peerMgr, 'recordPenalty');
+    const spy = vi.spyOn(peerMgr, 'recordPenaltyKind');
 
     net.penalizePeer('peer1', 'misbehavior', 'identity mismatch');
 
-    expect(spy).toHaveBeenCalledWith('misbehavior', 'peer1', 100, 'identity mismatch');
+    expect(spy).toHaveBeenCalledWith(PenaltyKind.Misbehavior, 'peer1', 'identity mismatch');
   });
 
   it('transient reaches the manager with the stated reason', () => {

@@ -288,7 +288,7 @@ describe('onPeerPenalised', () => {
     expect(events[0]!.detail).toBe('direct call');
   });
 
-  it('fires on a direct peerMgr.recordPenalty call (funnel coverage)', () => {
+  it('fires on a direct peerMgr.recordPenaltyKind(Misbehavior) call (funnel coverage)', () => {
     const net = new NetNode(makeConfig(), validators);
     const peerId = 'funnel-peer-2';
     const internals = net as unknown as { peerMgr: PeerManager };
@@ -303,7 +303,7 @@ describe('onPeerPenalised', () => {
     const events: Array<{ id: string; kind: string; detail: string | null }> = [];
     net.onPeerPenalised((id, k, d) => events.push({ id, kind: k, detail: d }));
 
-    internals.peerMgr.recordPenalty('misbehavior', peerId, 100, 'direct misbehavior');
+    internals.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, 'direct misbehavior');
 
     expect(events).toHaveLength(1);
     expect(events[0]!.id).toBe(peerId);

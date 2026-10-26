@@ -1984,7 +1984,7 @@ export class NetNode {
    */
   penalizePeer(peerId: string, kind: 'misbehavior' | 'transient', reason: string): void {
     if (kind === 'misbehavior') {
-      this.peerMgr.recordPenalty('misbehavior', peerId, 100, reason);
+      this.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, reason);
     } else {
       this.peerMgr.recordPenaltyKind(PenaltyKind.Transient, peerId, reason);
     }
@@ -2111,13 +2111,13 @@ export class NetNode {
         try {
           content = decodePostBody(mod.data);
         } catch {
-          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+          this.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId,
             `post body decode failed for ${mod.id}`);
           continue;
         }
         const vr = this.validators.verifyPostBody(content, commitment);
         if (!vr.valid) {
-          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+          this.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId,
             `post body commitment mismatch for ${mod.id}`);
           continue;
         }

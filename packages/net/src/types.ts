@@ -36,12 +36,6 @@ export interface Peer {
 }
 
 // ---------------------------------------------------------------------------
-// Penalty
-// ---------------------------------------------------------------------------
-
-export type PenaltyType = 'misbehavior' | 'permanent';
-
-// ---------------------------------------------------------------------------
 // Peer state machine
 // ---------------------------------------------------------------------------
 
@@ -52,15 +46,32 @@ export enum PeerState {
 }
 
 // ---------------------------------------------------------------------------
-// Penalty attribution tiers (additive to existing PenaltyType)
+// Penalty attribution tiers
+// (NET_INTERFACE → Peer Penalty System)
 // ---------------------------------------------------------------------------
 
 export enum PenaltyKind {
-  /** Transient failure — cooldown, not a ban. */
+  /** An invalid message — a Stage-1 failure (NET_INTERFACE → Peer Penalty System). */
+  Misbehavior = 'misbehavior',
+  /** A compatibility mismatch — a cooldown, not a ban. */
   Transient = 'transient',
-  /** Protocol violation — permanent ban. */
+  /** A protocol violation — a permanent ban. */
   ProtocolViolation = 'protocol_violation',
 }
+
+/**
+ * The score a `Misbehavior` penalty accrues. Named once beside the tier
+ * (NET_INTERFACE → Peer Penalty System → "A scored tier's score is named
+ * once, beside the tiers").
+ */
+export const MISBEHAVIOR_SCORE = 100;
+
+/**
+ * The score a `Transient` penalty accrues. Named once beside the tier
+ * (NET_INTERFACE → Peer Penalty System → "A scored tier's score is named
+ * once, beside the tiers").
+ */
+export const TRANSIENT_SCORE = 50;
 
 // ---------------------------------------------------------------------------
 // PeerMetadata — runtime peer state tracked by PeerManager

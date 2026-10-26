@@ -1,13 +1,13 @@
-import { PeerState, PenaltyKind } from './types.js';
-import type { NetConfig, Peer, PenaltyType, PeerMetadata } from './types.js';
+import { PeerState, PenaltyKind, MISBEHAVIOR_SCORE, TRANSIENT_SCORE } from './types.js';
+import type { NetConfig, Peer, PeerMetadata } from './types.js';
 
 /**
  * Points drained from an accumulated penalty score per elapsed
  * `penaltySafeIntervalMs` (NET_INTERFACE → Accrual and decay).
- * Break-even is one MisbehaviorPenalty (100) per interval: misbehave
+ * Break-even is one MisbehaviorPenalty per interval: misbehave
  * faster and the score climbs toward a ban, slower and it fades to zero.
  */
-const PENALTY_DECAY_PER_INTERVAL = 100;
+const PENALTY_DECAY_PER_INTERVAL = MISBEHAVIOR_SCORE;
 
 /**
  * The most bans to keep. A ban keys on a peer id, which regenerates freely, so a
@@ -181,21 +181,8 @@ export class PeerManager {
   }
 
   // -----------------------------------------------------------------------
-  // Penalty system (legacy score-based)
+  // Ban machinery
   // -----------------------------------------------------------------------
-
-  recordPenalty(type: PenaltyType, peerId: string, score: number, reason: string): void {
-    const now = Date.now();
-
-    if (type === 'permanent') {
-      this.imposeBan(peerId, now, null);
-      this.hooks.onPenalty?.(peerId, type, reason);
-      return;
-    }
-
-    this.accrueScoredPenalty(peerId, score, now);
-    this.hooks.onPenalty?.(peerId, type, reason);
-  }
 
   /**
    * Impose a ban, remove the row and its metadata, and propagate the
@@ -245,16 +232,22 @@ export class PeerManager {
   }
 
   // -----------------------------------------------------------------------
-  // Three-tier penalty attribution (contract: Penalty Attribution)
+  // The one penalty entry
+  // (NET_INTERFACE → Peer Penalty System →
+  // "`PeerManager.recordPenaltyKind(kind, peerId, reason)` is the one entry
+  // that records a penalty")
   // -----------------------------------------------------------------------
 
   /**
-   * Record a penalty using the two-tier system.
+   * Record a penalty against `peerId`.
    *
-   * - Transient: scored (50), decays over time, peer stays in PeerDb
-   *   (a compatibility mismatch, or an answer that refutes its claim —
-   *   NET_INTERFACE → Peer Penalty System)
-   * - ProtocolViolation: permanent ban, peer removed from PeerDb
+   * - `Misbehavior` accrues `MISBEHAVIOR_SCORE` and decays over time; the peer
+   *   stays in PeerDb until the accumulated score crosses the ban threshold
+   *   (NET_INTERFACE → Peer Penalty System).
+   * - `Transient` accrues `TRANSIENT_SCORE` with the same decay rule — a
+   *   compatibility mismatch, or an answer that refutes its claim.
+   * - `ProtocolViolation` is a permanent ban and the peer is removed from
+   *   PeerDb.
    */
   recordPenaltyKind(kind: PenaltyKind, peerId: string, reason: string): void {
     const now = Date.now();
@@ -265,8 +258,13 @@ export class PeerManager {
         this.hooks.onPenalty?.(peerId, kind, reason);
         return;
       }
+      case PenaltyKind.Misbehavior: {
+        this.accrueScoredPenalty(peerId, MISBEHAVIOR_SCORE, now);
+        this.hooks.onPenalty?.(peerId, kind, reason);
+        return;
+      }
       case PenaltyKind.Transient: {
-        this.accrueScoredPenalty(peerId, 50, now);
+        this.accrueScoredPenalty(peerId, TRANSIENT_SCORE, now);
         this.hooks.onPenalty?.(peerId, kind, reason);
         return;
       }

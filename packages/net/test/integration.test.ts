@@ -592,7 +592,10 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
       capabilities: [],
     });
 
-    internalsB.peerMgr.recordPenalty('misbehavior', aId, 500, 'test');
+    // Five misbehaviors cross the 500-point threshold.
+    for (let i = 0; i < 5; i++) {
+      internalsB.peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, aId, 'test');
+    }
     // NET_INTERFACE → "A ban ends the connection": the ban hangs up every
     // connection to the peer. The hang-up is asynchronous.
     expect(nodeB.getConnectedPeers()).not.toContain(aId);
@@ -663,9 +666,11 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     const bId = nodeB.peerId();
     expect(nodeA.getConnectedPeers()).toContain(bId);
 
-    (nodeA as unknown as Internals).peerMgr.recordPenalty(
-      'misbehavior', bId, 500, 'test',
-    );
+    const peerMgrA = (nodeA as unknown as Internals).peerMgr;
+    // Five misbehaviors cross the 500-point threshold.
+    for (let i = 0; i < 5; i++) {
+      peerMgrA.recordPenaltyKind(PenaltyKind.Misbehavior, bId, 'test');
+    }
     await new Promise((r) => setTimeout(r, 1500));
 
     expect(nodeA.libp2pNode?.getConnections()).toHaveLength(0);
