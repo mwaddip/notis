@@ -1574,10 +1574,11 @@ before it signs**, against the `effective` of the read its own flow made: a thre
 POST_PRICE_THREAD`, a reply while `effective ≥ POST_PRICE_REPLY`, a like while `effective − LIKE_KARMA_COST ≥
 KARMA_MINIMUM`, a vouch while `effective ≥ VOUCH_MIN_BALANCE`, an invite while `effective − bond ≥ KARMA_MINIMUM`, a
 burn while `effective − USERNAME_BURN_PRICE ≥ KARMA_MINIMUM`; a withdrawal and a claim spend and return one box, and
-the node judges no spend of 0. A spend the rule refuses is a client refusal — status 0, nothing signed, nothing sent
-(→ "Nothing retries") — and its line is the spend's own *… not sent:* and the floor's sentence, *vouch not sent: the
-last N rep is for posting.*, *invite not sent: …*, *burn not sent: …*, where the spend's flight or report line stands;
-a post's is the composer's *not enough rep to post right now.* **What a surface offers reads the number the `rep` row shows** (→ The profile window): the
+the node judges no spend of 0. **A like, a vouch, an invite or a burn the rule refuses ends as a refused signature
+does** (→ "A flow can end before the node ever sees it: `notSigned`") — nothing signed, nothing sent, its step undone —
+its line the spend's own *… not sent:* and the floor's sentence, *vouch not sent: the last N rep is for posting.*,
+*invite not sent: …*, *burn not sent: …*; a post the rule refuses is a client refusal (→ "Nothing retries"), the
+composer's *not enough rep to post right now.* **What a surface offers reads the number the `rep` row shows** (→ The profile window): the
 composer's `post` (→ Invariants → "Affordability is known before the attempt"), the invite form and its bond's
 maximum (→ The profile window), `burn` (→ The username row), the `your vouch` row (→ The author window). **`like`
 stays live at the floor**: a press the row's number refuses answers *like not sent: the last N rep is for posting.*
