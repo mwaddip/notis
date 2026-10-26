@@ -93,7 +93,7 @@ beforeEach(() => {
 });
 
 describe('the username row — burn\'s title names the floor', () => {
-  it.fails('burn is disabled with the floor-naming title while canAffordBurn is false', () => {
+  it('burn is disabled with the floor-naming title while canAffordBurn is false', () => {
     const burn = burnButton(renderProfile(profileCtx({ canAffordBurn: false })));
     // WEB_INTERFACE → The username row — the title names the price and the
     // floor: *a burn costs N rep, and the last M rep is for posting; this
@@ -215,6 +215,7 @@ function appHarness(opts: { effective: bigint; faceValue: bigint; feedPost?: str
       optimisticLikes: Set<string>;
       state: { feed: { report: string | null } };
       loadFeed(): Promise<void>;
+      profileKarma: KarmaResult | null;
     },
   };
 }
@@ -226,7 +227,7 @@ afterEach(() => {
 });
 
 describe('the composer\'s `post` reads the view\'s `effective`, not the face', () => {
-  it.fails('a face above the price and an `effective` below it disables `post`', async () => {
+  it('a face above the price and an `effective` below it disables `post`', async () => {
     const h = appHarness({ effective: 2n, faceValue: 100n });
     await flush();
     h.drive.openComposer(null);
@@ -242,10 +243,16 @@ describe('the composer\'s `post` reads the view\'s `effective`, not the face', (
 });
 
 describe('the like press at the floor', () => {
-  it.fails('press at effective = KARMA_MINIMUM reads no /karma, moves no count, sends nothing, and the report line is the floor sentence', async () => {
+  it('press at effective = KARMA_MINIMUM reads no /karma, moves no count, sends nothing, and the report line is the floor sentence', async () => {
     const h = appHarness({ effective: KARMA_MINIMUM, faceValue: 100n });
     await h.drive.loadFeed();
     await flush();
+    // `profileKarma` holds the row's number the press reads; populate it as
+    // the mount's membership read fills it.
+    h.drive.profileKarma = karmaResult({
+      userId: PUB, total: '100', effective: KARMA_MINIMUM.toString(),
+      boxes: [{ boxId: BOX, value: '100' }], boxCount: 1, height: 6000, member: true,
+    });
     const likePostsBefore = h.likePosts();
     const karmaReadsBefore = h.karmaReads();
     await h.drive.likePost(TARGET1);
@@ -267,6 +274,10 @@ describe('the like press at the floor', () => {
     const h = appHarness({ effective: KARMA_MINIMUM + LIKE_KARMA_COST, faceValue: 100n });
     await h.drive.loadFeed();
     await flush();
+    h.drive.profileKarma = karmaResult({
+      userId: PUB, total: '100', effective: (KARMA_MINIMUM + LIKE_KARMA_COST).toString(),
+      boxes: [{ boxId: BOX, value: '100' }], boxCount: 1, height: 6000, member: true,
+    });
     const likePostsBefore = h.likePosts();
     await h.drive.likePost(TARGET1);
     await flush();

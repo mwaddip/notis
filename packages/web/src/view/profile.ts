@@ -4,7 +4,7 @@ import { readHex64 } from '../hex64';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { markHandle } from './name-handle';
-import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, isValidUsernameBytes } from '@dagsocial/types';
+import { INVITE_BOND_VEST_PER_LIKES, KARMA_MINIMUM, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, isValidUsernameBytes } from '@dagsocial/types';
 import { figuresLine } from '../model/figures-line';
 import type { FiguresView, WindowBody } from '../model/state';
 import type { TipVerdict } from '../model/tip-verdict';
@@ -870,7 +870,9 @@ function usernameRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow
       const burn = el('button', 'word', 'burn') as HTMLButtonElement;
       if (!ctx.canAffordBurn) {
         burn.disabled = true;
-        burn.title = `a burn costs ${USERNAME_BURN_PRICE} rep; this key has less`;
+        // WEB_INTERFACE → The username row — the title names the price and
+        // the floor the burn's gate holds.
+        burn.title = `a burn costs ${USERNAME_BURN_PRICE} rep, and the last ${KARMA_MINIMUM} rep is for posting; this key has less`;
       }
       burn.addEventListener('click', openQuestion);
       line.appendChild(burn);

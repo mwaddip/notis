@@ -2,7 +2,7 @@ import { NodeClient, PageError, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, KARMA_MINIMUM, LIKE_KARMA_COST, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex } from '@dagsocial/types';
 import { KARMA_LISTING_MAX, LEDGER_READ_MAX, isHex64Lower } from '@dagsocial/node-reads';
 import { readWholeList } from './api/whole-list';
 import { decrementBoxId } from './wallet/box-id';
@@ -981,7 +981,12 @@ export class App {
       invite: ((): { bondMin: string; bondMax: string; probationBlocks: number } | null => {
         const nn = networkNumbers(BUILD_NETWORK, this.state.status);
         if (nn === null) return null;
-        return { bondMin: nn.inviteBondMin, bondMax: nn.inviteBondMax, probationBlocks: nn.inviteProbationBlocks };
+        // The form's `max` is the lesser of the network's and
+        // `effective − KARMA_MINIMUM` (WEB_INTERFACE → The profile window →
+        // "The `invites` row"). Where no karma has been read, the network's
+        // own max stands.
+        const bondMax = this.inviteBondMaxForForm() ?? nn.inviteBondMax;
+        return { bondMin: nn.inviteBondMin, bondMax, probationBlocks: nn.inviteProbationBlocks };
       })(),
       canAffordMinBond: this.canAffordMinBond(),
       bonds: this.bondsView,
@@ -1047,19 +1052,36 @@ export class App {
     return this.profileKarma !== null && this.profileKarma.boxes.length > 0;
   }
 
-  /** The spendable view covers the minimum bond — a courtesy that shows the invite
-   *  form only when it can be filled; the effective balance is the proxy, the
-   *  node's refusal the truth (WEB_INTERFACE → The profile window). */
+  /** The invite form is shown while the floor would stand over the minimum
+   *  bond — WEB_INTERFACE → The wallet → "The floor is the client's to know",
+   *  → The profile window → "The `invites` row". */
   private canAffordMinBond(): boolean {
     if (this.profileKarma === null) return false;
     const nn = networkNumbers(BUILD_NETWORK, this.state.status);
     if (nn === null) return false;
-    return BigInt(this.profileKarma.effective) >= BigInt(nn.inviteBondMin);
+    return BigInt(this.profileKarma.effective) - BigInt(nn.inviteBondMin) >= KARMA_MINIMUM;
   }
 
+  /** `burn` is enabled while the floor would stand over USERNAME_BURN_PRICE
+   *  (WEB_INTERFACE → The wallet → "The floor is the client's to know",
+   *  → The username row). */
   private canAffordBurn(): boolean {
     if (this.profileKarma === null) return false;
-    return BigInt(this.profileKarma.effective) >= USERNAME_BURN_PRICE;
+    return BigInt(this.profileKarma.effective) - USERNAME_BURN_PRICE >= KARMA_MINIMUM;
+  }
+
+  /** The invite form's bond `max`: the lesser of the network's and
+   *  `effective − KARMA_MINIMUM` — WEB_INTERFACE → The profile window →
+   *  "The `invites` row". `null` when nothing stands to compute from, mirroring
+   *  the `invite` ctx being null. */
+  private inviteBondMaxForForm(): string | null {
+    if (this.profileKarma === null) return null;
+    const nn = networkNumbers(BUILD_NETWORK, this.state.status);
+    if (nn === null) return null;
+    const headroom = BigInt(this.profileKarma.effective) - KARMA_MINIMUM;
+    const networkMax = BigInt(nn.inviteBondMax);
+    const lesser = headroom < networkMax ? headroom : networkMax;
+    return lesser.toString();
   }
 
   /** Whether the handle a key and a name render as reads clay — the check held
@@ -3095,8 +3117,9 @@ export class App {
     if (cur === null) return;
     try {
       const ctx = await readBuildContext(this.client, cur.pubKeyHex);
-      const total = ctx.spendable.reduce((sum, b) => sum + b.value, 0n);
-      this.composers.get(key)?.setAffordable(total >= price);
+      // WEB_INTERFACE → The wallet → "The floor is the client's to know":
+      // the composer's `post` reads the view's `effective`, not the face.
+      this.composers.get(key)?.setAffordable(ctx.effective >= price);
     } catch {
       // The spendable view could not be read; the foot says so and post stays
       // disabled, rather than a disabled button with no reason.
@@ -3292,6 +3315,17 @@ export class App {
   private async likePost(postId: string): Promise<void> {
     const cur = this.idm.current();
     if (cur === null || this.optimisticLikes.has(postId)) return;
+    // The floor against the row's number before the overlay — WEB_INTERFACE
+    // → The wallet → "`like` stays live at the floor": a press the row's
+    // number refuses answers the floor's line and moves no count. A null
+    // `profileKarma` (no karma read has landed) hands the press to the
+    // flow's own check.
+    if (this.profileKarma !== null && BigInt(this.profileKarma.effective) - LIKE_KARMA_COST < KARMA_MINIMUM) {
+      this.setReportForPost(postId, `like not sent: the last ${KARMA_MINIMUM} rep is for posting.`);
+      this.renderRegionsForPost(postId);
+      if (this.feedHasPost(postId)) this.renderFeed();
+      return;
+    }
     // The reader did it — show liked and move the count at once (WEB_INTERFACE →
     // The wallet). A number that moves in direct response to the reader's own
     // click is not the ticking readout the motion contract bans.
@@ -3458,7 +3492,8 @@ export class App {
       return { kind: 'reason', text: `your stake from an unvouch is held until block ${this.escrowHeldUntil}` };
     }
     if (this.profileKarma !== null && BigInt(this.profileKarma.effective) < VOUCH_MIN_BALANCE) {
-      return { kind: 'reason', text: `vouching needs ${VOUCH_MIN_BALANCE} rep held` };
+      // WEB_INTERFACE → The author window — the floor's one sentence.
+      return { kind: 'reason', text: `the last ${KARMA_MINIMUM} rep is for posting` };
     }
     const v = this.vouched.get(key);
     if (v) return { kind: 'vouched', sinceBlock: v.createdAtBlock, cooldownBlocks };
