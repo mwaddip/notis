@@ -21,7 +21,6 @@ export {
 } from './caps.js';
 
 export {
-  isHex64Lower,
   isNonNegSafeInt,
   isNonNegSafeIntOrNull,
   isBoxValue,

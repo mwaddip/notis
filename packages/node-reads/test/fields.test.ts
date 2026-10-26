@@ -3,39 +3,38 @@
 // ends in an accept or a refuse.
 
 import { describe, it, expect } from 'vitest';
-import { USERNAME_MAX_BYTES } from '@dagsocial/types';
+import { USERNAME_MAX_BYTES, isHex64 } from '@dagsocial/types';
 import {
   isAuthorName,
   isBoxValue,
-  isHex64Lower,
   isNonNegSafeInt,
   isNonNegSafeIntOrNull,
   isSum,
 } from '../src/fields.js';
 
-describe('isHex64Lower', () => {
+describe('isHex64', () => {
   it('accepts 64 lowercase hex digits', () => {
-    expect(isHex64Lower('ab'.repeat(32))).toBe(true);
-    expect(isHex64Lower('0'.repeat(64))).toBe(true);
-    expect(isHex64Lower('0123456789abcdef'.repeat(4))).toBe(true);
+    expect(isHex64('ab'.repeat(32))).toBe(true);
+    expect(isHex64('0'.repeat(64))).toBe(true);
+    expect(isHex64('0123456789abcdef'.repeat(4))).toBe(true);
   });
 
   it('refuses uppercase hex', () => {
-    expect(isHex64Lower('AB'.repeat(32))).toBe(false);
-    expect(isHex64Lower('AbCd'.repeat(16))).toBe(false);
+    expect(isHex64('AB'.repeat(32))).toBe(false);
+    expect(isHex64('AbCd'.repeat(16))).toBe(false);
   });
 
   it('refuses 63 and 65 characters', () => {
-    expect(isHex64Lower('a'.repeat(63))).toBe(false);
-    expect(isHex64Lower('a'.repeat(65))).toBe(false);
+    expect(isHex64('a'.repeat(63))).toBe(false);
+    expect(isHex64('a'.repeat(65))).toBe(false);
   });
 
   it('refuses a non-string, including the empty string', () => {
-    expect(isHex64Lower('')).toBe(false);
-    expect(isHex64Lower(null)).toBe(false);
-    expect(isHex64Lower(undefined)).toBe(false);
-    expect(isHex64Lower(0)).toBe(false);
-    expect(isHex64Lower({})).toBe(false);
+    expect(isHex64('')).toBe(false);
+    expect(isHex64(null)).toBe(false);
+    expect(isHex64(undefined)).toBe(false);
+    expect(isHex64(0)).toBe(false);
+    expect(isHex64({})).toBe(false);
   });
 });
 

@@ -40,7 +40,7 @@ Node ≥ 22.
   and the reader applies it to an unparseable body. `isRecord` is the one object check.
 - **The caps** (`src/caps.ts`): each route's byte cap and `LEDGER_READ_MAX`, the values `CONSTANTS → Client reads`
   argues. The NiPoPoW proof route's cap is the light client's, computed from the `m` and `k` it asks.
-- **The field checks** (`src/fields.ts`): total predicates for an answer's fields — 64 lowercase hex, a non-negative
+- **The field checks** (`src/fields.ts`): total predicates for an answer's fields — a non-negative
   safe integer and the same or `null`, a box value (a canonical decimal below `2⁶³`), a sum (a canonical decimal), a
   name (`null` or what `isValidUsernameBytes` accepts).
 - **The page rule and the whole-list read** (`src/pages.ts`): `parsePage` holds a parsed body to the page the node
