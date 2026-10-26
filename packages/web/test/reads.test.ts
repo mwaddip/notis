@@ -173,9 +173,8 @@ describe("the /karma reader rebuilds a row with `income` of the mark's domain", 
 
 // WEB_INTERFACE → The wallet → "The spendable views are the node's pending view":
 // `readBuildContext` asks `/karma/:key?pending=1`; `readCreditContext` asks
-// `/credits/:key?pending=1`. The fake karma/credits now take an optional third
-// arg (the shape the client offers today) and record whether `pending` was
-// passed, so a case can assert the rule's view.
+// `/credits/:key?pending=1`. The fake karma/credits record whether a read
+// passes `{ pending: true }`, so a case can assert the view a read asks.
 describe('readBuildContext asks the pending view', () => {
   it('karma is asked with { pending: true }', async () => {
     const seen: boolean[] = [];
