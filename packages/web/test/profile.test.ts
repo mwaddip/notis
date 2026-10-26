@@ -47,8 +47,8 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
 }
 
 function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
-  return {
-    identity: null, backedUp: false, karma: null, grant: null,
+  const merged = {
+    identity: null, backedUp: false, karma: null, karmaPlain: null, grant: null,
     invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
     ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
     nameClay: () => false, // no check has decided a pair — every handle in ink
@@ -57,7 +57,17 @@ function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
     // both (WEB_INTERFACE → The extension → "The verified figures").
     verdict: undefined, figures: null,
     ...over,
-  };
+  } as ProfileCtx;
+  // Where the override hands a `karma` without a `karmaPlain`, the plain
+  // listing defaults to the view's — the state the extension holds the
+  // moment the view and the plain read land matching: no pending spend, so
+  // the two figures agree (WEB_INTERFACE → The extension → "The verified
+  // figures"). A test that drives shown ≠ plain hands `karmaPlain`
+  // explicitly.
+  if (!('karmaPlain' in over) && merged.karma !== null) {
+    merged.karmaPlain = merged.karma;
+  }
+  return merged;
 }
 
 const render = (h: ProfileHandlers, c: ProfileCtx): HTMLElement => profileBody(h, () => c, () => ORIGIN).el;
@@ -602,7 +612,8 @@ describe('profile window — no standing row for any tier', () => {
 });
 
 describe('profile window — the karma field and the faucet step', () => {
-  it('the rep row reads the effective number alone, with and without a decay gap (WEB_INTERFACE → "The `rep` row is the `effective` number alone")', () => {
+  // WEB_INTERFACE → "The `rep` row is the rep view's `effective` alone"
+  it('the rep row reads the effective number alone, with and without a decay gap', () => {
     // No gap — the row's label says what the number counts, so no unit follows it.
     const flush = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '227' }) })), 'rep')!;
     expect(flush.querySelector('.mono')!.textContent).toBe('227');

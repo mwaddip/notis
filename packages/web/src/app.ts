@@ -244,7 +244,7 @@ interface ListingStamp {
 /** The pieces of the reader's own state, each held with the order the read that
  *  answered it began in: the two listings, /status, the vouch set with its
  *  escrow, the bonds and the reader's own name. */
-type ReaderPiece = 'karma' | 'credits' | 'status' | 'vouches' | 'bonds' | 'name';
+type ReaderPiece = 'karma' | 'karmaPlain' | 'credits' | 'creditsPlain' | 'status' | 'vouches' | 'bonds' | 'name';
 
 export class App {
   private state: AppState;
@@ -368,12 +368,20 @@ export class App {
   private figuresGen = 0;
   private figuresInFlight = false;
   private figuresDirty = false;
-  // The loaded key's /karma with the stamp its read began under — read at
-  // identity load, the profile window's open and its ↻, every landing of the
-  // reader's own transaction and, in the extension, every verified tip — and a
-  // faucet grant in flight or one that lapsed; both feed the profile window's ctx.
+  // The loaded key's /karma?pending=1 — the rep view, read at identity load,
+  // the profile window's open and its ↻, each 2xx of the reader's own rep
+  // spend and every landing of one, and in the extension every verified tip
+  // (WEB_INTERFACE → The profile window → "The `rep` row is the rep view's
+  // `effective` alone"); the row shows its `effective`.
   private profileKarma: KarmaResult | null = null;
-  private profileKarmaStamp: ListingStamp | null = null;
+  // The plain /karma listing read beside the view where the App holds a
+  // figures verifier, or where the tick has a grant standing — the listing
+  // the verified-figures run proves and the row's line reads for `plainShown`
+  // and `boxCount` (WEB_INTERFACE → The extension → "The verified figures",
+  // → The wallet → "A landing reads the plain listings, never `pending=1`").
+  // Null in a build with no verifier until a grant's reconcile reads it.
+  private profileKarmaPlain: KarmaResult | null = null;
+  private profileKarmaPlainStamp: ListingStamp | null = null;
   private grantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   // The reader's own state is what the node answers for the loaded key; an
   // identity change and a change of the reading node drop it whole
@@ -488,7 +496,14 @@ export class App {
   // identity owes before that send — which the row draws into whichever form
   // stands (→ "The `send` row").
   private walletCredits: CreditsResult | null = null;
-  private walletCreditsStamp: ListingStamp | null = null;
+  // The plain /credits listing read beside the view where the App holds a
+  // figures verifier, or where the tick has a credits grant standing — the
+  // listing the verified-figures run proves and the balance line reads for
+  // `plainShown` and `boxCount` (WEB_INTERFACE → The extension → "The
+  // verified figures", → The wallet → "A landing reads the plain listings,
+  // never `pending=1`").
+  private walletCreditsPlain: CreditsResult | null = null;
+  private walletCreditsPlainStamp: ListingStamp | null = null;
   private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   private sendFlight: Flight | null = null;
   private sendCheck: string | null = null;
@@ -958,6 +973,7 @@ export class App {
       identity: this.idm.current(),
       backedUp: this.idm.backedUp(),
       karma: this.profileKarma,
+      karmaPlain: this.profileKarmaPlain,
       grant: this.grantView,
       member: this.isMember(),
       author: this.authorData,
@@ -984,6 +1000,7 @@ export class App {
       // filter reads (WEB_INTERFACE → The wallet).
       status: this.state.status,
       credits: this.walletCredits,
+      creditsPlain: this.walletCreditsPlain,
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
       pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
@@ -2358,24 +2375,47 @@ export class App {
   }
 
   /** Re-read /credits and move the balance in place — the wallet window's
-   *  opening, by a press or restored at boot, and its ↻, and the re-read an
-   *  identity or node change and a verified tip owe while the window is open
-   *  (WEB_INTERFACE → The wallet window). An answer for the node or the key
-   *  before writes nothing. */
+   *  opening, by a press or restored at boot, and its ↻, each 2xx of the
+   *  reader's own send, and the re-read an identity or node change and a
+   *  verified tip owe while the window is open (WEB_INTERFACE → The wallet
+   *  window). The view fills the balance row; where the App holds a figures
+   *  verifier, a plain read of /credits stands beside the view and fills
+   *  `walletCreditsPlain` for the verified-figures run (→ The extension →
+   *  "The verified figures"). An answer for the node or the key before
+   *  writes nothing. */
   private async refreshWalletCredits(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
     const gen = this.readerGen;
     const stamp = this.listingStamp();
     const order = this.beginRead();
+    const plainStamp = this.listingStamp();
+    const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
+    const viewPromise = this.readOwnCredits(cur.pubKeyHex);
+    const plainPromise = this.figuresVerifier !== null
+      ? this.readOwnCreditsPlain(cur.pubKeyHex)
+      : null;
     let credits: CreditsResult;
     try {
-      credits = await this.readOwnCredits(cur.pubKeyHex);
+      credits = await viewPromise;
     } catch {
-      return; // a failed read leaves the last-known state; the next ↻ retries
+      // The plain read may be in flight — drop it on the floor and let its
+      // error surface silently; the next ↻ retries.
+      if (plainPromise !== null) void plainPromise.catch(() => {});
+      return;
     }
     if (gen !== this.readerGen) return;
     this.takeCredits(credits, stamp, order);
+    if (plainPromise !== null) {
+      let plain: CreditsResult;
+      try {
+        plain = await plainPromise;
+      } catch {
+        return;
+      }
+      if (gen !== this.readerGen) return;
+      this.takeCreditsPlain(plain, plainStamp, plainOrder);
+    }
   }
 
   /** Take a /credits listing as the balance row's, beside the stamp its read
@@ -2383,12 +2423,12 @@ export class App {
    *  balance moves in its slot (HOUSE_STYLE → Motion) and the figures run
    *  follows (WEB_INTERFACE → The extension → "The verified figures"). Answers
    *  whether it took. */
-  private takeCredits(credits: CreditsResult, stamp: ListingStamp, order: number): boolean {
+  private takeCredits(credits: CreditsResult, _stamp: ListingStamp, order: number): boolean {
     if (!this.newerRead('credits', order)) return false;
     this.walletCredits = credits;
-    this.walletCreditsStamp = stamp;
     this.renderCreditsRowInPlace();
-    this.startFigures();
+    // The view read fills the row; the plain read is the one a figures run
+    // reads and `takeCreditsPlain` triggers.
     return true;
   }
 
@@ -2766,7 +2806,8 @@ export class App {
     this.endSendPress();
     this.lastPolledHeight = 0;
     this.profileKarma = null;
-    this.profileKarmaStamp = null;
+    this.profileKarmaPlain = null;
+    this.profileKarmaPlainStamp = null;
     this.state.status = null;
     this.vouched.clear();
     this.escrowHeldUntil = null;
@@ -2777,7 +2818,8 @@ export class App {
     this.ownName = null;
     this.ownNameLoaded = false;
     this.walletCredits = null;
-    this.walletCreditsStamp = null;
+    this.walletCreditsPlain = null;
+    this.walletCreditsPlainStamp = null;
     this.heldRead.clear();
     // The figures describe the listings dropped here. A run in flight for them
     // is dropped by its older generation, and the flags clear beside the
@@ -2825,8 +2867,12 @@ export class App {
     return this.loadMembershipState();
   }
 
-  /** Re-read /karma and move the rep row in place — the first read a verified tip
-   *  owes (WEB_INTERFACE → The extension → "The verified figures"). An answer
+  /** Re-read /karma and move the rep row in place — each 2xx of a rep spend,
+   *  and the first read a verified tip owes (WEB_INTERFACE → The extension →
+   *  "The verified figures", → The profile window → "The `rep` row is the rep
+   *  view's `effective` alone"). The view fills the rep row; where the App
+   *  holds a figures verifier, a plain read of /karma stands beside the view
+   *  and fills `profileKarmaPlain` for the verified-figures run. An answer
    *  for the node or the key before writes nothing. */
   private async refreshOwnKarma(): Promise<void> {
     const cur = this.idm.current();
@@ -2834,35 +2880,84 @@ export class App {
     const gen = this.readerGen;
     const stamp = this.listingStamp();
     const order = this.beginRead();
+    const plainStamp = this.listingStamp();
+    const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
+    const viewPromise = this.readOwnKarma(cur.pubKeyHex);
+    const plainPromise = this.figuresVerifier !== null
+      ? this.readOwnKarmaPlain(cur.pubKeyHex)
+      : null;
     let karma: KarmaResult;
     try {
-      karma = await this.readOwnKarma(cur.pubKeyHex);
+      karma = await viewPromise;
     } catch {
-      return; // a failed read leaves the last-known state; the next read retries
+      if (plainPromise !== null) void plainPromise.catch(() => {});
+      return;
     }
     if (gen !== this.readerGen) return;
     this.takeKarma(karma, stamp, order);
+    if (plainPromise !== null) {
+      let plain: KarmaResult;
+      try {
+        plain = await plainPromise;
+      } catch {
+        return;
+      }
+      if (gen !== this.readerGen) return;
+      this.takeKarmaPlain(plain, plainStamp, plainOrder);
+    }
   }
 
   /** Hold a /karma listing as the rep row's, beside the stamp its read began
    *  under — unless the held listing's read began later (newerRead). Answers
    *  whether it took. */
-  private holdKarma(karma: KarmaResult, stamp: ListingStamp, order: number): boolean {
+  private holdKarma(karma: KarmaResult, _stamp: ListingStamp, order: number): boolean {
     if (!this.newerRead('karma', order)) return false;
     this.profileKarma = karma;
-    this.profileKarmaStamp = stamp;
     return true;
   }
 
   /** Take a /karma listing as the rep row's: its height feeds the tip the gates
    *  read (bumpTip) whichever listing the row holds, then it is held
    *  (holdKarma), the number moves in its slot (HOUSE_STYLE → Motion) and the
-   *  figures run follows (WEB_INTERFACE → The extension → "The verified
-   *  figures"). Answers whether it took. */
+   *  figures run follows if the plain listing stands beside the view
+   *  (WEB_INTERFACE → The extension → "The verified figures"). Answers
+   *  whether it took. */
   private takeKarma(karma: KarmaResult, stamp: ListingStamp, order: number): boolean {
     this.bumpTip(karma.height);
     if (!this.holdKarma(karma, stamp, order)) return false;
     this.renderProfileKarma();
+    // The view read fills the row; the plain read is the one a figures run
+    // reads and `takeKarmaPlain` triggers (WEB_INTERFACE → The extension →
+    // "The verified figures").
+    return true;
+  }
+
+  /** Hold a plain /karma listing beside the view — the one the verified-
+   *  figures run proves and the rep line reads for `plainShown` and
+   *  `boxCount` (WEB_INTERFACE → The extension → "The verified figures").
+   *  The row re-renders so the line reads the fresh plain figure, and the
+   *  figures run follows (startFigures reads the plain field). Answers
+   *  whether it took — a held answer whose read began later keeps its
+   *  place (newerRead). */
+  private takeKarmaPlain(karma: KarmaResult, stamp: ListingStamp, order: number): boolean {
+    if (!this.newerRead('karmaPlain', order)) return false;
+    this.profileKarmaPlain = karma;
+    this.profileKarmaPlainStamp = stamp;
+    this.renderProfileKarma();
+    this.startFigures();
+    return true;
+  }
+
+  /** Hold a plain /credits listing beside the view — the one the verified-
+   *  figures run proves and the balance line reads for `plainShown` and
+   *  `boxCount` (WEB_INTERFACE → The extension → "The verified figures").
+   *  The balance row re-renders so the line reads the fresh plain figure, and
+   *  the figures run follows (startFigures reads the plain field). */
+  private takeCreditsPlain(credits: CreditsResult, stamp: ListingStamp, order: number): boolean {
+    if (!this.newerRead('creditsPlain', order)) return false;
+    this.walletCreditsPlain = credits;
+    this.walletCreditsPlainStamp = stamp;
+    this.renderCreditsRowInPlace();
     this.startFigures();
     return true;
   }
@@ -3401,10 +3496,21 @@ export class App {
     const gen = this.readerGen;
     const stamp = this.listingStamp();
     const order = this.beginRead();
+    // The plain listing stands beside the view where the App holds a figures
+    // verifier (WEB_INTERFACE → The extension → "The verified figures").
+    // The view fires first so the rep row's listing read lands before the
+    // plain listing — a reader of the two reads' order reads the view's.
+    const viewPromise = this.readOwnKarma(cur.pubKeyHex);
+    const plainStamp = this.listingStamp();
+    const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
+    const plainPromise = this.figuresVerifier !== null
+      ? this.readOwnKarmaPlain(cur.pubKeyHex)
+      : null;
     let karmaTaken = false;
+    let karmaPlain: KarmaResult | null = null;
     try {
       const [karma, status, vouched, escrow, bonds, ownName] = await Promise.all([
-        this.readOwnKarma(cur.pubKeyHex),
+        viewPromise,
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
@@ -3427,25 +3533,51 @@ export class App {
         this.ownNameLoaded = true;
       }
     } catch {
+      if (plainPromise !== null) void plainPromise.catch(() => {});
       return; // a failed read leaves the last-known state; the ↻ retries
+    }
+    if (plainPromise !== null) {
+      try {
+        karmaPlain = await plainPromise;
+      } catch {
+        karmaPlain = null;
+      }
+      if (gen !== this.readerGen) return;
     }
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
-    // A fresh karma listing triggers a figures verifier run
-    // (WEB_INTERFACE → The extension → "The verified figures").
-    if (karmaTaken) this.startFigures();
+    if (karmaPlain !== null) {
+      // Holding the plain re-renders the rep row and triggers the figures run.
+      this.takeKarmaPlain(karmaPlain, plainStamp, plainOrder);
+    } else if (karmaTaken) {
+      // No plain read owed, or it failed — the view's write still triggers a
+      // figures run attempt (which skips without a plain listing standing).
+      this.startFigures();
+    }
   }
 
-  /** Read the whole /credits for a key, following `next` to the end. The
-   *  spendable view is the whole page; a landing needs to see every box the
-   *  node has (WEB_INTERFACE → "Paging is keyset, never offset"). `total` is
-   *  the identity's total on every page, so the first page's value stands. */
+  /** Read the whole /credits for a key, following `next` to the end — the
+   *  pending view the balance row shows (WEB_INTERFACE → The wallet → "The
+   *  spendable views are the node's pending view"). `total` is the identity's
+   *  total on every page, so the first page's value stands. */
   private async readOwnCredits(key: string): Promise<CreditsResult> {
+    return this.readCreditsFor(key, { pending: true });
+  }
+
+  /** Read the whole plain /credits for a key — the listing the verified-
+   *  figures run proves and the balance line reads for `plainShown`
+   *  and `boxCount` (WEB_INTERFACE → The extension → "The verified figures",
+   *  → The wallet → "A landing reads the plain listings, never `pending=1`"). */
+  private async readOwnCreditsPlain(key: string): Promise<CreditsResult> {
+    return this.readCreditsFor(key, undefined);
+  }
+
+  private async readCreditsFor(key: string, opts: { pending: true } | undefined): Promise<CreditsResult> {
     let first: CreditsResult | null = null;
     const boxes = await readWholeList<CreditsResult['boxes'][number], CreditsResult>({
       readPage: async (page) => {
-        const answer = await this.client.credits(key, page);
+        const answer = await this.client.credits(key, page, opts);
         if (first === null) first = answer;
         return answer;
       },
@@ -3458,18 +3590,31 @@ export class App {
     return { userId: captured.userId, total: captured.total, boxes, boxCount: boxes.length, next: null };
   }
 
-  /** Read the whole /karma for a key, following `next` to the end
-   *  (WEB_INTERFACE → "Paging is keyset, never offset"). The row's number is
-   *  the first page's `effective`; the figures verifier will prove the whole
-   *  listing (WEB_INTERFACE → The extension → "The verified figures"). Every
-   *  field but `boxes` / `boxCount` / `next` is the identity's, the same on
-   *  every page (NODE_INTERFACE → UTXO queries), so the first page's values
-   *  stand. */
+  /** Read the whole /karma for a key, following `next` to the end — the
+   *  pending view the rep row shows (WEB_INTERFACE → The wallet → "The
+   *  spendable views are the node's pending view", → The profile window →
+   *  "The `rep` row is the rep view's `effective` alone"). Every field but
+   *  `boxes` / `boxCount` / `next` is the identity's, the same on every page
+   *  (NODE_INTERFACE → UTXO queries), so the first page's values stand. */
   private async readOwnKarma(key: string): Promise<KarmaResult> {
+    return this.readKarmaFor(key, { pending: true });
+  }
+
+  /** Read the whole plain /karma for a key — the listing the verified-figures
+   *  run proves and the rep line reads for `plainShown` and `boxCount`
+   *  (WEB_INTERFACE → The extension → "The verified figures", → The wallet
+   *  → "A landing reads the plain listings, never `pending=1`"). The grant
+   *  reconcile also reads it — the plain listing is what a landing lists
+   *  (WEB_INTERFACE → The faucet step). */
+  private async readOwnKarmaPlain(key: string): Promise<KarmaResult> {
+    return this.readKarmaFor(key, undefined);
+  }
+
+  private async readKarmaFor(key: string, opts: { pending: true } | undefined): Promise<KarmaResult> {
     let first: KarmaResult | null = null;
     const boxes = await readWholeList<KarmaResult['boxes'][number], KarmaResult>({
       readPage: async (page) => {
-        const answer = await this.client.karma(key, page);
+        const answer = await this.client.karma(key, page, opts);
         if (first === null) first = answer;
         return answer;
       },
@@ -4580,27 +4725,28 @@ export class App {
   // under an older generation is dropped.
 
   /** Start a figures verifier run, or drop the trigger. Runs only when the App
-   *  holds every input the tool needs, and proves only a listing read after the
-   *  anchor it is proven against — one read before it may name a box spent
-   *  since, which the chain rightly no longer holds. Object identity of
-   *  `profileKarma` and `walletCredits` is the "listing moved" check — every
-   *  write assigns a fresh object from readOwnKarma / readOwnCredits, so a
-   *  captured pair identical to the field pair is the pair the run proved. */
+   *  holds every input the tool needs — the plain listings read beside the
+   *  views — and proves only a plain listing read after the anchor it is
+   *  proven against (WEB_INTERFACE → The extension → "The verified figures").
+   *  Object identity of `profileKarmaPlain` and `walletCreditsPlain` is the
+   *  "listing moved" check — every write assigns a fresh object from
+   *  readOwnKarmaPlain / readOwnCreditsPlain, so a captured pair identical to
+   *  the field pair is the pair the run proved. */
   private startFigures(): void {
     if (this.figuresVerifier === null) return;
     const cur = this.idm.current();
     if (cur === null) return;
     const anchor = this.tipAnchor;
     if (anchor === null) return;
-    const capturedKarma = this.profileKarma;
-    if (capturedKarma === null || !this.readAfterAnchor(this.profileKarmaStamp)) return;
+    const capturedKarma = this.profileKarmaPlain;
+    if (capturedKarma === null || !this.readAfterAnchor(this.profileKarmaPlainStamp)) return;
     if (this.figuresInFlight) {
       this.figuresDirty = true;
       return;
     }
-    const capturedCredits = this.walletCredits;
-    // A credits listing not read after the current anchor is passed as not
-    // read — never as an empty one, under which every box the key holds
+    const capturedCredits = this.walletCreditsPlain;
+    // A credits plain listing not read after the current anchor is passed as
+    // not read — never as an empty one, under which every box the key holds
     // would read `unlisted` (WEB_INTERFACE → The extension → "A listing
     // not read after the current anchor is handed to the run as not read").
     const listing: Listing = {
@@ -4609,7 +4755,7 @@ export class App {
         height: capturedKarma.height,
         effective: capturedKarma.effective,
       },
-      credits: capturedCredits !== null && this.readAfterAnchor(this.walletCreditsStamp)
+      credits: capturedCredits !== null && this.readAfterAnchor(this.walletCreditsPlainStamp)
         ? { boxes: capturedCredits.boxes }
         : null,
     };
@@ -4620,10 +4766,10 @@ export class App {
       (result) => {
         if (gen !== this.figuresGen) return;
         this.figuresInFlight = false;
-        if (this.profileKarma !== capturedKarma || this.walletCredits !== capturedCredits) {
-          // The listing moved during the run — the result belongs to the
-          // listing that has passed; run again against the one the App now
-          // holds. The dirty flag is cleared implicitly by the fresh call.
+        if (this.profileKarmaPlain !== capturedKarma || this.walletCreditsPlain !== capturedCredits) {
+          // The plain listing moved during the run — the result belongs to the
+          // listing that has passed; run again against the one the App holds.
+          // The dirty flag is cleared implicitly by the fresh call.
           this.figuresDirty = false;
           this.startFigures();
           return;
@@ -4885,8 +5031,8 @@ export class App {
    *  pointer are lost even where the pixels match. Every landing of the reader's
    *  own transaction re-reads the listing it changed, once per tick however many
    *  land in it, and a grant is decided on that same read (WEB_INTERFACE → The
-   *  profile window → "The `rep` row is the `effective` number alone", → The
-   *  wallet window → "The `balance` row", → The faucet step). A read that
+   *  profile window → "The `rep` row is the rep view's `effective` alone",
+   *  → The wallet window → "The `balance` row", → The faucet step). A read that
    *  answers after the reader's own state dropped ends the tick, writing nothing;
    *  a piece a read begun after the tick's own already answered keeps that
    *  answer (newerRead), and the tick still decides its entries on its own read. */
@@ -5083,14 +5229,39 @@ export class App {
       }
     }
 
-    // The tick's one /karma read: the listing every karma-side landing changed,
-    // and the faucet grant's landing signal — `boxCount` risen (WEB_INTERFACE →
-    // The faucet step). Read after every landing above was observed, so it holds
-    // what they spent; a failed read keeps a grant pending and the rep row's last
-    // listing, and the next tick or ↻ reads again.
+    // The tick's /karma reads: the plain listing reconciles grants and feeds
+    // the figures run (WEB_INTERFACE → The wallet → "A landing reads the
+    // plain listings, never `pending=1`"); the view fills the rep row once a
+    // landing moves it (→ The profile window → "The `rep` row is the rep
+    // view's `effective` alone"). The plain is read first so the view read
+    // follows a landing — a grant that cannot reconcile is pending; a failed
+    // plain read keeps a grant pending and ends the tick's karma reads.
     const grants = entries.filter((e) => e.kind === 'grant');
     let karmaTaken = false;
-    if (cur !== null && (karmaLanded || grants.length > 0)) {
+    const needPlainKarma = grants.length > 0 || (this.figuresVerifier !== null && karmaLanded);
+    if (cur !== null && needPlainKarma) {
+      const plainStamp = this.listingStamp();
+      const plainOrder = this.beginRead();
+      let karmaPlainR: KarmaResult | null = null;
+      try {
+        karmaPlainR = await this.readOwnKarmaPlain(cur.pubKeyHex);
+      } catch {
+        karmaPlainR = null;
+      }
+      if (gen !== this.readerGen) return;
+      if (karmaPlainR !== null) {
+        for (const entry of grants) {
+          const outcome = reconcileGrant(entry, karmaPlainR, tip);
+          if (outcome === 'pending') continue;
+          this.ledger.remove(entry.txId);
+          this.grantView = outcome === 'landed' ? null : { state: 'expired', atHeight: entry.expiresAtHeight };
+          if (outcome === 'landed') karmaLanded = true;
+          grantSettled = true;
+        }
+        this.takeKarmaPlain(karmaPlainR, plainStamp, plainOrder);
+      }
+    }
+    if (cur !== null && karmaLanded) {
       const stamp = this.listingStamp();
       const order = this.beginRead();
       let karma: KarmaResult | null = null;
@@ -5100,25 +5271,39 @@ export class App {
         karma = null;
       }
       if (gen !== this.readerGen) return;
-      if (karma !== null) {
-        for (const entry of grants) {
-          const outcome = reconcileGrant(entry, karma, tip);
-          if (outcome === 'pending') continue;
-          this.ledger.remove(entry.txId);
-          this.grantView = outcome === 'landed' ? null : { state: 'expired', atHeight: entry.expiresAtHeight };
-          if (outcome === 'landed') karmaLanded = true;
-          grantSettled = true;
-        }
-        if (karmaLanded) karmaTaken = this.takeKarma(karma, stamp, order);
-      }
+      if (karma !== null) karmaTaken = this.takeKarma(karma, stamp, order);
     }
 
-    // The tick's one /credits read of the reader's own key: the listing a send's
-    // landing changed, and the credits grant's landing signal — the box the
-    // faucet named, listed (WEB_INTERFACE → The faucet step, → The wallet).
+    // The tick's /credits reads: the plain listing reconciles credit grants
+    // and feeds the figures run (WEB_INTERFACE → The wallet → "A landing
+    // reads the plain listings, never `pending=1`"); the view fills the
+    // balance row once a landing moves it.
     const creditGrants = entries.filter((e) => e.kind === 'creditGrant');
     let creditsTaken = false;
-    if (cur !== null && (creditsLanded || creditGrants.length > 0)) {
+    const needPlainCredits = creditGrants.length > 0 || (this.figuresVerifier !== null && creditsLanded);
+    if (cur !== null && needPlainCredits) {
+      const plainStamp = this.listingStamp();
+      const plainOrder = this.beginRead();
+      let creditsPlainR: CreditsResult | null = null;
+      try {
+        creditsPlainR = await this.readOwnCreditsPlain(cur.pubKeyHex);
+      } catch {
+        creditsPlainR = null;
+      }
+      if (gen !== this.readerGen) return;
+      if (creditsPlainR !== null) {
+        for (const entry of creditGrants) {
+          const outcome = reconcileCreditGrant(entry, creditsPlainR, tip);
+          if (outcome === 'pending') continue;
+          this.ledger.remove(entry.txId);
+          this.creditGrantView = outcome === 'landed' ? null : { state: 'expired', atHeight: entry.expiresAtHeight };
+          if (outcome === 'landed') creditsLanded = true;
+          creditsChanged = true;
+        }
+        this.takeCreditsPlain(creditsPlainR, plainStamp, plainOrder);
+      }
+    }
+    if (cur !== null && creditsLanded) {
       const stamp = this.listingStamp();
       const order = this.beginRead();
       let credits: CreditsResult | null = null;
@@ -5128,17 +5313,7 @@ export class App {
         credits = null;
       }
       if (gen !== this.readerGen) return;
-      if (credits !== null) {
-        for (const entry of creditGrants) {
-          const outcome = reconcileCreditGrant(entry, credits, tip);
-          if (outcome === 'pending') continue;
-          this.ledger.remove(entry.txId);
-          this.creditGrantView = outcome === 'landed' ? null : { state: 'expired', atHeight: entry.expiresAtHeight };
-          if (outcome === 'landed') creditsLanded = true;
-          creditsChanged = true;
-        }
-        if (creditsLanded) creditsTaken = this.takeCredits(credits, stamp, order);
-      }
+      if (credits !== null) creditsTaken = this.takeCredits(credits, stamp, order);
     }
 
     // A landed card changes colour and nothing else; the geometry is identical.

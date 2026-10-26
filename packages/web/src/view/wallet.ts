@@ -84,7 +84,8 @@ export interface WalletCtx {
   // and the faucet step, *no $NOTIS yet.* and a lapsed grant's `ask again` wait
   // for it (→ The wallet window → "The `balance` row").
   status: StatusResult | null;
-  credits: CreditsResult | null;
+  credits: CreditsResult | null; // /credits?pending=1 — the credits view (WEB_INTERFACE → The wallet)
+  creditsPlain: CreditsResult | null; // /credits plain — read beside the view for a verifier run
   creditGrant: GrantView | null;
   sendFlight: Flight | null;
   pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
@@ -216,18 +217,23 @@ export function sendUnlockRow(
 function appendFiguresLine(
   line: HTMLElement,
   ctx: WalletCtx,
-  boxCount: number,
   height: number,
   shown: bigint,
   goldSpan: HTMLElement | null,
 ): void {
+  // The plain listing is the one the verified-figures run proves; its
+  // spendable sum and `boxCount` are what the line reads (WEB_INTERFACE →
+  // The extension → "The verified figures").
+  const plain = ctx.creditsPlain;
+  const plainShown = plain === null ? 0n : sumValues(spendableCreditBoxes(plain.boxes, height));
   const fLine = figuresLine({
     ledger: 'credits',
     verdict: ctx.verdict,
     result: ctx.figures?.result ?? null,
     shown,
+    plainShown,
     suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
-    boxCount,
+    boxCount: plain === null ? 0 : plain.boxCount,
     height,
   });
   if (fLine === null) return;
@@ -394,7 +400,7 @@ function creditsRows(b: HTMLElement, handlers: WalletHandlers, read: () => Walle
         hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
         line.appendChild(hint);
       }
-      appendFiguresLine(line, ctx, c.boxCount, height, spendable, goldSpan);
+      appendFiguresLine(line, ctx, height, spendable, goldSpan);
     } else {
       // No box spendable at the /status height → the faucet step when a faucet is
       // set, else "no $NOTIS yet." — both, and the lapsed grant's `ask again`, only
@@ -438,7 +444,7 @@ function creditsRows(b: HTMLElement, handlers: WalletHandlers, read: () => Walle
       // listing takes these lines as any listing does"; → The wallet window →
       // "A listing with no box reads its line too"). `shown` is 0 here, with
       // no gold to turn clay.
-      appendFiguresLine(line, ctx, c.boxCount, height, 0n, null);
+      appendFiguresLine(line, ctx, height, 0n, null);
     }
 
     showSendAnswer(form !== null && confirm === null ? form.el : null, ctx.sendAnswer);

@@ -281,7 +281,11 @@ describe('a figures run proves a listing read after its anchor, and never one re
     // Nothing is proven before the read answers.
     expect(h.figuresCalls).toHaveLength(runsBefore);
     await flush();
-    expect(h.node.count('karma')).toBe(readsBefore + 1);
+    // A verified tip reads /karma twice — the view feeds the rep row, the
+    // plain feeds the figures run (WEB_INTERFACE → The extension → "The
+    // verified figures", → The wallet → "A landing reads the plain listings,
+    // never `pending=1`").
+    expect(h.node.count('karma')).toBe(readsBefore + 2);
     const after = h.figuresCalls.slice(runsBefore);
     expect(after).toHaveLength(1);
     expect(after[0]!.anchor.tip.height).toBe(1104);
@@ -310,19 +314,20 @@ describe('a figures run proves a listing read after its anchor, and never one re
     const h = harness({ layout: '@profile', verifiers: true });
     await h.drive.loadMembershipState();
     await flush();
-    // A profile ↻ begins before the anchor and is held past it.
+    // A profile ↻ begins before the anchor and is held past it — two
+    // /karma reads start (view + plain), both held.
     h.node.setHold((m) => m === 'karma');
     const early = h.drive.refreshProfileKarma();
     await flush();
-    expect(h.node.held).toHaveLength(1);
-    // The anchor lands; its own /karma read fails, so the early read is the
-    // one that answers after the anchor.
+    expect(h.node.held).toHaveLength(2);
+    // The anchor lands; its own /karma reads fail, so the early reads are
+    // the ones that answer after the anchor.
     h.node.setHold(() => false);
     h.node.setFail((m) => m === 'karma');
     h.tipCalls[0]!.resolve(verified(1070));
     await flush();
     h.chain.effective = '218';
-    h.node.held[0]!.release();
+    for (const held of h.node.held) held.release();
     await early;
     await flush();
     expect(repNumber()).toBe('218');
@@ -341,7 +346,9 @@ describe('a figures run proves a listing read after its anchor, and never one re
     const karmaBefore = h.node.count('karma');
     h.tipCalls[0]!.resolve(verified(1070));
     await flush();
-    expect(h.node.count('karma')).toBe(karmaBefore + 1);
+    // A verified tip reads /karma twice — the view feeds the rep row, the
+    // plain feeds the figures run.
+    expect(h.node.count('karma')).toBe(karmaBefore + 2);
     expect(h.node.count('credits')).toBe(creditsBefore);
     expect(h.figuresCalls).toHaveLength(1);
     expect(h.figuresCalls[0]!.listing.credits).toBeNull();
@@ -356,7 +363,9 @@ describe('a figures run proves a listing read after its anchor, and never one re
     const creditsBefore = h.node.count('credits');
     h.tipCalls[0]!.resolve(verified(1070));
     await flush();
-    expect(h.node.count('credits')).toBe(creditsBefore + 1);
+    // A verified tip reads /credits twice too — the view feeds the balance
+    // row, the plain feeds the figures run.
+    expect(h.node.count('credits')).toBe(creditsBefore + 2);
     expect(h.figuresCalls).toHaveLength(1);
     expect(h.figuresCalls[0]!.listing.credits).toBeNull();
 
@@ -460,7 +469,7 @@ describe('every landing of the reader\'s own transaction re-reads the listing it
     expect(repNumber()).toBe('211');
   });
 
-  it('a faucet grant is decided on the same read: a grant and a post landing in one tick read /karma once', async () => {
+  it('a faucet grant is decided on the plain read; the view follows the landing — a grant and a post landing in one tick read /karma twice', async () => {
     setNode(NODE);
     const h = harness({ layout: '@profile', entries: [{ kind: 'grant', postId: ME }, { kind: 'post', postId: P }] });
     h.chain.karma = [];
@@ -475,7 +484,11 @@ describe('every landing of the reader\'s own transaction re-reads the listing it
     await h.drive.pollTick();
     await flush();
     expect(h.ledger.size).toBe(0);
-    expect(h.node.count('karma')).toBe(before + 1);
+    // The tick's plain read lands the grant (karmaLanded) and the view read
+    // moves the rep row's figure (WEB_INTERFACE → The wallet → "A landing
+    // reads the plain listings, never `pending=1`", → The profile window
+    // → "The `rep` row is the rep view's `effective` alone").
+    expect(h.node.count('karma')).toBe(before + 2);
     expect(repNumber()).toBe('250');
   });
 
@@ -493,7 +506,7 @@ describe('every landing of the reader\'s own transaction re-reads the listing it
     expect(h.node.count('karma')).toBe(before);
   });
 
-  it('a send\'s landing and a credits grant\'s in one tick read the reader\'s /credits once, the wallet closed', async () => {
+  it('a send\'s landing and a credits grant\'s in one tick read the reader\'s /credits twice, the wallet closed — plain for the grant reconcile, view for the balance row', async () => {
     setNode(NODE);
     const h = harness({ entries: [] });
     h.ledger.add({
@@ -514,6 +527,6 @@ describe('every landing of the reader\'s own transaction re-reads the listing it
     await h.drive.pollTick();
     await flush();
     expect(h.ledger.size).toBe(0);
-    expect(h.node.calls.filter((c) => c.method === 'credits' && c.key === ME).length).toBe(before + 1);
+    expect(h.node.calls.filter((c) => c.method === 'credits' && c.key === ME).length).toBe(before + 2);
   });
 });

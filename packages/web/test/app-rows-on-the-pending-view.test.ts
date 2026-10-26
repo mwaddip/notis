@@ -163,7 +163,7 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('the rep row reads the pending view', () => {
-  it.fails('a profile open fires /karma with pending=1 — control: a read did fire', async () => {
+  it('a profile open fires /karma with pending=1 — control: a read did fire', async () => {
     setNode('https://a.example');
     const h = harness();
     await flush();
@@ -175,7 +175,7 @@ describe('the rep row reads the pending view', () => {
     expect(own[0]!.pending).toBe(true);
   });
 
-  it.fails('the number the row renders is the pending view\'s `effective`', async () => {
+  it('the number the row renders is the pending view\'s `effective`', async () => {
     setNode('https://a.example');
     const h = harness();
     await flush();
@@ -197,7 +197,7 @@ describe('the rep row reads the pending view', () => {
 });
 
 describe('the balance row reads the pending view', () => {
-  it.fails('a wallet open fires /credits with pending=1 — control: a read did fire', async () => {
+  it('a wallet open fires /credits with pending=1 — control: a read did fire', async () => {
     setNode('https://a.example');
     const h = harness();
     await flush();
@@ -211,7 +211,7 @@ describe('the balance row reads the pending view', () => {
 });
 
 describe('the figures run reads the plain listing beside the view', () => {
-  it.fails('the plain /karma is read beside the view — one request each', async () => {
+  it('the plain /karma is read beside the view — one request each', async () => {
     setNode('https://a.example');
     const h = harness();
     await flush();
@@ -228,7 +228,7 @@ describe('the figures run reads the plain listing beside the view', () => {
 });
 
 describe('a web build (no verifier) reads no plain listing beside the view', () => {
-  it.fails('a profile open under no verifier fires one /karma — the view only', async () => {
+  it('a profile open under no verifier fires one /karma — the view only', async () => {
     setNode('https://a.example');
     const h = harness({ withVerifier: false });
     await flush();
