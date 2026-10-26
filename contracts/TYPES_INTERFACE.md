@@ -3701,9 +3701,9 @@ of test blocks inside sixteen whole bits, and the divergence is load-bearing rat
 ⚠ **Both are in units of 1/256 of a bit** — `VALIDATION_INTERFACE → orderingPowTarget`. Divide by 256
 to read them as whole bits.
 
-**The floor is nine bits rather than the four it was, and that is not a rescale.** `blockWork` stops
+**The floor is nine whole bits, the first whole bit at which `blockWork` resolves.** `blockWork` stops
 resolving below 2180 — a 1/256-bit step there buys zero additional work — so a chain admitted beneath
-that line retargets without moving the quantity fork choice selects on. 2304 is the first whole bit
+that line would retarget without moving the quantity fork choice selects on. 2304 is the first whole bit
 above it.
 
 ### Interlinks
