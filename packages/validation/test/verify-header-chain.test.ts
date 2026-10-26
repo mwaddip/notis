@@ -568,9 +568,9 @@ describe('verifyHeaderChain', () => {
     expect(result.ok).toBe(true);
   });
 
-  // ---- M-5: no-throw on malformed input ----
+  // ---- no-throw on malformed input ----
 
-  describe('M-5: no-throw on malformed input', () => {
+  describe('no-throw on malformed input', () => {
     it('non-object header answers domain', () => {
       const headers = [42 as unknown as BlockHeader];
       const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);

@@ -117,7 +117,7 @@ describe('verifyValidatorSignature', () => {
     expect(verifyValidatorSignature(header, new Uint8Array(64))).toBe(false);
   });
 
-  // --- no-panic (M-5): every malformed shape returns false, never throws ---
+  // --- no-panic: every malformed shape returns false, never throws ---
 
   it('returns false without throwing on a missing or mis-typed signature', () => {
     const kp = generateKeyPair();
@@ -693,7 +693,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
     expect(verifyTxStructure(txWith([out]))).toEqual({ valid: true });
   });
 
-  // Totality (M-5). The scan reads `boxType` off a peer-supplied object, so a
+  // Totality. The scan reads `boxType` off a peer-supplied object, so a
   // non-object output yields a verdict rather than a TypeError.
   //
   // ⛔ The verdict is a REJECTION, and it is the encoder's, not this scan's.
@@ -994,8 +994,7 @@ describe('verifyOrderingBlockStructure', () => {
   // ⛔ There is one committed body, so the only presence case left is the tree
   // itself. The `?.` on the first `utxoTxTree` read is what makes a block
   // carrying no `utxoTxTree` a verdict rather than a TypeError — the failure
-  // direction the no-panic rule forbids (VALIDATION_INTERFACE → Postconditions
-  // → "No-panic (M-5)").
+  // direction the no-panic rule forbids (VALIDATION_INTERFACE → Postconditions).
   //
   // Post field domain pins are in `verifyTxStructure` (below): a post's fields
   // are pinned on the transaction that carries them, the same object that
@@ -1620,7 +1619,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   // Totality is preserved — the pin adds rejections, never a throw
   // -------------------------------------------------------------------------
 
-  describe('totality (M-5) across every newly pinned field', () => {
+  describe('totality across every newly pinned field', () => {
     // One mined header for the whole sweep — the poison is per-field, and PoW
     // is irrelevant to a structure verdict.
     const template = makeBlock();
@@ -1779,10 +1778,10 @@ describe('isValidVouchTarget', () => {
 });
 
 // ---------------------------------------------------------------------------
-// M-4 — version-independent content character check
+// Version-independent content character check
 // ---------------------------------------------------------------------------
 
-describe('verifyContentCharacters — version-independent table (M-4)', () => {
+describe('verifyContentCharacters — version-independent table', () => {
   /** Wrap a bare codepoint in ASCII so a failure is about that codepoint only. */
   const cp = (n: number) => `ok${String.fromCodePoint(n)}ok`;
 
@@ -1791,7 +1790,7 @@ describe('verifyContentCharacters — version-independent table (M-4)', () => {
   });
 
   it('never consults runtime Unicode category data', () => {
-    // This is the whole of M-4: a `\p{...}` escape anywhere on the path would
+    // This is the whole of the rule: a `\p{...}` escape anywhere on the path would
     // reintroduce the Node/V8-version dependence the table exists to remove.
     // Scanned at source level, not via `Function.prototype.toString`, so a
     // property escape hidden in a module-level regex const is caught too.
@@ -1908,10 +1907,10 @@ describe('verifyContentCharacters — version-independent table (M-4)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// M-6 — integer guards on nonces and targetBits
+// Integer guards on nonces and targetBits
 // ---------------------------------------------------------------------------
 
-describe('integer guards on the header nonce and targetBits (M-6)', () => {
+describe('integer guards on the header nonce and targetBits', () => {
   // ⛔ The ordering-block header's `powNonce` is a `vlqU` field, written by
   // a total-by-sentinel writer and a search variable an attacker varies against
   // a target. The `isU64Safe` guard lives in `HEADER_DOMAIN`
@@ -1986,7 +1985,7 @@ describe('integer guards on the header nonce and targetBits (M-6)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// M-5 — no exported verify function throws on malformed input
+// No exported verify function throws on malformed input
 // ---------------------------------------------------------------------------
 
 /** Values that arrive off the wire wrongly typed, out of range, or hostile. */
@@ -2031,7 +2030,7 @@ const MALFORMED: unknown[] = [
   circular,
 ];
 
-describe('no-panic on malformed input (M-5)', () => {
+describe('no-panic on malformed input', () => {
   const kp = generateKeyPair();
 
   const makeGoodCommit = (): PostCommit => ({
@@ -2175,7 +2174,7 @@ describe('no-panic on malformed input (M-5)', () => {
     }
   });
 
-  // --- the specific throw sites named in the audit ---
+  // --- the specific throw sites ---
 
   it('rejects a public key that is not 32 bytes (createPublicKey)', () => {
     // The SPKI-envelope mechanics survive in the transaction/validator signature
@@ -2272,10 +2271,10 @@ describe('no-panic on malformed input (M-5)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Numeric guard on protocolVersion and type membership (M-6 follow-up)
+// Numeric guard on protocolVersion and type membership
 // ---------------------------------------------------------------------------
 
-describe('integer guard on protocolVersion and type membership (M-6)', () => {
+describe('integer guard on protocolVersion and type membership', () => {
   // ⛔ `verifyPostCommitDomains` enforces the numeric domain on
   // `protocolVersion` and the membership domain on `type`, reached through
   // `verifyTxStructure`'s post clause, protecting the same encoder:
@@ -2502,7 +2501,7 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Still total on adversarial input (M-5)
+  // Still total on adversarial input
   // -------------------------------------------------------------------------
 
   it('verifyPostCommitDomains survives every malformed argument', () => {
@@ -3212,7 +3211,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Totality (M-5), extended past the verify* naming convention
+  // Totality, extended past the verify* naming convention
   // -------------------------------------------------------------------------
 
   describe('totality on adversarial input', () => {
@@ -3358,7 +3357,7 @@ describe('verifyTxStructure — the transaction weight bound', () => {
   // signature. The half that IS observable is the block side's opposite measure,
   // pinned below: `utxoTxs` elements are weighed as bytes, never decoded.
 
-  describe('an encoder throw is a rejection, not an escape (M-5)', () => {
+  describe('an encoder throw is a rejection, not an escape', () => {
     const withOutput = (out: unknown): UtxoTransaction =>
       ({
         inputs: ['aa'.repeat(32)],

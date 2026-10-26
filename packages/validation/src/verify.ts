@@ -24,7 +24,7 @@ import type { Ed25519BatchEntry } from './ed25519-batch.js';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
 // ---------------------------------------------------------------------------
-// Input guards (audit M-5, M-6)
+// Input guards
 // ---------------------------------------------------------------------------
 //
 // Every exported verify* function receives objects straight off the wire, so
@@ -45,7 +45,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 
 /**
  * Guard for every value that reaches `BigInt(...)` + `writeBigUInt64LE`, and for
- * bit-count arguments (audit M-6).
+ * bit-count arguments.
  *
  * ⛔ **`HEADER_DOMAIN`'s `powNonce` row is the load-bearing one, and it is a
  * search variable an attacker varies against a target.** Its header writer is
@@ -592,7 +592,7 @@ export function verifyValidatorSignature(header: BlockHeader, signature: Uint8Ar
  * height (`protocolVersionAt` answers `null`) and when `declared` is anything but
  * that integer.
  *
- * Total (M-5): `protocolVersionAt` iterates the schedule (TYPES_INTERFACE →
+ * Total: `protocolVersionAt` iterates the schedule (TYPES_INTERFACE →
  * Version), so a non-array or an ill-formed schedule throws there — the call is
  * guarded and any throw is read as "no era", never escapes. No check in this
  * package reads `PROTOCOL_VERSION`.
@@ -622,7 +622,7 @@ export function verifyProtocolVersion(
  * the post-id preimage, so a commit declaring a version other than its
  * transaction's would mint a second identity for one post.
  *
- * Total (M-5): reached straight off gossip, so a non-object `tx` or a `post`
+ * Total: reached straight off gossip, so a non-object `tx` or a `post`
  * that is not an object is `false`, never a throw.
  */
 export function verifyTxProtocolVersion(
@@ -668,7 +668,7 @@ const CONTENT_CHAR_ERROR =
  *
  * Consults only the static table — never a runtime `\p{...}` escape — so the
  * verdict is identical on every node regardless of the Unicode data version its
- * Node/V8 build ships (audit M-4).
+ * Node/V8 build ships (VALIDATION_INTERFACE → verifyContentCharacters).
  */
 export function verifyContentCharacters(content: string): { valid: boolean; error?: string } {
   if (typeof content !== 'string') return { valid: false, error: CONTENT_CHAR_ERROR };
@@ -802,7 +802,7 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
   // `[0, 2^64)` (`canonicalBoxBytes`), and a `signatures` key or 64-byte value
   // of the same shape (TYPES_INTERFACE → Totality). None of them has an
   // unreachable sentinel to collapse onto, which is why the writer throws
-  // instead. The no-panic rule (Postconditions — No-panic M-5) decides the
+  // instead. The no-panic rule (VALIDATION_INTERFACE → Postconditions) decides the
   // shape: a transaction that cannot be encoded cannot be stored, mined or
   // relayed, so the throw is a rejection and not an escape.
   let encoded: Uint8Array;
@@ -1033,7 +1033,7 @@ export function isValidVouchTarget(userId: Uint8Array): boolean {
 //
 // A consumer therefore absorbs an *absence* — it does not learn the header
 // domain, call a predicate, or decide what well-formed means. This extends the
-// contract's no-panic rule (M-5) to two functions the `verify*` naming
+// contract's no-panic rule (VALIDATION_INTERFACE → Postconditions) to two functions the `verify*` naming
 // convention does not reach: one with no `false` to return says so with `null`.
 
 /**
@@ -1065,7 +1065,7 @@ export function computePowHash(header: BlockHeader): Uint8Array | null {
 /**
  * The 32-byte digest a header's nonce produced — the bytes `meetsPowTarget`
  * compares against the target. `null` on exactly the inputs `computePowHash`
- * refuses (M-5/M-6); never throws.
+ * refuses; never throws.
  */
 export function powHit(header: BlockHeader): Uint8Array | null {
   const preimage = computePowHash(header);
