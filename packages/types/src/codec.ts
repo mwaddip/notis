@@ -38,10 +38,12 @@ import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
  *
  * This ports the reasoning in `post.ts`'s Totality note above `postFieldBytes`,
  * not a new scheme. Wire's writers throw on non-integers, negatives, and
- * anything past `MAX_SAFE_INTEGER` (WIRE_INTERFACE → "Writers throw and that is load-bearing to preserve"), and `postFieldBytes`
- * is reached with malformed posts — `@dagsocial/validation`'s `isSignablePost`
- * admits them — so a throwing writer turns a malformed post into a panic and
- * breaks the no-panic contract validation asserts.
+ * anything past `MAX_SAFE_INTEGER`
+ * (WIRE_INTERFACE → "Writers throw and that is load-bearing to preserve"),
+ * and `postFieldBytes` is reached with malformed posts —
+ * `@dagsocial/validation`'s `isSignablePost` admits them — so a throwing
+ * writer turns a malformed post into a panic and breaks the no-panic contract
+ * validation asserts.
  *
  * The sentinel is unreachable from a well-formed field because the encodable
  * `number` domain is the non-negative safe integers, topping out at 2^53−1.
@@ -755,9 +757,9 @@ export function firstDifference(a: Uint8Array, b: Uint8Array): number {
  * **Two mint `subject` encodings are also `u32BE`, and subjects are the
  * caller's.** `coinbase` and `genesis` encode a `u32BE` selector,
  * `computeMintTxId` takes those bytes opaquely, and NODE_INTERFACE → Reason and
- * subject table is what mandates the form. One exported implementation is what stops node reimplementing it and
- * drifting — a silent divergence would move mint txIds, and through them every
- * box id, with nothing to catch it.
+ * subject table is what mandates the form. One exported implementation is what
+ * stops node reimplementing it and drifting — a silent divergence would move
+ * mint txIds, and through them every box id, with nothing to catch it.
  */
 const U32_SENTINEL = 0xffffffff;
 
