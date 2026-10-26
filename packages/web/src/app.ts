@@ -2382,48 +2382,36 @@ export class App {
    *  verifier, a plain read of /credits stands beside the view and fills
    *  `walletCreditsPlain` for the verified-figures run (→ The extension →
    *  "The verified figures"). An answer for the node or the key before
-   *  writes nothing. */
+   *  writes nothing. A failed view read leaves the last-known state (the
+   *  next ↻ retries), and a failed plain read leaves the plain listing as it
+   *  stands. */
   private async refreshWalletCredits(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
     const gen = this.readerGen;
-    const stamp = this.listingStamp();
     const order = this.beginRead();
     const plainStamp = this.listingStamp();
     const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
-    const viewPromise = this.readOwnCredits(cur.pubKeyHex);
-    const plainPromise = this.figuresVerifier !== null
-      ? this.readOwnCreditsPlain(cur.pubKeyHex)
-      : null;
-    let credits: CreditsResult;
-    try {
-      credits = await viewPromise;
-    } catch {
-      // The plain read may be in flight — drop it on the floor and let its
-      // error surface silently; the next ↻ retries.
-      if (plainPromise !== null) void plainPromise.catch(() => {});
-      return;
-    }
+    const outcomes = await Promise.allSettled(
+      this.figuresVerifier !== null
+        ? [this.readOwnCredits(cur.pubKeyHex), this.readOwnCreditsPlain(cur.pubKeyHex)]
+        : [this.readOwnCredits(cur.pubKeyHex)],
+    );
     if (gen !== this.readerGen) return;
-    this.takeCredits(credits, stamp, order);
-    if (plainPromise !== null) {
-      let plain: CreditsResult;
-      try {
-        plain = await plainPromise;
-      } catch {
-        return;
-      }
-      if (gen !== this.readerGen) return;
-      this.takeCreditsPlain(plain, plainStamp, plainOrder);
+    const viewOutcome = outcomes[0];
+    if (viewOutcome.status === 'fulfilled') {
+      this.takeCredits(viewOutcome.value, order);
+    }
+    const plainOutcome = outcomes[1];
+    if (plainOutcome !== undefined && plainOutcome.status === 'fulfilled') {
+      this.takeCreditsPlain(plainOutcome.value, plainStamp, plainOrder);
     }
   }
 
   /** Take a /credits listing as the balance row's, beside the stamp its read
-   *  began under — unless the held listing's read began later (newerRead): the
-   *  balance moves in its slot (HOUSE_STYLE → Motion) and the figures run
-   *  follows (WEB_INTERFACE → The extension → "The verified figures"). Answers
-   *  whether it took. */
-  private takeCredits(credits: CreditsResult, _stamp: ListingStamp, order: number): boolean {
+   *  — unless the held listing's read began later (newerRead): the balance
+   *  moves in its slot (HOUSE_STYLE → Motion). Answers whether it took. */
+  private takeCredits(credits: CreditsResult, order: number): boolean {
     if (!this.newerRead('credits', order)) return false;
     this.walletCredits = credits;
     this.renderCreditsRowInPlace();
@@ -2878,39 +2866,28 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     const gen = this.readerGen;
-    const stamp = this.listingStamp();
     const order = this.beginRead();
     const plainStamp = this.listingStamp();
     const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
-    const viewPromise = this.readOwnKarma(cur.pubKeyHex);
-    const plainPromise = this.figuresVerifier !== null
-      ? this.readOwnKarmaPlain(cur.pubKeyHex)
-      : null;
-    let karma: KarmaResult;
-    try {
-      karma = await viewPromise;
-    } catch {
-      if (plainPromise !== null) void plainPromise.catch(() => {});
-      return;
-    }
+    const outcomes = await Promise.allSettled(
+      this.figuresVerifier !== null
+        ? [this.readOwnKarma(cur.pubKeyHex), this.readOwnKarmaPlain(cur.pubKeyHex)]
+        : [this.readOwnKarma(cur.pubKeyHex)],
+    );
     if (gen !== this.readerGen) return;
-    this.takeKarma(karma, stamp, order);
-    if (plainPromise !== null) {
-      let plain: KarmaResult;
-      try {
-        plain = await plainPromise;
-      } catch {
-        return;
-      }
-      if (gen !== this.readerGen) return;
-      this.takeKarmaPlain(plain, plainStamp, plainOrder);
+    const viewOutcome = outcomes[0];
+    if (viewOutcome.status === 'fulfilled') {
+      this.takeKarma(viewOutcome.value, order);
+    }
+    const plainOutcome = outcomes[1];
+    if (plainOutcome !== undefined && plainOutcome.status === 'fulfilled') {
+      this.takeKarmaPlain(plainOutcome.value, plainStamp, plainOrder);
     }
   }
 
-  /** Hold a /karma listing as the rep row's, beside the stamp its read began
-   *  under — unless the held listing's read began later (newerRead). Answers
-   *  whether it took. */
-  private holdKarma(karma: KarmaResult, _stamp: ListingStamp, order: number): boolean {
+  /** Hold a /karma listing as the rep row's — unless the held listing's read
+   *  began later (newerRead). Answers whether it took. */
+  private holdKarma(karma: KarmaResult, order: number): boolean {
     if (!this.newerRead('karma', order)) return false;
     this.profileKarma = karma;
     return true;
@@ -2922,9 +2899,9 @@ export class App {
    *  figures run follows if the plain listing stands beside the view
    *  (WEB_INTERFACE → The extension → "The verified figures"). Answers
    *  whether it took. */
-  private takeKarma(karma: KarmaResult, stamp: ListingStamp, order: number): boolean {
+  private takeKarma(karma: KarmaResult, order: number): boolean {
     this.bumpTip(karma.height);
-    if (!this.holdKarma(karma, stamp, order)) return false;
+    if (!this.holdKarma(karma, order)) return false;
     this.renderProfileKarma();
     // The view read fills the row; the plain read is the one a figures run
     // reads and `takeKarmaPlain` triggers (WEB_INTERFACE → The extension →
@@ -3494,35 +3471,37 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     const gen = this.readerGen;
-    const stamp = this.listingStamp();
     const order = this.beginRead();
-    // The plain listing stands beside the view where the App holds a figures
-    // verifier (WEB_INTERFACE → The extension → "The verified figures").
-    // The view fires first so the rep row's listing read lands before the
-    // plain listing — a reader of the two reads' order reads the view's.
-    const viewPromise = this.readOwnKarma(cur.pubKeyHex);
     const plainStamp = this.listingStamp();
     const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
-    const plainPromise = this.figuresVerifier !== null
-      ? this.readOwnKarmaPlain(cur.pubKeyHex)
-      : null;
+    // The view's /karma fires first so the rep row's listing read lands
+    // before the plain listing — `app-rows-on-the-pending-view.test.ts >
+    // "a profile open fires /karma with pending=1"` asserts the first
+    // /karma request carries `pending=1`. The plain promise never rejects
+    // — a plain failure resolves to null so Promise.all's throw-on-
+    // rejection does not propagate the plain's error and the floating
+    // catch the view's failure would need goes with it.
+    const viewPromise = this.readOwnKarma(cur.pubKeyHex);
+    const plainPromise: Promise<KarmaResult | null> = this.figuresVerifier !== null
+      ? this.readOwnKarmaPlain(cur.pubKeyHex).then((k) => k, () => null)
+      : Promise.resolve(null);
     let karmaTaken = false;
     let karmaPlain: KarmaResult | null = null;
     try {
-      const [karma, status, vouched, escrow, bonds, ownName] = await Promise.all([
+      const [karma, status, vouched, escrow, bonds, ownName, plain] = await Promise.all([
         viewPromise,
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
         this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT }),
         this.client.usernameByOwner(cur.pubKeyHex),
+        plainPromise,
       ]);
       if (gen !== this.readerGen) return;
-      karmaTaken = this.holdKarma(karma, stamp, order);
-      // vouchCooldownBlocks + the bond range for the invites row
+      this.bumpTip(karma.height);
+      karmaTaken = this.holdKarma(karma, order);
       if (this.newerRead('status', order)) this.state.status = status;
       this.bumpTip(status.blockHeight);
-      this.bumpTip(karma.height);
       if (this.newerRead('vouches', order)) {
         this.vouched = vouched;
         this.escrowHeldUntil = escrow;
@@ -3532,17 +3511,9 @@ export class App {
         this.ownName = ownName;
         this.ownNameLoaded = true;
       }
+      karmaPlain = plain;
     } catch {
-      if (plainPromise !== null) void plainPromise.catch(() => {});
       return; // a failed read leaves the last-known state; the ↻ retries
-    }
-    if (plainPromise !== null) {
-      try {
-        karmaPlain = await plainPromise;
-      } catch {
-        karmaPlain = null;
-      }
-      if (gen !== this.readerGen) return;
     }
     this.renderHeader();
     this.renderFeed();
@@ -5262,7 +5233,6 @@ export class App {
       }
     }
     if (cur !== null && karmaLanded) {
-      const stamp = this.listingStamp();
       const order = this.beginRead();
       let karma: KarmaResult | null = null;
       try {
@@ -5271,7 +5241,7 @@ export class App {
         karma = null;
       }
       if (gen !== this.readerGen) return;
-      if (karma !== null) karmaTaken = this.takeKarma(karma, stamp, order);
+      if (karma !== null) karmaTaken = this.takeKarma(karma, order);
     }
 
     // The tick's /credits reads: the plain listing reconciles credit grants
@@ -5304,7 +5274,6 @@ export class App {
       }
     }
     if (cur !== null && creditsLanded) {
-      const stamp = this.listingStamp();
       const order = this.beginRead();
       let credits: CreditsResult | null = null;
       try {
@@ -5313,7 +5282,7 @@ export class App {
         credits = null;
       }
       if (gen !== this.readerGen) return;
-      if (credits !== null) creditsTaken = this.takeCredits(credits, stamp, order);
+      if (credits !== null) creditsTaken = this.takeCredits(credits, order);
     }
 
     // A landed card changes colour and nothing else; the geometry is identical.
