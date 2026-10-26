@@ -394,3 +394,30 @@ describe('proveRange — a transport failure or non-2xx is no-proof for the whol
   });
 });
 
+
+describe('proveRange — an owner key is read as either-case 64 hex', () => {
+  it('an owner spelled in uppercase answers what the lowercase spelling answers, asking the lowercase route', async () => {
+    const boxes: AnyBox[] = [karmaBoxFor(OWNER, 10n, 1), karmaBoxFor(OWNER, 20n, 2)];
+    const { prover, stateRoot } = buildHoldingsFixture({ boxes });
+    const lower = nodeFromProver({ url: 'http://a', prover, stateRoot, atHeightDefault: HEIGHT });
+    const upper = nodeFromProver({ url: 'http://a', prover, stateRoot, atHeightDefault: HEIGHT });
+
+    const header = { height: HEIGHT, stateRoot };
+    const expected = await proveRange('http://a', 'karma', OWNER_HEX, header, lower.fetch);
+    const result = await proveRange('http://a', 'karma', OWNER_HEX.toUpperCase(), header, upper.fetch);
+
+    expect(expected.ok).toBe(true);
+    expect(result).toEqual(expected);
+    expect(upper.calls).toEqual(lower.calls);
+  });
+
+  it('an owner that is not hex is unproven, no request made', async () => {
+    const { prover, stateRoot } = buildHoldingsFixture({ boxes: [] });
+    const { fetch, calls } = nodeFromProver({ url: 'http://a', prover, stateRoot, atHeightDefault: HEIGHT });
+
+    const notHex = 'zz'.repeat(32);
+    const result = await proveRange('http://a', 'karma', notHex, { height: HEIGHT, stateRoot }, fetch);
+    expect(result).toEqual({ ok: false, status: 'unproven', verdict: `owner is not 64 hex: '${notHex}'` });
+    expect(calls).toHaveLength(0);
+  });
+});
