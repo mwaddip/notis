@@ -1,9 +1,9 @@
-import { bytesToHex, canonicalUsernameBytes, firstDifference, isValidUsernameBytes, usernameString } from '@dagsocial/types';
+import { bytesToHex, canonicalUsernameBytes, firstDifference, isHex64, isValidUsernameBytes, usernameString } from '@dagsocial/types';
 import type { DecodedBoxCandidate } from '@dagsocial/types';
 import type { Anchor } from './boxes.js';
 import { HEX_64, excludedAtBoth, proveBoxAtHeight, readHeightAfter } from './boxes.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
-import { capped, fetchJson, isHex64Lower, isRecord, NAME_READ_BYTES } from '@dagsocial/node-reads';
+import { capped, fetchJson, isRecord, NAME_READ_BYTES } from '@dagsocial/node-reads';
 import { shown } from './http.js';
 
 /**
@@ -84,7 +84,7 @@ export async function proveName(
   }
   const answer = isRecord(lookup.data) ? lookup.data : {};
   const answeredBoxId = answer['boxId'];
-  if (!isHex64Lower(answeredBoxId)) {
+  if (!isHex64(answeredBoxId)) {
     return unanswered('unproven', `unproven: the lookup's boxId is not 64 hex: ${shown(answeredBoxId)}`);
   }
   const boxId = answeredBoxId;
