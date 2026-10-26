@@ -3653,7 +3653,16 @@ export const ORDERING_BLOCK_POW_TARGET_BITS = 5984;     // 23.375 bits — a 60s
 export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;    // 9 whole bits — the resolution floor
 export const RETARGET_HALFLIFE_BLOCKS = 288;            // the ASERT halflife, in ideal intervals (MINING_INTERFACE → Difficulty Schedule)
 export const MAX_FUTURE_DRIFT_MS = 600_000;             // 10 min — the future bound on createdAt (MINING_INTERFACE → Header timestamp rules)
+export const POW_TARGET_BITS_MAX = 65_536;              // 256 bits in 1/256-bit units — the top of powTargetBits' domain
 ```
+
+**`POW_TARGET_BITS_MAX` is the unit's own bound**, `256 × 256`: a target of 256 bits is the whole digest space, so
+`[0, POW_TARGET_BITS_MAX]` is every value `powTargetBits` can mean (`VALIDATION_INTERFACE → orderingPowTarget`). The
+header field's range check, `orderingPowTarget`'s domain and the node's check of a profile's ceiling read it; a
+profile's ceiling of `65536` is a value the profile chooses (`CONSTANTS → Ordering-block PoW`), not this bound.
+
+> ⚠ **AHEAD OF CODE (2026-10-26).** `POW_TARGET_BITS_MAX` leads `constants.ts`; `validation`'s `verify.ts` and the
+> node's `config.ts` write `65536` where they read it.
 
 **`RETARGET_HALFLIFE_BLOCKS` is the mechanic's own number and universal** — the reference's ratio of
 halflife to block time (BCH: 172 800 s at 600 s), stated in blocks so a profile's `orderingBlockIdealMs`
