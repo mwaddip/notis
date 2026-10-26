@@ -1,5 +1,6 @@
 import type { PostKey, BoxKey } from '../store/index.js';
 import {
+  isHex64,
   isValidUsernameBytes,
   canonicalUsernameBytes,
   PAGE_LIMIT_DEFAULT,
@@ -55,7 +56,7 @@ export function parseAfter(
         return { error: 'after must be <value>:<boxId> (value is a decimal integer)' };
       }
       // NODE_INTERFACE → HTTP API → "Hex is lowercase"
-      if (!/^[0-9a-f]{64}$/.test(idStr)) {
+      if (!isHex64(idStr)) {
         return { error: 'after must be <value>:<boxId> (boxId is 64 lowercase hex characters)' };
       }
       const value = BigInt(valStr);
@@ -66,7 +67,7 @@ export function parseAfter(
     }
     case 'id': {
       // NODE_INTERFACE → HTTP API → "Hex is lowercase"
-      if (!/^[0-9a-f]{64}$/.test(raw)) {
+      if (!isHex64(raw)) {
         return { error: 'after must be 64 lowercase hex characters' };
       }
       return raw;
@@ -105,8 +106,9 @@ export function resolveIdentityParam(
   value: string,
   getUsername: UsernameLookup,
 ): { hex: string } | { error: string; status: number } {
-  if (/^[0-9a-f]{64}$/.test(value)) {
-    return { hex: value };
+  const v: unknown = value;
+  if (isHex64(v)) {
+    return { hex: v };
   }
   if (value.startsWith('@')) {
     const rest = value.slice(1);
@@ -176,7 +178,7 @@ export function parseBatchIds(body: unknown): string[] | { error: string } {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of ids) {
-    if (typeof raw !== 'string' || !/^[0-9a-f]{64}$/.test(raw)) {
+    if (!isHex64(raw)) {
       return { error: 'ids must be 64 lowercase hex characters' };
     }
     if (seen.has(raw)) return { error: 'ids must not repeat' };

@@ -1,4 +1,4 @@
-import { BOX_VALUE_BOUND, computeBoxId, EMPTY_IDENTITY_RECORD, SYSTEM_KARMA_INITIAL, FAUCET_CREDITS_INITIAL } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, computeBoxId, EMPTY_IDENTITY_RECORD, isHex64, SYSTEM_KARMA_INITIAL, FAUCET_CREDITS_INITIAL } from '@dagsocial/types';
 import type {
   KarmaBox,
   CreditBox,
@@ -432,7 +432,7 @@ export function validateBackerTable(
   let weightSum = 0n;
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!;
-    if (r.key.length !== 64 || !/^[0-9a-f]{64}$/.test(r.key)) {
+    if (!isHex64(r.key)) {
       throw new Error(`Backer table row ${i}: key "${r.key}" is not 64 hex chars`);
     }
     if (r.key <= prev) {

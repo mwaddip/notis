@@ -7,6 +7,7 @@ import { getNet } from '../services/net-instance.js';
 import { checkRequestTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import { CorruptChainStateError, failStopIfCorruptChain } from '../services/corrupt-state.js';
+import { isHex64 } from '@dagsocial/types';
 import type { PostKey } from '../store/index.js';
 import {
   parseLimit, isLimitError,
@@ -90,7 +91,7 @@ export function createRouter(deps: PostsDeps): Router {
     // NODE_INTERFACE → HTTP API → "Hex is lowercase": the shape check runs
     // ahead of the lookup.
     const idRaw = req.params['id']!;
-    if (!/^[0-9a-f]{64}$/.test(idRaw)) {
+    if (!isHex64(idRaw)) {
       res.status(400).json({ error: 'id must be 64 lowercase hex characters' });
       return;
     }
@@ -143,7 +144,7 @@ export function createRouter(deps: PostsDeps): Router {
     const id = req.params['id']!;
     // NODE_INTERFACE → HTTP API → "Hex is lowercase": the shape check runs
     // ahead of the lookup.
-    if (!/^[0-9a-f]{64}$/.test(id)) {
+    if (!isHex64(id)) {
       res.status(400).json({ error: 'id must be 64 lowercase hex characters' });
       return;
     }

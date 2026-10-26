@@ -4,6 +4,7 @@ import {
   MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   decayCfgFor,
+  isHex64,
   profileFor,
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType, ProtocolEra } from '@dagsocial/types';
@@ -491,7 +492,7 @@ function assertInviteBondRangeInhabited(cfg: Config): void {
 function assertFaucetPublicKeyWellFormed(cfg: Config): void {
   const faucetKey = cfg.profile.faucetPublicKey;
   if (faucetKey === undefined) return;
-  if (!/^[0-9a-f]{64}$/.test(faucetKey)) {
+  if (!isHex64(faucetKey)) {
     throw new Error(
       `Invalid faucetPublicKey for network "${cfg.networkType}" — must be 64 ` +
         'lowercase hex characters, an Ed25519 public key',

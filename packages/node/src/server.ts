@@ -43,6 +43,7 @@ import {
   HTTP_KEEP_ALIVE_TIMEOUT_MS,
   HTTP_CHECK_INTERVAL_MS,
   HTTP_CONNECTIONS_MAX,
+  isHex64,
 } from '@dagsocial/types';
 
 // NODE_INTERFACE → "A body the parser refuses is the client's error"; CONSTANTS
@@ -377,7 +378,7 @@ export function createApp(config: Config): express.Express {
 
     const postId = req.params['id']!;
     // NODE_INTERFACE → HTTP API → "Hex is lowercase"
-    if (!/^[0-9a-f]{64}$/.test(postId)) {
+    if (!isHex64(postId)) {
       res.status(400).json({ error: 400, reason: 'id must be 64 lowercase hex characters' });
       return;
     }
