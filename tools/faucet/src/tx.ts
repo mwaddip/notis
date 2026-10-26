@@ -1,6 +1,6 @@
 import { createPrivateKey, sign } from 'crypto';
-import { computeCandidateBoxId, computeTxId } from '@dagsocial/types';
-import type { AnyBoxCandidate, UtxoTransaction } from '@dagsocial/types';
+import { computeCandidateBoxId, computeTxId, txToJson } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
 
 /**
@@ -68,49 +68,6 @@ function refFromIndex(tx: UtxoTransaction, txId: string, index: number | null): 
   const out = tx.outputs[index];
   if (out === undefined) return null;
   return { boxId: computeCandidateBoxId(out, txId, index), value: out.value };
-}
-
-/**
- * Render a transaction for the node's JSON edge — the inverse of its `jsonToTx`.
- *
- * ⚠ **`bigint` and `Uint8Array` both have to be converted**: the first throws in
- * `JSON.stringify` and the second serialises as an index-keyed object. Values
- * cross as decimal strings and binary fields as hex, which is what `convertBox`
- * reads back.
- *
- * ⛔ **Fields are converted by their VALUE's type, not by name.** A renderer
- * holding its own list of binary fields is a second copy of the node's, and the
- * two would have to be kept in agreement by hand.
- *
- * ⚠ **Throws on a `likeTarget` or a `post`.** The faucet builds neither, and a
- * field silently dropped here would leave the node recomputing a different id
- * from the one the signature covers.
- */
-export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
-  if (tx.likeTarget !== undefined || tx.post !== undefined) {
-    throw new Error('the faucet builds no likes and no posts, and this renderer carries neither');
-  }
-  return {
-    inputs: tx.inputs,
-    outputs: tx.outputs.map(boxToJson),
-    signatures: Object.fromEntries(
-      Object.entries(tx.signatures).map(([k, v]) => [k, Buffer.from(v).toString('hex')]),
-    ),
-    protocolVersion: tx.protocolVersion,
-  };
-}
-
-function boxToJson(box: AnyBoxCandidate): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(box).map(([key, value]) => [
-      key,
-      value instanceof Uint8Array
-        ? Buffer.from(value).toString('hex')
-        : typeof value === 'bigint'
-          ? value.toString()
-          : value,
-    ]),
-  );
 }
 
 /**
