@@ -1031,12 +1031,12 @@ export function verifyUtxoTxRoot(block: OrderingBlock): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Validate that a target UserId for a vouch is a well-formed 32-byte
- * Ed25519 public key.  Does NOT check whether the identity exists on-chain
- * — vouching for unknown public keys is allowed.
+ * The form of a vouch's target key: a `Uint8Array` (`isBytes`) of 32 bytes,
+ * not every byte zero (VALIDATION_INTERFACE → isValidVouchTarget). Reads no
+ * state — whether the key holds an identity record is not asked here.
  */
 export function isValidVouchTarget(userId: Uint8Array): boolean {
-  if (!(userId instanceof Uint8Array)) return false;
+  if (!isBytes(userId)) return false;
   if (userId.length !== 32) return false;
   let allZero = true;
   for (let i = 0; i < 32; i++) {
