@@ -27,7 +27,11 @@ const VOUCH_BOX_ID = '77'.repeat(32);
 const USERNAME_BOX_ID = '66'.repeat(32);
 const CREDIT_BOX_ID = '88'.repeat(32);
 const BOX = '11'.repeat(32);
-const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+};
 
 function statusResult(): StatusResult {
   return {
@@ -68,9 +72,17 @@ interface Harness {
 }
 
 function harness(opts: { member?: boolean; forName?: string } = {}): Harness {
+  // `sign` records each `txIdHex` the submit flow asks it to sign over; the
+  // write client echoes `lastSigned()` so the submit flow's `body.txId ===
+  // built.txId` check passes.
+  const signedIds: string[] = [];
+  const lastSigned = (): string => signedIds[signedIds.length - 1]!;
   const identity: AppIdentity = {
     current: () => ({ pubKeyHex: PUB, locked: false }),
-    sign: async () => ({ signature: 'ab'.repeat(64) }),
+    sign: async (_bytes, txIdHex) => {
+      signedIds.push(txIdHex);
+      return { signature: 'ab'.repeat(64) };
+    },
     draft: async () => ({ pubKeyHex: PUB }),
     create: async () => ({ pubKeyHex: PUB }),
     discardDraft: () => {},
@@ -135,15 +147,15 @@ function harness(opts: { member?: boolean; forName?: string } = {}): Harness {
   };
 
   const writeClient = {
-    submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: 'aa'.repeat(32) }),
-    submitLike: async () => ({ status: 'pending', txId: 'aa'.repeat(32), expiresAtHeight: 6720 }),
-    submitVouch: async () => ({ status: 'pending', txId: 'aa'.repeat(32), expiresAtHeight: 6720 }),
-    submitUnvouch: async () => ({ status: 'pending', txId: 'aa'.repeat(32), expiresAtHeight: 6720 }),
-    submitInvite: async () => ({ status: 'pending', txId: 'aa'.repeat(32), expiresAtHeight: 6720, bondBoxId: 'bb'.repeat(32) }),
-    submitWithdraw: async () => ({ status: 'submitted', txId: 'aa'.repeat(32), postId: OWN_POST_ID, expiresAtHeight: 6720 }),
-    submitClaim: async () => ({ status: 'pending', txId: 'aa'.repeat(32), expiresAtHeight: 6720, name: 'alice' }),
-    submitBurn: async () => ({ status: 'pending', txId: 'aa'.repeat(32), expiresAtHeight: 6720 }),
-    submitSend: async () => ({ status: 'pending', txId: 'aa'.repeat(32), expiresAtHeight: 6720 }),
+    submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: lastSigned() }),
+    submitLike: async () => ({ status: 'pending', txId: lastSigned(), expiresAtHeight: 6720 }),
+    submitVouch: async () => ({ status: 'pending', txId: lastSigned(), expiresAtHeight: 6720 }),
+    submitUnvouch: async () => ({ status: 'pending', txId: lastSigned(), expiresAtHeight: 6720 }),
+    submitInvite: async () => ({ status: 'pending', txId: lastSigned(), expiresAtHeight: 6720, bondBoxId: 'bb'.repeat(32) }),
+    submitWithdraw: async () => ({ status: 'submitted', txId: lastSigned(), postId: OWN_POST_ID, expiresAtHeight: 6720 }),
+    submitClaim: async () => ({ status: 'pending', txId: lastSigned(), expiresAtHeight: 6720, name: 'alice' }),
+    submitBurn: async () => ({ status: 'pending', txId: lastSigned(), expiresAtHeight: 6720 }),
+    submitSend: async () => ({ status: 'pending', txId: lastSigned(), expiresAtHeight: 6720 }),
   } as unknown as WriteClient;
 
   const ledger = new PendingLedger(PUB);
@@ -209,12 +221,13 @@ const REP_KINDS: Kind[] = [
 
 describe("every rep spend's 2xx re-reads /karma?pending=1", () => {
   for (const kind of REP_KINDS) {
-    it.fails(`${kind.name}'s 2xx re-reads the rep view through refreshOwnKarma`, async () => {
+    it(`${kind.name}'s 2xx re-reads the rep view through refreshOwnKarma`, async () => {
       const h = harness({ member: kind.member, forName: kind.forName });
       await flush();
       if (kind.prepare) await kind.prepare(h);
       const before = h.karmaViewReads;
       await kind.fire(h);
+      await flush();
       await flush();
       // The submit flow reads /karma?pending=1 once as a pre-flight; the 2xx
       // re-reads it a second time through `refreshOwnKarma`.
@@ -227,7 +240,7 @@ describe("every rep spend's 2xx re-reads /karma?pending=1", () => {
 // A send's 2xx re-reads /credits?pending=1 while the wallet window is open
 // ---------------------------------------------------------------------------
 describe("a send's 2xx re-reads /credits?pending=1 while the wallet window is open", () => {
-  it.fails("a send's 2xx re-reads the credits view through refreshWalletCredits", async () => {
+  it("a send's 2xx re-reads the credits view through refreshWalletCredits", async () => {
     const h = harness();
     await flush();
     // Open the wallet so refreshWalletCredits fires on the 2xx.

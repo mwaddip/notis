@@ -337,9 +337,11 @@ describe('a press waiting its turn belongs to the node and key of the press', ()
     await second;
 
     // The waiting press's own effects:
-    // (a) no karma?pending=1 read happens for the waiting press after the change.
-    //     Before the rule this is 0 either way — flows ask plain, never pending=1.
-    expect(h.karmaPendingReads() - pendingKarmaBeforeRelease).toBe(0);
+    // (a) exactly one karma?pending=1 read happens after the change — the
+    //     first press's 2xx re-reads the rep view through `refreshOwnKarma`
+    //     (WEB_INTERFACE → The profile window → "The `rep` row is the rep
+    //     view's `effective` alone"); the waiting press fires none.
+    expect(h.karmaPendingReads() - pendingKarmaBeforeRelease).toBe(1);
     // (b) no sign call happens at or after release — the waiting press never signs.
     expect(h.signCount() - signsBeforeRelease).toBe(0);
     // (c) the LAST assertion: no second POST /likes leaves.

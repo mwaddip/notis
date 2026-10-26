@@ -3278,6 +3278,10 @@ export class App {
       sub.postId = result.entry.postId;
       sub.expiresAtHeight = result.entry.expiresAtHeight;
       this.startPoll();
+      // WEB_INTERFACE → The profile window → "The `rep` row is the rep view's
+      // `effective` alone" — the row takes a new value at every 2xx of the
+      // reader's own spend.
+      void this.refreshOwnKarma();
     } else {
       sub.stage = 'rejected';
       sub.reason = postRejectionCopy(result.rejection);
@@ -3317,6 +3321,7 @@ export class App {
     }
     if (result.ok) {
       this.startPoll();
+      void this.refreshOwnKarma();
       return;
     }
     this.optimisticLikes.delete(postId);
@@ -3364,6 +3369,7 @@ export class App {
     this.withdrawFlights.delete(postId);
     if (result.ok) {
       this.startPoll();
+      void this.refreshOwnKarma();
     } else if ('rejection' in result) {
       this.setReportForPost(postId, 'withdraw rejected: ' + withdrawRejectionCopy(result.rejection));
     } else {
@@ -3697,6 +3703,7 @@ export class App {
       this.optimisticVouches.delete(key);
       if (d) d.flight = { stage: 'submitted' };
       this.startPoll();
+      void this.refreshOwnKarma();
     } else {
       this.optimisticVouches.delete(key);
       const reason = 'rejection' in result
@@ -3993,6 +4000,7 @@ export class App {
     if (result.ok) {
       this.inviteFlight = { stage: 'submitted' };
       this.startPoll();
+      void this.refreshOwnKarma();
     } else {
       const reason = 'rejection' in result
         ? 'invite rejected: ' + inviteRejectionCopy(result.rejection)
@@ -4062,6 +4070,7 @@ export class App {
     if (result.ok) {
       this.usernameFlight = null;
       this.startPoll();
+      void this.refreshOwnKarma();
     } else {
       const reason = 'rejection' in result
         ? 'claim rejected: ' + usernameRejectionCopy(result.rejection)
@@ -4103,6 +4112,7 @@ export class App {
     if (result.ok) {
       this.usernameFlight = null;
       this.startPoll();
+      void this.refreshOwnKarma();
     } else {
       const reason = 'rejection' in result
         ? 'burn rejected: ' + usernameRejectionCopy(result.rejection)
@@ -4349,6 +4359,10 @@ export class App {
       this.dropSendAnswer();
       this.wallet()?.resetSend();
       this.startPoll();
+      // WEB_INTERFACE → The wallet window → "The `balance` row" — the figure
+      // takes a new value at every 2xx of the reader's own send while the
+      // wallet window is open.
+      if (openSet(this.state.workspace).has('@wallet')) void this.refreshWalletCredits();
     } else if ('rejection' in result) {
       this.sendFlight = { stage: 'rejected', reason: 'send rejected: ' + result.rejection.message };
     } else {
