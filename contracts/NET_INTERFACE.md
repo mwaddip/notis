@@ -1102,8 +1102,15 @@ else — accrual, decay and the ban threshold below apply unchanged, and a peer 
 know is a no-op (the deliverer comes off the Active list; an unknown one is a disconnect race,
 not a target). It is the producing call site of the pipeline's rows.
 
-The table is the whole system: every `PenaltyType` and `PenaltyKind` member has
-a producing call site.
+The table is the whole system: every `PenaltyKind` member — `Misbehavior`, `Transient`, `ProtocolViolation` — has a
+producing call site, and **`PeerManager.recordPenaltyKind(kind, peerId, reason)` is the one entry that records a
+penalty**. A scored tier's score is named once, beside the tiers (`MISBEHAVIOR_SCORE` 100, `TRANSIENT_SCORE` 50), and no
+call site states a number.
+
+> ⚠ **AHEAD OF CODE (2026-10-26).** The one entry and the named scores lead `peer-mgr.ts`, `gossip.ts` and `node.ts`,
+> where a second entry, `recordPenalty(type, peerId, score, reason)` with `PenaltyType` `'misbehavior' | 'permanent'`,
+> takes the score `100` at a dozen call sites and `'permanent'` at none; and `HANDSHAKE_PROTOCOL` (→ Stream Protocols)
+> leads `node.ts`, which writes the handshake's id at its handle and its dial.
 
 Accumulated score >= threshold → temporal ban for `temporalBanDuration`.
 
@@ -1116,7 +1123,7 @@ misbehaving once every safe interval paid, while each invalid message
 still cost full Stage-1 work (ordering-block PoW verification included).
 
 Instead the accumulated score **decays with time**: it is reduced by
-`PENALTY_DECAY_PER_INTERVAL` (100 — one MisbehaviorPenalty) for every
+`PENALTY_DECAY_PER_INTERVAL` (`MISBEHAVIOR_SCORE` — one MisbehaviorPenalty) for every
 `PENALTY_SAFE_INTERVAL_MS` of elapsed time since the peer's score was
 last updated, floored at zero. Decay is applied lazily at penalty time,
 before the new score is added — no timers.
@@ -1127,7 +1134,7 @@ eventually banned, one misbehaving more slowly fades back to zero and is
 never banned. A flooding peer crosses the threshold in five messages
 rather than ten minutes.
 
-Permanent penalties (`PenaltyKind.ProtocolViolation`, `'permanent'`)
+Permanent penalties (`PenaltyKind.ProtocolViolation`)
 bypass scoring entirely and ban instantly — decay never applies to them.
 
 **A score is kept by peer id, and outlives its connection.** A peer's accumulated score and the time of its last
@@ -1275,8 +1282,8 @@ node operator may choose to link them (same keypair) or keep them separate.
 
 | Protocol | Framing | Purpose |
 |----------|---------|---------|
-| `/dagsocial/handshake/1` | Frame | The peer handshake (→ Handshake) |
-| `/dagsocial/sync/1` | Frame | Headers-first sync, post bodies, peer discovery (codes 2, 4, 5, 8, 9, 14–17) |
+| `/dagsocial/handshake/1` (`HANDSHAKE_PROTOCOL`) | Frame | The peer handshake (→ Handshake) |
+| `/dagsocial/sync/1` (`SYNC_PROTOCOL`) | Frame | Headers-first sync, post bodies, peer discovery (codes 2, 4, 5, 8, 9, 14–17) |
 
 **These two are the whole set.** Every chain-data query multiplexes over the sync stream and the
 frame `code` byte disambiguates it. A second stream protocol for chain data is what codes exist to
@@ -1663,7 +1670,7 @@ the block waits as its relayer's pending block (NODE_INTERFACE → Fork choice d
 | `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). |
 | `onPeerActive(cb)` | `((peerId: string, direction: 'inbound' \| 'outbound') => void) => void` | Fired when a peer completes the handshake and becomes Active; `direction` is the connection's. |
 | `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`), the disconnect a ban's hang-up raises included (→ Handshake, "A ban ends the connection"). `reason` is always `''` — libp2p's `peer:disconnect` carries none; the parameter is the shape JOURNAL_EVENTS → peer_disconnected names. |
-| `onPeerPenalised(cb)` | `((peerId: string, kind: string, detail: string \| null) => void) => void` | Fired by `PeerManager` itself at its two penalty entries, `recordPenalty` and `recordPenaltyKind` — so every path that records a penalty reaches it, `gossip.ts`'s and `penalizePeer`'s included; `kind` is the `PenaltyType` / `PenaltyKind` string as recorded, `detail` the reason. |
+| `onPeerPenalised(cb)` | `((peerId: string, kind: string, detail: string \| null) => void) => void` | Fired by `PeerManager` itself at its one penalty entry, `recordPenaltyKind` — so every path that records a penalty reaches it, `gossip.ts`'s and `penalizePeer`'s included; `kind` is the `PenaltyKind` string as recorded (`'misbehavior'`, `'transient'`, `'protocol_violation'`), `detail` the reason. |
 
 **These four are what JOURNAL_EVENTS → Peer Events / Sync Events and NODE_INTERFACE → Admin Listener read** —
 `peer_connected` from `onPeerActive`, `peer_disconnected`, `peer_penalised`, `sync_complete` from `onSyncComplete`;

@@ -135,7 +135,7 @@ The three fire from `NetNode`'s hooks — `onPeerActive(peerId, direction)`, `on
 reason)`, `onPeerPenalised(peerId, kind, detail)` (NET_INTERFACE → API → Sync Handler Registration) —
 registered in `node/src/index.ts`. `reason` on a disconnect is always `''` (libp2p's `peer:disconnect`
 carries none). `peer_penalised` fires for every penalty path, `gossip.ts`'s included — the hook is at
-`PeerManager`'s two penalty entries.
+`PeerManager`'s one penalty entry, `recordPenaltyKind`.
 
 ### peer_connected
 **Level:** INFO
