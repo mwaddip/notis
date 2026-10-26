@@ -3415,6 +3415,15 @@ The record shapes are exported beside their codecs: `NetworkRecord { memberCount
 `HolderRecord { claimAvailable, boxId | null }`, `PostRecord { author, height, standing }` — a box id as 64 lowercase
 hex, an author as 32 raw bytes.
 
+**Every tag is exported by name**, in the table's order: `IDENTITY_RECORD_TAG` (`0x80`), `NETWORK_RECORD_TAG`,
+`NAME_RECORD_TAG`, `HOLDER_RECORD_TAG`, `POST_RECORD_TAG`, `LIKE_MARKER_TAG`, `INDEX_MARKER_TAG`, `VOUCH_PAIR_TAG`,
+`CAST_COUNT_TAG` (`0x88`); `LIKE_MARKER` and `INDEX_MARKER` are the one-byte values of their tags. A reader that tells
+the kinds apart by the first byte — `boxFromRecordBytes`' refusal, the node's tree endpoint — reads these names, never
+the numbers.
+
+> ⚠ **AHEAD OF CODE (2026-10-26).** The exported tags lead `tree-records.ts`, which keeps all but
+> `IDENTITY_RECORD_TAG` private, and the node's `state/avl-endpoint.ts`, which writes `0x81`–`0x88`.
+
 ### PoW
 
 Ordering-block PoW is the consensus PoW; its constants are
