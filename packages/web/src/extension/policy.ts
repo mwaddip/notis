@@ -1,4 +1,4 @@
-import { bytesToHex } from '@dagsocial/types';
+import { bytesToHex, usernameString } from '@dagsocial/types';
 import type { UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 import type { SignSummary, CreditSend } from './protocol';
 
@@ -60,7 +60,7 @@ export function summarise(tx: UtxoTransaction, signerHex: string): SignSummary {
   const bondOut = firstOut(tx, 'bond');
   if (bondOut) return { kind: 'invite', inviteeHex: bytesToHex(bondOut.inviteePublicKey), spendRep: valueOf(bondOut) };
   const nameOut = firstOut(tx, 'username');
-  if (nameOut) return { kind: 'claim', name: nameToText(nameOut.name) };
+  if (nameOut) return { kind: 'claim', name: usernameString(nameOut.name) };
   // Burn: a `karma_price` output present with `post` and `likeTarget` absent —
   // the username box it spends is an input (an id only, so the name is not
   // in the transaction) and the burn's price rides the `karma_price` output.
@@ -129,13 +129,4 @@ function firstOut<T extends AnyBoxCandidate['boxType']>(tx: UtxoTransaction, box
 
 function valueOf(box: { value: bigint }): string {
   return box.value.toString();
-}
-
-const NAME_DECODER = new TextDecoder('utf-8');
-
-/** The username field is 1–24 UTF-8 bytes of [A-Za-z0-9_] — a strict subset of
- *  ASCII, so `TextDecoder` matches the node's own reading (TYPES_INTERFACE →
- *  UsernameBox). */
-function nameToText(bytes: Uint8Array): string {
-  return NAME_DECODER.decode(bytes);
 }
