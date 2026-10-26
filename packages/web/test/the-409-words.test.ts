@@ -256,7 +256,7 @@ describe('a like the node already holds reads from the node\'s own words', () =>
 // WEB_INTERFACE → The withdraw control — the node's known refusals mapped
 // to sentences; a pending withdrawal is not a withdrawn post.
 describe('a withdraw of a post the node already holds pending reads the pending line', () => {
-  it.fails('withdraw answered 409 "A withdrawal of this post is already pending" reads *withdraw rejected: a withdrawal of this post is already pending.*', async () => {
+  it('withdraw answered 409 "A withdrawal of this post is already pending" reads *withdraw rejected: a withdrawal of this post is already pending.*', async () => {
     const alreadyPending: Rejection = {
       status: 409,
       message: 'A withdrawal of this post is already pending',

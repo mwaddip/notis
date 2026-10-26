@@ -185,6 +185,10 @@ function withdrawRejectionCopy(r: Rejection): string {
   if (r.status === 503) return "the node's pool is full right now";
   const m = r.message.toLowerCase();
   if (/earlier block|not confirmed/.test(m)) return 'this post has not landed yet';
+  // The node's own pending withdrawal — a different thing from a withdrawn
+  // post (WEB_INTERFACE → The withdraw control: the node's known refusals
+  // mapped to sentences).
+  if (/withdrawal.*already pending/.test(m)) return 'a withdrawal of this post is already pending.';
   if (/already/.test(m)) return 'this post is already withdrawn';
   if (/author/.test(m)) return 'only the author can withdraw this post';
   return 'the node said: ' + m;
