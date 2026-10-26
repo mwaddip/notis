@@ -198,6 +198,19 @@ function notSignedCopy(kind: 'locked' | 'declined' | 'refused', reason: string, 
   return `${action} not sent.`;
 }
 
+/** Test-only exports — the surfaces render each copy with their existing
+ *  prefix (WEB_INTERFACE → The wallet, HOUSE_STYLE → Voice). The seam gives
+ *  the words a direct read, so a case can cover each surface's rule without
+ *  spinning up its full driving path. */
+export const _rejectionCopiesForTests = {
+  post: (r: Rejection): string => postRejectionCopy(r),
+  like: (r: Rejection): string => likeRejectionCopy(r),
+  vouch: (r: Rejection): string => vouchRejectionCopy(r),
+  invite: (r: Rejection): string => inviteRejectionCopy(r),
+  withdraw: (r: Rejection): string => withdrawRejectionCopy(r),
+  username: (r: Rejection): string => usernameRejectionCopy(r),
+};
+
 /** A username rejection in the voice register (WEB_INTERFACE → The username row,
  *  HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way. */
 function usernameRejectionCopy(r: Rejection): string {
