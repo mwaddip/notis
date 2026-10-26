@@ -91,9 +91,9 @@ import {
 // ---------------------------------------------------------------------------
 // Body sizing
 //
-// `entryByteCost` lives in `store/mempool.ts`, which records it per entry so a
-// transaction can be priced by the resource it consumes. This file spends that
-// number against the budget; the pool divides a fee by it.
+// The pool records each entry's byte cost (MEMPOOL_INTERFACE → Schema), so a
+// transaction can be priced by the resource it consumes. This file spends
+// that number against the budget; the pool divides a fee by it.
 // ---------------------------------------------------------------------------
 
 // NODE_INTERFACE → "Storage rent is a transition requiring no signature";
@@ -281,9 +281,9 @@ export function stopBlockCreator(): void {
  * block is committed — the tip moved, so the height this node mines moved with
  * it (MINING_INTERFACE → Template and submit).
  *
- * `startBlockCreator` is the only assignment of `config` and `index.ts` calls it
- * on a miner node alone, so an unassigned `config` *is* a server-role node: it
- * applies blocks and builds no templates.
+ * `startBlockCreator` is the only assignment of `config` and the node calls
+ * it on a miner node alone, so an unassigned `config` *is* a server-role
+ * node: it applies blocks and builds no templates.
  */
 export function rebuildTemplate(): void {
   if (!config) return;

@@ -51,8 +51,7 @@ const GENESIS_COMMITTED_KEY = 'genesis_committed';
  * root of whatever height it stopped at, which is not this one. A boot-time
  * comparison against the genesis pin therefore fails on every node with a
  * chain, and the only place the comparison means anything is the path that
- * just built the state it is checking. `test/services/genesis-state.test.ts`
- * pins that with a mined block rather than leaving it as an argument.
+ * just built the state it is checking.
  *
  * Called inside the seeding transaction rather than after it, so a mismatched
  * genesis is never committed: the throw rolls the boxes, the records, the tree
@@ -120,8 +119,6 @@ function markGenesisCommitted(): void {
  * ordering is consensus's, so the order in which the calls below happen to run
  * is deliberately not consensus-visible — genesis and block application share
  * one ordering rule rather than agreeing by coincidence.
- * `test/services/genesis-state.test.ts` pins that by seeding a reversed feed and
- * asserting the same root.
  *
  * Everything is inside one SQLite transaction because it is a multi-table
  * mutation: `utxo_boxes`, `identity_records`, `avl_tree_versions` and
@@ -178,11 +175,10 @@ export function seedGenesisState(): void {
   // `assertGenesisRoot`. The one comparison that could name the fault is
   // disabled by the act of skipping it, permanently and on every subsequent run.
   //
-  // Refusal follows `loadConfig`'s precedent for a below-floor ordering target
-  // (`config.ts` → the ordering-floor assertion): put the verdict where a human
-  // is reading it, rather than running against a state nobody configured. The
-  // remedy is in the message because the operator has exactly one — the chain
-  // and the AVL store share a SQLite file and must be wiped together.
+  // Refusal happens where a human is reading it, rather than letting the node
+  // run against a state nobody configured. The remedy is in the message
+  // because the operator has exactly one — the chain and the AVL store share
+  // a SQLite file and must be wiped together.
   if (getCurrentHeight() > 0) {
     throw new Error(
       `Store at height ${getCurrentHeight()} has no committed genesis state. Its ` +
@@ -237,11 +233,10 @@ export function seedGenesisState(): void {
       // rather than read from a config file
       // (ARCHITECTURE → "What varies per network, and what must not").
       //
-      // ⚠ **What each network's genesis holds is NOT restated here.** It is
-      // asserted once, in `genesis-state.test.ts`, and a prose count beside an
-      // assertion decays while the assertion stays green — the seeders below are
-      // gated one at a time, so the set is read off the gates rather than off a
-      // sentence that has to be re-read every time one is added.
+      // ⚠ **What each network's genesis holds is NOT restated here.** A prose
+      // count beside the gated seeders would decay while the gates stay
+      // green, so the set is read off the gates rather than off a sentence
+      // that has to be re-read every time one is added.
       //
       // ⛔ **One decoded payload reaches every mint site** (NODE_INTERFACE →
       // "Every mint id opens with the chain's genesis proof"). Decoded once

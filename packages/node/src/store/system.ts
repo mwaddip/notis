@@ -46,13 +46,13 @@ import {
 /**
  * The height a genesis mint commits to.
  *
- * A synthetic mint txId commits to a height and 0 is not one a block ever
- * settles at (`genesis-state.ts` → `GENESIS_HEIGHT`), so the genesis seeder's
- * own height — always 0, since seeding requires an empty store — is raised to
- * the first real one. Every seeder below takes its height through here: the
- * value reaches `mintTxIdFor`, so it is inside the box id, and three sites
- * spelling out the same clamp is three chances for one of them to stop
- * agreeing.
+ * A synthetic mint txId commits to a height (NODE_INTERFACE → Box Identity
+ * and Mint Provenance) and 0 is not one a block ever settles at, so the
+ * genesis seeder's own height — always 0, since seeding requires an empty
+ * store — is raised to the first real one. Every seeder below takes its
+ * height through here: the value reaches `mintTxIdFor`, so it is inside the
+ * box id, and three sites spelling out the same clamp is three chances for
+ * one of them to stop agreeing.
  */
 function genesisMintHeight(currentHeight: number): number {
   return currentHeight > 0 ? currentHeight : 1;

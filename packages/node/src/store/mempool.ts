@@ -200,17 +200,17 @@ function rowToEntry(row: MempoolRow): PoolEntry {
   };
 }
 
-// The one source of the default pool capacity. config.ts imports this
-// constant so the application layer's parse and the storage layer's bound
-// share one literal (ARCHITECTURE → Package boundaries).
+// The one source of the default pool capacity. The configuration module
+// imports this constant so the application layer's parse and the storage
+// layer's bound share one literal (ARCHITECTURE → Package boundaries).
 export const DEFAULT_MAX_MEMPOOL_ENTRIES = 10000;
 
 let maxEntries = DEFAULT_MAX_MEMPOOL_ENTRIES;
 
 /**
- * Set the pool capacity. Called once at startup from `index.ts` with the
- * parsed `config.maxMempoolEntries` (MEMPOOL_INTERFACE → Size cap — reject,
- * never evict).
+ * Set the pool capacity. Called once at startup with the parsed
+ * `config.maxMempoolEntries` (MEMPOOL_INTERFACE → Size cap — reject, never
+ * evict).
  */
 export function setMempoolCap(n: number): void {
   if (!Number.isSafeInteger(n) || n <= 0) {

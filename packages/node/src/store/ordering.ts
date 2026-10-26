@@ -46,8 +46,8 @@ interface OrderingBlockRow {
  *
  * `CorruptChainStateError` is what that catch already re-throws and what
  * `failStopIfCorruptChain` already stops for, so this needs no boundary edit:
- * exactly the property `corrupt-state.test.ts` pins as "a third kind must not
- * need a boundary edit to be fatal".
+ * the property that a third kind must not need a boundary edit to be fatal
+ * (NODE_INTERFACE → "Reach is the live argument, not the halt").
  */
 function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
   try {
@@ -75,13 +75,14 @@ function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
  * Insert a new ordering block — the only write path into `ordering_blocks`.
  *
  * **The provenance claim, stated here because several arguments elsewhere rest
- * on it.** This is the table's only INSERT, and in `src` it has exactly one
- * caller: `block-apply.ts` imports it as `storeCreateOrderingBlock` and calls
- * it from `applyBlockBody`. What it stores is `encodeHeader` /
- * `encodeUtxoTxTree` **of the decoded block** — this
- * node's own re-encoding, never the bytes a peer sent. So no input a peer can
- * choose reaches a reader of this table, and a row that disagrees with our own
- * writer means local corruption or a bug in us.
+ * on it** (NODE_INTERFACE → "Stored bytes: peer bytes are never stored").
+ * This is the table's only INSERT, and in `src` it has exactly one caller:
+ * block application imports it as `storeCreateOrderingBlock` and calls it
+ * from `applyBlockBody`. What it stores is `encodeHeader` /
+ * `encodeUtxoTxTree` **of the decoded block** — this node's own re-encoding,
+ * never the bytes a peer sent. So no input a peer can choose reaches a reader
+ * of this table, and a row that disagrees with our own writer means local
+ * corruption or a bug in us.
  *
  * **Two gates sit above that call and they are not interchangeable.**
  * `applyOrderingBlock` runs `verifyOrderingBlockStructure` before the body,
@@ -96,13 +97,13 @@ function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
  * every argument above and nothing says so.
  *
  * ⚠ **Neither obvious grep re-derives the enumeration.** `createOrderingBlock`
- * is also the block creator's own function (`services/block-creator.ts`), so a
- * search on the exported name returns two unrelated functions, and a search on
- * the alias returns only the sites already using the alias. Re-derive by arity
- * — this writer takes a block, the creator's takes nothing — or by import
- * source, and search the table name for the INSERT. The claim is about `src`:
- * tests write through this writer or through the raw-SQL poison helper that
- * exists to store rows this guard refuses.
+ * is also the block creator's own function, so a search on the exported name
+ * returns two unrelated functions, and a search on the alias returns only
+ * the sites already using the alias. Re-derive by arity — this writer takes
+ * a block, the creator's takes nothing — or by import source, and search the
+ * table name for the INSERT. The claim is about `src`: tests write through
+ * this writer or through the raw-SQL poison helper that exists to store rows
+ * this guard refuses.
  */
 export function createOrderingBlock(block: OrderingBlock, interlinks: string[]): void {
   const db = getDb();

@@ -25,7 +25,7 @@ export interface Config {
   /**
    * The parameter table `networkType` selects, resolved once at load and frozen.
    * The consensus fields below are copied from it so consumers keep one flat
-   * config surface; `index.ts` reads `magic` off it for the wire layer.
+   * config surface; the node reads `magic` off it for the wire layer.
    */
   profile: NetworkProfile;
   nodeRole: 'server' | 'miner';
@@ -184,7 +184,8 @@ export function loadConfig(): Readonly<Config> {
     // a value above `MAX_BLOCK_BODY_BYTES` as "as much as the rules allow"
     // — a node cannot raise its own consensus bound by asking. A fixture-
     // assembled `Config` does not pass through here, so the producer clamps
-    // again where it spends the budget (`block-creator.ts`).
+    // again where it spends the budget (MINING_INTERFACE → Template and
+    // submit → "Packing to the budget").
     blockBodyBudgetBytes: Math.min(
       readWholeNumber('BLOCK_BODY_BUDGET_BYTES', MAX_BLOCK_BODY_BYTES, { floor: 1 }),
       MAX_BLOCK_BODY_BYTES,
@@ -443,9 +444,9 @@ function assertOrderingTargetAboveFloor(cfg: Config): void {
  * **Non-empty, and that half is not pedantry.** An empty payload still encodes
  * cleanly, to the same `030000` on every network, so a profile that supplied one
  * would seed a proof box byte-identical to another network's — removing one of
- * the things that keeps two genesis roots apart. `network.test.ts` requires one or more pairs of the same profile
- * strings; the two guards state one rule between them, so the fail-stop must not
- * be the permissive one.
+ * the things that keeps two genesis roots apart. The suite requires every
+ * profile pair to disagree on this string too; the two guards state one rule
+ * between them, so the fail-stop must not be the permissive one.
  *
  * ⚠ **This is not the payload BOUND.** How long a payload may be is a decode
  * rule and belongs beside the encoder in `@dagsocial/types`; this asserts only

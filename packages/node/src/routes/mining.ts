@@ -17,16 +17,15 @@ export interface MiningDeps {
   setMinerPubkey(pubkey: Uint8Array | null): void;
   /**
    * Whether the node has met its peers, or has finished looking
-   * (`services/peer-readiness.ts`). A decision rather than a side effect, so it
-   * arrives as a dependency — the gate is part of this route's contract and is
-   * testable without a net instance.
+   * (MINING_INTERFACE → "The peer-readiness gate"). A decision rather than a
+   * side effect, so it arrives as a dependency — the gate is part of this
+   * route's contract and is testable without a net instance.
    */
   peerReady(): boolean;
   /**
    * MINING_INTERFACE → The window gate: `appliedTip < S + maxReorgDepth`. The
    * intake answers; a `false` withholds the template with the same 404 the
-   * peer-readiness gate answers with, so `scripts/miner.mjs` polls through
-   * both.
+   * peer-readiness gate answers with, so a miner polls through both.
    */
   windowOpen(): boolean;
   miningSecret: string;
@@ -97,7 +96,7 @@ export function createRouter(deps: MiningDeps): Router {
     // The peer-readiness gate (MINING_INTERFACE → "The peer-readiness gate")
     // and the window gate (MINING_INTERFACE → "The window gate"): both withhold
     // with the *same* 404 the absent-template case answers with — the shape
-    // `scripts/miner.mjs` polls through with no give-up count.
+    // a miner polls through with no give-up count.
     //
     // Behind the `?miner=` validation on purpose: a malformed payout key is a
     // client bug and must earn its 400 whatever either gate's state is.

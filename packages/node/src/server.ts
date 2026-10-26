@@ -420,15 +420,15 @@ export function createApp(config: Config): express.Express {
 
   // Admission's `held` and `owed` are the spend rule's engine inputs
   // (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule needs"),
-  // written once in `services/karma-admission.ts` and wired here as the
-  // engine's `getKarmaValue` and `getKarmaOwed`; `handleRelayedTx` wires the
-  // same two readers from the same module.
+  // written once by the karma-admission service and wired here as the engine's
+  // `getKarmaValue` and `getKarmaOwed`; `handleRelayedTx` wires the same two
+  // readers from the same module.
   // ⛔ **Every `getBox` below is `getBoxWithPending`, and that is an admission
   // convenience, not a consensus one.** These deps reach submission services
-  // only. Block application takes its `getBox` from a direct store import
-  // (`block-apply.ts`), so nothing here can reach it — and nothing here may be
-  // given to it: a block's inputs must resolve against the confirmed set alone,
-  // or what a block may spend would depend on one node's unshared pool.
+  // only. Block application takes its `getBox` from a direct store import, so
+  // nothing here can reach it — and nothing here may be given to it: a block's
+  // inputs must resolve against the confirmed set alone, or what a block may
+  // spend would depend on one node's unshared pool.
   //
   // Submission needs the wider view because a transaction that spends the change
   // box of one still in the pool is ordinary — the client chains rather than

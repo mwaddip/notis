@@ -125,7 +125,7 @@ export function createSignatureMemo(
 export const signatureMemo = createSignatureMemo(SIGNATURE_MEMO_ENTRIES);
 
 /**
- * The validators `index.ts` hands `NetNode` — net's Stage 1 reads
+ * The validators the node hands `NetNode` — net's Stage 1 reads
  * `verifyTxSignatures` through the memo's batch
  * (NET_INTERFACE → Stage 1 → "A transaction's signatures are checked at
  * Stage 1").

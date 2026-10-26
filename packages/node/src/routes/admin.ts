@@ -1,4 +1,5 @@
-// NODE_INTERFACE → Admin Listener: a pure reader of metrics.ts and injected net deps.
+// NODE_INTERFACE → Admin Listener: a pure reader of the metrics module and
+// injected net deps.
 import { Router } from 'express';
 import type { ProtocolEra } from '@dagsocial/types';
 import { protocolVersionAt } from '@dagsocial/types';

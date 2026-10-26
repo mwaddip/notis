@@ -701,8 +701,7 @@ export function getRentEligibleCreditBoxes(
  * settles for free in one block. **Two guards hold that shut and either alone
  * suffices**: the `invited_at_block > 0` predicate here and the caller's early
  * return. They are the same rule written twice rather than two independent
- * checks, which is why `invite-block-apply.test.ts` has to remove both before
- * its case fails.
+ * checks.
  */
 /**
  * Unspent bonds whose invitee's `invited_at_block` is in `(0, maxInvitedAt]`,

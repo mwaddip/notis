@@ -431,9 +431,9 @@ export function registerRangeEndpoint(app: Express, handle: AvlProverHandle): vo
       }
       if (err instanceof TreeInconsistencyError) {
         // The tree contradicts itself under the route's read — local
-        // corruption, as `services/cost-estimate.ts` reads it; never a verdict
-        // on the request (NODE_INTERFACE → "A tree that contradicts itself
-        // under a route's read is local corruption").
+        // corruption, never a verdict on the request (NODE_INTERFACE → "A
+        // tree that contradicts itself under a route's read is local
+        // corruption").
         failStopIfCorruptChain(
           new InconsistentStateTreeError('GET /api/v1/range', resolved.atHeight, err),
         );

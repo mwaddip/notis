@@ -7,11 +7,11 @@
  * construct may take the node down.
  *
  * "Our own stored header cannot be hashed" is not in that class and cannot be
- * put in it. The ordering store's provenance is stated on `store/ordering.ts`'s
- * `createOrderingBlock`; the half this argument needs is the header-domain
- * gate, so every stored header cleared `verifyHeaderFieldDomains`. No peer can
- * cause this: it means local corruption or a bug in us, and the honest response
- * is to stop.
+ * put in it. The ordering store's provenance is stated once
+ * (NODE_INTERFACE → "Stored bytes: peer bytes are never stored"); the half
+ * this argument needs is the header-domain gate, so every stored header
+ * cleared `verifyHeaderFieldDomains`. No peer can cause this: it means local
+ * corruption or a bug in us, and the honest response is to stop.
  *
  * The alternative is worse than stopping. A stored `prevBlock` that cannot be
  * hashed makes every subsequent block fail its chain-link check, forever, logged
@@ -65,11 +65,12 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
  * **Why this is corrupt state and not a rejection, stated as provenance rather
  * than as a guess about the error class.** The decode that raises it reads a
  * row of `ordering_blocks`, and what that table holds is our own re-encoding of
- * a block that already cleared the apply gate — one INSERT, one `src` caller,
- * stated on `store/ordering.ts`'s `createOrderingBlock`. So there is no input a
- * peer can choose that reaches this decoder: a row that will not decode means
- * the row changed after we wrote it, or our writer and our reader disagree.
- * Corruption, or a bug in us. Both are what fail-stop is for.
+ * a block that already cleared the apply gate — the provenance claim stated
+ * once (NODE_INTERFACE → "Stored bytes: peer bytes are never stored"). So
+ * there is no input a peer can choose that reaches this decoder: a row that
+ * will not decode means the row changed after we wrote it, or our writer and
+ * our reader disagree. Corruption, or a bug in us. Both are what fail-stop
+ * is for.
  *
  * ⚠ **The distinction this type exists to keep is the one between those bytes
  * and the block's own**, and it is why the naming happens at the read rather
@@ -118,10 +119,10 @@ export class UnreadableStoredBlockError extends CorruptChainStateError {
  * takes whatever block it is handed, so the contiguity of the table is a
  * property of the path, never of the INSERT.
  *
- * The **single writer** is what makes that gate cover every row, and it is
- * stated on `store/ordering.ts`'s `createOrderingBlock`: one INSERT, one `src`
- * caller, which is the gated one. Both halves are needed — a gate on one of two
- * writers guarantees nothing.
+ * The **single writer** is what makes that gate cover every row, and the
+ * provenance claim says so once (NODE_INTERFACE → "Stored bytes: peer bytes
+ * are never stored"): one INSERT, one `src` caller, which is the gated one.
+ * Both halves are needed — a gate on one of two writers guarantees nothing.
  *
  * The one delete is reached only from `revertBlock` inside `reorg`'s strictly
  * top-down loop and inside its transaction. Nothing prunes blocks.
@@ -518,7 +519,7 @@ export function guardStoreRead<A extends unknown[], R>(
  * other reason is logged with its stack and the function returns, so the
  * process keeps running.
  *
- * `index.ts` registers one call of this at startup, through
+ * The node registers one call of this at startup, through
  * `process.on('unhandledRejection', …)`.
  */
 export function handleUnhandledRejection(reason: unknown): void {

@@ -298,8 +298,8 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
     // in that class and cannot be put in it: the ordering store's one writer
     // runs inside `applyBlockBody` below, downstream of the
     // `verifyOrderingBlockStructure` call above — the same domain predicate —
-    // so no peer can cause it. (`store/ordering.ts`'s `createOrderingBlock`
-    // states the provenance.) Answering `false` would turn local corruption
+    // so no peer can cause it (NODE_INTERFACE → "Stored bytes: peer bytes are
+    // never stored"). Answering `false` would turn local corruption
     // into a permanent rejection of every subsequent block, logged as an
     // unexpected failure — a node that rejects everything while staying up looks
     // exactly like a quiet network. The unwinding below still runs, because the
@@ -512,7 +512,7 @@ function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; index
   // 5. The coinbase's maturity lock is checked with the rest of the settlement,
   //    in the mutation phase: the coinbase is an output of that transaction
   //    and every clause about it is one rule in one place
-  //    (`settlement.ts` → checkSettlement).
+  //    (NODE_INTERFACE → The settlement transaction).
 
   // 6. Store the block — the vector the funnel verified is the one stored
   storeCreateOrderingBlock(block, expectedInterlinks);
@@ -919,10 +919,11 @@ export type StateRootSpeculation =
  * ⛔ **`CorruptChainStateError` is the exception, and it calls the boundary
  * here rather than re-throwing.** Producing is where the fault would otherwise
  * be silent: mapped to `body-rejected` it would stop this node producing while
- * it stayed up, which is the one outcome `services/corrupt-state.ts` exists to
- * prevent. Re-throwing is not open either — the caller in `createOrderingBlock`
- * has no try/catch around it, and its neighbours already call
- * `failStopIfCorruptChain` directly.
+ * it stayed up, which is the one outcome fail-stop exists to prevent
+ * (NODE_INTERFACE → "Reach is the live argument, not the halt"). Re-throwing
+ * is not open either — the caller in `createOrderingBlock` has no try/catch
+ * around it, and its neighbours already call `failStopIfCorruptChain`
+ * directly.
  *
  * ⚠ **The `finally` below does NOT run on that arm.** `process.exit(1)` does not
  * unwind, so the prover restore is skipped. That is correct — the process is
