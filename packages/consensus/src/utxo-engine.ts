@@ -106,6 +106,25 @@ export function isRoot(record: IdentityRecord): boolean {
   return record.memberSinceBlock > 0 && record.memberBar === 0 && record.invitedAtBlock === 0;
 }
 
+/**
+ * Who may invite, and how many (CONSENSUS_INTERFACE → What it holds → "Who
+ * may invite, and how many, is one function"; ARCHITECTURE → The invite
+ * budget). `'no-record'` where there is no record, `'root'` for a root
+ * (uncapped — ARCHITECTURE → Roots), `⌊memberVouches / bar()⌋ − invitesUsed`
+ * for a member, and `'none'` for anyone else. `bar` is called once, for a
+ * member alone — a caller that reads the bar from the network record reads
+ * no network record for a root, a non-member or a key with no record.
+ */
+export function availableInvites(
+  record: IdentityRecord | null,
+  bar: () => number,
+): 'no-record' | 'root' | 'none' | number {
+  if (record === null) return 'no-record';
+  if (isRoot(record)) return 'root';
+  if (!isMember(record)) return 'none';
+  return Math.floor(record.memberVouches / bar()) - record.invitesUsed;
+}
+
 // ---------------------------------------------------------------------------
 // Dependency interface
 // ---------------------------------------------------------------------------
@@ -910,30 +929,32 @@ function checkTransitions(
           };
         }
         // NODE_INTERFACE → Bond transition rules: only a root or a member with
-        // an invite available creates a bond.
+        // an invite available creates a bond. The budget is one function
+        // (CONSENSUS_INTERFACE → What it holds → "Who may invite, and how
+        // many, is one function"), and the bar it computed is kept for the
+        // refusal message rather than read twice.
         const inviterRecord = deps.getIdentityRecord(bondOut.inviterId);
-        if (!inviterRecord) {
+        let d: number | null = null;
+        const avail = availableInvites(inviterRecord, () => {
+          d = membershipBar(deps.getNetworkRecord().memberCount, deps.membershipBarMultiplier);
+          return d;
+        });
+        if (avail === 'no-record') {
           return {
             valid: false,
             error: `Inviter holds no identity record`,
           };
         }
-        if (isRoot(inviterRecord)) {
-          // Roots have no budget check — bounded by bond karma alone.
-        } else if (isMember(inviterRecord)) {
-          const nr = deps.getNetworkRecord();
-          const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
-          const available = Math.floor(inviterRecord.memberVouches / d) - inviterRecord.invitesUsed;
-          if (available < 1) {
-            return {
-              valid: false,
-              error: `Inviter has no invites available (vouches: ${inviterRecord.memberVouches}, D: ${d}, used: ${inviterRecord.invitesUsed})`,
-            };
-          }
-        } else {
+        if (avail === 'none') {
           return {
             valid: false,
             error: `Only a root or a member may invite`,
+          };
+        }
+        if (avail !== 'root' && avail < 1) {
+          return {
+            valid: false,
+            error: `Inviter has no invites available (vouches: ${inviterRecord!.memberVouches}, D: ${d!}, used: ${inviterRecord!.invitesUsed})`,
           };
         }
       }
