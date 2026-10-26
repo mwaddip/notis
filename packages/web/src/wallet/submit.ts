@@ -295,8 +295,8 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
   if (nn === null) return clientRejection('cannot read the network numbers.');
   // The unvouch spends a `vouch` box, not karma, and the rule names no floor
   // for it — the context's `effective` is set to 0n to satisfy the type and
-  // read by no flow (WEB_INTERFACE → The wallet → "An unvouch spends a
-  // `vouch` box, no view's").
+  // read by no flow (WEB_INTERFACE → The wallet → "The reader's spends run
+  // one at a time, per ledger").
   const ctx: BuildContext = {
     spendable: [],
     height: status.blockHeight,
