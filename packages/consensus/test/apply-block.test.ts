@@ -404,6 +404,15 @@ describe('applyBlock — a chain of blocks over a stub view', () => {
     it('a like on a post no block confirmed', () => {
       expectRefused(at2(), 3, [likeTx(l1, largest(at2(), l1), 'ab'.repeat(32), t.userId, 3)], 'is not confirmed, so it names no author');
     });
+
+    it('two postWithdraw transactions for one post — the second refused as "already-withdrawn or unknown post"', () => {
+      // The withdrawal arm reads `getPostStanding` after the first call to
+      // `withdrawPost` set the standing in the overlay, so the standing check
+      // answers the second entry.
+      const first = withdrawTx(t, largest(at2(), t), tThread.postId, 3);
+      const second = withdrawTx(t, changeOf(first), tThread.postId, 3);
+      expectRefused(at2(), 3, [first, second], 'already-withdrawn or unknown post');
+    });
   });
 
   describe('the body itself', () => {
