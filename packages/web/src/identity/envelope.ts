@@ -2,7 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { scryptAsync } from '@noble/hashes/scrypt.js';
 import { randomBytes } from '@noble/hashes/utils.js';
-import { bytesToHex, hexToBytes } from '@dagsocial/types';
+import { bytesToHex, hexToBytes, ED25519_PKCS8_PREFIX } from '@dagsocial/types';
 import { isHex64Lower } from '@dagsocial/node-reads';
 
 // The identity envelope — WEB_INTERFACE → The identity module. The stored value
@@ -27,12 +27,6 @@ export const SCRYPT_P = 1;
  *  identity module → "An envelope's scrypt cost is bounded". Four times the
  *  seal's own cost, the room left for the seal to rise. */
 export const SCRYPT_N_MAX = 262_144;
-
-/** The fixed RFC 8410 PKCS8 wrapper for an Ed25519 seed — a 16-byte prefix before
- *  the 32-byte seed (WEB_INTERFACE → The identity module, the Key generation row).
- *  The sealed plaintext is the seed alone; this is what a clear file's 48-byte DER
- *  carries in front of it. */
-const PKCS8_PREFIX_HEX = '302e020100300506032b657004220420';
 
 const HEX = /^(?:[0-9a-f]{2})+$/;
 
@@ -225,7 +219,9 @@ function seedFromClear(pubKeyHex: string, privKeyBase64: string): Uint8Array {
   if (der.length !== 48) {
     throw new IdentityError('the private key is not a 48-byte PKCS8 key.');
   }
-  if (bytesToHex(der.subarray(0, 16)) !== PKCS8_PREFIX_HEX) {
+  // The RFC 8410 wrapper ahead of the 32-byte seed in a clear file's 48-byte DER
+  // (TYPES_INTERFACE → Mempool and encoding, WEB_INTERFACE → The identity module).
+  if (bytesToHex(der.subarray(0, 16)) !== ED25519_PKCS8_PREFIX) {
     throw new IdentityError('the private key is not an Ed25519 PKCS8 key.');
   }
   const seed = new Uint8Array(der.subarray(16));
