@@ -1,7 +1,7 @@
 import { KARMA_LISTING_MAX, LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import type { Api } from '../api/client';
 import { readWholeList } from '../api/whole-list';
-import type { BuildContext, SendBuildContext } from './builders';
+import type { BuildContext, RepBuildContext } from './builders';
 import type { SpendableBox } from './types';
 import type { CreditBoxRow, KarmaBoxRow } from '../api/dto';
 
@@ -17,7 +17,7 @@ import type { CreditBoxRow, KarmaBoxRow } from '../api/dto';
 export async function readBuildContext(
   reads: Pick<Api, 'karma' | 'status'>,
   author: string,
-): Promise<BuildContext> {
+): Promise<RepBuildContext> {
   // The first page carries the view's `effective` — the number the floor is
   // held against (WEB_INTERFACE → The wallet → "The floor is the client's to
   // know"). KARMA_LISTING_MAX is 2 and PAGE_LIMIT_MAX reads up to 100 rows a
@@ -96,7 +96,7 @@ export function lockedCreditSummary(
 export async function readCreditContext(
   reads: Pick<Api, 'credits' | 'status'>,
   author: string,
-): Promise<SendBuildContext> {
+): Promise<BuildContext> {
   const rows = await readWholeList<CreditBoxRow, Awaited<ReturnType<Api['credits']>>>({
     readPage: (page) => reads.credits(author, page, { pending: true }),
     pick: (answer) => ({ rows: answer.boxes, next: answer.next }),

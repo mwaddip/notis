@@ -4,7 +4,7 @@ import { encodeTx, decodeTx, POST_PRICE_THREAD, POST_PRICE_REPLY, LIKE_KARMA_COS
 import type { UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 import {
   buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend,
-  type BuildContext,
+  type BuildContext, type RepBuildContext,
 } from '../src/wallet/builders';
 import { classifyLedger, summarise } from '../src/extension/policy';
 
@@ -24,7 +24,7 @@ const TARGET_KEY = 'ee'.repeat(32);
 const INVITEE = '22'.repeat(32);
 const VOUCH_BOX = '33'.repeat(32);
 
-function ctx(spendableValue = 227n): BuildContext {
+function ctx(spendableValue = 227n): RepBuildContext {
   return {
     spendable: [{ boxId: BOX, value: spendableValue }],
     height: 6000,
@@ -178,7 +178,7 @@ describe('summarise — the derived summary matches the transaction shape', () =
     // not cover a thread, so both inputs ride (WEB_INTERFACE → The wallet).
     // The derived summary is a thread, with the same `spendRep` as the one
     // input case.
-    const twoInputCtx: BuildContext = {
+    const twoInputCtx: RepBuildContext = {
       spendable: [
         { boxId: BOX, value: 3n },
         { boxId: '55'.repeat(32), value: 100n, income: true },
@@ -202,7 +202,6 @@ describe('summarise — the derived summary matches the transaction shape', () =
       height: 5000,
       era: 1,
       author: SIGNER,
-      effective: 0n,
     };
     const { tx } = buildSend(sendCtx, TARGET_KEY, 1_250_000_000n);
     expect(summarise(roundtrip(tx), SIGNER)).toEqual({
