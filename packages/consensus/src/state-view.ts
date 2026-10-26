@@ -67,9 +67,11 @@ export interface StateView {
   /** At most `limit` live escrows with `releaseAtBlock ≤ height`, `(releaseAtBlock, id)`. */
   getVouchEscrowsReleasableAt(height: number, limit: number): VouchEscrowBox[];
   /**
-   * At most `limit` live vouch boxes whose voucher's record fails `member()`,
-   * voucher by voucher and each voucher's in target order (CONSENSUS_INTERFACE →
-   * StateView → "The lapses run voucher by voucher").
+   * At most `limit` live vouch boxes whose voucher is a lapsed member —
+   * `memberSinceBlock > 0` and failing `member()` (CONSENSUS_INTERFACE → What it
+   * holds → "Membership is one predicate") — voucher by voucher and each
+   * voucher's in target order (CONSENSUS_INTERFACE → StateView → "The lapses run
+   * voucher by voucher").
    */
   getLapsedVouches(limit: number): VouchBox[];
   /** The post's recorded author — the post record under the state root (NODE_INTERFACE → Block Topology → "Block application reads the record, through the tree view"), or none. */
