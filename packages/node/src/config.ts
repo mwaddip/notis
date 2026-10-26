@@ -3,6 +3,7 @@ import {
   TREE_KEY_LENGTH,
   MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  POW_TARGET_BITS_MAX,
   decayCfgFor,
   isHex64,
   profileFor,
@@ -390,7 +391,7 @@ function assertProofWindowWithinProofHistory(cfg: Config): void {
 /**
  * The difficulty band is refused at load, never clamped.
  * NODE_INTERFACE → Configuration: `floorBits >= ORDERING_BLOCK_POW_TARGET_FLOOR`,
- * `floorBits <= anchorBits <= ceilingBits`, `ceilingBits <= 65536`,
+ * `floorBits <= anchorBits <= ceilingBits`, `ceilingBits <= POW_TARGET_BITS_MAX`,
  * `idealMs > 0`. Each comparison is negated so `NaN` refuses.
  */
 function assertOrderingTargetAboveFloor(cfg: Config): void {
@@ -413,10 +414,10 @@ function assertOrderingTargetAboveFloor(cfg: Config): void {
         `"${net}" is below anchorBits ${cfg.orderingBlockPowTargetBits}`,
     );
   }
-  if (!(cfg.orderingBlockPowTargetCeilingBits <= 65536)) {
+  if (!(cfg.orderingBlockPowTargetCeilingBits <= POW_TARGET_BITS_MAX)) {
     throw new Error(
       `orderingBlockPowTargetCeilingBits ${cfg.orderingBlockPowTargetCeilingBits} for network ` +
-        `"${net}" exceeds 65536`,
+        `"${net}" exceeds ${POW_TARGET_BITS_MAX}`,
     );
   }
   if (!(cfg.orderingBlockIdealMs > 0)) {
