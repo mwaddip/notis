@@ -14,6 +14,7 @@ import {
   protocolVersionAt,
   isValidUsernameBytes,
   isBytes,
+  isHex64,
 } from '@dagsocial/types';
 import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash, hash32, bytesToHex, hexToBytes, computeUtxoTxRoot, computeTxId } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
@@ -63,44 +64,17 @@ function isU64Safe(v: unknown): v is number {
 }
 
 /**
- * A `PostId` as it appears in `parentRefs`: exactly 64 lowercase hex
- * characters, the output shape of `computePostId`'s `.toString('hex')`.
- *
- * Lowercase, not case-insensitive: uppercase hex decodes to the same 32 bytes,
- * so accepting both would make `hexToBytes` non-injective at the codec boundary
- * — two distinct in-memory posts encoding to one preimage, which is the
- * malleability the M-1 encoding exists to close.
- */
-const POST_ID_HEX = /^[0-9a-f]{64}$/;
-
-/**
- * The `b32` string domain: exactly 64 lowercase hex characters.
- *
- * One predicate over `POST_ID_HEX` rather than a second regex, because it is
- * the same domain reached from a different field. Every 32-byte value that
- * stays a hex `string` in memory and crosses the wire as raw bytes lands here
- * — post ids, the roots, `prevBlockHash`, tx ids, the consensus-carried
- * `author`. `codec.ts`'s `hexToBytesExact` is the function on the other side
- * and its accepted set is exactly this one, deliberately: a domain narrower
- * than the writer's leaves a reachable throw, and a domain wider than the
- * writer's is a check that rejects nothing.
- */
-function isHex32(v: unknown): v is string {
-  return typeof v === 'string' && POST_ID_HEX.test(v);
-}
-
-/**
  * `stateRoot`'s domain — **66** characters, not 64.
  *
  * The AVL+ digest is 33 bytes (`EMPTY_STATE_ROOT = '00'.repeat(33)`), so it is
- * `b33` on the wire and `POST_ID_HEX` is the wrong width for it. The extra byte
+ * `b33` on the wire and `isHex64` is the wrong width for it. The extra byte
  * is the root node's height, carried inside the digest; it is not a 32-byte
  * hash with a spare byte, so there is no "close enough" reading under which the
  * 64-char form is acceptable.
  */
 const STATE_ROOT_HEX = /^[0-9a-f]{66}$/;
 
-/** `stateRoot`'s domain as a predicate — the `b33` counterpart to `isHex32`. */
+/** `stateRoot`'s domain as a predicate — the `b33` counterpart to `isHex64`. */
 function isHex33(v: unknown): v is string {
   return typeof v === 'string' && STATE_ROOT_HEX.test(v);
 }
@@ -143,7 +117,7 @@ export function verifyPostCommitDomains(commit: unknown): { valid: boolean; erro
     return { valid: false, error: 'Post parentRefs must be an array' };
   }
   for (const ref of commit.parentRefs) {
-    if (typeof ref !== 'string' || !POST_ID_HEX.test(ref)) {
+    if (typeof ref !== 'string' || !isHex64(ref)) {
       return { valid: false, error: 'Post parentRef must be 64 lowercase hex characters' };
     }
   }
@@ -165,7 +139,7 @@ export function verifyPostCommitDomains(commit: unknown): { valid: boolean; erro
 
 export function verifyPostWithdrawCommitDomains(commit: unknown): { valid: boolean; error?: string } {
   if (!isObject(commit)) return { valid: false, error: 'PostWithdrawCommit is not an object' };
-  if (!isHex32(commit.postId)) {
+  if (!isHex64(commit.postId)) {
     return { valid: false, error: 'PostWithdrawCommit postId must be 64 lowercase hex characters' };
   }
   return { valid: true };
@@ -213,8 +187,8 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   { field: 'protocolVersion', ok: isU64Safe, error: 'Block header protocolVersion must be a non-negative safe integer' },
   { field: 'height', ok: isU64Safe, error: 'Block header height must be a non-negative safe integer' },
   // b32 — 32 bytes carried as hex in memory
-  { field: 'prevBlockHash', ok: isHex32, error: 'Block header prevBlockHash must be 64 lowercase hex characters' },
-  { field: 'utxoTxRoot', ok: isHex32, error: 'Block header utxoTxRoot must be 64 lowercase hex characters' },
+  { field: 'prevBlockHash', ok: isHex64, error: 'Block header prevBlockHash must be 64 lowercase hex characters' },
+  { field: 'utxoTxRoot', ok: isHex64, error: 'Block header utxoTxRoot must be 64 lowercase hex characters' },
   // b33 — the AVL+ digest carries a height byte, so 66 characters, not 64
   { field: 'stateRoot', ok: isHex33, error: 'Block header stateRoot must be 66 lowercase hex characters' },
   // b32 — already bytes, so type before width (a 32-char string is not 32 bytes)
@@ -234,10 +208,10 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   // schedule (→ asertTargetBits) read it.
   { field: 'createdAt', ok: isU64Safe, error: 'Block header createdAt must be a non-negative safe integer' },
   // b32 — the interlink vector's commitment (TYPES_INTERFACE → Interlink vector)
-  { field: 'interlinkRoot', ok: isHex32, error: 'Block header interlinkRoot must be 64 lowercase hex characters' },
+  { field: 'interlinkRoot', ok: isHex64, error: 'Block header interlinkRoot must be 64 lowercase hex characters' },
   // b32 — hash32 of the block's AVL+ proof (NODE_INTERFACE → The block proof); last, so no
   // earlier field's number depends on it (TYPES_INTERFACE → Layout — Block)
-  { field: 'adProofsRoot', ok: isHex32, error: 'Block header adProofsRoot must be 64 lowercase hex characters' },
+  { field: 'adProofsRoot', ok: isHex64, error: 'Block header adProofsRoot must be 64 lowercase hex characters' },
 ];
 
 /**
@@ -556,7 +530,7 @@ export function verifyTxSignatures(
   if (!isObject(map) || Array.isArray(map)) return false;
   const rawEntries = Object.entries(map);
   for (const [key] of rawEntries) {
-    if (!isHex32(key)) return false;
+    if (!isHex64(key)) return false;
   }
   let txId: string;
   try {
@@ -929,7 +903,7 @@ export function verifyOrderingBlockStructure(
   // the stated rejection the apply path requires (NODE_INTERFACE → Ordering
   // block apply-time authorization).
   for (const id of block.utxoTxTree.utxoTxIds) {
-    if (!isHex32(id)) {
+    if (!isHex64(id)) {
       return {
         valid: false,
         error: 'Ordering block utxoTxId must be 64 lowercase hex characters',
@@ -1013,7 +987,7 @@ export function verifyUtxoTxRoot(block: OrderingBlock): boolean {
   const header = (block as { header: unknown }).header;
   if (!isObject(header)) return false;
   const root = header.utxoTxRoot;
-  if (!isHex32(root)) return false;
+  if (!isHex64(root)) return false;
   const tree = (block as { utxoTxTree: unknown }).utxoTxTree;
   if (!isObject(tree)) return false;
   const ids = tree.utxoTxIds;
@@ -1021,7 +995,7 @@ export function verifyUtxoTxRoot(block: OrderingBlock): boolean {
   if (!Array.isArray(ids)) return false;
   if (!Array.isArray(txs)) return false;
   if (ids.length !== txs.length) return false;
-  for (const id of ids) if (!isHex32(id)) return false;
+  for (const id of ids) if (!isHex64(id)) return false;
   for (const tx of txs) if (!isBytes(tx)) return false;
   return computeUtxoTxRoot({ utxoTxIds: ids, utxoTxs: txs }) === root;
 }
@@ -1216,7 +1190,7 @@ export function verifyHeaderChain(
   // Validate anchor interlinks before entering the loop.
   if (!Array.isArray(anchor.interlinks) ||
       anchor.interlinks.length > MAX_INTERLINKS ||
-      anchor.interlinks.some(e => !isHex32(e)) ||
+      anchor.interlinks.some(e => !isHex64(e)) ||
       (anchor.interlinks.length === 0 && anchor.height !== 0)) {
     return { ok: false, index: 0, reason: 'interlinks' };
   }
