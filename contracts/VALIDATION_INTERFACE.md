@@ -1250,6 +1250,22 @@ both the node's envelope check and its transition arm call this one.
 `postId` must be 64 lowercase hex characters. **It takes `unknown`** — that parameter type is what
 makes it a domain gate rather than a restatement of the TypeScript type, since the value arrives
 from a decoder or an HTTP body and the compiler has never seen it.
+
+### isValidVouchTarget
+
+```ts
+isValidVouchTarget(userId: Uint8Array): boolean
+```
+
+**The form of a vouch's target key**: a `Uint8Array` (`types`' `isBytes`) of 32 bytes, not every byte zero. It
+reads no state — whether the key holds an identity record is the node's question (`NODE_INTERFACE → Vouch transition
+rules`). The node's vouch service asks it before anything else about the target.
+
+> ⚠ **AHEAD OF CODE (2026-10-26).** `isBytes` from `types` (`TYPES_INTERFACE → Export table`) leads `verify.ts`, which
+> tests the type with its own `instanceof`; `verify.ts` and `ed25519-batch.ts` each hold a private `isBytes`, and
+> `verify.ts` its own 64-hex pattern where `types`' `isHex64` stands, and `65536` where `types`' `POW_TARGET_BITS_MAX`
+> stands.
+
 ### verifyBlockChainLink
 
 ```
