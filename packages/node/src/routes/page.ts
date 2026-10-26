@@ -102,6 +102,17 @@ export function isAfterError(
   return v !== null && typeof v === 'object' && 'error' in v && !('blockHeight' in v) && !('value' in v);
 }
 
+// NODE_INTERFACE → Usernames; NODE_INTERFACE → Identity parameters: strip a
+// leading `@`, hold the rest to `isValidUsernameBytes`, and answer the
+// canonical string (TYPES_INTERFACE → "Content limits"). The caller maps the
+// failure to its own error string.
+export function parseNameParam(raw: string): { canonical: string } | { invalid: true } {
+  const rest = raw.startsWith('@') ? raw.slice(1) : raw;
+  const bytes = Buffer.from(rest, 'utf8');
+  if (!isValidUsernameBytes(bytes)) return { invalid: true };
+  return { canonical: canonicalUsername(bytes) };
+}
+
 // NODE_INTERFACE → Identity parameters;
 // NODE_INTERFACE → HTTP API → "Hex is lowercase"
 export function resolveIdentityParam(
@@ -113,13 +124,11 @@ export function resolveIdentityParam(
     return { hex: v };
   }
   if (value.startsWith('@')) {
-    const rest = value.slice(1);
-    const bytes = Buffer.from(rest, 'utf8');
-    if (!isValidUsernameBytes(bytes)) {
+    const parsed = parseNameParam(value);
+    if ('invalid' in parsed) {
       return { error: 'malformed identity parameter', status: 400 };
     }
-    const canonical = canonicalUsername(bytes);
-    const row = getUsername(canonical);
+    const row = getUsername(parsed.canonical);
     if (!row) return { error: 'unknown handle', status: 404 };
     return { hex: row.owner };
   }
