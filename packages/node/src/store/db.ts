@@ -143,8 +143,9 @@ const MIGRATIONS = [
   // against an old one (NODE_INTERFACE → No store schema version, and none is
   // owed).
   //
-  // The like_/invite_/vouch_ columns are gate metadata (audit M-8): populated by
-  // insertUtxoTx from the tx outputs so the correctness gates are plain SQL over
+  // The like_/invite_/vouch_ columns are gate metadata (MEMPOOL_INTERFACE →
+  // Correctness gates): populated by insertUtxoTx from the tx outputs so the
+  // correctness gates are plain SQL over
   // every row, not a decode-scan of the first 1000. `tx_fee` and `tx_bytes` are
   // the same principle for the pool's two classes and its ordering
   // (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
@@ -242,9 +243,9 @@ const MIGRATIONS = [
     proof BLOB NOT NULL
   )`,
 
-  // Discovered peers — persistence behind net's PeerStorage seam (audit L-14).
-  // Shaped to net's PeerRecord, keyed by multiaddr: PeerDb dedupes by address,
-  // and a libp2p peerId is freely regenerable so it makes a worthless key.
+  // Discovered peers — persistence behind net's PeerStorage seam. Shaped to
+  // net's PeerRecord, keyed by multiaddr: PeerDb dedupes by address, and a
+  // libp2p peerId is freely regenerable so it makes a worthless key.
   `CREATE TABLE IF NOT EXISTS peers (
     address           TEXT PRIMARY KEY,
     last_seen_ms      INTEGER NOT NULL,
@@ -478,8 +479,9 @@ function migrateMempoolTxColumns(database: Database.Database): void {
 }
 
 /**
- * Partial indexes over the mempool gate-metadata columns (audit M-8). Created
- * after the mempool migrations so they land on whichever CREATE TABLE ran last.
+ * Partial indexes over the mempool gate-metadata columns (MEMPOOL_INTERFACE
+ * → Correctness gates). Created after the mempool migrations so they land on
+ * whichever CREATE TABLE ran last.
  * A database predating the gate columns fails loudly here at startup rather
  * than silently at the first insert — pre-stable, DB reset acceptable.
  *

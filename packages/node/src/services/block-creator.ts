@@ -528,9 +528,9 @@ export function createOrderingBlock(): OrderingBlock | null {
     //
     //    Bodies ride in `utxoTxs` in the same order as `utxoTxIds` — the
     //    alignment `verifyOrderingBlockStructure` checks, and the reason a
-    //    syncing node holds the whole post rather than a claim about it (audit
-    //    H-3). The ids are derived from the bytes that ride beside them rather
-    //    than read off the pool row, because that derivation is the property
+    //    syncing node holds the whole post rather than a claim about it. The
+    //    ids are derived from the bytes that ride beside them rather than
+    //    read off the pool row, because that derivation is the property
     //    block application re-checks and rejects on.
     //
     //    ⚠ **The selection holds the USER transactions, and the body is built
@@ -1001,7 +1001,7 @@ export function createOrderingBlock(): OrderingBlock | null {
       validatorSignature: new Uint8Array(64),
     });
 
-    // 19b. Compute the POST-block state root (H-6) — the digest this block's own
+    // 19b. Compute the POST-block state root — the digest this block's own
     // body produces, obtained by running that body through the apply path's
     // mutation phase and restoring the prover after — and the digest of the
     // proof that run makes, `adProofsRoot` (NODE_INTERFACE → Post-block

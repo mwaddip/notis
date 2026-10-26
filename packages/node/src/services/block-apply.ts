@@ -242,8 +242,8 @@ export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   // than in the gossip topic validator alone, so the guarantee is
   // path-independent: the pull-sync path decodes straight into the apply
   // handler, and a validator-only check leaves it reachable with fields of
-  // arbitrary type. Same shape as the PoW target (M-2), coinbase maturity
-  // (M-3), and the validator signature (H-1).
+  // arbitrary type. Same shape as the PoW target, coinbase maturity, and the
+  // validator signature.
   const structure = validation.verifyOrderingBlockStructure(block);
   if (!structure.valid) {
     console.warn(`Rejected block: invalid structure: ${structure.error}`);
@@ -484,7 +484,7 @@ function applyBlockBody(block: OrderingBlock): { karmaOwners: Set<string>; index
     return null;
   }
 
-  // 3b. Validator signature (H-1)
+  // 3b. Validator signature
   //
   // PoW proves work was spent; it does not prove who spent it. Without this,
   // any miner forges a block under any validatorId. Runs in applyBlockBody — the
@@ -884,7 +884,7 @@ export type StateRootSpeculation =
 
 /**
  * The post-block AVL digest a candidate block's header must commit to as
- * `stateRoot` (H-6; NODE_INTERFACE → Post-block stateRoot), as a
+ * `stateRoot` (NODE_INTERFACE → Post-block stateRoot), as a
  * `StateRootSpeculation`.
  *
  * PoW covers the header, so the producer has to know this digest *before*

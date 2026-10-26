@@ -648,7 +648,7 @@ export function setCostEstimate(rowid: number, costEstimate: number): void {
 }
 
 // ---------------------------------------------------------------------------
-// Correctness gates (audit M-8)
+// Correctness gates (MEMPOOL_INTERFACE → Correctness gates)
 //
 // SQL over the gate-metadata columns — never a bounded scan. A gate that
 // decodes `getPendingEntries(N)` per request cannot see an entry past row N,

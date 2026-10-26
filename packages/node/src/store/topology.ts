@@ -4,7 +4,8 @@ import { getDb, prepared } from './db.js';
  * Record a post's parent references and author at the block height where it was
  * confirmed. Every field comes from the confirming block's post transaction —
  * consensus data, never local DAG content — so the table is identical on every
- * node, including one that synced from ordering blocks alone (audit H-3).
+ * node, including one that synced from ordering blocks alone (NODE_INTERFACE
+ * → Block Topology).
  * Idempotent — the first block to confirm a postId wins.
  */
 export function insertBlockTopology(

@@ -604,7 +604,8 @@ export function createApp(config: Config): express.Express {
   );
 
   // Mining — /mining. A miner node is by definition one that serves templates,
-  // so the role alone decides the surface (audit M-7).
+  // so the role alone decides the surface
+  // (MINING_INTERFACE → Invariants, item 8).
   if (config.nodeRole === 'miner') {
     app.use(
       '/mining',

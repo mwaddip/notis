@@ -506,7 +506,7 @@ function assertFaucetPublicKeyWellFormed(cfg: Config): void {
  * A miner node serves the coinbase payout override (`?miner=`) over HTTP, so the
  * bearer secret is load-bearing — there is no unauthenticated mode. A miner
  * without a secret fails at startup rather than opening the endpoints
- * (MINING_INTERFACE → Invariants, item 8; audit M-7).
+ * (MINING_INTERFACE → Invariants, item 8).
  */
 function assertMiningAuthConfigured(cfg: Config): void {
   if (cfg.nodeRole !== 'miner') return;

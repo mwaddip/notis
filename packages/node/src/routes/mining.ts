@@ -39,7 +39,7 @@ export interface MiningDeps {
 /**
  * Bearer auth for every mining route. There is no unauthenticated mode: the
  * `?miner=` coinbase payout override is reachable only behind this check
- * (MINING_INTERFACE → Invariants, item 8; audit M-7).
+ * (MINING_INTERFACE → Invariants, item 8).
  */
 function authMiddleware(secret: string): import('express').RequestHandler {
   const expected = Buffer.from(`Bearer ${secret}`, 'utf8');
