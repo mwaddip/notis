@@ -353,10 +353,9 @@ export function buildClaim(ctx: RepBuildContext, name: string): BuiltTx {
  *  reconcile can look for it on the recipient's `/credits`. */
 export function buildSend(ctx: BuildContext, toHex: string, amount: bigint): BuiltTx & { paymentBoxId: string } {
   const spendable = ctx.spendable;
-  const sorted = [...spendable].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-  const total = sorted.reduce((sum, b) => sum + b.value, 0n);
+  const total = spendable.reduce((sum, b) => sum + b.value, 0n);
   if (total < amount) throw new InsufficientCredits(amount, total);
-  const selected = selectBoxes(sorted, amount);
+  const selected = selectBoxes(spendable, amount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const change = selectedTotal - amount;
 
