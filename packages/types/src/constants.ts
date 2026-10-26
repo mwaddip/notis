@@ -352,3 +352,9 @@ export const HTTP_CONNECTIONS_MAX = 1_024;         // local — connections a se
 // Crypto
 /** DER-encoded SPKI prefix for raw Ed25519 32-byte public keys (RFC 8410). */
 export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';
+/**
+ * DER-encoded PKCS8 prefix for a raw 32-byte Ed25519 seed (RFC 8410), as hex:
+ * the `PrivateKeyInfo` wrapping an OCTET STRING around the seed that follows
+ * it (TYPES_INTERFACE → Mempool and encoding).
+ */
+export const ED25519_PKCS8_PREFIX = '302e020100300506032b657004220420';

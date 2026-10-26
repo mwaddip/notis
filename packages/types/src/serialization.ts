@@ -34,6 +34,7 @@ import {
   equalBytes,
   firstDifference,
   hexToBytes,
+  isHex64,
   lpByteLength,
   readArr,
   readBytesN,
@@ -376,7 +377,7 @@ export function utxoTxTreeByteLength(t: UtxoTxTree): number {
  * `txId` that is not 64 lowercase hex returns `null`.
  */
 export function utxoTxBytesIn(treeBytes: Uint8Array, txId: TxId): Uint8Array | null {
-  if (typeof txId !== 'string' || !/^[0-9a-f]{64}$/.test(txId)) return null;
+  if (!isHex64(txId)) return null;
   // One decode of the wanted id to its 32 raw bytes, up front; the walk
   // allocates nothing per id after this.
   const wantedBytes = hexToBytes(txId);

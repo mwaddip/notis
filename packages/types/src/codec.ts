@@ -110,8 +110,13 @@ function isEncodableVlqS(n: unknown): n is number {
   return Number.isSafeInteger(zz);
 }
 
-/** True for a real byte view — `Uint8Array`, not merely array-like. */
-function isBytes(v: unknown): v is Uint8Array {
+/**
+ * True for a real byte view — `Uint8Array`, not merely array-like
+ * (TYPES_INTERFACE → Export table). Deliberately not `ArrayBuffer.isView`: a
+ * `Uint32Array` of 8 elements passes that and copies into 8 bytes where 32 are
+ * required.
+ */
+export function isBytes(v: unknown): v is Uint8Array {
   return v instanceof Uint8Array;
 }
 
@@ -173,6 +178,15 @@ export function hexToBytes(hex: string): Uint8Array {
     throw new TypeError(`hexToBytes: not an even-length lowercase hex string (length ${hex.length})`);
   }
   return bytes;
+}
+
+/**
+ * True for a string of exactly 64 characters of `[0-9a-f]` — the one spelling
+ * of a 32-byte id or key on the HTTP edge (NODE_INTERFACE → "Hex is
+ * lowercase"). The test a caller applies before decoding such a string.
+ */
+export function isHex64(v: unknown): v is string {
+  return hexToBytesExact(v, 32) !== null;
 }
 
 /**

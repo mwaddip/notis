@@ -62,6 +62,7 @@ export {
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
   ED25519_SPKI_PREFIX,
+  ED25519_PKCS8_PREFIX,
   USERNAME_MAX_BYTES,
   USERNAME_BURN_PRICE,
   LEVEL_CAP,
@@ -172,6 +173,7 @@ export {
   identityRecordBytes,
   identityRecordFromBytes,
   IDENTITY_RECORD_TAG,
+  EMPTY_IDENTITY_RECORD,
 } from './identity-record.js';
 export type { IdentityRecord } from './identity-record.js';
 
@@ -293,6 +295,8 @@ export {
   bytesToHex,
   hexToBytes,
   equalBytes,
+  isBytes,
+  isHex64,
   writeU8OrThrow,
   readU8,
   writeVlqU,

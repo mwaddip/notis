@@ -1,5 +1,6 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { hexToBytes } from './codec.js';
+import { ED25519_PKCS8_PREFIX } from './constants.js';
 
 export interface KeyPair {
   publicKey: Uint8Array;  // 32 raw bytes — Ed25519 public key
@@ -12,12 +13,8 @@ export interface KeyPair {
  */
 export type UserId = Uint8Array;
 
-/**
- * The RFC 8410 PKCS8 prefix for a raw Ed25519 seed (TYPES_INTERFACE →
- * Identity) — the ASN.1 `PrivateKeyInfo` wrapping an OCTET STRING around
- * nothing but the 32-byte seed that follows it.
- */
-const ED25519_PKCS8_PREFIX = hexToBytes('302e020100300506032b657004220420');
+/** `ED25519_PKCS8_PREFIX` as bytes. */
+const PKCS8_PREFIX_BYTES = hexToBytes(ED25519_PKCS8_PREFIX);
 
 /**
  * A random 32-byte seed through `@noble/curves`' Ed25519 (TYPES_INTERFACE →
@@ -27,8 +24,8 @@ const ED25519_PKCS8_PREFIX = hexToBytes('302e020100300506032b657004220420');
 export function generateKeyPair(): KeyPair {
   const seed = ed25519.utils.randomSecretKey();
   const publicKey = ed25519.getPublicKey(seed);
-  const secretKey = new Uint8Array(ED25519_PKCS8_PREFIX.length + seed.length);
-  secretKey.set(ED25519_PKCS8_PREFIX, 0);
-  secretKey.set(seed, ED25519_PKCS8_PREFIX.length);
+  const secretKey = new Uint8Array(PKCS8_PREFIX_BYTES.length + seed.length);
+  secretKey.set(PKCS8_PREFIX_BYTES, 0);
+  secretKey.set(seed, PKCS8_PREFIX_BYTES.length);
   return { publicKey, secretKey };
 }
