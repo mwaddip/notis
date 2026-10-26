@@ -360,7 +360,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
 
   // -----------------------------------------------------------------------
   // 4b. The mempool gate sees a pending like past the old 1000-row scan
-  //     bound (audit M-8).
+  //     bound (MEMPOOL_INTERFACE → Correctness gates).
   // -----------------------------------------------------------------------
   it('castLike rejects a duplicate whose pending like sits past row 1000', async () => {
     const karma = createKarmaBox(likerPubKey, 100n, 1);

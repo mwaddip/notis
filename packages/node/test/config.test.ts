@@ -135,7 +135,7 @@ describe('config', () => {
   });
 
   // Each throwing case below has a control differing only in the guarded field.
-  describe('5. mining auth fail-fast (audit M-7)', () => {
+  describe('5. mining auth fail-fast', () => {
     it('throws when a miner has no MINING_SECRET', async () => {
       // Import under a safe env so module-level `config` builds, then flip.
       const { loadConfig } = await import('../src/config.js');

@@ -322,7 +322,7 @@ describe('block-creator', () => {
     expect(block!.header.height).toBe(1);
     // ⛔ ONE committed list. The post rides `utxoTxIds` with everything else,
     // and its payload — parents and author included — is inside the transaction
-    // body rather than in a parallel claim the producer wrote (audit H-3).
+    // body rather than in a parallel claim the producer wrote.
     const { postsOf } = await import('@dagsocial/consensus');
     const carried = postsOf(block!);
     expect(carried).toHaveLength(1);
@@ -733,7 +733,7 @@ describe('block-creator', () => {
   });
 
   // -----------------------------------------------------------------------
-  // H-3: the committed root binds the post's author, through its transaction
+  // The committed root binds the post's author, through its transaction
   // -----------------------------------------------------------------------
 
   it('computeUtxoTxRoot commits to the post author, via the transaction id', async () => {

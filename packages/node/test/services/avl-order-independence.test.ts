@@ -12,10 +12,9 @@ import {
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
-// Spec B P2 acceptance (M-12) — the audit escalation scenario, made
-// permanent: two nodes holding the same box set, but with the bootstrap feed
-// presented in different orders, build/apply the same blocks and end at the
-// identical AVL digest.
+// AVL bootstrap-order independence: two nodes holding the same box set, but
+// with the bootstrap feed presented in different orders, build/apply the same
+// blocks and end at the identical AVL digest.
 //
 // Node A seeds the boxes in creation order and bootstraps with the store's
 // feed. Node B — a fresh module universe via vi.resetModules() — seeds the
@@ -212,7 +211,7 @@ describe('AVL digest order-independence across nodes (P2 acceptance)', () => {
     const digestB = new Uint8Array(handleB.prover.digest()!);
 
     // End to end: two nodes, same boxes, different row order, one chain —
-    // the audit escalation scenario, and the same digest.
+    // the same digest.
     expect(Buffer.from(digestA).equals(Buffer.from(digestB))).toBe(true);
   });
 });

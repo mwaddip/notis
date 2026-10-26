@@ -79,7 +79,7 @@ const bytes32 = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 
 // ---------------------------------------------------------------------------
 // The `as unknown as AnyBoxCandidate[]` casts below are DELIBERATE and must not
-// be "fixed" by a future type audit.
+// be "fixed" by a future type pass.
 //
 // This suite's subject is `checkOutputShape`, whose job is to reject decoded
 // CBOR that does not match a box type. Its inputs are therefore malformed BY

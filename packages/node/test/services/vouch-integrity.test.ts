@@ -1,11 +1,7 @@
 // ---------------------------------------------------------------------------
-// P2-B phase 2 — vouch integrity + the born-committed bond (audit
-// F-consensus-3, B6, and two holes found deriving the phase: the unpinned
-// voucherId and the invite-create arm).
+// Vouch integrity + the born-committed bond.
 //
-// Every attack below was first written in its ACCEPTANCE form and run against
-// HEAD, where all of them passed — these are transactions the engine used to
-// accept, not hypothetical shapes. Each keeps its own reachability note.
+// Each attack below has a reachability note; each keeps its own.
 //
 // Each attack is paired with a non-vacuity control: the same transaction
 // differing only in the field the new rule pins, proving the rejection
@@ -251,9 +247,9 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   }
 
   // -------------------------------------------------------------------------
-  // V1 — the stake is unpinned in both directions (audit F-consensus-3).
-  // `checkOutputValues` permits 0n and conservation is the only other bound,
-  // while the unvouch escrow writes the CONSTANT: a 0-value vouch matures
+  // V1 — the stake must be pinned in both directions. `checkOutputValues`
+  // permits 0n and conservation is the only other bound, while the unvouch
+  // escrow writes the CONSTANT: without the pins, a 0-value vouch matures
   // into 1 karma minted from nothing, a 100-value vouch destroys 99.
   // -------------------------------------------------------------------------
 

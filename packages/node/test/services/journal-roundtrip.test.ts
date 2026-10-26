@@ -229,9 +229,10 @@ function takeSnapshot(
 
 /**
  * The shared tail of every class test: revert the class block through the
- * real reorg path and check all three P1 acceptance properties, plus the
- * P3/H-6 property that rides on the same restored pre-state — the digest the
- * producer computes speculatively equals the one the real apply produces.
+ * real reorg path and check all three acceptance properties, plus the
+ * post-block state root property that rides on the same restored pre-state —
+ * the digest the producer computes speculatively equals the one the real
+ * apply produces (NODE_INTERFACE → Post-block stateRoot).
  */
 async function assertRoundTrip(
   db: DbModule,
@@ -256,8 +257,8 @@ async function assertRoundTrip(
   // 2. Digest identity — the active prover is back at the pre-block digest.
   expect(Buffer.from(digestOf(handle)).equals(Buffer.from(pre.digest))).toBe(true);
 
-  // 2b. Speculation identity (P3/H-6) — on this restored pre-state, the digest
-  //     the producer computes *without applying anything* is the digest step 3
+  // 2b. Speculation identity — on this restored pre-state, the digest the
+  //     producer computes *without applying anything* is the digest step 3
   //     below actually lands on. That is what makes `header.stateRoot`
   //     checkable: producer and verifier run one implementation of the state
   //     transition, not two.
@@ -418,11 +419,9 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
   // -----------------------------------------------------------------------
   // The escrow release — the matured `VouchEscrowBox` is consumed and its karma
-  // emitted by the settlement; revert restores the box. ⛔ H-7's hand-written
-  // side-record and inverse are deleted rather than ported: a box journals
-  // through `insertBox`/`consumeBox` with exact inverses already.
-  // (Extends the Phase B fork-resolution revert test with the reorg path,
-  // digest identity, and re-apply identity.)
+  // emitted by the settlement; revert restores the box. ⛔ A hand-written
+  // side-record and inverse have no place: a box journals through
+  // `insertBox`/`consumeBox` with exact inverses already.
   // -----------------------------------------------------------------------
 
   it('the settlement consumes a matured escrow and the round-trip holds', async () => {

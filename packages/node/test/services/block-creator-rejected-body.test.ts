@@ -41,7 +41,7 @@ import { config } from '../../src/config.js';
 // pooled, because a spend of the voucher's OTHER karma box commits first. Its
 // own input stays live, so at block creation the embedded-tx re-validation —
 // not the liveness skip — is what fails, and the speculative state-root run
-// (H-6) rejects the whole body.
+// rejects the whole body.
 //
 // The vehicle has to be a rule whose verdict can move without touching the
 // transaction's inputs, and the minimum-balance gate is one: it reads the

@@ -15,7 +15,7 @@ const toTx = (raw: Record<string, unknown>) => jsonToTx(raw, PROTOCOL_VERSION);
  * `0 <= value < BOX_VALUE_BOUND` — the accepted domain, which is narrower than
  * the encodable one (TYPES_INTERFACE → Box value domain).
  */
-describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
+describe('jsonToTx box value validation', () => {
   const ownerHex = 'ab'.repeat(32);
 
   function rawTx(value: unknown): Record<string, unknown> {

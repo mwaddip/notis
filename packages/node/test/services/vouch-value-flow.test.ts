@@ -1,10 +1,9 @@
 // ---------------------------------------------------------------------------
-// P2-B phase 2 — the vouch escrow's money consequence, measured through real
-// block application (audit F-consensus-3).
+// The vouch escrow's money consequence, measured through real block
+// application.
 //
 // The engine-level legs live in vouch-integrity.test.ts; this file measures
-// what the defects DID to the karma supply. Both tests were first written in
-// their acceptance form and run against HEAD, where they passed:
+// the escrow's effect on the karma supply:
 //
 //   - a 0-value vouch unvouched and matured minted 1 karma from nothing (the
 //     escrow wrote the CONSTANT, and maturity re-minted it);
