@@ -252,3 +252,20 @@ describe('a like the node already holds reads from the node\'s own words', () =>
     expect(h.drive.state.feed.report).toBe('like rejected: you have already liked this post');
   });
 });
+
+// WEB_INTERFACE → The withdraw control — the node's known refusals mapped
+// to sentences; a pending withdrawal is not a withdrawn post.
+describe('a withdraw of a post the node already holds pending reads the pending line', () => {
+  it.fails('withdraw answered 409 "A withdrawal of this post is already pending" reads *withdraw rejected: a withdrawal of this post is already pending.*', async () => {
+    const alreadyPending: Rejection = {
+      status: 409,
+      message: 'A withdrawal of this post is already pending',
+    };
+    const h = appHarness({ rejection: alreadyPending, feedPostId: POST_ID });
+    (h.raw as unknown as { state: { feed: { posts: PostResult[] } } }).state.feed.posts = [confirmedPost(POST_ID, PUB)];
+    await flush();
+    await h.drive.withdrawPost(POST_ID);
+    await flush();
+    expect(h.drive.state.feed.report).toBe('withdraw rejected: a withdrawal of this post is already pending.');
+  });
+});
