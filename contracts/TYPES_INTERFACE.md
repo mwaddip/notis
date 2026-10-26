@@ -1285,7 +1285,23 @@ recompute the hash and check the signature.
 | `computeTxId(tx)` | `(UtxoTransaction) => TxId` | Transaction id over candidates |
 | `computeMintTxId(genesisProof, height, reason, subject)` | `(Uint8Array, number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding; everything else is a settlement output with an ordinary id. `genesisProof` is the chain's genesis proof payload (→ Mint identity); `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
 | `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (a browser mirror, a light client) assert against the encoder that computes ids, not a lookalike |
-| `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — a greedy prefix of the **given** order until `requiredAmount` is covered; throws when the boxes' total falls short. **Precondition: the caller supplies boxes sorted by value descending** — the function imposes no order of its own, so its determinism is exactly its caller's. A transaction-builder helper (the faucet's invite and transfer builders are the consumers); no block-application path calls it |
+| `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — the boxes ordered by value descending, boxes of equal value in the order given, then the shortest prefix of that order whose total covers `requiredAmount`; throws when the boxes' total falls short. **The order is the function's own**, so a caller sorts nothing and hands the boxes as it holds them; the argument is not reordered. A transaction-builder helper (the web client's and the faucet's builders are the consumers); no block-application path calls it |
+
+> ⚠ **AHEAD OF CODE (2026-10-26).** `selectBoxes` ordering its own input and `txToJson` (→ The JSON form of a
+> transaction) lead `utxo.ts` and a `types` module that does not exist yet; the web client's, the faucet's and the e2e
+> suite's own renderers and sorts are what they replace.
+
+### The JSON form of a transaction
+
+**`txToJson(tx)` is the one renderer of a transaction for the node's HTTP edge** — `(UtxoTransaction) =>
+Record<string, unknown>`, the `tx` of the `{ tx }` body every write route reads (`NODE_INTERFACE → "A write request's
+transaction is checked whole before anything reads it"`). `inputs` as given; each output as its own fields, a byte
+field as lowercase hex and a `bigint` as its decimal string, every other value as it is; each signature as lowercase
+hex under its key; `protocolVersion`. `likeTarget`, `post` (`contentHash` and `author` as hex, `parentRefs`,
+`protocolVersion`, `type`) and `postWithdraw` (`{ postId }`) are carried when the transaction holds them, and no key
+when it does not — each sits inside the signed bytes, so a renderer that dropped one would send a transaction whose id
+the node computes differently. The web client, the faucet and the e2e suite render through it; nothing in the packages
+the node runs calls it.
 
 ---
 
@@ -1349,6 +1365,7 @@ its cfg through it; a client builds the same from `profileFor(network)` — neve
 | `identityRecordBytes(record)` | `(IdentityRecord) => Uint8Array` | The tree value — see Layout — IdentityRecord |
 | `identityRecordFromBytes(bytes)` | `(Uint8Array) => IdentityRecord` | Inverse of `identityRecordBytes`, with the four-part boundary check (→ The boundary check); a first byte other than `IDENTITY_RECORD_TAG` is refused as `invalid-tag` |
 | `IDENTITY_RECORD_TAG` | `0x80` | Field 1 of the layout — the record discriminator among the tree's entity kinds (`NODE_INTERFACE → Entity kinds`) |
+| `EMPTY_IDENTITY_RECORD` | `Readonly<IdentityRecord>` | The record of an identity no block has written: every field `0`, the two `bigint` counters `0n`, frozen. The valuation values a `null` record as it, and every writer that builds a record over one it may not find starts from it |
 | `decayCfgFor(profile)` | `(NetworkProfile) => DecayCfg` | The one derivation of the valuation's four numbers |
 | `isIdentityStale(record, height, staleThresholdBlocks)` | `(IdentityRecord \| null, number, number) => boolean` | `stale` above |
 | `owedPeriods(record, height, decayIntervalBlocks)` | `(IdentityRecord \| null, number, number) => number` | `owedPeriods` above — no clamp at zero: the caller skips `<= 0`, and a negative says a clock ran ahead of the chain |
@@ -2669,6 +2686,12 @@ bytes with provenance appended — for its tree value (→ Canonical encoding); 
 | `bytesToHex(bytes)` | `(Uint8Array) => string` | Lowercase hex, two characters a byte — the codec's own conversion, and the one hex encoder in the packages the browser runs. Total |
 | `hexToBytes(hex)` | `(string) => Uint8Array` | Its inverse, strict: even length and `[0-9a-f]` only, or it throws — never the partial decode `Buffer.from(hex, 'hex')` answers. A caller holding hex it did not produce checks it first, so a refusal there is a verdict, not a throw |
 | `equalBytes(a, b)` | `(Uint8Array, Uint8Array) => boolean` | Equal lengths and equal bytes |
+| `isBytes(v)` | `(unknown) => v is Uint8Array` | `v instanceof Uint8Array` — a real byte view, deliberately not `ArrayBuffer.isView`: a `Uint32Array` of 8 elements would pass that and copy into 8 bytes where 32 are required. The byte test of every check that takes bytes from a caller |
+| `isHex64(v)` | `(unknown) => v is string` | 64 characters of `[0-9a-f]` — the one spelling of a 32-byte id or key on the HTTP edge (`NODE_INTERFACE → "Hex is lowercase"`). The test every package that reads such a string applies before decoding it |
+
+> ⚠ **AHEAD OF CODE (2026-10-26).** `isBytes`, `isHex64`, `EMPTY_IDENTITY_RECORD` (→ Identity record and karma
+> valuation) and `ED25519_PKCS8_PREFIX` (→ Mempool and encoding) lead `codec.ts`, `identity-record.ts` and
+> `constants.ts`; each replaces a private or per-package copy.
 
 
 ### How a dispatch decays this contract, and why nothing catches it
@@ -3556,6 +3579,7 @@ A mechanism that needs either brings its own parameter with its own reader.
 ```typescript
 export const MEMPOOL_EXPIRY_BLOCKS = 720;          // local — blocks before mempool entries expire (~12h)
 export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';  // SPKI wrapper stripped from raw keys
+export const ED25519_PKCS8_PREFIX = '302e020100300506032b657004220420';  // RFC 8410 PKCS8 wrapper ahead of a raw seed
 ```
 
 ### HTTP view bounds
