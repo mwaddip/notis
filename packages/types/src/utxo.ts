@@ -1407,5 +1407,5 @@ export function selectBoxes<T extends { value: bigint }>(
     throw new Error('Insufficient total value');
   }
 
-    return selected;
+  return selected;
 }
