@@ -331,8 +331,8 @@ describe('GET /api/v1/range/:kind/:owner — the range route', () => {
         .expect(400);
     });
 
-    it('`limit` of 0, -1, 1.5, abc, empty string', async () => {
-      for (const bad of ['0', '-1', '1.5', 'abc', '']) {
+    it('`limit` of 0, -1, 1.5, abc, +1, empty string', async () => {
+      for (const bad of ['0', '-1', '1.5', 'abc', '+1', '']) {
         await request(ctx.app)
           .get(`/api/v1/range/credit/${bytesToHex(ctx.owner.userId)}?limit=${encodeURIComponent(bad)}`)
           .expect(400);
@@ -340,7 +340,7 @@ describe('GET /api/v1/range/:kind/:owner — the range route', () => {
     });
 
     it('`atHeight` that is not a non-negative integer', async () => {
-      for (const bad of ['-1', '1.5', 'abc', '']) {
+      for (const bad of ['-1', '1.5', 'abc', '+1', '']) {
         await request(ctx.app)
           .get(`/api/v1/range/credit/${bytesToHex(ctx.owner.userId)}?atHeight=${encodeURIComponent(bad)}`)
           .expect(400);

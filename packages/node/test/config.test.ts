@@ -796,6 +796,8 @@ describe('config', () => {
       await expect(importWithRetention('-1')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
       vi.resetModules();
       await expect(importWithRetention('2.5')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
+      vi.resetModules();
+      await expect(importWithRetention('+1')).rejects.toThrow(/PROOF_RETENTION_BLOCKS/);
     });
   });
 
