@@ -144,10 +144,6 @@ export function createPost(
   if (!txResult.valid) {
     throw new PostServiceError(txResult.error ?? 'invalid post transaction');
   }
-  const txId = txResult.txId;
-  if (!txId) {
-    throw new PostServiceError('transaction validation returned no txId');
-  }
   const validationDurationMs = performance.now() - validationStart;
 
   // ---- Bind the payload's author to the karma being spent ----
@@ -168,15 +164,15 @@ export function createPost(
   }
 
   // ---- Name the post from its creating transaction ----
-  const postId = computePostId(txId, 0);
+  const postId = computePostId(heldTxId, 0);
   emitPostReceived(postId, 'local', 'packet');
   emitPostValidated(postId, validationDurationMs);
 
   // ---- admitTx and insertPost in one store transaction ----
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   deps.runInTransaction(() => {
-    deps.admitTx(tx, txId, expiresAtHeight);
-    deps.insertPost(postId, txId, commit, content);
+    deps.admitTx(tx, heldTxId, expiresAtHeight);
+    deps.insertPost(postId, heldTxId, commit, content);
   });
   emitPostIndexed(postId, commit.parentRefs.length);
 
@@ -184,7 +180,7 @@ export function createPost(
     postId,
     status: 'pending',
     expiresAtHeight,
-    txId,
+    txId: heldTxId,
     tx,
   };
 }
