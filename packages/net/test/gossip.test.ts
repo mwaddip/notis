@@ -797,8 +797,8 @@ describe('gossip dispatch listener', () => {
   });
 
   it('logs when a handler throws, instead of absorbing it silently', () => {
-    // Pre-fix this produced no output of any kind: the handler call sat inside
-    // a `try` whose `catch` had an empty body.
+    // A throwing handler produces console output; the dispatch's `catch`
+    // never has an empty body.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { deliver } = makeDispatchHarness({
       onOrderingBlock: () => {

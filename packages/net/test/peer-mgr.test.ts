@@ -43,7 +43,7 @@ describe('PeerManager', () => {
 
   it('accumulates penalty scores', () => {
     mgr.addPeer(makePeer('peer1'));
-    // Override safe interval
+    // The second penalty lands one decay interval later, so the first has decayed
     vi.spyOn(Date, 'now').mockReturnValue(0);
     mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'bad message');
     vi.spyOn(Date, 'now').mockReturnValue(config.penaltyDecayIntervalMs + 1);
@@ -75,12 +75,9 @@ describe('PeerManager', () => {
   // Penalty accrual + decay (NET_INTERFACE → Accrual and decay)
   // -----------------------------------------------------------------------
 
-  it('always accrues: 5 rapid MisbehaviorPenalties ban the peer (fails pre-fix)', () => {
-    // Every penalty accrues: 5 × 100 = 500 >= threshold. A safe-interval
-    // cooldown would discard 4 of these 5 (score 100, no ban), making ban
-    // pressure independent of attack rate. The nonzero timestamp is what makes
-    // that check meaningful — such a cooldown skips itself while
-    // lastPenaltyTime is 0, so a t=0 flood would ban either way.
+  it('always accrues: 5 MisbehaviorPenalties at one instant ban the peer', () => {
+    // Every penalty accrues: 5 × 100 = 500 >= threshold, and no time elapses
+    // between them for the score to decay.
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(1_000);
     for (let i = 0; i < 5; i++) {

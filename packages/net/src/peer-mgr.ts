@@ -278,9 +278,7 @@ export class PeerManager {
    * Every penalty accrues — none are discarded for arriving quickly.
    * Instead the accumulated score decays by PENALTY_DECAY_PER_INTERVAL per
    * `penaltyDecayIntervalMs` elapsed since the last penalty, proportionally
-   * and floored at zero, computed lazily here — no timers. The config field
-   * keeps its "safe interval" name because @dagsocial/node sets it from the
-   * environment, but it is a decay interval, not a cooldown.
+   * and floored at zero, computed lazily here — no timers.
    *
    * NET_INTERFACE → Accrual and decay →
    * "A score is kept by peer id, and outlives its connection":
