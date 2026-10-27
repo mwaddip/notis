@@ -146,7 +146,7 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 insertUtxoTx(tx: UtxoTransaction, txId: TxId, expiresAtHeight: number, costEstimate?: number | null): number
 ```
 
-**`txId` is `computeTxId(tx)` as its caller computed it, and the pool hashes nothing.** Admission hands the id it
+**`txId` is `computeTxId(tx)` as its caller computed it, and the insert hashes nothing.** Admission hands the id it
 looked the pool up by (→ getHeldEntry); a switch's re-insertion hands the id the reverted block declared, which its
 application held to the bytes. The row is keyed by it and its outputs' box ids derive from it (→ Schema).
 
