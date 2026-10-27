@@ -3,12 +3,20 @@
 // session; CONSENSUS_INTERFACE → The block proof) over bodies sized to the block's budget (CONSENSUS_INTERFACE → The
 // block's cost), in Node or in a browser:
 //
-//   ordinary   — 10 one-signer credit sends;
-//   one-signer — one-signer credit sends, as many as MAX_BLOCK_COST admits;
-//   packed     — credit payments of as many signers as MAX_TX_BYTES holds, MAX_BLOCK_COST / W_SIG signers in all: the
-//                signatures' term alone at the budget, the largest batch the body check runs;
-//   read-heavy — vouches, each from a member holding KARMA_BOXES_PER_VOUCHER karma boxes its vouch's balance read
-//                walks, as many as MAX_BLOCK_COST admits.
+//   ordinary           — 10 one-signer credit sends;
+//   one-signer         — one-signer credit sends, as many as MAX_BLOCK_COST admits;
+//   packed             — credit payments of as many signers as MAX_TX_BYTES holds, MAX_BLOCK_COST / W_SIG signers in
+//                        all: the signatures' term alone at the budget, the largest batch the body check runs;
+//   rent-heavy         — rent collections (NODE_INTERFACE → Storage rent is a transition requiring no signature),
+//                        each tx spending as many credit boxes past their rent period as MAX_TX_BYTES holds, the
+//                        boxes of distinct owners; the signature map is empty on every transaction, so the whole
+//                        budget pays for operations. The body applies at RENT_HEIGHT (CONSENSUS_INTERFACE → "A
+//                        replay of a block from its proof"), the smallest height that admits boxes created at
+//                        HEIGHT − 1 — stated below as the body is built;
+//   wide-consolidation — one-signer credit transactions (NODE_INTERFACE → Legal box transitions, the `CreditBox`
+//                        row), each tx spending as many of its signer's own credit boxes as MAX_TX_BYTES holds into
+//                        one credit output, one signature a transaction — the admitted signed body with the most
+//                        tree operations per signature.
 //
 // Each body is built over its own stub state and proven on a prover seeded with the same state: its reads recorded,
 // then its writes. A replay decodes the proof and anchors it at the parent's digest, runs `applyBlock` over
@@ -40,14 +48,15 @@ import { PACKAGE_DIR, buildIife, entrySource } from '../test/browser-bundle.ts';
 import {
   BUDGET_SIGNATURES,
   HEIGHT,
-  KARMA_BOXES_PER_VOUCHER,
   KINDS,
+  RENT_HEIGHT,
   atBudget,
   built,
   ctx,
   packedShape,
   proven,
-  readHeavy,
+  rentHeavy,
+  wideConsolidation,
 } from './bench-bodies.mjs';
 import { batchOf, encodeContext, replay } from './leaf-replay.mjs';
 
@@ -85,11 +94,13 @@ const bodies = [
   provenBody(built('ordinary', KINDS.ordinary, new Array(10).fill(1))),
   atBudget((n) => built('one-signer', KINDS.ordinary, new Array(n).fill(1)), 0),
   provenBody(built('packed', KINDS.packed, packedShape(KINDS.packed, BUDGET_SIGNATURES))),
-  atBudget(readHeavy, 1),
+  atBudget(rentHeavy, 1),
+  atBudget(wideConsolidation, 1),
 ].map(({ body, proven: { parentDigest, proof, digest, cost } }) => ({
   name: body.name,
   txs: body.txs,
   bytes: body.bytes,
+  height: body.block.header.height,
   block: encodeOrderingBlock(body.block),
   parentDigest,
   proof,
@@ -99,12 +110,12 @@ const bodies = [
 
 console.log(
   `node ${process.version} · testnet profile · height ${HEIGHT} · ` +
+  `rent-heavy height ${RENT_HEIGHT} · ` +
   `bodies built and proven in ${((performance.now() - setupStart) / 1000).toFixed(1)} s`,
 );
 for (const b of bodies) {
   console.log(
-    `${b.name.padEnd(10)} ${b.txs} transactions, body ${b.bytes} bytes` +
-    (b.name === 'read-heavy' ? `, ${KARMA_BOXES_PER_VOUCHER} karma boxes a voucher` : '') +
+    `${b.name.padEnd(18)} ${b.txs} transactions, body ${b.bytes} bytes, height ${b.height}` +
     `; proof ${b.proof.length} bytes; cost ${blockCost(b.cost)} of ${MAX_BLOCK_COST}: ` +
     `${b.cost.signatures} signatures, ${b.cost.lookups} lookups, ${b.cost.writes} writes`,
   );
@@ -123,7 +134,7 @@ const median = (values) => {
 function printHeader(runtime) {
   console.log(`\nreplay in ${runtime} · medians of ${RUNS} run${RUNS === 1 ? '' : 's'}, milliseconds`);
   console.log(
-    `${'body'.padEnd(10)} ${'proof B'.padStart(9)} ${'lookups'.padStart(7)} ${'writes'.padStart(6)} ` +
+    `${'body'.padEnd(18)} ${'proof B'.padStart(9)} ${'lookups'.padStart(7)} ${'writes'.padStart(6)} ` +
     `${'sigs'.padStart(5)} ${'cost'.padStart(7)} ${'decode'.padStart(9)} ${'batch'.padStart(9)} ` +
     `${'rest'.padStart(9)} ${'writes'.padStart(9)} ${'total'.padStart(9)}  verdict`,
   );
@@ -137,7 +148,7 @@ function printRow(b, runs) {
   if (!counted) process.exitCode = 1;
   const ms = (pick) => median(runs.map(pick)).toFixed(1).padStart(9);
   console.log(
-    `${b.name.padEnd(10)} ${String(b.proof.length).padStart(9)} ${String(b.cost.lookups).padStart(7)} ` +
+    `${b.name.padEnd(18)} ${String(b.proof.length).padStart(9)} ${String(b.cost.lookups).padStart(7)} ` +
     `${String(b.cost.writes).padStart(6)} ${String(b.cost.signatures).padStart(5)} ` +
     `${String(blockCost(b.cost)).padStart(7)} ${ms((r) => r.decode)} ${ms((r) => r.batch)} ` +
     `${ms((r) => r.applyBlock - r.batch)} ${ms((r) => r.writes)} ${ms((r) => r.decode + r.applyBlock + r.writes)}  ` +
