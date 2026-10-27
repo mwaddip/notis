@@ -111,6 +111,68 @@ describe('owedPeriods — the `max` and the no-clamp rule', () => {
   });
 });
 
+describe('effectiveKarma — the grace window and the window-end clock', () => {
+  // The valuation reads the record's clock through the grace window:
+  // the window ends at `A + T`, and the first period lands at `A + T + I`
+  // (`TYPES_INTERFACE → Identity record and karma valuation →
+  // "Decay starts at the grace window's end, from nothing"`).
+  const T = TEST_CFG.staleThresholdBlocks;
+  const I = TEST_CFG.decayIntervalBlocks;
+  const amount = TEST_CFG.decayAmount;
+  const A = 1000;
+  const face = 10_000n;
+
+  it.fails('a record last active at A: at A + T returns face', () => {
+    expect(effectiveKarma(face, clock(A), A + T, TEST_CFG)).toBe(face);
+  });
+
+  it.fails('a record last active at A: at A + T + I − 1 returns face', () => {
+    expect(effectiveKarma(face, clock(A), A + T + I - 1, TEST_CFG)).toBe(face);
+  });
+
+  it.fails('a record last active at A: at A + T + I returns face − decayAmount', () => {
+    expect(effectiveKarma(face, clock(A), A + T + I, TEST_CFG)).toBe(face - amount);
+  });
+
+  it.fails('a record last active at A: at A + T + 3I returns face − 3·decayAmount', () => {
+    expect(effectiveKarma(face, clock(A), A + T + 3 * I, TEST_CFG)).toBe(face - 3n * amount);
+  });
+
+  it('a record with lastDecayBlock past the window: periods count from it, not from the window', () => {
+    const D = A + T + 5 * I;
+    // Each height carries its own `expect`: before `D`, nothing owed; at `D + I`
+    // the first period lands; at `D + 2I` the second.
+    expect(effectiveKarma(face, clock(A, D), D, TEST_CFG)).toBe(face);
+    expect(effectiveKarma(face, clock(A, D), D + I - 1, TEST_CFG)).toBe(face);
+    expect(effectiveKarma(face, clock(A, D), D + I, TEST_CFG)).toBe(face - amount);
+    expect(effectiveKarma(face, clock(A, D), D + 2 * I, TEST_CFG)).toBe(face - 2n * amount);
+  });
+
+  it('a null record: at T returns face', () => {
+    expect(effectiveKarma(face, null, T, TEST_CFG)).toBe(face);
+  });
+
+  it.fails('a null record: at T + I − 1 returns face', () => {
+    expect(effectiveKarma(face, null, T + I - 1, TEST_CFG)).toBe(face);
+  });
+
+  it.fails('a null record: at T + I returns face − decayAmount', () => {
+    expect(effectiveKarma(face, null, T + I, TEST_CFG)).toBe(face - amount);
+  });
+
+  it('a clock(0) record: at T returns face', () => {
+    expect(effectiveKarma(face, clock(0), T, TEST_CFG)).toBe(face);
+  });
+
+  it.fails('a clock(0) record: at T + I − 1 returns face', () => {
+    expect(effectiveKarma(face, clock(0), T + I - 1, TEST_CFG)).toBe(face);
+  });
+
+  it.fails('a clock(0) record: at T + I returns face − decayAmount', () => {
+    expect(effectiveKarma(face, clock(0), T + I, TEST_CFG)).toBe(face - amount);
+  });
+});
+
 describe('effectiveKarma — the four edges', () => {
   it('not stale returns the face total', () => {
     // 99000 activity out of a 100000 height — well inside the threshold.
