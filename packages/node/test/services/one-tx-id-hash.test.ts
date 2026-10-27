@@ -95,7 +95,7 @@ describe('one hash a transaction, where its bytes are proven', () => {
     counter.answers.length = 0;
   });
 
-  it.fails('a write route admitting one transaction with the cost gate on hashes the admitted transaction twice', async () => {
+  it('a write route admitting one transaction with the cost gate on hashes the admitted transaction twice', async () => {
     const actual = await vi.importActual<typeof import('@dagsocial/types')>('@dagsocial/types');
     const { makeTestIdentity, makeCreditBox, makeCreditTx, liveProver } = await import('../helpers.js');
     const db = await import('../../src/store/db.js');
@@ -157,7 +157,7 @@ describe('one hash a transaction, where its bytes are proven', () => {
     expect(matchesOf(counter.answers, admittedId)).toBe(2);
   });
 
-  it.fails('the relay handler admitting one transaction hashes the admitted transaction twice', async () => {
+  it('the relay handler admitting one transaction hashes the admitted transaction twice', async () => {
     const actual = await vi.importActual<typeof import('@dagsocial/types')>('@dagsocial/types');
     const { makeTestIdentity, makeCreditBox, makeCreditTx, liveProver } = await import('../helpers.js');
     const db = await import('../../src/store/db.js');
@@ -179,7 +179,7 @@ describe('one hash a transaction, where its bytes are proven', () => {
     expect(matchesOf(counter.answers, admittedId)).toBe(2);
   });
 
-  it.fails('createOrderingBlock over a pool of one pooled transaction hashes the pooled transaction 3 times', async () => {
+  it('createOrderingBlock over a pool of one pooled transaction hashes the pooled transaction 3 times', async () => {
     const actual = await vi.importActual<typeof import('@dagsocial/types')>('@dagsocial/types');
     const { makeTestIdentity, makeCreditBox, makeCreditTx, liveProver, makeTestConfig } = await import('../helpers.js');
     const db = await import('../../src/store/db.js');
@@ -205,5 +205,149 @@ describe('one hash a transaction, where its bytes are proven', () => {
     expect(template).not.toBeNull();
     expect(template!.utxoTxTree.utxoTxIds).toContain(pooledId);
     expect(matchesOf(counter.answers, pooledId)).toBe(3);
+  });
+
+  it('a transaction admitted through a write route lands in the pool under its id', async () => {
+    const actual = await vi.importActual<typeof import('@dagsocial/types')>('@dagsocial/types');
+    const { makeTestIdentity, makeCreditBox, makeCreditTx, liveProver } = await import('../helpers.js');
+    const consensus = await import('@dagsocial/consensus');
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await import('../../src/store/utxo.js');
+    const sender = makeTestIdentity();
+    const box = makeCreditBox(100_000n, sender.userId, 0, 1);
+    utxo.insertBox(box);
+    await liveProver();
+    const tx = makeCreditTx(sender, [box], 1_000n);
+    const admittedId = actual.computeTxId(tx);
+
+    const credits = await import('../../src/services/credits.js');
+    const { config } = await import('../../src/config.js');
+    const { admissionOwed } = await import('../../src/services/karma-admission.js');
+    const { getIdentityRecord } = await import('../../src/store/identity-records.js');
+    const deps = {
+      getBox: utxo.getBox,
+      insertBox: utxo.insertBox,
+      consumeBox: utxo.consumeBox,
+      getKarmaOwed: admissionOwed({
+        staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+        decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+        decayAmount: config.karmaDecayAmount,
+        karmaMinimum: config.karmaMinimum,
+      }),
+      getKarmaValue: utxo.getKarmaValue,
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        utxo.getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
+      getIdentityRecord,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+        decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+        decayAmount: config.karmaDecayAmount,
+        karmaMinimum: config.karmaMinimum,
+      },
+      storageRentPeriodBlocks: config.storageRentPeriodBlocks,
+      getBoxProvenance: utxo.getBoxProvenance,
+      getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
+      runInTransaction: (fn: () => void) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: config.membershipBarMultiplier,
+      putIdentityRecord: () => {},
+      protocolVersionSchedule: config.protocolVersionSchedule,
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
+    };
+
+    credits.sendCredits(deps, tx, 0);
+
+    const mempool = await import('../../src/store/mempool.js');
+    const held = mempool.getHeldEntry(admittedId);
+    expect(held).not.toBeNull();
+    const decoded = actual.decodeTx(held!.txBytes);
+    for (let i = 0; i < decoded.outputs.length; i++) {
+      const box = consensus.materializeOutput(decoded.outputs[i]!, admittedId, i);
+      const pending = mempool.findPendingOutput(box.id!);
+      expect(pending?.id).toBe(box.id);
+    }
+  });
+
+  it('a candidate the cost gate builds carries the admitted id in its body', async () => {
+    const actual = await vi.importActual<typeof import('@dagsocial/types')>('@dagsocial/types');
+    const { makeTestIdentity, makeCreditBox, makeCreditTx, liveProver } = await import('../helpers.js');
+    const seenBodies: ReadonlyArray<{ txId: string }>[] = [];
+    vi.doMock('@dagsocial/consensus', async (importOriginal) => {
+      const inner = await importOriginal<typeof import('@dagsocial/consensus')>();
+      return {
+        ...inner,
+        applyBlock: (view: Parameters<typeof inner.applyBlock>[0], block: Parameters<typeof inner.applyBlock>[1], ctx: Parameters<typeof inner.applyBlock>[2]) => {
+          seenBodies.push(block.utxoTxTree.utxoTxIds.map((id) => ({ txId: id })));
+          return inner.applyBlock(view, block, ctx);
+        },
+      };
+    });
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await import('../../src/store/utxo.js');
+    const sender = makeTestIdentity();
+    const box = makeCreditBox(100_000n, sender.userId, 0, 1);
+    utxo.insertBox(box);
+    await liveProver();
+    const tx = makeCreditTx(sender, [box], 1_000n);
+    const admittedId = actual.computeTxId(tx);
+
+    const credits = await import('../../src/services/credits.js');
+    const { config } = await import('../../src/config.js');
+    const { admissionOwed } = await import('../../src/services/karma-admission.js');
+    const { getIdentityRecord } = await import('../../src/store/identity-records.js');
+    const deps = {
+      getBox: utxo.getBox,
+      insertBox: utxo.insertBox,
+      consumeBox: utxo.consumeBox,
+      getKarmaOwed: admissionOwed({
+        staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+        decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+        decayAmount: config.karmaDecayAmount,
+        karmaMinimum: config.karmaMinimum,
+      }),
+      getKarmaValue: utxo.getKarmaValue,
+      getOwnKarmaBoxIds: (owner: Uint8Array) =>
+        utxo.getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
+      getIdentityRecord,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+        decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+        decayAmount: config.karmaDecayAmount,
+        karmaMinimum: config.karmaMinimum,
+      },
+      storageRentPeriodBlocks: config.storageRentPeriodBlocks,
+      getBoxProvenance: utxo.getBoxProvenance,
+      getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
+      runInTransaction: (fn: () => void) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: config.membershipBarMultiplier,
+      putIdentityRecord: () => {},
+      protocolVersionSchedule: config.protocolVersionSchedule,
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
+    };
+
+    credits.sendCredits(deps, tx, 0);
+
+    const candidateBodies = seenBodies.filter((ids) => ids.some((entry) => entry.txId === admittedId));
+    expect(candidateBodies.length).toBeGreaterThan(0);
+    for (const ids of candidateBodies) expect(ids.map((e) => e.txId)).toContain(admittedId);
   });
 });

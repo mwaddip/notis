@@ -1256,6 +1256,7 @@ export async function makeApplicableBlock(
   const miner = opts.miner ?? makeTestIdentity();
   const embeddedTxs = opts.utxoTxs ?? [];
   const txBytesList = embeddedTxs.map((tx) => encodeTx(tx));
+  const bodyPairs = embeddedTxs.map((tx, i) => ({ txId: computeTxId(tx), txBytes: txBytesList[i]! }));
 
   // The settlement this body requires, built the way the creator builds it — the
   // helper's contract is a block that passes every apply check, and every
@@ -1264,7 +1265,7 @@ export async function makeApplicableBlock(
   // (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
   const built = buildBlockSettlement(
     treeStateView(proverSession(handle.prover)),
-    txBytesList,
+    bodyPairs,
     height,
     miner.userId,
     miner.userId,

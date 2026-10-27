@@ -190,7 +190,7 @@ export function admitTx(tx: UtxoTransaction, txId: string, expiresAtHeight: numb
   assertPoolAdmits(tx);
 
   // MEMPOOL_INTERFACE → The cost gate.
-  const alone = costAlone(tx, 'admitTx');
+  const alone = costAlone(tx, txId, 'admitTx');
   if (alone === null) return insertUtxoTx(tx, txId, expiresAtHeight);
   // The block alone is refused for its signatures alone, before its cost is
   // counted — `applyBlock`'s own refusal, named (MEMPOOL_INTERFACE → The cost

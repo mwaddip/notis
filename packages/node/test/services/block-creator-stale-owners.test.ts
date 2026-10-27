@@ -222,7 +222,7 @@ describe('the fill counts a squaring for an entry whose owner owes decay', () =>
     const miner = newIdentity();
     const built = buildBlockSettlement(
       treeStateView(proverSession(getAvlProver().prover)),
-      likeTxs.map((tx) => encodeTx(tx)),
+      likeTxs.map((tx) => ({ txId: computeTxId(tx), txBytes: encodeTx(tx) })),
       TARGET_HEIGHT,
       miner.pub,
       miner.pub,

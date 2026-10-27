@@ -2066,7 +2066,7 @@ describe('a resubmit is answered as held', () => {
       admitTx: admitTxReal,
       getHeldEntry,
       runInTransaction: (fn: () => void) => (db.transaction(fn) as () => void)(),
-      validateTx: (tx: UtxoTransaction, height: number) => validateTx(engineDeps, tx, computeTxId(tx), height),
+      validateTx: (tx: UtxoTransaction, txId: string, height: number) => validateTx(engineDeps, tx, txId, height),
       getBox: getBoxWithPending,
     };
   }

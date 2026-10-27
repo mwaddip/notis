@@ -74,7 +74,12 @@ function validateAndApplyTx(
   tx: UtxoTransaction,
   currentBlockHeight: number,
 ): UtxoResult {
-  const result = validateTx(deps, tx, computeTxId(tx), currentBlockHeight);
+  // Some cases hand a malformed transaction a canonical encoder refuses.
+  // The id is the admitted id where one encodes; the shape check at step 4
+  // or 5 returns a verdict on the malformed cases without reading it.
+  let id: string;
+  try { id = computeTxId(tx); } catch { id = '0'.repeat(64); }
+  const result = validateTx(deps, tx, id, currentBlockHeight);
   if (!result.valid) return result;
   applyTx(deps, tx, result.computedOutputs!, currentBlockHeight);
   return result;
@@ -2572,9 +2577,8 @@ describe('validateAndApplyTx', () => {
       const badWithdraw = {
         postId: 'not-hex-64',
       } as unknown as PostWithdrawCommit;
-      // No signature: the envelope check catches the bad payload before
-      // authorization, so signing is unreachable — and computeTxId throws on
-      // a field outside the encoder's domain.
+      // The envelope check catches the bad payload before any id read, so
+      // the id is the stub a malformed probe passes.
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [newKarma],
@@ -2582,7 +2586,7 @@ describe('validateAndApplyTx', () => {
         protocolVersion: 1,
         postWithdraw: badWithdraw,
       };
-      const result = validateTx(deps, tx, computeTxId(tx), 10);
+      const result = validateTx(deps, tx, '0'.repeat(64), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/Invalid tx envelope/);
     });

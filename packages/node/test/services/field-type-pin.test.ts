@@ -278,7 +278,7 @@ describe('field-type pin', () => {
         };
         let result: ReturnType<typeof validateTx> | undefined;
         expect(() => {
-          result = validateTx(deps, tx, computeTxId(tx), 10);
+          result = validateTx(deps, tx, '0'.repeat(64), 10);
         }).not.toThrow();
         expect(result!.valid).toBe(false);
         expect(result!.error).toMatch(/Invalid output shape/);
@@ -293,7 +293,7 @@ describe('field-type pin', () => {
         signatures: {},
         protocolVersion: 1,
       };
-      const r = validateTx(deps, tx, computeTxId(tx), 10);
+      const r = validateTx(deps, tx, '0'.repeat(64), 10);
       expect(r.valid).toBe(false);
       expect(r.error).toMatch(/index 1 \(karma\): field 'owner'/);
     });

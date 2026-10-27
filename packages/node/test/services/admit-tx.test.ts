@@ -335,11 +335,12 @@ describe('the cost gate', () => {
     const ctx = applyContextFrom(config);
     const miner = makeTestIdentity();
     const txBytes = encodeTx(tx);
-    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), [txBytes], 1, miner.userId, miner.userId, ctx);
+    const txIdHex = computeTxId(tx);
+    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), [{ txId: txIdHex, txBytes }], 1, miner.userId, miner.userId, ctx);
     if ('error' in built) throw new Error(built.error);
     const block = {
       header: { height: 1, validatorId: miner.userId },
-      utxoTxTree: { utxoTxIds: [computeTxId(tx), computeTxId(built.tx)], utxoTxs: [txBytes, encodeTx(built.tx)] },
+      utxoTxTree: { utxoTxIds: [txIdHex, computeTxId(built.tx)], utxoTxs: [txBytes, encodeTx(built.tx)] },
       validatorSignature: new Uint8Array(64),
     } as unknown as OrderingBlock;
     const view = treeStateView(proverSession(handle.prover));
@@ -471,12 +472,13 @@ describe('the gate keeps what it measured', () => {
     const ctx = applyContextFrom(config);
     const miner = makeTestIdentity();
     const bodies = txs.map((tx) => encodeTx(tx));
-    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), bodies, 1, miner.userId, miner.userId, ctx);
+    const bodyPairs = txs.map((tx, i) => ({ txId: computeTxId(tx), txBytes: bodies[i]! }));
+    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), bodyPairs, 1, miner.userId, miner.userId, ctx);
     if ('error' in built) throw new Error(built.error);
     const block = {
       header: { height: 1, validatorId: miner.userId },
       utxoTxTree: {
-        utxoTxIds: [...txs.map((tx) => computeTxId(tx)), computeTxId(built.tx)],
+        utxoTxIds: [...bodyPairs.map((p) => p.txId), computeTxId(built.tx)],
         utxoTxs: [...bodies, encodeTx(built.tx)],
       },
       validatorSignature: new Uint8Array(64),

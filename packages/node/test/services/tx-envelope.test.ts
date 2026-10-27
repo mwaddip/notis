@@ -559,7 +559,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
 
     let result: ReturnType<typeof validateTx> | undefined;
     expect(() => {
-      result = validateTx(deps, tx, computeTxId(tx), 10);
+      result = validateTx(deps, tx, '0'.repeat(64), 10);
     }, `${label} threw`).not.toThrow();
 
     expect(result!.valid, label).toBe(false);

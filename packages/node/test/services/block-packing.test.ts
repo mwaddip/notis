@@ -169,12 +169,13 @@ async function bodiesCost(bodies: Uint8Array[]): Promise<number> {
   const handle = await liveProver();
   const miner = makeTestIdentity();
   const ctx = applyContextFrom(config);
-  const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), bodies, 1, miner.userId, miner.userId, ctx);
+  const bodyPairs = bodies.map((txBytes) => ({ txId: computeTxId(decodeTx(txBytes)), txBytes }));
+  const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), bodyPairs, 1, miner.userId, miner.userId, ctx);
   if ('error' in built) throw new Error(built.error);
   const block = {
     header: { height: 1, validatorId: miner.userId },
     utxoTxTree: {
-      utxoTxIds: [...bodies.map((body) => computeTxId(decodeTx(body))), computeTxId(built.tx)],
+      utxoTxIds: [...bodyPairs.map((p) => p.txId), computeTxId(built.tx)],
       utxoTxs: [...bodies, encodeTx(built.tx)],
     },
     validatorSignature: new Uint8Array(64),
@@ -208,11 +209,12 @@ async function settlementLength(bodies: Uint8Array[]): Promise<number> {
   const { proverSession } = await import('../../src/state/prover-session.js');
   const { applyContextFrom } = await import('../../src/services/block-apply.js');
   const { config } = await import('../../src/config.js');
-  const { encodeTx } = await import('@dagsocial/types');
+  const { encodeTx, decodeTx: decode, computeTxId: tid } = await import('@dagsocial/types');
   const handle = await liveProver();
   const miner = makeTestIdentity();
+  const bodyPairs = bodies.map((txBytes) => ({ txId: tid(decode(txBytes)), txBytes }));
   const built = buildBlockSettlement(
-    treeStateView(proverSession(handle.prover)), bodies, 1, miner.userId, miner.userId, applyContextFrom(config),
+    treeStateView(proverSession(handle.prover)), bodyPairs, 1, miner.userId, miner.userId, applyContextFrom(config),
   );
   if ('error' in built) throw new Error(built.error);
   return encodeTx(built.tx).length;

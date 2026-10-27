@@ -2007,7 +2007,7 @@ describe('reorg — ceiling screen', () => {
     const journal = journalMod.getBlockJournal(height);
     if (!journal) throw new Error(`no journal at height ${height}`);
     const encoded = encodeTx(tx);
-    journal.appliedUtxoTxs.push({ txId: 'ceiling-test-tx', txBytes: encoded });
+    journal.appliedUtxoTxs.push({ txId: computeTxId(tx), txBytes: encoded });
     journalMod.insertBlockJournal(journal);
   }
 
@@ -2217,7 +2217,7 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       const journalMod = await import('../../src/store/journal.js');
       const journal5 = journalMod.getBlockJournal(5);
       if (!journal5) throw new Error('no journal at height 5');
-      journal5.appliedUtxoTxs.push({ txId: 'floor-test-tx', txBytes: encodeTx(floorTx) });
+      journal5.appliedUtxoTxs.push({ txId: computeTxId(floorTx), txBytes: encodeTx(floorTx) });
       journalMod.insertBlockJournal(journal5);
 
       const { decodeTx: decode } = await import('@dagsocial/types');
