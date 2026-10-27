@@ -764,7 +764,7 @@ included — can stall a node by keeping a header sync open. This is the eclipse
 **`synced` — the best chain is fully applied and every unmarked Active peer's claim is settled.** Entering `synced`
 clears every stall mark and fires `onSyncComplete`.
 
-### Sync Integrity (audit M-10)
+### Sync Integrity
 
 - **An answer is bound to its request by its stream.** Every header and block this node receives on the sync
   protocol arrives as the answer on a stream this node opened for the request — one round trip (→ Pull Requests →
@@ -1109,7 +1109,7 @@ call site states a number.
 
 Accumulated score >= threshold → temporal ban for `temporalBanDuration`.
 
-### Accrual and decay (audit L-13)
+### Accrual and decay
 
 **Every penalty accrues.** A penalty is never discarded because another
 one arrived recently: each invalid message costs this node full Stage-1
@@ -1440,7 +1440,7 @@ nothing (→ Stage 1 → "A refusal that rests on this node's state records noth
 
 | Topic | Checks before Accept |
 |-------|----------------------|
-| ordering-block | the message's length, at most `MAX_ORDERING_BLOCK_BYTES`; **the header first** — `readOrderingBlockSections` (TYPES_INTERFACE → Layout — Block), the header decoded and the body's bytes and the validator signature taken as they stand, a block that does not read → `ProtocolViolation` (→ Stage 1 → "A header is read before its body"); `verifyHeaderFieldDomains(header)`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits`, and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised"); **the header's standing** — a header this node holds, has refused, or accepted inside the seen window is **Ignored with no penalty** (→ Stage 1 → "A header this node knows is Ignored"); **the validator signature** — `verifyValidatorSignature(header, validatorSignature)`, one that does not verify Rejected with `misbehavior`; **the body** — `decodeUtxoTxTree` over the body's bytes (undecodable → `ProtocolViolation`) and `verifyOrderingBlockStructure` over the block; **the body's root** — `verifyUtxoTxRoot(block)`, last: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits") |
+| ordering-block | the message's length, at most `MAX_ORDERING_BLOCK_BYTES`; **the header first** — `readOrderingBlockSections` (TYPES_INTERFACE → Layout — Block), the header decoded and the body's bytes and the validator signature taken as they stand, a block that does not read → `ProtocolViolation` (→ Stage 1 → "A header is read before its body"); `verifyHeaderFieldDomains(header)`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits`, and a non-safe-integer `powNonce`/`powTargetBits` never verifies (`VALIDATION_INTERFACE → Invariants`); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised"); **the header's standing** — a header this node holds, has refused, or accepted inside the seen window is **Ignored with no penalty** (→ Stage 1 → "A header this node knows is Ignored"); **the validator signature** — `verifyValidatorSignature(header, validatorSignature)`, one that does not verify Rejected with `misbehavior`; **the body** — `decodeUtxoTxTree` over the body's bytes (undecodable → `ProtocolViolation`) and `verifyOrderingBlockStructure` over the block; **the body's root** — `verifyUtxoTxRoot(block)`, last: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits") |
 | tx | the message's length, at most `MAX_TX_PACKET_BYTES`; `decodeTxPacket`; `verifyTxStructure`; protocol version — `verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)`, the envelope's and the commit's against the next block's era, a mismatch **Rejected with no penalty** (→ Stage 1 → "A refusal that rests on this node's state records nothing"); the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions), a miss **Rejected with no penalty**; then `verifyTxSignatures(tx)` — every entry of the signature map over the transaction's id, one that does not verify Rejected with `misbehavior` (→ Stage 1 → "A transaction's signatures are checked at Stage 1"). Order as under Gossip Topics; the forward waits for Stage 2 (→ Forwarding Rule) |
 
 Stage 1 reads chain state through two providers and the karma set, and through nothing else. It does
@@ -1452,7 +1452,7 @@ scheduled-target provider, for the one case it can answer without trusting anyth
 holds. The header-standing provider answers whether this node holds a header or has
 refused it (→ Sync Handler Registration). The validator signature is checked twice: at Stage 1 over the
 header and the signature alone, and in the funnel on every entry path. The relay PoW gate exists to
-make mesh propagation cost-bearing: no zero-work ordering block may be re-gossiped (audit M-9), and the
+make mesh propagation cost-bearing: no zero-work ordering block may be re-gossiped, and the
 network's floor puts the price of a forwarded header at the network's own minimum rather than the
 resolution floor's nine bits.
 

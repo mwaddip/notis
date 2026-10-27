@@ -115,7 +115,7 @@ on read; on **insert** of a
 `utxo_tx` it walks the (already-decoded) transaction's outputs once to
 populate the gate-metadata columns below — the single chokepoint every
 insertion path (HTTP routes and gossip relay alike) goes through, which is
-what makes the correctness gates unable to miss an entry (audit M-8).
+what makes the correctness gates unable to miss an entry (→ Correctness gates).
 
 ### Gate metadata columns
 
@@ -241,7 +241,7 @@ each path answers is its own
 (`NODE_INTERFACE → Service Layer Architecture → "A transaction the pool already holds is answered as held"`; → Relay
 Integration).
 
-### Correctness gates (audit M-8)
+### Correctness gates
 
 ```
 hasPendingLike(targetPostId: string, likerId: string): boolean
@@ -797,7 +797,7 @@ expiry removed stays gone, and its submitter sends it again (→ Expiry).
 
 ## Design Decisions
 
-### Size cap — reject, never evict (audit M-8)
+### Size cap — reject, never evict
 
 The pool holds at most `MAX_MEMPOOL_ENTRIES` rows (config, default 10000)
 across all entry types. Every insert function checks the count and throws a

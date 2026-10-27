@@ -64,8 +64,8 @@ mismatches.
 >
 > **Writers throw and that is load-bearing to preserve.** `encodeVlqU` rejects non-integers,
 > negatives, and values past `MAX_SAFE_INTEGER`. Do **not** make them total here — totality is
-> supplied by wrappers in `types`' codec layer, which need the sentinel discipline that audits
-> M-5/M-6 established (see TYPES_INTERFACE → Totality). A writer that silently coerced instead of
+> supplied by wrappers in `types`' codec layer, which need the sentinel discipline of the no-panic
+> rule (see TYPES_INTERFACE → Totality). A writer that silently coerced instead of
 > throwing would defeat both layers.
 
 ---
@@ -106,7 +106,7 @@ there. The codec stays the lowest layer.
 
 ---
 
-## ReaderError codes (audit L-15)
+## ReaderError codes
 
 Every `ReaderError` carries a `code` naming **what kind of wrong** the
 bytes were. Callers switch on `code`; they MUST NOT match on `message`,
@@ -257,8 +257,8 @@ Not carried over:
 **One deliberate divergence from scorex**, in `encodeVlqZigZagBigInt`: it **throws** outside the i64
 domain where the reference masks silently. Outside i64 the mask is not injective — `2^63` and `0n`
 both encode to the single byte `0x00`, measured against the live reference — and these bytes are
-consensus preimages, so a writer that silently emits one value's encoding for another is the M-1
-defect class. The reference's own docstring states the i64 domain without enforcing it. Inside the
+consensus preimages, so a writer that silently emits one value's encoding for another breaks the
+injectivity the canonical field encoding holds (TYPES_INTERFACE → Canonical field encoding). The reference's own docstring states the i64 domain without enforcing it. Inside the
 domain the bytes are identical (378 in-domain values compared, 0 mismatches, both boundaries
 included).
 
@@ -506,7 +506,7 @@ type ReaderErrorCode =
   | 'out-of-domain'          // Well formed, but the value is outside the field's domain — readers above wire
 ```
 
-See "ReaderError codes (audit L-15)" above for the normative meanings.
+See "ReaderError codes" above for the normative meanings.
 
 ---
 

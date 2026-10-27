@@ -258,13 +258,13 @@ node-set and `POST /mining/submit` is unchanged.
 
 ## Mining API
 
-**Exposure (audit M-7):** the `/mining` routes are mounted **only** when
+**Exposure:** the `/mining` routes are mounted **only** when
 `nodeRole === 'miner'`. **A miner node is by definition one that serves
 templates** — the node holds no solver, so there is no configuration in which
 it mines without exposing this surface. On a server-role node the paths simply
 do not exist (404 from the server).
 
-**Authentication (audit M-7):** a miner node REQUIRES a configured, non-empty
+**Authentication:** a miner node REQUIRES a configured, non-empty
 `MINING_SECRET` — `NODE_ROLE=miner` with an empty secret **fails at startup**
 with a configuration error; there is no unauthenticated passthrough mode. Every `/mining/*` request must carry
 `Authorization: Bearer <MINING_SECRET>`; the comparison is constant-time
@@ -774,7 +774,7 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
    configured `MINING_SECRET` (enforced at startup, not per-request), every
    request is bearer-authenticated with a constant-time comparison, and the
    coinbase payout override (`?miner=`) is reachable only behind that auth.
-   Internal mode mounts no mining routes. (audit M-7)
+   Internal mode mounts no mining routes (→ Mining API).
 9. A miner node **serves no template before it is peer-ready**, and gating happens at
    serve rather than at creation — the node holds a template throughout, or has declined
    terminally (*Template and submit*), so the gate never weakens the holding rule. See *The

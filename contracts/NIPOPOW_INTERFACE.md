@@ -201,7 +201,7 @@ On success `headers` is the flattened sequence, `tip` its last element, `tipHeig
 height, `suffixHead` the PoPowHeader a client verifies box proofs against
 (`NODE_INTERFACE → Nipopow prover`, the light client's use).
 
-**M-5 applies.** Malformed input — bytes that do not parse, a hand-built object with a
+**The no-panic rule applies** (`VALIDATION_INTERFACE → Postconditions`). Malformed input — bytes that do not parse, a hand-built object with a
 non-array `prefix`, a header outside its domain, a vector with a non-hex entry — answers
 `ok: false`; the function never throws. `interlinkRoot` throws on a malformed vector, so the
 vector's shape is checked before it is hashed, as `verifyHeaderChain` checks its anchor.

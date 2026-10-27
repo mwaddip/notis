@@ -568,7 +568,7 @@ inexpressible over JSON: it arrives as a hex string, which the output shape refu
 cast and unvouch through the JSON edge. `GET /vouches?voucher=X` carries a `boxId` per entry, which the
 unvouch builder names as the VouchBox it spends.
 
-**Route error policy (L-12):** services signal intentional, client-safe
+**Route error policy:** services signal intentional, client-safe
 rejections with a typed client-error class; route handlers return its message
 with the mapped status (400/404/409). Any other thrown error returns a
 **generic** body (`{ error: "Internal error" }`, 500) and is logged
@@ -863,7 +863,7 @@ that serves templates — the node holds no solver of its own. That role require
 a configured non-empty `MINING_SECRET` — startup fails otherwise; there is no
 unauthenticated passthrough. Every request needs
 `Authorization: Bearer <MINING_SECRET>` (constant-time comparison), and the
-`?miner=` coinbase payout override sits behind that auth (audit M-7). Full
+`?miner=` coinbase payout override sits behind that auth. Full
 endpoint semantics in `MINING_INTERFACE.md`.
 ### Nipopow
 
@@ -2040,7 +2040,7 @@ There is **no other legal bond or invite shape**. In particular:
 - **A bond is never spent, only settled.** Creation, the probation clock and
   forfeiture are all block application's, so no
   transition admits a bond into a user transaction and no signature reaches it.
-  This is what closes audit F-consensus-1 by construction rather than by a rule: there
+  So the bond is closed by construction rather than by a rule: there
   is no shape in which any party — inviter or invitee — can direct a
   bond's value anywhere.
 - **The bond's value only ever reaches `bond.inviterId` or the pool.**
@@ -2070,10 +2070,8 @@ There is **no other legal bond or invite shape**. In particular:
 - **An invite and a bond are paired by `inviteePublicKey`, and nothing
   else is needed.** A key is invited at most once, so it identifies
   exactly one live pair — no box id, no output index, no provenance walk.
-  This is what closes audit **F-consensus-5**, whose root cause was that
-  the commit transition re-created the bond and broke the `(txId, index)`
-  reference; with no commit, a bond is created once and the pairing it
-  was born with is the pairing it dies with.
+  A bond is created once, and the pairing it is born with is the pairing
+  it dies with.
 - ⛔ **An invite may only name a key that is not already an account**, and
   *"is an account"* means **holds an `IdentityRecord`** — not "was
   invited before". Invite creation is where this is enforced, rather than
@@ -2139,15 +2137,12 @@ inside the network's reported supply.
 
 - **All karma inputs must share one owner.** The engine pins every karma
   *output* to `inputs[0].owner` and calls the violation "Karma cannot be
-  transferred", but never checked that the inputs themselves agree — and
-  `validateTx` step 4 only requires a common `boxType`. So
-  `[karmaA(10), karmaB(10)] → karmaA(20)` validated: conservation holds,
-  every output matches `inputs[0].owner`, and `checkAuthorization` gets the owner
-  signature it wants from each of A and B. **B's karma became A's.**
-  Consensual, but karma is non-transferable *by rule* — a consensual transfer
-  is still a transfer, and it prices off-chain. This is the audit's most
-  severe class, and unlike the unlike-path instance it does **not** close when
-  P2-D removes unlike.
+  transferred", and `validateTx` step 4 only requires a common `boxType` — so
+  without this rule `[karmaA(10), karmaB(10)] → karmaA(20)` would validate:
+  conservation holds, every output matches `inputs[0].owner`, and
+  `checkAuthorization` gets the owner signature it wants from each of A and B.
+  **B's karma would become A's.** Consensual, but karma is non-transferable
+  *by rule* — a consensual transfer is still a transfer, and it prices off-chain.
 - An owner's own box beside their income box is the legitimate two-input case
   (→ "An identity holds at most two karma boxes", below). The faucet's invite (`tools/faucet`,
   `karma → karma + bond`) is unaffected: every karma input it spends is its own.
@@ -2296,20 +2291,15 @@ the confirmed set, as it resolves inputs.
   that would be refused at apply is refused earlier, and refusing it earlier changes no verdict.
 - **The stake is pinned at cast: `VouchBox.value == VOUCH_KARMA_AMOUNT`.**
   A vouch is one vote and always stakes exactly 1 karma (user decision,
-  2026-08-07). Before the pin, value was bounded only by conservation and
-  `checkOutputValues` — which permits `0n` — while unvouch escrowed the
-  **constant**. Both directions broke: a 0-value vouch matured into 1 karma
-  minted from nothing, and a 100-value vouch destroyed 99 (audit
-  F-consensus-3).
+  2026-08-07); conservation and `checkOutputValues`, which permits `0n`,
+  bound the value no further.
 - **`voucherId` is pinned at cast: it must equal the karma input's owner.**
   A `vouch` input's authorization requires a signature by the box's own
   `voucherId`, so a VouchBox carrying a *foreign* one is authorized by that
   foreign key:
   A stakes their own karma, B unvouches it, and the escrow matures to B.
   That is a karma transfer with no invite — the property the whole
-  invite/bond mechanism protects. Not in the audit; found deriving this
-  phase. `castVouch` never compared the signer to `voucherId` either, so it
-  was reachable through the front door as well as through a block.
+  invite/bond mechanism protects.
 - **The escrow records the actual staked value**, never the constant, and the
   settlement returns exactly that. With the cast pin the two always agree —
   recording the real value is what makes the round trip conservation-
@@ -2842,9 +2832,9 @@ prefix-freeness over the tag set.
 
 A mint's identity MUST NOT derive from its position in the journal, the block,
 or any iteration order. Position-derived identity would put ordering back into
-*identity* — strictly worse than the M-12 ordering bug P2 closed for the AVL
-feed, because there the fix was a sort at one boundary, whereas an
-order-dependent id is baked into committed state and unrecoverable.
+*identity* — worse than an unsorted AVL feed (ARCHITECTURE → AVL+ State Root),
+because a feed is sorted at one boundary, whereas an order-dependent id is
+baked into committed state and unrecoverable.
 
 **Adding a mint reason** therefore requires three things in one unit: the ASCII
 tag added to `MintReason` in types, a fixed-length or self-delimiting subject
@@ -3291,7 +3281,7 @@ In external mode, the block creator builds a template with `powNonce=0` and
 stores it. External miners poll the template endpoint, solve PoW, and submit
 via `POST /mining/submit`. The node verifies PoW, signs, and finalizes.
 
-### Post-block stateRoot (H-6)
+### Post-block stateRoot
 
 `header.stateRoot` commits to the UTXO state **after** this block is applied
 (ARCHITECTURE → AVL+ State Root). PoW covers the header, so the producer must
@@ -3661,9 +3651,9 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 | `getBackerStakeBox(owner)` | `(UserId) => BackerStakeBox \| null` — the identity's live stake, at most one (→ Backer transition rules) |
 | `getBackerPoolBox()` | `() => BackerPoolBox \| null` — the one live pool box, `owner IS NULL … ORDER BY id LIMIT 1` like the emission, treasury and karma-pool reads, so the owner index answers it (→ "A read the node runs per request or per block touches what it answers"); null on a network whose table is empty. `GET /backers` reads it on every request. The store's answer to the settlement's backer-leg read (§The settlement transaction), for the API and the shadow run; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else") |
 | `getKarmaBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: KarmaBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getKarmaBoxes` reads, `ORDER BY value DESC, id` strictly after `after` (two index ranges — `value = ? AND id > ?`, then `value < ?` — concatenated in that order), over the same `KARMA_UNSPENT_WHERE` fragment; never a consensus input — every balance check reads the whole set through `getKarmaBoxes` / `getKarmaValue` |
-| `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box: admission reads it for the karma spend rule — `held` is this sum less the pool's pending spends (→ Karma transition rules) — and the services for their courtesy checks; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else"). It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE`. The predicate is the `KARMA_UNSPENT_WHERE` fragment that `getKarmaTotal`, the `COUNT` and the page share — the set is named once; the sum is computed here, in process |
+| `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box: admission reads it for the karma spend rule — `held` is this sum less the pool's pending spends (→ Karma transition rules) — and the services for their courtesy checks; the rules read the tree's (→ AVL+ State Root, "The rules read the tree, and nothing else"). It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE`. The predicate is the `KARMA_UNSPENT_WHERE` fragment that `getKarmaTotal`, the `COUNT` and the page share — the set is named once; the sum is computed here, in process |
 | `getKarmaTotal(owner)` | `(Uint8Array) => bigint` — the view's total: `COALESCE(SUM(value), 0)` over `KARMA_UNSPENT_WHERE`, an index scan of the owner's unspent entries; `/karma/:userId`'s `total`. Never a consensus input, and equal to `getKarmaValue` on every owner (a test pins it) |
-| `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC, id` — a total order, so element `[0]` is a deterministic read; there is deliberately **no single-box credit accessor** (an unordered `LIMIT 1` names an arbitrary row — M-12's class) |
+| `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC, id` — a total order, so element `[0]` is a deterministic read; there is deliberately **no single-box credit accessor** (an unordered `LIMIT 1` names an arbitrary row) |
 | `getCreditBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: CreditBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getCreditBoxes` reads, the same order and clause, over the `CREDIT_UNSPENT_WHERE` fragment |
 | `getCreditValue(owner)` | `(Uint8Array) => bigint` — summed value of every unspent credit box: `COALESCE(SUM(value), 0)` over `CREDIT_UNSPENT_WHERE`, the fragment `getCreditBoxes` and the page share; a view read (`/credits/:userId`'s `total`), not a consensus input |
 | `getRentEligibleCreditBoxes(height, period, limit)` | `(number, number, number) => { box: CreditBox, txId, index }[]` — the producer's rent selection: unspent credit boxes created before `height − period`, oldest first (`created_at_block` ascending), at most `limit`, read for every template (→ Storage rent is a transition requiring no signature). A range of `utxo_boxes (created_at_block) WHERE box_type = 'credit' AND spent_at_block IS NULL`: `limit` entries, never the credit set |
@@ -3723,7 +3713,7 @@ observed anything.
 
 Legitimate readers are `getUnspentBoxes` ordering and display.
 **`getUnspentBoxes` feeding `bootstrapAvlProver` is not a counterexample:** the
-bootstrap sorts by boxId at the prover boundary (M-12), so the SQL order never
+bootstrap sorts by boxId at the prover boundary, so the SQL order never
 reaches the tree. That sort is what makes this column safe to keep.
 
 Consensus reads its heights elsewhere — locks from `lockedUntilBlock`, bond
@@ -4088,8 +4078,8 @@ that reads it reads committed state.
 
 `block_topology` rows record `(post_id, parent_refs, author, block_height)` —
 all sourced from the confirming block's post transactions (consensus data, never
-from local DAG content). `author` is the creating transaction's signer
-(audit H-3); `getTopologyAuthor` returns `null` for posts no applied
+from local DAG content). `author` is the creating transaction's signer;
+`getTopologyAuthor` returns `null` for posts no applied
 block has confirmed. Idempotent insert (first block to confirm a postId wins);
 `rollbackBlockTopology` removes a reverted height's rows wholesale.
 
@@ -4113,7 +4103,7 @@ one write feeds both, so the two cannot disagree.
 | `followAppliedBlock(height, appliedTxIds, spentBoxIds)` | `(number, readonly string[], readonly string[]) => number` | The pool's part of every applied block, inside its write: the confirmed entries by `tx_id`, then every entry the block's spends, its expiry or its ceiling leave no place for, with their dependents (MEMPOOL_INTERFACE → followAppliedBlock) |
 | `purgeExpired(currentHeight)` | `(number) => number` | `followAppliedBlock`'s expiry half — the entries past their expiry or their ceiling, with their dependents (MEMPOOL_INTERFACE → purgeExpired) |
 | `removeUnconfirmed(rowids)` | `(readonly number[]) => number` | Every unconfirmed exit: the entries, their dependents down the chain, each post entry's pending row (MEMPOOL_INTERFACE → removeUnconfirmed) |
-| `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
+| `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — the count admission holds a member's bonds to (MEMPOOL_INTERFACE → Correctness gates) |
 | `hasPendingInvitee(inviteeId)` | `(string) => boolean` | SQL EXISTS over `invite_invitee` — one pending bond per invitee |
 | `hasPendingVouch(voucherId, targetId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — the pending mirror of one live vouch per `(voucher, target)` pair (§Vouches) |
@@ -4401,8 +4391,8 @@ that moves them, and each journals as its own entry.
 pairs each withdrawn id with the content the store holds for it before the
 withdrawal's write. **No store primitive records**, and services and call sites
 MUST NOT maintain parallel mutation bookkeeping — one list, written and
-journalled from the same pass, is the drift fix (C-5, H-5, H-7, and the
-merge-consume value-loss class). The rollback inverses — `deleteBox`,
+journalled from the same pass, keeps the store, the journal and the tree
+from drifting apart. The rollback inverses — `deleteBox`,
 `unconsumeBox`, `deleteIdentityRecord`, `deleteLikeRecord` — are plain writes
 like every other.
 
@@ -4502,7 +4492,7 @@ the tree view read by read.
   is not configurable — no variable disables it
 - **Verification:** apply computes the post-mutation digest and rejects the
   block unless it equals `header.stateRoot`, on every node — no node applies a block
-  without its prover (→ Post-block stateRoot). Both sides are post-block (H-6) and both perform `treeWritesOf`'s
+  without its prover (→ Post-block stateRoot). Both sides are post-block and both perform `treeWritesOf`'s
   writes in their consensus order (`CONSENSUS_INTERFACE → The tree writes`) — so a mismatch means genuine state
   divergence, not a representation difference. A rejected block leaves the prover restored by
   the funnel's single rollback point
@@ -4591,7 +4581,7 @@ the tree view read by read.
   own view of the tree (`CONSENSUS_INTERFACE → The tree writes`) — a box the block creates and spends nets out, a key
   written twice takes its last value, and the index entries follow their boxes. One derivation serves the apply path
   and the speculative run; it switches on the effect's `kind` exhaustively (→ "One log, not parallel arrays")
-- **Canonically ordered (M-12):** the writes' order is `consensus`' — every `Remove`, then every `Insert`, every
+- **Canonically ordered:** the writes' order is `consensus`' — every `Remove`, then every `Insert`, every
   `Update`, every `InsertOrUpdate`, each by key bytewise, no key taking two writes in one block (`CONSENSUS_INTERFACE →
   The tree writes`) — and the node performs them in the order they come; genesis's are `seedTreeWrites`', all
   `Insert`s in key order
@@ -5670,7 +5660,7 @@ its actual reach.
 | `KARMA_DECAY_AMOUNT` | universal constant | Economics. Devnet decays *often*, not *harder* |
 | `KARMA_MINIMUM` | universal constant | Economics |
 | `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`, `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `INCLUSION_BONUS_K` | universal constant | Economics — the coinbase split |
-| `CREDIT_INITIAL_REWARD` | universal constant | Economics — separately, it is read and never used (A5) |
+| `CREDIT_INITIAL_REWARD` | universal constant | Economics |
 | `TREE_KEY_LENGTH` | universal constant | Format. No network has a reason to differ |
 
 | Variable | Class | Default | Description |
@@ -5684,7 +5674,7 @@ its actual reach.
 | ~~`ORDERING_BLOCK_POW_TARGET_BITS`~~ | **removed** | ~~`12`~~ | → profile field `orderingBlockPowTargetBits`, the ASERT schedule's anchor; the schedule itself is universal (`MINING_INTERFACE → Difficulty Schedule`) |
 | ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `COINBASE_TREASURY_PCT` (`@dagsocial/types`). The **env key** keeps this name; only the constant renamed, so a rename sweep that rewrites the string here changes what `config.test.ts` guards |
 | ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | Gone entirely, with no destination. The treasury's share accrues to a `TreasuryBox` that block application holds no release path for, so no key names it — see MINING_INTERFACE → Coinbase Application |
-| ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
+| ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. |
 | ~~`VERIFY_STATE_ROOT`~~ | **removed** | ~~`true`~~ | Gone, with no destination: the `stateRoot` check at apply is unconditional on every node (→ AVL+ State Root). It is the sole backstop against the `computeTxId`-collision class, where two distinct block bodies share a header, and no variable may switch it off |
 | ~~`NETWORK_MODE`~~ | **renamed** | ~~`testnet`~~ | → `NETWORK_TYPE`. The name changes because the meaning does: it selected a faucet flag, it now selects the whole consensus parameter table |
 | ~~`MAX_SUB_BLOCKS_PER_BLOCK`~~ | **replaced** | ~~`1000`~~ | → `BLOCK_BODY_BUDGET_BYTES`. A count, named for a structure that no longer exists, capping every entry type at once. Its "CONSENSUS GAP" note is closed by `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE` → Size caps), which is enforced in structure validation |
@@ -5802,7 +5792,7 @@ not fail the API request.
   write, and an `'unbound'`, `'acceptance'` or `'local'` refusal marks nothing (→ "The funnel answers
   with a class"). The pull path enters the **same** intake through net's `setPipeline` (Sync handlers),
   and a switch applies through `reorg` inside it. The authoritative consensus checks — including
-  **validator-signature verification (H-1)** — are enforced *inside* `applyOrderingBlock` (see
+  **validator-signature verification** — are enforced *inside* `applyOrderingBlock` (see
   "Ordering block apply-time authorization" below), so every path ends at the same gate. Both
   registrations — this one and `setPipeline`'s — hand the intake's `CorruptChainStateError` to
   `failStopIfCorruptChain`: the apply funnel re-throws it, and the registration is its outer frame
@@ -5821,9 +5811,9 @@ valid. Previously this ran *only* in the gossip topic validator
 (`net/src/gossip.ts`), so the pull-sync path — which decodes wire bytes and
 calls the apply handler directly — reached consensus code with fields of
 arbitrary type.
-Enforcing it in the funnel makes the guarantee path-independent, and is the
-same relocation already applied to the PoW target (M-2), coinbase maturity
-(M-3), and the validator signature (H-1).
+Enforcing it in the funnel makes the guarantee path-independent, as the PoW
+target, coinbase maturity and the validator signature are (→ Ordering block
+apply-time authorization).
 
 > ✅ **RESOLVED — verified 2026-08-10. Closed by Phase 3b's positional codecs, at all three
 > layers this marker names.** Everything below the next two paragraphs is kept as the record of a
@@ -6029,7 +6019,7 @@ phases, and the middle one is `@dagsocial/consensus`'s `applyBlock`
 (`CONSENSUS_INTERFACE → Applying a block`) — the state transition as one
 function, run without the header being final. That is what lets the block
 creator compute a post-block `stateRoot` through this same code instead of a
-parallel implementation (H-6). The split is structural, not a mode flag: there
+parallel implementation. The split is structural, not a mode flag: there
 is no "skip the checks" parameter on the apply path.
 
 | Phase | Contents | Runs in speculative computation? |
@@ -6103,7 +6093,7 @@ reads the class — at extension, and through `reorg` inside a switch — and ma
 `'consensus'` alone (→ Fork choice decides on verified headers → "A body-stage refusal marks the
 header"). Both entries are total, and the `CorruptChainStateError` re-throw is the one exception of both.
 
-**Validator signature (H-1).** Before applying any state, the block is rejected
+**Validator signature.** Before applying any state, the block is rejected
 unless `verifyValidatorSignature(block.header, block.validatorSignature)` (from
 `@dagsocial/validation`) returns `true`. This binds block-production attribution
 (coinbase-output ownership, genesis credit distribution) to the holder of
@@ -6133,9 +6123,10 @@ its block 1 exists — testnet's is pinned, `TYPES_INTERFACE → Network profile
 as the sentinel compare alone
 (`TYPES_INTERFACE` → Network profiles).
 
-**Post authorship + withdrawal authorship (H-3).** A post transaction carries the
+**Post authorship + withdrawal authorship.** A post transaction carries the
 **whole post** in `utxoTxs` plus the author's signature over the `TxId`, so
-authorship is verified, not claimed (`TYPES_INTERFACE` → "The H-3 property");
+authorship is verified, not claimed (`TYPES_INTERFACE` → "Withdrawal authorship is checkable without DAG content,
+through the body itself");
 there is no separate authorship entry for a producer to fill or a node to
 cross-check. Enforcement has two legs, both inside the `applyOrderingBlock`
 funnel:

@@ -317,7 +317,7 @@ verifyCreatedAtOrder(header: BlockHeader, parent: BlockHeader): boolean   // hea
 ```
 
 `MINING_INTERFACE → Header timestamp rules`, the order rule — consensus: stated there and computed
-here. M-5 applies: a non-object, a `NaN`, a non-integer or a negative operand answers `false`; never
+here. The no-panic rule applies (→ Postconditions): a non-object, a `NaN`, a non-integer or a negative operand answers `false`; never
 throws.
 
 ### verifyCreatedAtBound — the future bound
@@ -327,7 +327,7 @@ verifyCreatedAtBound(header: BlockHeader, nowMs: number, maxDriftMs: number): bo
 ```
 
 `MINING_INTERFACE → Header timestamp rules`, the future bound — an acceptance rule against the
-**caller's** clock, injected as `nowMs`; this package reads no clock. M-5 applies as above; never
+**caller's** clock, injected as `nowMs`; this package reads no clock. The no-panic rule applies as above; never
 throws.
 
 ### powHit — the digest a header's nonce produced
@@ -338,7 +338,7 @@ powHit(header: BlockHeader): Uint8Array | null
 
 `blake2b512(computePowHash(header) ‖ encodeLE64(powNonce))[:32]` — the 32 bytes the admission rule
 compares against the target, returned rather than judged. `null` on exactly the inputs
-`computePowHash` refuses (its domain, M-5/M-6); never throws. `verifyOrderingBlockPoW` is
+`computePowHash` refuses (its domain, → Invariants); never throws. `verifyOrderingBlockPoW` is
 `meetsPowTarget(powHit(header), orderingPowTarget(header.powTargetBits))` and nothing else, so the
 hit a verifier judges and the hit a level is computed from are one computation.
 
@@ -389,7 +389,7 @@ verifyOrderingBlockPoW(header: BlockHeader): boolean
 Answers `meetsPowTarget(powHit(header), orderingPowTarget(header.powTargetBits))` — `false` when
 either half is `null`. The hit is `powHit` above: `blake2b512(computePowHash(header) ‖
 encodeLE64(powNonce))[:32]`.
-Guards its inputs (M-5 / M-6): returns `false` — never throws — if the
+Guards its inputs (→ Postconditions, → Invariants): returns `false` — never throws — if the
 header is not encodable, or if `powNonce` / `powTargetBits` is not a
 non-negative safe integer.
 
@@ -400,7 +400,7 @@ Checks the solution against the header's **own** `powTargetBits` only. It does
 parent the receiving node holds, the scheduled target are `@dagsocial/net`'s
 stage-1 checks over values node supplies (`NET_INTERFACE → Stage 1`); and the
 authoritative height-scheduled target is enforced at block apply
-(`@dagsocial/node`, audit M-2 — see NODE_INTERFACE "Ordering block apply-time
+(`@dagsocial/node` — see NODE_INTERFACE "Ordering block apply-time
 authorization"). A producer that writes a low target into its own header still
 passes this function; the checks around it are what reject it.
 
@@ -617,7 +617,7 @@ A block whose `validatorId` names a key the producer does not hold (a forged
 authorship) fails this check. The caller supplies the public key (the header's
 own `validatorId`) and the function performs no I/O.
 
-**No-panic (M-5).** Returns `false` — never throws — on malformed input: a
+**No-panic.** Returns `false` — never throws — on malformed input: a
 `signature` that is not a byte view, or any header outside the domain, which
 is **one** guard rather than two. `blockHash` returns `null` on
 exactly the headers `verifyHeaderFieldDomains` rejects, and its non-null return
@@ -693,7 +693,7 @@ BOM/interlinear/soft-hyphen and other format codepoints, control characters
 codepoints. Allows all letters, marks, numbers, punctuation, symbols,
 separators, emoji, unassigned codepoints, and `\n`.
 
-**Version-independence (M-4).** This is a **consensus Stage-1 check**, so every
+**Version-independence.** This is a **consensus Stage-1 check**, so every
 node must reach the same verdict for the same bytes. It therefore may **not** be
 implemented with runtime Unicode general-category escapes (`\p{C}` / `\P{C}`):
 `\P{C}` excludes `\p{Cn}` (unassigned), whose membership shifts as each Node/V8
@@ -791,7 +791,7 @@ It reads **no content** — the commit carries none; the body's rules are `verif
 **Why lowercase is load-bearing, not stylistic.** `'AB…'` and `'ab…'` hex-decode
 to the same 32 bytes. Accepting both would make the hex→bytes conversion at the
 codec boundary non-injective: two distinct in-memory posts, one preimage, one
-id. That is precisely the malleability the M-1 field encoding exists to close,
+id. That is precisely the malleability the canonical field encoding (TYPES_INTERFACE → Canonical field encoding) exists to close,
 arriving from the codec side instead of the concatenation side.
 
 **Why it exists.** `author` and the refs take fixed-width `b32` writers, which cannot carry
@@ -802,7 +802,7 @@ it keeps the sentinel path closed so two distinct malformed posts cannot share o
 encoding. The payload reaches `computeTxId` through
 `postFieldBytes`, so the domain must be established before then — without this
 pin a malformed post would put a throw in a path this contract requires never
-to throw (the M-5/M-6 regression).
+to throw (→ Postconditions).
 
 **This was not only tightening the already-unusable.** A post with a
 64-character *non-hex* `parentRef` passed every then-live check, because the
@@ -892,8 +892,8 @@ node (the packet validator, a pull response, `POST /posts`) and never inside a t
 check (→ verifyPostBody).
 
 ⚠ **`verifyPostCommitDomains` is still needed** — the post payload is
-still attacker-supplied bytes reaching an encoder, and the no-panic contract
-(M-5/M-6) is unchanged.
+still attacker-supplied bytes reaching an encoder, and the no-panic rule
+(→ Postconditions) binds it.
 
 ⛔ **A method rule:** a
 check justified by a path is a claim about the rest of the tree, and it expires
@@ -939,7 +939,7 @@ the node stores and re-serves. Each check measures the bytes its own object actu
 is the other's approximation.
 
 ⛔ **It runs after every shape check, and a residual throw is a rejection.** This package's
-no-panic rule (`Postconditions` — No-panic (M-5)) binds here as everywhere: `encodeTx` is the
+no-panic rule (→ Postconditions) binds here as everywhere: `encodeTx` is the
 positional `TX` codec over a peer-supplied object, and its writers throw on out-of-domain fields —
 so it is called only once the shape checks have established those domains, and the encode sits in a
 `try` whose catch returns `Transaction is not encodable` rather than letting the throw out. A size
@@ -1350,7 +1350,7 @@ block, not the header, so it stays a body-stage check. **`'clock'` is the one re
 verdict on the chain** — `NODE_INTERFACE → Fork choice decides on verified headers` classifies it
 apart from every other refusal: refuse, no penalty, no mark, no memo.
 
-**M-5 applies.** Malformed input — non-object headers, a `NaN` height, an out-of-domain target —
+**The no-panic rule applies** (→ Postconditions). Malformed input — non-object headers, a `NaN` height, an out-of-domain target —
 answers `ok: false`; the function never throws. `NODE_INTERFACE → Fork choice decides on verified
 headers` states how the caller classifies a refusal (`'clock'` versus misbehaviour).
 
@@ -1448,7 +1448,7 @@ own.
 - All exported functions are pure: same inputs → same outputs, no side effects
 - No I/O, no DB access, no network calls
 - Callable from any context (gossip event handler, HTTP route handler, test)
-- **No-panic (M-5).** No exported verify function throws on malformed or
+- **No-panic.** No exported verify function throws on malformed or
   adversarial input — each returns `false` / `{ valid: false }` instead. Inputs
   arrive straight off the wire and may be wrongly typed or out of range
   (non-string `content`, non-array `parentRefs`, a public key or `validatorId`
@@ -1474,7 +1474,7 @@ own.
   strict RFC 8032 through `@noble/curves` (→ Acceptance criterion)
 - **One PoW nonce encoding**: the ordering-block nonce is `encodeLE64`
   (`MINING_INTERFACE.md` → PoW Verification). A post carries no nonce.
-- The integer-range guard (M-6): a nonce or `targetBits` that is not a
+- The integer-range guard: a nonce or `targetBits` that is not a
   non-negative safe integer within `u64` yields `false`, never a thrown
   `RangeError` — the guard prevents a throw from `BigInt` / `DataView.setBigUint64`.
   Validate with `Number.isInteger` (not a loose `typeof === 'number'`, which

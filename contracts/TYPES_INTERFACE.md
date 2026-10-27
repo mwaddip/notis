@@ -112,7 +112,7 @@ separate post signature to verify**, and no path should reintroduce one.
 that computes `TxId` locally still displays optimistically; the ordering is what
 inverts.
 
-### Canonical field encoding (M-1 — injective, protocol-breaking)
+### Canonical field encoding (injective, protocol-breaking)
 
 **The normative byte layout is Serialization → "Layout — PostCommit".** This section states the
 properties that layout must have and does not restate it. `POST_ID_DOMAIN` is
@@ -121,9 +121,8 @@ properties that layout must have and does not restate it. `POST_ID_DOMAIN` is
 `postFieldBytes` is **injective**: every variable-length field is length-prefixed and the
 ref array carries an explicit count, so no two distinct posts share a `postFieldBytes`.
 Numeric fields are encoded, never stringified — an undelimited `String(n)` concatenation
-collides, since `(a=5, b=23)` and `(52, 3)` both yield `…"5""23"…`. That is
-the defect M-1 closed, and injectivity is the property every later dialect change has had to
-preserve.
+collides, since `(a=5, b=23)` and `(52, 3)` both yield `…"5""23"…`. Injectivity is the
+property every change to the encoding preserves.
 
 ⛔ **Injectivity is still required, and it no longer carries post identity.** These bytes are
 the post's payload inside its creating transaction, so they enter that transaction's `TxId`
@@ -133,7 +132,7 @@ transactions, which is strictly worse.
 
 The numeric writers are **total**: a field outside the encodable domain (non-negative safe
 integers ≤ 2⁵³−1) encodes to a sentinel rather than throwing. This keeps the encoder
-panic-free on malformed input (the `@dagsocial/validation` no-panic contract, M-5/M-6). A
+panic-free on malformed input (the no-panic rule, `VALIDATION_INTERFACE → Postconditions`). A
 mirror implementation must reproduce this, not reintroduce a throw.
 
 ⚠ **No field takes an out-of-domain sentinel that consensus then reads.** `vlqU`'s sentinel
@@ -252,7 +251,7 @@ odd-sized level — roughly half of all blocks.**
 **`NODE_TAG` is `0x00`. Exactly that byte — this is a pinned constant, not an example.**
 A mirror choosing a different reserved byte computes different roots everywhere.
 
-**Leaf/node domain separation (L-9).** `nodeHash` carries `NODE_TAG` (a reserved byte that
+**Leaf/node domain separation.** `nodeHash` carries `NODE_TAG` (a reserved byte that
 is not a valid `leafHash` domain prefix — leaves begin
 with a domain string) so an internal node can never be
 reinterpreted as a leaf, and vice versa. Without it, a 64-byte leaf preimage
@@ -325,8 +324,8 @@ member** — omitting from a union collapses it to the common keys. `UtxoTransac
 `AnyBoxCandidate[]`.
 
 A candidate is what a creator builds and what `computeTxId` hashes. A `BoxBase` is what exists
-in the ledger, the store, and the AVL value. The split makes "has provenance-free identity" —
-the M-11 state — unrepresentable.
+in the ledger, the store, and the AVL value. The split makes "has provenance-free identity"
+unrepresentable.
 
 > **`id` is optional, and deliberately.** A producer builds the candidate-plus-provenance object
 > and hashes *it* to obtain the id, so the value is genuinely absent for exactly one expression,
@@ -344,10 +343,10 @@ the node did.
 beside `boxType` and `value`, so it is candidate content: it rides the transaction,
 `canonicalBoxBytes` encodes it, and `computeTxId` covers the creator's signature over it.
 
-⛔ **What made the id dishonest was APPLY-MUTATION, not the field.** The field was once written
-by block application after its box existed, so a stored box stopped matching its own id — audit
-M-11. A value the creator declares and signs is fixed before the id is computed, so the
-invariant above holds unchanged. **The objection was to the writer, never to the field.**
+⛔ **What makes an id dishonest is APPLY-MUTATION, not the field.** A field block application
+wrote after its box existed would leave a stored box not matching its own id. A value the creator
+declares and signs is fixed before the id is computed, so the invariant above holds. **The
+objection is to the writer, never to the field.**
 
 ⚠ **The node's `created_at_block` store column holds the same number**, written from the box's
 own field at insert. It is a denormalisation for querying, **not a second source**: consensus
@@ -406,8 +405,8 @@ transaction id of a chain is bound to that chain's payload with no other derivat
 
 `reason` is a tag from a closed set, written into the preimage as a single `enum8` byte; `subject`
 is a canonical byte encoding defined per reason. The discriminant is **semantic, never positional** —
-deriving it from journal position would make identity order-dependent, the failure class M-12 closed
-for the AVL feed. Full reason/subject table in `NODE_INTERFACE.md`.
+deriving it from journal position would make identity order-dependent, as an unsorted feed would
+make the AVL digest (ARCHITECTURE → AVL+ State Root). Full reason/subject table in `NODE_INTERFACE.md`.
 
 > **Injectivity is only half-guaranteed here, and the other half is `NODE_INTERFACE.md`'s.**
 > *Across* reasons it holds unconditionally, because `enum8(reason)` is a single distinguishing
@@ -452,7 +451,7 @@ computes different ids.
   caller encodes*, not a typed field. State the form per preimage, and check which side of
   the line it falls on rather than inferring from a neighbouring function's name.
 - **`u32BE` is total, never throwing.** Input outside `[0, 2³²−1)` writes the all-ones
-  sentinel, following `post.ts`'s numeric-writer discipline for the M-5 no-panic contract. The
+  sentinel, following `post.ts`'s numeric-writer discipline for the no-panic rule. The
   encodable domain excludes the sentinel, so a well-formed index or height never collides with
   a malformed one. A mirror that throws instead would diverge.
 
@@ -1600,29 +1599,23 @@ one-byte `lp` prefix, and every tree the decoder answers is aligned. It refuses 
 `verifyOrderingBlockStructure` refuses, so no block's verdict moves. The encoder writes whatever tree it
 is given, aligned or not (→ Sizing without encoding).
 
-**The H-3 property — withdrawal authorship checkable without DAG content — holds through the
-body itself.** A post transaction carries the **whole post** in `utxoTxs` plus the
+**Withdrawal authorship is checkable without DAG content, through the body itself.** A post transaction carries the **whole post** in `utxoTxs` plus the
 author's signature over the `TxId`, so a node syncing from ordering blocks alone holds
 the thing an authorship claim would be about, and verifies it rather than trusts it.
 
 ⚠ **That guarantee rests on `utxoTxs` reaching every syncing node.** `utxoTxIds` alone
 is not enough — the ids do not contain the post. **Any sync path that delivers ids
-without bodies regresses H-3.**
+without bodies breaks it.**
 
 
-`likeBoxIds` and `epochTallyResults` were deleted by P2-D: likes ride `utxoTxIds` like
-every other transaction, and per-block settlement is **derived state** computed identically
-by every node at apply — nothing to carry in the block. (The `EpochTally` structure, its
-`epoch` Merkle leaf and `canonicalEpochTallyJson` died with it; audit C-6's
-key-order-divergence problem is closed by not existing.)
+Likes ride `utxoTxIds` like every other transaction, and per-block settlement is **derived
+state** computed identically by every node at apply — nothing to carry in the block.
 
 **Authorship is the transaction's signer**, and every node holding the block body holds
 it. A post transaction is signed over its `TxId` by the author's key, so the
 `signatures` map names the author directly — there is no separate authorship claim to
 contradict, and therefore no apply-time reconciliation between a claim and the content.
-This is what makes withdrawal authorship (audit H-3) checkable deterministically, and it
-replaces a rule that required nodes holding the post to reject a block whose entry
-disagreed with it.
+This is what makes withdrawal authorship checkable deterministically, by every node alike.
 
 ### ~~Coinbase output~~ — DELETED (C1)
 
@@ -1777,7 +1770,7 @@ separates both from wire's own refusals, so a caller switching on `code` never h
   > the deploy gate holding. **Filling holes needs no such argument; compaction does.**
 - **Maps encode as arrays sorted by raw key bytes ascending.** A positional format has no maps, and
   without a normative sort one transaction has two encodings — reopening the malleability being closed.
-- **Encoders are total** (sentinel discipline, per audits M-5/M-6), with one stated exception: see
+- **Encoders are total** (sentinel discipline, `VALIDATION_INTERFACE → Postconditions`), with one stated exception: see
   "Totality" below.
 
 ### Totality
@@ -1895,7 +1888,7 @@ The body's standalone wire form — a pull response's element, and the packet's 
 - There is no `encodePost` / `decodePost`: nothing stores or ships a `Post` as one struct — the
   commit has its codec, the body has its own.
 
-The encodings are positional and injective (audit M-1); the frozen golden vectors are the
+The encodings are positional and injective (→ Canonical field encoding); the frozen golden vectors are the
 anchor a second implementation is checked against.
 
 ### Layout — PostWithdrawCommit
@@ -2290,11 +2283,6 @@ payload sits.
 `TxId` in existence and every box id derived from one, exactly as appending one and removing
 `preimages` did — see "Re-pinning a frozen vector when a preimage changes". A reader that keeps
 five offsets reads `postWithdraw`'s tag as the end of the struct; the count is load-bearing.
-
-Order preserves today's sequence. This satisfies **C1 structurally**: the prior preimage used
-`String(protocolVersion)` (the M-1 pattern) and concatenated inputs and variable-length outputs with
-no counts or length prefixes. `preimages` already sorted by key, so the normative sort **ratifies**
-existing behaviour there; for `signatures` it is new, because they were never hashed.
 
 **Wire codec** (`encodeTx`): `txIdBytes` ‖ `arr(signatures sorted, b32(pubkey) ‖ b64(sig))`.
 
