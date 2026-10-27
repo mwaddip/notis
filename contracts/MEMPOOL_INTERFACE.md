@@ -150,10 +150,6 @@ insertUtxoTx(tx: UtxoTransaction, txId: TxId, expiresAtHeight: number, costEstim
 looked the pool up by (→ getHeldEntry); a switch's re-insertion hands the id the reverted block declared, which its
 application held to the bytes. The row is keyed by it and its outputs' box ids derive from it (→ Schema).
 
-> ⚠ **AHEAD OF CODE (2026-10-27).** The `txId` parameter leads node's `store/mempool.ts`, whose
-> `insertUtxoTx(tx, expiresAtHeight, costEstimate?)` computes the id, and its callers `admit-tx.ts`' `admitTx` and
-> `fork-resolution.ts`' re-insertion.
-
 Encodes the UTXO transaction (`encodeTx`) and inserts a `utxo_tx` entry, populating
 the gate-metadata columns from the transaction's outputs (see above). Returns
 the SQLite `rowid`. Throws `MempoolFullError` at the size cap, and
@@ -303,10 +299,6 @@ admission.
 **The candidate carries the id admission computed.** Its body declares it, the settlement build reads it
 (`CONSENSUS_INTERFACE → The settlement build`), and `applyBlock` holds it to the transaction's bytes as it holds any
 block's (`CONSENSUS_INTERFACE → Applying a block`) — so the gate hashes the transaction once, in that check.
-
-> ⚠ **AHEAD OF CODE (2026-10-27).** The candidate's id leads node's `cost-estimate.ts`, whose `costAlone(tx, site)`
-> computes the id for the body and whose settlement build hashes it again, and its callers `admit-tx.ts` and
-> `block-creator.ts`.
 
 **The gate keeps what it measured.** A row carries the transaction's **marginal cost** as `cost_estimate` — its
 single-transaction block's cost less the empty block's at the same tip, the empty block's computed once a tip — the

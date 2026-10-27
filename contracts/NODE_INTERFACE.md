@@ -1075,11 +1075,6 @@ Applying a block`); admission passes the id it computed for the pool's lookup (`
 pool holds is answered as held, before anything reads state"`). Step 8's signatures are checked over that id and the
 outputs materialize under it — one hash a transaction, read at every use.
 
-> ⚠ **AHEAD OF CODE (2026-10-27).** The `txId` parameter leads consensus' `utxo-engine.ts`, whose
-> `validateTx(deps, tx, currentBlockHeight)` computes the id at step 6 and again in `checkAuthorization`, and its
-> callers: `apply-block.ts`' loop, and node's `admit-tx.ts`, `handle-tx.ts`, `post-service.ts` and the closures
-> `server.ts` and the services hand them.
-
 **`currentBlockHeight` is the height of the block the transaction is judged for** — at admission
 `tip + 1`, the block that would carry it; at block application the block's own height. Every rule keyed
 on it (step 3's unlock floor, step 6's creation bound, step 7's era) reads that height, so a transaction
