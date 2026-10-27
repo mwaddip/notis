@@ -303,14 +303,12 @@ structure, no body — until backfill fills it (NODE_INTERFACE → Store Interfa
 > **The byte-exact layout is specified in `TYPES_INTERFACE.md` (Serialization → "Layout —
 > PostCommit" and "Layout — Post body") and nowhere else.** Every field is length-prefixed and the ref array carries an
 > explicit count (TYPES_INTERFACE → Canonical field encoding); the id's domain tag keeps a post id from ever colliding
-> with a box or tx id derived from the same provenance. **Do not restate the formula here.** This document previously
-> carried it twice, in two different field orders, both in an unprefixed form — a
-> restatement of a byte format is a mirror implementation in prose, and it diverged exactly
-> the way mirrors do.
+> with a box or tx id derived from the same provenance. **Do not restate the formula here.** A restatement of a byte
+> format is a mirror implementation in prose, and a mirror diverges.
 >
-> ⚠ **It diverged again, in this very paragraph, and that is the point.** The clause above
+> ⚠ **A restatement diverges even inside the warning against one.** The clause above
 > read "an explicit `u32LE` count" until 2026-08-10 — a fragment of the format, restated
-> inside the warning against restating the format, left behind when Phase 3b made the count
+> inside the warning against restating the format, left behind when the count became
 > `vlqU`. A prohibition does not exempt the text that carries it.
 
 A post's `parentRefs` name confirmed posts, live or withdrawn. The hash is
