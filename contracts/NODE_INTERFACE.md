@@ -5606,10 +5606,10 @@ derived here — for the funnel, the creator and the pipeline's admission (→ D
 All config via environment variables with defaults. **Every whole-number setting is read by one reader, and a set
 value it refuses stops the node at load.** `loadConfig` reads `PORT`, `ADMIN_PORT`, `BLOCK_BODY_BUDGET_BYTES`,
 `MAX_MEMPOOL_ENTRIES`, `MAX_PEERS`, `MIN_PEERS`, `PEER_DB_CAP`, `OUTBOUND_REDIAL_COOLDOWN_MS`,
-`PENALTY_SCORE_THRESHOLD`, `TEMPORAL_BAN_DURATION_MS`, `PENALTY_SAFE_INTERVAL_MS`, `SYNC_REQUEST_TIMEOUT_MS`,
+`PENALTY_SCORE_THRESHOLD`, `TEMPORAL_BAN_DURATION_MS`, `PENALTY_DECAY_INTERVAL_MS`, `SYNC_REQUEST_TIMEOUT_MS`,
 `MAX_PROOF_HISTORY`, `PROOF_RETENTION_BLOCKS`, `PROOF_RETENTION_BYTES`, `PROOF_WINDOW_BLOCKS` and `PROOF_WINDOW_NODES`
 through it: decimal digits and nothing else, a safe integer, at or above the setting's floor — 1 for
-`BLOCK_BODY_BUDGET_BYTES`, `MAX_PEERS`, `PENALTY_SAFE_INTERVAL_MS` and `SYNC_REQUEST_TIMEOUT_MS`, whose zero names
+`BLOCK_BODY_BUDGET_BYTES`, `MAX_PEERS`, `PENALTY_DECAY_INTERVAL_MS` and `SYNC_REQUEST_TIMEOUT_MS`, whose zero names
 nothing a node runs on (a node is a peer of a network: one that takes no peers is no node of it), and 0 for every
 other — and a port at most 65 535. An unset
 setting takes its default; a set one the reader refuses stops the node at startup naming the setting, never with a
@@ -5618,6 +5618,9 @@ under which no peer is ever banned (`PENALTY_SCORE_THRESHOLD`) or every stream r
 and 2 for `2.5`. The rules above stand on what the reader returns, and `BLOCK_BODY_BUDGET_BYTES` is clamped to
 `MAX_BLOCK_BODY_BYTES` after it. **The configuration is loaded once a process** — `config.ts`'s exported `config` —
 and `index.ts` reads that one; the net settings reach `NetNode` from it (NET_INTERFACE → Config).
+
+> ⚠ **AHEAD OF CODE (2026-10-27).** `PENALTY_DECAY_INTERVAL_MS`, here and in the table below, leads `config.ts`,
+> `index.ts` and `config.test.ts`, which read and pin `PENALTY_SAFE_INTERVAL_MS` into `penaltySafeIntervalMs`.
 
 **Every variable carries a `Class`. The class is normative, not descriptive.**
 
@@ -5686,7 +5689,7 @@ its actual reach.
 | `OUTBOUND_REDIAL_COOLDOWN_MS` | `local` | `60000` | Redial cooldown per failed outbound target — semantics `NET_INTERFACE → Config` |
 | `PENALTY_SCORE_THRESHOLD` | `local` | `500` | Accrued-penalty score that trips a temporal ban — semantics `NET_INTERFACE → Peer Penalty System` |
 | `TEMPORAL_BAN_DURATION_MS` | `local` | `3600000` | Temporal ban length — semantics `NET_INTERFACE → Peer Penalty System` |
-| `PENALTY_SAFE_INTERVAL_MS` | `local` | `120000` | Quiet interval after which accrued penalty decays — semantics `NET_INTERFACE → Peer Penalty System` |
+| `PENALTY_DECAY_INTERVAL_MS` | `local` | `120000` | Decay interval: an accrued penalty score sheds one misbehavior's points per interval, pro rata to the time elapsed — semantics `NET_INTERFACE → Accrual and decay` |
 | `SYNC_REQUEST_TIMEOUT_MS` | `local` | `10000` | Abort timeout on one sync request — semantics `NET_INTERFACE → Config` |
 | `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions the store keeps for a switch's revert, never below the profile's `maxReorgDepth` nor below `PROOF_WINDOW_BLOCKS` (→ AVL+ State Root) |
 | `PROOF_WINDOW_BLOCKS` | `local` | `64` | the last blocks its proof routes answer `atHeight` at, by a kept root or from the store, and the most roots the node keeps in memory; never above `MAX_PROOF_HISTORY`; below a light client's `k` (20) the node proves it no settled height (→ AVL+ State Root) |

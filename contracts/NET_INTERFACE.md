@@ -1112,22 +1112,28 @@ Accumulated score >= threshold → temporal ban for `temporalBanDuration`.
 ### Accrual and decay (audit L-13)
 
 **Every penalty accrues.** A penalty is never discarded because another
-one arrived recently — that made ban pressure independent of attack
-rate, since a peer flooding invalid messages paid exactly what a peer
-misbehaving once every safe interval paid, while each invalid message
-still cost full Stage-1 work (ordering-block PoW verification included).
+one arrived recently: each invalid message costs this node full Stage-1
+work (ordering-block PoW verification included), so the score a peer
+accrues rises with the rate it misbehaves at.
 
-Instead the accumulated score **decays with time**: it is reduced by
-`PENALTY_DECAY_PER_INTERVAL` (`MISBEHAVIOR_SCORE` — one MisbehaviorPenalty) for every
-`PENALTY_SAFE_INTERVAL_MS` of elapsed time since the peer's score was
-last updated, floored at zero. Decay is applied lazily at penalty time,
-before the new score is added — no timers.
+The accumulated score **decays continuously with time**. At each penalty,
+before the new score is added, it is reduced by `PENALTY_DECAY_PER_INTERVAL`
+(`MISBEHAVIOR_SCORE` — one MisbehaviorPenalty) pro rata to the time elapsed
+since the peer's last penalty over `PENALTY_DECAY_INTERVAL_MS` — a quarter of
+an interval sheds a quarter of the points, never a whole interval's or none —
+and floored at zero. Decay is computed lazily at penalty time — no timers.
 
-The break-even point is therefore **one MisbehaviorPenalty per safe
+The break-even point is therefore **one MisbehaviorPenalty per decay
 interval**: a peer misbehaving faster than that accrues pressure and is
 eventually banned, one misbehaving more slowly fades back to zero and is
-never banned. A flooding peer crosses the threshold in five messages
-rather than ten minutes.
+never banned.
+
+**A ban takes five misbehaviours at one instant, and one more for each interval they spread across.** While the
+score does not reach zero between them, `n` misbehaviours spread over an elapsed time `T` stand at
+`MISBEHAVIOR_SCORE · n − PENALTY_DECAY_PER_INTERVAL · T / PENALTY_DECAY_INTERVAL_MS`, and the ban comes when that
+reaches the threshold. At the defaults (threshold 500, interval 2 min) that is five only when no time passes between
+them, six over less than one interval, seven over less than two; a `Transient` penalty weighs half — ten at one
+instant, two more for each interval.
 
 Permanent penalties (`PenaltyKind.ProtocolViolation`)
 bypass scoring entirely and ban instantly — decay never applies to them.
@@ -1145,11 +1151,11 @@ whatever the map keeps, so an entry dropped grants nothing a new id could not ta
 |-----------|---------|-------------|
 | `PENALTY_SCORE_THRESHOLD` | `500` | Score to trigger ban |
 | `TEMPORAL_BAN_DURATION_MS` | `3600000` | Ban duration (60 min) |
-| `PENALTY_SAFE_INTERVAL_MS` | `120000` | Decay interval — `PENALTY_DECAY_PER_INTERVAL` points of accumulated score decay per interval (2 min) |
+| `PENALTY_DECAY_INTERVAL_MS` | `120000` | Decay interval — `PENALTY_DECAY_PER_INTERVAL` points of accumulated score decay per interval, pro rata (2 min) |
 
-The parameter keeps its `SAFE_INTERVAL` name because it is set from the
-environment by `@dagsocial/node`; renaming it is a cross-package change
-tracked as a follow-up.
+> ⚠ **AHEAD OF CODE (2026-10-27).** The name `PENALTY_DECAY_INTERVAL_MS`, and `penaltyDecayIntervalMs` in the
+> config (→ Config), lead net's `peer-mgr.ts` and `types.ts` and node's `config.ts` and `index.ts`, which read
+> `PENALTY_SAFE_INTERVAL_MS` into `penaltySafeIntervalMs`.
 
 ---
 
@@ -1733,7 +1739,7 @@ interface NetConfig {
   // Penalties
   penaltyScoreThreshold: number
   temporalBanDurationMs: number
-  penaltySafeIntervalMs: number
+  penaltyDecayIntervalMs: number
 }
 ```
 
