@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import http from 'http';
+import type { AddressInfo } from 'net';
 import { computeTxId } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 
@@ -44,6 +46,32 @@ function countTxIds(): TxIdCounter {
 /** Every answer equal to `id`, counted. */
 function matchesOf(answers: readonly string[], id: string): number {
   return answers.filter((answer) => answer === id).length;
+}
+
+/** POST `body` to `/credits/transfer` at `127.0.0.1:port`, parse the JSON answer. */
+async function postTransfer(port: number, body: unknown): Promise<{ status: number; data: unknown }> {
+  return new Promise((resolve) => {
+    const payload = Buffer.from(JSON.stringify(body));
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: '/credits/transfer',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) },
+      },
+      (res) => {
+        let d = '';
+        res.on('data', (c) => (d += c));
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode ?? 0, data: JSON.parse(d) }); }
+          catch { resolve({ status: res.statusCode ?? 0, data: d }); }
+        });
+      },
+    );
+    req.write(payload);
+    req.end();
+  });
 }
 
 /**
@@ -97,7 +125,9 @@ describe('one hash a transaction, where its bytes are proven', () => {
 
   it('a write route admitting one transaction with the cost gate on hashes the admitted transaction twice', async () => {
     const actual = await vi.importActual<typeof import('@dagsocial/types')>('@dagsocial/types');
-    const { makeTestIdentity, makeCreditBox, makeCreditTx, liveProver } = await import('../helpers.js');
+    const types = await import('@dagsocial/types');
+    const { makeTestIdentity, makeCreditBox, makeCreditTx, liveProver, makeTestConfig } = await import('../helpers.js');
+    const { setNet } = await import('../../src/services/net-instance.js');
     const db = await import('../../src/store/db.js');
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -109,52 +139,32 @@ describe('one hash a transaction, where its bytes are proven', () => {
     const tx = makeCreditTx(sender, [box], 1_000n);
     const admittedId = actual.computeTxId(tx);
 
-    const credits = await import('../../src/services/credits.js');
-    const { config } = await import('../../src/config.js');
-    const { admissionOwed } = await import('../../src/services/karma-admission.js');
-    const { getIdentityRecord } = await import('../../src/store/identity-records.js');
-    const deps = {
-      getBox: utxo.getBox,
-      insertBox: utxo.insertBox,
-      consumeBox: utxo.consumeBox,
-      getKarmaOwed: admissionOwed({
-        staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-        decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-        decayAmount: config.karmaDecayAmount,
-        karmaMinimum: config.karmaMinimum,
-      }),
-      getKarmaValue: utxo.getKarmaValue,
-      getOwnKarmaBoxIds: (owner: Uint8Array) =>
-        utxo.getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
-      getIdentityRecord,
-      hasActiveVouchEscrow: () => false,
-      vouchCooldownBlocks: config.vouchCooldownBlocks,
-      inviteBondMin: config.inviteBondMin,
-      inviteBondMax: config.inviteBondMax,
-      decayCfg: {
-        staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-        decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-        decayAmount: config.karmaDecayAmount,
-        karmaMinimum: config.karmaMinimum,
-      },
-      storageRentPeriodBlocks: config.storageRentPeriodBlocks,
-      getBoxProvenance: utxo.getBoxProvenance,
-      getTopologyAuthor: () => null,
-      getPendingPostAuthor: () => null,
-      runInTransaction: (fn: () => void) => fn(),
-      getVouchBox: () => null,
-      getNetworkRecord: () => ({ memberCount: 1 }),
-      membershipBarMultiplier: config.membershipBarMultiplier,
-      putIdentityRecord: () => {},
-      protocolVersionSchedule: config.protocolVersionSchedule,
-      getUsername: () => null,
-      getUsernameByOwner: () => null,
+    const netStub = {
+      penalizePeer: () => {}, chainMoved: () => {}, needHeaders: () => {},
+      broadcastOrderingBlock: async () => {},
+      broadcastTx: async () => {}, getConnectedPeers: () => [], tipApplied: () => {},
+      setKarmaMembers: () => {}, addKarmaMember: () => {}, removeKarmaMember: () => {},
+      requestPostBodies: async () => [],
     };
+    setNet(netStub as unknown as Parameters<typeof setNet>[0]);
 
-    counter.answers.length = 0;
-    const result = credits.sendCredits(deps, tx, 0);
-    expect(result.txId).toBe(admittedId);
-    expect(matchesOf(counter.answers, admittedId)).toBe(2);
+    const { createApp } = await import('../../src/server.js');
+    const app = createApp(makeTestConfig({
+      port: 0, dbPath: ':memory:', nodeRole: 'server',
+      bootstrapPeers: [], listenAddrs: '/ip4/127.0.0.1/tcp/0', maxPeers: 50,
+    }));
+    const server = app.listen(0);
+    const addr = server.address() as AddressInfo;
+    try {
+      counter.answers.length = 0;
+      const res = await postTransfer(addr.port, { tx: types.txToJson(tx) });
+      expect(res.status, JSON.stringify(res.data)).toBe(200);
+      expect((res.data as { txId: string }).txId).toBe(admittedId);
+      expect(matchesOf(counter.answers, admittedId)).toBe(2);
+    } finally {
+      server.close();
+      setNet(null as unknown as Parameters<typeof setNet>[0]);
+    }
   });
 
   it('the relay handler admitting one transaction hashes the admitted transaction twice', async () => {
@@ -209,8 +219,10 @@ describe('one hash a transaction, where its bytes are proven', () => {
 
   it('a transaction admitted through a write route lands in the pool under its id', async () => {
     const actual = await vi.importActual<typeof import('@dagsocial/types')>('@dagsocial/types');
-    const { makeTestIdentity, makeCreditBox, makeCreditTx, liveProver } = await import('../helpers.js');
+    const types = await import('@dagsocial/types');
+    const { makeTestIdentity, makeCreditBox, makeCreditTx, liveProver, makeTestConfig } = await import('../helpers.js');
     const consensus = await import('@dagsocial/consensus');
+    const { setNet } = await import('../../src/services/net-instance.js');
     const db = await import('../../src/store/db.js');
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -222,58 +234,38 @@ describe('one hash a transaction, where its bytes are proven', () => {
     const tx = makeCreditTx(sender, [box], 1_000n);
     const admittedId = actual.computeTxId(tx);
 
-    const credits = await import('../../src/services/credits.js');
-    const { config } = await import('../../src/config.js');
-    const { admissionOwed } = await import('../../src/services/karma-admission.js');
-    const { getIdentityRecord } = await import('../../src/store/identity-records.js');
-    const deps = {
-      getBox: utxo.getBox,
-      insertBox: utxo.insertBox,
-      consumeBox: utxo.consumeBox,
-      getKarmaOwed: admissionOwed({
-        staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-        decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-        decayAmount: config.karmaDecayAmount,
-        karmaMinimum: config.karmaMinimum,
-      }),
-      getKarmaValue: utxo.getKarmaValue,
-      getOwnKarmaBoxIds: (owner: Uint8Array) =>
-        utxo.getKarmaBoxes(owner).filter((b) => b.income !== true).map((b) => b.id!),
-      getIdentityRecord,
-      hasActiveVouchEscrow: () => false,
-      vouchCooldownBlocks: config.vouchCooldownBlocks,
-      inviteBondMin: config.inviteBondMin,
-      inviteBondMax: config.inviteBondMax,
-      decayCfg: {
-        staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-        decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-        decayAmount: config.karmaDecayAmount,
-        karmaMinimum: config.karmaMinimum,
-      },
-      storageRentPeriodBlocks: config.storageRentPeriodBlocks,
-      getBoxProvenance: utxo.getBoxProvenance,
-      getTopologyAuthor: () => null,
-      getPendingPostAuthor: () => null,
-      runInTransaction: (fn: () => void) => fn(),
-      getVouchBox: () => null,
-      getNetworkRecord: () => ({ memberCount: 1 }),
-      membershipBarMultiplier: config.membershipBarMultiplier,
-      putIdentityRecord: () => {},
-      protocolVersionSchedule: config.protocolVersionSchedule,
-      getUsername: () => null,
-      getUsernameByOwner: () => null,
+    const netStub = {
+      penalizePeer: () => {}, chainMoved: () => {}, needHeaders: () => {},
+      broadcastOrderingBlock: async () => {},
+      broadcastTx: async () => {}, getConnectedPeers: () => [], tipApplied: () => {},
+      setKarmaMembers: () => {}, addKarmaMember: () => {}, removeKarmaMember: () => {},
+      requestPostBodies: async () => [],
     };
+    setNet(netStub as unknown as Parameters<typeof setNet>[0]);
 
-    credits.sendCredits(deps, tx, 0);
+    const { createApp } = await import('../../src/server.js');
+    const app = createApp(makeTestConfig({
+      port: 0, dbPath: ':memory:', nodeRole: 'server',
+      bootstrapPeers: [], listenAddrs: '/ip4/127.0.0.1/tcp/0', maxPeers: 50,
+    }));
+    const server = app.listen(0);
+    const addr = server.address() as AddressInfo;
+    try {
+      const res = await postTransfer(addr.port, { tx: types.txToJson(tx) });
+      expect(res.status, JSON.stringify(res.data)).toBe(200);
 
-    const mempool = await import('../../src/store/mempool.js');
-    const held = mempool.getHeldEntry(admittedId);
-    expect(held).not.toBeNull();
-    const decoded = actual.decodeTx(held!.txBytes);
-    for (let i = 0; i < decoded.outputs.length; i++) {
-      const box = consensus.materializeOutput(decoded.outputs[i]!, admittedId, i);
-      const pending = mempool.findPendingOutput(box.id!);
-      expect(pending?.id).toBe(box.id);
+      const mempool = await import('../../src/store/mempool.js');
+      const held = mempool.getHeldEntry(admittedId);
+      expect(held).not.toBeNull();
+      const decoded = actual.decodeTx(held!.txBytes);
+      for (let i = 0; i < decoded.outputs.length; i++) {
+        const b = consensus.materializeOutput(decoded.outputs[i]!, admittedId, i);
+        const pending = mempool.findPendingOutput(b.id!);
+        expect(pending?.id).toBe(b.id);
+      }
+    } finally {
+      server.close();
+      setNet(null as unknown as Parameters<typeof setNet>[0]);
     }
   });
 
