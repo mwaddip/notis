@@ -71,9 +71,8 @@ function clockStart(record: IdentityRecord | null, cfg: DecayCfg): number {
  *     owedPeriods = floor( (height − clockStart) / decayIntervalBlocks )
  *
  * No clamp at zero — negative or zero through the grace window, and a caller
- * charges nothing at `<= 0`. Swallowing a negative here would hide a clock
- * that had somehow run ahead of the chain
- * (TYPES_INTERFACE → Identity record and karma valuation).
+ * charges nothing at `<= 0` (TYPES_INTERFACE → Identity record and karma
+ * valuation).
  */
 export function owedPeriods(
   record: IdentityRecord | null,
@@ -91,16 +90,15 @@ export function owedPeriods(
  * The part of a period that has run at `height` stays owed and the next
  * squaring counts it; writing `height` would forgive it
  * (NODE_INTERFACE → Karma decay → "A squaring writes the height it settles
- * through, never its own height"). Read only where `owedPeriods > 0`.
+ * through, never its own height"). Read only where `owedPeriods > 0`. The
+ * count is `owedPeriods`' alone — one floor-division in the file.
  */
 export function decaySettledThrough(
   record: IdentityRecord | null,
   height: number,
   cfg: DecayCfg,
 ): number {
-  const start = clockStart(record, cfg);
-  const periods = Math.floor((height - start) / cfg.decayIntervalBlocks);
-  return start + periods * cfg.decayIntervalBlocks;
+  return clockStart(record, cfg) + owedPeriods(record, height, cfg) * cfg.decayIntervalBlocks;
 }
 
 /**

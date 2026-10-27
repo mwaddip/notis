@@ -76,7 +76,7 @@ describe('the window boundary and the null / `clock(0)` start', () => {
     expect(effectiveKarma(face, clock(100), 99 + T, TEST_CFG)).toBe(face);
   });
 
-  it('a `null` record values from the window: at `T` the face stands, past `T + I` it decays', () => {
+  it('a `null` record values from the window: at `T` and `T + 1` the count is 0 and the face stands', () => {
     expect(owedPeriods(null, T, TEST_CFG)).toBe(0);
     expect(effectiveKarma(face, null, T, TEST_CFG)).toBe(face);
     // One past the window's end still owes nothing — the first period lands at `T + I`.
@@ -84,7 +84,7 @@ describe('the window boundary and the null / `clock(0)` start', () => {
     expect(effectiveKarma(face, null, T + 1, TEST_CFG)).toBe(face);
   });
 
-  it('a `lastActivityBlock 0` record values from the window: at `T` the face stands, past `T + I` it decays', () => {
+  it('a `lastActivityBlock 0` record values from the window: at `T` and `T + 1` the count is 0 and the face stands', () => {
     expect(owedPeriods(clock(0), T, TEST_CFG)).toBe(0);
     expect(effectiveKarma(face, clock(0), T, TEST_CFG)).toBe(face);
     expect(owedPeriods(clock(0), T + 1, TEST_CFG)).toBe(0);
@@ -117,9 +117,10 @@ describe('owedPeriods — the `max` and the no-clamp rule', () => {
     expect(owedPeriods(clock(activityAt, decayAt), height, TEST_CFG)).toBe(3);
   });
 
-  it('no clamp: a clock ahead of the chain answers negative', () => {
-    // The caller skips anything `<= 0`; swallowing a negative here would hide
-    // a clock that had somehow run ahead of the chain.
+  it('a record whose activity sits above the read height answers a negative count', () => {
+    // No clamp at zero — the count is negative when the read height sits
+    // below the clock, and the caller charges nothing at `<= 0`
+    // (TYPES_INTERFACE → Identity record and karma valuation).
     expect(owedPeriods(clock(1000), 999, TEST_CFG)).toBeLessThan(0);
   });
 });
