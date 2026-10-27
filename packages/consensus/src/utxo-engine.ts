@@ -1455,10 +1455,13 @@ function checkHexKeyedByteMap(
  * non-array `outputs` OBJECT slips that loop (`length` undefined) and throws at
  * conservation's `.reduce`, a missing or `null` `signatures` throws at
  * `tx.signatures[hexKey]`, and `likeTarget: null` throws inside `computeTxId` —
- * which `checkAuthorization` calls on its first line, so the whole envelope
- * reaches the hasher. Each one is an HTTP
- * 500 or, through the block funnel, a whole-block rejection logged as an
- * unexpected failure.
+ * the hash this gate keeps total runs after it on the block path, in
+ * `decodeBodyEntry`'s declared-id check (CONSENSUS_INTERFACE → Applying a
+ * block → "A transaction's id is hashed once, where its bytes are proven"),
+ * and admission's JSON edge runs this gate before any service hashes
+ * (NODE_INTERFACE → Transaction envelope shape, the call-site list). Each
+ * one is an HTTP 500 or, through the block funnel, a whole-block rejection
+ * logged as an unexpected failure.
  *
  * **Total**: returns `{valid: false}` and never throws for any decoded
  * value. Error strings quote input through `describeValue`, never bare
@@ -1641,10 +1644,13 @@ export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly 
   // transaction.** `txIdBytes` writes the payload through `postFieldBytes`,
   // which encodes `author` and every `parentRefs` entry fixed-width — writers
   // with no unreachable sentinel, so they THROW outside their domain
-  // (TYPES_INTERFACE → Totality). `checkAuthorization` hashes on its first
-  // line, so an
-  // attacker-supplied payload reaches those writers before any transition arm
-  // runs. Same obligation as `likeTarget` above, one field deeper.
+  // (TYPES_INTERFACE → Totality). The hash this gate keeps total is
+  // `decodeBodyEntry`'s declared-id check on the block path
+  // (CONSENSUS_INTERFACE → Applying a block → "A transaction's id is hashed
+  // once, where its bytes are proven"), and admission's JSON edge runs this
+  // gate before any service hashes (NODE_INTERFACE → Transaction envelope
+  // shape, the call-site list). Same obligation as `likeTarget` above, one
+  // field deeper.
   //
   // `verifyPostCommitDomains` is the single statement of that domain, shared with
   // the gossip gate and the verifier — a narrower re-check written here would be
@@ -2366,9 +2372,9 @@ export function validateTx(
   currentBlockHeight: number,
 ): UtxoResult {
   // ---- 0. Transaction envelope shape ----
-  // Ahead of every other read of `tx`: steps 1–9 index `tx.inputs`, iterate
-  // `tx.outputs`, and hash the whole envelope inside `computeTxId`, all of
-  // which are throw sites for a malformed envelope without this gate.
+  // Ahead of every other read of `tx`: steps 1–9 index `tx.inputs` and
+  // iterate `tx.outputs`, both throw sites for a malformed envelope without
+  // this gate.
   const envelopeCheck = checkTxEnvelope(tx, currentBlockHeight, deps.protocolVersionSchedule);
   if (!envelopeCheck.valid) return envelopeCheck;
 
