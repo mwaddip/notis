@@ -2266,8 +2266,8 @@ function checkAuthorization(
   verifySignature: UtxoEngineDeps['verifySignature'],
 ): UtxoResult {
   const AUTHORIZATION = authorizationTable(storageRentPeriodBlocks);
-  // `txId` is the caller's (NODE_INTERFACE → validateTx); the signature batch
-  // reads its 32 bytes against each required signer.
+  // `txId` is the caller's (NODE_INTERFACE → validateTx); each required
+  // signer's signature is checked over its 32 bytes.
   const txHash = hexToBytes(txId);
   const requiredKeys = new Set<string>();
 
