@@ -20,7 +20,7 @@ export function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
     outboundRedialCooldownMs: 60_000,
     penaltyScoreThreshold: 500,
     temporalBanDurationMs: 3_600_000,
-    penaltySafeIntervalMs: 120_000,
+    penaltyDecayIntervalMs: 120_000,
     syncRequestTimeoutMs: 10_000,
     ...overrides,
   };

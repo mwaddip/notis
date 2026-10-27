@@ -46,7 +46,7 @@ describe('PeerManager', () => {
     // Override safe interval
     vi.spyOn(Date, 'now').mockReturnValue(0);
     mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'bad message');
-    vi.spyOn(Date, 'now').mockReturnValue(config.penaltySafeIntervalMs + 1);
+    vi.spyOn(Date, 'now').mockReturnValue(config.penaltyDecayIntervalMs + 1);
     mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'bad message again');
     // Peer should still be tracked (not banned yet at 200 < 500)
     expect(mgr.getPeerCount()).toBe(1);
@@ -93,7 +93,7 @@ describe('PeerManager', () => {
   it('control: the same 5 penalties spaced two intervals apart decay away — no ban', () => {
     mgr.addPeer(makePeer('peer1'));
     for (let i = 0; i < 5; i++) {
-      vi.spyOn(Date, 'now').mockReturnValue(i * 2 * config.penaltySafeIntervalMs);
+      vi.spyOn(Date, 'now').mockReturnValue(i * 2 * config.penaltyDecayIntervalMs);
       mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', `sporadic ${i}`);
     }
     expect(mgr.isBanned('peer1')).toBe(false);
@@ -111,18 +111,18 @@ describe('PeerManager', () => {
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(200);
 
     // One interval since the last penalty: 200 − 100 (decay) + 100 = 200.
-    vi.spyOn(Date, 'now').mockReturnValue(config.penaltySafeIntervalMs);
+    vi.spyOn(Date, 'now').mockReturnValue(config.penaltyDecayIntervalMs);
     mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'at one interval');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(200);
 
     // Another interval since the last penalty: 200 − 100 + 100 = 200.
-    vi.spyOn(Date, 'now').mockReturnValue(2 * config.penaltySafeIntervalMs);
+    vi.spyOn(Date, 'now').mockReturnValue(2 * config.penaltyDecayIntervalMs);
     mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'at two intervals');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(200);
 
     // Ten intervals since the last penalty: max(0, 200 − 1000) + 100 = 100.
     // Without the floor the subtraction lands at −800 and the score at −700.
-    vi.spyOn(Date, 'now').mockReturnValue(12 * config.penaltySafeIntervalMs);
+    vi.spyOn(Date, 'now').mockReturnValue(12 * config.penaltyDecayIntervalMs);
     mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'at twelve intervals');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(100);
   });
@@ -136,7 +136,7 @@ describe('PeerManager', () => {
     // Half an interval since the last penalty: 200 − 50 (proportional decay)
     // + 100 = 250. Stepwise decay drains nothing in half an interval
     // (Math.floor(0.5) · 100 = 0) and the score lands at 300.
-    vi.spyOn(Date, 'now').mockReturnValue(config.penaltySafeIntervalMs / 2);
+    vi.spyOn(Date, 'now').mockReturnValue(config.penaltyDecayIntervalMs / 2);
     mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'at half an interval');
     expect((mgr as any).scores.get('peer1').penaltyScore).toBe(250);
   });
@@ -144,7 +144,7 @@ describe('PeerManager', () => {
   it('break-even: one MisbehaviorPenalty per interval holds steady, never bans', () => {
     mgr.addPeer(makePeer('peer1'));
     for (let i = 0; i < 20; i++) {
-      vi.spyOn(Date, 'now').mockReturnValue(i * config.penaltySafeIntervalMs);
+      vi.spyOn(Date, 'now').mockReturnValue(i * config.penaltyDecayIntervalMs);
       mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', `steady ${i}`);
     }
     expect(mgr.isBanned('peer1')).toBe(false);
@@ -156,7 +156,7 @@ describe('PeerManager', () => {
     mgr.addPeer(makePeer('peer1'));
     // Net +50 per penalty after the first: 100, 150, … 500 on the 9th.
     for (let i = 0; i < 9; i++) {
-      vi.spyOn(Date, 'now').mockReturnValue(i * (config.penaltySafeIntervalMs / 2));
+      vi.spyOn(Date, 'now').mockReturnValue(i * (config.penaltyDecayIntervalMs / 2));
       mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', `pressure ${i}`);
     }
     expect(mgr.isBanned('peer1')).toBe(true);
@@ -295,7 +295,7 @@ describe('PeerManager', () => {
 
     // NET_INTERFACE → Accrual and decay →
     // "A score is kept by peer id, and outlives its connection":
-    // two penaltySafeIntervalMs between the disconnect and the next penalty
+    // two penaltyDecayIntervalMs between the disconnect and the next penalty
     // drain the kept 400 to 200; +100 lands 300, one more at the same
     // moment lands 400, both under the 500 threshold.
     it('a two-interval gap between disconnect and the next penalty decays the kept score, so one more does not ban either', () => {
@@ -307,7 +307,7 @@ describe('PeerManager', () => {
       expect(mgr.isBanned('peer1')).toBe(false);
 
       mgr.removePeer('peer1');
-      vi.spyOn(Date, 'now').mockReturnValue(2 * config.penaltySafeIntervalMs);
+      vi.spyOn(Date, 'now').mockReturnValue(2 * config.penaltyDecayIntervalMs);
       mgr.addPeer(makePeer('peer1'));
 
       mgr.recordPenaltyKind(PenaltyKind.Misbehavior, 'peer1', 'after two intervals');

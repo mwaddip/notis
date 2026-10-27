@@ -147,7 +147,7 @@ export interface NetConfig {
   outboundRedialCooldownMs: number;
   penaltyScoreThreshold: number;
   temporalBanDurationMs: number;
-  penaltySafeIntervalMs: number;
+  penaltyDecayIntervalMs: number;
   syncRequestTimeoutMs: number;
 }
 

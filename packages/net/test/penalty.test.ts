@@ -53,7 +53,7 @@ describe('penalty attribution (using PeerManager)', () => {
     // faster misbehavior accrues pressure. One penalty per interval/10 nets
     // +40 per step — 50, 90, 130, … crossing 500 on the 13th penalty.
     for (let i = 0; i < 13; i++) {
-      vi.spyOn(Date, 'now').mockReturnValue(i * (config.penaltySafeIntervalMs / 10));
+      vi.spyOn(Date, 'now').mockReturnValue(i * (config.penaltyDecayIntervalMs / 10));
       mgr.recordPenaltyKind(PenaltyKind.Transient, 'peer1', `timeout ${i}`);
     }
 
@@ -89,7 +89,7 @@ describe('penalty attribution (using PeerManager)', () => {
     // permanently banned on the spot — decay never applies to permanents.
     mgr.addPeer(makePeer('peer2'));
     mgr.recordPenaltyKind(PenaltyKind.Transient, 'peer2', 'noise');
-    vi.spyOn(Date, 'now').mockReturnValue(1000 * config.penaltySafeIntervalMs);
+    vi.spyOn(Date, 'now').mockReturnValue(1000 * config.penaltyDecayIntervalMs);
     mgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer2', 'malformed later');
     expect(mgr.isBanned('peer2')).toBe(true);
     expect(mgr.getPeerCount()).toBe(0);

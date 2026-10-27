@@ -175,7 +175,7 @@ describe('handshake', () => {
         outboundRedialCooldownMs: 60_000,
         penaltyScoreThreshold: 500,
         temporalBanDurationMs: BAN_MS,
-        penaltySafeIntervalMs: 120_000,
+        penaltyDecayIntervalMs: 120_000,
         syncRequestTimeoutMs: 10_000,
       };
       const mgr = new PeerManager(config);

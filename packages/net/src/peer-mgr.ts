@@ -3,7 +3,7 @@ import type { NetConfig, Peer, PeerMetadata } from './types.js';
 
 /**
  * Points drained from an accumulated penalty score per elapsed
- * `penaltySafeIntervalMs` (NET_INTERFACE → Accrual and decay).
+ * `penaltyDecayIntervalMs` (NET_INTERFACE → Accrual and decay).
  * Break-even is one MisbehaviorPenalty per interval: misbehave
  * faster and the score climbs toward a ban, slower and it fades to zero.
  */
@@ -277,7 +277,7 @@ export class PeerManager {
    *
    * Every penalty accrues — none are discarded for arriving quickly.
    * Instead the accumulated score decays by PENALTY_DECAY_PER_INTERVAL per
-   * `penaltySafeIntervalMs` elapsed since the last penalty, proportionally
+   * `penaltyDecayIntervalMs` elapsed since the last penalty, proportionally
    * and floored at zero, computed lazily here — no timers. The config field
    * keeps its "safe interval" name because @dagsocial/node sets it from the
    * environment, but it is a decay interval, not a cooldown.
@@ -295,7 +295,7 @@ export class PeerManager {
   private accrueScoredPenalty(peerId: string, score: number, now: number): void {
     if (!this.peers.has(peerId)) return;
 
-    const intervalMs = this.config.penaltySafeIntervalMs;
+    const intervalMs = this.config.penaltyDecayIntervalMs;
     const prev = this.scores.get(peerId);
     let penaltyScore = prev?.penaltyScore ?? 0;
     const lastPenaltyTime = prev?.lastPenaltyTime ?? now;
