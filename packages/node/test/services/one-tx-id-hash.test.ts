@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { computeTxId } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 
 /**
@@ -193,7 +194,7 @@ describe('one hash a transaction, where its bytes are proven', () => {
     const pooledId = actual.computeTxId(tx);
 
     const mempool = await import('../../src/store/mempool.js');
-    mempool.insertUtxoTx(tx, 1000);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 1000);
 
     const bc = await import('../../src/services/block-creator.js');
     const cfg = makeTestConfig();

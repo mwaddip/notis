@@ -207,8 +207,8 @@ describe('a removable record the block creates and removes', () => {
     const claim = claimTx(holder, node.utxo.getKarmaBoxes(holder.userId)[0]!, 'Gamma');
     const [change, nameBox] = outputsOf(claim) as [AnyBox, AnyBox];
     const burn = burnTx(holder, change, nameBox);
-    mempool.insertUtxoTx(claim, 100);
-    mempool.insertUtxoTx(burn, 100);
+    mempool.insertUtxoTx(claim, computeTxId(claim), 100);
+    mempool.insertUtxoTx(burn, computeTxId(burn), 100);
 
     const bc = await import('../../src/services/block-creator.js');
     bc.startBlockCreator(makeTestConfig());

@@ -80,7 +80,7 @@ async function importUtxo() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
   };
 }
 
@@ -277,7 +277,7 @@ describe('escrow settlement leg', () => {
 
     // Queue the unvouch for block at releaseAtBlock.
     const unvouchTx = makeUnvouchTx(vouch.id!, voucher, VOUCH_KARMA_AMOUNT, releaseAtBlock);
-    mempool.insertUtxoTx(unvouchTx, 100000);
+    mempool.insertUtxoTx(unvouchTx, computeTxId(unvouchTx), 100000);
 
     // Block at releaseAtBlock: the body creates the escrow with
     // releaseAtBlock <= h. Pre-body capture does NOT see it.
@@ -428,7 +428,7 @@ describe('escrow settlement leg', () => {
     const vouch = makeVouchBox(VOUCH_KARMA_AMOUNT, voucher.userId, target.userId, 0);
     utxo.insertBox(vouch);
     const unvouchTx = makeUnvouchTx(vouch.id!, voucher, VOUCH_KARMA_AMOUNT, 0 + config.vouchCooldownBlocks);
-    mempool.insertUtxoTx(unvouchTx, 100000);
+    mempool.insertUtxoTx(unvouchTx, computeTxId(unvouchTx), 100000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -469,7 +469,7 @@ describe('escrow settlement leg', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(castTx, voucher.privateKey, hex(voucher.userId));
-    mempool.insertUtxoTx(castTx, 100000);
+    mempool.insertUtxoTx(castTx, computeTxId(castTx), 100000);
 
     // Mine the recast — if it applies, the cast was accepted.
     const recastBlock = await mineNextBlock(bc);

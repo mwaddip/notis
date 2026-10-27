@@ -124,7 +124,7 @@ async function importAvl() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{ entryType: string }>;
   };
 }
@@ -405,7 +405,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     signTransaction(tx, sender.privateKey, hex(sender.userId));
 
     const mempool = await importMempool();
-    mempool.insertUtxoTx(tx, 1000);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 1000);
 
     const classBlock = await mineNextBlock(bc); // height 2 carries the tx
     expect(classBlock).not.toBeNull();

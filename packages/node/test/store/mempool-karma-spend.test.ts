@@ -3,14 +3,15 @@
 import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
-import {
-  POST_PRICE_THREAD,
+import {POST_PRICE_THREAD,
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
   LIKE_KARMA_COST,
   VOUCH_KARMA_AMOUNT,
   USERNAME_BURN_PRICE,
+  computeTxId,
 } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 
 async function importDb() {
   return (await import('../../src/store/db.js')) as {
@@ -22,7 +23,7 @@ async function importDb() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: unknown, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: unknown, txId: string, expiresAtHeight: number) => number;
     pendingKarmaSpend: (ownerId: string) => bigint;
     removeUtxoTxEntry: (txId: string) => number;
     removeEntry: (rowid: number) => void;
@@ -314,7 +315,7 @@ describe('mempool karma spend gate', () => {
   it('a like writes the signer and LIKE_KARMA_COST', async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(likeTx(OWNER_A), 100);
+    insertUtxoTx(likeTx(OWNER_A), computeTxId(likeTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).safeIntegers().get() as { karma_owner: string; karma_spend: bigint };
@@ -326,7 +327,7 @@ describe('mempool karma spend gate', () => {
   it('a thread writes the signer and POST_PRICE_THREAD', async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(threadTx(OWNER_A), 100);
+    insertUtxoTx(threadTx(OWNER_A), computeTxId(threadTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).safeIntegers().get() as { karma_owner: string; karma_spend: bigint };
@@ -338,7 +339,7 @@ describe('mempool karma spend gate', () => {
   it('a reply writes the signer and the summed value of its karma-price and marker outputs', async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(replyTx(OWNER_A), 100);
+    insertUtxoTx(replyTx(OWNER_A), computeTxId(replyTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).safeIntegers().get() as { karma_owner: string; karma_spend: bigint };
@@ -351,7 +352,7 @@ describe('mempool karma spend gate', () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
     const bondValue = 25n;
-    insertUtxoTx(inviteTx(OWNER_A, bondValue), 100);
+    insertUtxoTx(inviteTx(OWNER_A, bondValue), computeTxId(inviteTx(OWNER_A, bondValue) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).safeIntegers().get() as { karma_owner: string; karma_spend: bigint };
@@ -363,7 +364,7 @@ describe('mempool karma spend gate', () => {
   it('a vouch cast writes the signer and VOUCH_KARMA_AMOUNT', async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(vouchCastTx(OWNER_A), 100);
+    insertUtxoTx(vouchCastTx(OWNER_A), computeTxId(vouchCastTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).safeIntegers().get() as { karma_owner: string; karma_spend: bigint };
@@ -375,7 +376,7 @@ describe('mempool karma spend gate', () => {
   it('a name burn writes the signer and USERNAME_BURN_PRICE', async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(nameBurnTx(OWNER_A), 100);
+    insertUtxoTx(nameBurnTx(OWNER_A), computeTxId(nameBurnTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).safeIntegers().get() as { karma_owner: string; karma_spend: bigint };
@@ -394,7 +395,7 @@ describe('mempool karma spend gate', () => {
   it("a consolidation writes the signer in karma_owner and NULL in karma_spend", async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(consolidationTx(OWNER_A), 100);
+    insertUtxoTx(consolidationTx(OWNER_A), computeTxId(consolidationTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
@@ -406,7 +407,7 @@ describe('mempool karma spend gate', () => {
   it("a claim writes the signer in karma_owner and NULL in karma_spend", async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(claimTx(OWNER_A), 100);
+    insertUtxoTx(claimTx(OWNER_A), computeTxId(claimTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
@@ -418,7 +419,7 @@ describe('mempool karma spend gate', () => {
   it("a withdrawal writes the signer in karma_owner and NULL in karma_spend", async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(withdrawalTx(OWNER_A), 100);
+    insertUtxoTx(withdrawalTx(OWNER_A), computeTxId(withdrawalTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
@@ -430,7 +431,7 @@ describe('mempool karma spend gate', () => {
   it("an unvouch writes the signer in karma_owner and NULL in karma_spend", async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(unvouchTx(OWNER_A), 100);
+    insertUtxoTx(unvouchTx(OWNER_A), computeTxId(unvouchTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
@@ -442,7 +443,7 @@ describe('mempool karma spend gate', () => {
   it('a credit send writes NULL in both columns', async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(creditSendTx(OWNER_A), 100);
+    insertUtxoTx(creditSendTx(OWNER_A), computeTxId(creditSendTx(OWNER_A) as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
@@ -454,7 +455,7 @@ describe('mempool karma spend gate', () => {
   it('a rent collection writes NULL in both columns', async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx } = await importMempool();
-    insertUtxoTx(rentCollectionTx(), 100);
+    insertUtxoTx(rentCollectionTx(), computeTxId(rentCollectionTx() as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
@@ -466,11 +467,11 @@ describe('mempool karma spend gate', () => {
 
   it('sums several karma-spend rows of one owner, ignoring another owner\'s rows', async () => {
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
-    insertUtxoTx(likeTx(OWNER_A, 'A-like-1'), 100);
-    insertUtxoTx(threadTx(OWNER_A, 'A-thread-1'), 100);
-    insertUtxoTx(replyTx(OWNER_A, 'A-reply-1'), 100);
-    insertUtxoTx(likeTx(OWNER_B, 'B-like-1'), 100);
-    insertUtxoTx(threadTx(OWNER_B, 'B-thread-1'), 100);
+    insertUtxoTx(likeTx(OWNER_A, 'A-like-1'), computeTxId(likeTx(OWNER_A, 'A-like-1') as UtxoTransaction), 100);
+    insertUtxoTx(threadTx(OWNER_A, 'A-thread-1'), computeTxId(threadTx(OWNER_A, 'A-thread-1') as UtxoTransaction), 100);
+    insertUtxoTx(replyTx(OWNER_A, 'A-reply-1'), computeTxId(replyTx(OWNER_A, 'A-reply-1') as UtxoTransaction), 100);
+    insertUtxoTx(likeTx(OWNER_B, 'B-like-1'), computeTxId(likeTx(OWNER_B, 'B-like-1') as UtxoTransaction), 100);
+    insertUtxoTx(threadTx(OWNER_B, 'B-thread-1'), computeTxId(threadTx(OWNER_B, 'B-thread-1') as UtxoTransaction), 100);
 
     expect(pendingKarmaSpend(OWNER_A)).toBe(
       LIKE_KARMA_COST + POST_PRICE_THREAD + POST_PRICE_REPLY + REPLY_AUTHOR_SHARE,
@@ -482,8 +483,8 @@ describe('mempool karma spend gate', () => {
   it('removeUtxoTxEntry takes the row\'s spend out of the sum', async () => {
     const { getDb } = await importDb();
     const { insertUtxoTx, pendingKarmaSpend, removeUtxoTxEntry } = await importMempool();
-    const rowid = insertUtxoTx(threadTx(OWNER_A, 'thread-to-remove'), 100);
-    insertUtxoTx(likeTx(OWNER_A, 'like-stays'), 100);
+    const rowid = insertUtxoTx(threadTx(OWNER_A, 'thread-to-remove'), computeTxId(threadTx(OWNER_A, 'thread-to-remove') as UtxoTransaction), 100);
+    insertUtxoTx(likeTx(OWNER_A, 'like-stays'), computeTxId(likeTx(OWNER_A, 'like-stays') as UtxoTransaction), 100);
     expect(pendingKarmaSpend(OWNER_A)).toBe(POST_PRICE_THREAD + LIKE_KARMA_COST);
     const txId = (
       getDb().prepare('SELECT tx_id FROM mempool WHERE rowid = ?').get(rowid) as { tx_id: string }
@@ -494,8 +495,8 @@ describe('mempool karma spend gate', () => {
 
   it('removeEntry takes the row\'s spend out of the sum', async () => {
     const { insertUtxoTx, pendingKarmaSpend, removeEntry } = await importMempool();
-    const rowid = insertUtxoTx(threadTx(OWNER_A, 'thread-to-remove'), 100);
-    insertUtxoTx(likeTx(OWNER_A, 'like-stays'), 100);
+    const rowid = insertUtxoTx(threadTx(OWNER_A, 'thread-to-remove'), computeTxId(threadTx(OWNER_A, 'thread-to-remove') as UtxoTransaction), 100);
+    insertUtxoTx(likeTx(OWNER_A, 'like-stays'), computeTxId(likeTx(OWNER_A, 'like-stays') as UtxoTransaction), 100);
     expect(pendingKarmaSpend(OWNER_A)).toBe(POST_PRICE_THREAD + LIKE_KARMA_COST);
     removeEntry(rowid);
     expect(pendingKarmaSpend(OWNER_A)).toBe(LIKE_KARMA_COST);
@@ -503,8 +504,8 @@ describe('mempool karma spend gate', () => {
 
   it('purgeExpired takes an expiring row\'s spend out of the sum', async () => {
     const { insertUtxoTx, pendingKarmaSpend, purgeExpired } = await importMempool();
-    insertUtxoTx(threadTx(OWNER_A, 'expires-at-10'), 10);
-    insertUtxoTx(likeTx(OWNER_A, 'expires-at-100'), 100);
+    insertUtxoTx(threadTx(OWNER_A, 'expires-at-10'), computeTxId(threadTx(OWNER_A, 'expires-at-10') as UtxoTransaction), 10);
+    insertUtxoTx(likeTx(OWNER_A, 'expires-at-100'), computeTxId(likeTx(OWNER_A, 'expires-at-100') as UtxoTransaction), 100);
     expect(pendingKarmaSpend(OWNER_A)).toBe(POST_PRICE_THREAD + LIKE_KARMA_COST);
     purgeExpired(50);
     expect(pendingKarmaSpend(OWNER_A)).toBe(LIKE_KARMA_COST);
@@ -552,7 +553,7 @@ describe('mempool karma spend gate', () => {
     const { insertUtxoTx, pendingKarmaSpend } = await importMempool();
     const tx = likeTx(OWNER_A);
     tx.signatures = {};
-    insertUtxoTx(tx, 100);
+    insertUtxoTx(tx, computeTxId(tx as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };
@@ -569,7 +570,7 @@ describe('mempool karma spend gate', () => {
       [OWNER_A]: new Uint8Array(64),
       [OWNER_B]: new Uint8Array(64),
     };
-    insertUtxoTx(tx, 100);
+    insertUtxoTx(tx, computeTxId(tx as UtxoTransaction), 100);
     const row = getDb().prepare(
       `SELECT karma_owner, karma_spend FROM mempool`,
     ).get() as { karma_owner: string | null; karma_spend: number | null };

@@ -48,7 +48,7 @@ export interface PostServiceDeps {
   /** The profile's era schedule — supplied to the verifier's version check. */
   protocolVersionSchedule: readonly ProtocolEra[];
 
-  admitTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+  admitTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
 
   /** MEMPOOL_INTERFACE → getHeldEntry — the pool's one point read by id. */
   getHeldEntry: (txId: string) => { expiresAtHeight: number; txBytes: Uint8Array } | null;
@@ -175,7 +175,7 @@ export function createPost(
   // ---- admitTx and insertPost in one store transaction ----
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   deps.runInTransaction(() => {
-    deps.admitTx(tx, expiresAtHeight);
+    deps.admitTx(tx, txId, expiresAtHeight);
     deps.insertPost(postId, txId, commit, content);
   });
   emitPostIndexed(postId, commit.parentRefs.length);

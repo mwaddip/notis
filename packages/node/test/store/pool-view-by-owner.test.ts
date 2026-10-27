@@ -46,7 +46,7 @@ async function importUtxo() {
 // export fails the case's last assertion rather than the file's compile.
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as unknown as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
     getBoxesPageWithPending: (
       owner: Uint8Array,
       boxType: 'karma' | 'credit',
@@ -179,7 +179,7 @@ describe("an owner's boxes under the pool, read by owner", () => {
     expect(confirmedA.rows.map((r) => r.id)).toEqual([X.id]);
 
     const tx = creditTransferTx(OWNER_A, X.id!, 30n, OWNER_B, 70n);
-    mempool.insertUtxoTx(tx, 999);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 999);
     const txId = computeTxId(tx);
     const changeId = computeCandidateBoxId(tx.outputs[0]!, txId, 0);
     const paymentId = computeCandidateBoxId(tx.outputs[1]!, txId, 1);
@@ -201,7 +201,7 @@ describe("an owner's boxes under the pool, read by owner", () => {
     utxo.insertBox(X);
 
     const tx1 = creditTransferTx(OWNER_A, X.id!, 60n, OWNER_B, 40n);
-    mempool.insertUtxoTx(tx1, 999);
+    mempool.insertUtxoTx(tx1, computeTxId(tx1), 999);
     const tx1Id = computeTxId(tx1);
     const change1 = computeCandidateBoxId(tx1.outputs[0]!, tx1Id, 0);
     // Control: the first chain link alone leaves A holding change1.
@@ -209,7 +209,7 @@ describe("an owner's boxes under the pool, read by owner", () => {
     expect(after1.rows.map((r) => r.id)).toEqual([change1]);
 
     const tx2 = creditTransferTx(OWNER_A, change1, 20n, OWNER_B, 40n);
-    mempool.insertUtxoTx(tx2, 999);
+    mempool.insertUtxoTx(tx2, computeTxId(tx2), 999);
     const tx2Id = computeTxId(tx2);
     const change2 = computeCandidateBoxId(tx2.outputs[0]!, tx2Id, 0);
 
@@ -227,7 +227,7 @@ describe("an owner's boxes under the pool, read by owner", () => {
     utxo.insertBox(income);
 
     const tx = karmaLikeTx(OWNER_A, own.id!, 100n - LIKE_KARMA_COST);
-    mempool.insertUtxoTx(tx, 999);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 999);
     const txId = computeTxId(tx);
     const changeId = computeCandidateBoxId(tx.outputs[0]!, txId, 0);
 
@@ -257,14 +257,14 @@ describe("an owner's boxes under the pool, read by owner", () => {
     const feederP300 = creditBox(300n, OWNER_B, 10);
     utxo.insertBox(feederP300);
     const txP300 = creditTransferTx(OWNER_B, feederP300.id!, 0n, OWNER_A, 300n);
-    mempool.insertUtxoTx(txP300, 999);
+    mempool.insertUtxoTx(txP300, computeTxId(txP300), 999);
     const txP300Id = computeTxId(txP300);
     const P300 = computeCandidateBoxId(txP300.outputs[0]!, txP300Id, 0);
 
     const feederP150 = creditBox(150n, OWNER_B, 11);
     utxo.insertBox(feederP150);
     const txP150 = creditTransferTx(OWNER_B, feederP150.id!, 0n, OWNER_A, 150n);
-    mempool.insertUtxoTx(txP150, 999);
+    mempool.insertUtxoTx(txP150, computeTxId(txP150), 999);
     const txP150Id = computeTxId(txP150);
     const P150 = computeCandidateBoxId(txP150.outputs[0]!, txP150Id, 0);
 
@@ -312,12 +312,12 @@ describe("an owner's boxes under the pool, read by owner", () => {
     utxo.insertBox(income);
 
     const tx1 = karmaLikeTx(OWNER_A, own.id!, 100n - LIKE_KARMA_COST);
-    mempool.insertUtxoTx(tx1, 999);
+    mempool.insertUtxoTx(tx1, computeTxId(tx1), 999);
     const tx1Id = computeTxId(tx1);
     const change1 = computeCandidateBoxId(tx1.outputs[0]!, tx1Id, 0);
 
     const tx2 = karmaLikeTx(OWNER_A, change1, 100n - 2n * LIKE_KARMA_COST);
-    mempool.insertUtxoTx(tx2, 999);
+    mempool.insertUtxoTx(tx2, computeTxId(tx2), 999);
     const tx2Id = computeTxId(tx2);
     const change2 = computeCandidateBoxId(tx2.outputs[0]!, tx2Id, 0);
 

@@ -140,7 +140,7 @@ export function handleRelayedTx(
     // the pending row in one store transaction for a post, or admitTx alone.
     const db = getDb();
     db.transaction(() => {
-      admitTx(tx, expiresAtHeight);
+      admitTx(tx, txIdHex, expiresAtHeight);
       if (tx.post && result.txId) {
         const postId = computePostId(result.txId, 0);
         insertPost(postId, result.txId, tx.post, content ?? null);

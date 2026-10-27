@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { BatchAVLVerifier } from '@dagsocial/avltree';
-import { MAX_BLOCK_BODY_BYTES, TREE_KEY_LENGTH, boxKey, bytesToHex, hash32, hexToBytes } from '@dagsocial/types';
+import {MAX_BLOCK_BODY_BYTES, TREE_KEY_LENGTH, boxKey, bytesToHex, hash32, hexToBytes,
+  computeTxId,
+} from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { applyBlock, treeStateView, treeWritesOf, verifierSession } from '@dagsocial/consensus';
 import type { ApplyContext, BlockEffects, TreeLookup, TreeSession, TreeWrite } from '@dagsocial/consensus';
@@ -450,8 +452,8 @@ describe('the block proof', () => {
     await freshStore();
     const { sender, boxes } = await seededSender();
     const mempool = await import('../../src/store/mempool.js');
-    mempool.insertUtxoTx(makeCreditTx(sender, [boxes[0]!], 10_000n), 1000);
-    mempool.insertUtxoTx(makeCreditTx(sender, [boxes[1]!], 5_000n), 1000);
+    mempool.insertUtxoTx(makeCreditTx(sender, [boxes[0]!], 10_000n), computeTxId(makeCreditTx(sender, [boxes[0]!], 10_000n)), 1000);
+    mempool.insertUtxoTx(makeCreditTx(sender, [boxes[1]!], 5_000n), computeTxId(makeCreditTx(sender, [boxes[1]!], 5_000n)), 1000);
     await liveProver();
     const bc = await import('../../src/services/block-creator.js');
     const testConfig: Config = makeTestConfig({ nodeRole: 'miner', blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES });
@@ -472,7 +474,7 @@ describe('the block proof', () => {
     await freshStore();
     const { sender, boxes } = await seededSender();
     const mempool = await import('../../src/store/mempool.js');
-    mempool.insertUtxoTx(makeCreditTx(sender, [boxes[0]!], 10_000n), 1000);
+    mempool.insertUtxoTx(makeCreditTx(sender, [boxes[0]!], 10_000n), computeTxId(makeCreditTx(sender, [boxes[0]!], 10_000n)), 1000);
     await liveProver();
     const bc = await import('../../src/services/block-creator.js');
     bc.startBlockCreator(makeTestConfig({ nodeRole: 'miner', blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES }));

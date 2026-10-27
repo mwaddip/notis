@@ -451,7 +451,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
 
   /** The producer's next block from `traffic`, pooled first: it carries every transaction of it. */
   async function produce(height: number, traffic: Record<string, UtxoTransaction>): Promise<OrderingBlock> {
-    for (const tx of Object.values(traffic)) node.mempool.insertUtxoTx(tx, 1_000);
+    for (const tx of Object.values(traffic)) node.mempool.insertUtxoTx(tx, computeTxId(tx), 1_000);
     const block = await mineNextBlock(node.creator);
     if (block === null || block.header.height !== height) throw new Error(`the producer made no block at height ${height}`);
     const carried = block.utxoTxTree.utxoTxIds.slice(0, -1);

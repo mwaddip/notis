@@ -57,7 +57,7 @@ async function importPosts() {
 async function importMempoolFresh() {
   const mod = await import('../../src/store/mempool.js');
   return mod as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
@@ -680,7 +680,7 @@ describe('revertBlock', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -734,7 +734,7 @@ describe('revertBlock', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     // Insert post transaction
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     // Insert a standalone UTXO tx. The like targets the post this block
     // confirms — N2b rejects likes on unconfirmed targets, and topology
@@ -743,7 +743,7 @@ describe('revertBlock', () => {
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
     const likeTx = makeLikeTx(liker, karmaBox, postId, author.userId);
-    mempool.insertUtxoTx(likeTx, 1000);
+    mempool.insertUtxoTx(likeTx, computeTxId(likeTx), 1000);
 
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
@@ -935,7 +935,7 @@ describe('reorg', () => {
     }
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, computeTxId(postTx), commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
+      mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
       await mineNextBlock(bc);
     }
 
@@ -987,7 +987,7 @@ describe('reorg', () => {
     const bc = await importBlockCreator();
 
     posts.insertPost(postId, txId, commit, content);
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
     expect(mempool.getPendingEntries(100)).toHaveLength(0);
@@ -1045,13 +1045,13 @@ describe('reorg', () => {
       const occupier = await seededSelfSpend();
 
       posts.insertPost(postId, txId, commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
+      mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
       bc.startBlockCreator(testConfig);
       await mineNextBlock(bc);
       expect(mempool.getPendingEntries(100)).toHaveLength(0);
 
       // Fill the pool so the reorg's re-insertion is dropped.
-      mempool.insertUtxoTx(occupier, 1000);
+      mempool.insertUtxoTx(occupier, computeTxId(occupier), 1000);
       expect(mempool.getPendingEntries(100)).toHaveLength(1);
 
       const forkResolution = await importForkResolution();
@@ -1118,8 +1118,8 @@ describe('reorg', () => {
     // Block 1: txA (like from startBox).
     const txA = makeLikeTx(liker, startBox, postAId, authorA.userId);
     const txAId = computeTxId(txA);
-    mempool.insertUtxoTx(postATx, 1000);
-    mempool.insertUtxoTx(txA, 1000);
+    mempool.insertUtxoTx(postATx, computeTxId(postATx), 1000);
+    mempool.insertUtxoTx(txA, computeTxId(txA), 1000);
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
 
@@ -1127,10 +1127,10 @@ describe('reorg', () => {
     expect(ordering.getCurrentHeight()).toBe(1);
 
     // Block 2: txB (like from txA's change box — depends on txA).
-    mempool.insertUtxoTx(postBTx, 1000);
+    mempool.insertUtxoTx(postBTx, computeTxId(postBTx), 1000);
     const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, authorB.userId);
     const txBId = computeTxId(txB);
-    mempool.insertUtxoTx(txB, 1000);
+    mempool.insertUtxoTx(txB, computeTxId(txB), 1000);
     await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(2);
 
@@ -1171,13 +1171,13 @@ describe('reorg', () => {
 
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'reorg re-insert conflict');
     posts.insertPost(postId, computeTxId(postTx), commit, content);
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const liker = makeTestIdentity();
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
     const likeTx = makeLikeTx(liker, karmaBox, postId, author.userId);
-    mempool.insertUtxoTx(likeTx, 1000);
+    mempool.insertUtxoTx(likeTx, computeTxId(likeTx), 1000);
 
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
@@ -1192,7 +1192,7 @@ describe('reorg', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(incumbent, liker.privateKey, hex(liker.userId));
-    mempool.insertUtxoTx(incumbent, 1000);
+    mempool.insertUtxoTx(incumbent, computeTxId(incumbent), 1000);
 
     const forkResolution = await importForkResolution();
     expect(() => forkResolution.reorg(0, [])).not.toThrow();
@@ -1231,7 +1231,7 @@ describe('reorg', () => {
     for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `chain a ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, computeTxId(postTx), commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
+      mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
       await mineNextBlock(bc);
     }
 
@@ -1275,7 +1275,7 @@ describe('reorg', () => {
     for (let i = 0; i < 3; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `original ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, computeTxId(postTx), commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
+      mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
       await mineNextBlock(bc);
     }
 
@@ -1351,7 +1351,7 @@ describe('reorg', () => {
       for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `full pool ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, computeTxId(postTx), commit, content);
-        mempool.insertUtxoTx(postTx, 1000);
+        mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
         await mineNextBlock(bc);
       }
 
@@ -1360,7 +1360,7 @@ describe('reorg', () => {
       expect(mempool.getPendingEntries(100)).toHaveLength(0);
 
       // Fill the pool to its cap, so every re-insertion below is rejected.
-      mempool.insertUtxoTx(occupier, 1000);
+      mempool.insertUtxoTx(occupier, computeTxId(occupier), 1000);
       expect(mempool.getPendingEntries(100)).toHaveLength(1);
 
       const forkResolution = await importForkResolution();
@@ -1396,11 +1396,11 @@ describe('reorg', () => {
     for (let i = 0; i < 2; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `room in pool ${i}`));
     for (const { commit, tx: postTx, postId, content } of seededPosts) {
       posts.insertPost(postId, computeTxId(postTx), commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
+      mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
       await mineNextBlock(bc);
     }
 
-    mempool.insertUtxoTx(occupier, 1000);
+    mempool.insertUtxoTx(occupier, computeTxId(occupier), 1000);
 
     const forkResolution = await importForkResolution();
     forkResolution.reorg(0, []);
@@ -2029,7 +2029,7 @@ describe('reorg — ceiling screen', () => {
       for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `ceiling ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, computeTxId(postTx), commit, content);
-        mempool.insertUtxoTx(postTx, 1000);
+        mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
         await mineNextBlock(bc);
       }
 
@@ -2070,7 +2070,7 @@ describe('reorg — ceiling screen', () => {
       for (let i = 0; i < 6; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `no-screen ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, computeTxId(postTx), commit, content);
-        mempool.insertUtxoTx(postTx, 1000);
+        mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
         await mineNextBlock(bc);
       }
 
@@ -2111,7 +2111,7 @@ describe('reorg — ceiling screen', () => {
       for (let i = 0; i < 7; i++) seededPosts.push(await seedPostTx(makeTestIdentity(), `null-ceiling ${i}`));
       for (const { commit, tx: postTx, postId, content } of seededPosts) {
         posts.insertPost(postId, computeTxId(postTx), commit, content);
-        mempool.insertUtxoTx(postTx, 1000);
+        mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
         await mineNextBlock(bc);
       }
 
@@ -2183,7 +2183,7 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       for (let i = 0; i < 6; i++) {
         const { commit, tx: postTx, postId, content } = postFixtures[i]!;
         posts.insertPost(postId, computeTxId(postTx), commit, content);
-        mempool.insertUtxoTx(postTx, 1000);
+        mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
         await mineNextBlock(bc);
       }
       expect(ordering.getCurrentHeight()).toBe(6);

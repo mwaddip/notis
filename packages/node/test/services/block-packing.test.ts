@@ -115,7 +115,7 @@ async function fillOrder(): Promise<string[]> {
  */
 async function poolOf(shapes: Array<{ inputs: number; outputs: number }>): Promise<string[]> {
   const mempool = await import('../../src/store/mempool.js');
-  for (const tx of await fundedTransfers(shapes)) mempool.insertUtxoTx(tx, 5000);
+  for (const tx of await fundedTransfers(shapes)) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
   return fillOrder();
 }
 
@@ -128,7 +128,7 @@ async function admittedPoolOf(shapes: Array<{ inputs: number; outputs: number }>
   const txs = await fundedTransfers(shapes);
   await liveProver();
   const { admitTx } = await import('../../src/services/admit-tx.js');
-  for (const tx of txs) admitTx(tx, 5000);
+  for (const tx of txs) admitTx(tx, computeTxId(tx), 5000);
   return fillOrder();
 }
 
@@ -386,7 +386,7 @@ describe('packing to the budget', () => {
     const parts = split.outputs.slice(0, 8).map((out, i) => materializeOutput(out, splitId, i) as CreditBox);
     const joined = creditSpend(spender, parts, 1_000n, 1);
     const unrelated = creditSpend(spender, [other], 10n, 1);
-    for (const tx of [split, joined, unrelated]) mempool.insertUtxoTx(tx, 5000);
+    for (const tx of [split, joined, unrelated]) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
     const order = [...mempool.iteratePendingEntries({ klass: 'credit' })].map((entry) => computeTxId(decodeTx(entry.utxoTxBytes!)));
     expect(order).toEqual([splitId, computeTxId(joined), computeTxId(unrelated)]);
     await liveProver();
@@ -580,8 +580,8 @@ describe('packing to the budget', () => {
     const parent = creditSpend(spender, [box], 5_000n, 2);
     const change = materializeOutput(parent.outputs[0]!, computeTxId(parent), 0) as CreditBox;
     const child = creditSpend(spender, [change], 10n, 1);
-    mempool.insertUtxoTx(parent, 5000);
-    mempool.insertUtxoTx(child, 5000);
+    mempool.insertUtxoTx(parent, computeTxId(parent), 5000);
+    mempool.insertUtxoTx(child, computeTxId(child), 5000);
     const order = await fillOrder();
     expect(order).toEqual([computeTxId(parent), computeTxId(child)]);
     await liveProver();
@@ -900,8 +900,8 @@ describe('a returned vouch grows the settlement in a second rebuild', () => {
     await activateProverOverStore();
 
     const mempool = await import('../../src/store/mempool.js');
-    for (const tx of postTxs) mempool.insertUtxoTx(tx, 5000);
-    mempool.insertUtxoTx(unvouch, 5000);
+    for (const tx of postTxs) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
+    mempool.insertUtxoTx(unvouch, computeTxId(unvouch), 5000);
     // Pre-written estimates keep the fill from pricing an entry alone — a
     // candidate-cost build would land in `settles.count` otherwise. The small
     // positive value stays below any realistic block-marginal cost, so the
@@ -1027,7 +1027,7 @@ describe('the creator\'s refill', () => {
     }
     await liveProver();
     const { admitTx } = await import('../../src/services/admit-tx.js');
-    for (const tx of txs) admitTx(tx, 5000);
+    for (const tx of txs) admitTx(tx, computeTxId(tx), 5000);
     return txs;
   }
 

@@ -279,7 +279,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
     // `expiresAtHeight` the chain reaches in two blocks, which `insertUtxoTx`
     // takes directly (MEMPOOL_INTERFACE → insertUtxoTx; → Expiry).
     const T = buildThread(A, X, 'T expiring');
-    mem.insertUtxoTx(T, 2);
+    mem.insertUtxoTx(T, computeTxId(T), 2);
 
     const b1 = await makeApplicableBlock({ height: 1 });
     expect(await applyBlockThroughIntake(b1)).toBe(true);
@@ -491,7 +491,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
       signatures: { [dummyKey]: new Uint8Array(64) },
       protocolVersion: PROTOCOL_VERSION,
     };
-    mem.insertUtxoTx(vouchTx, 1000);
+    mem.insertUtxoTx(vouchTx, computeTxId(vouchTx), 1000);
 
     for (let h = 1; h <= 15; h++) {
       const b = await makeApplicableBlock({ height: h });

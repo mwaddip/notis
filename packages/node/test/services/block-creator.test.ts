@@ -139,7 +139,7 @@ async function importPosts() {
 async function importMempoolFresh() {
   const mod = await import('../../src/store/mempool.js');
   return mod as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
@@ -311,7 +311,7 @@ describe('block-creator', () => {
     // block that takes it carries the payload (NODE_INTERFACE → Post
     // transactions).
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     // Start block creator and create block
     const bc = await importBlockCreator();
@@ -400,8 +400,8 @@ describe('block-creator', () => {
       utxo.insertBox(fillerInputBox('era-1'));
       const eraTx = { ...fillerTx('era-2'), protocolVersion: 2 };
       const foreignTx = fillerTx('era-1'); // PROTOCOL_VERSION = 1
-      const foreignRow = mempool.insertUtxoTx(foreignTx, 1000);
-      mempool.insertUtxoTx(eraTx, 1000);
+      const foreignRow = mempool.insertUtxoTx(foreignTx, computeTxId(foreignTx), 1000);
+      mempool.insertUtxoTx(eraTx, computeTxId(eraTx), 1000);
 
       await liveProver();
       bc.startBlockCreator(testConfig);
@@ -464,7 +464,7 @@ describe('block-creator', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -498,7 +498,7 @@ describe('block-creator', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -532,12 +532,12 @@ describe('block-creator', () => {
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'template shape');
 
     posts.insertPost(postId, computeTxId(postTx), commit, content);
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const liker = makeTestIdentity();
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
-    mempool.insertUtxoTx(makeLikeTx(liker, karmaBox, postId, author.userId), 1000);
+    mempool.insertUtxoTx(makeLikeTx(liker, karmaBox, postId, author.userId), computeTxId(makeLikeTx(liker, karmaBox, postId, author.userId)), 1000);
 
     bc.startBlockCreator(testConfig);
     const block = await mineNextBlock(bc);
@@ -600,7 +600,7 @@ describe('block-creator', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -615,7 +615,7 @@ describe('block-creator', () => {
     // Second block
     const { commit: commit2, tx: post2Tx, postId: postId2, content: content2 } = await seedPostTx(author, 'height test 2');
     posts.insertPost(postId2, computeTxId(post2Tx), commit2, content2);
-    mempool.insertUtxoTx(post2Tx, 1000);
+    mempool.insertUtxoTx(post2Tx, computeTxId(post2Tx), 1000);
 
     await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(2);
@@ -644,7 +644,7 @@ describe('block-creator', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     // Insert post transaction into mempool
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     // Set up: standalone UTXO transaction in mempool — another identity's like
     // of the post the same block confirms (topology lands before the
@@ -653,7 +653,7 @@ describe('block-creator', () => {
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     await seedBoxes([karmaBox]);
     const likeTx = makeLikeTx(liker, karmaBox, postId, author.userId);
-    mempool.insertUtxoTx(likeTx, 1000);
+    mempool.insertUtxoTx(likeTx, computeTxId(likeTx), 1000);
 
     // The subject is the body the creator assembles, so the template is what
     // this reads.
@@ -704,14 +704,14 @@ describe('block-creator', () => {
 
     const { tx: postTx, postId } = await seedPostTx(author, 'batch UTXO test');
     const { computeTxId } = await import('@dagsocial/types');
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     // Another identity's like of the post the same block confirms.
     const liker = makeTestIdentity();
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     await seedBoxes([karmaBox]);
     const likeTx = makeLikeTx(liker, karmaBox, postId, author.userId);
-    mempool.insertUtxoTx(likeTx, 1000);
+    mempool.insertUtxoTx(likeTx, computeTxId(likeTx), 1000);
 
     // Assembly again, so again the template.
     bc.startBlockCreator(testConfig);
@@ -815,7 +815,7 @@ describe('block-creator', () => {
         // (MEMPOOL_INTERFACE → Block Creator Integration), so the filler's
         // stand-in input is seeded confirmed before the pool receives the row.
         utxo.insertBox(fillerInputBox(label));
-        rowids.push(mempool.insertUtxoTx(fillerTx(label), 5000));
+        rowids.push(mempool.insertUtxoTx(fillerTx(label), computeTxId(fillerTx(label)), 5000));
       }
       return rowids;
     }
@@ -1097,13 +1097,13 @@ describe('block-creator', () => {
 
       // The payer arrives FIRST, so arrival order cannot explain the outcome.
       const payer = await seedCreditSpend('payer', 10_000n, 9_000n);
-      mempool.insertUtxoTx(payer, 5000);
+      mempool.insertUtxoTx(payer, computeTxId(payer), 5000);
       // The fill's dependency skip reads each entry's input through `getBox`
       // (MEMPOOL_INTERFACE → Block Creator Integration), so the filler's
       // stand-in input is seeded confirmed.
       const utxo = await importUtxo();
       utxo.insertBox(fillerInputBox('karma_side'));
-      mempool.insertUtxoTx(fillerTx('karma_side') as UtxoTransaction, 5000);
+      mempool.insertUtxoTx(fillerTx('karma_side') as UtxoTransaction, computeTxId(fillerTx('karma_side') as UtxoTransaction), 5000);
 
       // A budget that admits exactly one of the two. Both costs are measured
       // rather than assumed, and the larger one sets the budget so that
@@ -1152,9 +1152,9 @@ describe('block-creator', () => {
       const cheap = await seedCreditSpend('cheap', 10_000n, 1n);
       const mid = await seedCreditSpend('mid', 10_000n, 50n);
       const rich = await seedCreditSpend('rich', 10_000n, 500n);
-      mempool.insertUtxoTx(cheap, 5000);
-      mempool.insertUtxoTx(mid, 5000);
-      mempool.insertUtxoTx(rich, 5000);
+      mempool.insertUtxoTx(cheap, computeTxId(cheap), 5000);
+      mempool.insertUtxoTx(mid, computeTxId(mid), 5000);
+      mempool.insertUtxoTx(rich, computeTxId(rich), 5000);
 
       await liveProver();
       bc.startBlockCreator(testConfig);
@@ -1176,8 +1176,8 @@ describe('block-creator', () => {
       // Identical fees; only the byte cost differs.
       const fat = await seedCreditSpend('fat', 10_000n, 600n, 14);
       const lean = await seedCreditSpend('lean', 10_000n, 600n, 1);
-      mempool.insertUtxoTx(fat, 5000);
-      mempool.insertUtxoTx(lean, 5000);
+      mempool.insertUtxoTx(fat, computeTxId(fat), 5000);
+      mempool.insertUtxoTx(lean, computeTxId(lean), 5000);
 
       await liveProver();
       bc.startBlockCreator(testConfig);

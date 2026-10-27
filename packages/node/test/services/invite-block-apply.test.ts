@@ -320,7 +320,7 @@ describe('the invite at block application', () => {
     const poolBefore = utxo.getKarmaPoolBox()!.value;
 
     const mempool = await importMempool();
-    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), computeTxId(inviteTx(inviter, invitee, karma)), 1000);
     const block = await mineOne();
     expect(block).not.toBeNull();
     const height = block!.header.height;
@@ -371,7 +371,7 @@ describe('the invite at block application', () => {
     const networkBefore = records.getNetworkRecord().memberCount;
 
     const mempool = await importMempool();
-    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), computeTxId(inviteTx(inviter, invitee, karma)), 1000);
     const block = await mineOne();
     expect(block).not.toBeNull();
     const height = block!.header.height;
@@ -413,7 +413,7 @@ describe('the invite at block application', () => {
     const networkBefore = records.getNetworkRecord().memberCount;
 
     const mempool = await importMempool();
-    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), computeTxId(inviteTx(inviter, invitee, karma)), 1000);
     const block = await mineOne();
     expect(block).not.toBeNull();
 
@@ -506,7 +506,7 @@ describe('the invite at block application', () => {
     const types = await import('@dagsocial/types');
 
     // Block 1: the invite.
-    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), computeTxId(inviteTx(inviter, invitee, karma)), 1000);
     const inviteBlock = await mineOne();
     expect(inviteBlock).not.toBeNull();
     const claimHeight = inviteBlock!.header.height;
@@ -540,7 +540,7 @@ describe('the invite at block application', () => {
     const postId = types.computePostId(types.computeTxId(postTx), 0);
     const posts = await import('../../src/store/posts.js');
     posts.insertPost(postId, types.computeTxId(postTx), postCommit, 'first post');
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
     const postBlock = await mineOne();
     expect(postBlock).not.toBeNull();
 
@@ -648,7 +648,7 @@ describe('the invite at block application', () => {
     const mempool = await importMempool();
     const engine = await import('@dagsocial/consensus');
 
-    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), computeTxId(inviteTx(inviter, invitee, karma)), 1000);
     expect(await mineOne()).not.toBeNull();
 
     const second = inviteTx(secondInviter, invitee, karma2);
@@ -962,8 +962,8 @@ describe('the invite at block application', () => {
 
     for (const { commit, content, postTx, postId, liker, karma } of batch) {
       posts.insertPost(postId, types.computeTxId(postTx), commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
-      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId, inviteeKey), 1000);
+      mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
+      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId, inviteeKey), computeTxId(makeLikeTx(liker, karma, postId, inviteeKey)), 1000);
     }
 
     expect(await mineOne()).not.toBeNull();
@@ -1174,7 +1174,7 @@ describe('the invite at block application — decay adjacency', () => {
 
     // The invitee holds no karma before the invite grant.
     const inviteeBefore = utxo.getKarmaValue(invitee.userId);
-    mempool.insertUtxoTx(inviteTx(inviter, invitee, inviterKarma, bondValue), 1000);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, inviterKarma, bondValue), computeTxId(inviteTx(inviter, invitee, inviterKarma, bondValue)), 1000);
     const invitedAtBlock = (await mine()).header.height;
     // The settlement granted, and the grant started the clock.
     expect(utxo.getKarmaValue(invitee.userId)).toBe(inviteeBefore + bondValue);
@@ -1214,8 +1214,8 @@ describe('the invite at block application — decay adjacency', () => {
       };
       signTransaction(postTx, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
       const postId = types.computePostId(types.computeTxId(postTx), 0);
-      mempool.insertUtxoTx(postTx, 1000);
-      mempool.insertUtxoTx(makeLikeTx(likerFixtures[i]!.liker, likerFixtures[i]!.karma, postId, invitee.userId), 1000);
+      mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
+      mempool.insertUtxoTx(makeLikeTx(likerFixtures[i]!.liker, likerFixtures[i]!.karma, postId, invitee.userId), computeTxId(makeLikeTx(likerFixtures[i]!.liker, likerFixtures[i]!.karma, postId, invitee.userId)), 1000);
       runningKarma = changeValue > 0n ? changeBoxOf(postTx) : null;
     }
     await mine();

@@ -86,7 +86,7 @@ async function importBlockCreator() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{ rowid: number; entryType: string }>;
   };
 }
@@ -244,7 +244,7 @@ async function seedStaleVouchCast() {
   const deps = await storeBackedDeps();
   expect(validateTx(deps, cast, computeTxId(cast), 1).valid).toBe(true);
 
-  mempool.insertUtxoTx(cast, 1000);
+  mempool.insertUtxoTx(cast, computeTxId(cast), 1000);
 
   // The voucher's other box is consumed AFTER the cast pooled, dropping the
   // summed balance below the minimum. The cast's own input stays live.

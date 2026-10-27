@@ -9,6 +9,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   VOUCH_KARMA_AMOUNT,
   PROTOCOL_VERSION,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   VouchBox,
@@ -386,7 +387,7 @@ describe('membership cascade across blocks', () => {
     // estimate the creator packs by.
     const admit = await import('../../src/services/admit-tx.js');
     const mem = await import('../../src/store/mempool.js');
-    admit.admitTx(unvouchTx, 5000);
+    admit.admitTx(unvouchTx, computeTxId(unvouchTx), 5000);
     const [pooled] = mem.getPendingEntries(10);
     const pooledRowid = pooled!.rowid;
 
@@ -403,7 +404,6 @@ describe('membership cascade across blocks', () => {
     });
     expect(mined).not.toBeNull();
 
-    const { computeTxId } = await import('@dagsocial/types');
     // The body carries the admitted unvouch, then the settlement last.
     expect(mined!.utxoTxTree.utxoTxIds[0]).toBe(computeTxId(unvouchTx));
     const settlementTxId = mined!.utxoTxTree.utxoTxIds[mined!.utxoTxTree.utxoTxIds.length - 1]!;

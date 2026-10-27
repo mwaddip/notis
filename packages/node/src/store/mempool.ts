@@ -542,6 +542,7 @@ export function bidOf(tx: UtxoTransaction): bigint | null {
  */
 export function insertUtxoTx(
   tx: UtxoTransaction,
+  txId: string,
   expiresAtHeight: number,
   costEstimate: number | null = null,
 ): number {
@@ -559,7 +560,6 @@ export function insertUtxoTx(
   const ceiling = ceilingOf(tx);
 
   const inputs = tx.inputs ?? [];
-  const txId = computeTxId(tx);
   const outputs = materializedOutputs(tx, txId);
   const meta = gateMetadata(tx);
 

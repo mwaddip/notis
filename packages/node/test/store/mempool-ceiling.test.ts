@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
+import {PROTOCOL_VERSION,
+  computeTxId,
+} from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
@@ -57,7 +59,7 @@ describe('mempool ceiling — reclaim while pooled', () => {
   it('purgeExpired reclaims an entry past its ceiling', () => {
     const tx = vouchCastTx(10);
     // ceiling = 15
-    insertUtxoTx(tx, 1000);
+    insertUtxoTx(tx, computeTxId(tx), 1000);
     expect(getPendingEntries(10)).toHaveLength(1);
 
     // height 15: still valid
@@ -70,17 +72,17 @@ describe('mempool ceiling — reclaim while pooled', () => {
   });
 
   it('does not reclaim an entry with no ceiling', () => {
-    insertUtxoTx(karmaTx(), 1000);
+    insertUtxoTx(karmaTx(), computeTxId(karmaTx()), 1000);
     expect(purgeExpired(999)).toBe(0);
     expect(getPendingEntries(10)).toHaveLength(1);
   });
 
   it('reclaims ceiling-dead entries alongside expiry-dead entries', () => {
     // A vouch with ceiling 15
-    insertUtxoTx(vouchCastTx(10), 1000);
+    insertUtxoTx(vouchCastTx(10), computeTxId(vouchCastTx(10)), 1000);
 
     // A karma tx expiring at height 20
-    insertUtxoTx(karmaTx(), 20);
+    insertUtxoTx(karmaTx(), computeTxId(karmaTx()), 20);
 
     expect(getPendingEntries(10)).toHaveLength(2);
 

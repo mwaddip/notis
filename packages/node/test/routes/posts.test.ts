@@ -1636,7 +1636,7 @@ describe('POST /posts/batch', () => {
       const { commit, tx, postId } = makePostTx(idObj, 'batch-pending');
       pendingId = postId;
       pendingTxId = computeTxId(tx);
-      insertUtxoTx(tx, 1000);
+      insertUtxoTx(tx, computeTxId(tx), 1000);
       insertPost(pendingId, pendingTxId, commit, 'batch-pending');
     }
   });

@@ -1,6 +1,9 @@
 import { createHash } from 'crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { computeBoxId, MEMPOOL_CREDIT_SHARE_PCT, computePostId } from '@dagsocial/types';
+import {computeBoxId, MEMPOOL_CREDIT_SHARE_PCT, computePostId,
+  computeTxId,
+} from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 // Dynamic import pattern — fresh modules per test
@@ -16,7 +19,7 @@ async function importDbFresh() {
 async function importMempoolFresh() {
   const mod = await import('../../src/store/mempool.js');
   return mod as {
-    insertUtxoTx: (tx: any, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: any, txId: string, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => any[];
     purgeExpired: (currentHeight: number) => number;
     removeEntry: (rowid: number) => void;
@@ -152,11 +155,11 @@ function txWithInput(label: string): unknown {
  */
 function seedExpiringPostRow(
   db: Database.Database,
-  insertUtxoTx: (tx: unknown, expiresAtHeight: number) => number,
+  insertUtxoTx: (tx: unknown, txId: string, expiresAtHeight: number) => number,
   label: string,
   expiresAtHeight: number,
 ): { rowid: number; postId: string } {
-  const rowid = insertUtxoTx(txWithInput(label), expiresAtHeight);
+  const rowid = insertUtxoTx(txWithInput(label), computeTxId(txWithInput(label) as UtxoTransaction), expiresAtHeight);
   const txId = (
     db.prepare('SELECT tx_id FROM mempool WHERE rowid = ?').get(rowid) as { tx_id: string }
   ).tx_id;
@@ -254,7 +257,7 @@ describe('mempool store', () => {
       protocolVersion: 1,
     };
 
-    insertUtxoTx(tx as any, 200);
+    insertUtxoTx(tx as any, computeTxId(tx as any), 200);
     const entries = getPendingEntries(10);
 
     expect(entries).toHaveLength(1);
@@ -267,7 +270,7 @@ describe('mempool store', () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
 
     for (let i = 0; i < 5; i++) {
-      insertUtxoTx(txWithInput(`sb_${i}`) as any, 100);
+      insertUtxoTx(txWithInput(`sb_${i}`) as any, computeTxId(txWithInput(`sb_${i}`) as any), 100);
     }
 
     const entries = getPendingEntries(3);
@@ -277,9 +280,9 @@ describe('mempool store', () => {
   it('getPendingEntries returns entries in FIFO order by rowid', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
 
-    insertUtxoTx(txWithInput('first') as any, 100);
-    insertUtxoTx(txWithInput('second') as any, 100);
-    insertUtxoTx(txWithInput('third') as any, 100);
+    insertUtxoTx(txWithInput('first') as any, computeTxId(txWithInput('first') as any), 100);
+    insertUtxoTx(txWithInput('second') as any, computeTxId(txWithInput('second') as any), 100);
+    insertUtxoTx(txWithInput('third') as any, computeTxId(txWithInput('third') as any), 100);
 
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(3);
@@ -292,9 +295,9 @@ describe('mempool store', () => {
     const { insertUtxoTx, getPendingEntries, purgeExpired } =
       await importMempoolFresh();
 
-    insertUtxoTx(txWithInput('expired') as any, 10);
-    insertUtxoTx(txWithInput('kept_50') as any, 50);
-    insertUtxoTx(txWithInput('kept_30') as any, 30);
+    insertUtxoTx(txWithInput('expired') as any, computeTxId(txWithInput('expired') as any), 10);
+    insertUtxoTx(txWithInput('kept_50') as any, computeTxId(txWithInput('kept_50') as any), 50);
+    insertUtxoTx(txWithInput('kept_30') as any, computeTxId(txWithInput('kept_30') as any), 30);
 
     const removed = purgeExpired(25); // removes entries with expires_at_height < 25
     expect(removed).toBe(1); // only expired at 10; the txs at 50 and 30 are kept
@@ -306,9 +309,9 @@ describe('mempool store', () => {
   it('purgeExpired returns count of removed entries', async () => {
     const { insertUtxoTx, purgeExpired } = await importMempoolFresh();
 
-    insertUtxoTx(txWithInput('a') as any, 10);
-    insertUtxoTx(txWithInput('b') as any, 20);
-    insertUtxoTx(txWithInput('c') as any, 30);
+    insertUtxoTx(txWithInput('a') as any, computeTxId(txWithInput('a') as any), 10);
+    insertUtxoTx(txWithInput('b') as any, computeTxId(txWithInput('b') as any), 20);
+    insertUtxoTx(txWithInput('c') as any, computeTxId(txWithInput('c') as any), 30);
 
     const removed = purgeExpired(25);
     expect(removed).toBe(2); // a (10) and b (20) — both < 25
@@ -317,8 +320,8 @@ describe('mempool store', () => {
   it('removeEntry removes a specific row by rowid', async () => {
     const { insertUtxoTx, getPendingEntries, removeEntry } = await importMempoolFresh();
 
-    const rowid1 = insertUtxoTx(txWithInput('keep') as any, 100);
-    const rowid2 = insertUtxoTx(txWithInput('remove') as any, 100);
+    const rowid1 = insertUtxoTx(txWithInput('keep') as any, computeTxId(txWithInput('keep') as any), 100);
+    const rowid2 = insertUtxoTx(txWithInput('remove') as any, computeTxId(txWithInput('remove') as any), 100);
 
     removeEntry(rowid2);
 
@@ -358,9 +361,9 @@ describe('mempool store', () => {
   it('handles multiple entries', async () => {
     const { insertUtxoTx, getPendingEntries } =
       await importMempoolFresh();
-    insertUtxoTx(txWithInput('multi_1') as any, 100);
-    insertUtxoTx(txWithInput('multi_2') as any, 100);
-    insertUtxoTx(txWithInput('multi_3') as any, 100);
+    insertUtxoTx(txWithInput('multi_1') as any, computeTxId(txWithInput('multi_1') as any), 100);
+    insertUtxoTx(txWithInput('multi_2') as any, computeTxId(txWithInput('multi_2') as any), 100);
+    insertUtxoTx(txWithInput('multi_3') as any, computeTxId(txWithInput('multi_3') as any), 100);
 
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(3);
@@ -375,21 +378,21 @@ describe('mempool store', () => {
 
   it('getPendingEntries with limit 0 returns empty array', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
-    insertUtxoTx(txWithInput('sb_limit0') as any, 100);
+    insertUtxoTx(txWithInput('sb_limit0') as any, computeTxId(txWithInput('sb_limit0') as any), 100);
     const entries = getPendingEntries(0);
     expect(entries).toEqual([]);
   });
 
   it('purgeExpired returns 0 when nothing to purge', async () => {
     const { insertUtxoTx, purgeExpired } = await importMempoolFresh();
-    insertUtxoTx(txWithInput('sb_nopurge') as any, 100);
+    insertUtxoTx(txWithInput('sb_nopurge') as any, computeTxId(txWithInput('sb_nopurge') as any), 100);
     const removed = purgeExpired(50); // nothing < 50
     expect(removed).toBe(0);
   });
 
   it('removeEntry is a no-op for a non-existent rowid', async () => {
     const { insertUtxoTx, getPendingEntries, removeEntry } = await importMempoolFresh();
-    insertUtxoTx(txWithInput('sb_remove_noop') as any, 100);
+    insertUtxoTx(txWithInput('sb_remove_noop') as any, computeTxId(txWithInput('sb_remove_noop') as any), 100);
     removeEntry(9999); // should not throw
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(1);
@@ -397,7 +400,7 @@ describe('mempool store', () => {
 
   it('createdAt is set on insert', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
-    insertUtxoTx(txWithInput('sb_createdat') as any, 100);
+    insertUtxoTx(txWithInput('sb_createdat') as any, computeTxId(txWithInput('sb_createdat') as any), 100);
     const entries = getPendingEntries(10);
     expect(entries[0].createdAt).toBeTruthy();
     expect(typeof entries[0].createdAt).toBe('string');
@@ -406,7 +409,7 @@ describe('mempool store', () => {
   it('utxo_tx entry carries utxoTxBytes as a Uint8Array', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
     const tx = { inputs: [BOX_99], outputs: [], signatures: {}, protocolVersion: 1 };
-    insertUtxoTx(tx as any, 300);
+    insertUtxoTx(tx as any, computeTxId(tx as any), 300);
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(1);
     expect(entries[0].entryType).toBe('utxo_tx');
@@ -423,8 +426,8 @@ describe('mempool store', () => {
         await importMempoolFresh();
 
       // Bury the like behind the 1000-row bound the old decode-scan used.
-      for (let i = 0; i < 1000; i++) insertUtxoTx(txWithInput(`filler_${i}`) as any, 100);
-      const likeRowid = insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100);
+      for (let i = 0; i < 1000; i++) insertUtxoTx(txWithInput(`filler_${i}`) as any, computeTxId(txWithInput(`filler_${i}`) as any), 100);
+      const likeRowid = insertUtxoTx(likeTx(TARGET, LIKER_A) as any, computeTxId(likeTx(TARGET, LIKER_A) as any), 100);
 
       // Vacuity: the entry really is past the old scan's reach, so this test
       // fails against the fetch-1000-and-decode implementation. Keyed on the
@@ -454,10 +457,10 @@ describe('mempool store', () => {
           new Uint8Array(32).fill(invitee);
         return tx;
       };
-      for (let i = 0; i < 1000; i++) insertUtxoTx(txWithInput(`filler_${i}`) as any, 100);
-      insertUtxoTx(invite(INVITER_A, 0x11) as any, 100);
-      insertUtxoTx(invite(INVITER_A, 0x12) as any, 100);
-      insertUtxoTx(invite(INVITER_B, 0x13) as any, 100);
+      for (let i = 0; i < 1000; i++) insertUtxoTx(txWithInput(`filler_${i}`) as any, computeTxId(txWithInput(`filler_${i}`) as any), 100);
+      insertUtxoTx(invite(INVITER_A, 0x11) as any, computeTxId(invite(INVITER_A, 0x11) as any), 100);
+      insertUtxoTx(invite(INVITER_A, 0x12) as any, computeTxId(invite(INVITER_A, 0x12) as any), 100);
+      insertUtxoTx(invite(INVITER_B, 0x13) as any, computeTxId(invite(INVITER_B, 0x13) as any), 100);
 
       expect(countPendingInvites(INVITER_A)).toBe(2);
       expect(countPendingInvites(INVITER_B)).toBe(1);
@@ -467,7 +470,7 @@ describe('mempool store', () => {
     it('hasPendingVouch is keyed on the (voucher, target) pair', async () => {
       const { insertUtxoTx, hasPendingVouch } = await importMempoolFresh();
 
-      insertUtxoTx(vouchTx(VOUCHER_A, TARGET_ID) as any, 100);
+      insertUtxoTx(vouchTx(VOUCHER_A, TARGET_ID) as any, computeTxId(vouchTx(VOUCHER_A, TARGET_ID) as any), 100);
 
       expect(hasPendingVouch(VOUCHER_A, TARGET_ID)).toBe(true);
       expect(hasPendingVouch(VOUCHER_B, TARGET_ID)).toBe(false);
@@ -476,7 +479,7 @@ describe('mempool store', () => {
 
     it('leaves gate columns null for a tx with no gated outputs', async () => {
       const { insertUtxoTx, getDbRow } = await importMempoolWithRow();
-      insertUtxoTx({ inputs: [], outputs: [], signatures: {}, protocolVersion: 1 } as any, 100);
+      insertUtxoTx({ inputs: [], outputs: [], signatures: {}, protocolVersion: 1 } as any, computeTxId({ inputs: [], outputs: [], signatures: {}, protocolVersion: 1 } as any), 100);
       const row = getDbRow();
       expect(row.like_target).toBeNull();
       expect(row.like_liker).toBeNull();
@@ -487,7 +490,7 @@ describe('mempool store', () => {
 
     it('populates like_target/like_liker from the tx field and the signer (P2-D)', async () => {
       const { insertUtxoTx, getDbRow } = await importMempoolWithRow();
-      insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100);
+      insertUtxoTx(likeTx(TARGET, LIKER_A) as any, computeTxId(likeTx(TARGET, LIKER_A) as any), 100);
       const row = getDbRow();
       expect(row.like_target).toBe(TARGET);
       expect(row.like_liker).toBe(LIKER_A);
@@ -500,7 +503,7 @@ describe('mempool store', () => {
       const { insertUtxoTx, getDbRow, hasPendingLike } = await importMempoolWithRow();
       const tx = likeTx(TARGET, LIKER_A);
       (tx.signatures as Record<string, Uint8Array>)[LIKER_B] = new Uint8Array(64);
-      insertUtxoTx(tx as any, 100);
+      insertUtxoTx(tx as any, computeTxId(tx as any), 100);
       const row = getDbRow();
       expect(row.like_target).toBe(TARGET);
       expect(row.like_liker).toBeNull();
@@ -520,7 +523,12 @@ describe('mempool store', () => {
         outputs: [{ boxType: 'karma', value: 2n,  createdAtBlock: 0,owner: bytes(LIKER_A) }],
         signatures: {},
         protocolVersion: 1,
-      } as any, 100);
+      } as any, computeTxId({
+        inputs: [],
+        outputs: [{ boxType: 'karma', value: 2n,  createdAtBlock: 0,owner: bytes(LIKER_A) }],
+        signatures: {},
+        protocolVersion: 1,
+      } as any), 100);
       const row = getDbRow();
       expect(row.like_target).toBeNull();
       expect(row.like_liker).toBeNull();
@@ -551,12 +559,12 @@ describe('mempool store', () => {
     it('refuses a second pending spend of the same box', async () => {
       const mem = await importMempoolFresh();
 
-      mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000);
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, computeTxId(spendTx([BOX_A]) as any), 1000);
 
-      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000)).toThrow(
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, computeTxId(spendTx([BOX_A]) as any), 1000)).toThrow(
         mem.PendingSpendConflictError,
       );
-      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000)).toThrow(
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, computeTxId(spendTx([BOX_A]) as any), 1000)).toThrow(
         /already spent by a pending/i,
       );
     });
@@ -564,20 +572,20 @@ describe('mempool store', () => {
     it('admits two transactions spending different boxes', async () => {
       const mem = await importMempoolFresh();
 
-      mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000);
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, computeTxId(spendTx([BOX_A]) as any), 1000);
 
-      expect(() => mem.insertUtxoTx(spendTx([BOX_B]) as any, 1000)).not.toThrow();
+      expect(() => mem.insertUtxoTx(spendTx([BOX_B]) as any, computeTxId(spendTx([BOX_B]) as any), 1000)).not.toThrow();
       expect(mem.getPendingEntries(10)).toHaveLength(2);
     });
 
     it('refuses on any shared input, not only the first', async () => {
       const mem = await importMempoolFresh();
 
-      mem.insertUtxoTx(spendTx([BOX_B]) as any, 1000);
+      mem.insertUtxoTx(spendTx([BOX_B]) as any, computeTxId(spendTx([BOX_B]) as any), 1000);
 
       // BOX_A is free; the conflict is on the second input, and the error names
       // the box that actually collided rather than the first one checked.
-      expect(() => mem.insertUtxoTx(spendTx([BOX_A, BOX_B]) as any, 1000)).toThrow(
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A, BOX_B]) as any, computeTxId(spendTx([BOX_A, BOX_B]) as any), 1000)).toThrow(
         new RegExp(BOX_B),
       );
     });
@@ -585,7 +593,7 @@ describe('mempool store', () => {
     it('hasPendingSpend names the conflicting box and is null when there is none', async () => {
       const mem = await importMempoolFresh();
 
-      mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000);
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, computeTxId(spendTx([BOX_A]) as any), 1000);
 
       expect(mem.hasPendingSpend([BOX_A])).toBe(BOX_A);
       expect(mem.hasPendingSpend([BOX_B])).toBeNull();
@@ -638,7 +646,7 @@ describe('mempool store', () => {
       const mem = await importMempoolFresh();
 
       const parent = chainTx([CONFIRMED], [karmaOut(95n), karmaOut(5n)]);
-      mem.insertUtxoTx(parent as never, 1000);
+      mem.insertUtxoTx(parent as never, computeTxId(parent as never), 1000);
       const changeId = await predictedId(parent, 0);
 
       expect(mem.findPendingOutput(changeId)).not.toBeNull();
@@ -650,10 +658,10 @@ describe('mempool store', () => {
       const mem = await importMempoolFresh();
 
       const parent = chainTx([CONFIRMED], [karmaOut(95n)]);
-      mem.insertUtxoTx(parent as never, 1000);
+      mem.insertUtxoTx(parent as never, computeTxId(parent as never), 1000);
       const changeId = await predictedId(parent, 0);
 
-      mem.insertUtxoTx(chainTx([changeId], [karmaOut(90n)]) as never, 1000);
+      mem.insertUtxoTx(chainTx([changeId], [karmaOut(90n)]) as never, computeTxId(chainTx([changeId], [karmaOut(90n)]) as never), 1000);
 
       expect(mem.findPendingOutput(changeId)).not.toBeNull();
       expect(() => mem.getBoxWithPending(changeId)).toThrow(
@@ -679,7 +687,7 @@ describe('mempool store', () => {
 
       expect(mem.getBoxWithPending(confirmed.id)!.id).toBe(confirmed.id);
 
-      mem.insertUtxoTx(chainTx([confirmed.id], [karmaOut(99n)]) as never, 1000);
+      mem.insertUtxoTx(chainTx([confirmed.id], [karmaOut(99n)]) as never, computeTxId(chainTx([confirmed.id], [karmaOut(99n)]) as never), 1000);
 
       expect(() => mem.getBoxWithPending(confirmed.id)).toThrow(
         mem.PendingSpendConflictError,
@@ -706,7 +714,7 @@ describe('mempool store', () => {
         index: 7,
       };
       const parent = chainTx([CONFIRMED], [forged]);
-      mem.insertUtxoTx(parent as never, 1000);
+      mem.insertUtxoTx(parent as never, computeTxId(parent as never), 1000);
 
       expect(mem.findPendingOutput('ff'.repeat(32))).toBeNull();
       const realId = await predictedId(parent, 0);
@@ -737,13 +745,13 @@ describe('mempool store', () => {
       // the credit class stays untouched throughout.
       const mem = await importCapped(6);
 
-      expect(() => mem.insertUtxoTx(txWithInput('sb_1') as any, 100)).not.toThrow();
-      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100)).not.toThrow();
-      expect(() => mem.insertUtxoTx(txWithInput('sb_x') as any, 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(txWithInput('sb_1') as any, computeTxId(txWithInput('sb_1') as any), 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, computeTxId(likeTx(TARGET, LIKER_A) as any), 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(txWithInput('sb_x') as any, computeTxId(txWithInput('sb_x') as any), 100)).not.toThrow();
 
       // At the class cap, each insert path rejects.
-      expect(() => mem.insertUtxoTx(txWithInput('sb_2') as any, 100)).toThrow(mem.MempoolFullError);
-      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_B) as any, 100)).toThrow(
+      expect(() => mem.insertUtxoTx(txWithInput('sb_2') as any, computeTxId(txWithInput('sb_2') as any), 100)).toThrow(mem.MempoolFullError);
+      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_B) as any, computeTxId(likeTx(TARGET, LIKER_B) as any), 100)).toThrow(
         mem.MempoolFullError,
       );
 
@@ -753,15 +761,15 @@ describe('mempool store', () => {
 
       // And the pool is not full — a credit transaction still gets in, so the
       // rejection above was the class's bound and not the pool's.
-      expect(() => mem.insertUtxoTx(creditTxWithInput('c_1') as any, 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(creditTxWithInput('c_1') as any, computeTxId(creditTxWithInput('c_1') as any), 100)).not.toThrow();
       expect(mem.getPendingEntries(100)).toHaveLength(4);
     });
 
     it('names the class that was full, not just the cap', async () => {
       const mem = await importCapped(2);   // one slot each
-      mem.insertUtxoTx(txWithInput('k_1') as any, 100);
+      mem.insertUtxoTx(txWithInput('k_1') as any, computeTxId(txWithInput('k_1') as any), 100);
       try {
-        mem.insertUtxoTx(txWithInput('k_2') as any, 100);
+        mem.insertUtxoTx(txWithInput('k_2') as any, computeTxId(txWithInput('k_2') as any), 100);
         expect.unreachable('the karma class was full');
       } catch (err) {
         expect(err).toBeInstanceOf(mem.MempoolFullError);
@@ -771,19 +779,19 @@ describe('mempool store', () => {
 
     it('accepts again once entries expire — a full class drains itself', async () => {
       const mem = await importCapped(4);   // two karma slots
-      mem.insertUtxoTx(txWithInput('sb_expiring') as any, 10);
-      mem.insertUtxoTx(txWithInput('sb_live') as any, 900);
-      expect(() => mem.insertUtxoTx(txWithInput('sb_blocked') as any, 900)).toThrow(mem.MempoolFullError);
+      mem.insertUtxoTx(txWithInput('sb_expiring') as any, computeTxId(txWithInput('sb_expiring') as any), 10);
+      mem.insertUtxoTx(txWithInput('sb_live') as any, computeTxId(txWithInput('sb_live') as any), 900);
+      expect(() => mem.insertUtxoTx(txWithInput('sb_blocked') as any, computeTxId(txWithInput('sb_blocked') as any), 900)).toThrow(mem.MempoolFullError);
 
       mem.purgeExpired(50);
-      expect(() => mem.insertUtxoTx(txWithInput('sb_after_purge') as any, 900)).not.toThrow();
+      expect(() => mem.insertUtxoTx(txWithInput('sb_after_purge') as any, computeTxId(txWithInput('sb_after_purge') as any), 900)).not.toThrow();
     });
 
     it('bounds a credit flood to its share, leaving the karma class free', async () => {
       const mem = await importCapped(10);   // five credit slots, five karma
       for (let i = 0; i < 20; i++) {
         try {
-          mem.insertUtxoTx(creditTxWithInput(`flood_${i}`) as any, 100);
+          mem.insertUtxoTx(creditTxWithInput(`flood_${i}`) as any, computeTxId(creditTxWithInput(`flood_${i}`) as any), 100);
         } catch {
           // Every arrival bids 0, so none can displace another — the class
           // fills and then refuses, which is what bounds the flood.
@@ -792,8 +800,8 @@ describe('mempool store', () => {
       expect(mem.getPendingEntries(100)).toHaveLength(5);
 
       // The karma class never saw the flood.
-      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100)).not.toThrow();
-      expect(() => mem.insertUtxoTx(txWithInput('after_flood') as any, 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, computeTxId(likeTx(TARGET, LIKER_A) as any), 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(txWithInput('after_flood') as any, computeTxId(txWithInput('after_flood') as any), 100)).not.toThrow();
     });
   });
 
@@ -820,12 +828,12 @@ describe('mempool store', () => {
       const mid = seededCreditTx('mid', 1000n, 500n);        // fee 500
       const mem = await importCappedWithBoxes(4, [rich.box, poor.box, mid.box]);
 
-      mem.insertUtxoTx(rich.tx as any, 100);
-      mem.insertUtxoTx(poor.tx as any, 100);
+      mem.insertUtxoTx(rich.tx as any, computeTxId(rich.tx as any), 100);
+      mem.insertUtxoTx(poor.tx as any, computeTxId(poor.tx as any), 100);
       expect(mem.getPendingEntries(100)).toHaveLength(2);
 
       // Two credit slots are full; `mid` outbids `poor` and takes its place.
-      mem.insertUtxoTx(mid.tx as any, 100);
+      mem.insertUtxoTx(mid.tx as any, computeTxId(mid.tx as any), 100);
       const fees = mem.getPendingEntries(100).map((e: { rowid: number }) => e.rowid);
       expect(fees).toHaveLength(2);
 
@@ -841,9 +849,9 @@ describe('mempool store', () => {
       const low = seededCreditTx('low', 1000n, 999n); // fee 1
       const mem = await importCappedWithBoxes(4, [a.box, b.box, low.box]);
 
-      mem.insertUtxoTx(a.tx as any, 100);
-      mem.insertUtxoTx(b.tx as any, 100);
-      expect(() => mem.insertUtxoTx(low.tx as any, 100)).toThrow(mem.MempoolFullError);
+      mem.insertUtxoTx(a.tx as any, computeTxId(a.tx as any), 100);
+      mem.insertUtxoTx(b.tx as any, computeTxId(b.tx as any), 100);
+      expect(() => mem.insertUtxoTx(low.tx as any, computeTxId(low.tx as any), 100)).toThrow(mem.MempoolFullError);
 
       // Rejected, not admitted-then-evicted: both residents survive.
       expect(mem.getPendingEntries(100)).toHaveLength(2);
@@ -858,13 +866,13 @@ describe('mempool store', () => {
       const cheap = seededCreditTx('cheap', 1000n, 999n); // fee 1
       const mem = await importCappedWithBoxes(4, [rich.box, cheap.box]);
 
-      mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100);
-      mem.insertUtxoTx(txWithInput('post_like') as any, 100);
-      mem.insertUtxoTx(cheap.tx as any, 100);
-      mem.insertUtxoTx(creditTxWithInput('zero_bid') as any, 100);
+      mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, computeTxId(likeTx(TARGET, LIKER_A) as any), 100);
+      mem.insertUtxoTx(txWithInput('post_like') as any, computeTxId(txWithInput('post_like') as any), 100);
+      mem.insertUtxoTx(cheap.tx as any, computeTxId(cheap.tx as any), 100);
+      mem.insertUtxoTx(creditTxWithInput('zero_bid') as any, computeTxId(creditTxWithInput('zero_bid') as any), 100);
 
       // Credit class full at two; the rich arrival displaces a credit entry.
-      mem.insertUtxoTx(rich.tx as any, 100);
+      mem.insertUtxoTx(rich.tx as any, computeTxId(rich.tx as any), 100);
 
       const db = (await import('../../src/store/db.js')).getDb();
       const karma = db.prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NULL')
@@ -883,11 +891,11 @@ describe('mempool store', () => {
       const fat = seededCreditTx('fat', 1000n, 400n, 12);     // fee 600, 12 outputs
       const mem = await importCappedWithBoxes(2, [lean.box, fat.box]);
 
-      mem.insertUtxoTx(fat.tx as any, 100);
+      mem.insertUtxoTx(fat.tx as any, computeTxId(fat.tx as any), 100);
       const db = (await import('../../src/store/db.js')).getDb();
       const fatBytes = (db.prepare('SELECT tx_bytes FROM mempool').get() as { tx_bytes: number }).tx_bytes;
 
-      mem.insertUtxoTx(lean.tx as any, 100);
+      mem.insertUtxoTx(lean.tx as any, computeTxId(lean.tx as any), 100);
       const rows = db.prepare('SELECT tx_fee, tx_bytes FROM mempool').all() as
         Array<{ tx_fee: number; tx_bytes: number }>;
 
@@ -902,7 +910,7 @@ describe('mempool store', () => {
       const resident = seededCreditTx('resident_big', RESIDENT_FEE + 1n, 1n);
       const mem = await importCappedWithBoxes(2, [resident.box]);
 
-      mem.insertUtxoTx(resident.tx as any, 100);
+      mem.insertUtxoTx(resident.tx as any, computeTxId(resident.tx as any), 100);
 
       const db = (await import('../../src/store/db.js')).getDb();
       const stored = db.prepare('SELECT tx_fee FROM mempool WHERE tx_fee IS NOT NULL')
@@ -913,11 +921,11 @@ describe('mempool store', () => {
       const arrival = seededCreditTx('arrival_big', arrivalFee + 1n, 1n);
       (await import('../../src/store/utxo.js')).insertBox(arrival.box as never);
 
-      expect(() => mem.insertUtxoTx(arrival.tx as any, 100)).toThrow(mem.MempoolFullError);
+      expect(() => mem.insertUtxoTx(arrival.tx as any, computeTxId(arrival.tx as any), 100)).toThrow(mem.MempoolFullError);
 
       const arrivalWins = seededCreditTx('arrival_wins', RESIDENT_FEE + 2n, 1n);
       (await import('../../src/store/utxo.js')).insertBox(arrivalWins.box as never);
-      mem.insertUtxoTx(arrivalWins.tx as any, 100);
+      mem.insertUtxoTx(arrivalWins.tx as any, computeTxId(arrivalWins.tx as any), 100);
       expect(mem.getPendingEntries(100)).toHaveLength(1);
       const remaining = db.prepare('SELECT tx_fee FROM mempool WHERE tx_fee IS NOT NULL')
         .safeIntegers().get() as { tx_fee: bigint };
@@ -953,9 +961,9 @@ describe('mempool store', () => {
       mem.setMempoolCap(CAP);
 
       for (let i = 0; i < KARMA_SLOTS; i++) {
-        expect(() => mem.insertUtxoTx(txWithInput(`cap_${i}`) as any, 100)).not.toThrow();
+        expect(() => mem.insertUtxoTx(txWithInput(`cap_${i}`) as any, computeTxId(txWithInput(`cap_${i}`) as any), 100)).not.toThrow();
       }
-      expect(() => mem.insertUtxoTx(txWithInput('cap_over') as any, 100)).toThrow(
+      expect(() => mem.insertUtxoTx(txWithInput('cap_over') as any, computeTxId(txWithInput('cap_over') as any), 100)).toThrow(
         mem.MempoolFullError,
       );
     });
@@ -973,9 +981,9 @@ describe('mempool store', () => {
       expect(() => mem.setMempoolCap(NaN)).toThrow('invalid capacity');
 
       for (let i = 0; i < KARMA_SLOTS; i++) {
-        expect(() => mem.insertUtxoTx(txWithInput(`surv_${i}`) as any, 100)).not.toThrow();
+        expect(() => mem.insertUtxoTx(txWithInput(`surv_${i}`) as any, computeTxId(txWithInput(`surv_${i}`) as any), 100)).not.toThrow();
       }
-      expect(() => mem.insertUtxoTx(txWithInput('surv_over') as any, 100)).toThrow(
+      expect(() => mem.insertUtxoTx(txWithInput('surv_over') as any, computeTxId(txWithInput('surv_over') as any), 100)).toThrow(
         mem.MempoolFullError,
       );
     });
@@ -1026,14 +1034,14 @@ describe('mempool store', () => {
       const mem = await importMempoolFresh();
 
       const { over, at } = await txOverMaxSize();
-      expect(() => mem.insertUtxoTx(over as any, 1000)).toThrow(
+      expect(() => mem.insertUtxoTx(over as any, computeTxId(over as any), 1000)).toThrow(
         (mem as any).TxTooLargeError,
       );
-      expect(() => mem.insertUtxoTx(over as any, 1000)).toThrow(/above the .* limit/i);
+      expect(() => mem.insertUtxoTx(over as any, computeTxId(over as any), 1000)).toThrow(/above the .* limit/i);
 
       expect(mem.getPendingEntries(10)).toHaveLength(0);
 
-      expect(() => mem.insertUtxoTx(at as any, 1000)).not.toThrow();
+      expect(() => mem.insertUtxoTx(at as any, computeTxId(at as any), 1000)).not.toThrow();
       expect(mem.getPendingEntries(10)).toHaveLength(1);
     });
   });
@@ -1085,7 +1093,7 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     const resident = seededCreditTx('cheap_resident_X', 1000n, 990n); // fee 10
     const mem = await importCappedWithBoxes(2, [resident.box]);
 
-    mem.insertUtxoTx(resident.tx as any, 100);
+    mem.insertUtxoTx(resident.tx as any, computeTxId(resident.tx as any), 100);
     const row = (await importDbFresh()).getDb()
       .prepare('SELECT tx_id, tx_fee, tx_bytes FROM mempool').get() as
       { tx_id: string; tx_fee: bigint | number; tx_bytes: number };
@@ -1109,10 +1117,10 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     expect(arrivalFee * residentBytes).toBeGreaterThan(residentFee * arrivalBytes);
 
     // The refusal is the conflict gate's and names the box.
-    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(
+    expect(() => mem.insertUtxoTx(arrival as any, computeTxId(arrival as any), 100)).toThrow(
       mem.PendingSpendConflictError,
     );
-    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(residentInput);
+    expect(() => mem.insertUtxoTx(arrival as any, computeTxId(arrival as any), 100)).toThrow(residentInput);
 
     const residentStill = (await importDbFresh()).getDb()
       .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(row.tx_id);
@@ -1129,8 +1137,8 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     const bystander = seededCreditTx('bystander_X', 1000n, 500n); // fee 500
     const mem = await importCappedWithBoxes(4, [cheapest.box, bystander.box]);
 
-    mem.insertUtxoTx(cheapest.tx as any, 100);
-    mem.insertUtxoTx(bystander.tx as any, 100);
+    mem.insertUtxoTx(cheapest.tx as any, computeTxId(cheapest.tx as any), 100);
+    mem.insertUtxoTx(bystander.tx as any, computeTxId(bystander.tx as any), 100);
     const cheapestInput = (cheapest.tx as any).inputs[0] as string;
     const bystanderInput = (bystander.tx as any).inputs[0] as string;
 
@@ -1154,10 +1162,10 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     const arrivalFee = 900n;
     expect(arrivalFee * cheapestBytes).toBeGreaterThan(cheapestFee * arrivalBytes);
 
-    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(
+    expect(() => mem.insertUtxoTx(arrival as any, computeTxId(arrival as any), 100)).toThrow(
       mem.PendingSpendConflictError,
     );
-    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(bystanderInput);
+    expect(() => mem.insertUtxoTx(arrival as any, computeTxId(arrival as any), 100)).toThrow(bystanderInput);
 
     const cheapestStill = (await importDbFresh()).getDb()
       .prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1').get(cheapestRow.tx_id);
@@ -1195,26 +1203,28 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     // is free again as the pool sees it.
     expect(() => mem.insertUtxoTx({
       inputs: [inputId], outputs: [], signatures: {}, protocolVersion: 1,
-    } as any, 100)).not.toThrow();
+    } as any, computeTxId({
+      inputs: [inputId], outputs: [], signatures: {}, protocolVersion: 1,
+    } as any), 100)).not.toThrow();
   }
 
   it('eviction by the capacity gate takes the entry\'s input and output rows with it', async () => {
     const { mem, utxo, db } = await freshPool(2);
     const resident = seededCreditTx('exit_evict', 1000n, 990n); // fee 10
     utxo.insertBox(resident.box as never);
-    const rowid = mem.insertUtxoTx(resident.tx as any, 100);
+    const rowid = mem.insertUtxoTx(resident.tx as any, computeTxId(resident.tx as any), 100);
     const inputId = (resident.tx as any).inputs[0] as string;
 
     const arrival = seededCreditTx('exit_evict_arrival', 1500n, 600n); // fee 900
     utxo.insertBox(arrival.box as never);
-    mem.insertUtxoTx(arrival.tx as any, 100);
+    mem.insertUtxoTx(arrival.tx as any, computeTxId(arrival.tx as any), 100);
 
     await assertRowsGone(db, rowid, inputId, mem);
   });
 
   it('removeUtxoTxEntry takes the entry\'s input and output rows with it', async () => {
     const { mem, db } = await freshPool(10);
-    const rowid = mem.insertUtxoTx(txWithInput('exit_removeTx') as any, 100);
+    const rowid = mem.insertUtxoTx(txWithInput('exit_removeTx') as any, computeTxId(txWithInput('exit_removeTx') as any), 100);
     const row = db.prepare('SELECT tx_id FROM mempool WHERE rowid = ?').get(rowid) as { tx_id: string };
     const inputId = db.prepare('SELECT box_id FROM mempool_inputs WHERE entry_rowid = ?').get(rowid) as { box_id: string };
 
@@ -1225,7 +1235,7 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
 
   it('purgeExpired takes the entry\'s input and output rows with it', async () => {
     const { mem, db } = await freshPool(10);
-    const rowid = mem.insertUtxoTx(txWithInput('exit_purge') as any, 10);
+    const rowid = mem.insertUtxoTx(txWithInput('exit_purge') as any, computeTxId(txWithInput('exit_purge') as any), 10);
     const inputId = db.prepare('SELECT box_id FROM mempool_inputs WHERE entry_rowid = ?').get(rowid) as { box_id: string };
 
     mem.purgeExpired(50);
@@ -1235,7 +1245,7 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
 
   it('removeEntry takes the entry\'s input and output rows with it', async () => {
     const { mem, db } = await freshPool(10);
-    const rowid = mem.insertUtxoTx(txWithInput('exit_remove') as any, 100);
+    const rowid = mem.insertUtxoTx(txWithInput('exit_remove') as any, computeTxId(txWithInput('exit_remove') as any), 100);
     const inputId = db.prepare('SELECT box_id FROM mempool_inputs WHERE entry_rowid = ?').get(rowid) as { box_id: string };
 
     mem.removeEntry(rowid);
@@ -1253,7 +1263,7 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     const resident = seededCreditTx('cheap_resident_Z', 1000n, 990n); // fee 10
     const mem = await importCappedWithBoxes(2, [resident.box]);
 
-    mem.insertUtxoTx(resident.tx as any, 100);
+    mem.insertUtxoTx(resident.tx as any, computeTxId(resident.tx as any), 100);
     const db = (await importDbFresh()).getDb();
     const residentRow = db.prepare('SELECT tx_id, tx_fee, tx_bytes FROM mempool')
       .get() as { tx_id: string; tx_fee: bigint | number; tx_bytes: number };
@@ -1277,7 +1287,7 @@ describe('insertUtxoTx — the conflict gate before the capacity gate, in one tr
     const arrivalFee = 900n;
     expect(arrivalFee * residentBytes).toBeGreaterThan(residentFee * arrivalBytes);
 
-    expect(() => mem.insertUtxoTx(arrival as any, 100)).toThrow(/boom/);
+    expect(() => mem.insertUtxoTx(arrival as any, computeTxId(arrival as any), 100)).toThrow(/boom/);
 
     const residentStill = db.prepare('SELECT 1 FROM mempool WHERE tx_id = ? LIMIT 1')
       .get(residentRow.tx_id);
@@ -1306,9 +1316,9 @@ describe('the cost estimate', () => {
   it('a row inserted with an estimate carries it to every reader; one inserted without carries NULL', async () => {
     const mem = await import('../../src/store/mempool.js');
     const { tx: credit } = seededCreditTx('estimate_credit', 10_000n, 9_000n);
-    mem.insertUtxoTx(credit as never, 100, 340);
-    mem.insertUtxoTx(txWithInput('estimate_karma') as never, 100, 170);
-    mem.insertUtxoTx(txWithInput('estimate_uncosted') as never, 100);
+    mem.insertUtxoTx(credit as never, computeTxId(credit as never), 100, 340);
+    mem.insertUtxoTx(txWithInput('estimate_karma') as never, computeTxId(txWithInput('estimate_karma') as never), 100, 170);
+    mem.insertUtxoTx(txWithInput('estimate_uncosted') as never, computeTxId(txWithInput('estimate_uncosted') as never), 100);
 
     expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([340, 170, null]);
     expect([...mem.iteratePendingEntries()].map((entry) => entry.costEstimate)).toEqual([340, 170, null]);
@@ -1318,8 +1328,8 @@ describe('the cost estimate', () => {
 
   it('setCostEstimate writes one row\'s estimate and no other\'s', async () => {
     const mem = await import('../../src/store/mempool.js');
-    const first = mem.insertUtxoTx(txWithInput('estimate_first') as never, 100);
-    mem.insertUtxoTx(txWithInput('estimate_second') as never, 100);
+    const first = mem.insertUtxoTx(txWithInput('estimate_first') as never, computeTxId(txWithInput('estimate_first') as never), 100);
+    mem.insertUtxoTx(txWithInput('estimate_second') as never, computeTxId(txWithInput('estimate_second') as never), 100);
 
     mem.setCostEstimate(first, 290);
 
@@ -1347,8 +1357,8 @@ describe('removeUnconfirmed answers the entries it removed', () => {
     const { getDb } = await importDbFresh();
     const db = getDb();
 
-    const gone = mem.insertUtxoTx(txWithInput('rem_gone') as never, 100);
-    const live = mem.insertUtxoTx(txWithInput('rem_live') as never, 100);
+    const gone = mem.insertUtxoTx(txWithInput('rem_gone') as never, computeTxId(txWithInput('rem_gone') as never), 100);
+    const live = mem.insertUtxoTx(txWithInput('rem_live') as never, computeTxId(txWithInput('rem_live') as never), 100);
     (db as any).prepare('DELETE FROM mempool WHERE rowid = ?').run(gone);
 
     expect(mem.removeUnconfirmed([gone, live])).toBe(1);

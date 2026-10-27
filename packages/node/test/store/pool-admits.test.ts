@@ -5,7 +5,9 @@
 // make.
 import { createHash } from 'crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { computeBoxId } from '@dagsocial/types';
+import {computeBoxId,
+  computeTxId,
+} from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 async function importDbFresh() {
@@ -20,7 +22,7 @@ async function importDbFresh() {
 async function importMempoolFresh() {
   const mod = await import('../../src/store/mempool.js');
   return mod as {
-    insertUtxoTx: (tx: any, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: any, txId: string, expiresAtHeight: number) => number;
     assertPoolAdmits: (tx: any) => void;
     getPendingEntries: (limit: number) => any[];
     setMempoolCap: (n: number) => void;
@@ -82,7 +84,7 @@ describe('assertPoolAdmits', () => {
     mem.setMempoolCap(4);
 
     const resident = seededCreditTx('with_room_resident', 10_000n, 100n); // fee 9_900
-    mem.insertUtxoTx(resident.tx as any, 1000);
+    mem.insertUtxoTx(resident.tx as any, computeTxId(resident.tx as any), 1000);
 
     const before = await snapshotPool();
     expect(before.count).toBe(1);
@@ -99,7 +101,7 @@ describe('assertPoolAdmits', () => {
     mem.setMempoolCap(2); // credit cap = 1
 
     const resident = seededCreditTx('fullcred_resident', 1_000n, 900n); // fee 100
-    mem.insertUtxoTx(resident.tx as any, 1000);
+    mem.insertUtxoTx(resident.tx as any, computeTxId(resident.tx as any), 1000);
 
     const before = await snapshotPool();
     expect(before.count).toBe(1);
@@ -118,7 +120,7 @@ describe('assertPoolAdmits', () => {
     mem.setMempoolCap(2); // credit cap = 1
 
     const resident = seededCreditTx('fullcred_resident2', 1_000n, 100n); // fee 900
-    mem.insertUtxoTx(resident.tx as any, 1000);
+    mem.insertUtxoTx(resident.tx as any, computeTxId(resident.tx as any), 1000);
 
     const arrival = seededCreditTx('fullcred_arrival_lower', 1_000n, 999n); // fee 1
     let refusal: unknown;
@@ -136,7 +138,7 @@ describe('assertPoolAdmits', () => {
     mem.setMempoolCap(2); // credit cap = 1
 
     const resident = seededCreditTx('conflict_resident', 1_000n, 100n); // fee 900
-    mem.insertUtxoTx(resident.tx as any, 1000);
+    mem.insertUtxoTx(resident.tx as any, computeTxId(resident.tx as any), 1000);
 
     // A second transaction spending the SAME input box as the resident.
     const share = (resident.box.value as bigint) - 500n;

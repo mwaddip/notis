@@ -403,7 +403,7 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
       const ownB = seedKarma(liker.pub, 10n, 2);
       const deps = admissionDeps();
       const consolidation = buildConsolidate(liker, [ownA, ownB]);
-      admitTx(consolidation, 1000);
+      admitTx(consolidation, computeTxId(consolidation), 1000);
 
       const likeSpent = buildLikeFromInputs(liker, [ownA], postId);
       try {
@@ -428,7 +428,7 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
       const own = seedKarma(liker.pub, KARMA_MINIMUM + LIKE_KARMA_COST, 1);
       const deps = admissionDeps();
       const claim = buildClaim(liker, own, 'Claimed');
-      admitTx(claim, 1000);
+      admitTx(claim, computeTxId(claim), 1000);
 
       const likeSpent = buildLikeFromInputs(liker, [own], postId);
       try {
@@ -455,7 +455,7 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
       // live post since the withdrawal service is not invoked here, only
       // admitTx — which admits the shape.
       const withdrawal = buildWithdrawal(liker, own, postId);
-      admitTx(withdrawal, 1000);
+      admitTx(withdrawal, computeTxId(withdrawal), 1000);
 
       const likeSpent = buildLikeFromInputs(liker, [own], postId);
       try {
@@ -506,7 +506,7 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
       const deps = admissionDeps();
       // A consolidation of the own box and the income box is pooled.
       const consolidation = buildConsolidate(liker, [ownA, income]);
-      admitTx(consolidation, 1000);
+      admitTx(consolidation, computeTxId(consolidation), 1000);
       // A like naming the income box is now in conflict with the pool's
       // input, so admission's conflict gate returns 409.
       const tx = buildLikeFromInputs(liker, [income], postId);

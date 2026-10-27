@@ -6,12 +6,12 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import http from 'http';
 import type { AddressInfo } from 'net';
 import { applyBlock } from '@dagsocial/consensus';
-import {
-  LIKE_KARMA_COST,
+import {LIKE_KARMA_COST,
   MAX_BLOCK_BODY_BYTES,
   PROTOCOL_VERSION,
   computeContentHash,
   profileFor,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -173,7 +173,7 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     // which the spy counts: the control that the arrival's zero-count below
     // is a path read, not a spy that stopped intercepting.
     const first = makeCreditTx(sender, [box], 5_000n);
-    admitTx(first, 1000);
+    admitTx(first, computeTxId(first), 1000);
     expect(getPendingEntries(10)).toHaveLength(1);
     expect(vi.mocked(applyBlock).mock.calls.length).toBe(1);
 
@@ -250,7 +250,7 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     // that the arrival's zero-count below is a path read, not a spy that
     // stopped intercepting.
     const residentLike = buildLike(likerA, karmaA, postIdA);
-    admitTx(residentLike, 1000);
+    admitTx(residentLike, computeTxId(residentLike), 1000);
     expect(getPendingEntries(10)).toHaveLength(1);
     expect(vi.mocked(applyBlock).mock.calls.length).toBe(1);
 
@@ -260,7 +260,7 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
 
     let refusal: unknown;
     try {
-      admitTx(arrivalLike, 1000);
+      admitTx(arrivalLike, computeTxId(arrivalLike), 1000);
     } catch (err) {
       refusal = err;
     }

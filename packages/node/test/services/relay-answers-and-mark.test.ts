@@ -3,7 +3,9 @@
 // Refused headers.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
-import { MAX_BLOCK_BODY_BYTES } from '@dagsocial/types';
+import {MAX_BLOCK_BODY_BYTES,
+  computeTxId,
+} from '@dagsocial/types';
 import type { OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import {
@@ -242,7 +244,7 @@ describe('the relay handler answers whether it admitted the transaction', () => 
     mempool.setMempoolCap(2); // one credit slot
 
     const resident = makeCreditTx(sender, [box], 1n);
-    mempool.insertUtxoTx(resident, 100);
+    mempool.insertUtxoTx(resident, computeTxId(resident), 100);
 
     const before = mempool.getPendingEntries(10);
     expect(before).toHaveLength(1);

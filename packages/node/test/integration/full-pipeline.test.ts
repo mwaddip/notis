@@ -113,7 +113,7 @@ async function importFeedReadPath() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
@@ -344,7 +344,7 @@ describe('full-pipeline', () => {
     // the confirm-and-like-in-one-block shape is test 2 below. Block 1 carries
     // the post transaction alone.
     const mempool = await importMempool();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     expect(await mineNextBlock(bc)).not.toBeNull();
@@ -460,7 +460,7 @@ describe('full-pipeline', () => {
 
     // Insert post transaction into mempool
     const mempool = await importMempool();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     // Cast like via service — the burn shape
     const changeVal = karmaBox.value - LIKE_KARMA_COST;
