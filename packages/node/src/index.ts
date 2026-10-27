@@ -141,7 +141,7 @@ const net = new NetNode(
     outboundRedialCooldownMs: config.outboundRedialCooldownMs,
     penaltyScoreThreshold: config.penaltyScoreThreshold,
     temporalBanDurationMs: config.temporalBanDurationMs,
-    penaltySafeIntervalMs: config.penaltySafeIntervalMs,
+    penaltyDecayIntervalMs: config.penaltyDecayIntervalMs,
     syncRequestTimeoutMs: config.syncRequestTimeoutMs,
   },
   netValidators(),
