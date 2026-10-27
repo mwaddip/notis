@@ -395,7 +395,7 @@ export function corrupted(body) {
   };
 }
 
-/** The rent charge for a credit box, under its creating transaction (NODE_INTERFACE → "The charge is …"). */
+/** The rent charge for a credit box, under its creating transaction (NODE_INTERFACE → Storage rent is a transition requiring no signature). */
 const rentChargeOf = (box) =>
   STORAGE_RENT_PER_BYTE * BigInt(boxRecordBytes(box, box.txId, box.index).length);
 
