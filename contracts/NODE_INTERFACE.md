@@ -1104,8 +1104,7 @@ citation of a `validateTx` step in this repo:
    "Output shape" below). This is the **first step that reads `tx.outputs`**:
    steps 6–9 operate on outputs whose
    structure and field types are already pinned, and may dereference output
-   fields freely. (Step position changed by the field-type pin — the check
-   originally ran last; see the placement note in "Output shape".)
+   fields freely.
 6. No output claims a height the chain has not reached:
    `createdAtBlock <= currentBlockHeight` for every output. **And no output is
    older than the oldest input** — `output.createdAtBlock >= max(input.createdAtBlock)`,
@@ -1690,8 +1689,8 @@ The checks:
 **Call sites (all of them, or the guarantee is path-dependent):**
 
 - `validateTx` **step 0** — ahead of every other read of `tx`.
-- The block funnel, immediately after `decodeTx` (`block-apply.ts`) — the
-  funnel computes `computeTxId(tx)` for its id-equality check BEFORE
+- `applyBlock`'s body decode, immediately after `decodeTx` (`CONSENSUS_INTERFACE → Applying a block`) — it
+  computes `computeTxId(tx)` for its id-equality check BEFORE
   `validateTx` runs, so the gate is what keeps that hash total. Its verdict
   there is **block rejection**, under the proof obligation stated at
   "Embedded transactions" below; it is not a per-tx skip.
