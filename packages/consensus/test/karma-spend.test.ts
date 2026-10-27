@@ -7,6 +7,7 @@ import {
   POST_PRICE_THREAD,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
+  computeTxId,
   profileFor,
 } from '@dagsocial/types';
 import type {
@@ -750,7 +751,7 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
   it('a reply with held=3 owed=1 (remaining=2, spend=3) is refused', () => {
     const k = karma(POST_PRICE_REPLY); // input value must equal the spend's non-karma outputs
     const reply = replyTxFor(k);
-    const result = validateTx(deps({ held: 3n, owed: 1n, boxes: [k] }), reply.tx, H);
+    const result = validateTx(deps({ held: 3n, owed: 1n, boxes: [k] }), reply.tx, computeTxId(reply.tx), H);
     expect(result.valid).toBe(false);
     expect(result.error).toContain(POST_RULE);
   });
@@ -758,14 +759,14 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
   it('a reply with held=3 owed=0 (remaining=3, spend=3) is valid', () => {
     const k = karma(POST_PRICE_REPLY);
     const reply = replyTxFor(k);
-    const result = validateTx(deps({ held: 3n, owed: 0n, boxes: [k] }), reply.tx, H);
+    const result = validateTx(deps({ held: 3n, owed: 0n, boxes: [k] }), reply.tx, computeTxId(reply.tx), H);
     expect(result.valid).toBe(true);
   });
 
   it('a like with held=10 owed=0 (remaining=10, spend=1) is refused — below the floor', () => {
     const k = karma(1n);
     const like = likeTxFor(k);
-    const result = validateTx(deps({ held: 10n, owed: 0n, boxes: [k] }), like.tx, H);
+    const result = validateTx(deps({ held: 10n, owed: 0n, boxes: [k] }), like.tx, computeTxId(like.tx), H);
     expect(result.valid).toBe(false);
     expect(result.error).toContain(FLOOR_RULE);
   });
@@ -773,7 +774,7 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
   it('a like with held=11 owed=0 (remaining=11, spend=1) is valid', () => {
     const k = karma(1n);
     const like = likeTxFor(k);
-    const result = validateTx(deps({ held: 11n, owed: 0n, boxes: [k] }), like.tx, H);
+    const result = validateTx(deps({ held: 11n, owed: 0n, boxes: [k] }), like.tx, computeTxId(like.tx), H);
     expect(result.valid).toBe(true);
   });
 
@@ -782,7 +783,7 @@ describe('validateTx answers from `getKarmaValue` and `getKarmaOwed`', () => {
     const like = likeTxFor(k);
     const spy = vi.fn((_owner: Uint8Array, _height: number) => 0n);
     const d = deps({ held: 11n, owed: 0n, boxes: [k], getKarmaOwed: spy });
-    const result = validateTx(d, like.tx, H);
+    const result = validateTx(d, like.tx, computeTxId(like.tx), H);
     expect(result.valid).toBe(true);
     expect(spy).toHaveBeenCalled();
     const [owner, height] = spy.mock.calls[0]!;

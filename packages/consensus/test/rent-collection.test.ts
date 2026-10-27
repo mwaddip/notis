@@ -163,7 +163,7 @@ describe('validateTx — past-period rent-collection refusals', () => {
       [{ boxType: 'credit', value: 51_000_000n, createdAtBlock: H, owner: attacker.userId } as AnyBoxCandidate],
     );
     signedBy(tx, attacker);
-    expect(validateTx(depsOver([victimBox, attackerBox]), tx, H).valid).toBe(false);
+    expect(validateTx(depsOver([victimBox, attackerBox]), tx, computeTxId(tx), H).valid).toBe(false);
   });
 
   it('two past-period boxes of one owner and one value, unsigned, one successor to another owner → REFUSE', () => {
@@ -179,7 +179,7 @@ describe('validateTx — past-period rent-collection refusals', () => {
         { boxType: 'fee', value: c1 + c2, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    expect(validateTx(depsOver([v1, v2]), tx, H).valid).toBe(false);
+    expect(validateTx(depsOver([v1, v2]), tx, computeTxId(tx), H).valid).toBe(false);
   });
 
   it('an unsigned rent collection with a successor carrying lockedUntilBlock → REFUSE', () => {
@@ -198,7 +198,7 @@ describe('validateTx — past-period rent-collection refusals', () => {
         { boxType: 'fee', value: c, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    expect(validateTx(depsOver([v]), tx, H).valid).toBe(false);
+    expect(validateTx(depsOver([v]), tx, computeTxId(tx), H).valid).toBe(false);
   });
 });
 
@@ -230,28 +230,28 @@ describe('validateTx — the empty-map rent transition', () => {
   it('one past-period input, empty map, exact rent shape → ACCEPT', () => {
     const v = creditBox(victim.userId, 50_000_000n, PAST, 6);
     const tx = makeTx([v], exactRentOutputs([v]));
-    expect(validateTx(depsOver([v]), tx, H)).toMatchObject({ valid: true });
+    expect(validateTx(depsOver([v]), tx, computeTxId(tx), H)).toMatchObject({ valid: true });
   });
 
   it('two past-period inputs of one owner, empty map, exact rent shape → ACCEPT', () => {
     const v1 = creditBox(victim.userId, 50_000_000n, PAST, 7);
     const v2 = creditBox(victim.userId, 60_000_000n, PAST, 8);
     const tx = makeTx([v1, v2], exactRentOutputs([v1, v2]));
-    expect(validateTx(depsOver([v1, v2]), tx, H)).toMatchObject({ valid: true });
+    expect(validateTx(depsOver([v1, v2]), tx, computeTxId(tx), H)).toMatchObject({ valid: true });
   });
 
   it('two past-period inputs of two owners, empty map, exact rent shape (each successor to its own owner) → ACCEPT', () => {
     const v1 = creditBox(victim.userId, 50_000_000n, PAST, 9);
     const v2 = creditBox(stranger.userId, 70_000_000n, PAST, 10);
     const tx = makeTx([v1, v2], exactRentOutputs([v1, v2]));
-    expect(validateTx(depsOver([v1, v2]), tx, H)).toMatchObject({ valid: true });
+    expect(validateTx(depsOver([v1, v2]), tx, computeTxId(tx), H)).toMatchObject({ valid: true });
   });
 
   it('two past-period inputs of one owner and one value, empty map, two successors to that owner → ACCEPT', () => {
     const v1 = creditBox(victim.userId, 50_000_000n, PAST, 11);
     const v2 = creditBox(victim.userId, 50_000_000n, PAST, 12);
     const tx = makeTx([v1, v2], exactRentOutputs([v1, v2]));
-    expect(validateTx(depsOver([v1, v2]), tx, H)).toMatchObject({ valid: true });
+    expect(validateTx(depsOver([v1, v2]), tx, computeTxId(tx), H)).toMatchObject({ valid: true });
   });
 
   it('one past-period input whose value is below its charge is consumed whole; empty map, FeeBox only → ACCEPT', () => {
@@ -265,7 +265,7 @@ describe('validateTx — the empty-map rent transition', () => {
       [underfunded],
       [{ boxType: 'fee', value: underfunded.value, createdAtBlock: H } as AnyBoxCandidate],
     );
-    expect(validateTx(depsOver([underfunded]), tx, H)).toMatchObject({ valid: true });
+    expect(validateTx(depsOver([underfunded]), tx, computeTxId(tx), H)).toMatchObject({ valid: true });
   });
 
   it('empty map, two past-period inputs, one successor short → REFUSE', () => {
@@ -282,7 +282,7 @@ describe('validateTx — the empty-map rent transition', () => {
         { boxType: 'fee', value: (v2.value - c2) + c1 + c2, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    expect(validateTx(depsOver([v1, v2]), tx, H).valid).toBe(false);
+    expect(validateTx(depsOver([v1, v2]), tx, computeTxId(tx), H).valid).toBe(false);
   });
 
   it('empty map, two past-period inputs, one successor over → REFUSE', () => {
@@ -300,7 +300,7 @@ describe('validateTx — the empty-map rent transition', () => {
         { boxType: 'fee', value: c1 + c2 - 1n, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    expect(validateTx(depsOver([v1, v2]), tx, H).valid).toBe(false);
+    expect(validateTx(depsOver([v1, v2]), tx, computeTxId(tx), H).valid).toBe(false);
   });
 
   it('empty map, past-period input, FeeBox off by one → REFUSE', () => {
@@ -313,7 +313,7 @@ describe('validateTx — the empty-map rent transition', () => {
         { boxType: 'fee', value: c - 1n, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    expect(validateTx(depsOver([v]), tx, H).valid).toBe(false);
+    expect(validateTx(depsOver([v]), tx, computeTxId(tx), H).valid).toBe(false);
   });
 
   it('empty map + one past + one fresh → REFUSE at auth with the fresh input\'s owner-signature refusal', () => {
@@ -332,7 +332,7 @@ describe('validateTx — the empty-map rent transition', () => {
         { boxType: 'fee', value: cp + cf, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    const r = validateTx(depsOver([past, fresh]), tx, H);
+    const r = validateTx(depsOver([past, fresh]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain(`Missing or invalid owner signature for box ${fresh.id}`);
   });
@@ -343,7 +343,7 @@ describe('validateTx — the empty-map rent transition', () => {
       [v],
       [{ boxType: 'credit', value: v.value, createdAtBlock: H, owner: stranger.userId } as AnyBoxCandidate],
     );
-    const r = validateTx(depsOver([v]), tx, H);
+    const r = validateTx(depsOver([v]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('Rent: credit outputs do not match');
   });
@@ -360,7 +360,7 @@ describe('validateTx — the empty-map rent transition', () => {
         { boxType: 'fee', value: fee, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    const r = validateTx(depsOver([v]), tx, H);
+    const r = validateTx(depsOver([v]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('Rent: credit outputs do not match');
   });
@@ -375,7 +375,7 @@ describe('validateTx — the empty-map rent transition', () => {
         { boxType: 'fee', value: c, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    const r = validateTx(depsOver([v]), tx, H);
+    const r = validateTx(depsOver([v]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('Rent: credit outputs do not match');
   });
@@ -392,7 +392,7 @@ describe('validateTx — the empty-map rent transition', () => {
         { boxType: 'fee', value: c, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    const r = validateTx(depsOver([v]), tx, H);
+    const r = validateTx(depsOver([v]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain(`must equal height ${H}`);
   });
@@ -411,7 +411,7 @@ describe('validateTx — the empty-map rent transition', () => {
         { boxType: 'fee', value: 10_000_000n, createdAtBlock: H } as AnyBoxCandidate,
       ],
     );
-    const r = validateTx(depsOver([belowCharge]), tx, H);
+    const r = validateTx(depsOver([belowCharge]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('Rent: credit outputs do not match');
   });
@@ -425,7 +425,7 @@ describe('validateTx — the empty-map rent transition', () => {
       [fresh],
       [{ boxType: 'credit', value: 50_000_000n, createdAtBlock: H, owner: stranger.userId } as AnyBoxCandidate],
     );
-    const r = validateTx(depsOver([fresh]), tx, H);
+    const r = validateTx(depsOver([fresh]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain(`Missing or invalid owner signature for box ${fresh.id}`);
   });
@@ -435,7 +435,7 @@ describe('validateTx — the empty-map rent transition', () => {
     // map still refuses at auth: the signer answers the owner.
     const fresh = creditBox(victim.userId, 50_000_000n, FRESH, 41);
     const tx = makeTx([fresh], exactRentOutputs([fresh]));
-    const r = validateTx(depsOver([fresh]), tx, H);
+    const r = validateTx(depsOver([fresh]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain(`Missing or invalid owner signature for box ${fresh.id}`);
   });
@@ -453,7 +453,7 @@ describe('validateTx — a non-empty map is an ordinary credit transfer', () => 
       ],
     );
     signedBy(tx, victim);
-    expect(validateTx(depsOver([v]), tx, H)).toMatchObject({ valid: true });
+    expect(validateTx(depsOver([v]), tx, computeTxId(tx), H)).toMatchObject({ valid: true });
   });
 
   it('owner-signed past-period input, outputs happen to be the rent shape → ACCEPT (ordinary transfer)', () => {
@@ -463,7 +463,7 @@ describe('validateTx — a non-empty map is an ordinary credit transfer', () => 
     const v = creditBox(victim.userId, 50_000_000n, PAST, 22);
     const tx = makeTx([v], exactRentOutputs([v]));
     signedBy(tx, victim);
-    expect(validateTx(depsOver([v]), tx, H)).toMatchObject({ valid: true });
+    expect(validateTx(depsOver([v]), tx, computeTxId(tx), H)).toMatchObject({ valid: true });
   });
 
   it('owner-signed FRESH input, ordinary transfer → ACCEPT', () => {
@@ -473,7 +473,7 @@ describe('validateTx — a non-empty map is an ordinary credit transfer', () => 
       [{ boxType: 'credit', value: 50_000_000n, createdAtBlock: H, owner: stranger.userId } as AnyBoxCandidate],
     );
     signedBy(tx, victim);
-    expect(validateTx(depsOver([fresh]), tx, H)).toMatchObject({ valid: true });
+    expect(validateTx(depsOver([fresh]), tx, computeTxId(tx), H)).toMatchObject({ valid: true });
   });
 
   it('non-empty map, mixed past+fresh of two owners, both signed → ACCEPT', () => {
@@ -484,7 +484,7 @@ describe('validateTx — a non-empty map is an ordinary credit transfer', () => 
       [{ boxType: 'credit', value: 60_000_000n, createdAtBlock: H, owner: stranger.userId } as AnyBoxCandidate],
     );
     signedBy(tx, victim, attacker);
-    expect(validateTx(depsOver([past, fresh]), tx, H)).toMatchObject({ valid: true });
+    expect(validateTx(depsOver([past, fresh]), tx, computeTxId(tx), H)).toMatchObject({ valid: true });
   });
 
   it('non-empty map but a required owner\'s signature is missing → REFUSE at auth', () => {
@@ -499,7 +499,7 @@ describe('validateTx — a non-empty map is an ordinary credit transfer', () => 
       [{ boxType: 'credit', value: 51_000_000n, createdAtBlock: H, owner: attacker.userId } as AnyBoxCandidate],
     );
     signedBy(tx, attacker);
-    const r = validateTx(depsOver([victimBox, attackerBox]), tx, H);
+    const r = validateTx(depsOver([victimBox, attackerBox]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain(`Missing or invalid owner signature for box ${victimBox.id}`);
   });
@@ -511,7 +511,7 @@ describe('validateTx — a non-empty map is an ordinary credit transfer', () => 
       [{ boxType: 'credit', value: v.value, createdAtBlock: H, owner: victim.userId } as AnyBoxCandidate],
     );
     signedBy(tx, stranger);
-    const r = validateTx(depsOver([v]), tx, H);
+    const r = validateTx(depsOver([v]), tx, computeTxId(tx), H);
     // Non-empty map puts each input on OWNER_SIGNATURE. Victim's signature is
     // absent, so the input refuses with its rule's text before the unrequired
     // key is reached.
@@ -529,7 +529,7 @@ describe('validateTx — a non-empty map is an ordinary credit transfer', () => 
       ],
     );
     signedBy(tx, victim, stranger);
-    const r = validateTx(depsOver([v]), tx, H);
+    const r = validateTx(depsOver([v]), tx, computeTxId(tx), H);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('Signature map carries unrequired key');
   });

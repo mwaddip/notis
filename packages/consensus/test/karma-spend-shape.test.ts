@@ -9,6 +9,7 @@ import {
   REPLY_AUTHOR_SHARE,
   USERNAME_BURN_PRICE,
   VOUCH_KARMA_AMOUNT,
+  computeTxId,
   profileFor,
 } from '@dagsocial/types';
 import type { AnyBox, AnyBoxCandidate, KarmaBox, UsernameBox } from '@dagsocial/types';
@@ -548,7 +549,7 @@ describe('rule 3 — validateTx reads the reader on every answered id', () => {
     const [b1, b2] = [makeBox(5n, 1), makeBox(7n, 2)];
     const consol = consolidateTx(actor, [b1], H);
     const deps = stubDeps({ boxes: [b1, b2], ownIds: [b1.id!, b2.id!] });
-    const result = validateTx(deps, consol.tx, H);
+    const result = validateTx(deps, consol.tx, computeTxId(consol.tx), H);
     expect(result.valid).toBe(false);
   });
 
@@ -556,7 +557,7 @@ describe('rule 3 — validateTx reads the reader on every answered id', () => {
     const [b1, b2] = [makeBox(5n, 1), makeBox(7n, 2)];
     const consol = consolidateTx(actor, [b1, b2], H);
     const deps = stubDeps({ boxes: [b1, b2], ownIds: [b1.id!, b2.id!] });
-    const result = validateTx(deps, consol.tx, H);
+    const result = validateTx(deps, consol.tx, computeTxId(consol.tx), H);
     expect(result.valid).toBe(true);
   });
 });

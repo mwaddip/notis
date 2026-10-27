@@ -2,7 +2,6 @@ import {
   BOX_VALUE_BOUND,
   boxRecordBytes,
   computeBoxId,
-  computeTxId,
   LIKE_KARMA_COST,
   MIN_BOX_VALUE_PER_BYTE,
   POST_PRICE_THREAD,
@@ -25,12 +24,9 @@ import {
 import { isCreditSideTx } from './coinbase-split.js';
 import type { DecayCfg, UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
 
-// `computeTxId` has exactly one implementation and it is types'. This engine
-// must never grow a local copy: the id it returns is both the hash
-// `checkAuthorization` verifies signatures against and the `txId` every output
-// is materialized under,
-// so a second hasher is a divergence surface that agrees only by coincidence —
-// same `Encoder` options, same strip rule, same domain tag, all by hand
+// NODE_INTERFACE → validateTx. The engine never hashes a transaction: the id
+// each rule reads is `validateTx`'s `txId` parameter, taken from its caller,
+// so a second hasher is a divergence surface this file does not open
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
 import { verifyEd25519, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyTxProtocolVersion } from '@dagsocial/validation';
@@ -2263,13 +2259,16 @@ function authorizationTable(
  */
 function checkAuthorization(
   tx: UtxoTransaction,
+  txId: string,
   inputBoxes: AnyBox[],
   currentBlockHeight: number,
   storageRentPeriodBlocks: number,
   verifySignature: UtxoEngineDeps['verifySignature'],
 ): UtxoResult {
   const AUTHORIZATION = authorizationTable(storageRentPeriodBlocks);
-  const txHash = hexToBytes(computeTxId(tx));
+  // `txId` is the caller's (NODE_INTERFACE → validateTx); the signature batch
+  // reads its 32 bytes against each required signer.
+  const txHash = hexToBytes(txId);
   const requiredKeys = new Set<string>();
 
   for (const box of inputBoxes) {
@@ -2363,6 +2362,7 @@ function checkAuthorization(
 export function validateTx(
   deps: UtxoEngineDeps,
   tx: UtxoTransaction,
+  txId: string,
   currentBlockHeight: number,
 ): UtxoResult {
   // ---- 0. Transaction envelope shape ----
@@ -2433,9 +2433,8 @@ export function validateTx(
   const shapeCheck = checkOutputShape(tx.outputs);
   if (!shapeCheck.valid) return shapeCheck;
 
-  // Computed once ahead of step 6 (the credit floor reads it) and reused at
-  // the end for output materialization.
-  const txId = computeTxId(tx);
+  // `txId` is the caller's (NODE_INTERFACE → validateTx); the credit floor at
+  // step 6 reads it, and output materialization at the end carries it.
 
   // ---- 6. Height bounds and credit floor ----
   // TYPES_INTERFACE → Monotonic creation height: no output may predate its
@@ -2495,6 +2494,7 @@ export function validateTx(
   // from the input type and the output count; step 9 pins the rest of the shape.
   const authCheck = checkAuthorization(
     tx,
+    txId,
     inputBoxes,
     currentBlockHeight,
     deps.storageRentPeriodBlocks,

@@ -268,8 +268,11 @@ export function applyQueuedTx(
 
   // Every input resolves — full re-validation. A tx that lists the same
   // input twice is refused by validateTx step 1 (duplicate input ids),
-  // before any liveness read.
-  const revalidated = validateTx(utxoDeps, item.tx, height);
+  // before any liveness read. The declared id is handed in — the engine
+  // calls `computeTxId` on no body entry
+  // (CONSENSUS_INTERFACE → Applying a block → "A transaction's id is hashed
+  // once, where its bytes are proven").
+  const revalidated = validateTx(utxoDeps, item.tx, item.txId, height);
   if (!revalidated.valid) {
     return {
       ok: false,

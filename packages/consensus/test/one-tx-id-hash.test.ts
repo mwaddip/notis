@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { computeTxId, profileFor } from '@dagsocial/types';
-import type { CreditBox } from '@dagsocial/types';
-import { applyBlock } from '@dagsocial/consensus';
+import type { AnyBox, CreditBox } from '@dagsocial/types';
+import { applyBlock, validateTx } from '@dagsocial/consensus';
+import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import {
   MemoryStateView,
   applyContextFor,
@@ -71,10 +72,44 @@ function viewOf(): { view: MemoryStateView; ca: CreditBox; cb: CreditBox } {
   return { view, ca, cb };
 }
 
+/** Engine deps over a fixed set of live boxes; the credit arm reads nothing else. */
+function depsOver(boxes: AnyBox[]): UtxoEngineDeps {
+  const live = new Map(boxes.map((b) => [b.id!, b]));
+  const unread = (member: string) => (): never => {
+    throw new Error(`a one-id-hash case reads no ${member}`);
+  };
+  return {
+    getBox: (id) => live.get(id) ?? null,
+    insertBox: unread('insertBox'),
+    consumeBox: unread('consumeBox'),
+    getKarmaValue: unread('getKarmaValue'),
+    getKarmaOwed: unread('getKarmaOwed'),
+    getOwnKarmaBoxIds: () => [],
+    getIdentityRecord: unread('getIdentityRecord'),
+    hasActiveVouchEscrow: unread('hasActiveVouchEscrow'),
+    vouchCooldownBlocks: CTX.vouchCooldownBlocks,
+    getTopologyAuthor: unread('getTopologyAuthor'),
+    getPendingPostAuthor: unread('getPendingPostAuthor'),
+    runInTransaction: unread('runInTransaction'),
+    inviteBondMin: CTX.inviteBondMin,
+    inviteBondMax: CTX.inviteBondMax,
+    decayCfg: CTX.decayCfg,
+    storageRentPeriodBlocks: CTX.storageRentPeriodBlocks,
+    getBoxProvenance: unread('getBoxProvenance'),
+    getVouchBox: unread('getVouchBox'),
+    getNetworkRecord: unread('getNetworkRecord'),
+    membershipBarMultiplier: CTX.membershipBarMultiplier,
+    putIdentityRecord: unread('putIdentityRecord'),
+    protocolVersionSchedule: CTX.protocolVersionSchedule,
+    getUsername: unread('getUsername'),
+    getUsernameByOwner: unread('getUsernameByOwner'),
+  };
+}
+
 describe('applyBlock hashes each body entry once', () => {
   beforeEach(() => resetTxIdCount());
 
-  it.fails('a block of 2 user transactions and its settlement makes 3 calls under applyBlock', () => {
+  it('a block of 2 user transactions and its settlement makes 3 calls under applyBlock', () => {
     const { view, ca, cb } = viewOf();
     const height = 1;
     const txs = [
@@ -91,5 +126,29 @@ describe('applyBlock hashes each body entry once', () => {
     const result = applyBlock(view, block, CTX);
     expect(result.ok).toBe(true);
     expect(readTxIdCount()).toBe(txs.length + 1);
+  });
+});
+
+describe('validateTx hashes the transaction no further times', () => {
+  beforeEach(() => resetTxIdCount());
+
+  it('a valid credit send through validateTx adds no further computeTxId calls', () => {
+    const height = 1;
+    const ca = seedProvenance<CreditBox>(
+      { boxType: 'credit', value: 100n * CREDIT, createdAtBlock: 0, owner: sa.userId },
+      0,
+      1,
+    );
+    const built = creditSendTx(sa, ca, 10n * CREDIT, rcpt.userId, CREDIT, height);
+    const deps = depsOver([ca]);
+
+    resetTxIdCount();
+    const txId = computeTxId(built.tx);
+    expect(readTxIdCount()).toBe(1);
+    resetTxIdCount();
+
+    const result = validateTx(deps, built.tx, txId, height);
+    expect(result.valid).toBe(true);
+    expect(readTxIdCount()).toBe(0);
   });
 });

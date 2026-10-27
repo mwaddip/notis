@@ -3,6 +3,7 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   bytesToHex,
+  computeTxId,
   profileFor,
 } from '@dagsocial/types';
 import type { AnyBox, IdentityRecord, KarmaBox } from '@dagsocial/types';
@@ -100,7 +101,7 @@ function runInvite(inviterRecord: IdentityRecord | null, memberCount = 1): {
   const input = karmaBox(inviter.userId, 500n, 0, H);
   const { deps, log } = stubDeps({ input, inviterRecord, memberCount });
   const tx = inviteTx(inviter, input, invitee, FIXTURE_BOND_KARMA, H);
-  return { result: validateTx(deps, tx.tx, H), log };
+  return { result: validateTx(deps, tx.tx, computeTxId(tx.tx), H), log };
 }
 
 describe('the invite arm reads the identity record first, and the network record only for a member', () => {
