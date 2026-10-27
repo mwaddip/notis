@@ -2179,8 +2179,8 @@ to differ too (an invite is always `0`), but nothing may rely on that.
 field's **domain**, not its TypeScript type — `Uint8Array` is equally the type of a
 fixed-32 field and a 0-or-32 one, so the type cannot settle the width. **Check the
 producers before pinning a width.** The cost of over-pinning is not a fixture
-problem: `writeBytesNOrThrow` throws on zero-length input, and `computeTxId` runs
-inside `validateTx`, so an over-pinned row is a live throw on every producer of
+problem: `writeBytesNOrThrow` throws on zero-length input, and `computeTxId` hashes
+every transaction a node admits or applies, so an over-pinned row is a live throw on every producer of
 that box.
 
 ⚠ **A search for `bytes0or32` cannot find every instance of this defect**, and the

@@ -83,6 +83,13 @@ block, `applyTx`, the post's activity bump, the like record, the name claim or b
 chain first (`NODE_INTERFACE → Ordering block apply-time authorization`), and the creator's speculative run passes a
 candidate whose nonce, signature and `stateRoot` are placeholders (`NODE_INTERFACE → Post-block stateRoot`).
 
+**A transaction's id is hashed once, where its bytes are proven.** Each embedded transaction's declared id is held to
+`computeTxId` of its decoded bytes, and that id — never a second hash — is what the signature batch's message, the
+loop's `validateTx` (`NODE_INTERFACE → validateTx`) and the outputs' box ids read.
+
+> ⚠ **AHEAD OF CODE (2026-10-27).** The loop's id leads `apply-block.ts`' `applyQueuedTx`, whose `validateTx` call
+> passes no id, so the engine hashes the transaction twice more.
+
 **The owed-decay capture reads the record of every identity the body touches** — one the body leaves with no karma
 box among them, which the decay plans pass over: its posts are judged against `owed` as any other spend is. Only a
 post's author can be left with none (`NODE_INTERFACE → Karma transition rules`, "Only a post spends the floor"), and
@@ -473,12 +480,20 @@ the same list — one list, so the store, the journal and the tree's writes cann
 
 ## The settlement build
 
-**`buildBlockSettlement(view, txBytes, height, validatorId, minerOwner, ctx)` is the producer's settlement** for a body
+**`buildBlockSettlement(view, body, height, validatorId, minerOwner, ctx)` is the producer's settlement** for a body
 of user transactions (`MINING_INTERFACE → Template and submit`): read through `StateView` over pre-body state, the
-body's own outputs resolved from the body. **It shares every derivation with `applyBlock`** — decay's projection
-(`collectPostBodyKarma`), the settlement's read wiring (`settlementDepsWith`), the reward (`computeBlockReward`) — so
-producer and applier derive from one implementation, and a settlement the build gets wrong is the speculative run's
-`body-rejected` (`NODE_INTERFACE → Post-block stateRoot`), never a mined block.
+body's own outputs resolved from the body. **`body` is the user transactions as `{ txId, txBytes }` pairs, each id
+`computeTxId` of its bytes as the caller holds it** — the pool row's, or the id admission computed (`MEMPOOL_INTERFACE
+→ The cost gate`): the build decodes each body and hashes none, its outputs materialized under the id it is handed. A
+pair whose id its bytes do not produce builds a candidate `applyBlock` refuses at its declared-id check (→ Applying a
+block), so the producer's speculative run catches it before any block is mined. **It shares every derivation with
+`applyBlock`** — decay's projection (`collectPostBodyKarma`), the settlement's read wiring (`settlementDepsWith`), the
+reward (`computeBlockReward`) — so producer and applier derive from one implementation, and a settlement the build
+gets wrong is the speculative run's `body-rejected` (`NODE_INTERFACE → Post-block stateRoot`), never a mined block.
+
+> ⚠ **AHEAD OF CODE (2026-10-27).** The pairs lead `settlement.ts`, whose `buildBlockSettlement` takes the bodies' bytes
+> alone and hashes each, and its callers: node's `block-creator.ts` and `cost-estimate.ts`, and this package's
+> `scripts/bench-bodies.mjs`.
 
 **The lapse list is one function's answer on both sides.** `lapseLegOf(captured, spent)` answers the view's
 `getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK)` over pre-body state, in its order, less every vouch whose id is

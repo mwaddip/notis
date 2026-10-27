@@ -76,8 +76,8 @@ the `entry_rowid` indexes are what the cascade and a per-entry read find them by
 pending view asked by owner is a range of the owner index, and decodes the entries of the rows a page answers and no
 other (→ getBoxesPageWithPending).
 
-**`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
-no additional hash. It exists because cleanup has to find an entry *by transaction identity* when a
+**`tx_id` is written at insert from the id `insertUtxoTx` is handed** (→ insertUtxoTx), so it costs
+no hash of its own. It exists because cleanup has to find an entry *by transaction identity* when a
 peer's block confirms it, and a scan that recomputes the id per candidate is the cost measured under
 *Confirmed-entry cleanup* below. The index is **partial** — a row without a `tx_id` is not indexed.
 
@@ -143,8 +143,16 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 ### insertUtxoTx
 
 ```
-insertUtxoTx(tx: UtxoTransaction, expiresAtHeight: number, costEstimate?: number | null): number
+insertUtxoTx(tx: UtxoTransaction, txId: TxId, expiresAtHeight: number, costEstimate?: number | null): number
 ```
+
+**`txId` is `computeTxId(tx)` as its caller computed it, and the pool hashes nothing.** Admission hands the id it
+looked the pool up by (→ getHeldEntry); a switch's re-insertion hands the id the reverted block declared, which its
+application held to the bytes. The row is keyed by it and its outputs' box ids derive from it (→ Schema).
+
+> ⚠ **AHEAD OF CODE (2026-10-27).** The `txId` parameter leads node's `store/mempool.ts`, whose
+> `insertUtxoTx(tx, expiresAtHeight, costEstimate?)` computes the id, and its callers `admit-tx.ts`' `admitTx` and
+> `fork-resolution.ts`' re-insertion.
 
 Encodes the UTXO transaction (`encodeTx`) and inserts a `utxo_tx` entry, populating
 the gate-metadata columns from the transaction's outputs (see above). Returns
@@ -291,6 +299,14 @@ every template until it expired. **The run reads two karma boxes per owner at mo
 the gate. A transaction that fits alone may still be
 trimmed from a full block: that is packing (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), not
 admission.
+
+**The candidate carries the id admission computed.** Its body declares it, the settlement build reads it
+(`CONSENSUS_INTERFACE → The settlement build`), and `applyBlock` holds it to the transaction's bytes as it holds any
+block's (`CONSENSUS_INTERFACE → Applying a block`) — so the gate hashes the transaction once, in that check.
+
+> ⚠ **AHEAD OF CODE (2026-10-27).** The candidate's id leads node's `cost-estimate.ts`, whose `costAlone(tx, site)`
+> computes the id for the body and whose settlement build hashes it again, and its callers `admit-tx.ts` and
+> `block-creator.ts`.
 
 **The gate keeps what it measured.** A row carries the transaction's **marginal cost** as `cost_estimate` — its
 single-transaction block's cost less the empty block's at the same tip, the empty block's computed once a tip — the
@@ -716,7 +732,7 @@ like every other transaction.
 Inbound relay handlers insert into the mempool rather than applying state:
 
 - **`onTx(tx)`**: `getHeldEntry` → `validateTx` (read-only) → `admitTx`, its correctness gates (→ Correctness gates)
-  as every route's → `insertUtxoTx(tx, expiresAtHeight)`. **A transaction the pool holds answers `false` at the
+  as every route's → `insertUtxoTx(tx, txId, expiresAtHeight)`. **A transaction the pool holds answers `false` at the
   lookup** — not admitted, so not forwarded — and logs nothing: a copy of a pooled transaction arriving again is
   ordinary gossip (→ getHeldEntry).
   There is no sub-block relay handler — a post arrives as a transaction through

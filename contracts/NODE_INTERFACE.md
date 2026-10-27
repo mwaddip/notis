@@ -465,7 +465,7 @@ schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COS
    would be zero), plus exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose
    `author` is the target's author and not the liker — and the transaction **conserves**. There is
    no deficit.
-5. Insert into mempool: `insertUtxoTx(tx, expiresAtHeight)` (gate metadata
+5. Insert into mempool: `insertUtxoTx(tx, txId, expiresAtHeight)` (gate metadata
    `like_target`/`like_liker` from `likeTarget` + the signer)
 6. Return `{ status: "pending", txId, expiresAtHeight }`
 
@@ -526,7 +526,7 @@ and the block's settlement grants the invitee the bond's value from the pool.
    pending bond names, and a member's bond its pending bonds leave no invite for
 3. Build the transaction: karma box → karma box (`balance − bond`) + **`BondBox`
    only**
-4. `insertUtxoTx(tx, expiresAtHeight)`; return the one box id
+4. `insertUtxoTx(tx, txId, expiresAtHeight)`; return the one box id
 
 Block application writes `invitedAtBlock` at the grant, which starts the
 probation clock — and, when the inviter is a root, the invitee's membership
@@ -1066,8 +1066,19 @@ conservation is checked over face values. The engine is split into three functio
 ### validateTx
 
 ```
-validateTx(deps, tx: UtxoTransaction, currentBlockHeight: number): UtxoResult
+validateTx(deps, tx: UtxoTransaction, txId: TxId, currentBlockHeight: number): UtxoResult
 ```
+
+**`txId` is `computeTxId(tx)` as the caller computed it, and `validateTx` hashes nothing itself.** Block application
+passes the id the block declares, which it has just held to `computeTxId` of the decoded bytes (`CONSENSUS_INTERFACE →
+Applying a block`); admission passes the id it computed for the pool's lookup (`MEMPOOL_INTERFACE → "A transaction the
+pool holds is answered as held, before anything reads state"`). Step 8's signatures are checked over that id and the
+outputs materialize under it — one hash a transaction, read at every use.
+
+> ⚠ **AHEAD OF CODE (2026-10-27).** The `txId` parameter leads consensus' `utxo-engine.ts`, whose
+> `validateTx(deps, tx, currentBlockHeight)` computes the id at step 6 and again in `checkAuthorization`, and its
+> callers: `apply-block.ts`' loop, and node's `admit-tx.ts`, `handle-tx.ts`, `post-service.ts` and the closures
+> `server.ts` and the services hand them.
 
 **`currentBlockHeight` is the height of the block the transaction is judged for** — at admission
 `tip + 1`, the block that would carry it; at block application the block's own height. Every rule keyed
@@ -4094,7 +4105,7 @@ one write feeds both, so the two cannot disagree.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `insertUtxoTx(tx, expiresAtHeight)` | `(UtxoTransaction, number) => number` | Queue UTXO tx, returns rowid |
+| `insertUtxoTx(tx, txId, expiresAtHeight)` | `(UtxoTransaction, TxId, number) => number` | Queue UTXO tx under the id its caller computed, returns rowid |
 | `getPendingEntries(limit)` | `(number) => PoolEntry[]` | FIFO-ordered pending entries |
 | `getBoxWithPending(boxId)` | `(string) => AnyBox \| null` | The pending view — confirmed ∪ pending outputs − pending inputs, three point reads on the pool's input and output tables and the confirmed set; submission's `getBox`, never block application's (MEMPOOL_INTERFACE → getBoxWithPending; → Block finalization) |
 | `getBoxesPageWithPending(owner, boxType, page)` | `(Uint8Array, 'karma' \| 'credit', Page<BoxKey>) => { rows: (KarmaBox \| CreditBox)[], next: BoxKey \| null, count: number }` | The same view asked by owner, one page in `value DESC, id` strictly after `after`: the owner's confirmed boxes of that type no pooled entry spends, beside the pooled outputs of that type to the owner no pooled entry spends — the listings' `pending=1` (→ UTXO queries; MEMPOOL_INTERFACE → getBoxesPageWithPending) |
