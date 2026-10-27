@@ -169,15 +169,36 @@ describe('buildBlockSettlement reads its ids from the caller', () => {
       creditSendTx(sa, ca, 10n * CREDIT, rcpt.userId, CREDIT, height),
       creditSendTx(sb, cb, 10n * CREDIT, rcpt.userId, CREDIT, height),
     ];
-    const block = candidateBlock(view, height, txs, miner.userId, CTX);
-
-    // Count the standalone build alone: the body as id/bytes pairs is handed
-    // in; the settlement's fee-leg reads each tx's FeeBox output.
-    resetTxIdCount();
     const body = txs.map((b) => ({ txId: b.txId, txBytes: encodeTx(b.tx) }));
+
+    // Count the build alone: the body as id/bytes pairs is handed in; the
+    // settlement's fee-leg reads each tx's FeeBox output.
+    resetTxIdCount();
     const settled = buildBlockSettlement(view, body, height, miner.userId, miner.userId, CTX);
-    expect('tx' in settled).toBe(true);
+    if (!('tx' in settled)) throw new Error(settled.error);
     expect(readTxIdCount()).toBe(0);
+
+    const settledId = computeTxId(settled.tx);
+    const block: OrderingBlock = {
+      header: {
+        protocolVersion: PROTOCOL_VERSION,
+        height,
+        prevBlockHash: '0'.repeat(64),
+        utxoTxRoot: '0'.repeat(64),
+        stateRoot: EMPTY_STATE_ROOT,
+        validatorId: miner.userId,
+        powNonce: 0,
+        powTargetBits: 0,
+        createdAt: 0,
+        interlinkRoot: '0'.repeat(64),
+        adProofsRoot: '0'.repeat(64),
+      },
+      utxoTxTree: {
+        utxoTxIds: [...body.map((e) => e.txId), settledId],
+        utxoTxs: [...body.map((e) => e.txBytes), encodeTx(settled.tx)],
+      },
+      validatorSignature: new Uint8Array(64),
+    };
 
     const result = applyBlock(view, block, CTX);
     expect(result.ok).toBe(true);
