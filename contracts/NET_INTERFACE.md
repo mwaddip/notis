@@ -1153,10 +1153,6 @@ whatever the map keeps, so an entry dropped grants nothing a new id could not ta
 | `TEMPORAL_BAN_DURATION_MS` | `3600000` | Ban duration (60 min) |
 | `PENALTY_DECAY_INTERVAL_MS` | `120000` | Decay interval — `PENALTY_DECAY_PER_INTERVAL` points of accumulated score decay per interval, pro rata (2 min) |
 
-> ⚠ **AHEAD OF CODE (2026-10-27).** The name `PENALTY_DECAY_INTERVAL_MS`, and `penaltyDecayIntervalMs` in the
-> config (→ Config), lead net's `peer-mgr.ts` and `types.ts` and node's `config.ts` and `index.ts`, which read
-> `PENALTY_SAFE_INTERVAL_MS` into `penaltySafeIntervalMs`.
-
 ---
 
 ## Biased Event Loop

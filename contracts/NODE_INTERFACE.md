@@ -5619,9 +5619,6 @@ and 2 for `2.5`. The rules above stand on what the reader returns, and `BLOCK_BO
 `MAX_BLOCK_BODY_BYTES` after it. **The configuration is loaded once a process** — `config.ts`'s exported `config` —
 and `index.ts` reads that one; the net settings reach `NetNode` from it (NET_INTERFACE → Config).
 
-> ⚠ **AHEAD OF CODE (2026-10-27).** `PENALTY_DECAY_INTERVAL_MS`, here and in the table below, leads `config.ts`,
-> `index.ts` and `config.test.ts`, which read and pin `PENALTY_SAFE_INTERVAL_MS` into `penaltySafeIntervalMs`.
-
 **Every variable carries a `Class`. The class is normative, not descriptive.**
 
 | Class | Meaning | Rule |
