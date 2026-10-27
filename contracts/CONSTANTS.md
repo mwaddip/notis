@@ -118,9 +118,9 @@ none replays a block (`CONSENSUS_INTERFACE → The tree session`).
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `W_SIG` | `100` | a signature's weight | consensus | measured 2026-09-30 in Waterfox 140: a signature ~0.8 ms of the batch, an operation 40–51 µs (`CONSENSUS_INTERFACE → Cost`) | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
-| `W_OP` | `10` | a tree operation's weight — a lookup or a write | consensus | between time and size: by time an operation is ~1/16–1/21 of a signature (~6), by the proof's size (~107 bytes a random lookup, ≤ ~6 MB at the budget) ~11; at 10 the largest proof measured over the bench's own tree is 6.27 MB (5.98 MiB), and over a 10⁶-leaf tree an operation is 291 bytes of proof | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
-| `MAX_BLOCK_COST` | `600_000` | 6 000 signatures' worth; a valid body ~4 600 signatures packed or 3 156 one-signer sends; ≤ 60 000 tree operations | consensus | measured 2026-09-30 at the budget in Waterfox 140: 4.12 s for the one-signer body, 2.39 s and 6.27 MB for the read-heavy one — within the ruling's about 6 s | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+| `W_SIG` | `100` | a signature's weight | consensus | measured 2026-10-27 in Waterfox 140: a signature ~1.1 ms of the batch, an operation 36–47 µs (`CONSENSUS_INTERFACE → Cost`) | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+| `W_OP` | `10` | a tree operation's weight — a lookup or a write | consensus | above time and size, kept at 10 by the user's ruling 2026-10-27: by time an operation is ~1/24–1/30 of a signature (~3–4), by the proof's size (~73 bytes an operation of the wide consolidations, a proof near 6 MB at the budget) ~7; at 10 the largest proof of the bodies the rules admit measured over the bench's own tree is 4.34 MB (4.14 MiB), and over a 10⁶-leaf tree an operation is 291 bytes of proof | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
+| `MAX_BLOCK_COST` | `600_000` | 6 000 signatures' worth; a valid body ~4 600 signatures packed or 3 156 one-signer sends; ≤ 60 000 tree operations | consensus | measured 2026-10-27 at the budget in Waterfox 140: 5.25 s for the one-signer body, 3.68 s and 4.34 MB for the wide consolidations, 3.49 s for the rent collections — within the ruling's about 6 s | PROVISIONAL | `TYPES_INTERFACE → The block's cost` |
 
 ### Karma
 
