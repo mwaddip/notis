@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { computeTxId, profileFor } from '@dagsocial/types';
-import type { AnyBox, CreditBox } from '@dagsocial/types';
-import { applyBlock, validateTx } from '@dagsocial/consensus';
+import { EMPTY_STATE_ROOT, PROTOCOL_VERSION, computeTxId, encodeTx, profileFor } from '@dagsocial/types';
+import type { AnyBox, CreditBox, OrderingBlock } from '@dagsocial/types';
+import { applyBlock, buildBlockSettlement, validateTx } from '@dagsocial/consensus';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
 import {
   MemoryStateView,
@@ -150,5 +150,76 @@ describe('validateTx hashes the transaction no further times', () => {
     const result = validateTx(deps, built.tx, txId, height);
     expect(result.valid).toBe(true);
     expect(readTxIdCount()).toBe(0);
+  });
+});
+
+/**
+ * `CONSENSUS_INTERFACE → The settlement build` — the build hashes no entry: it
+ * materializes each body entry's outputs under the id its caller supplies, and
+ * a pair whose id its bytes do not produce builds a candidate `applyBlock`
+ * refuses at its declared-id check (`CONSENSUS_INTERFACE → Applying a block`).
+ */
+describe('buildBlockSettlement reads its ids from the caller', () => {
+  beforeEach(() => resetTxIdCount());
+
+  it('over 2 pairs it calls computeTxId zero times, and applyBlock accepts the candidate', () => {
+    const { view, ca, cb } = viewOf();
+    const height = 1;
+    const txs = [
+      creditSendTx(sa, ca, 10n * CREDIT, rcpt.userId, CREDIT, height),
+      creditSendTx(sb, cb, 10n * CREDIT, rcpt.userId, CREDIT, height),
+    ];
+    const block = candidateBlock(view, height, txs, miner.userId, CTX);
+
+    // Count the standalone build alone: the body as id/bytes pairs is handed
+    // in; the settlement's fee-leg reads each tx's FeeBox output.
+    resetTxIdCount();
+    const body = txs.map((b) => ({ txId: b.txId, txBytes: encodeTx(b.tx) }));
+    const settled = buildBlockSettlement(view, body, height, miner.userId, miner.userId, CTX);
+    expect('tx' in settled).toBe(true);
+    expect(readTxIdCount()).toBe(0);
+
+    const result = applyBlock(view, block, CTX);
+    expect(result.ok).toBe(true);
+  });
+
+  it("a body pair whose id its bytes do not produce builds a candidate applyBlock refuses with the declared-id reason", () => {
+    const { view, ca, cb } = viewOf();
+    const height = 1;
+    const txA = creditSendTx(sa, ca, 10n * CREDIT, rcpt.userId, CREDIT, height);
+    const txB = creditSendTx(sb, cb, 10n * CREDIT, rcpt.userId, CREDIT, height);
+    expect(txA.txId).not.toBe(txB.txId);
+
+    const wrongPair = { txId: txA.txId, txBytes: encodeTx(txB.tx) };
+    const settled = buildBlockSettlement(view, [wrongPair], height, miner.userId, miner.userId, CTX);
+    if (!('tx' in settled)) throw new Error(settled.error);
+    const settledId = computeTxId(settled.tx);
+
+    const block: OrderingBlock = {
+      header: {
+        protocolVersion: PROTOCOL_VERSION,
+        height,
+        prevBlockHash: '0'.repeat(64),
+        utxoTxRoot: '0'.repeat(64),
+        stateRoot: EMPTY_STATE_ROOT,
+        validatorId: miner.userId,
+        powNonce: 0,
+        powTargetBits: 0,
+        createdAt: 0,
+        interlinkRoot: '0'.repeat(64),
+        adProofsRoot: '0'.repeat(64),
+      },
+      utxoTxTree: {
+        utxoTxIds: [wrongPair.txId, settledId],
+        utxoTxs: [wrongPair.txBytes, encodeTx(settled.tx)],
+      },
+      validatorSignature: new Uint8Array(64),
+    };
+
+    const result = applyBlock(view, block, CTX);
+    expect(result).toEqual({
+      ok: false,
+      reason: `Rejected block height=${height}: embedded UTXO tx ${wrongPair.txId} declares an id its bytes do not produce (${txB.txId})`,
+    });
   });
 });

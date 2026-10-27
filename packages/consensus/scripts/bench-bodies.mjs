@@ -220,8 +220,8 @@ class StubView {
 
 /** The block over `view`: the body, then `buildBlockSettlement`'s settlement as its last entry. */
 function blockOf(view, txs) {
-  const txBytes = txs.map((tx) => encodeTx(tx));
-  const settled = buildBlockSettlement(view, txBytes, HEIGHT, miner.publicKey, miner.publicKey, ctx);
+  const body = txs.map((tx) => ({ txId: computeTxId(tx), txBytes: encodeTx(tx) }));
+  const settled = buildBlockSettlement(view, body, HEIGHT, miner.publicKey, miner.publicKey, ctx);
   if ('error' in settled) throw new Error(`no settlement at height ${HEIGHT}: ${settled.error}`);
   return {
     header: {
@@ -238,8 +238,8 @@ function blockOf(view, txs) {
       adProofsRoot: '0'.repeat(64),
     },
     utxoTxTree: {
-      utxoTxIds: [...txs.map((tx) => computeTxId(tx)), computeTxId(settled.tx)],
-      utxoTxs: [...txBytes, encodeTx(settled.tx)],
+      utxoTxIds: [...body.map((e) => e.txId), computeTxId(settled.tx)],
+      utxoTxs: [...body.map((e) => e.txBytes), encodeTx(settled.tx)],
     },
     validatorSignature: new Uint8Array(64),
   };

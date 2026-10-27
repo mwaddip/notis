@@ -311,8 +311,8 @@ describe('the owner spends their income box in the same block they are paid', ()
       const like = likeTx(liker, view.getKarmaBoxes(liker.userId)[0]!, postId, owner.userId, H);
 
       // The producer's build over pre-body state.
-      const txBytes = [encodeTx(spend.tx), encodeTx(like.tx)];
-      const built = buildBlockSettlement(view, txBytes, H, miner.userId, miner.userId, CTX);
+      const body = [spend, like].map((b) => ({ txId: b.txId, txBytes: encodeTx(b.tx) }));
+      const built = buildBlockSettlement(view, body, H, miner.userId, miner.userId, CTX);
       if ('error' in built) throw new Error(built.error);
 
       // The applier's path: run applyBlock and compare the resulting
@@ -540,8 +540,8 @@ describe('a stale owner spends both karma boxes in the block they are paid', () 
       const like = likeTx(liker, view.getKarmaBoxes(liker.userId)[0]!, postId, owner.userId, H);
 
       // The producer's build over pre-body state matches the applier's.
-      const txBytes = [encodeTx(spend.tx), encodeTx(like.tx)];
-      const built = buildBlockSettlement(view, txBytes, H, miner.userId, miner.userId, CTX);
+      const body = [spend, like].map((b) => ({ txId: b.txId, txBytes: encodeTx(b.tx) }));
+      const built = buildBlockSettlement(view, body, H, miner.userId, miner.userId, CTX);
       if ('error' in built) throw new Error(built.error);
 
       const block = applied(view, H, [spend, like]);
@@ -603,8 +603,8 @@ describe('a stale owner spends the own box alone in the block they are paid', ()
       const spend = consolidateTx(owner, [ownBox], H);
       const like = likeTx(liker, view.getKarmaBoxes(liker.userId)[0]!, postId, owner.userId, H);
 
-      const txBytes = [encodeTx(spend.tx), encodeTx(like.tx)];
-      const built = buildBlockSettlement(view, txBytes, H, miner.userId, miner.userId, CTX);
+      const body = [spend, like].map((b) => ({ txId: b.txId, txBytes: encodeTx(b.tx) }));
+      const built = buildBlockSettlement(view, body, H, miner.userId, miner.userId, CTX);
       if ('error' in built) throw new Error(built.error);
 
       const block = applied(view, H, [spend, like]);
