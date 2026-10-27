@@ -74,7 +74,12 @@ function validateAndApplyTx(
   tx: UtxoTransaction,
   currentBlockHeight: number,
 ): UtxoResult {
-  const result = validateTx(deps, tx, currentBlockHeight);
+  // Some cases hand a malformed transaction a canonical encoder refuses.
+  // The id is the admitted id where one encodes; the shape check at step 4
+  // or 5 returns a verdict on the malformed cases without reading it.
+  let id: string;
+  try { id = computeTxId(tx); } catch { id = '0'.repeat(64); }
+  const result = validateTx(deps, tx, id, currentBlockHeight);
   if (!result.valid) return result;
   applyTx(deps, tx, result.computedOutputs!, currentBlockHeight);
   return result;
@@ -597,7 +602,7 @@ describe('validateAndApplyTx', () => {
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
 
     expect(result.valid).toBe(true);
     expect(result.computedOutputs).toBeDefined();
@@ -690,14 +695,14 @@ describe('validateAndApplyTx', () => {
       // (NODE_INTERFACE → validateTx step 5).
       expect(outSum).toBe(inSum);
 
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(true);
       expect(result.error).toBeUndefined();
     });
 
     it('rejects a stranger-signed invite — it is the karma owner who signs', () => {
       const tx = signBy(inviteTx(), strangerPubKey, strangerPrivKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('owner signature');
     });
@@ -709,7 +714,7 @@ describe('validateAndApplyTx', () => {
       // is the value that makes the price free.
       for (const v of [0n, config.inviteBondMin - 1n, config.inviteBondMax + 1n]) {
         const tx = signBy(inviteTx({ bondValue: v }), inviterPubKey, inviterPrivKey);
-        const result = validateTx(deps, tx, 10);
+        const result = validateTx(deps, tx, computeTxId(tx), 10);
         expect(result.valid, `value=${v}`).toBe(false);
         expect(result.error).toContain('An invite bond must hold between');
       }
@@ -720,7 +725,7 @@ describe('validateAndApplyTx', () => {
       // refuses every bond.
       for (const v of [config.inviteBondMin, config.inviteBondMax]) {
         const tx = signBy(inviteTx({ bondValue: v }), inviterPubKey, inviterPrivKey);
-        const result = validateTx(deps, tx, 10);
+        const result = validateTx(deps, tx, computeTxId(tx), 10);
         expect(result.valid, `value=${v}`).toBe(true);
       }
     });
@@ -731,7 +736,7 @@ describe('validateAndApplyTx', () => {
       // makes that cost exactly what it strands.
       const bondValue = config.inviteBondMin + 3n;
       const tx = signBy(inviteTx({ bondValue }), inviterPubKey, inviterPrivKey);
-      expect(validateTx(deps, tx, 10).valid).toBe(true);
+      expect(validateTx(deps, tx, computeTxId(tx), 10).valid).toBe(true);
       const bond = tx.outputs.find((o) => o.boxType === 'bond') as CandidateOf<BondBox>;
       expect(bond.value).toBe(bondValue);
     });
@@ -740,7 +745,7 @@ describe('validateAndApplyTx', () => {
       const tx = signBy(
         inviteTx({ bondInviterId: strangerPubKey }), inviterPubKey, inviterPrivKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain("inviterId must be the karma input's owner");
     });
@@ -760,7 +765,7 @@ describe('validateAndApplyTx', () => {
         invitesUsed: 0,
       });
       const tx = signBy(inviteTx(), inviterPubKey, inviterPrivKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('may not name an existing account');
     });
@@ -780,7 +785,7 @@ describe('validateAndApplyTx', () => {
       (tx.outputs[0] as KarmaBox).value = FUNDED - FIXTURE_BOND_KARMA * 2n;
       signBy(tx, inviterPubKey, inviterPrivKey);
 
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('exactly 1 bond output');
     });
@@ -825,7 +830,7 @@ describe('validateAndApplyTx', () => {
         ownerPubKey,
       );
 
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/at most one karma output/i);
     });
@@ -843,7 +848,7 @@ describe('validateAndApplyTx', () => {
         ownerPubKey,
       );
 
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/at most one karma output/i);
     });
@@ -1339,7 +1344,7 @@ describe('validateAndApplyTx', () => {
         ownerPrivKey,
         ownerPubKey,
       );
-      const authorized = validateTx(deps, conserving, 10);
+      const authorized = validateTx(deps, conserving, computeTxId(conserving), 10);
       expect(authorized.valid).toBe(false);
       expect(authorized.error).toContain('block application');
     });
@@ -1633,7 +1638,7 @@ describe('validateAndApplyTx', () => {
       };
       tx.signatures[Buffer.from(attackerPubKey).toString('hex')] = signHash(computeTxHash(tx), attackerKeys.privateKey);
 
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Mixed input types');
 
@@ -1666,7 +1671,7 @@ describe('validateAndApplyTx', () => {
       };
       tx.signatures[Buffer.from(attackerPubKey).toString('hex')] = signHash(computeTxHash(tx), attackerKeys.privateKey);
 
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('block application');
       expect(deps.getBox(bond!.id!)).not.toBeNull();
@@ -1711,7 +1716,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [karmaOut(99n, ownerPubKey), marker()], ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.error).toBeUndefined();
       expect(result.valid).toBe(true);
     });
@@ -1721,7 +1726,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [karmaOut(100n - LIKE_KARMA_COST, ownerPubKey)], ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Value non-conservation');
     });
@@ -1731,7 +1736,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [karmaOut(100n, ownerPubKey)], ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('like_accrual marker expected');
     });
@@ -1741,7 +1746,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [karmaOut(98n, ownerPubKey), marker(2n)], ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       // ⛔ It CONSERVES — 100 in, 100 out. The old shape announced itself as an
       // imbalance; this one is refused only because a rule reads the marker.
@@ -1753,7 +1758,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [karmaOut(100n, ownerPubKey), marker()], ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       // The deficit carve is gone: step 5 is `sum(in) == sum(out)` for every
       // transaction, likes included.
@@ -1777,7 +1782,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [karmaOut(99n, ownerPubKey), marker()], ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('legal only on a like or a reply');
     });
@@ -1793,7 +1798,7 @@ describe('validateAndApplyTx', () => {
         [karmaOut(99n, ownerPubKey), marker(LIKE_KARMA_COST, rawPublicKey(strangerPub))],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain("author is");
     });
@@ -1808,7 +1813,7 @@ describe('validateAndApplyTx', () => {
         [karma.id!], [karmaOut(99n, ownerPubKey), marker()], ownerPrivKey, ownerPubKey, 1,
         'cd'.repeat(32),
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('not confirmed');
     });
@@ -1826,7 +1831,7 @@ describe('validateAndApplyTx', () => {
         [karma.id!], [karmaOut(99n, ownerPubKey), marker()], ownerPrivKey, ownerPubKey, 1,
         pendingTarget,
       );
-      const result = validateTx(pendingDeps, tx, 10);
+      const result = validateTx(pendingDeps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('not confirmed');
     });
@@ -1841,7 +1846,7 @@ describe('validateAndApplyTx', () => {
         [karmaOut(100n - LIKE_KARMA_COST, ownerPubKey), marker()],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.error).toBeUndefined();
       expect(result.valid).toBe(true);
     });
@@ -1861,7 +1866,7 @@ describe('validateAndApplyTx', () => {
       tx.signatures[Buffer.from(otherRaw).toString('hex')] =
         signHash(computeTxHash(tx), otherPriv);
 
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Karma cannot be transferred');
     });
@@ -1882,7 +1887,7 @@ describe('validateAndApplyTx', () => {
         [{ ...creditBox, value: 99_000n } as AnyBox],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('likeTarget is only legal on an all-karma burn transaction');
     });
@@ -1901,7 +1906,7 @@ describe('validateAndApplyTx', () => {
       storeInsertBox(seededVouchBox);
 
       const tx = buildSignedTx([vouchBoxId], [], ownerPrivKey, ownerPubKey, 1, TARGET);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('likeTarget is only legal on an all-karma burn transaction');
     });
@@ -1915,7 +1920,7 @@ describe('validateAndApplyTx', () => {
         [karmaOut(60n, ownerPubKey), karmaOut(39n, ownerPubKey), marker()],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('at most one karma output');
     });
@@ -1932,7 +1937,7 @@ describe('validateAndApplyTx', () => {
         [karmaOut(94n, ownerPubKey), priceBox, marker()],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('at most one karma output');
     });
@@ -1946,7 +1951,7 @@ describe('validateAndApplyTx', () => {
         [karmaOut(0n, ownerPubKey), marker()],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('zero-value karma output');
     });
@@ -1964,7 +1969,7 @@ describe('validateAndApplyTx', () => {
         [karmaOut(1n, ownerPubKey), marker()],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid, result.error).toBe(true);
     });
 
@@ -1982,7 +1987,7 @@ describe('validateAndApplyTx', () => {
         [marker()],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid, result.error).toBe(true);
       expect(result.computedOutputs).toHaveLength(1);
       expect(result.computedOutputs![0]!.boxType).toBe('like_accrual');
@@ -2005,7 +2010,7 @@ describe('validateAndApplyTx', () => {
         undefined,
         makePostCommit(ownerPubKey, 'exact-spend post'),
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid, result.error).toBe(true);
       expect(result.computedOutputs!.filter(o => o.boxType === 'karma')).toHaveLength(0);
     });
@@ -2027,7 +2032,7 @@ describe('validateAndApplyTx', () => {
         inviteePublicKey: new Uint8Array(32).fill(0xbb),
       };
       const tx = buildSignedTx([karma.id!], [bondBox], ownerPrivKey, ownerPubKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid, result.error).toBe(true);
       expect(result.computedOutputs!.filter(o => o.boxType === 'karma')).toHaveLength(0);
     });
@@ -2042,7 +2047,7 @@ describe('validateAndApplyTx', () => {
         inviteePublicKey: new Uint8Array(32).fill(0xbb),
       };
       const tx = buildSignedTx([karma.id!], [bondBox], ownerPrivKey, ownerPubKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/inviterId/);
     });
@@ -2066,7 +2071,7 @@ describe('validateAndApplyTx', () => {
         targetId: targetPubRaw,
       };
       const tx = buildSignedTx([karma.id!], [vouchBox], ownerPrivKey, ownerPubKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid, result.error).toBe(true);
       expect(result.computedOutputs!.filter(o => o.boxType === 'karma')).toHaveLength(0);
     });
@@ -2083,7 +2088,7 @@ describe('validateAndApplyTx', () => {
         targetId: targetPubRaw,
       };
       const tx = buildSignedTx([karma.id!], [vouchBox], ownerPrivKey, ownerPubKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/voucherId/);
     });
@@ -2107,7 +2112,7 @@ describe('validateAndApplyTx', () => {
         [karmaOut(98n, ownerPubKey), relic],
         ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('unknown boxType like');
     });
@@ -2127,7 +2132,7 @@ describe('validateAndApplyTx', () => {
         [karmaOut(POST_PRICE_THREAD, ownerPubKey)],
         ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('No user transition consumes');
       expect(result.error).toContain('a karma_price box is consumed only by block application');
@@ -2187,7 +2192,7 @@ describe('validateAndApplyTx', () => {
       cases.forEach(([inValue, outValue], i) => {
         const box = creditIn(inValue, 100 + i);
         const tx = buildSignedTx([box.id!], [creditOut(outValue)], ownerPrivKey, ownerPubKey);
-        const result = validateTx(deps, tx, 10);
+        const result = validateTx(deps, tx, computeTxId(tx), 10);
         expect(result.valid).toBe(false);
         expect(result.error).toContain('Value non-conservation');
         expect(result.error).toContain(`inputs=${inValue}`);
@@ -2211,7 +2216,7 @@ describe('validateAndApplyTx', () => {
           [creditOut(outValue), feeOut(inValue - outValue)],
           ownerPrivKey, ownerPubKey,
         );
-        const result = validateTx(deps, tx, 10);
+        const result = validateTx(deps, tx, computeTxId(tx), 10);
         expect(result.error).toBeUndefined();
         expect(result.valid).toBe(true);
       });
@@ -2225,7 +2230,7 @@ describe('validateAndApplyTx', () => {
     it('accepts a transaction whose only output is a fee box for the entire input', () => {
       const box = creditIn(100_000n, 118);
       const tx = buildSignedTx([box.id!], [feeOut(100_000n)], ownerPrivKey, ownerPubKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.error).toBeUndefined();
       expect(result.valid).toBe(true);
     });
@@ -2240,7 +2245,7 @@ describe('validateAndApplyTx', () => {
         [creditOut(40_000n), creditOut(60_000n)],
         ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.error).toBeUndefined();
       expect(result.valid).toBe(true);
     });
@@ -2251,7 +2256,7 @@ describe('validateAndApplyTx', () => {
     it('rejects a credit transaction whose outputs exceed its inputs', () => {
       const box = creditIn(100_000n, 111);
       const tx = buildSignedTx([box.id!], [creditOut(100_001n)], ownerPrivKey, ownerPubKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Value non-conservation');
       expect(result.error).toContain('inputs=100000');
@@ -2277,7 +2282,7 @@ describe('validateAndApplyTx', () => {
       tx.signatures[Buffer.from(ownerPubKey).toString('hex')] = signHash(hash, ownerPrivKey);
       tx.signatures[Buffer.from(secondRaw).toString('hex')] = signHash(hash, secondPriv);
 
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.error).toBeUndefined();
       expect(result.valid).toBe(true);
     });
@@ -2295,7 +2300,7 @@ describe('validateAndApplyTx', () => {
         [creditOut(90_000n), feeOut(6_000n), feeOut(4_000n)],
         ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('at most one FeeBox');
     });
@@ -2310,7 +2315,7 @@ describe('validateAndApplyTx', () => {
         [creditOut(90_000n), feeOut(6_000n), feeOut(4_000n)],
         ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.error).not.toContain('non-conservation');
     });
 
@@ -2325,7 +2330,7 @@ describe('validateAndApplyTx', () => {
         [creditOut(100_000n), feeOut(0n)],
         ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('zero-value FeeBox');
       expect(result.error).not.toContain('non-conservation');
@@ -2345,7 +2350,7 @@ describe('validateAndApplyTx', () => {
         ],
         ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       // The allowlist's own message, not a fee-specific one: the point of the
       // rule being structural is that no clause names `fee`, so asserting a
@@ -2367,7 +2372,7 @@ describe('validateAndApplyTx', () => {
         [{ boxType: 'karma', value: 90n, createdAtBlock: 0, owner: ownerPubKey }],
         ownerPrivKey, ownerPubKey,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Value non-conservation');
       expect(result.error).not.toContain('Like non-conservation');
@@ -2383,7 +2388,7 @@ describe('validateAndApplyTx', () => {
         [creditOut(90_000n)],
         ownerPrivKey, ownerPubKey, 1, 'ab'.repeat(32),
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('likeTarget is only legal on an all-karma burn transaction');
       expect(result.error).not.toContain('Value non-conservation');
@@ -2409,7 +2414,7 @@ describe('validateAndApplyTx', () => {
       storeInsertBox(seeded);
 
       const tx = buildSignedTx([seeded.id!], [], ownerPrivKey, ownerPubKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Value non-conservation');
     });
@@ -2421,7 +2426,7 @@ describe('validateAndApplyTx', () => {
     it('refuses a funded zero-output credit spend at conservation', () => {
       const box = creditIn(1000n, 117);
       const tx = buildSignedTx([box.id!], [], ownerPrivKey, ownerPubKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Value non-conservation');
     });
@@ -2435,7 +2440,7 @@ describe('validateAndApplyTx', () => {
     it('refuses a zero-value zero-output credit spend at the transition', () => {
       const box = creditIn(0n, 119);
       const tx = buildSignedTx([box.id!], [], ownerPrivKey, ownerPubKey);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('CreditBox can only be spent to create CreditBox or FeeBox outputs');
       expect(result.error).not.toContain('non-conservation');
@@ -2490,7 +2495,7 @@ describe('validateAndApplyTx', () => {
     it('refuses a credit input before its lockedUntilBlock', () => {
       const box = lockedCreditIn(50_000n, 200, 20);
       const tx = buildSignedTx([box.id!], [creditOut(50_000n)], ownerPrivKey, ownerPubKey);
-      const r = validateTx(deps, tx, 19);
+      const r = validateTx(deps, tx, computeTxId(tx), 19);
       expect(r.valid).toBe(false);
       expect(r.error).toMatch(/locked until 20/);
     });
@@ -2498,13 +2503,13 @@ describe('validateAndApplyTx', () => {
     it('accepts the same input at exactly lockedUntilBlock', () => {
       const box = lockedCreditIn(50_000n, 201, 20);
       const tx = buildSignedTx([box.id!], [creditOut(50_000n)], ownerPrivKey, ownerPubKey);
-      expect(validateTx(deps, tx, 20).valid).toBe(true);
+      expect(validateTx(deps, tx, computeTxId(tx), 20).valid).toBe(true);
     });
 
     it('accepts a credit input carrying no lock', () => {
       const box = unlockedCreditIn(50_000n, 202);
       const tx = buildSignedTx([box.id!], [creditOut(50_000n)], ownerPrivKey, ownerPubKey);
-      expect(validateTx(deps, tx, 1).valid).toBe(true);
+      expect(validateTx(deps, tx, computeTxId(tx), 1).valid).toBe(true);
     });
 
     it('refuses on timing before authorization, on an unsigned locked spend', () => {
@@ -2515,7 +2520,7 @@ describe('validateAndApplyTx', () => {
         signatures: {},
         protocolVersion: 1,
       };
-      const r = validateTx(deps, tx, 19);
+      const r = validateTx(deps, tx, computeTxId(tx), 19);
       expect(r.error).toMatch(/locked until/);
       expect(r.error).not.toMatch(/signature/i);
     });
@@ -2559,7 +2564,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [out1, out2], ownerPrivKey, ownerPubKey, 1, undefined, undefined, pw,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/at most one karma output/i);
     });
@@ -2572,9 +2577,8 @@ describe('validateAndApplyTx', () => {
       const badWithdraw = {
         postId: 'not-hex-64',
       } as unknown as PostWithdrawCommit;
-      // No signature: the envelope check catches the bad payload before
-      // authorization, so signing is unreachable — and computeTxId throws on
-      // a field outside the encoder's domain.
+      // The envelope check catches the bad payload before any id read, so
+      // the id is the stub a malformed probe passes.
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [newKarma],
@@ -2582,7 +2586,7 @@ describe('validateAndApplyTx', () => {
         protocolVersion: 1,
         postWithdraw: badWithdraw,
       };
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, '0'.repeat(64), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/Invalid tx envelope/);
     });
@@ -2602,7 +2606,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, pw,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/not authored by the karma input/);
       topologyAuthors.delete(strangerPost);
@@ -2618,7 +2622,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, pw,
       );
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/not authored by the karma input/);
     });
@@ -2638,7 +2642,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, pw,
       );
-      const result = validateTx(pendingDeps, tx, 10);
+      const result = validateTx(pendingDeps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/not authored by the karma input/);
     });

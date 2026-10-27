@@ -102,7 +102,7 @@ describe('the admission seam', () => {
 
     // A transaction is ~950 in-block bytes, so a floor of 10 per byte asks for
     // roughly 9,500 and this pays 1.
-    expect(() => admit.admitTx(spend(box, 1n), 1000)).toThrow(admit.FeeBelowFloorError);
+    expect(() => admit.admitTx(spend(box, 1n), computeTxId(spend(box, 1n)), 1000)).toThrow(admit.FeeBelowFloorError);
     expect(mem.getPendingEntries(10)).toHaveLength(0);
   });
 
@@ -112,7 +112,7 @@ describe('the admission seam', () => {
 
     // The control that makes the refusal above attributable to the AMOUNT
     // rather than to anything else about the fixture.
-    expect(() => admit.admitTx(spend(box, 90_000n), 1000)).not.toThrow();
+    expect(() => admit.admitTx(spend(box, 90_000n), computeTxId(spend(box, 90_000n)), 1000)).not.toThrow();
     expect(mem.getPendingEntries(10)).toHaveLength(1);
   });
 
@@ -122,7 +122,7 @@ describe('the admission seam', () => {
     // A floor high enough to refuse any credit transaction must still leave
     // posts, likes and vouches admissible — they bid nothing by nature, and
     // charging them would close the network the moment an operator raised one.
-    expect(() => admit.admitTx(karmaSide('a_post'), 1000)).not.toThrow();
+    expect(() => admit.admitTx(karmaSide('a_post'), computeTxId(karmaSide('a_post')), 1000)).not.toThrow();
     expect(mem.getPendingEntries(10)).toHaveLength(1);
   });
 
@@ -132,7 +132,7 @@ describe('the admission seam', () => {
     delete process.env['MIN_FEE_RATE_PER_BYTE'];
     const { admit, mem } = await nodeWithFloor('0', [box]);
 
-    expect(() => admit.admitTx(spend(box, 0n), 1000)).not.toThrow();
+    expect(() => admit.admitTx(spend(box, 0n), computeTxId(spend(box, 0n)), 1000)).not.toThrow();
     expect(mem.getPendingEntries(10)).toHaveLength(1);
   });
 
@@ -146,12 +146,12 @@ describe('the admission seam', () => {
 
     // Mined when this node's floor was zero, so it pays 1 over ~950 bytes.
     const tx = spend(box, 1n);
-    expect(() => admit.admitTx(tx, 1000)).toThrow(admit.FeeBelowFloorError);
+    expect(() => admit.admitTx(tx, computeTxId(tx), 1000)).toThrow(admit.FeeBelowFloorError);
 
     // `fork-resolution` re-inserts through the store, not through admission.
     // The chain already accepted this transaction; a relay policy raised after
     // the fact must not be able to erase it.
-    expect(() => mem.insertUtxoTx(tx, 1000)).not.toThrow();
+    expect(() => mem.insertUtxoTx(tx, computeTxId(tx), 1000)).not.toThrow();
     expect(mem.getPendingEntries(10)).toHaveLength(1);
   });
 
@@ -204,7 +204,7 @@ describe('rent admission refusal', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
 
-    expect(() => admit.admitTx(tx, 1000)).toThrow(admit.RentRefusedError);
+    expect(() => admit.admitTx(tx, computeTxId(tx), 1000)).toThrow(admit.RentRefusedError);
     expect(mem.getPendingEntries(10)).toHaveLength(0);
   });
 
@@ -277,7 +277,7 @@ describe('rent admission refusal', () => {
       getUsernameByOwner: () => null,
     };
 
-    const result = engine.validateTx(deps, tx, height);
+    const result = engine.validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(true);
 
     dbMod.closeDb();
@@ -335,11 +335,12 @@ describe('the cost gate', () => {
     const ctx = applyContextFrom(config);
     const miner = makeTestIdentity();
     const txBytes = encodeTx(tx);
-    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), [txBytes], 1, miner.userId, miner.userId, ctx);
+    const txIdHex = computeTxId(tx);
+    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), [{ txId: txIdHex, txBytes }], 1, miner.userId, miner.userId, ctx);
     if ('error' in built) throw new Error(built.error);
     const block = {
       header: { height: 1, validatorId: miner.userId },
-      utxoTxTree: { utxoTxIds: [computeTxId(tx), computeTxId(built.tx)], utxoTxs: [txBytes, encodeTx(built.tx)] },
+      utxoTxTree: { utxoTxIds: [txIdHex, computeTxId(built.tx)], utxoTxs: [txBytes, encodeTx(built.tx)] },
       validatorSignature: new Uint8Array(64),
     } as unknown as OrderingBlock;
     const view = treeStateView(proverSession(handle.prover));
@@ -356,7 +357,7 @@ describe('the cost gate', () => {
     budget.set(cost - 1);
     let refusal: unknown;
     try {
-      admit.admitTx(tx, 1000);
+      admit.admitTx(tx, computeTxId(tx), 1000);
     } catch (err) {
       refusal = err;
     }
@@ -366,7 +367,7 @@ describe('the cost gate', () => {
     expect(mem.getPendingEntries(10)).toHaveLength(0);
 
     budget.set(cost);
-    expect(() => admit.admitTx(tx, 1000)).not.toThrow();
+    expect(() => admit.admitTx(tx, computeTxId(tx), 1000)).not.toThrow();
     expect(mem.getPendingEntries(10)).toHaveLength(1);
   });
 
@@ -375,7 +376,7 @@ describe('the cost gate', () => {
     // A proof made at the boundary the bootstrap left covers no operation.
     const empty = handle.prover.prover.generateProof();
 
-    expect(() => admit.admitTx(tx, 1000)).not.toThrow();
+    expect(() => admit.admitTx(tx, computeTxId(tx), 1000)).not.toThrow();
     expect(handle.prover.prover.generateProof()).toEqual(empty);
   });
 
@@ -396,11 +397,11 @@ describe('the cost gate', () => {
     const { reorg } = await import('../../src/services/fork-resolution.js');
     expect(() => reorg(0, [])).not.toThrow();
     expect(mem.getPendingEntries(10)).toHaveLength(1);
-    expect(() => admit.admitTx(tx, 1000)).toThrow(mem.PendingSpendConflictError);
+    expect(() => admit.admitTx(tx, computeTxId(tx), 1000)).toThrow(mem.PendingSpendConflictError);
 
     expect(mem.removeUtxoTxEntry(computeTxId(tx))).toBe(1);
     expect(mem.getPendingEntries(10)).toHaveLength(0);
-    expect(() => admit.admitTx(tx, 1000)).toThrow(`cost ${cost} over the budget ${cost - 1}`);
+    expect(() => admit.admitTx(tx, computeTxId(tx), 1000)).toThrow(`cost ${cost} over the budget ${cost - 1}`);
   });
 });
 
@@ -471,12 +472,13 @@ describe('the gate keeps what it measured', () => {
     const ctx = applyContextFrom(config);
     const miner = makeTestIdentity();
     const bodies = txs.map((tx) => encodeTx(tx));
-    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), bodies, 1, miner.userId, miner.userId, ctx);
+    const bodyPairs = txs.map((tx, i) => ({ txId: computeTxId(tx), txBytes: bodies[i]! }));
+    const built = buildBlockSettlement(treeStateView(proverSession(handle.prover)), bodyPairs, 1, miner.userId, miner.userId, ctx);
     if ('error' in built) throw new Error(built.error);
     const block = {
       header: { height: 1, validatorId: miner.userId },
       utxoTxTree: {
-        utxoTxIds: [...txs.map((tx) => computeTxId(tx)), computeTxId(built.tx)],
+        utxoTxIds: [...bodyPairs.map((p) => p.txId), computeTxId(built.tx)],
         utxoTxs: [...bodies, encodeTx(built.tx)],
       },
       validatorSignature: new Uint8Array(64),
@@ -496,7 +498,7 @@ describe('the gate keeps what it measured', () => {
     const empty = await blockCostOf([]);
     expect(alone).toBeGreaterThan(empty);
 
-    admit.admitTx(tx, 1000);
+    admit.admitTx(tx, computeTxId(tx), 1000);
 
     expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([alone - empty]);
   });
@@ -505,15 +507,15 @@ describe('the gate keeps what it measured', () => {
     const { funded, admit, mem } = await nodeWithSenders(3);
     const [first, second, third] = funded.map(({ sender, box }) => makeCreditTx(sender, [box], 1_000n));
 
-    admit.admitTx(first!, 1000);
-    admit.admitTx(second!, 1000);
+    admit.admitTx(first!, computeTxId(first!), 1000);
+    admit.admitTx(second!, computeTxId(second!), 1000);
     expect(emptyBuilds).toBe(1);
 
     const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
     expect(applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [first!, second!] }))).toBe(true);
     expect(mem.getPendingEntries(10)).toHaveLength(0);
 
-    admit.admitTx(third!, 1000);
+    admit.admitTx(third!, computeTxId(third!), 1000);
     expect(emptyBuilds).toBe(2);
     expect(mem.getPendingEntries(10).map((entry) => entry.costEstimate)).toEqual([expect.any(Number)]);
   });
@@ -527,8 +529,8 @@ describe('the gate keeps what it measured', () => {
     const change = materializeOutput(parent.outputs[0]!, computeTxId(parent), 0) as CreditBox;
     const child = makeCreditTx(sender, [change], 500n);
 
-    admit.admitTx(parent, 1000);
-    admit.admitTx(child, 1000);
+    admit.admitTx(parent, computeTxId(parent), 1000);
+    admit.admitTx(child, computeTxId(child), 1000);
 
     const [parentRow, childRow] = mem.getPendingEntries(10);
     expect(parentRow!.costEstimate).toEqual(expect.any(Number));
@@ -539,7 +541,7 @@ describe('the gate keeps what it measured', () => {
     const { funded, admit, mem } = await nodeWithSenders(1);
     const { sender, box } = funded[0]!;
     const tx = makeCreditTx(sender, [box], 1_000n);
-    admit.admitTx(tx, 1000);
+    admit.admitTx(tx, computeTxId(tx), 1000);
     expect(mem.getPendingEntries(10)[0]!.costEstimate).toEqual(expect.any(Number));
 
     const { applyOrderingBlock } = await import('../../src/services/block-apply.js');
@@ -612,7 +614,7 @@ describe('the gate keeps what it measured', () => {
     const admit = await import('../../src/services/admit-tx.js');
     const mem = await import('../../src/store/mempool.js');
 
-    admit.admitTx(tx, 5000);
+    admit.admitTx(tx, computeTxId(tx), 5000);
 
     const [row] = mem.getPendingEntries(10);
     expect(row).toBeDefined();
@@ -680,7 +682,7 @@ describe('the cost gate\'s signatures-alone refusal', () => {
     const mem = await import('../../src/store/mempool.js');
     let refusal: unknown;
     try {
-      admit.admitTx(tx, 1000);
+      admit.admitTx(tx, computeTxId(tx), 1000);
     } catch (err) {
       refusal = err;
     }

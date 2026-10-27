@@ -348,7 +348,7 @@ function postServiceDeps(engine: UtxoEngineDeps, getCurrentHeight: () => number)
     protocolVersionSchedule: engine.protocolVersionSchedule,
     admitTx,
     getHeldEntry,
-    validateTx: (tx, h) => validateTx(engine, tx, h),
+    validateTx: (tx, i, h) => validateTx(engine, tx, i, h),
     getBox: engine.getBox,
     runInTransaction: engine.runInTransaction,
   };

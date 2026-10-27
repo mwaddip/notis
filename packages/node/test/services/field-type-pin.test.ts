@@ -278,7 +278,7 @@ describe('field-type pin', () => {
         };
         let result: ReturnType<typeof validateTx> | undefined;
         expect(() => {
-          result = validateTx(deps, tx, 10);
+          result = validateTx(deps, tx, '0'.repeat(64), 10);
         }).not.toThrow();
         expect(result!.valid).toBe(false);
         expect(result!.error).toMatch(/Invalid output shape/);
@@ -293,7 +293,7 @@ describe('field-type pin', () => {
         signatures: {},
         protocolVersion: 1,
       };
-      const r = validateTx(deps, tx, 10);
+      const r = validateTx(deps, tx, '0'.repeat(64), 10);
       expect(r.valid).toBe(false);
       expect(r.error).toMatch(/index 1 \(karma\): field 'owner'/);
     });
@@ -435,7 +435,7 @@ describe('field-type pin', () => {
         cryptoSign(null, hash, inviter.privateKey),
       );
 
-      const r = validateTx(deps, tx, 100);
+      const r = validateTx(deps, tx, computeTxId(tx), 100);
       expect(r.valid, r.error).toBe(true);
     });
 
@@ -461,7 +461,8 @@ describe('field-type pin', () => {
         owner: ownerPubKey,
         releaseAtBlock: 0 + 2,
       };
-      const r = validateTx(deps, signedTx([seeded.id!], [escrow as never]), 10);
+      const tx = signedTx([seeded.id!], [escrow as never]);
+      const r = validateTx(deps, tx, computeTxId(tx), 10);
       expect(r.valid, r.error).toBe(true);
     });
   });
@@ -495,7 +496,7 @@ describe('field-type pin', () => {
         price['owner'] = bad;
 
         let r: ReturnType<typeof validateTx> | undefined;
-        expect(() => { r = validateTx(deps, tx, 10); }).not.toThrow();
+        expect(() => { r = validateTx(deps, tx, computeTxId(tx), 10); }).not.toThrow();
         expect(r!.valid).toBe(false);
         expect(r!.error).toMatch(/unexpected key 'owner'/);
       });

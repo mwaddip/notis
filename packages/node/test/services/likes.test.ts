@@ -367,7 +367,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     const postId = createTestPost(likerId);
 
     // Bury the pending like behind 1000 unrelated entries.
-    for (let i = 0; i < 1000; i++) insertUtxoTx(fillerTx(`filler_${i}`), 900);
+    for (let i = 0; i < 1000; i++) insertUtxoTx(fillerTx(`filler_${i}`), computeTxId(fillerTx(`filler_${i}`)), 900);
     const tx1 = buildBurnLikeTx(karma, postId);
     castLike(deps, tx1, 5);
 

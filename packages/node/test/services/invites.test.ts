@@ -234,7 +234,7 @@ describe('invites service', () => {
 
     const karmaOut = tx.outputs[0] as CandidateOf<KarmaBox>;
     expect(karmaOut.value).toBe(100n - FIXTURE_BOND_KARMA);
-    expect(validateTx(deps, tx, 5).valid).toBe(true);
+    expect(validateTx(deps, tx, computeTxId(tx), 5).valid).toBe(true);
   });
 
   it('createInvite rejects an inviter who cannot fund the bond', () => {
@@ -303,7 +303,7 @@ describe('invites service', () => {
 
     expect(() => createInvite(deps, tx, 5)).toThrow(/is already an account/);
     // Consensus refuses it too, not only the service.
-    const result = validateTx(deps, tx, 5);
+    const result = validateTx(deps, tx, computeTxId(tx), 5);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('may not name an existing account');
   });
@@ -439,7 +439,7 @@ describe('invites service', () => {
     const inSum = karma.value;
     const outSum = tx.outputs.reduce((sum, o) => sum + o.value, 0n);
     expect(outSum).toBe(inSum);
-    expect(validateTx(deps, tx, 5).valid).toBe(true);
+    expect(validateTx(deps, tx, computeTxId(tx), 5).valid).toBe(true);
   });
 
   // -----------------------------------------------------------------------
@@ -541,7 +541,7 @@ describe('invites service', () => {
     };
     signTransaction(tx, inviterPrivKey, inviterPubKeyHex);
 
-    const result = validateTx(deps, tx, 5);
+    const result = validateTx(deps, tx, computeTxId(tx), 5);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('non-conservation');
   });

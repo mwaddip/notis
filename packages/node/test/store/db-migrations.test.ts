@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import Database from 'better-sqlite3';
+import { computeTxId } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 
 async function importFresh() {
   const mod = await import('../../src/store/db.js');
@@ -204,7 +206,7 @@ describe('migrateMempoolTxColumns', () => {
     const { initDb, closeDb } = await importFresh();
     initDb(dbPath);
     const mempool = await import('../../src/store/mempool.js') as {
-      insertUtxoTx: (tx: unknown, expiresAtHeight: number) => number;
+      insertUtxoTx: (tx: unknown, txId: string, expiresAtHeight: number) => number;
       purgeExpired: (currentHeight: number) => number;
       hasPendingVouch: (voucherId: string, targetId: string) => boolean;
     };
@@ -225,7 +227,7 @@ describe('migrateMempoolTxColumns', () => {
       protocolVersion: 1,
     };
 
-    expect(() => mempool.insertUtxoTx(vouchTx, 100)).not.toThrow();
+    expect(() => mempool.insertUtxoTx(vouchTx, computeTxId(vouchTx as UtxoTransaction), 100)).not.toThrow();
     expect(() => mempool.purgeExpired(0)).not.toThrow();
     expect(mempool.hasPendingVouch(voucherHex, targetHex)).toBe(true);
 

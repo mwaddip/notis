@@ -3,11 +3,11 @@ import type { MockInstance } from 'vitest';
 import type { AvlNode } from '@dagsocial/avltree';
 import request from 'supertest';
 import { BatchAVLVerifier } from '@dagsocial/avltree';
-import {
-  TREE_KEY_LENGTH,
+import {TREE_KEY_LENGTH,
   bytesToHex,
   creditOfKey,
   hexToBytes,
+  computeTxId,
 } from '@dagsocial/types';
 import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';
 import type { CreditBox } from '@dagsocial/types';
@@ -145,11 +145,11 @@ describe('GET /api/v1/range/:kind/:owner — the range route', () => {
     bc.startBlockCreator(makeTestConfig({ nodeRole: 'miner' }));
 
     const mempool = await import('../../src/store/mempool.js');
-    mempool.insertUtxoTx(makeCreditTx(owner, [box1], 10n, other.userId), 1_000);
+    mempool.insertUtxoTx(makeCreditTx(owner, [box1], 10n, other.userId), computeTxId(makeCreditTx(owner, [box1], 10n, other.userId)), 1_000);
     const block1 = await mineNextBlock(bc);
     expect(block1!.header.height).toBe(1);
 
-    mempool.insertUtxoTx(makeCreditTx(owner, [box2], 10n, other.userId), 1_000);
+    mempool.insertUtxoTx(makeCreditTx(owner, [box2], 10n, other.userId), computeTxId(makeCreditTx(owner, [box2], 10n, other.userId)), 1_000);
     const block2 = await mineNextBlock(bc);
     expect(block2!.header.height).toBe(2);
 

@@ -57,7 +57,7 @@ export function executePostWithdraw(
         throw new ClientError('Post is already withdrawn');
       }
     },
-    (t, h) => validateTx(deps, t, h),
+    (t, i, h) => validateTx(deps, t, i, h),
     tx,
     currentBlockHeight,
     'Invalid postWithdraw transaction: ',

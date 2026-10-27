@@ -350,7 +350,7 @@ environment is not merely discouraged, it has no effect.
 | `OUTBOUND_REDIAL_COOLDOWN_MS` | `60000` | Redial cooldown per failed outbound target |
 | `PENALTY_SCORE_THRESHOLD` | `500` | Accrued penalty that trips a temporal ban |
 | `TEMPORAL_BAN_DURATION_MS` | `3600000` | Temporal ban length |
-| `PENALTY_SAFE_INTERVAL_MS` | `120000` | Quiet interval after which accrued penalty decays |
+| `PENALTY_DECAY_INTERVAL_MS` | `120000` | Decay interval: an accrued penalty score sheds one misbehavior's points per interval, pro rata |
 | `SYNC_REQUEST_TIMEOUT_MS` | `10000` | Abort timeout on one sync request |
 | `MAX_PROOF_HISTORY` | `1440` | AVL+ versions the store keeps for a reorg's walk; never below the profile's reorg horizon |
 | `PROOF_WINDOW_BLOCKS` | `64` | The last blocks whose state roots are kept in memory — the heights the proof routes answer `atHeight` at |

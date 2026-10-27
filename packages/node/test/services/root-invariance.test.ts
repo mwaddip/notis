@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { OrderingBlock, UtxoTransaction, UtxoTxTree } from '@dagsocial/types';
-import {
-  bytesToHex,
+import {bytesToHex,
   buildMerkleRoot,
   computeUtxoTxRoot,
   hexToBytes,
   leafHash,
   MAX_BLOCK_BODY_BYTES,
+  computeTxId,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
@@ -39,7 +39,7 @@ async function importUtxo() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
   };
 }
 
@@ -81,7 +81,7 @@ describe('utxoTxRoot — the root over one body', () => {
     utxo.insertBox(box);
 
     const mempool = await importMempool();
-    mempool.insertUtxoTx(makeCreditTx(sender, [box], 10_000n), 1000);
+    mempool.insertUtxoTx(makeCreditTx(sender, [box], 10_000n), computeTxId(makeCreditTx(sender, [box], 10_000n)), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -112,7 +112,7 @@ describe('utxoTxRoot — the root over one body', () => {
     utxo.insertBox(box);
 
     const mempool = await importMempool();
-    mempool.insertUtxoTx(makeCreditTx(sender, [box], 10_000n), 1000);
+    mempool.insertUtxoTx(makeCreditTx(sender, [box], 10_000n), computeTxId(makeCreditTx(sender, [box], 10_000n)), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);

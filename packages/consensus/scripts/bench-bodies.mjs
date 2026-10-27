@@ -1,12 +1,15 @@
 // The bodies the benches build (CONSENSUS_INTERFACE → Cost; CONSENSUS_INTERFACE → The block's cost), each over its
-// own stub state and from fixed seeds, so every run builds the same bytes. Four kinds of transaction:
+// own stub state and from fixed seeds, so every run builds the same bytes. The transaction kinds a `built` body is
+// filled with:
 //
 //   ordinary   — a one-signer credit send, spending one whole credit;
 //   packed     — a credit payment of as many signers as MAX_TX_BYTES holds;
 //   oversigned — a one-input credit send signed by its input's owner and by keys no input requires;
-//   a vouch    — from a member holding many karma boxes, every one of which the vouch's balance read walks.
 //
-// Every signer's box was created the block before, inside the rent period, so each input needs its owner's
+// and two bodies the rules admit built outside `built`: `rentHeavy` and `wideConsolidation`
+// (CONSENSUS_INTERFACE → "A replay of a block from its proof").
+//
+// Each signer's box has `createdAtBlock` of HEIGHT − 1, inside the rent period, so every input needs its owner's
 // signature; every transaction conserves value; the settlement is `buildBlockSettlement`'s, placed last, and the body
 // is weighed with it. A body's cost is counted over its tree: its state seeded into a prover with `seedTreeWrites`,
 // the block proven on it — its reads recorded, then its writes (CONSENSUS_INTERFACE → The block proof) — so a body
@@ -15,13 +18,13 @@
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
 import {
   ED25519_PKCS8_PREFIX,
-  EMPTY_IDENTITY_RECORD,
   EMPTY_STATE_ROOT,
   MAX_BLOCK_BODY_BYTES,
   MAX_BLOCK_COST,
   MAX_TX_BYTES,
-  VOUCH_KARMA_AMOUNT,
+  STORAGE_RENT_PER_BYTE,
   W_SIG,
+  boxRecordBytes,
   computeBoxId,
   computeTxId,
   decayCfgFor,
@@ -52,6 +55,15 @@ export const ctx = {
   creditMinerRewardDelay: profile.creditMinerRewardDelay,
 };
 const VERSION = protocolVersionAt(ctx.protocolVersionSchedule, HEIGHT);
+
+/**
+ * The height a rent collection body applies at: boxes created at HEIGHT − 1 satisfy the predicate
+ *   `currentBlockHeight − box.createdAtBlock > storageRentPeriodBlocks`
+ * (NODE_INTERFACE → Storage rent is a transition requiring no signature), with no spare margin: the smallest height
+ * that admits the body's inputs.
+ */
+export const RENT_HEIGHT = HEIGHT + ctx.storageRentPeriodBlocks;
+const RENT_VERSION = protocolVersionAt(ctx.protocolVersionSchedule, RENT_HEIGHT);
 
 /** The most signatures a body carries before they alone cost over the budget. */
 export const BUDGET_SIGNATURES = Math.floor(MAX_BLOCK_COST / W_SIG);
@@ -89,15 +101,22 @@ function heldBox(candidate, label) {
   return { ...box, id: computeBoxId(box) };
 }
 
-/** A signer's credit box of `value`, created the block before. */
-const creditBox = (signer, value, label) =>
-  heldBox({ boxType: 'credit', value, createdAtBlock: HEIGHT - 1, owner: signer.publicKey }, label);
+/** A signer's credit box of `value`, created at `createdAtBlock` (HEIGHT − 1 by default). */
+const creditBox = (signer, value, label, createdAtBlock = HEIGHT - 1) =>
+  heldBox({ boxType: 'credit', value, createdAtBlock, owner: signer.publicKey }, label);
 
-const credit = (owner, value) => ({ boxType: 'credit', value, createdAtBlock: HEIGHT, owner });
+/** A credit box the view holds, owned by `ownerKey` of `value`, created at `createdAtBlock`. */
+const creditBoxOwned = (ownerKey, value, label, createdAtBlock) =>
+  heldBox({ boxType: 'credit', value, createdAtBlock, owner: ownerKey }, label);
 
-/** A transaction spending `boxes`, signed over its id by each signer — a stand-in's entry is 64 zero bytes. */
-function transaction(boxes, outputs, signers) {
-  const tx = { inputs: boxes.map((box) => box.id), outputs, signatures: {}, protocolVersion: VERSION };
+const credit = (owner, value, createdAtBlock = HEIGHT) => ({ boxType: 'credit', value, createdAtBlock, owner });
+
+/**
+ * A transaction spending `boxes`, signed over its id by each signer — a stand-in's entry is 64 zero bytes. An empty
+ * `signers` array leaves the signature map empty, as a rent collection carries it.
+ */
+function transaction(boxes, outputs, signers, protocolVersion = VERSION) {
+  const tx = { inputs: boxes.map((box) => box.id), outputs, signatures: {}, protocolVersion };
   const message = Buffer.from(computeTxId(tx), 'hex');
   for (const signer of signers) {
     tx.signatures[hex(signer.publicKey)] = signer.privateKey
@@ -218,15 +237,15 @@ class StubView {
   hasLikeRecord() { return false; }
 }
 
-/** The block over `view`: the body, then `buildBlockSettlement`'s settlement as its last entry. */
-function blockOf(view, txs) {
-  const txBytes = txs.map((tx) => encodeTx(tx));
-  const settled = buildBlockSettlement(view, txBytes, HEIGHT, miner.publicKey, miner.publicKey, ctx);
-  if ('error' in settled) throw new Error(`no settlement at height ${HEIGHT}: ${settled.error}`);
+/** The block over `view` at `height` under `version`: the body, then `buildBlockSettlement`'s settlement as its last entry. */
+function blockOf(view, txs, height = HEIGHT, version = VERSION) {
+  const body = txs.map((tx) => ({ txId: computeTxId(tx), txBytes: encodeTx(tx) }));
+  const settled = buildBlockSettlement(view, body, height, miner.publicKey, miner.publicKey, ctx);
+  if ('error' in settled) throw new Error(`no settlement at height ${height}: ${settled.error}`);
   return {
     header: {
-      protocolVersion: VERSION,
-      height: HEIGHT,
+      protocolVersion: version,
+      height,
       prevBlockHash: '0'.repeat(64),
       utxoTxRoot: '0'.repeat(64),
       stateRoot: EMPTY_STATE_ROOT,
@@ -238,8 +257,8 @@ function blockOf(view, txs) {
       adProofsRoot: '0'.repeat(64),
     },
     utxoTxTree: {
-      utxoTxIds: [...txs.map((tx) => computeTxId(tx)), computeTxId(settled.tx)],
-      utxoTxs: [...txBytes, encodeTx(settled.tx)],
+      utxoTxIds: [...body.map((e) => e.txId), computeTxId(settled.tx)],
+      utxoTxs: [...body.map((e) => e.txBytes), encodeTx(settled.tx)],
     },
     validatorSignature: new Uint8Array(64),
   };
@@ -315,9 +334,9 @@ export function filledShape(kind) {
 }
 
 /** A body of `txs` carrying `signatures`, over its own view of `seed`, with every bound it is held to checked. */
-function bodyOf(name, seed, txs, signatures) {
+function bodyOf(name, seed, txs, signatures, height = HEIGHT, version = VERSION) {
   const view = new StubView(seed);
-  const block = blockOf(view, txs);
+  const block = blockOf(view, txs, height, version);
   const bytes = utxoTxTreeByteLength(block.utxoTxTree);
   const settlement = block.utxoTxTree.utxoTxs.at(-1).length;
   const heaviest = Math.max(0, ...block.utxoTxTree.utxoTxs.slice(0, -1).map((b) => b.length));
@@ -376,51 +395,134 @@ export function corrupted(body) {
   };
 }
 
-/** Karma boxes each read-heavy voucher holds. */
-export const KARMA_BOXES_PER_VOUCHER = 1000;
+/** The rent charge for a credit box, under its creating transaction (NODE_INTERFACE → Storage rent is a transition requiring no signature). */
+const rentChargeOf = (box) =>
+  STORAGE_RENT_PER_BYTE * BigInt(boxRecordBytes(box, box.txId, box.index).length);
 
-/** A karma box of `value` the view holds for `owner`, created the block before. */
-const karmaBox = (owner, value, label) =>
-  heldBox({ boxType: 'karma', value, createdAtBlock: HEIGHT - 1, owner }, label);
-
-const karma = (owner, value) => ({ boxType: 'karma', value, createdAtBlock: HEIGHT, owner });
-
-const vouch = (voucherId, targetId) =>
-  ({ boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: HEIGHT, voucherId, targetId });
-
-/** An identity record with every field zero but the ones given. */
-const identityRecord = (fields) => ({ ...EMPTY_IDENTITY_RECORD, ...fields });
+/** A credit box whose value covers its rent charge with a comfortable margin — a successor the rent arm admits. */
+const RENT_INPUT_VALUE = 10n ** 11n;
 
 /**
- * `vouchers` vouches for one target (NODE_INTERFACE → Vouch transition rules), one a voucher. Each voucher is a
- * member, active the block before so no decay moves its boxes (NODE_INTERFACE → Karma decay), and holds
- * KARMA_BOXES_PER_VOUCHER karma boxes of 10, staking from the first: the vouch's balance read walks every one
- * (CONSENSUS_INTERFACE → The tree view → "A range read walks"), two lookups a box.
+ * A rent collection (NODE_INTERFACE → Storage rent is a transition requiring no signature;
+ * NODE_INTERFACE → Legal box transitions, the `CreditBox, every input past its rent period` row): N inputs, each a
+ * credit box past its period, a successor credit output for each input to the input's own owner at RENT_HEIGHT
+ * carrying `value − charge` with no `lockedUntilBlock`, and one FeeBox carrying the summed charge. The signature map
+ * is empty — a transition requiring no signature.
  */
-export function readHeavy(vouchers) {
-  const target = seed32('read-heavy/target');
-  const boxes = [...genesis];
-  const records = [{ identityId: target, record: identityRecord({}) }];
-  const txs = [];
-  for (let i = 0; i < vouchers; i++) {
-    const voucher = keyPair(`voucher/${i}`);
-    const held = Array.from(
-      { length: KARMA_BOXES_PER_VOUCHER },
-      (_, j) => karmaBox(voucher.publicKey, 10n, `read-heavy/${i}/${j}`),
-    );
-    boxes.push(...held);
-    records.push({
-      identityId: voucher.publicKey,
-      record: identityRecord({ lastActivityBlock: HEIGHT - 1, memberSinceBlock: 1 }),
+function rentCollection(inputs) {
+  const outputs = [];
+  let totalCharge = 0n;
+  for (const box of inputs) {
+    const charge = rentChargeOf(box);
+    outputs.push({
+      boxType: 'credit',
+      value: box.value - charge,
+      createdAtBlock: RENT_HEIGHT,
+      owner: box.owner,
     });
-    const [stake] = held;
-    txs.push(transaction(
-      [stake],
-      [karma(voucher.publicKey, stake.value - VOUCH_KARMA_AMOUNT), vouch(voucher.publicKey, target)],
-      [voucher],
-    ));
+    totalCharge += charge;
   }
-  return bodyOf('read-heavy', { network: { memberCount: vouchers }, boxes, records }, txs, vouchers);
+  outputs.push({ boxType: 'fee', value: totalCharge, createdAtBlock: RENT_HEIGHT });
+  return transaction(inputs, outputs, [], RENT_VERSION);
+}
+
+/** The length of a `rentCollection` transaction of `n` inputs — stand-in owners, each a credit box of RENT_INPUT_VALUE. */
+function rentWeighed(n) {
+  const inputs = Array.from({ length: n }, (_, i) =>
+    creditBoxOwned(standIn(`rent/weigh/${n}/${i}`).publicKey, RENT_INPUT_VALUE, `rent/weigh/${n}/${i}`, HEIGHT - 1),
+  );
+  return encodeTx(rentCollection(inputs)).length;
+}
+
+/** As many rent inputs as MAX_TX_BYTES holds in one rent collection. */
+export function rentInputsPerTx() {
+  return largest(
+    Math.floor(MAX_TX_BYTES / 32),
+    (n) => n === 0 || rentWeighed(n) <= MAX_TX_BYTES,
+  );
+}
+
+/** A rent box owner: the signature map is empty on every rent collection, so a 32-byte key stands for its owner — no Ed25519 pair generated. */
+const rentOwner = (i) => seed32(`rent/owner/${i}`);
+
+/**
+ * A body of `txs` rent collections at RENT_HEIGHT (NODE_INTERFACE → Storage rent is a transition requiring no
+ * signature). Each transaction spends `rentInputsPerTx()` credit boxes past their rent period, the boxes of distinct
+ * owners (one key per input); each input has a successor credit box to its own owner less the charge, and each
+ * transaction carries one FeeBox. The signature map is empty on every transaction.
+ */
+export function rentHeavy(txs) {
+  const perTx = rentInputsPerTx();
+  const inputs = txs * perTx;
+  const boxes = Array.from({ length: inputs }, (_, i) =>
+    creditBoxOwned(rentOwner(i), RENT_INPUT_VALUE, `rent/${i}`, HEIGHT - 1),
+  );
+  const body = [];
+  for (let t = 0; t < txs; t++) {
+    body.push(rentCollection(boxes.slice(t * perTx, (t + 1) * perTx)));
+  }
+  const spent = new Set(body.flatMap((tx) => tx.inputs));
+  const seed = {
+    network: { memberCount: 0 },
+    boxes: [...genesis, ...boxes.filter((box) => spent.has(box.id))],
+    records: [],
+  };
+  return bodyOf('rent-heavy', seed, body, 0, RENT_HEIGHT, RENT_VERSION);
+}
+
+/** A credit box the wide-consolidation body spends — the signer's own, created the block before. */
+const WIDE_INPUT_VALUE = 10n ** 8n;
+
+/**
+ * A one-signer credit transaction (NODE_INTERFACE → Legal box transitions, `CreditBox` row): `signer` spends
+ * `inputs`, all its own credit boxes, into one credit output carrying the summed value to the recipient. One
+ * signature a transaction.
+ */
+function wideConsolidationTx(signer, inputs) {
+  const total = inputs.reduce((sum, box) => sum + box.value, 0n);
+  return transaction(inputs, [credit(recipient, total)], [signer]);
+}
+
+/** The length of a `wideConsolidationTx` of `n` inputs — one stand-in signer owning each. */
+function wideWeighed(n) {
+  const stand = standIn(`wide/weigh/${n}`);
+  const inputs = Array.from({ length: n }, (_, i) => creditBox(stand, WIDE_INPUT_VALUE, `wide/weigh/${n}/${i}`));
+  return encodeTx(wideConsolidationTx(stand, inputs)).length;
+}
+
+/** As many of a signer's own credit inputs as MAX_TX_BYTES holds in one wide-consolidation transaction. */
+export function wideInputsPerTx() {
+  return largest(
+    Math.floor(MAX_TX_BYTES / 32),
+    (n) => n === 0 || wideWeighed(n) <= MAX_TX_BYTES,
+  );
+}
+
+/**
+ * A body of `txs` wide-consolidation transactions (NODE_INTERFACE → Legal box transitions, `CreditBox` row), each tx
+ * spending `wideInputsPerTx()` of its signer's own credit boxes into one credit output. One signer a transaction,
+ * one signature a transaction.
+ */
+export function wideConsolidation(txs) {
+  const perTx = wideInputsPerTx();
+  const signerKeys_ = signers(txs);
+  const body = [];
+  const allInputs = [];
+  for (let t = 0; t < txs; t++) {
+    const signer = signerKeys_[t];
+    const txInputs = Array.from({ length: perTx }, (_, i) =>
+      creditBox(signer, WIDE_INPUT_VALUE, `wide/${t}/${i}`),
+    );
+    body.push(wideConsolidationTx(signer, txInputs));
+    allInputs.push(...txInputs);
+  }
+  const spent = new Set(body.flatMap((tx) => tx.inputs));
+  const seed = {
+    network: { memberCount: 0 },
+    boxes: [...genesis, ...allInputs.filter((box) => spent.has(box.id))],
+    records: [],
+  };
+  return bodyOf('wide-consolidation', seed, body, txs);
 }
 
 /**

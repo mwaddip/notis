@@ -115,7 +115,7 @@ async function importPosts() {
 async function importMempoolFresh() {
   const mod = await import('../../src/store/mempool.js');
   return mod as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
@@ -283,7 +283,7 @@ describe('block-apply journal recording', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -320,7 +320,7 @@ describe('block-apply journal recording', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     // Insert post transaction
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     // Insert a standalone UTXO transaction in mempool. The like targets the
     // post this same block confirms — N2b's apply rules reject a like on an
@@ -330,7 +330,7 @@ describe('block-apply journal recording', () => {
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
     const likeTx = makeLikeTx(liker, karmaBox, postId, author.userId);
-    mempool.insertUtxoTx(likeTx, 1000);
+    mempool.insertUtxoTx(likeTx, computeTxId(likeTx), 1000);
 
     bc.startBlockCreator(testConfig);
     const block = await mineNextBlock(bc);
@@ -1284,14 +1284,14 @@ describe('block-apply embedded tx re-validation', () => {
     const author = makeTestIdentity();
     const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'valid-txs target a');
     posts.insertPost(postAId, computeTxId(postATx), commitA, contentA);
-    mempool.insertUtxoTx(postATx, 1000);
+    mempool.insertUtxoTx(postATx, computeTxId(postATx), 1000);
 
     // ⛔ **The marker names the POST'S author, not the liker** (NODE_INTERFACE
     // → Karma transition rules).
     const aliceTx = makeLikeTx(alice, aliceBox, postAId, author.userId);
     const bobTx = makeLikeTx(bob, bobBox, postAId, author.userId);
-    mempool.insertUtxoTx(aliceTx, 1000);
-    mempool.insertUtxoTx(bobTx, 1000);
+    mempool.insertUtxoTx(aliceTx, computeTxId(aliceTx), 1000);
+    mempool.insertUtxoTx(bobTx, computeTxId(bobTx), 1000);
 
     await mineBlockOverMempool();
 
@@ -1624,7 +1624,7 @@ describe('block-apply embedded tx re-validation', () => {
     utxo.insertBox(splitA);
     utxo.insertBox(splitB);
 
-    mempool.insertUtxoTx(makeVouchCastTx(splitA, voucher, target.userId), 1000);
+    mempool.insertUtxoTx(makeVouchCastTx(splitA, voucher, target.userId), computeTxId(makeVouchCastTx(splitA, voucher, target.userId)), 1000);
     const block = await mineBlockOverMempool();
     expect(block).not.toBeNull();
 
@@ -1666,7 +1666,7 @@ describe('block-apply embedded tx re-validation', () => {
     const whole = makeKarmaBox(12n, voucher.userId, 0);
     utxo.insertBox(whole);
 
-    mempool.insertUtxoTx(makeVouchCastTx(whole, voucher, target.userId), 1000);
+    mempool.insertUtxoTx(makeVouchCastTx(whole, voucher, target.userId), computeTxId(makeVouchCastTx(whole, voucher, target.userId)), 1000);
     const block = await mineBlockOverMempool();
     expect(block).not.toBeNull();
 
@@ -1916,7 +1916,7 @@ describe('block-apply mint provenance', () => {
         post: staleCommit,
       };
       signTransaction(postTx, stale.privateKey, hex(stale.userId));
-      mempool.insertUtxoTx(postTx, 1000);
+      mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
       const block = await mineNextBlock(bc);
       expect(block).not.toBeNull();
@@ -2603,11 +2603,11 @@ describe('block-apply funnel totality', () => {
     // (1000), or the fixture cannot tell a keyed delete from a bounded one:
     // every entry a shallow pool holds is inside any bound.
     const DEPTH = 1_100;
-    for (let i = 0; i < DEPTH; i++) mempool.insertUtxoTx(fillerTx(`deep_${i}`), 5000);
+    for (let i = 0; i < DEPTH; i++) mempool.insertUtxoTx(fillerTx(`deep_${i}`), computeTxId(fillerTx(`deep_${i}`)), 5000);
 
     const author = makeTestIdentity();
     const { tx: postTx } = await seedPostTx(author, 'confirmed by a peer');
-    const deepRowid = mempool.insertUtxoTx(postTx, 5000);
+    const deepRowid = mempool.insertUtxoTx(postTx, computeTxId(postTx), 5000);
     expect(deepRowid).toBeGreaterThan(1000);
 
     // ⛔ The RECEIVED-block path, not `mineNextBlock`. `submitMinedBlock` evicts by
@@ -2937,7 +2937,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     posts.insertPost(postId, computeTxId(postTx), commit, content);
 
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -2963,7 +2963,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const posts = await importPosts();
     posts.insertPost(postId, computeTxId(postTx), commit, content);
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -2974,7 +2974,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     await seedBoxes([likerKarma]);
 
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
-    mempool.insertUtxoTx(likeTx, 1000);
+    mempool.insertUtxoTx(likeTx, computeTxId(likeTx), 1000);
 
     const block2 = await mineNextBlock(bc);
     expect(block2).not.toBeNull();
@@ -2997,7 +2997,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const posts = await importPosts();
     posts.insertPost(postId, computeTxId(postTx), commit, content);
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -3007,7 +3007,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     await seedBoxes([likerKarma]);
 
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
-    mempool.insertUtxoTx(likeTx, 1000);
+    mempool.insertUtxoTx(likeTx, computeTxId(likeTx), 1000);
 
     const records = await import('../../src/store/identity-records.js');
     const authorRecordBefore = records.getIdentityRecord(author.userId);
@@ -3035,7 +3035,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const posts = await importPosts();
     posts.insertPost(postId, computeTxId(postTx), commit, content);
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -3059,7 +3059,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     signTransaction(replyTx, replier.privateKey, hex(replier.userId));
     const replyPostId = computePostId(computeTxId(replyTx), 0);
     posts.insertPost(replyPostId, computeTxId(replyTx), replyCommit, 'T4 reply');
-    mempool.insertUtxoTx(replyTx, 1000);
+    mempool.insertUtxoTx(replyTx, computeTxId(replyTx), 1000);
 
     const block2 = await mineNextBlock(bc);
     expect(block2).not.toBeNull();
@@ -3095,7 +3095,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const posts = await importPosts();
     posts.insertPost(postId, computeTxId(postTx), commit, 'T4 exact post');
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -3234,7 +3234,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     const posts = await importPosts();
     posts.insertPost(postId, computeTxId(postTx), commit, content);
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -3254,7 +3254,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
       postWithdraw: { postId },
     };
     signTransaction(withdrawTx, author.privateKey, hex(author.userId));
-    mempool.insertUtxoTx(withdrawTx, 1000);
+    mempool.insertUtxoTx(withdrawTx, computeTxId(withdrawTx), 1000);
 
     await mineNextBlock(bc);
 
@@ -3313,7 +3313,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     signTransaction(consolidationTx, owner.privateKey, hex(owner.userId));
 
     const mempool = await importMempoolFresh();
-    mempool.insertUtxoTx(consolidationTx, 1000);
+    mempool.insertUtxoTx(consolidationTx, computeTxId(consolidationTx), 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);

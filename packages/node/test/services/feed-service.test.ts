@@ -848,7 +848,7 @@ describe('feed-service — tx bytes ride the row, over the real store', () => {
     const txId = computeTxId(tx);
     const txBytes = encodeTx(tx);
 
-    realInsertUtxoTx(tx, 1000);
+    realInsertUtxoTx(tx, txId, 1000);
     realInsertPost(postId, txId, commit, content);
 
     const r = realStoreFeedService().getPost(postId, null, true) as PostJson;
@@ -868,7 +868,7 @@ describe('feed-service — tx bytes ride the row, over the real store', () => {
     const txBytes = encodeTx(tx);
 
     // Pending first — the hex that case 1 would answer.
-    realInsertUtxoTx(tx, 1000);
+    realInsertUtxoTx(tx, txId, 1000);
     realInsertPost(postId, txId, commit, content);
     const pendingHex = (realStoreFeedService().getPost(postId, null, true) as PostJson).tx;
 

@@ -14,7 +14,7 @@ const testConfig: NetConfig = {
   outboundRedialCooldownMs: 60000,
   penaltyScoreThreshold: 500,
   temporalBanDurationMs: 3600000,
-  penaltySafeIntervalMs: 120000,
+  penaltyDecayIntervalMs: 120000,
   syncRequestTimeoutMs: 10000,
 };
 
@@ -131,13 +131,11 @@ describe('OutboundManager', () => {
   // -----------------------------------------------------------------------
 
   describe('planTick counts outbound connections only (eclipse resistance)', () => {
-    it('N inbound > maxPeers with 0 outbound: the floor still fires — we still dial out (fails pre-fix)', () => {
-      // Pre-fix the timer fed peerMgr.getPeerCount() — ALL tracked peers —
-      // into these decisions. Twelve inbound connections read as 12: the
-      // floor check (12 < minPeers=3 — false) dialed no seeds, and the fill
-      // phase (12 >= maxPeers=10) returned null. An attacker who filled our
-      // inbound slots had silenced every outbound dial: the eclipse setup.
-      // Post-fix both phases see outbound=0, so the floor fires.
+    it('N inbound > maxPeers with 0 outbound: the floor still fires — we still dial out', () => {
+      // Both phases count outbound connections only. Twelve inbound
+      // connections leave outbound=0, so the floor check (0 < minPeers=3)
+      // dials the seeds; counting all tracked peers would read 12 and let an
+      // inbound flood silence every outbound dial.
       const inboundFlood = Array.from({ length: 12 }, (_, i) =>
         conn('inbound', `/ip4/198.51.100.${i}/tcp/${40000 + i}`));
       const plan = mgr.planTick(inboundFlood);

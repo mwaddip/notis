@@ -160,7 +160,7 @@ function costedOrNothing(what: string, measure: () => number | null): number | n
  */
 function estimateAlone(tx: UtxoTransaction, txId: string): number | null {
   return costedOrNothing(`transaction ${txId} alone`, () => {
-    const alone = costAlone(tx, 'createOrderingBlock');
+    const alone = costAlone(tx, txId, 'createOrderingBlock');
     if (alone === null || 'overBudget' in alone) return null;
     return marginalCost(alone, 'createOrderingBlock');
   });
@@ -571,7 +571,7 @@ export function createOrderingBlock(): OrderingBlock | null {
       let built: ReturnType<typeof buildBlockSettlement>;
       try {
         built = buildBlockSettlement(
-          view, entries.map((entry) => entry.txBytes), newHeight, validatorId,
+          view, entries.map((entry) => ({ txId: entry.txId, txBytes: entry.txBytes })), newHeight, validatorId,
           currentMinerPubkey ?? validatorId, applyContextFrom(nodeConfig),
         );
       } catch (err) {

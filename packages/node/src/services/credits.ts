@@ -56,7 +56,7 @@ export function sendCredits(
         throw new ClientError('credit transfer outputs must be credit or fee boxes');
       }
     },
-    (t, h) => validateTx(deps, t, h),
+    (t, i, h) => validateTx(deps, t, i, h),
     tx,
     currentBlockHeight,
     'Invalid credit transfer: ',

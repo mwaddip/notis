@@ -81,7 +81,7 @@ async function importBlockCreator() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{ rowid: number; entryType: string; utxoTxBytes: Uint8Array | null }>;
     removeEntry: (rowid: number) => void;
     getHeldEntry: (txId: string) => { expiresAtHeight: number; txBytes: Uint8Array } | null;
@@ -390,9 +390,9 @@ describe('block creator vs a screened body', () => {
     await activateProverOverStore();
 
     const mempool = await importMempool();
-    const claim1Row = mempool.insertUtxoTx(claim1, 1000);
-    const claim2Row = mempool.insertUtxoTx(claim2, 1000);
-    const honestRow = mempool.insertUtxoTx(honest, 1000);
+    const claim1Row = mempool.insertUtxoTx(claim1, computeTxId(claim1), 1000);
+    const claim2Row = mempool.insertUtxoTx(claim2, computeTxId(claim2), 1000);
+    const honestRow = mempool.insertUtxoTx(honest, computeTxId(honest), 1000);
     expect(mempool.getPendingEntries(10)).toHaveLength(3);
 
     const bc = await importBlockCreator();
@@ -442,9 +442,9 @@ describe('block creator vs a screened body', () => {
     const t2Id = computeTxId(t2);
 
     const mempool = await importMempool();
-    const castRow = mempool.insertUtxoTx(cast, 1000);
-    const r1 = mempool.insertUtxoTx(t1, 1000);
-    const r2 = mempool.insertUtxoTx(t2, 1000);
+    const castRow = mempool.insertUtxoTx(cast, computeTxId(cast), 1000);
+    const r1 = mempool.insertUtxoTx(t1, computeTxId(t1), 1000);
+    const r2 = mempool.insertUtxoTx(t2, computeTxId(t2), 1000);
 
     // The voucher's other box leaves the confirmed set before the tree is
     // built, so the cast turns invalid against the tree the fill reads
@@ -504,8 +504,8 @@ describe('block creator vs a screened body', () => {
     await activateProverOverStore();
 
     const mempool = await importMempool();
-    mempool.insertUtxoTx(t1, 1000);
-    mempool.insertUtxoTx(t2, 1000);
+    mempool.insertUtxoTx(t1, computeTxId(t1), 1000);
+    mempool.insertUtxoTx(t2, computeTxId(t2), 1000);
     expect(mempool.getPendingEntries(10)).toHaveLength(2);
 
     const errors: string[] = [];
@@ -606,8 +606,8 @@ describe('block creator vs a screened body', () => {
     await activateProverOverStore();
 
     const mempool = await importMempool();
-    const replyRow = mempool.insertUtxoTx(replyTx, 1000);
-    const parentRow = mempool.insertUtxoTx(parentTx, 1000);
+    const replyRow = mempool.insertUtxoTx(replyTx, computeTxId(replyTx), 1000);
+    const parentRow = mempool.insertUtxoTx(parentTx, computeTxId(parentTx), 1000);
     expect(mempool.getPendingEntries(10)).toHaveLength(2);
 
     const warns: string[] = [];
@@ -663,8 +663,8 @@ describe('block creator vs a screened body', () => {
     await activateProverOverStore();
 
     const mempool = await importMempool();
-    const likeRow = mempool.insertUtxoTx(like, 1000);
-    const wdRow = mempool.insertUtxoTx(wd, 1000);
+    const likeRow = mempool.insertUtxoTx(like, computeTxId(like), 1000);
+    const wdRow = mempool.insertUtxoTx(wd, computeTxId(wd), 1000);
     expect(mempool.getPendingEntries(10)).toHaveLength(2);
 
     const warns: string[] = [];
@@ -712,8 +712,8 @@ describe('block creator vs a screened body', () => {
     // Post FIRST (rowid order), reply after — the karma class draws in FIFO,
     // so the fill meets the parent before the reply (MEMPOOL_INTERFACE →
     // Ordering).
-    mempool.insertUtxoTx(parentTx, 1000);
-    mempool.insertUtxoTx(replyTx, 1000);
+    mempool.insertUtxoTx(parentTx, computeTxId(parentTx), 1000);
+    mempool.insertUtxoTx(replyTx, computeTxId(replyTx), 1000);
     expect(mempool.getPendingEntries(10)).toHaveLength(2);
 
     const warns: string[] = [];
@@ -770,8 +770,8 @@ describe('block creator vs a screened body', () => {
     await activateProverOverStore();
 
     const mempool = await importMempool();
-    const parentRow = mempool.insertUtxoTx(parent, 1000);
-    const childRow = mempool.insertUtxoTx(child, 1000);
+    const parentRow = mempool.insertUtxoTx(parent, computeTxId(parent), 1000);
+    const childRow = mempool.insertUtxoTx(child, computeTxId(child), 1000);
     expect(mempool.getPendingEntries(100)).toHaveLength(2);
 
     const bc = await importBlockCreator();

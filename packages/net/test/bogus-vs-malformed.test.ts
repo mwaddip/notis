@@ -70,7 +70,7 @@ describe('bogus vs malformed distinction', () => {
     expect(meta!.penaltyCount).toBe(1);
   });
 
-  it('Transient penalty: does NOT cause permanent ban, just cooldown', () => {
+  it('Transient penalty: does NOT cause permanent ban, accrues a decaying score', () => {
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(0);
 
@@ -87,7 +87,7 @@ describe('bogus vs malformed distinction', () => {
   it('accumulating bogus penalties above break-even triggers temporal ban (not permanent)', () => {
     mgr.addPeer(makePeer('peer1'));
 
-    // A Transient (50) decays away within half the 120s safe interval, so
+    // A Transient (50) decays away within half the 120s decay interval, so
     // only faster misbehavior accrues pressure. One penalty every 12s nets
     // +40 per step — 50, 90, 130, … crossing the 500 threshold on the 13th.
     for (let i = 0; i < 13; i++) {
@@ -116,7 +116,7 @@ describe('bogus vs malformed distinction', () => {
     mgr.recordPenaltyKind(PenaltyKind.Transient, 'peer1', 'bogus content');
     expect(mgr.isBanned('peer1')).toBe(false);
 
-    // Advance time past safe interval
+    // Advance time past the decay interval
     vi.spyOn(Date, 'now').mockReturnValue(120_001);
 
     // Then: malformed message — permanent ban

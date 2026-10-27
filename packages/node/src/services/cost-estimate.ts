@@ -6,7 +6,7 @@ import {
   treeWritesOf,
   TreeInconsistencyError,
 } from '@dagsocial/consensus';
-import type { BlockCost } from '@dagsocial/consensus';
+import type { BlockCost, SettlementBodyTx } from '@dagsocial/consensus';
 import { EMPTY_STATE_ROOT, MAX_BLOCK_COST, bytesToHex, computeTxId, encodeTx } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { nextBlockHeight } from '../store/index.js';
@@ -63,15 +63,14 @@ export type CostAlone = BlockCost | { overBudget: true; reason: string } | null;
  */
 function candidateCost(
   handle: AvlProverHandle,
-  txs: readonly UtxoTransaction[],
+  body: readonly SettlementBodyTx[],
   height: number,
   site: string,
 ): CostAlone {
   const ctx = applyContextFrom(config);
-  const bodies = txs.map((tx) => encodeTx(tx));
   try {
     const built = buildBlockSettlement(
-      treeStateView(proverSession(handle.prover)), bodies, height, NO_PRODUCER, NO_PRODUCER, ctx,
+      treeStateView(proverSession(handle.prover)), body, height, NO_PRODUCER, NO_PRODUCER, ctx,
     );
     if ('error' in built) return null;
     const header: BlockHeader = {
@@ -90,8 +89,8 @@ function candidateCost(
     const block: OrderingBlock = {
       header,
       utxoTxTree: {
-        utxoTxIds: [...txs.map((tx) => computeTxId(tx)), computeTxId(built.tx)],
-        utxoTxs: [...bodies, encodeTx(built.tx)],
+        utxoTxIds: [...body.map((entry) => entry.txId), computeTxId(built.tx)],
+        utxoTxs: [...body.map((entry) => entry.txBytes), encodeTx(built.tx)],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -118,10 +117,10 @@ function candidateCost(
  * node with no prover, which has no tree to run it over (MEMPOOL_INTERFACE →
  * The cost gate). `site` names the caller in a fail-stop's diagnostic.
  */
-export function costAlone(tx: UtxoTransaction, site: string): CostAlone {
+export function costAlone(tx: UtxoTransaction, txId: string, site: string): CostAlone {
   const handle = tryGetAvlProver();
   if (handle === null) return null;
-  return candidateCost(handle, [tx], nextBlockHeight(), site);
+  return candidateCost(handle, [{ txId, txBytes: encodeTx(tx) }], nextBlockHeight(), site);
 }
 
 /** The tip the empty block was last costed at — its height and the tree's digest — and that cost. */

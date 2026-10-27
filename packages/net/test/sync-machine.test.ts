@@ -37,7 +37,7 @@ const testConfig: NetConfig = {
   outboundRedialCooldownMs: 60000,
   penaltyScoreThreshold: 500,
   temporalBanDurationMs: 3600000,
-  penaltySafeIntervalMs: 120000,
+  penaltyDecayIntervalMs: 120000,
   syncRequestTimeoutMs: 10000,
 };
 

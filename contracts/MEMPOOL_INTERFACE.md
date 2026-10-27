@@ -76,8 +76,8 @@ the `entry_rowid` indexes are what the cascade and a per-entry read find them by
 pending view asked by owner is a range of the owner index, and decodes the entries of the rows a page answers and no
 other (→ getBoxesPageWithPending).
 
-**`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
-no additional hash. It exists because cleanup has to find an entry *by transaction identity* when a
+**`tx_id` is written at insert from the id `insertUtxoTx` is handed** (→ insertUtxoTx), so it costs
+no hash of its own. It exists because cleanup has to find an entry *by transaction identity* when a
 peer's block confirms it, and a scan that recomputes the id per candidate is the cost measured under
 *Confirmed-entry cleanup* below. The index is **partial** — a row without a `tx_id` is not indexed.
 
@@ -115,7 +115,7 @@ on read; on **insert** of a
 `utxo_tx` it walks the (already-decoded) transaction's outputs once to
 populate the gate-metadata columns below — the single chokepoint every
 insertion path (HTTP routes and gossip relay alike) goes through, which is
-what makes the correctness gates unable to miss an entry (audit M-8).
+what makes the correctness gates unable to miss an entry (→ Correctness gates).
 
 ### Gate metadata columns
 
@@ -143,8 +143,12 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 ### insertUtxoTx
 
 ```
-insertUtxoTx(tx: UtxoTransaction, expiresAtHeight: number, costEstimate?: number | null): number
+insertUtxoTx(tx: UtxoTransaction, txId: TxId, expiresAtHeight: number, costEstimate?: number | null): number
 ```
+
+**`txId` is `computeTxId(tx)` as its caller computed it, and the insert hashes nothing.** Admission hands the id it
+looked the pool up by (→ getHeldEntry); a switch's re-insertion hands the id the reverted block declared, which its
+application held to the bytes. The row is keyed by it and its outputs' box ids derive from it (→ Schema).
 
 Encodes the UTXO transaction (`encodeTx`) and inserts a `utxo_tx` entry, populating
 the gate-metadata columns from the transaction's outputs (see above). Returns
@@ -233,7 +237,7 @@ each path answers is its own
 (`NODE_INTERFACE → Service Layer Architecture → "A transaction the pool already holds is answered as held"`; → Relay
 Integration).
 
-### Correctness gates (audit M-8)
+### Correctness gates
 
 ```
 hasPendingLike(targetPostId: string, likerId: string): boolean
@@ -291,6 +295,10 @@ every template until it expired. **The run reads two karma boxes per owner at mo
 the gate. A transaction that fits alone may still be
 trimmed from a full block: that is packing (`MINING_INTERFACE → Template and submit → "Packing to the budget"`), not
 admission.
+
+**The candidate carries the id admission computed.** Its body declares it, the settlement build reads it
+(`CONSENSUS_INTERFACE → The settlement build`), and `applyBlock` holds it to the transaction's bytes as it holds any
+block's (`CONSENSUS_INTERFACE → Applying a block`) — so the gate hashes the transaction once, in that check.
 
 **The gate keeps what it measured.** A row carries the transaction's **marginal cost** as `cost_estimate` — its
 single-transaction block's cost less the empty block's at the same tip, the empty block's computed once a tip — the
@@ -716,7 +724,7 @@ like every other transaction.
 Inbound relay handlers insert into the mempool rather than applying state:
 
 - **`onTx(tx)`**: `getHeldEntry` → `validateTx` (read-only) → `admitTx`, its correctness gates (→ Correctness gates)
-  as every route's → `insertUtxoTx(tx, expiresAtHeight)`. **A transaction the pool holds answers `false` at the
+  as every route's → `insertUtxoTx(tx, txId, expiresAtHeight)`. **A transaction the pool holds answers `false` at the
   lookup** — not admitted, so not forwarded — and logs nothing: a copy of a pooled transaction arriving again is
   ordinary gossip (→ getHeldEntry).
   There is no sub-block relay handler — a post arrives as a transaction through
@@ -781,7 +789,7 @@ expiry removed stays gone, and its submitter sends it again (→ Expiry).
 
 ## Design Decisions
 
-### Size cap — reject, never evict (audit M-8)
+### Size cap — reject, never evict
 
 The pool holds at most `MAX_MEMPOOL_ENTRIES` rows (config, default 10000)
 across all entry types. Every insert function checks the count and throws a

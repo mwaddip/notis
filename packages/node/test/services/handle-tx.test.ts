@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { PROTOCOL_VERSION, STORAGE_RENT_PER_BYTE, boxRecordBytes } from '@dagsocial/types';
+import {PROTOCOL_VERSION, STORAGE_RENT_PER_BYTE, boxRecordBytes,
+  computeTxId,
+} from '@dagsocial/types';
 import type { AnyBoxCandidate, UtxoTransaction } from '@dagsocial/types';
 import { blockBudgetSeam, liveProver, makeCreditBox, makeCreditTx, makeTestIdentity } from '../helpers.js';
 
@@ -133,7 +135,7 @@ describe('the relay handler takes a policy refusal as an answer', () => {
     const { MEMPOOL_EXPIRY_BLOCKS } = await import('@dagsocial/types');
     const mempoolMod = await import('../../src/store/mempool.js');
     const ord = await import('../../src/store/ordering.js');
-    adm.admitTx(tx, ord.getCurrentHeight() + 1 + MEMPOOL_EXPIRY_BLOCKS);
+    adm.admitTx(tx, computeTxId(tx), ord.getCurrentHeight() + 1 + MEMPOOL_EXPIRY_BLOCKS);
     const poolBefore = mempoolMod.getPendingEntries(10).length;
 
     const run = await relay(tx);

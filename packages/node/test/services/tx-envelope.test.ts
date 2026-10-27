@@ -559,7 +559,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
 
     let result: ReturnType<typeof validateTx> | undefined;
     expect(() => {
-      result = validateTx(deps, tx, 10);
+      result = validateTx(deps, tx, '0'.repeat(64), 10);
     }, `${label} threw`).not.toThrow();
 
     expect(result!.valid, label).toBe(false);
@@ -574,7 +574,8 @@ describe('validateTx step 0 — the envelope gate in place', () => {
     for (const key of ['inputs', 'outputs', 'signatures', 'protocolVersion']) {
       const tx = unsignedTx() as unknown as Record<string, unknown>;
       delete tx[key];
-      const result = validateTx(deps, tx as unknown as UtxoTransaction, 10);
+      const asTx = tx as unknown as UtxoTransaction;
+      const result = validateTx(deps, asTx, '0'.repeat(64), 10);
       expect(result.valid, key).toBe(false);
       expect(result.error, key).toContain(`missing required key '${key}'`);
     }
@@ -584,7 +585,8 @@ describe('validateTx step 0 — the envelope gate in place', () => {
     // Proves every rejection above isolates the envelope rule rather than
     // tripping over the absent signature — and that step 0 is not swallowing
     // the authorization check.
-    const result = validateTx(deps, unsignedTx(), 10);
+    const tx = unsignedTx();
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Missing or invalid owner signature');
   });
@@ -595,7 +597,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
     tx.signatures[Buffer.from(owner.pub).toString('hex')] = new Uint8Array(
       cryptoSign(null, hash, owner.priv),
     );
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });
@@ -607,7 +609,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
     tx.signatures[Buffer.from(owner.pub).toString('hex')] = new Uint8Array(
       cryptoSign(null, hash, owner.priv),
     );
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('protocolVersion must be the era');
   });
@@ -641,7 +643,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
     tx.signatures[Buffer.from(owner.pub).toString('hex')] = new Uint8Array(
       cryptoSign(null, hash, owner.priv),
     );
-    expect(validateTx(deps, tx, 10)).toMatchObject({ valid: true });
+    expect(validateTx(deps, tx, computeTxId(tx), 10)).toMatchObject({ valid: true });
   });
 });
 

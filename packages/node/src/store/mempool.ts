@@ -502,8 +502,8 @@ export function gateMetadata(tx: UtxoTransaction): GateMetadata {
  * materializes the same outputs through the same call, so the pool's prediction
  * and the block's result cannot disagree.
  *
- * `txId` is a parameter rather than a second `computeTxId` call, so the id this
- * row is keyed on and the ids of the boxes it promises come from one hash.
+ * `txId` is `insertUtxoTx`'s parameter, the caller's (MEMPOOL_INTERFACE →
+ * insertUtxoTx), so the row's key and its boxes' ids are one value.
  *
  * MEMPOOL_INTERFACE → Schema → "An output row carries its box's owner, type
  * and value": the row is written from the box this returns, so the pool's
@@ -542,6 +542,7 @@ export function bidOf(tx: UtxoTransaction): bigint | null {
  */
 export function insertUtxoTx(
   tx: UtxoTransaction,
+  txId: string,
   expiresAtHeight: number,
   costEstimate: number | null = null,
 ): number {
@@ -559,7 +560,6 @@ export function insertUtxoTx(
   const ceiling = ceilingOf(tx);
 
   const inputs = tx.inputs ?? [];
-  const txId = computeTxId(tx);
   const outputs = materializedOutputs(tx, txId);
   const meta = gateMetadata(tx);
 

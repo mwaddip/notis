@@ -15,8 +15,8 @@ import {
   validateTx,
 } from '@dagsocial/consensus';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
-import {
-  PROTOCOL_VERSION,
+import {PROTOCOL_VERSION,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   BackerStakeBox, BackerUnstakeBox, UtxoTransaction, AnyBoxCandidate,
@@ -121,7 +121,7 @@ describe('backer transition rules', () => {
     const stake = seedStake(holder.userId, 100n);
     insertBox(stake);
     const tx = unstakeTx(holder, stake, 100n);
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(true);
   });
 
@@ -129,7 +129,7 @@ describe('backer transition rules', () => {
     const stake = seedStake(holder.userId, 100n);
     insertBox(stake);
     const tx = unstakeTx(holder, stake, 40n);
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(true);
   });
 
@@ -139,7 +139,7 @@ describe('backer transition rules', () => {
     insertBox(stake);
     // BACKER_UNSTAKE_MIN_PCT=1, so minimum is ceil(200/100)=2. Unstake 1.
     const tx = unstakeTx(holder, stake, 1n);
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('unstake below minimum');
   });
@@ -157,7 +157,7 @@ describe('backer transition rules', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('unstake weight not conserved');
   });
@@ -174,7 +174,7 @@ describe('backer transition rules', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('unstake marker names another owner');
   });
@@ -192,7 +192,7 @@ describe('backer transition rules', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('stake successor names another owner');
   });
@@ -209,7 +209,7 @@ describe('backer transition rules', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('non-conservation');
   });
@@ -228,7 +228,7 @@ describe('backer transition rules', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('exactly one BackerStakeBox');
   });
@@ -247,7 +247,7 @@ describe('backer transition rules', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(false);
   });
 
@@ -266,7 +266,7 @@ describe('backer transition rules', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(false);
   });
 
@@ -282,7 +282,7 @@ describe('backer transition rules', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const r = validateTx(deps, tx, HEIGHT);
+    const r = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(r.valid).toBe(false);
     expect(r.error).toContain('block application');
   });

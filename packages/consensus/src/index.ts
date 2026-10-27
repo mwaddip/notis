@@ -19,7 +19,7 @@ export {
   decayLegMaxBytes,
   settlementMarginalBytes,
 } from './settlement.js';
-export type { SettlementDeps, SettlementBody } from './settlement.js';
+export type { SettlementBody, SettlementBodyTx, SettlementDeps } from './settlement.js';
 
 export { deriveKarmaDecay, commitDecayClocks, karmaOwed } from './decay.js';
 export type { DecayDeps, DecayPlan } from './decay.js';

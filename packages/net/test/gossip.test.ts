@@ -81,7 +81,7 @@ const validators: NetValidators = {
 };
 
 function makeConfig(): NetConfig {
-  return makeBaseConfig({ penaltyScoreThreshold: 1000, penaltySafeIntervalMs: 0 });
+  return makeBaseConfig({ penaltyScoreThreshold: 1000, penaltyDecayIntervalMs: 0 });
 }
 
 type CapturedValidator = (
@@ -797,8 +797,8 @@ describe('gossip dispatch listener', () => {
   });
 
   it('logs when a handler throws, instead of absorbing it silently', () => {
-    // Pre-fix this produced no output of any kind: the handler call sat inside
-    // a `try` whose `catch` had an empty body.
+    // A throwing handler produces console output; the dispatch's `catch`
+    // never has an empty body.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { deliver } = makeDispatchHarness({
       onOrderingBlock: () => {
@@ -1014,7 +1014,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
 
   it('a mismatch accrues 50, not 100: one hit under threshold 75 does not ban, two do', () => {
     // The score that separates Transient from misbehavior. The harness config
-    // sets penaltySafeIntervalMs 0, so no decay: 50 + 50 = 100 crosses 75, while
+    // sets penaltyDecayIntervalMs 0, so no decay: 50 + 50 = 100 crosses 75, while
     // a single misbehavior (100) would have banned at the first hit.
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
       schedule: twoEra,

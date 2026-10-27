@@ -302,15 +302,13 @@ structure, no body — until backfill fills it (NODE_INTERFACE → Store Interfa
 
 > **The byte-exact layout is specified in `TYPES_INTERFACE.md` (Serialization → "Layout —
 > PostCommit" and "Layout — Post body") and nowhere else.** Every field is length-prefixed and the ref array carries an
-> explicit count (audit M-1); the id's domain tag keeps a post id from ever colliding with a
-> box or tx id derived from the same provenance. **Do not restate the formula here.** This document previously
-> carried it twice, in two different field orders, both in the pre-M-1 unprefixed form — a
-> restatement of a byte format is a mirror implementation in prose, and it diverged exactly
-> the way mirrors do.
+> explicit count (TYPES_INTERFACE → Canonical field encoding); the id's domain tag keeps a post id from ever colliding
+> with a box or tx id derived from the same provenance. **Do not restate the formula here.** A restatement of a byte
+> format is a mirror implementation in prose, and a mirror diverges.
 >
-> ⚠ **It diverged again, in this very paragraph, and that is the point.** The clause above
+> ⚠ **A restatement diverges even inside the warning against one.** The clause above
 > read "an explicit `u32LE` count" until 2026-08-10 — a fragment of the format, restated
-> inside the warning against restating the format, left behind when Phase 3b made the count
+> inside the warning against restating the format, left behind when the count became
 > `vlqU`. A prohibition does not exempt the text that carries it.
 
 A post's `parentRefs` name confirmed posts, live or withdrawn. The hash is
@@ -349,7 +347,7 @@ may do to a post after posting it — a like, the other act over a post, is neve
 (§Likes). Who "the author" is, is itself consensus data: every confirmed
 post's `author` is the signer of its creating transaction, recorded at confirmation in the post's
 record under the state root (`CONSENSUS_INTERFACE → StateView`), and a withdrawal is valid only if the karma input's
-owner equals that recorded author (audit H-3) — so a signature from anyone else, however valid for its own key, authorizes
+owner equals that recorded author — so a signature from anyone else, however valid for its own key, authorizes
 nothing, and any node reaches the verdict with or without the DAG content.
 
 **No act reaches another author's post.** A reply belongs to the one who wrote it; the author of the
@@ -748,7 +746,7 @@ post and like records) and index entries derived from each entity's own fields; 
   (`CONSENSUS_INTERFACE → The block's cost`) — what bounds the work of replaying it from its proof, where
   `MAX_BLOCK_BODY_BYTES` bounds its bytes.
 
-- **Post-state, not parent-state (H-6).** `stateRoot` commits to the state the
+- **Post-state, not parent-state.** `stateRoot` commits to the state the
   block *produces*, following Ergo. The block therefore commits to its own
   effect, and the tip's state is provable as soon as the tip exists. The cost
   is that a producer must know its block's outcome before mining it — see
@@ -807,7 +805,7 @@ post and like records) and index entries derived from each entity's own fields; 
   pairs for the same boxId netted out deterministically, and a name or holder
   key the block both creates and removes netted out the same way. Inserted box
   bytes come from the effect's box, never a store re-fetch
-- **Canonically ordered (M-12):** the AVL digest is insertion-order-sensitive,
+- **Canonically ordered:** the AVL digest is insertion-order-sensitive,
   so every prover feed is sorted before the operations run: the per-block net
   set applies all removes then all inserts, each sorted lexicographically by
   hex boxId, and the startup bootstrap feeds the unspent set sorted by boxId
@@ -1422,7 +1420,7 @@ is byte-identical from creation to the block that consumes it.
 > in `node/src/config.ts`, gates whether `MINING_SECRET` is required, and selects the mining
 > wiring (`index.ts` and `server.ts` branch on `config.nodeRole === 'miner'`). The **validator
 > signature** on ordering blocks is real and load-bearing — verified on every apply path
-> (audit H-1).
+> (NODE_INTERFACE → Ordering block apply-time authorization).
 >
 > ✅ **The remainder of this section is verified against the code, 2026-08-20.** Responsibilities,
 > Validator selection, Rewards and Separation match `block-creator.ts`, `settlement.ts` and
@@ -2259,8 +2257,8 @@ no object check compares against it and no producer stamps it.
   source. No mutation or rollback may read a withdrawn post's content.
 - **AVL feed derives from the effects.** The prover's per-block mutation set
   is computed from the block's effects, the same list the journal is built
-  from — never from hand-maintained consumed/created lists (the drift source
-  behind audit C-5/H-5/H-7).
+  from — never from hand-maintained consumed/created lists, which can drift
+  from what the block did.
 - **Prover restored on rejection.** A rejected block leaves the AVL prover at
   its pre-block digest regardless of which stage rejected it.
 
@@ -2540,7 +2538,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > non-JS light client would have to reimplement V8 string escaping to compute a block root.
   >
   > **Decision 2026-08-06: replace, do not specify.** Move to a length-prefixed canonical
-  > encoding — the pattern `postFieldBytes` already uses, which is the M-1 fix and is
+  > encoding — the pattern `postFieldBytes` already uses, which is the canonical field encoding and is
   > verified injective. Two supporting reasons: the format is **already straining**
   > (`canonicalEpochTallyJson` existed precisely because JSON insertion order was not
   > deterministic enough for one leaf — retired with the epoch, P2-D), and it is

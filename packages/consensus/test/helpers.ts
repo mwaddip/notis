@@ -497,8 +497,8 @@ export function candidateBlock(
   validator: Uint8Array,
   ctx: ApplyContext,
 ): OrderingBlock {
-  const txBytes = txs.map((b) => encodeTx(b.tx));
-  const settled = buildBlockSettlement(view, txBytes, height, validator, validator, ctx);
+  const body = txs.map((b) => ({ txId: b.txId, txBytes: encodeTx(b.tx) }));
+  const settled = buildBlockSettlement(view, body, height, validator, validator, ctx);
   if ('error' in settled) throw new Error(`no settlement at height ${height}: ${settled.error}`);
   return {
     header: {
@@ -515,8 +515,8 @@ export function candidateBlock(
       adProofsRoot: '0'.repeat(64),
     },
     utxoTxTree: {
-      utxoTxIds: [...txs.map((b) => b.txId), computeTxId(settled.tx)],
-      utxoTxs: [...txBytes, encodeTx(settled.tx)],
+      utxoTxIds: [...body.map((e) => e.txId), computeTxId(settled.tx)],
+      utxoTxs: [...body.map((e) => e.txBytes), encodeTx(settled.tx)],
     },
     validatorSignature: new Uint8Array(64),
   };

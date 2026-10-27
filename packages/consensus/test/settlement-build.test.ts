@@ -211,12 +211,12 @@ describe('buildBlockSettlement — the producer\'s settlement over a view', () =
     const release = computeBlockReward(height, ctx);
 
     const signed = bodyTx([held.id!], outputs, { [hex(payer)]: new Uint8Array(64) });
-    const paid = built(buildBlockSettlement(view, [encodeTx(signed.tx)], height, miner, miner, ctx));
+    const paid = built(buildBlockSettlement(view, [{ txId: signed.txId, txBytes: encodeTx(signed.tx) }], height, miner, miner, ctx));
     expect(paid.inputs).toEqual([view.getEmissionBox()!.id, signed.outputs[2]!.id]);
     expect(paid.outputs.at(-1)!.value).toBe(splitCoinbase(release, charge, 0n, 0).miner);
 
     const unsigned = bodyTx([held.id!], outputs);
-    const rented = built(buildBlockSettlement(view, [encodeTx(unsigned.tx)], height, miner, miner, ctx));
+    const rented = built(buildBlockSettlement(view, [{ txId: unsigned.txId, txBytes: encodeTx(unsigned.tx) }], height, miner, miner, ctx));
     expect(rented.inputs).toEqual([view.getEmissionBox()!.id, unsigned.outputs[2]!.id]);
     expect(rented.outputs.at(-1)!.value).toBe(splitCoinbase(release, 0n, charge, 0).miner);
   });
@@ -235,7 +235,7 @@ describe('buildBlockSettlement — the producer\'s settlement over a view', () =
     const height = 9;
     const consolidate = bodyTx([a1.id], [karma(stale, 40n, height)]);
     const produced = consolidate.outputs[0]!;
-    const tx = built(buildBlockSettlement(view, [encodeTx(consolidate.tx)], height, miner, miner, decayCtx));
+    const tx = built(buildBlockSettlement(view, [{ txId: consolidate.txId, txBytes: encodeTx(consolidate.tx) }], height, miner, miner, decayCtx));
 
     // Stale at 9 with 3 whole intervals owed: 70 face, 15 burned, 55 re-emitted.
     const planInputs = tx.inputs.slice(tx.inputs.indexOf(a2.id));
@@ -260,7 +260,7 @@ describe('buildBlockSettlement — the producer\'s settlement over a view', () =
       owner: voucher,
       releaseAtBlock: staked.createdAtBlock + ctx.vouchCooldownBlocks,
     } as AnyBoxCandidate]);
-    const tx = built(buildBlockSettlement(view, [encodeTx(unvouch.tx)], height, miner, miner, ctx));
+    const tx = built(buildBlockSettlement(view, [{ txId: unvouch.txId, txBytes: encodeTx(unvouch.tx) }], height, miner, miner, ctx));
 
     expect(tx.inputs).toContain(held.id);
     expect(tx.inputs).not.toContain(unvouch.outputs[0]!.id);

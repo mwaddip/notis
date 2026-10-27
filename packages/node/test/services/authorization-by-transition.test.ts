@@ -20,12 +20,13 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { PROTOCOL_VERSION,
+import {PROTOCOL_VERSION,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   BOX_TYPE_TAGS,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -296,7 +297,8 @@ describe('authorization is a property of the transition', () => {
 
     for (const [boxType, c] of ENTRIES) {
       it(`${boxType}: unsigned is refused, with a verdict rather than a throw`, () => {
-        const result = validateTx(deps, spendOf(c), 10);
+        const tx = spendOf(c);
+        const result = validateTx(deps, tx, computeTxId(tx), 10);
         expect(result.valid).toBe(false);
         expect(result.error).toBeTypeOf('string');
       });
@@ -315,7 +317,7 @@ describe('authorization is a property of the transition', () => {
         const tx = spendOf(c);
         signTransaction(tx, holder.privateKey, toHex(holder.userId));
 
-        const result = validateTx(deps, tx, 10);
+        const result = validateTx(deps, tx, computeTxId(tx), 10);
         expect(result.valid, result.error).toBe(true);
       });
 
@@ -323,7 +325,7 @@ describe('authorization is a property of the transition', () => {
         const tx = spendOf(c);
         signTransaction(tx, stranger.privateKey, toHex(stranger.userId));
 
-        expect(validateTx(deps, tx, 10).valid).toBe(false);
+        expect(validateTx(deps, tx, computeTxId(tx), 10).valid).toBe(false);
       });
 
       it(`${boxType}: the other key the transaction mentions does not either`, () => {
@@ -333,7 +335,7 @@ describe('authorization is a property of the transition', () => {
         const tx = spendOf(c);
         signTransaction(tx, other.privateKey, toHex(other.userId));
 
-        expect(validateTx(deps, tx, 10).valid).toBe(false);
+        expect(validateTx(deps, tx, computeTxId(tx), 10).valid).toBe(false);
       });
     }
   });
@@ -358,7 +360,7 @@ describe('authorization is a property of the transition', () => {
           const tx = spendOf(c);
           if (id !== null) signTransaction(tx, id.privateKey, toHex(id.userId));
 
-          const result = validateTx(deps, tx, 10);
+          const result = validateTx(deps, tx, computeTxId(tx), 10);
           expect(result.valid, `${boxType} signed by ${id === null ? 'nobody' : toHex(id.userId).slice(0, 8)}`)
             .toBe(false);
           expect(result.error).not.toMatch(/signature|signed by/i);
@@ -392,7 +394,8 @@ describe('authorization is a property of the transition', () => {
     }
 
     it('an unsigned, illegally-shaped karma spend is refused for the signature', () => {
-      const result = validateTx(deps, karmaToCredit(), 10);
+      const tx = karmaToCredit();
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/signature/i);
     });
@@ -401,7 +404,7 @@ describe('authorization is a property of the transition', () => {
       const tx = karmaToCredit();
       signTransaction(tx, holder.privateKey, toHex(holder.userId));
 
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).not.toMatch(/signature/i);
     });

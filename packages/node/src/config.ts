@@ -157,7 +157,7 @@ export interface Config {
   outboundRedialCooldownMs: number;
   penaltyScoreThreshold: number;
   temporalBanDurationMs: number;
-  penaltySafeIntervalMs: number;
+  penaltyDecayIntervalMs: number;
   syncRequestTimeoutMs: number;
 }
 
@@ -240,7 +240,7 @@ export function loadConfig(): Readonly<Config> {
     outboundRedialCooldownMs: readWholeNumber('OUTBOUND_REDIAL_COOLDOWN_MS', 60_000, { floor: 0 }),
     penaltyScoreThreshold: readWholeNumber('PENALTY_SCORE_THRESHOLD', 500, { floor: 0 }),
     temporalBanDurationMs: readWholeNumber('TEMPORAL_BAN_DURATION_MS', 3_600_000, { floor: 0 }),
-    penaltySafeIntervalMs: readWholeNumber('PENALTY_SAFE_INTERVAL_MS', 120_000, { floor: 1 }),
+    penaltyDecayIntervalMs: readWholeNumber('PENALTY_DECAY_INTERVAL_MS', 120_000, { floor: 1 }),
     syncRequestTimeoutMs: readWholeNumber('SYNC_REQUEST_TIMEOUT_MS', 10_000, { floor: 1 }),
   };
 

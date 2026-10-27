@@ -23,7 +23,7 @@ const TEST_KEYS = [
   'OUTBOUND_REDIAL_COOLDOWN_MS',
   'PENALTY_SCORE_THRESHOLD',
   'TEMPORAL_BAN_DURATION_MS',
-  'PENALTY_SAFE_INTERVAL_MS',
+  'PENALTY_DECAY_INTERVAL_MS',
   'SYNC_REQUEST_TIMEOUT_MS',
   'NETWORK_TYPE',
   'MINING_SECRET',
@@ -946,7 +946,7 @@ describe('config', () => {
   // one reader, and a set value it refuses stops the node at load" — the
   // seventeen whole-number settings go through the one reader: decimal digits
   // and nothing else, a safe integer, at or above the setting's floor (1 for
-  // BLOCK_BODY_BUDGET_BYTES, PENALTY_SAFE_INTERVAL_MS and
+  // BLOCK_BODY_BUDGET_BYTES, PENALTY_DECAY_INTERVAL_MS and
   // SYNC_REQUEST_TIMEOUT_MS, 0 for every other), and a port at most 65 535.
   //
   // `vitest.config.ts` pins NETWORK_TYPE=devnet; `clearTestEnv` in the outer
@@ -971,7 +971,7 @@ describe('config', () => {
       { env: 'OUTBOUND_REDIAL_COOLDOWN_MS', floor: 0,             field: 'outboundRedialCooldownMs',   dflt: 60_000 },
       { env: 'PENALTY_SCORE_THRESHOLD',     floor: 0,             field: 'penaltyScoreThreshold',      dflt: 500 },
       { env: 'TEMPORAL_BAN_DURATION_MS',    floor: 0,             field: 'temporalBanDurationMs',      dflt: 3_600_000 },
-      { env: 'PENALTY_SAFE_INTERVAL_MS',    floor: 1,             field: 'penaltySafeIntervalMs',      dflt: 120_000 },
+      { env: 'PENALTY_DECAY_INTERVAL_MS',   floor: 1,             field: 'penaltyDecayIntervalMs',     dflt: 120_000 },
       { env: 'SYNC_REQUEST_TIMEOUT_MS',     floor: 1,             field: 'syncRequestTimeoutMs',       dflt: 10_000 },
       { env: 'MAX_PROOF_HISTORY',           floor: 0,             field: 'maxProofHistory',            dflt: 1440 },
       { env: 'PROOF_RETENTION_BLOCKS',      floor: 0,             field: 'proofRetentionBlocks',       dflt: 10_080 },
@@ -1073,7 +1073,7 @@ describe('config', () => {
       const NET = SETTINGS.filter((x) => [
         'MIN_PEERS', 'PEER_DB_CAP', 'OUTBOUND_REDIAL_COOLDOWN_MS',
         'PENALTY_SCORE_THRESHOLD', 'TEMPORAL_BAN_DURATION_MS',
-        'PENALTY_SAFE_INTERVAL_MS', 'SYNC_REQUEST_TIMEOUT_MS',
+        'PENALTY_DECAY_INTERVAL_MS', 'SYNC_REQUEST_TIMEOUT_MS',
       ].includes(x.env));
       for (const s of NET) {
         it(`${s.env}=5 reads as config.${s.field} === 5`, async () => {

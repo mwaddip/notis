@@ -244,7 +244,7 @@ describe('credit transfers ride consensus', () => {
     // Mine: one post transaction to populate the block, then create it.
     const author = makeTestIdentity();
     const { tx: postTx } = await seedPostTx(author, 'settlement fixture');
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
     bc.startBlockCreator(testConfig);
     const block = await mineNextBlock(bc);
     bc.stopBlockCreator();
@@ -368,7 +368,7 @@ describe('credit transfers ride consensus', () => {
     // The live prover has not moved yet: pooling settles nothing.
     const preBlockDigest = digestHex(handle);
 
-    mempool.insertUtxoTx(postTx, 1000);
+    mempool.insertUtxoTx(postTx, computeTxId(postTx), 1000);
     bc.startBlockCreator(testConfig);
     const block3 = await mineNextBlock(bc);
     bc.stopBlockCreator();

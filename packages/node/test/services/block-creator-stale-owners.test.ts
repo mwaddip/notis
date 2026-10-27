@@ -222,7 +222,7 @@ describe('the fill counts a squaring for an entry whose owner owes decay', () =>
     const miner = newIdentity();
     const built = buildBlockSettlement(
       treeStateView(proverSession(getAvlProver().prover)),
-      likeTxs.map((tx) => encodeTx(tx)),
+      likeTxs.map((tx) => ({ txId: computeTxId(tx), txBytes: encodeTx(tx) })),
       TARGET_HEIGHT,
       miner.pub,
       miner.pub,
@@ -557,7 +557,7 @@ describe('createOrderingBlock reserves a squaring for every stale owner\'s entry
     await seedCommittedState({ mutations: [...boxMutations, ...recordMutations] as never });
 
     const mempool = await import('../../src/store/mempool.js');
-    for (const tx of consolidations) mempool.insertUtxoTx(tx, 5000);
+    for (const tx of consolidations) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
 
     const bc = await import('../../src/services/block-creator.js');
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -639,7 +639,7 @@ describe('createOrderingBlock reserves a squaring for every stale owner\'s entry
     });
 
     const mempool = await import('../../src/store/mempool.js');
-    for (const tx of likeTxs) mempool.insertUtxoTx(tx, 5000);
+    for (const tx of likeTxs) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
 
     const bc = await import('../../src/services/block-creator.js');
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -700,7 +700,7 @@ describe('createOrderingBlock reserves a squaring for every stale owner\'s entry
     const mempool = await import('../../src/store/mempool.js');
     const utxo = await import('../../src/store/utxo.js');
     const consolidationIds = consolidations.map((tx) => computeTxId(tx));
-    for (const tx of consolidations) mempool.insertUtxoTx(tx, 5000);
+    for (const tx of consolidations) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
 
     const bc = await import('../../src/services/block-creator.js');
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -767,7 +767,7 @@ describe('createOrderingBlock reserves a squaring for every stale owner\'s entry
     });
 
     const mempool = await import('../../src/store/mempool.js');
-    for (const tx of likeTxs) mempool.insertUtxoTx(tx, 5000);
+    for (const tx of likeTxs) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
 
     const bc = await import('../../src/services/block-creator.js');
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -822,7 +822,7 @@ describe('createOrderingBlock reserves a squaring for every stale owner\'s entry
     });
 
     const mempool = await import('../../src/store/mempool.js');
-    for (const tx of likeTxs) mempool.insertUtxoTx(tx, 5000);
+    for (const tx of likeTxs) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
 
     const bc = await import('../../src/services/block-creator.js');
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -896,9 +896,9 @@ describe('createOrderingBlock reserves a squaring for every stale owner\'s entry
     const withdrawTx = buildWithdrawal(withdrawOwner, withdrawOwn, postId);
 
     const mempool = await import('../../src/store/mempool.js');
-    mempool.insertUtxoTx(consolTx, 5000);
-    mempool.insertUtxoTx(claimTx, 5000);
-    mempool.insertUtxoTx(withdrawTx, 5000);
+    mempool.insertUtxoTx(consolTx, computeTxId(consolTx), 5000);
+    mempool.insertUtxoTx(claimTx, computeTxId(claimTx), 5000);
+    mempool.insertUtxoTx(withdrawTx, computeTxId(withdrawTx), 5000);
 
     // All three rows carry a non-null `karma_owner` — `gateMetadata`'s karma
     // arm fires on any output of type karma, karma_price, like_accrual, bond
@@ -963,8 +963,8 @@ describe('createOrderingBlock reserves a squaring for every stale owner\'s entry
     const second = buildLikeOfOwnBox(liker, change, author.pub, postId2);
 
     const mempool = await import('../../src/store/mempool.js');
-    mempool.insertUtxoTx(first, 5000);
-    mempool.insertUtxoTx(second, 5000);
+    mempool.insertUtxoTx(first, computeTxId(first), 5000);
+    mempool.insertUtxoTx(second, computeTxId(second), 5000);
 
     // Both rows name the same owner on `karma_owner`, so the fill asks the
     // predicate once (cached) and reserves `decayLegMaxBytes` for each entry.
@@ -1091,7 +1091,7 @@ describe('a reorg across an income box', () => {
     // emits a fresh one at the summed accrual.
     for (let i = 0; i < K; i++) {
       const tx = buildLikeOfOwnBox(likersA[i]!, ownBoxesA[i]!, author.pub, postId);
-      mempool.insertUtxoTx(tx, 5000);
+      mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
     }
     const blockA = await mineNextBlock(bc);
     expect(blockA).not.toBeNull();
@@ -1109,7 +1109,7 @@ describe('a reorg across an income box', () => {
     for (let i = 0; i < K; i++) {
       const tx = buildLikeOfOwnBox(likersB[i]!, ownBoxesB[i]!, author.pub, postId);
       likesB.push(tx);
-      mempool.insertUtxoTx(tx, 5000);
+      mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
     }
     const blockB = await mineNextBlock(bc);
     expect(blockB).not.toBeNull();
@@ -1146,7 +1146,7 @@ describe('a reorg across an income box', () => {
     // The pool holds B's likes again — the inputs `revertBlock` unspent are
     // re-pooled for the next build (NODE_INTERFACE → Fork choice decides on
     // verified headers → "One intake, one at a time").
-    for (const tx of likesB) mempool.insertUtxoTx(tx, 5000);
+    for (const tx of likesB) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
     expect(mempool.getPendingEntries(100).length).toBeGreaterThanOrEqual(K);
     void utxo; void incomeBId; void incomeBValue;
     process.stdout.write('MEASUREMENT: ' + JSON.stringify({

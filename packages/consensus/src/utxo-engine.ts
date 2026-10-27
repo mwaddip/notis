@@ -2,7 +2,6 @@ import {
   BOX_VALUE_BOUND,
   boxRecordBytes,
   computeBoxId,
-  computeTxId,
   LIKE_KARMA_COST,
   MIN_BOX_VALUE_PER_BYTE,
   POST_PRICE_THREAD,
@@ -25,12 +24,9 @@ import {
 import { isCreditSideTx } from './coinbase-split.js';
 import type { DecayCfg, UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
 
-// `computeTxId` has exactly one implementation and it is types'. This engine
-// must never grow a local copy: the id it returns is both the hash
-// `checkAuthorization` verifies signatures against and the `txId` every output
-// is materialized under,
-// so a second hasher is a divergence surface that agrees only by coincidence —
-// same `Encoder` options, same strip rule, same domain tag, all by hand
+// NODE_INTERFACE → validateTx. The engine never hashes a transaction: the id
+// each rule reads is `validateTx`'s `txId` parameter, taken from its caller,
+// so a second hasher is a divergence surface this file does not open
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
 import { verifyEd25519, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyTxProtocolVersion } from '@dagsocial/validation';
@@ -1459,10 +1455,13 @@ function checkHexKeyedByteMap(
  * non-array `outputs` OBJECT slips that loop (`length` undefined) and throws at
  * conservation's `.reduce`, a missing or `null` `signatures` throws at
  * `tx.signatures[hexKey]`, and `likeTarget: null` throws inside `computeTxId` —
- * which `checkAuthorization` calls on its first line, so the whole envelope
- * reaches the hasher. Each one is an HTTP
- * 500 or, through the block funnel, a whole-block rejection logged as an
- * unexpected failure.
+ * the hash this gate keeps total runs after it on the block path, in
+ * `decodeBodyEntry`'s declared-id check (CONSENSUS_INTERFACE → Applying a
+ * block → "A transaction's id is hashed once, where its bytes are proven"),
+ * and admission's JSON edge runs this gate before any service hashes
+ * (NODE_INTERFACE → Transaction envelope shape, the call-site list). Each
+ * one is an HTTP 500 or, through the block funnel, a whole-block rejection
+ * logged as an unexpected failure.
  *
  * **Total**: returns `{valid: false}` and never throws for any decoded
  * value. Error strings quote input through `describeValue`, never bare
@@ -1645,10 +1644,13 @@ export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly 
   // transaction.** `txIdBytes` writes the payload through `postFieldBytes`,
   // which encodes `author` and every `parentRefs` entry fixed-width — writers
   // with no unreachable sentinel, so they THROW outside their domain
-  // (TYPES_INTERFACE → Totality). `checkAuthorization` hashes on its first
-  // line, so an
-  // attacker-supplied payload reaches those writers before any transition arm
-  // runs. Same obligation as `likeTarget` above, one field deeper.
+  // (TYPES_INTERFACE → Totality). The hash this gate keeps total is
+  // `decodeBodyEntry`'s declared-id check on the block path
+  // (CONSENSUS_INTERFACE → Applying a block → "A transaction's id is hashed
+  // once, where its bytes are proven"), and admission's JSON edge runs this
+  // gate before any service hashes (NODE_INTERFACE → Transaction envelope
+  // shape, the call-site list). Same obligation as `likeTarget` above, one
+  // field deeper.
   //
   // `verifyPostCommitDomains` is the single statement of that domain, shared with
   // the gossip gate and the verifier — a narrower re-check written here would be
@@ -2263,13 +2265,16 @@ function authorizationTable(
  */
 function checkAuthorization(
   tx: UtxoTransaction,
+  txId: string,
   inputBoxes: AnyBox[],
   currentBlockHeight: number,
   storageRentPeriodBlocks: number,
   verifySignature: UtxoEngineDeps['verifySignature'],
 ): UtxoResult {
   const AUTHORIZATION = authorizationTable(storageRentPeriodBlocks);
-  const txHash = hexToBytes(computeTxId(tx));
+  // `txId` is the caller's (NODE_INTERFACE → validateTx); each required
+  // signer's signature is checked over its 32 bytes.
+  const txHash = hexToBytes(txId);
   const requiredKeys = new Set<string>();
 
   for (const box of inputBoxes) {
@@ -2363,12 +2368,13 @@ function checkAuthorization(
 export function validateTx(
   deps: UtxoEngineDeps,
   tx: UtxoTransaction,
+  txId: string,
   currentBlockHeight: number,
 ): UtxoResult {
   // ---- 0. Transaction envelope shape ----
-  // Ahead of every other read of `tx`: steps 1–9 index `tx.inputs`, iterate
-  // `tx.outputs`, and hash the whole envelope inside `computeTxId`, all of
-  // which are throw sites for a malformed envelope without this gate.
+  // Ahead of every other read of `tx`: steps 1–9 index `tx.inputs` and
+  // iterate `tx.outputs`, both throw sites for a malformed envelope without
+  // this gate.
   const envelopeCheck = checkTxEnvelope(tx, currentBlockHeight, deps.protocolVersionSchedule);
   if (!envelopeCheck.valid) return envelopeCheck;
 
@@ -2433,9 +2439,8 @@ export function validateTx(
   const shapeCheck = checkOutputShape(tx.outputs);
   if (!shapeCheck.valid) return shapeCheck;
 
-  // Computed once ahead of step 6 (the credit floor reads it) and reused at
-  // the end for output materialization.
-  const txId = computeTxId(tx);
+  // `txId` is the caller's (NODE_INTERFACE → validateTx); the credit floor at
+  // step 6 reads it, and output materialization at the end carries it.
 
   // ---- 6. Height bounds and credit floor ----
   // TYPES_INTERFACE → Monotonic creation height: no output may predate its
@@ -2495,6 +2500,7 @@ export function validateTx(
   // from the input type and the output count; step 9 pins the rest of the shape.
   const authCheck = checkAuthorization(
     tx,
+    txId,
     inputBoxes,
     currentBlockHeight,
     deps.storageRentPeriodBlocks,

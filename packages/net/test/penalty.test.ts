@@ -49,11 +49,11 @@ describe('penalty attribution (using PeerManager)', () => {
 
   it('accumulating Transient penalties above break-even triggers temporal ban', () => {
     mgr.addPeer(makePeer('peer1'));
-    // A Transient (50) decays away within half a safe interval, so only
+    // A Transient (50) decays away within half a decay interval, so only
     // faster misbehavior accrues pressure. One penalty per interval/10 nets
     // +40 per step — 50, 90, 130, … crossing 500 on the 13th penalty.
     for (let i = 0; i < 13; i++) {
-      vi.spyOn(Date, 'now').mockReturnValue(i * (config.penaltySafeIntervalMs / 10));
+      vi.spyOn(Date, 'now').mockReturnValue(i * (config.penaltyDecayIntervalMs / 10));
       mgr.recordPenaltyKind(PenaltyKind.Transient, 'peer1', `timeout ${i}`);
     }
 
@@ -61,11 +61,10 @@ describe('penalty attribution (using PeerManager)', () => {
     expect(mgr.getPeerCount()).toBe(0);
   });
 
-  it('rapid non-fatal penalties all accrue — none are discarded (fails pre-fix)', () => {
-    // Every penalty counts: a safe-interval cooldown that swallowed the second
-    // one would leave penaltyCount at 1. The nonzero timestamp is what makes
-    // that check meaningful — such a cooldown skips itself while
-    // lastPenaltyTime is 0, so a t=0 flood would accrue either way.
+  it('rapid non-fatal penalties all accrue — every penalty accrues', () => {
+    // Every penalty counts, so two at one instant leave penaltyCount at 2.
+    // The score decays pro rata to the time elapsed over the decay interval
+    // (NET_INTERFACE → Accrual and decay).
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(1_000);
 
@@ -89,7 +88,7 @@ describe('penalty attribution (using PeerManager)', () => {
     // permanently banned on the spot — decay never applies to permanents.
     mgr.addPeer(makePeer('peer2'));
     mgr.recordPenaltyKind(PenaltyKind.Transient, 'peer2', 'noise');
-    vi.spyOn(Date, 'now').mockReturnValue(1000 * config.penaltySafeIntervalMs);
+    vi.spyOn(Date, 'now').mockReturnValue(1000 * config.penaltyDecayIntervalMs);
     mgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer2', 'malformed later');
     expect(mgr.isBanned('peer2')).toBe(true);
     expect(mgr.getPeerCount()).toBe(0);

@@ -13,7 +13,7 @@ import type { UsernameRow } from '../store/usernames.js';
 
 export interface UsernameRouteDeps extends UtxoEngineDeps {
   getCurrentHeight(): number;
-  validateTx(tx: UtxoTransaction, currentBlockHeight: number): UtxoResult;
+  validateTx(tx: UtxoTransaction, txId: string, currentBlockHeight: number): UtxoResult;
   getUsername(nameLower: string): UsernameRow | null;
   getUsernameByOwner(owner: Uint8Array | string): UsernameRow | null;
 }

@@ -17,7 +17,7 @@ const base = {
   maxPeers: 10,
   penaltyScoreThreshold: 500,
   temporalBanDurationMs: 3_600_000,
-  penaltySafeIntervalMs: 120_000,
+  penaltyDecayIntervalMs: 120_000,
   syncRequestTimeoutMs: 10_000,
 };
 

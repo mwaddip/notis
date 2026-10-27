@@ -159,7 +159,7 @@ describe('invite id prediction carries transaction provenance', () => {
 
     // The engine's own materialization of the same transaction — the path block
     // application takes. One shared rule, so these cannot drift.
-    const applied = validateTx(deps() as never, tx, HEIGHT);
+    const applied = validateTx(deps() as never, tx, computeTxId(tx), HEIGHT);
     expect(applied.valid).toBe(true);
 
     expect(applied.txId).toBe(result.txId);

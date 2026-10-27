@@ -83,6 +83,10 @@ block, `applyTx`, the post's activity bump, the like record, the name claim or b
 chain first (`NODE_INTERFACE → Ordering block apply-time authorization`), and the creator's speculative run passes a
 candidate whose nonce, signature and `stateRoot` are placeholders (`NODE_INTERFACE → Post-block stateRoot`).
 
+**A transaction's id is hashed once, where its bytes are proven.** Each embedded transaction's declared id is held to
+`computeTxId` of its decoded bytes, and that id — never a second hash — is what the signature batch's message, the
+loop's `validateTx` (`NODE_INTERFACE → validateTx`) and the outputs' box ids read.
+
 **The owed-decay capture reads the record of every identity the body touches** — one the body leaves with no karma
 box among them, which the decay plans pass over: its posts are judged against `owed` as any other spend is. Only a
 post's author can be left with none (`NODE_INTERFACE → Karma transition rules`, "Only a post spends the floor"), and
@@ -473,12 +477,16 @@ the same list — one list, so the store, the journal and the tree's writes cann
 
 ## The settlement build
 
-**`buildBlockSettlement(view, txBytes, height, validatorId, minerOwner, ctx)` is the producer's settlement** for a body
+**`buildBlockSettlement(view, body, height, validatorId, minerOwner, ctx)` is the producer's settlement** for a body
 of user transactions (`MINING_INTERFACE → Template and submit`): read through `StateView` over pre-body state, the
-body's own outputs resolved from the body. **It shares every derivation with `applyBlock`** — decay's projection
-(`collectPostBodyKarma`), the settlement's read wiring (`settlementDepsWith`), the reward (`computeBlockReward`) — so
-producer and applier derive from one implementation, and a settlement the build gets wrong is the speculative run's
-`body-rejected` (`NODE_INTERFACE → Post-block stateRoot`), never a mined block.
+body's own outputs resolved from the body. **`body` is the user transactions as `{ txId, txBytes }` pairs, each id
+`computeTxId` of its bytes as the caller holds it** — the pool row's, or the id admission computed (`MEMPOOL_INTERFACE
+→ The cost gate`): the build decodes each body and hashes none, its outputs materialized under the id it is handed. A
+pair whose id its bytes do not produce builds a candidate `applyBlock` refuses at its declared-id check (→ Applying a
+block), so the producer's speculative run catches it before any block is mined. **It shares every derivation with
+`applyBlock`** — decay's projection (`collectPostBodyKarma`), the settlement's read wiring (`settlementDepsWith`), the
+reward (`computeBlockReward`) — so producer and applier derive from one implementation, and a settlement the build
+gets wrong is the speculative run's `body-rejected` (`NODE_INTERFACE → Post-block stateRoot`), never a mined block.
 
 **The lapse list is one function's answer on both sides.** `lapseLegOf(captured, spent)` answers the view's
 `getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK)` over pre-body state, in its order, less every vouch whose id is
@@ -543,21 +551,29 @@ times on a busier machine): the ordinary body **+0.46 s (+12%)** — the most ha
 the packed body +0.33 s (+6%), the corrupted packed body +0.28 s, the refused one +0.01 s. Of the packed body's, the
 hashing itself is about 0.05 s (1 014 digests); the rest is unattributed. The testnet box is not measured.
 
-**A replay of a block from its proof**, measured 2026-09-30 with `packages/consensus/scripts/bench-leaf-replay.mjs`
+**A replay of a block from its proof**, measured 2026-10-27 with `packages/consensus/scripts/bench-leaf-replay.mjs`
 (the verifier built over the parent's digest and the proof, `applyBlock` over `verifierSession`, the writes and the
-digest; medians of 9 runs, pinned to performance cores of the i9-14900HX, testnet's numbers at height 1 000), in
-seconds — the bodies at the budget but the last:
+digest; medians of 9 runs, pinned to performance cores of the i9-14900HX beside the laptop's paced miner, testnet's
+numbers at height 1 000 and the rent collections at 2 103 400, the first height their boxes are past their period),
+in seconds — the bodies at the budget but the last:
 
-| Body | Proof | Operations | Signatures | Node 22 | Chromium 149 | Firefox 156 | Waterfox 140 |
+| Body | Proof | Operations | Signatures | Node 22 | Chromium 149 | Firefox 157 | Waterfox 140 |
 |---|---|---|---|---|---|---|---|
-| one-signer credit sends at the budget | 0.73 MB | 28 423 | 3 156 | 2.39 | 1.19 | 2.06 | 4.12 |
-| read-heavy: vouchers of 1 000 karma boxes | 6.27 MB | 58 427 | 29 | 2.03 | 1.18 | 2.12 | 2.39 |
-| 6 000 signers packed — over the budget | 1.32 MB | 18 253 | 6 000 | 2.55 | 1.18 | 2.13 | 5.61 |
+| one-signer credit sends at the budget | 0.73 MB | 28 423 | 3 156 | 2.82 | 1.67 | 2.65 | 5.25 |
+| wide consolidations: 64 signers, each spending 307 of its own credit boxes | 4.34 MB | 59 155 | 64 | 3.12 | 2.45 | 3.26 | 3.68 |
+| rent collections: 76 transactions of 131 boxes, each box another owner's | 2.27 MB | 59 832 | 0 | 2.97 | 2.36 | 3.20 | 3.49 |
+| 6 000 signers packed — over the budget | 1.32 MB | 18 253 | 6 000 | 3.29 | 1.62 | 2.77 | 7.24 |
 
-In Waterfox 140 a signature costs about 0.8 ms of the batch and an operation 40–51 µs, and a random lookup about 107 bytes
-of proof. Against `W_SIG` = 100, time alone would weigh an operation about 6, and the proof's size — at most about
-6 MB at the budget — about 11; `W_OP` stands between (`TYPES_INTERFACE → The block's cost`). At the budget a valid body holds at most about
-4 600 signatures packed, or 3 156 one-signer transactions.
+**Of the bodies measured, the wide consolidations make the largest proof at the budget.** A transaction holds about 307
+inputs under one signature, a rent collection about 131 under none — each of its inputs takes an output of its own —
+and an identity holds at most two karma boxes (→ The block's cost), so these two are the bodies of the most operations
+at the budget the rules admit, and of the transitions the bench's state answers none carries more operations a
+signature short of a rent collection's none. The consolidations' operations take about 73 bytes of proof each, the
+rent collections' about 38. In Waterfox 140 a signature costs about 1.1 ms of the batch and an operation 36–47 µs.
+Against `W_SIG` = 100, time alone would weigh an operation about 3 to 4, and the proof's size — about 7 to hold a
+body's proof near 6 MB; `W_OP` = 10 stands above both (`TYPES_INTERFACE → The block's cost`), the margin a chain's
+deeper tree takes (below). At the budget a valid body holds at most about 4 600 signatures packed, or 3 156 one-signer
+transactions.
 
 **Each proof in the table is over the bench's own state** — a tree holding the body's entities and nothing else. A
 proof's size grows with the tree's depth, a 33-byte label for each level an operation's path shares with no other
@@ -584,7 +600,7 @@ other work shared, and a second pinned run read 8.8 s at 6·10⁶.
 **The budget's numbers are a small tree's.** Over 10⁶ leaves the body the budget admits proves in 8.28 MB — past the
 6 MB `CONSTANTS → The block's cost` argues `W_OP` and `MAX_BLOCK_COST` from — and its replay's tree operations alone
 take 3.1 s on Node 22, where the whole replay over the bench's own tree, signatures and rules included, takes
-2.39 s. No browser is measured over a large tree. No client replays a block (→ The tree session), so nothing waits
+2.82 s. No browser is measured over a large tree. No client replays a block (→ The tree session), so nothing waits
 on that replay; the proof's size is what a node stores and serves (`NODE_INTERFACE → The block proof`).
 
 No other term may grow faster than the reads the body makes: each overlay read is a map lookup or one composition over

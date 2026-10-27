@@ -32,7 +32,7 @@ async function importUtxo() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
     getOwnKarmaBoxIdsWithPending: (ownerId: string) => string[];
     removeUtxoTxEntry: (txId: string) => number;
     removeEntry: (rowid: number) => void;
@@ -218,7 +218,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     const own = karmaBox(100n, OWNER, 1);
     utxo.insertBox(own);
     const tx = likeTx(OWNER, own.id!, 100n - LIKE_KARMA_COST);
-    mempool.insertUtxoTx(tx, 999);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 999);
     const changeId = pendingOutputId(tx, 0);
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([changeId]);
   });
@@ -228,15 +228,15 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     utxo.insertBox(own);
 
     const tx1 = likeTx(OWNER, own.id!, 100n - LIKE_KARMA_COST);
-    mempool.insertUtxoTx(tx1, 999);
+    mempool.insertUtxoTx(tx1, computeTxId(tx1), 999);
     const changeAfter1 = pendingOutputId(tx1, 0);
 
     const tx2 = likeTx(OWNER, changeAfter1, 100n - 2n * LIKE_KARMA_COST);
-    mempool.insertUtxoTx(tx2, 999);
+    mempool.insertUtxoTx(tx2, computeTxId(tx2), 999);
     const changeAfter2 = pendingOutputId(tx2, 0);
 
     const tx3 = likeTx(OWNER, changeAfter2, 100n - 3n * LIKE_KARMA_COST);
-    mempool.insertUtxoTx(tx3, 999);
+    mempool.insertUtxoTx(tx3, computeTxId(tx3), 999);
     const changeAfter3 = pendingOutputId(tx3, 0);
 
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([changeAfter3]);
@@ -259,9 +259,9 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     const tx3 = likeTx(OWNER, changeAfter2, 100n - 3n * LIKE_KARMA_COST);
     const changeAfter3 = pendingOutputId(tx3, 0);
 
-    mempool.insertUtxoTx(tx3, 999);
-    mempool.insertUtxoTx(tx2, 999);
-    mempool.insertUtxoTx(tx1, 999);
+    mempool.insertUtxoTx(tx3, computeTxId(tx3), 999);
+    mempool.insertUtxoTx(tx2, computeTxId(tx2), 999);
+    mempool.insertUtxoTx(tx1, computeTxId(tx1), 999);
 
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([changeAfter3]);
   });
@@ -273,7 +273,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     const own = karmaBox(LIKE_KARMA_COST, OWNER, 1);
     utxo.insertBox(own);
     const tx = likeTx(OWNER, own.id!, 0n);
-    mempool.insertUtxoTx(tx, 999);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 999);
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([]);
   });
 
@@ -300,7 +300,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     utxo.insertBox(ownOther);
 
     const otherTx = likeTx(other, ownOther.id!, 100n - LIKE_KARMA_COST);
-    mempool.insertUtxoTx(otherTx, 999);
+    mempool.insertUtxoTx(otherTx, computeTxId(otherTx), 999);
 
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([ownA.id]);
     expect(mempool.getOwnKarmaBoxIdsWithPending(otherHex)).toEqual([pendingOutputId(otherTx, 0)]);
@@ -313,7 +313,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     utxo.insertBox(ownB);
 
     const tx = consolidationTx(OWNER, [ownA.id!, ownB.id!], 100n);
-    mempool.insertUtxoTx(tx, 999);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 999);
 
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([pendingOutputId(tx, 0)]);
   });
@@ -322,7 +322,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     const own = karmaBox(100n, OWNER, 1);
     utxo.insertBox(own);
     const tx = claimTx(OWNER, own.id!, 100n, 'alice');
-    mempool.insertUtxoTx(tx, 999);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 999);
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([pendingOutputId(tx, 0)]);
   });
 
@@ -330,7 +330,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     const own = karmaBox(10n, OWNER, 1);
     utxo.insertBox(own);
     const tx = withdrawalTx(OWNER, own.id!, 10n);
-    mempool.insertUtxoTx(tx, 999);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 999);
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([pendingOutputId(tx, 0)]);
   });
 
@@ -338,7 +338,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     const own = karmaBox(100n, OWNER, 1);
     utxo.insertBox(own);
     const tx = likeTx(OWNER, own.id!, 100n - LIKE_KARMA_COST);
-    mempool.insertUtxoTx(tx, 999);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 999);
     mempool.removeUtxoTxEntry(computeTxId(tx));
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([own.id]);
   });
@@ -347,7 +347,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     const own = karmaBox(100n, OWNER, 1);
     utxo.insertBox(own);
     const tx = likeTx(OWNER, own.id!, 100n - LIKE_KARMA_COST);
-    const rowid = mempool.insertUtxoTx(tx, 999);
+    const rowid = mempool.insertUtxoTx(tx, computeTxId(tx), 999);
     mempool.removeEntry(rowid);
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([own.id]);
   });
@@ -356,7 +356,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     const own = karmaBox(100n, OWNER, 1);
     utxo.insertBox(own);
     const tx = threadTx(OWNER, own.id!, 100n - POST_PRICE_THREAD);
-    mempool.insertUtxoTx(tx, 50);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 50);
     mempool.purgeExpired(100);
     expect(mempool.getOwnKarmaBoxIdsWithPending(OWNER_HEX)).toEqual([own.id]);
   });
@@ -365,7 +365,7 @@ describe('getOwnKarmaBoxIdsWithPending — confirmed ∪ pending outputs − pen
     const own = karmaBox(100n, OWNER, 1);
     utxo.insertBox(own);
     const tx = likeTx(OWNER, own.id!, 100n - LIKE_KARMA_COST);
-    mempool.insertUtxoTx(tx, 999);
+    mempool.insertUtxoTx(tx, computeTxId(tx), 999);
     // What a block that confirms a pending entry does: the row is removed by
     // its tx id, and the confirmed state then holds the change box.
     mempool.removeUtxoTxEntry(computeTxId(tx));

@@ -12,12 +12,12 @@ import * as http from 'node:http';
 import express from 'express';
 import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import {
-  computeBoxId,
+import {computeBoxId,
   canonicalBoxBytes,
   u32BE,
   type VouchBox,
   type CreditBox,
+  computeTxId,
 } from '@dagsocial/types';
 
 async function importDbFresh() {
@@ -96,7 +96,7 @@ async function setUpPool(dbFile: string): Promise<string> {
   const { computeTxId } = await import('@dagsocial/types');
   const { materializeOutput } = await import('@dagsocial/consensus');
   const tx = karmaTx();
-  mem.insertUtxoTx(tx as never, 100);
+  mem.insertUtxoTx(tx as never, computeTxId(tx as never), 100);
   const txId = computeTxId(tx as never);
   const output = materializeOutput(tx.outputs[0] as never, txId, 0);
   dbMod.closeDb();
@@ -941,7 +941,7 @@ describe('the pool-follow reads explained', () => {
       signatures: { [OWNER_LOCAL]: new Uint8Array(64) },
       protocolVersion: 1,
     };
-    const rowid = mem.insertUtxoTx(tx as never, 100);
+    const rowid = mem.insertUtxoTx(tx as never, computeTxId(tx as never), 100);
     const run = recordPrepared(db, () => mem.removeUnconfirmed([rowid]));
     expect(run.sqls.length).toBeGreaterThan(0);
     const plans = run.sqls.map((sql) => planOf(db, sql));

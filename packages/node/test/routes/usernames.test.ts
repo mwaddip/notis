@@ -164,7 +164,7 @@ describe('username routes', () => {
     app.use('/usernames', createRouter({
       ...deps,
       getCurrentHeight,
-      validateTx: (tx, h) => validateTx(deps, tx, h),
+      validateTx: (tx, i, h) => validateTx(deps, tx, i, h),
       getUsername,
       getUsernameByOwner,
     }));
@@ -685,7 +685,7 @@ describe('a resubmit is answered as held', () => {
     heldApp.use('/usernames', createRouter({
       ...deps,
       getCurrentHeight,
-      validateTx: (tx, h) => validateTx(deps, tx, h),
+      validateTx: (tx, i, h) => validateTx(deps, tx, i, h),
       getUsername,
       getUsernameByOwner,
     }));

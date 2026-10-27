@@ -122,7 +122,7 @@ export function handleRelayedTx(
   // it — tip + 1 (NODE_INTERFACE → validateTx).
   const currentHeight = nextBlockHeight();
   const validationStart = performance.now();
-  const result = validateTx(deps, tx, currentHeight);
+  const result = validateTx(deps, tx, txIdHex, currentHeight);
   if (!result.valid) {
     // Boxes referenced by relayed txs may not have arrived yet via header sync.
     // The tx will be included in the ordering block that carries the boxes.
@@ -140,21 +140,21 @@ export function handleRelayedTx(
     // the pending row in one store transaction for a post, or admitTx alone.
     const db = getDb();
     db.transaction(() => {
-      admitTx(tx, expiresAtHeight);
-      if (tx.post && result.txId) {
-        const postId = computePostId(result.txId, 0);
-        insertPost(postId, result.txId, tx.post, content ?? null);
+      admitTx(tx, txIdHex, expiresAtHeight);
+      if (tx.post) {
+        const postId = computePostId(txIdHex, 0);
+        insertPost(postId, txIdHex, tx.post, content ?? null);
         emitPostReceived(postId, fromPeerId, 'packet');
         emitPostValidated(postId, performance.now() - validationStart);
       }
     })();
   } catch (err) {
     if (err instanceof MempoolFullError) {
-      console.warn(`Relayed tx dropped, mempool full: ${result.txId}`);
+      console.warn(`Relayed tx dropped, mempool full: ${txIdHex}`);
       return false;
     }
     if (err instanceof PendingSpendConflictError) {
-      console.warn(`Relayed tx dropped, input spent by a pending entry: ${result.txId}`);
+      console.warn(`Relayed tx dropped, input spent by a pending entry: ${txIdHex}`);
       return false;
     }
     // Admission's policy refusals — the fee floor, rent, the cost gate — are
@@ -165,6 +165,6 @@ export function handleRelayedTx(
     }
     throw err;
   }
-  console.log(`Relayed tx queued in mempool: ${result.txId}`);
+  console.log(`Relayed tx queued in mempool: ${txIdHex}`);
   return true;
 }

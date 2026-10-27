@@ -43,7 +43,6 @@ import {
   MAX_ESCROW_RETURNS_PER_BLOCK,
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   protocolVersionAt,
-  computeTxId,
   decodeTx,
   encodeTx,
   bytesToHex,
@@ -1314,22 +1313,32 @@ function predictSettlementBody(
 }
 
 /**
+ * One body entry as `buildBlockSettlement` reads it: the id the caller holds
+ * (`computeTxId` of its bytes) beside the bytes.
+ */
+export interface SettlementBodyTx {
+  txId: string;
+  txBytes: Uint8Array;
+}
+
+/**
  * The producer's settlement for a body of user transactions, ready to ride as
  * the body's last entry (CONSENSUS_INTERFACE → The settlement build): read
  * through `view` over pre-body state, the body's own outputs resolved from the
- * body, every derivation the one the applier makes.
+ * body, every derivation the one the applier makes. Each entry's bytes decode
+ * and its outputs materialize under the id the caller supplies; the build
+ * hashes no entry.
  */
 export function buildBlockSettlement(
   view: StateView,
-  txBytesList: Uint8Array[],
+  body: ReadonlyArray<SettlementBodyTx>,
   height: number,
   validator: Uint8Array,
   minerOwner: Uint8Array,
   ctx: ApplyContext,
 ): { tx: UtxoTransaction } | { error: string } {
-  const decoded = txBytesList.map((raw) => {
-    const tx = decodeTx(raw);
-    const txId = computeTxId(tx);
+  const decoded = body.map(({ txId, txBytes }) => {
+    const tx = decodeTx(txBytes);
     const outputs = tx.outputs.map((out, i) => materializeOutput(out, txId, i));
     return { tx, txId, inputs: tx.inputs, outputs };
   });

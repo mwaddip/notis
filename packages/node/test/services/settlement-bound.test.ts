@@ -13,6 +13,7 @@ import {
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   LIKE_KARMA_COST,
   encodeTx,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -73,14 +74,14 @@ async function importBlockCreator() {
     // The settlement build the creator runs: over a tree view on the live
     // prover, under the context of the process config.
     buildBlockSettlement: (
-      txBytesList: Uint8Array[],
+      body: readonly { txId: string; txBytes: Uint8Array }[],
       height: number,
       validator: Uint8Array,
       minerOwner: Uint8Array,
     ): { tx: UtxoTransaction } | { error: string } =>
       buildBlockSettlement(
         treeStateView(proverSession(getAvlProver().prover)),
-        txBytesList, height, validator, minerOwner, applyContextFrom(nodeConfig),
+        body, height, validator, minerOwner, applyContextFrom(nodeConfig),
       ),
   };
 }
@@ -207,8 +208,8 @@ describe('T2 — like storm', () => {
     });
 
     // Build like tx bytes — each liker contributes one marker input
-    async function makeLikeTxBytes(count: number): Promise<Uint8Array[]> {
-      const txBytes: Uint8Array[] = [];
+    async function makeLikeTxBytes(count: number): Promise<{ txId: string; txBytes: Uint8Array }[]> {
+      const pairs: { txId: string; txBytes: Uint8Array }[] = [];
       const boxes: KarmaBox[] = [];
       for (let i = 0; i < count; i++) {
         const liker = makeTestIdentity();
@@ -220,10 +221,10 @@ describe('T2 — like storm', () => {
         }, 10_000 + i);
         boxes.push(karmaBox);
         const tx = makeLikeTx(liker, karmaBox, targetPostId, postAuthor.userId);
-        txBytes.push(encodeTx(tx));
+        pairs.push({ txId: computeTxId(tx), txBytes: encodeTx(tx) });
       }
       await seedBoxes(boxes);
-      return txBytes;
+      return pairs;
     }
 
     const miner = makeTestIdentity();

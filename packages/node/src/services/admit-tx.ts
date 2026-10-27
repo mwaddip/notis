@@ -113,7 +113,7 @@ export class TxOverBlockBudgetError extends ClientError {
  * the store that the reorg path does not take, so a floor an operator raises
  * never drops confirmed history.
  */
-export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
+export function admitTx(tx: UtxoTransaction, txId: string, expiresAtHeight: number): number {
   // MEMPOOL_INTERFACE → Storage rent is refused at admission.
   // Every caller runs `validateTx` first; an unsigned transaction that passed
   // authorization is a rent collection — the biconditional (NODE_INTERFACE →
@@ -190,8 +190,8 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
   assertPoolAdmits(tx);
 
   // MEMPOOL_INTERFACE → The cost gate.
-  const alone = costAlone(tx, 'admitTx');
-  if (alone === null) return insertUtxoTx(tx, expiresAtHeight);
+  const alone = costAlone(tx, txId, 'admitTx');
+  if (alone === null) return insertUtxoTx(tx, txId, expiresAtHeight);
   // The block alone is refused for its signatures alone, before its cost is
   // counted — `applyBlock`'s own refusal, named (MEMPOOL_INTERFACE → The cost
   // gate). No block can carry this transaction any more than one over
@@ -200,7 +200,7 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
   const overBudget = checkBlockCost(alone);
   if (overBudget !== null) throw new TxOverBlockBudgetError(overBudget);
 
-  return insertUtxoTx(tx, expiresAtHeight, marginalCost(alone, 'admitTx'));
+  return insertUtxoTx(tx, txId, expiresAtHeight, marginalCost(alone, 'admitTx'));
 }
 
 /**
@@ -237,7 +237,7 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
  */
 export function admitWriteTx(
   checks: () => void,
-  validate: (tx: UtxoTransaction, currentBlockHeight: number) => UtxoResult,
+  validate: (tx: UtxoTransaction, txId: string, currentBlockHeight: number) => UtxoResult,
   tx: UtxoTransaction,
   currentBlockHeight: number,
   openingWords: string,
@@ -265,11 +265,11 @@ export function admitWriteTx(
     };
   }
   checks();
-  const result = validate(tx, currentBlockHeight);
+  const result = validate(tx, txId, currentBlockHeight);
   if (!result.valid) {
     throw new ClientError(`${openingWords}${result.error ?? ''}`);
   }
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  admitTx(tx, expiresAtHeight);
+  admitTx(tx, txId, expiresAtHeight);
   return { txId, expiresAtHeight, tx, held: false };
 }

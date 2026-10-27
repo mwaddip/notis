@@ -764,7 +764,7 @@ included — can stall a node by keeping a header sync open. This is the eclipse
 **`synced` — the best chain is fully applied and every unmarked Active peer's claim is settled.** Entering `synced`
 clears every stall mark and fires `onSyncComplete`.
 
-### Sync Integrity (audit M-10)
+### Sync Integrity
 
 - **An answer is bound to its request by its stream.** Every header and block this node receives on the sync
   protocol arrives as the answer on a stream this node opened for the request — one round trip (→ Pull Requests →
@@ -1109,25 +1109,31 @@ call site states a number.
 
 Accumulated score >= threshold → temporal ban for `temporalBanDuration`.
 
-### Accrual and decay (audit L-13)
+### Accrual and decay
 
 **Every penalty accrues.** A penalty is never discarded because another
-one arrived recently — that made ban pressure independent of attack
-rate, since a peer flooding invalid messages paid exactly what a peer
-misbehaving once every safe interval paid, while each invalid message
-still cost full Stage-1 work (ordering-block PoW verification included).
+one arrived recently: each invalid message costs this node full Stage-1
+work (ordering-block PoW verification included), so the score a peer
+accrues rises with the rate it misbehaves at.
 
-Instead the accumulated score **decays with time**: it is reduced by
-`PENALTY_DECAY_PER_INTERVAL` (`MISBEHAVIOR_SCORE` — one MisbehaviorPenalty) for every
-`PENALTY_SAFE_INTERVAL_MS` of elapsed time since the peer's score was
-last updated, floored at zero. Decay is applied lazily at penalty time,
-before the new score is added — no timers.
+The accumulated score **decays continuously with time**. At each penalty,
+before the new score is added, it is reduced by `PENALTY_DECAY_PER_INTERVAL`
+(`MISBEHAVIOR_SCORE` — one MisbehaviorPenalty) pro rata to the time elapsed
+since the peer's last penalty over `PENALTY_DECAY_INTERVAL_MS` — a quarter of
+an interval sheds a quarter of the points, never a whole interval's or none —
+and floored at zero. Decay is computed lazily at penalty time — no timers.
 
-The break-even point is therefore **one MisbehaviorPenalty per safe
+The break-even point is therefore **one MisbehaviorPenalty per decay
 interval**: a peer misbehaving faster than that accrues pressure and is
 eventually banned, one misbehaving more slowly fades back to zero and is
-never banned. A flooding peer crosses the threshold in five messages
-rather than ten minutes.
+never banned.
+
+**A ban takes five misbehaviours at one instant, and one more for each interval they spread across.** While the
+score does not reach zero between them, `n` misbehaviours spread over an elapsed time `T` stand at
+`MISBEHAVIOR_SCORE · n − PENALTY_DECAY_PER_INTERVAL · T / PENALTY_DECAY_INTERVAL_MS`, and the ban comes when that
+reaches the threshold. At the defaults (threshold 500, interval 2 min) that is five only when no time passes between
+them, six over less than one interval, seven over less than two; a `Transient` penalty weighs half — ten at one
+instant, two more for each interval.
 
 Permanent penalties (`PenaltyKind.ProtocolViolation`)
 bypass scoring entirely and ban instantly — decay never applies to them.
@@ -1145,11 +1151,7 @@ whatever the map keeps, so an entry dropped grants nothing a new id could not ta
 |-----------|---------|-------------|
 | `PENALTY_SCORE_THRESHOLD` | `500` | Score to trigger ban |
 | `TEMPORAL_BAN_DURATION_MS` | `3600000` | Ban duration (60 min) |
-| `PENALTY_SAFE_INTERVAL_MS` | `120000` | Decay interval — `PENALTY_DECAY_PER_INTERVAL` points of accumulated score decay per interval (2 min) |
-
-The parameter keeps its `SAFE_INTERVAL` name because it is set from the
-environment by `@dagsocial/node`; renaming it is a cross-package change
-tracked as a follow-up.
+| `PENALTY_DECAY_INTERVAL_MS` | `120000` | Decay interval — `PENALTY_DECAY_PER_INTERVAL` points of accumulated score decay per interval, pro rata (2 min) |
 
 ---
 
@@ -1434,7 +1436,7 @@ nothing (→ Stage 1 → "A refusal that rests on this node's state records noth
 
 | Topic | Checks before Accept |
 |-------|----------------------|
-| ordering-block | the message's length, at most `MAX_ORDERING_BLOCK_BYTES`; **the header first** — `readOrderingBlockSections` (TYPES_INTERFACE → Layout — Block), the header decoded and the body's bytes and the validator signature taken as they stand, a block that does not read → `ProtocolViolation` (→ Stage 1 → "A header is read before its body"); `verifyHeaderFieldDomains(header)`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits`, and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised"); **the header's standing** — a header this node holds, has refused, or accepted inside the seen window is **Ignored with no penalty** (→ Stage 1 → "A header this node knows is Ignored"); **the validator signature** — `verifyValidatorSignature(header, validatorSignature)`, one that does not verify Rejected with `misbehavior`; **the body** — `decodeUtxoTxTree` over the body's bytes (undecodable → `ProtocolViolation`) and `verifyOrderingBlockStructure` over the block; **the body's root** — `verifyUtxoTxRoot(block)`, last: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits") |
+| ordering-block | the message's length, at most `MAX_ORDERING_BLOCK_BYTES`; **the header first** — `readOrderingBlockSections` (TYPES_INTERFACE → Layout — Block), the header decoded and the body's bytes and the validator signature taken as they stand, a block that does not read → `ProtocolViolation` (→ Stage 1 → "A header is read before its body"); `verifyHeaderFieldDomains(header)`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits`, and a non-safe-integer `powNonce`/`powTargetBits` never verifies (`VALIDATION_INTERFACE → Invariants`); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised"); **the header's standing** — a header this node holds, has refused, or accepted inside the seen window is **Ignored with no penalty** (→ Stage 1 → "A header this node knows is Ignored"); **the validator signature** — `verifyValidatorSignature(header, validatorSignature)`, one that does not verify Rejected with `misbehavior`; **the body** — `decodeUtxoTxTree` over the body's bytes (undecodable → `ProtocolViolation`) and `verifyOrderingBlockStructure` over the block; **the body's root** — `verifyUtxoTxRoot(block)`, last: a body that is not the one the header's `utxoTxRoot` commits is Rejected with `misbehavior` (→ Stage 1 → "A worked header is forwarded with the body its root commits") |
 | tx | the message's length, at most `MAX_TX_PACKET_BYTES`; `decodeTxPacket`; `verifyTxStructure`; protocol version — `verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)`, the envelope's and the commit's against the next block's era, a mismatch **Rejected with no penalty** (→ Stage 1 → "A refusal that rests on this node's state records nothing"); the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions), a miss **Rejected with no penalty**; then `verifyTxSignatures(tx)` — every entry of the signature map over the transaction's id, one that does not verify Rejected with `misbehavior` (→ Stage 1 → "A transaction's signatures are checked at Stage 1"). Order as under Gossip Topics; the forward waits for Stage 2 (→ Forwarding Rule) |
 
 Stage 1 reads chain state through two providers and the karma set, and through nothing else. It does
@@ -1446,7 +1448,7 @@ scheduled-target provider, for the one case it can answer without trusting anyth
 holds. The header-standing provider answers whether this node holds a header or has
 refused it (→ Sync Handler Registration). The validator signature is checked twice: at Stage 1 over the
 header and the signature alone, and in the funnel on every entry path. The relay PoW gate exists to
-make mesh propagation cost-bearing: no zero-work ordering block may be re-gossiped (audit M-9), and the
+make mesh propagation cost-bearing: no zero-work ordering block may be re-gossiped, and the
 network's floor puts the price of a forwarded header at the network's own minimum rather than the
 resolution floor's nine bits.
 
@@ -1733,7 +1735,7 @@ interface NetConfig {
   // Penalties
   penaltyScoreThreshold: number
   temporalBanDurationMs: number
-  penaltySafeIntervalMs: number
+  penaltyDecayIntervalMs: number
 }
 ```
 

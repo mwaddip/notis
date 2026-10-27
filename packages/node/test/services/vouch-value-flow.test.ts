@@ -95,7 +95,7 @@ async function importIdentityRecords() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: UtxoTransaction, txId: string, expiresAtHeight: number) => number;
   };
 }
 
@@ -221,7 +221,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     // The engine pins `releaseAtBlock` as an exact equality:
     // `vouch.createdAtBlock + cooldown`. The vouch was cast at block 0.
     mempool.insertUtxoTx(
-      makeUnvouchTx(zeroVouch.id!, voucher, zeroVouch.value, 0 + config.vouchCooldownBlocks),
+      makeUnvouchTx(zeroVouch.id!, voucher, zeroVouch.value, 0 + config.vouchCooldownBlocks), computeTxId(makeUnvouchTx(zeroVouch.id!, voucher, zeroVouch.value, 0 + config.vouchCooldownBlocks)),
       100000,
     );
 

@@ -11,8 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  PROTOCOL_VERSION,
+import {PROTOCOL_VERSION,
   boxRecordBytes,
   STORAGE_RENT_PER_BYTE,
   KARMA_STALE_THRESHOLD_BLOCKS,
@@ -21,6 +20,7 @@ import {
   KARMA_MINIMUM,
   computeContentHash,
   VOUCH_KARMA_AMOUNT,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   CreditBox,
@@ -146,7 +146,7 @@ describe('payload-signature binding', () => {
         post: commit,
       };
       signTransaction(tx, alice.privateKey, toHex(alice.userId));
-      const result = validateTx(deps, tx, height);
+      const result = validateTx(deps, tx, computeTxId(tx), height);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('karma transition');
     });
@@ -171,7 +171,7 @@ describe('payload-signature binding', () => {
         postWithdraw,
       };
       signTransaction(tx, alice.privateKey, toHex(alice.userId));
-      const result = validateTx(deps, tx, height);
+      const result = validateTx(deps, tx, computeTxId(tx), height);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('karma transition');
     });
@@ -225,7 +225,7 @@ describe('payload-signature binding', () => {
         postWithdraw,
       };
       signTransaction(tx, alice.privateKey, toHex(alice.userId));
-      const result = validateTx(deps, tx, height);
+      const result = validateTx(deps, tx, computeTxId(tx), height);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('PostWithdraw transition requires exactly one karma output');
     });
@@ -251,7 +251,7 @@ describe('payload-signature binding', () => {
         protocolVersion: PROTOCOL_VERSION,
       };
       signTransaction(tx, bob.privateKey, toHex(bob.userId));
-      const result = validateTx(deps, tx, height);
+      const result = validateTx(deps, tx, computeTxId(tx), height);
       expect(result.valid).toBe(false);
       expect(result.error).toContain(`Missing or invalid owner signature for box ${box.id}`);
     });
@@ -274,7 +274,7 @@ describe('payload-signature binding', () => {
       };
       signTransaction(tx, alice.privateKey, toHex(alice.userId));
       signTransaction(tx, bob.privateKey, toHex(bob.userId));
-      const result = validateTx(deps, tx, height);
+      const result = validateTx(deps, tx, computeTxId(tx), height);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('unrequired key');
     });
@@ -294,7 +294,7 @@ describe('payload-signature binding', () => {
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
       };
-      const result = validateTx(deps, tx, height);
+      const result = validateTx(deps, tx, computeTxId(tx), height);
       expect(result.valid).toBe(true);
     });
 
@@ -312,7 +312,7 @@ describe('payload-signature binding', () => {
         protocolVersion: PROTOCOL_VERSION,
       };
       signTransaction(tx, alice.privateKey, toHex(alice.userId));
-      const result = validateTx(deps, tx, height);
+      const result = validateTx(deps, tx, computeTxId(tx), height);
       expect(result.valid).toBe(true);
     });
   });

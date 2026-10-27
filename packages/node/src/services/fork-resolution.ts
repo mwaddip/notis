@@ -310,7 +310,7 @@ export function reorg(forkHeight: number, newHashes: readonly string[]): void {
         console.warn(`Reorg re-insertion skipped, past ceiling ${ceiling} at height ${newTipHeight}: tx ${txRecord.txId}`);
         continue;
       }
-      reinsert(() => insertUtxoTx(tx, mempoolExpiry), `tx ${txRecord.txId}`);
+      reinsert(() => insertUtxoTx(tx, txRecord.txId, mempoolExpiry), `tx ${txRecord.txId}`);
     }
   }
 
