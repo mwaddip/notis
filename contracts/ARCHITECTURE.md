@@ -433,11 +433,18 @@ inactivity an identity's karma decays *virtually*: every karma-sufficiency
 read computes the **effective** value from committed state, and the face
 values in boxes move only when a transaction touches the identity.
 
-- **Staleness:** `(height − lastActivityBlock) >= KARMA_STALE_THRESHOLD_BLOCKS`,
-  read from the identity record — the committed clock, not box heights.
+> ⚠ **AHEAD OF CODE (2026-10-28).** The grace window and the settled-through clock lead `types`' `owedPeriods`, which
+> counts from `max(lastActivityBlock, lastDecayBlock)` with a separate stale check in front of it, and `consensus`'
+> `commitDecayClocks`, which writes the squaring's own height (`NODE_INTERFACE → Karma decay`).
+
+- **The grace window:** decay's clock starts at `lastActivityBlock + KARMA_STALE_THRESHOLD_BLOCKS`,
+  read from the identity record — the committed clock, not box heights — and starts from nothing:
+  the first period falls one `KARMA_DECAY_INTERVAL_BLOCKS` after the window ends, never the
+  window's worth at once (user, 2026-10-17).
 - **Effective value:** `faceTotal − owedPeriods · KARMA_DECAY_AMOUNT`, clamped
   so it never drops below `min(faceTotal, KARMA_MINIMUM)`, where
-  `owedPeriods = floor((height − max(lastActivityBlock, lastDecayBlock)) / KARMA_DECAY_INTERVAL_BLOCKS)`.
+  `owedPeriods = floor((height − max(lastActivityBlock + KARMA_STALE_THRESHOLD_BLOCKS, lastDecayBlock)) / KARMA_DECAY_INTERVAL_BLOCKS)`
+  and `lastDecayBlock` is the height the last squaring settled decay through.
   **One implementation** — the settlement's decay, the spend rule's `owed`
   and the verifier read the same exported valuation function (`VALIDATION_INTERFACE` → "One
   implementation per rule").
@@ -466,7 +473,8 @@ values in boxes move only when a transaction touches the identity.
 - **Clocks: posting is activity, and nothing else is.** `lastActivityBlock` advances
   when block application applies the identity's post transaction — a thread or a
   reply, the transaction carrying a `post` commit (`NODE_INTERFACE` → Populating the
-  record); squaring advances `lastDecayBlock`. No other spend moves the activity
+  record); squaring advances `lastDecayBlock` to the height it settles decay through,
+  never past it (`NODE_INTERFACE` → Karma decay). No other spend moves the activity
   half: a like, an invite, a vouch cast or unvouch, a username claim or burn, a
   withdrawal and a bare consolidation all leave it where it stands, so resetting the
   clock costs a post's price and never less. Received value — a like payout, a

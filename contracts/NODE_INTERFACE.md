@@ -2520,8 +2520,8 @@ is valued over the two together. **An identity paid in the block that squares it
 with that own box and a new income box: the squaring took the old one, so the income leg names no
 input for it (→ The settlement transaction → "The income leg pays each owner once").
 
-**The valuation function and its two helpers are `@dagsocial/types`'** — `effectiveKarma`, `isIdentityStale`,
-`owedPeriods`, `DecayCfg` and `decayCfgFor` (`TYPES_INTERFACE → Identity record and karma valuation`) — and `decay.ts`
+**The valuation function and its two helpers are `@dagsocial/types`'** — `effectiveKarma`, `owedPeriods`,
+`decaySettledThrough`, `DecayCfg` and `decayCfgFor` (`TYPES_INTERFACE → Identity record and karma valuation`) — and `decay.ts`
 holds the execution: `karmaOwed`, `deriveKarmaDecay`, `commitDecayClocks`, the deps, the leg. `loadConfig` builds its `DecayCfg`
 through `decayCfgFor(profile)`, and the sites that pass a cfg on pass the one it built. **One implementation**: the
 settlement's decay, the spend rule's `owed` (`karmaOwed`, the face less it), the read API and a light client
@@ -2531,22 +2531,35 @@ anywhere is the mirror defect class.
 The clock is the `IdentityRecord` (Store Interface → Identity Records):
 
 ```
-stale       = (height − lastActivityBlock) >= staleThresholdBlocks
-owedPeriods = floor( (height − max(lastActivityBlock, lastDecayBlock)) / interval )
-effective   = clamp(faceTotal − owedPeriods · decayAmount)   // never below min(faceTotal, KARMA_MINIMUM)
+clockStart     = max(lastActivityBlock + staleThresholdBlocks, lastDecayBlock)
+owedPeriods    = floor( (height − clockStart) / interval )
+effective      = owedPeriods > 0 ? clamp(faceTotal − owedPeriods · decayAmount) : faceTotal   // never below min(faceTotal, KARMA_MINIMUM)
+settledThrough = clockStart + owedPeriods · interval   // what a squaring at `height` writes as lastDecayBlock
 ```
 
-⚠ **The comparison is `>=`, not `>`.** This contract said `>`,
-and was wrong by one block. `isIdentityStale` treats a box as recent
-when `createdAtBlock > currentHeight − threshold`, so an identity is stale
-exactly when *no* box satisfies that — i.e. when
-`currentHeight − lastActivityBlock >= threshold`. `>` would delay every
-identity's first decay by one block, which is a behaviour change D10 forbids.
-Found by reading the code.
+> ⚠ **AHEAD OF CODE (2026-10-28).** The four lines above and the first two leads below lead `types`' `karma-valuation.ts`
+> — `owedPeriods(record, height, interval)` counts from `max(lastActivityBlock, lastDecayBlock)`, `effectiveKarma`
+> gates on a separate `isIdentityStale`, and no `decaySettledThrough` exists — and `consensus`' `decay.ts`, whose
+> `deriveKarmaDecay` gates on `isIdentityStale` and whose `commitDecayClocks` writes `lastDecayBlock: currentHeight`.
 
-**Staleness reads the record.** `lastActivityBlock` is the height of the owner's
-most recent post transaction — a thread or a reply (§Populating the record) — so the
-predicate is "no post within the threshold window".
+**Decay starts at the grace window's end, and from nothing.** An identity last active at `A` owes nothing through
+`A + staleThresholdBlocks`, and its first period at `A + staleThresholdBlocks + interval`: the window costs nothing,
+and every interval after it costs `decayAmount` — never the window's worth at once (on testnet and mainnet, nothing
+for 28 days, then 5 a day; user, 2026-10-17).
+Once a squaring has settled past the window's end, `lastDecayBlock` is the start. Staleness needs no predicate of its
+own: `owedPeriods > 0` holds only past the window, on every record, `EMPTY_IDENTITY_RECORD` included.
+
+**A squaring writes the height it settles through, never its own height.** A squaring at `h` charges `owedPeriods`
+whole periods and writes `lastDecayBlock = settledThrough` — so the part of a period that has run at `h` stays owed and
+the next squaring counts it. Writing `h` would forgive that part at every squaring, and an owner timing their own spends
+just short of each second period's end would pay one period in two.
+
+**The floor settles no clock it does not charge.** A squaring the floor cuts short — `effective` clamped above
+`faceTotal − owedPeriods · decayAmount` — still settles every period it owed. A touch that owes periods and burns
+nothing — an identity at its floor — is no squaring: no leg, no clock write, and its periods stay owed.
+
+**The clock reads the record.** `lastActivityBlock` is the height of the owner's most recent post transaction — a
+thread or a reply (§Populating the record) — so the window is "no post within `staleThresholdBlocks`".
 
 **`owedPeriods` changes, deliberately — one accepted exception to D10.** The old
 code measures from the **oldest** non-decay box (falling back to the youngest
@@ -2569,7 +2582,7 @@ taken deliberately pre-network rather than discovered later. Pinned by
 The record is populated at the producing paths: `lastActivityBlock` on the
 owner's own post transaction — **no other spend is activity, and received value (a
 like payout, a vesting return, a settlement re-emit) is not either; nothing but a
-post resets the clock** — and `lastDecayBlock` when a squaring fires.
+post resets the clock** — and `lastDecayBlock` when a squaring fires, to the height it settles through.
 
 ---
 
@@ -3732,7 +3745,7 @@ holds what is the store's: the table, its functions, the writers, the lifecycle,
 ```
 IdentityRecord {
   lastActivityBlock: number     // u32 — starts at the claim height that creates the record; advanced when block application applies the owner's post transaction, thread or reply
-  lastDecayBlock: number        // u32 — bumped when decay fires
+  lastDecayBlock: number        // u32 — the height decay is settled through; a squaring writes it (→ Karma decay)
   invitedAtBlock: number        // u32 — height the invite grant applied; 0 = never invited
   lifetimeLikesReceived: bigint // likes this identity has ever received; never decremented
   memberSinceBlock: number      // u32 — 0 = never a member; else the height the bar was first met, or a root's grant conferred it — the AGE, never reset; a root's is the genesis mint height
@@ -3861,7 +3874,8 @@ bytes are typed.
   boxes (the decay leg) and every settlement output — grants, payouts, vests,
   returns, refunds, decay re-emits — leave it untouched: they apply outside the
   user-transaction loop.
-- **`lastDecayBlock`** — bumped when decay fires for that owner.
+- **`lastDecayBlock`** — written only by a squaring of that owner, to the height it settles decay through
+  (→ Karma decay), which is at most the squaring's own height.
 - **`invitedAtBlock`** — written only by block application when an invite grant
   applies (the settlement's grant leg); every other writer carries it through.
 - **`lifetimeLikesReceived`** — bumped only by the lifetime-counter bookkeeping

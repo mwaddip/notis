@@ -1310,7 +1310,7 @@ function the node runs: **one implementation of the valuation, never a second on
 ```
 IdentityRecord {
   lastActivityBlock: number     // u32 — the height of the owner's most recent post transaction; the grant path initialises it
-  lastDecayBlock: number        // u32 — bumped when a decay squaring fires
+  lastDecayBlock: number        // u32 — the height decay is settled through; a decay squaring writes it
   invitedAtBlock: number        // u32 — the height an invite claim applied; 0 = never invited (a reachable value, not a sentinel)
   lifetimeLikesReceived: bigint // likes ever received; never decremented
   memberSinceBlock: number      // u32 — 0 = never a member; else the height the bar was first met — the AGE, never reset
@@ -1334,21 +1334,28 @@ settlement touches the identity (`NODE_INTERFACE → Karma decay` holds the rule
 Karma decay` the model):
 
 ```
-stale       = height > staleThresholdBlocks ∧ (height − lastActivityBlock) >= staleThresholdBlocks
-owedPeriods = floor( (height − max(lastActivityBlock, lastDecayBlock)) / decayIntervalBlocks )
-effective   = stale ∧ owedPeriods > 0
-              ? max( faceTotal − owedPeriods · decayAmount, min(faceTotal, karmaMinimum) )
-              : faceTotal
+clockStart     = max( lastActivityBlock + staleThresholdBlocks, lastDecayBlock )
+owedPeriods    = floor( (height − clockStart) / decayIntervalBlocks )
+effective      = owedPeriods > 0
+                 ? max( faceTotal − owedPeriods · decayAmount, min(faceTotal, karmaMinimum) )
+                 : faceTotal
+settledThrough = clockStart + owedPeriods · decayIntervalBlocks
 ```
 
-**`>=`, not `>`**: an identity last active at `A` is stale iff `height − A >= threshold`; `>` would delay every first
-decay by one block. The `height > staleThresholdBlocks` guard is not subsumed by the formula — a never-active identity
-carries `lastActivityBlock 0`, and without the guard it would read stale at exactly `height === threshold`. **The
-`max` in `owedPeriods` is not decoration**: after a squaring the owner's karma box is the decay output, whose height is
-`lastDecayBlock`; charging from `lastActivityBlock` alone would re-bill every interval since the original activity on
-every later cycle. **A `null` record values as never active** — maximally stale, decaying from height 0: every karma
-producer writes a record, so the case should be unreachable, and the total function says what happens if it is not;
-the alternative, exempting a record-less owner from decay, is the silent economic hole.
+> ⚠ **AHEAD OF CODE (2026-10-28).** The block above and the leads below lead `karma-valuation.ts`, whose `owedPeriods`
+> takes `(record, height, decayIntervalBlocks)` and counts from `max(lastActivityBlock, lastDecayBlock)`, whose
+> `effectiveKarma` gates on `isIdentityStale`, and which exports no `decaySettledThrough`.
+
+**Decay starts at the grace window's end, from nothing** (`NODE_INTERFACE → Karma decay` holds the rule): an identity
+last active at `A` owes its first period at `A + staleThresholdBlocks + decayIntervalBlocks`, and `owedPeriods` is
+negative or zero through the window. **No stale predicate stands beside it**: `owedPeriods > 0` holds only past the
+window, so a second test of the window would be a second statement of one rule. **The `max` in `clockStart` is not
+decoration**: past the window's end the start is `lastDecayBlock`, the height the last squaring settled through —
+counting from the window's end alone would re-bill every period a squaring settled. **`settledThrough` is what a
+squaring writes as `lastDecayBlock`**, never the squaring's own height: the part of a period that has run stays owed.
+**A `null` record values as never active** — its clock starts at `staleThresholdBlocks`: every karma producer writes a
+record, so the case should be unreachable, and the total function says what happens if it is not; the alternative,
+exempting a record-less owner from decay, is the silent economic hole.
 
 `DecayCfg` is `{ staleThresholdBlocks, decayIntervalBlocks, decayAmount: bigint, karmaMinimum: bigint }`, and
 **`decayCfgFor(profile)` is its one derivation**: the profile's `karmaStaleThresholdBlocks` and `karmaDecayIntervalBlocks`
@@ -1362,8 +1369,8 @@ its cfg through it; a client builds the same from `profileFor(network)` — neve
 | `IDENTITY_RECORD_TAG` | `0x80` | Field 1 of the layout — the record discriminator among the tree's entity kinds (`NODE_INTERFACE → Entity kinds`) |
 | `EMPTY_IDENTITY_RECORD` | `Readonly<IdentityRecord>` | The record of an identity no block has written: every field `0`, the two `bigint` counters `0n`, frozen. The valuation values a `null` record as it, and every writer that builds a record over one it may not find starts from it |
 | `decayCfgFor(profile)` | `(NetworkProfile) => DecayCfg` | The one derivation of the valuation's four numbers |
-| `isIdentityStale(record, height, staleThresholdBlocks)` | `(IdentityRecord \| null, number, number) => boolean` | `stale` above |
-| `owedPeriods(record, height, decayIntervalBlocks)` | `(IdentityRecord \| null, number, number) => number` | `owedPeriods` above — no clamp at zero: the caller skips `<= 0`, and a negative says a clock ran ahead of the chain |
+| `owedPeriods(record, height, cfg)` | `(IdentityRecord \| null, number, DecayCfg) => number` | `owedPeriods` above — no clamp at zero: negative or zero through the grace window, and a caller charges nothing at `<= 0` |
+| `decaySettledThrough(record, height, cfg)` | `(IdentityRecord \| null, number, DecayCfg) => number` | `settledThrough` above — the `lastDecayBlock` a squaring at `height` writes; read only where `owedPeriods > 0` |
 | `effectiveKarma(faceTotal, record, height, cfg)` | `(bigint, IdentityRecord \| null, number, DecayCfg) => bigint` | `effective` above — the value every karma-sufficiency check on the node reads, the number `GET /karma/:userId` serves as `effective`, and the number a light client reproduces from a proven face total and a proven record |
 
 ---
