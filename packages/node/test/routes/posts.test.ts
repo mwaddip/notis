@@ -135,7 +135,7 @@ async function request(
       admitTx: insertUtxoTx,
       getHeldEntry,
       runInTransaction: (fn: () => void) => db.transaction(fn)(),
-      validateTx: (tx: UtxoTransaction, height: number) => {
+      validateTx: (tx: UtxoTransaction, txId: string, height: number) => {
         return validateTx(
           {
             getBox: (id: string): AnyBox | null => {
@@ -184,6 +184,7 @@ async function request(
       getUsernameByOwner: () => null,
           },
           tx,
+          txId,
           height,
         );
       },
@@ -2065,7 +2066,7 @@ describe('a resubmit is answered as held', () => {
       admitTx: admitTxReal,
       getHeldEntry,
       runInTransaction: (fn: () => void) => (db.transaction(fn) as () => void)(),
-      validateTx: (tx: UtxoTransaction, height: number) => validateTx(engineDeps, tx, height),
+      validateTx: (tx: UtxoTransaction, height: number) => validateTx(engineDeps, tx, computeTxId(tx), height),
       getBox: getBoxWithPending,
     };
   }

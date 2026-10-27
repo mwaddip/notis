@@ -151,7 +151,7 @@ describe('backer routes', () => {
       createRouter({
         ...deps,
         getCurrentHeight,
-        validateTx: (tx, h) => validateTx(deps, tx, h),
+        validateTx: (tx, i, h) => validateTx(deps, tx, i, h),
         getBackerPoolBox,
         getBackerStakeBox,
         backerSupply: 100n,
@@ -314,7 +314,7 @@ describe('a resubmit is answered as held', () => {
       createRouter({
         ...deps,
         getCurrentHeight,
-        validateTx: (tx, h) => validateTx(deps, tx, h),
+        validateTx: (tx, i, h) => validateTx(deps, tx, i, h),
         getBackerPoolBox,
         getBackerStakeBox,
         backerSupply: 100n,

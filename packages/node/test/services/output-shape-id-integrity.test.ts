@@ -191,12 +191,9 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       createdAtBlock: 0,
       guard: 'block_apply',
     };
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_PRICE_THREAD), lyingPrice],
-        makePostCommit(ownerPubKey, 'guard key payload')),
-      10,
-    );
+    const tx = signedTx([karma.id!], [karmaChange(100n - POST_PRICE_THREAD), lyingPrice],
+      makePostCommit(ownerPubKey, 'guard key payload'));
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unexpected key 'guard'/);
     expect(deps.getBox(karma.id!)).not.toBeNull();
@@ -214,12 +211,9 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       createdAtBlock: 0,
       note: 'x',
     };
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_PRICE_THREAD), strayPrice],
-        makePostCommit(ownerPubKey, 'stray key payload')),
-      10,
-    );
+    const tx = signedTx([karma.id!], [karmaChange(100n - POST_PRICE_THREAD), strayPrice],
+      makePostCommit(ownerPubKey, 'stray key payload'));
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unexpected key 'note'/);
     expect(deps.getBox(karma.id!)).not.toBeNull();
@@ -237,7 +231,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       [karmaChange(100n - POST_PRICE_THREAD), price],
       makePostCommit(ownerPubKey, 'honest price payload'),
     );
-    const r = validateTx(deps, tx, 10);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid, r.error).toBe(true);
     applyTx(deps, tx, r.computedOutputs!, 10);
     for (const out of r.computedOutputs!) expectIdClean(out.id!);
@@ -257,7 +251,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       [karma.id!],
       [karmaChange(100n - FIXTURE_BOND_KARMA), bond],
     );
-    const r = validateTx(deps, tx, 10);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid, r.error).toBe(true);
     applyTx(deps, tx, r.computedOutputs!, 10);
     for (const out of r.computedOutputs!) expectIdClean(out.id!);
@@ -273,7 +267,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       lockedUntilBlock: 500,
     };
     const tx = signedTx([credit.id!], [out]);
-    const r = validateTx(deps, tx, 10);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid, r.error).toBe(true);
     applyTx(deps, tx, r.computedOutputs!, 10);
     for (const o of r.computedOutputs!) expectIdClean(o.id!);
@@ -296,7 +290,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     };
     const change = karmaChange(100n - VOUCH_KARMA_AMOUNT);
     const tx = signedTx([karma.id!], [change, vouch]);
-    const r = validateTx(deps, tx, 10);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid, r.error).toBe(true);
     applyTx(deps, tx, r.computedOutputs!, 10);
     for (const o of r.computedOutputs!) expectIdClean(o.id!);
@@ -318,12 +312,9 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       createdAtBlock: 0,
       owner: ownerPubKey,
     };
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_PRICE_THREAD), lyingPrice],
-        makePostCommit(ownerPubKey, 'class-4a payload')),
-      10,
-    );
+    const tx = signedTx([karma.id!], [karmaChange(100n - POST_PRICE_THREAD), lyingPrice],
+      makePostCommit(ownerPubKey, 'class-4a payload'));
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unexpected key 'owner'/);
     expect(deps.getBox(karma.id!)).not.toBeNull();
@@ -342,7 +333,8 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       owner: ownerPubKey,
       lockedUntilBlock: -0,
     };
-    const r = validateTx(deps, signedTx([credit.id!], [out]), 10);
+    const tx = signedTx([credit.id!], [out]);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/field 'lockedUntilBlock'.*got -0/);
   });
@@ -371,12 +363,13 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     // consulted. It also has to be unsigned to build at all: signing means
     // hashing the transaction, so a builder that signs this shape throws on the
     // client instead of reaching the node.
-    const lying = validateTx(deps, {
+    const lyingTx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: lyingPair(inviteeHex) as unknown as UtxoTransaction['outputs'],
       signatures: {},
       protocolVersion: 1,
-    }, 10);
+    };
+    const lying = validateTx(deps, lyingTx, '0'.repeat(64), 10);
     expect(lying.valid).toBe(false);
     expect(lying.error).toMatch(/field 'inviteePublicKey' must be a 32-byte Uint8Array/);
     // Nothing applied: the karma input is still unspent.
@@ -386,7 +379,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     // output satisfies the discriminator.
     const honestOutputs = lyingPair(new Uint8Array(Buffer.from(inviteeHex, 'hex')));
     const honestTx = signedTx([karma.id!], honestOutputs);
-    const honest = validateTx(deps, honestTx, 10);
+    const honest = validateTx(deps, honestTx, computeTxId(honestTx), 10);
     expect(honest.valid, honest.error).toBe(true);
     applyTx(deps, honestTx, honest.computedOutputs!, 10);
     for (const o of honest.computedOutputs!) expectIdClean(o.id!);

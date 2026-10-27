@@ -203,7 +203,7 @@ async function buildPostDeps(engine: UtxoEngineDeps, getCurrentHeight: () => num
     protocolVersionSchedule: engine.protocolVersionSchedule,
     admitTx: admit.admitTx,
     getHeldEntry: store.getHeldEntry,
-    validateTx: (tx, h) => consensus.validateTx(engine, tx, h),
+    validateTx: (tx, i, h) => consensus.validateTx(engine, tx, i, h),
     getBox: engine.getBox,
     runInTransaction: engine.runInTransaction,
   };
@@ -317,11 +317,11 @@ describe('every applied block lets the pool follow it, on every node', () => {
     // admitted against the pending view as a write route admits them
     // (MEMPOOL_INTERFACE → getBoxWithPending; → getOwnKarmaBoxIdsWithPending).
     const Tchild = buildConsolidation(A, Troot_change);
-    admit.admitWriteTx(() => {}, (t, h) => consensus.validateTx(engine, t, h), Tchild, 1, '');
+    admit.admitWriteTx(() => {}, (t, i, h) => consensus.validateTx(engine, t, i, h), Tchild, 1, '');
     const Tchild_change = changeBox(Tchild, A);
 
     const Tgrand = buildConsolidation(A, Tchild_change);
-    admit.admitWriteTx(() => {}, (t, h) => consensus.validateTx(engine, t, h), Tgrand, 1, '');
+    admit.admitWriteTx(() => {}, (t, i, h) => consensus.validateTx(engine, t, i, h), Tgrand, 1, '');
 
     expect(mem.getPendingEntries(10)).toHaveLength(3);
 
@@ -390,7 +390,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
     const T_change = changeBox(T, A);
 
     const Tdep = buildConsolidation(A, T_change);
-    admit.admitWriteTx(() => {}, (t, h) => consensus.validateTx(engine, t, h), Tdep, 1, '');
+    admit.admitWriteTx(() => {}, (t, i, h) => consensus.validateTx(engine, t, i, h), Tdep, 1, '');
 
     expect(mem.getPendingEntries(10)).toHaveLength(2);
 
@@ -547,7 +547,7 @@ describe('every applied block lets the pool follow it, on every node', () => {
     const Tb_change = changeBox(Tb, A);
 
     const Tp = buildConsolidation(A, Tb_change);
-    admit.admitWriteTx(() => {}, (t, h) => consensus.validateTx(engine, t, h), Tp, 1, '');
+    admit.admitWriteTx(() => {}, (t, i, h) => consensus.validateTx(engine, t, i, h), Tp, 1, '');
 
     // Controls: Tb_change is A's in the pending view before the block, and
     // Tp sits in the pool before the block.

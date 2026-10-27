@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import {
-  EMPTY_STATE_ROOT,
+import {EMPTY_STATE_ROOT,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
   MAX_BLOCK_BODY_BYTES,
@@ -8,6 +7,7 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -242,14 +242,14 @@ async function seedStaleVouchCast() {
   // Entry-time proof: this is the tx pool entry / relay validation accepts.
   const { validateTx } = await import('@dagsocial/consensus');
   const deps = await storeBackedDeps();
-  expect(validateTx(deps, cast, 1).valid).toBe(true);
+  expect(validateTx(deps, cast, computeTxId(cast), 1).valid).toBe(true);
 
   mempool.insertUtxoTx(cast, 1000);
 
   // The voucher's other box is consumed AFTER the cast pooled, dropping the
   // summed balance below the minimum. The cast's own input stays live.
   utxo.consumeBox(other.id!, 0);
-  expect(validateTx(deps, cast, 1).valid).toBe(false);
+  expect(validateTx(deps, cast, computeTxId(cast), 1).valid).toBe(false);
 
   return { utxo, mempool, voucher, target, spent, cast };
 }

@@ -277,7 +277,7 @@ describe('rent admission refusal', () => {
       getUsernameByOwner: () => null,
     };
 
-    const result = engine.validateTx(deps, tx, height);
+    const result = engine.validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(true);
 
     dbMod.closeDb();

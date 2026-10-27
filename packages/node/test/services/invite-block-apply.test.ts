@@ -24,6 +24,7 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   BondBox,
@@ -682,7 +683,7 @@ describe('the invite at block application', () => {
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       getUsername: () => null,
       getUsernameByOwner: () => null,
-    }, second, 2);
+    }, second, computeTxId(second), 2);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('may not name an existing account');
   });

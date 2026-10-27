@@ -497,8 +497,8 @@ export function createApp(config: Config): express.Express {
       getHeldEntry: store.getHeldEntry,
       getUtxoTxTreeBytes: guardStoreRead(store.getUtxoTxTreeBytes),
       admitTx,
-      validateTx: (tx, currentBlockHeight) =>
-        validateTx(utxoEngineDeps, tx, currentBlockHeight),
+      validateTx: (tx, txId, currentBlockHeight) =>
+        validateTx(utxoEngineDeps, tx, txId, currentBlockHeight),
       getBox: store.getBoxWithPending,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
@@ -551,8 +551,8 @@ export function createApp(config: Config): express.Express {
     usernameRoutes({
       ...utxoEngineDeps,
       getCurrentHeight: store.getCurrentHeight,
-      validateTx: (tx, currentBlockHeight) =>
-        validateTx(utxoEngineDeps, tx, currentBlockHeight),
+      validateTx: (tx, txId, currentBlockHeight) =>
+        validateTx(utxoEngineDeps, tx, txId, currentBlockHeight),
       getUsername: store.getUsername,
       getUsernameByOwner: store.getUsernameByOwner,
     }),
@@ -564,8 +564,8 @@ export function createApp(config: Config): express.Express {
     backerRoutes({
       ...utxoEngineDeps,
       getCurrentHeight: store.getCurrentHeight,
-      validateTx: (tx, currentBlockHeight) =>
-        validateTx(utxoEngineDeps, tx, currentBlockHeight),
+      validateTx: (tx, txId, currentBlockHeight) =>
+        validateTx(utxoEngineDeps, tx, txId, currentBlockHeight),
       getBackerPoolBox: store.getBackerPoolBox,
       getBackerStakeBox: store.getBackerStakeBox,
       backerSupply: config.profile.backerSupply,

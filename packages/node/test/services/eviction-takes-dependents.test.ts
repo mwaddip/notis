@@ -159,7 +159,7 @@ describe('a credit-class displacement takes the cheapest resident\'s dependents'
     const engine = await buildEngineDeps();
     const admit = await importAdmit();
     const consensus = await import('@dagsocial/consensus');
-    const validate = (t: UtxoTransaction, h: number) => consensus.validateTx(engine, t, h);
+    const validate = (t: UtxoTransaction, i: string, h: number) => consensus.validateTx(engine, t, i, h);
 
     const C = creditTransfer(spender, boxC, 10n);
     const Cid = computeTxId(C);
@@ -214,7 +214,7 @@ describe('an arrival that depends on the cheapest resident\'s closure is refused
     const engine = await buildEngineDeps();
     const admit = await importAdmit();
     const consensus = await import('@dagsocial/consensus');
-    const validate = (t: UtxoTransaction, h: number) => consensus.validateTx(engine, t, h);
+    const validate = (t: UtxoTransaction, i: string, h: number) => consensus.validateTx(engine, t, i, h);
 
     const C = creditTransfer(spender, boxC, 10n);
     const Cid = computeTxId(C);
@@ -253,7 +253,7 @@ describe('an arrival that depends on the cheapest resident\'s closure is refused
     const engine = await buildEngineDeps();
     const admit = await importAdmit();
     const consensus = await import('@dagsocial/consensus');
-    const validate = (t: UtxoTransaction, h: number) => consensus.validateTx(engine, t, h);
+    const validate = (t: UtxoTransaction, i: string, h: number) => consensus.validateTx(engine, t, i, h);
 
     // The resident `C` outputs two credit boxes to its owner and a fee: its
     // dependent `C'` spends the first, the arrival spends the second.
@@ -334,7 +334,7 @@ describe('a build whose screen refuses a pooled transaction takes that transacti
     const engine = await buildEngineDeps();
     const admit = await importAdmit();
     const consensus = await import('@dagsocial/consensus');
-    const validate = (t: UtxoTransaction, h: number) => consensus.validateTx(engine, t, h);
+    const validate = (t: UtxoTransaction, i: string, h: number) => consensus.validateTx(engine, t, i, h);
 
     // P bids less than D so the credit-class fee-rate fill meets D ahead of P.
     // D's input is P's change — the pending view holds it; the confirmed set
@@ -410,7 +410,7 @@ describe('a mined block the intake refuses sweeps the template rows\' pooled dep
     const engine = await buildEngineDeps();
     const admit = await importAdmit();
     const consensus = await import('@dagsocial/consensus');
-    const validate = (t: UtxoTransaction, h: number) => consensus.validateTx(engine, t, h);
+    const validate = (t: UtxoTransaction, i: string, h: number) => consensus.validateTx(engine, t, i, h);
 
     const P = creditTransfer(spender, boxX, 10n);
     const Pid = computeTxId(P);

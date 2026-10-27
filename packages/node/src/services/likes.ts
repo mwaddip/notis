@@ -83,7 +83,7 @@ export function castLike(
         throw new ClientError('Already liked this post');
       }
     },
-    (t, h) => validateTx(deps, t, h),
+    (t, i, h) => validateTx(deps, t, i, h),
     tx,
     currentBlockHeight,
     'Invalid like transaction: ',

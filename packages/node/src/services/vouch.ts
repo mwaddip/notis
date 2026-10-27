@@ -75,7 +75,7 @@ export function castVouch(
         throw new ClientError('Vouch cooldown active — cannot re-vouch yet');
       }
     },
-    (t, h) => validateTx(deps, t, h),
+    (t, i, h) => validateTx(deps, t, i, h),
     tx,
     currentBlockHeight,
     'Invalid vouch transaction: ',
@@ -132,7 +132,7 @@ export function initiateUnvouch(
         throw new ClientError('VouchBox does not belong to signer');
       }
     },
-    (t, h) => validateTx(deps, t, h),
+    (t, i, h) => validateTx(deps, t, i, h),
     tx,
     currentBlockHeight,
     'Invalid unvouch transaction: ',

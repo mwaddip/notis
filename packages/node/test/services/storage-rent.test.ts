@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync } from 'crypto';
-import {
-  boxRecordBytes,
+import {boxRecordBytes,
   PROTOCOL_VERSION,
   STORAGE_RENT_PER_BYTE,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  computeTxId,
 } from '@dagsocial/types';
 import type { CreditBox, UtxoTransaction } from '@dagsocial/types';
 import { initDb, closeDb } from '../../src/store/db.js';
@@ -112,7 +112,7 @@ describe('storage rent', () => {
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
-    const result = validateTx(deps, tx, height);
+    const result = validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(true);
   });
 
@@ -129,7 +129,7 @@ describe('storage rent', () => {
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
-    const result = validateTx(deps, tx, height);
+    const result = validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('signature');
   });
@@ -151,7 +151,7 @@ describe('storage rent', () => {
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
-    const result = validateTx(deps, tx, height);
+    const result = validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(false);
   });
 
@@ -169,7 +169,7 @@ describe('storage rent', () => {
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
-    const result = validateTx(deps, tx, height);
+    const result = validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(true);
   });
 
@@ -187,7 +187,7 @@ describe('storage rent', () => {
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
-    const result = validateTx(deps, tx, height);
+    const result = validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(false);
   });
 
@@ -210,7 +210,7 @@ describe('storage rent', () => {
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
-    const result = validateTx(deps, tx, height);
+    const result = validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Rent: credit outputs do not match');
   });
@@ -237,7 +237,7 @@ describe('storage rent', () => {
     };
     const aliceHex = Buffer.from(alicePub).toString('hex');
     signTransaction(tx, alice.privateKey, aliceHex);
-    const result = validateTx(deps, tx, height);
+    const result = validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(true);
   });
 
@@ -267,7 +267,7 @@ describe('storage rent', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, attackerKp.privateKey, Buffer.from(attackerPub).toString('hex'));
-    const result = validateTx(deps, tx, height);
+    const result = validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(false);
     expect(result.error).toContain(`Missing or invalid owner signature for box ${victim.id}`);
   });

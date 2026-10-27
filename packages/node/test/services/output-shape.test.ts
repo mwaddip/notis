@@ -456,38 +456,33 @@ describe('validateTx output shape (integration)', () => {
 
   it('accepts karma → karma (honest)', () => {
     const karma = seedKarma(100n);
-    const r = validateTx(deps, signedTx([karma.id!], [karmaChange(100n)]), 10);
+    const tx = signedTx([karma.id!], [karmaChange(100n)]);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid, r.error).toBe(true);
   });
 
   it('accepts credit → credit (honest, lockedUntilBlock absent and present)', () => {
     const c1 = seedCredit(40_000n);
-    const r1 = validateTx(
-      deps,
-      signedTx(
-        [c1.id!],
-        [{ boxType: 'credit', value: 40_000n, createdAtBlock: 0, owner: ownerPubKey }],
-      ),
-      10,
+    const tx1 = signedTx(
+      [c1.id!],
+      [{ boxType: 'credit', value: 40_000n, createdAtBlock: 0, owner: ownerPubKey }],
     );
+    const r1 = validateTx(deps, tx1, computeTxId(tx1), 10);
     expect(r1.valid, r1.error).toBe(true);
 
-    const r2 = validateTx(
-      deps,
-      signedTx(
-        [c1.id!],
-        [
-          {
-            boxType: 'credit',
-            value: 40_000n,
-            createdAtBlock: 0,
-            owner: ownerPubKey,
-            lockedUntilBlock: 500,
-          },
-        ],
-      ),
-      10,
+    const tx2 = signedTx(
+      [c1.id!],
+      [
+        {
+          boxType: 'credit',
+          value: 40_000n,
+          createdAtBlock: 0,
+          owner: ownerPubKey,
+          lockedUntilBlock: 500,
+        },
+      ],
     );
+    const r2 = validateTx(deps, tx2, computeTxId(tx2), 10);
     expect(r2.valid, r2.error).toBe(true);
   });
 
@@ -498,15 +493,12 @@ describe('validateTx output shape (integration)', () => {
       value: POST_PRICE_THREAD,
       createdAtBlock: 0,
     };
-    const r = validateTx(
-      deps,
-      signedTx(
-        [karma.id!],
-        [karmaChange(100n - POST_PRICE_THREAD), price],
-        makePostCommit(ownerPubKey, 'honest price payload'),
-      ),
-      10,
+    const tx = signedTx(
+      [karma.id!],
+      [karmaChange(100n - POST_PRICE_THREAD), price],
+      makePostCommit(ownerPubKey, 'honest price payload'),
     );
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid, r.error).toBe(true);
   });
 
@@ -525,11 +517,8 @@ describe('validateTx output shape (integration)', () => {
       voucherId: ownerPubKey,
       targetId: target,
     };
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [karmaChange(100n - VOUCH_KARMA_AMOUNT), vouch]),
-      10,
-    );
+    const tx = signedTx([karma.id!], [karmaChange(100n - VOUCH_KARMA_AMOUNT), vouch]);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid, r.error).toBe(true);
   });
 
@@ -544,7 +533,8 @@ describe('validateTx output shape (integration)', () => {
       inviteePublicKey: invitee,
     };
     const change = karmaChange(100n - FIXTURE_BOND_KARMA);
-    const r = validateTx(deps, signedTx([karma.id!], [change, bond]), 10);
+    const tx = signedTx([karma.id!], [change, bond]);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid, r.error).toBe(true);
   });
 
@@ -552,11 +542,8 @@ describe('validateTx output shape (integration)', () => {
 
   it('rejects a karma output carrying a guard key', () => {
     const karma = seedKarma(100n);
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [{ ...karmaChange(100n), guard: 'owner_signature' }]),
-      10,
-    );
+    const tx = signedTx([karma.id!], [{ ...karmaChange(100n), guard: 'owner_signature' }]);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/\(karma\): unexpected key 'guard'/);
   });
@@ -571,15 +558,12 @@ describe('validateTx output shape (integration)', () => {
       createdAtBlock: 0,
       note: 'x',
     };
-    const r = validateTx(
-      deps,
-      signedTx(
-        [karma.id!],
-        [karmaChange(100n - POST_PRICE_THREAD), strayPrice],
-        makePostCommit(ownerPubKey, 'stray key payload'),
-      ),
-      10,
+    const tx = signedTx(
+      [karma.id!],
+      [karmaChange(100n - POST_PRICE_THREAD), strayPrice],
+      makePostCommit(ownerPubKey, 'stray key payload'),
     );
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unexpected key 'note'/);
   });
@@ -592,7 +576,7 @@ describe('validateTx output shape (integration)', () => {
     // ordinary case. What the box round-trips is the absent form.
     const credit = seedCredit(40_000n);
     const tx = signedTx([credit.id!], [{ boxType: 'credit', value: 40_000n, createdAtBlock: 0, owner: ownerPubKey, lockedUntilBlock: undefined }]);
-    const r = validateTx(deps, tx, 10);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid, r.error).toBe(true);
     applyTx(deps, tx, r.computedOutputs!, 10);
     const stored = deps.getBox(r.computedOutputs![0]!.id!);
@@ -609,7 +593,8 @@ describe('validateTx output shape (integration)', () => {
   it('rejects an unknown output boxType at the shape gate (the transition arm backstops it)', () => {
     const karma = seedKarma(100n);
     const alien = { boxType: 'wat', value: 10n,  createdAtBlock: 0,};
-    const r = validateTx(deps, signedTx([karma.id!], [{ ...karmaChange(90n) }, alien]), 10);
+    const tx = signedTx([karma.id!], [{ ...karmaChange(90n) }, alien]);
+    const r = validateTx(deps, tx, computeTxId(tx), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unknown boxType wat/);
   });

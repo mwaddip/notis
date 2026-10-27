@@ -614,7 +614,7 @@ describe('admission runs the pool\'s correctness gates on every path', () => {
     const router = createBackersRouter({
       ...deps,
       getCurrentHeight,
-      validateTx: (tx, h) => validateTx(deps, tx, h),
+      validateTx: (tx, i, h) => validateTx(deps, tx, i, h),
       getBackerPoolBox: () => pool as never,
       getBackerStakeBox: () => stake,
       backerSupply: 100n,

@@ -55,6 +55,7 @@ export interface PostServiceDeps {
 
   validateTx: (
     tx: UtxoTransaction,
+    txId: string,
     currentBlockHeight: number,
   ) => { valid: boolean; error?: string; computedOutputs?: AnyBox[]; txId?: string };
   getBox: (id: string) => AnyBox | null;
@@ -139,7 +140,7 @@ export function createPost(
   }
 
   // ---- Validate the transaction ----
-  const txResult = deps.validateTx(tx, currentHeight);
+  const txResult = deps.validateTx(tx, heldTxId, currentHeight);
   if (!txResult.valid) {
     throw new PostServiceError(txResult.error ?? 'invalid post transaction');
   }

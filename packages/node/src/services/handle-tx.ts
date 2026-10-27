@@ -122,7 +122,7 @@ export function handleRelayedTx(
   // it — tip + 1 (NODE_INTERFACE → validateTx).
   const currentHeight = nextBlockHeight();
   const validationStart = performance.now();
-  const result = validateTx(deps, tx, currentHeight);
+  const result = validateTx(deps, tx, txIdHex, currentHeight);
   if (!result.valid) {
     // Boxes referenced by relayed txs may not have arrived yet via header sync.
     // The tx will be included in the ordering block that carries the boxes.

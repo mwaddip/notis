@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync } from 'crypto';
-import { PROTOCOL_VERSION,
+import {PROTOCOL_VERSION,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -153,7 +154,8 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
   it('validateTx refuses to spend it, naming the box type', () => {
     // Zero outputs, so face-value conservation (0 in, 0 out) HOLDS and cannot be
     // what rejects this. The verdict has to come from authorization.
-    const result = validateTx(deps, spend([]), 10);
+    const tx = spend([]);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/a genesis_proof box can never be consumed/);
     expect(result.error).toContain(proof.id);
@@ -163,7 +165,8 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
     const karmaOut = {
       boxType: 'karma', value: 0n,  createdAtBlock: 0,owner: new Uint8Array(32).fill(2),
     } as unknown as AnyBoxCandidate;
-    const result = validateTx(deps, spend([karmaOut]), 10);
+    const tx = spend([karmaOut]);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/a genesis_proof box can never be consumed/);
   });
@@ -182,7 +185,7 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/Mixed input types/);
   });

@@ -55,7 +55,7 @@ function validateAndApplyTx(
   tx: UtxoTransaction,
   currentBlockHeight: number,
 ): UtxoResult {
-  const result = validateTx(deps, tx, currentBlockHeight);
+  const result = validateTx(deps, tx, computeTxId(tx), currentBlockHeight);
   if (!result.valid) return result;
   applyTx(deps, tx, result.computedOutputs!, currentBlockHeight);
   return result;
@@ -299,7 +299,7 @@ describe('membership arms', () => {
       const tx3 = makeInviteTx(
         change2.id!, ownerPubKey, ownerPrivKey, invitee3, change2.value, FIXTURE_BOND_KARMA,
       );
-      const r3 = validateTx(deps, tx3, 10);
+      const r3 = validateTx(deps, tx3, computeTxId(tx3), 10);
       expect(r3.valid).toBe(false);
       expect(r3.error).toContain('no invites available');
 
@@ -351,7 +351,7 @@ describe('membership arms', () => {
         karma.id!, ownerPubKey, ownerPrivKey, invitee, 500n, FIXTURE_BOND_KARMA,
       );
 
-      const refused = validateTx(deps, tx, 10);
+      const refused = validateTx(deps, tx, computeTxId(tx), 10);
       expect(refused.valid).toBe(false);
       expect(refused.error).toContain('no invites available');
 
@@ -400,7 +400,7 @@ describe('membership arms', () => {
       seedRecord(targetRaw);
 
       const tx = makeVouchTx(karma.id!, ownerPubKey, ownerPrivKey, targetRaw, 100n);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('voucher to be a member');
     });
@@ -410,7 +410,7 @@ describe('membership arms', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
       const tx = makeVouchTx(karma.id!, ownerPubKey, ownerPrivKey, ownerPubKey, 100n);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Cannot vouch for yourself');
     });
@@ -433,7 +433,7 @@ describe('membership arms', () => {
 
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
       const tx = makeVouchTx(karma.id!, ownerPubKey, ownerPrivKey, targetRaw, 100n);
-      const result = validateTx(deps, tx, 10);
+      const result = validateTx(deps, tx, computeTxId(tx), 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('A live vouch already exists');
     });
@@ -496,7 +496,7 @@ describe('membership arms', () => {
 
       // Vouch refused — no record.
       const vouchTx = makeVouchTx(karma.id!, ownerPubKey, ownerPrivKey, freshTarget, 500n);
-      const vouchResult = validateTx(deps, vouchTx, 10);
+      const vouchResult = validateTx(deps, vouchTx, computeTxId(vouchTx), 10);
       expect(vouchResult.valid).toBe(false);
       expect(vouchResult.error).toContain('Vouch target holds no identity record');
 

@@ -6,10 +6,10 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import {
-  PROTOCOL_VERSION,
+import {PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
   MAX_BLOCK_BODY_BYTES,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -538,6 +538,7 @@ describe('escrow settlement leg', () => {
       getUsernameByOwner: () => null,
       },
       tx,
+      computeTxId(tx),
       10,
     );
     expect(result.valid).toBe(false);

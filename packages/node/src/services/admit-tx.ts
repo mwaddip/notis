@@ -237,7 +237,7 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
  */
 export function admitWriteTx(
   checks: () => void,
-  validate: (tx: UtxoTransaction, currentBlockHeight: number) => UtxoResult,
+  validate: (tx: UtxoTransaction, txId: string, currentBlockHeight: number) => UtxoResult,
   tx: UtxoTransaction,
   currentBlockHeight: number,
   openingWords: string,
@@ -265,7 +265,7 @@ export function admitWriteTx(
     };
   }
   checks();
-  const result = validate(tx, currentBlockHeight);
+  const result = validate(tx, txId, currentBlockHeight);
   if (!result.valid) {
     throw new ClientError(`${openingWords}${result.error ?? ''}`);
   }

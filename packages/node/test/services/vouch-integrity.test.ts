@@ -260,7 +260,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(voucher.pub, 100n);
     const tx = buildVouchCast(karma, voucher, { stake: 0n, height: 10 });
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('must stake exactly');
   });
@@ -271,7 +271,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(voucher.pub, 200n);
     const tx = buildVouchCast(karma, voucher, { stake: 100n, height: 10 });
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('must stake exactly');
   });
@@ -280,7 +280,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(voucher.pub, 100n);
     const tx = buildVouchCast(karma, voucher, { stake: VOUCH_KARMA_AMOUNT, height: 10 });
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });
@@ -302,7 +302,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(voucher.pub, 100n);
     const tx = buildVouchCast(karma, voucher, { voucherIdInBox: foreign.pub, height: 10 });
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain("voucherId must be the karma input's owner");
   });
@@ -323,7 +323,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(voucher.pub, 100n);
     const tx = buildVouchCast(karma, voucher, { voucherIdInBox: voucher.pub, height: 10 });
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });
@@ -340,7 +340,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     seedEscrow(voucher.pub, 999);
 
     const tx = buildVouchCast(karma, voucher, { height: 10 });
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('unreleased escrow');
   });
@@ -357,7 +357,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     seedEscrow(otherVoucher.pub, 999);
 
     const tx = buildVouchCast(karma, voucher, { height: 10 });
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });
@@ -374,7 +374,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n);
     const tx = buildVouchCast(karma, voucher, { height: 10 });
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('below the floor of');
   });
@@ -387,7 +387,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n, 1, true);
 
     const tx = buildVouchCast(first, voucher, { height: 10 });
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });
@@ -396,7 +396,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(voucher.pub, VOUCH_MIN_BALANCE);
     const tx = buildVouchCast(karma, voucher, { height: 10 });
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });
@@ -444,7 +444,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(inviter, karma, makeKeys().pub, 0n);
 
-    const result = validateTx(deps, createTx, 1);
+    const result = validateTx(deps, createTx, computeTxId(createTx), 1);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('An invite bond must hold between');
   });
@@ -457,7 +457,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       inviter, karma, makeKeys().pub, config.inviteBondMin - 1n,
     );
 
-    const result = validateTx(deps, createTx, 1);
+    const result = validateTx(deps, createTx, computeTxId(createTx), 1);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('An invite bond must hold between');
   });
@@ -470,7 +470,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       inviter, karma, makeKeys().pub, config.inviteBondMax + 1n,
     );
 
-    const result = validateTx(deps, createTx, 1);
+    const result = validateTx(deps, createTx, computeTxId(createTx), 1);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('An invite bond must hold between');
   });
@@ -492,7 +492,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     seedMember(inviter.pub);
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(inviter, karma, invitee.pub, FIXTURE_BOND_KARMA);
-    const created = validateTx(deps, createTx, 1);
+    const created = validateTx(deps, createTx, computeTxId(createTx), 1);
     expect(created.valid).toBe(true);
     applyTx(deps, createTx, created.computedOutputs!, 1);
 
@@ -514,7 +514,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
         protocolVersion: 1,
       };
       addSignature(reclaim, signer);
-      const result = validateTx(deps, reclaim, 2);
+      const result = validateTx(deps, reclaim, computeTxId(reclaim), 2);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('block application');
     }
@@ -528,7 +528,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       inviter, karma, makeKeys().pub, FIXTURE_BOND_KARMA,
     );
 
-    const result = validateTx(deps, createTx, 1);
+    const result = validateTx(deps, createTx, computeTxId(createTx), 1);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });

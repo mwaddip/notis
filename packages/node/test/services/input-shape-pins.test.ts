@@ -207,7 +207,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
 
     const tx = buildConsolidation([boxA, boxB], a.pub, [a, b]);
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('karma inputs have different owners');
   });
@@ -220,7 +220,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
 
     const tx = buildConsolidation([boxA1, boxA2], a.pub, [a]);
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });
@@ -270,7 +270,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
     };
     addSignature(tx, voucher);
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('exactly one VouchBox');
   });
@@ -288,7 +288,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
     };
     addSignature(tx, voucher);
 
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });

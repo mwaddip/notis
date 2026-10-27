@@ -15,9 +15,9 @@ import {
   validateTx, applyTx,
 } from '@dagsocial/consensus';
 import type { UtxoEngineDeps } from '@dagsocial/consensus';
-import {
-  PROTOCOL_VERSION,
+import {PROTOCOL_VERSION,
   USERNAME_BURN_PRICE,
+  computeTxId,
 } from '@dagsocial/types';
 import type {
   KarmaBox, UsernameBox, UtxoTransaction, AnyBoxCandidate, AnyBox,
@@ -137,7 +137,7 @@ describe('username claim and burn transitions', () => {
     const kb = seedKarma(holder.userId, 100n);
     insertBox(kb);
     const tx = claimTx(holder, kb, 'Alice');
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid, result.error).toBe(true);
   });
 
@@ -153,7 +153,7 @@ describe('username claim and burn transitions', () => {
     const kb2 = seedKarma(b.userId, 100n);
     insertBox(kb2);
     const tx = claimTx(b, kb2, 'Alice');
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('name taken');
   });
@@ -166,7 +166,7 @@ describe('username claim and burn transitions', () => {
     const kb = seedKarma(b.userId, 100n);
     insertBox(kb);
     const tx = claimTx(b, kb, 'ALICE');
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('name taken');
   });
@@ -178,7 +178,7 @@ describe('username claim and burn transitions', () => {
     const kb = seedKarma(holder.userId, 100n);
     insertBox(kb);
     const tx = claimTx(holder, kb, 'Charlie');
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('identity holds a name');
   });
@@ -198,7 +198,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('owner must match');
   });
@@ -217,7 +217,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('value must be 0');
   });
@@ -236,7 +236,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('name invalid');
   });
@@ -251,7 +251,7 @@ describe('username claim and burn transitions', () => {
     insertBox(ub);
 
     const tx = burnTx(holder, kb, ub);
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid, result.error).toBe(true);
   });
 
@@ -275,7 +275,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, other.privateKey, hex(other.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('signature');
   });
@@ -297,7 +297,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('price must be exactly');
   });
@@ -318,7 +318,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('KarmaPriceBox required');
   });
@@ -341,7 +341,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('no username output');
   });
@@ -359,7 +359,7 @@ describe('username claim and burn transitions', () => {
     insertBox(ka);
 
     const claimA = claimTx(a, ka, 'Reclaim');
-    const r1 = validateTx(deps, claimA, HEIGHT);
+    const r1 = validateTx(deps, claimA, computeTxId(claimA), HEIGHT);
     expect(r1.valid, r1.error).toBe(true);
     applyTx(deps, claimA, r1.computedOutputs!, HEIGHT);
     const uOut = r1.computedOutputs!.find(o => o.boxType === 'username')!;
@@ -370,7 +370,7 @@ describe('username claim and burn transitions', () => {
     });
 
     const burnA = burnTx(a, kaChange1, uOut as UsernameBox);
-    const r2 = validateTx(deps, burnA, HEIGHT + 1);
+    const r2 = validateTx(deps, burnA, computeTxId(burnA), HEIGHT + 1);
     expect(r2.valid, r2.error).toBe(true);
     applyTx(deps, burnA, r2.computedOutputs!, HEIGHT + 1);
     deleteUsername('reclaim');
@@ -379,7 +379,7 @@ describe('username claim and burn transitions', () => {
     const kb = seedKarma(b.userId, 100n);
     insertBox(kb);
     const claimB = claimTx(b, kb, 'Reclaim');
-    const r3 = validateTx(deps, claimB, HEIGHT + 2);
+    const r3 = validateTx(deps, claimB, computeTxId(claimB), HEIGHT + 2);
     expect(r3.valid, r3.error).toBe(true);
   });
 
@@ -393,7 +393,7 @@ describe('username claim and burn transitions', () => {
     insertBox(ka);
 
     const c1 = claimTx(a, ka, 'SelfReclaim');
-    const r1 = validateTx(deps, c1, HEIGHT);
+    const r1 = validateTx(deps, c1, computeTxId(c1), HEIGHT);
     expect(r1.valid, r1.error).toBe(true);
     applyTx(deps, c1, r1.computedOutputs!, HEIGHT);
     const uOut = r1.computedOutputs!.find(o => o.boxType === 'username')!;
@@ -404,14 +404,14 @@ describe('username claim and burn transitions', () => {
     });
 
     const b1 = burnTx(a, kaChange1, uOut as UsernameBox);
-    const r2 = validateTx(deps, b1, HEIGHT + 1);
+    const r2 = validateTx(deps, b1, computeTxId(b1), HEIGHT + 1);
     expect(r2.valid, r2.error).toBe(true);
     applyTx(deps, b1, r2.computedOutputs!, HEIGHT + 1);
     deleteUsername('selfreclaim');
 
     const kaChange2 = r2.computedOutputs!.find(o => o.boxType === 'karma')! as KarmaBox;
     const c2 = claimTx(a, kaChange2, 'SelfReclaim');
-    const r3 = validateTx(deps, c2, HEIGHT + 2);
+    const r3 = validateTx(deps, c2, computeTxId(c2), HEIGHT + 2);
     expect(r3.valid, r3.error).toBe(true);
   });
 
@@ -435,7 +435,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Mixed input types');
   });
@@ -458,7 +458,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('At most one username input');
   });
@@ -475,7 +475,7 @@ describe('username claim and burn transitions', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('username input alone');
   });
@@ -500,7 +500,7 @@ describe('username claim and burn transitions', () => {
       likeTarget: 'aa'.repeat(32),
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/not legal on a like|all-karma/i);
   });
@@ -529,7 +529,7 @@ describe('username claim and burn transitions', () => {
       },
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('not legal on a like, post or withdrawal');
   });
@@ -551,7 +551,7 @@ describe('username claim and burn transitions', () => {
       postWithdraw: { postId: 'dd'.repeat(32) },
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('not legal on a like, post or withdrawal');
   });
@@ -579,7 +579,7 @@ describe('username claim and burn transitions', () => {
       },
     };
     signTransaction(tx, holder.privateKey, hex(holder.userId));
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('not legal on a like, post or withdrawal');
   });
@@ -591,7 +591,7 @@ describe('username claim and burn transitions', () => {
     const kb = seedKarma(holder.userId, 100n);
     insertBox(kb);
     const tx = claimTx(holder, kb, 'Conserve');
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid, result.error).toBe(true);
   });
 
@@ -602,7 +602,7 @@ describe('username claim and burn transitions', () => {
     const ub = seedUsernameBox(holder.userId, 'BurnCons');
     insertBox(ub);
     const tx = burnTx(holder, kb, ub);
-    const result = validateTx(deps, tx, HEIGHT);
+    const result = validateTx(deps, tx, computeTxId(tx), HEIGHT);
     expect(result.valid, result.error).toBe(true);
   });
 });

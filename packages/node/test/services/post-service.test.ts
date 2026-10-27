@@ -35,7 +35,7 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
     getCurrentHeight: () => 100,
     admitTx: () => 1,
     getHeldEntry: () => null,
-    validateTx: (tx: UtxoTransaction) => ({ valid: true, txId: computeTxId(tx) }),
+    validateTx: (_tx: UtxoTransaction, txId: string) => ({ valid: true, txId }),
     getBox: () =>
       ({
         boxType: 'karma',
@@ -110,7 +110,7 @@ describe('PostService', () => {
     const deps = mockDeps({
       getCurrentHeight: () => L - 1,
       verifyPost: (vd) => { verifierHeight = vd.currentHeight; return { valid: true }; },
-      validateTx: (tx, height) => { validateHeight = height; return { valid: true, txId: computeTxId(tx) }; },
+      validateTx: (_tx, txId, height) => { validateHeight = height; return { valid: true, txId }; },
     });
 
     const result = createPost(deps, makePostTx(), CONTENT);

@@ -184,7 +184,7 @@ describe('bond transitions', () => {
 
   /** Every rejection here names the same rule; assert the reason, not just the verdict. */
   function expectRefusedAsBlockApplyOnly(tx: UtxoTransaction, height: number): void {
-    const result = validateTx(deps, tx, height);
+    const result = validateTx(deps, tx, computeTxId(tx), height);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('block application');
   }
@@ -240,7 +240,7 @@ describe('bond transitions', () => {
     addSignature(tx, inviter);
     // Mixed input types are refused at step 3, ahead of authorization, which is
     // a second layer over the same shape rather than a different verdict.
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/Mixed input types|block application/);
   });
@@ -267,7 +267,7 @@ describe('bond transitions', () => {
       protocolVersion: 1,
     };
     addSignature(tx, inviter);
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });
@@ -292,7 +292,7 @@ describe('bond transitions', () => {
       protocolVersion: 1,
     };
     addSignature(tx, invitee);
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('non-conservation');
   });
@@ -306,7 +306,7 @@ describe('bond transitions', () => {
       protocolVersion: 1,
     };
     addSignature(tx, inviter);
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('non-conservation');
   });
@@ -359,7 +359,7 @@ describe('bond transitions', () => {
       protocolVersion: 1,
     };
     addSignature(tx, voucher);
-    const result = validateTx(deps, tx, 10);
+    const result = validateTx(deps, tx, computeTxId(tx), 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
   });

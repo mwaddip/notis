@@ -11,7 +11,7 @@ import { resolveIdentityParam, isResolveError } from './page.js';
 
 export interface BackerRouteDeps extends UtxoEngineDeps {
   getCurrentHeight(): number;
-  validateTx(tx: UtxoTransaction, currentBlockHeight: number): UtxoResult;
+  validateTx(tx: UtxoTransaction, txId: string, currentBlockHeight: number): UtxoResult;
   getBackerPoolBox(): BackerPoolBox | null;
   getBackerStakeBox(owner: Uint8Array): BackerStakeBox | null;
   backerSupply: bigint;
