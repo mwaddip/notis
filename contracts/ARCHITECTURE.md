@@ -426,16 +426,18 @@ non-tradeable. An account's karma box can be consumed only to:
 - Create like boxes (spending karma to vote)
 - Create one new karma box for the same owner (a balance change)
 
-#### Karma decay (virtual, squared on touch)
+#### Karma decay (virtual, squared on touch or payment)
 
 Decay is a **valuation, not a per-block mutation**. After 28 days of
 inactivity an identity's karma decays *virtually*: every karma-sufficiency
 read computes the **effective** value from committed state, and the face
-values in boxes move only when a transaction touches the identity.
+values in boxes move only when a block touches the identity or pays it.
 
 > ⚠ **AHEAD OF CODE (2026-10-28).** The grace window and the settled-through clock lead `types`' `owedPeriods`, which
 > counts from `max(lastActivityBlock, lastDecayBlock)` with a separate stale check in front of it, and `consensus`'
-> `commitDecayClocks`, which writes the squaring's own height (`NODE_INTERFACE → Karma decay`).
+> `commitDecayClocks`, which writes the squaring's own height. The squaring of a paid identity and the floor's
+> forgiveness lead `consensus`' `collectPostBodyKarma`, which projects the owners the body touches alone, and
+> `deriveKarmaDecay`, which emits no plan where nothing burns (`NODE_INTERFACE → Karma decay`).
 
 - **The grace window:** decay's clock starts at `lastActivityBlock + KARMA_STALE_THRESHOLD_BLOCKS`,
   read from the identity record — the committed clock, not box heights — and starts from nothing:
@@ -461,13 +463,16 @@ values in boxes move only when a transaction touches the identity.
   burn leave it standing. It binds every identity, stale or not; one that spent
   its floor on anything else would hold nothing to post with and have no way to
   earn more (user, 2026-10-11).
-- **Squaring, per identity, on touch:** when a block's body consumes any of an
-  identity's karma boxes, that block's settlement squares the identity — it
-  consumes their post-body karma boxes and re-emits the effective value to the
-  owner and the owed remainder to the karma pool. The touching transaction
-  itself conserves at face, unchanged.
+- **Squaring, per identity, on touch or payment:** when a block's body consumes any of an
+  identity's karma boxes, or its settlement pays the identity karma, that block's settlement
+  squares the identity — it consumes their post-body karma boxes and re-emits the effective
+  value to the owner and the owed remainder to the karma pool, before any payment lands. The
+  touching transaction itself conserves at face, unchanged.
+- **The floor forgives what it stops.** A squaring settles every period the identity owed,
+  whatever the floor let it burn, so time spent at the floor owes nothing: karma that reaches a
+  dormant identity decays from the block it lands in, never into a backlog (user, 2026-10-28).
 - **No periodic pass.** There is no per-block walk over karma owners and no
-  background sweep. An identity nothing touches keeps its face values and its
+  background sweep. An identity nothing touches or pays keeps its face values and its
   virtual decay indefinitely; its effective value still dissolves, and the
   pool — seeded with the supply total — does not depend on decay inflow.
 - **Clocks: posting is activity, and nothing else is.** `lastActivityBlock` advances

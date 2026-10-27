@@ -3232,6 +3232,11 @@ capped legs full is 17 395 bytes when every paid owner is a distinct identity al
 across heights 1 to 5 000 000 and values 1 to 2⁶³ − 1; `decayLegMaxBytes` — 115 at the current version — is its
 ceiling (`CONSENSUS_INTERFACE → The settlement build`).
 
+> ⚠ **AHEAD OF CODE (2026-10-28).** The settlement squares every owner it pays that owes decay (`NODE_INTERFACE →
+> Karma decay → "A block squares every identity it touches or pays"`), so the capped legs' settlement above, and
+> `CONSTANTS`' `MAX_SETTLEMENT_BYTES` row that quotes it, are measured again with every paid owner owing decay —
+> up to 128 squarings more, 14 720 bytes at `decayLegMaxBytes`, under the 100 000 bound.
+
 **The three encoded bounds are derived, never chosen: each is the longest encoding of something Stage 1
 accepts.** They are what a peer's bytes are weighed against before a decode
 (`NET_INTERFACE → Validation (and untrusted-input safety)`), so a bound one byte short refuses an honest
