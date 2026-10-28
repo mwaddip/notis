@@ -33,6 +33,7 @@ import type {
   UtxoTxTree,
   AnyBoxCandidate,
   DecayCfg,
+  LikeAccrualBox,
   UtxoTransaction,
 } from '@dagsocial/types';
 // The process config, distinct from the injected `config` below: the rules'
@@ -115,12 +116,14 @@ const PACKING_COST_MARGIN = 5;
  * cost the fill packed it by (MEMPOOL_INTERFACE → The cost gate), `null` for one
  * with no block alone to cost, which the fill counts as nothing.
  *
- * `squaringBytes` is `decayLegMaxBytes(era)` for an entry whose karma owner
- * owes decay at the block's height, `0` otherwise — the one figure that
- * reserves the squaring the settlement charges that owner (MEMPOOL_INTERFACE →
- * The fill budget is bytes; getPendingEntries is a count → "An entry whose
- * owner owes decay adds the squaring"). The accumulator reserves it and the
- * covering sum takes it back under a pop, so one answer per entry.
+ * `squaringBytes` is `decayLegMaxBytes(era)` for each identity the entry
+ * reserves a squaring for — its karma owner where it owes decay, plus one
+ * for each distinct author its `like_accrual` outputs name who owes decay
+ * at the block's height (MEMPOOL_INTERFACE → The fill budget is bytes;
+ * getPendingEntries is a count → "An entry whose owner owes decay adds the
+ * squaring", → "An entry whose marker pays an author who owes decay adds
+ * that author's squaring"). The accumulator reserves it and the covering
+ * sum takes it back under a pop, so one answer per entry.
  */
 interface SelectedEntry {
   txId: string;
@@ -664,22 +667,42 @@ export function createOrderingBlock(): OrderingBlock | null {
     const emptyCost = costedOrNothing('the empty block', () => emptyBlockCost('createOrderingBlock')) ?? 0;
     const decayCfg = applyContextFrom(nodeConfig).decayCfg;
     const squaringAtEra = decayLegMaxBytes(era);
-    // ⛔ **The predicate's answer for an entry is the same on every pass of
-    // one build** (MEMPOOL_INTERFACE → The fill budget is bytes;
+    // ⛔ **The predicate's answer for an identity is the same on every pass
+    // of one build** (MEMPOOL_INTERFACE → The fill budget is bytes;
     // getPendingEntries is a count → "An entry whose owner owes decay adds
-    // the squaring"). Cached per owner hex over confirmed state, so a build
-    // reads `getKarmaValue` and `getIdentityRecord` once per distinct karma
-    // owner however many entries that owner holds in the pool.
-    const owesDecayBy: Map<string, boolean> = new Map();
-    const squaringBytesOf = (karmaOwner: string | null): number => {
-      if (karmaOwner === null) return 0;
-      let answer = owesDecayBy.get(karmaOwner);
+    // the squaring", → "An entry whose marker pays an author who owes decay
+    // adds that author's squaring"). Cached per key hex over confirmed
+    // state, so a build reads `getKarmaValue` and `getIdentityRecord` once
+    // per distinct identity — the owner cache and the author cache one map.
+    const owesDecayByKey: Map<string, boolean> = new Map();
+    const owesDecay = (keyHex: string): boolean => {
+      let answer = owesDecayByKey.get(keyHex);
       if (answer === undefined) {
-        const owner = Buffer.from(karmaOwner, 'hex');
-        answer = karmaOwed(getKarmaValue(owner), getIdentityRecord(owner), newHeight, decayCfg) > 0n;
-        owesDecayBy.set(karmaOwner, answer);
+        const key = Buffer.from(keyHex, 'hex');
+        answer = karmaOwed(getKarmaValue(key), getIdentityRecord(key), newHeight, decayCfg) > 0n;
+        owesDecayByKey.set(keyHex, answer);
       }
-      return answer ? squaringAtEra : 0;
+      return answer;
+    };
+    // ⛔ **The entry's reservation is its karma owner's squaring plus one
+    // `decayLegMaxBytes` for each distinct author its `like_accrual` outputs
+    // name for whom the predicate holds** (MEMPOOL_INTERFACE → The fill
+    // budget is bytes; getPendingEntries is a count → "An entry whose marker
+    // pays an author who owes decay adds that author's squaring"). Over the
+    // safe direction where two entries pay one author, where the payout
+    // stays in the carry, and where the author is also the entry's owner.
+    const squaringBytesForEntry = (karmaOwner: string | null, tx: UtxoTransaction): number => {
+      let bytes = karmaOwner !== null && owesDecay(karmaOwner) ? squaringAtEra : 0;
+      const distinctAuthors = new Set<string>();
+      for (const out of tx.outputs) {
+        if (out.boxType === 'like_accrual') {
+          distinctAuthors.add(Buffer.from((out as LikeAccrualBox).author).toString('hex'));
+        }
+      }
+      for (const authorHex of distinctAuthors) {
+        if (owesDecay(authorHex)) bytes += squaringAtEra;
+      }
+      return bytes;
     };
     let spent = seededSpent;
     let settlementSpent = seededSettlementSpent;
@@ -734,12 +757,15 @@ export function createOrderingBlock(): OrderingBlock | null {
           if (invitedThisBlock.has(inviteeHex)) continue;
           invitedThisBlock.add(inviteeHex);
         }
-        // The entry's squaring, where its karma owner owes decay at the
-        // block's height — in the body-budget reservation and the
-        // settlement-bound reservation alike (MEMPOOL_INTERFACE → The fill
-        // budget is bytes; getPendingEntries is a count → "An entry whose
-        // owner owes decay adds the squaring"). Priced over confirmed state.
-        const squaringBytes = squaringBytesOf(entry.karmaOwner);
+        // The entry's squaring, where its karma owner or an author its
+        // `like_accrual` outputs name owes decay at the block's height —
+        // in the body-budget reservation and the settlement-bound
+        // reservation alike (MEMPOOL_INTERFACE → The fill budget is bytes;
+        // getPendingEntries is a count → "An entry whose owner owes decay
+        // adds the squaring", → "An entry whose marker pays an author who
+        // owes decay adds that author's squaring"). Priced over confirmed
+        // state.
+        const squaringBytes = squaringBytesForEntry(entry.karmaOwner, tx);
         const cost = entryByteCost(entry.utxoTxBytes) + squaringBytes;
         if (spent + cost > budget) return;
         // MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a

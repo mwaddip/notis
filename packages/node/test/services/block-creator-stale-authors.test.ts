@@ -237,11 +237,11 @@ describe('createOrderingBlock reserves one squaring per distinct author a marker
   beforeEach(() => { vi.resetModules(); });
   afterEach(teardown);
 
-  // n1: Under the author reservation the fresh-liker pool to a STALE author
+  // Under the author reservation the fresh-liker pool to a STALE author
   // fills to fewer entries than the twin pool to a FRESH author. Each like
   // adds a `decayLegMaxBytes` reservation under the first arm and nothing
   // under the second. The two pools are otherwise identical.
-  it.fails('a fresh-liker pool to a stale author fills to fewer entries than the twin pool to a fresh author', async () => {
+  it('a fresh-liker pool to a stale author fills to fewer entries than the twin pool to a fresh author', async () => {
     const N = 1500;
 
     // Arm A — stale author.
@@ -260,11 +260,11 @@ describe('createOrderingBlock reserves one squaring per distinct author a marker
     expect(keptStale).toBeLessThan(keptFresh);
   });
 
-  // n2: The author predicate is read once per author per build. A pool of
+  // The author predicate is read once per author per build. A pool of
   // `N` likes by distinct fresh likers to one stale author drives one build
   // through `createOrderingBlock`; a spy on the store's `getKarmaValue`
   // keyed by the author's bytes counts one call, not `N`.
-  it.fails('the author predicate is read once per author per build however many entries pay them', async () => {
+  it('the author predicate is read once per author per build however many entries pay them', async () => {
     const N = 5;
     mockConfigForLowStale();
     await freshStoreWithGenesisBoxes();
@@ -313,13 +313,13 @@ describe('createOrderingBlock reserves one squaring per distinct author a marker
     expect(authorKarmaReads.count).toBe(1);
   });
 
-  // n3: A pool of likes to DISTINCT stale authors by fresh likers builds a
-  // template whose settlement encodes at or under `MAX_SETTLEMENT_BYTES`, and
-  // the block it builds applies (no `body-rejected`), its cost under
+  // A pool of likes to DISTINCT stale authors by fresh likers builds a
+  // template whose settlement encodes at or under `MAX_SETTLEMENT_BYTES`,
+  // and the block it builds applies (no `body-rejected`), its cost under
   // `MAX_BLOCK_COST`. Without the author reservation the fill selects more
   // entries than the bound admits and the sizer's covering sum under-covers
   // the overshoot, so the template holds no user entries at all.
-  it.fails('a pool of likes to distinct stale authors by fresh likers builds a non-empty template within the settlement bound', async () => {
+  it('a pool of likes to distinct stale authors by fresh likers builds a non-empty template within the settlement bound', async () => {
     // Pool N is above the fill's natural ceiling under the author reservation
     // (~675 entries at `MAX_SETTLEMENT_BYTES / (settlementMarginalBytes +
     // decayLegMaxBytes)`), so the fill's settlement-bound check is the
