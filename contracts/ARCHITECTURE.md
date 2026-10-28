@@ -433,12 +433,6 @@ inactivity an identity's karma decays *virtually*: every karma-sufficiency
 read computes the **effective** value from committed state, and the face
 values in boxes move only when a block touches the identity or pays it.
 
-> ⚠ **AHEAD OF CODE (2026-10-28).** The grace window and the settled-through clock lead `types`' `owedPeriods`, which
-> counts from `max(lastActivityBlock, lastDecayBlock)` with a separate stale check in front of it, and `consensus`'
-> `commitDecayClocks`, which writes the squaring's own height. The squaring of a paid identity and the floor's
-> forgiveness lead `consensus`' `collectPostBodyKarma`, which projects the owners the body touches alone, and
-> `deriveKarmaDecay`, which emits no plan where nothing burns (`NODE_INTERFACE → Karma decay`).
-
 - **The grace window:** decay's clock starts at `lastActivityBlock + KARMA_STALE_THRESHOLD_BLOCKS`,
   read from the identity record — the committed clock, not box heights — and starts from nothing:
   the first period falls one `KARMA_DECAY_INTERVAL_BLOCKS` after the window ends, never the
@@ -1567,8 +1561,9 @@ chain or owed one:
 | **headers-first sync** (2026-10-17) | **no committed byte and no consensus verdict** — the sync wire: `SyncInfo` carries the tip hash, `GetHeaders` a locator, `GetBlocks` ids, and `Inv` (code 3) and block modifiers (type 101) retire (NET_INTERFACE → Historical Sync), so a node on it shares no sync with a node on 0.3.1; three store tables, additive (NODE_INTERFACE → Header tree); the reach floor, which reverts up to `maxReorgDepth` blocks above genesis where the fork walk it replaces stopped one short — a local fork-choice bound. **Rides the 0.4.0 reset**, with no era row |
 | **the handshake** (2026-10-19) | **no committed byte and no consensus verdict** — the handshake body: `sessionMagic` retires (NET_INTERFACE → Handshake Body), so a node on it completes no handshake with a node on 0.3.1. **Rides the 0.4.0 reset**, with no era row |
 | **the pool's output rows** (2026-10-22) | **no committed byte and no consensus verdict** — `mempool_outputs` carries each output's owner, type and value under an owner index (MEMPOOL_INTERFACE → Schema), and the store adds no column to a standing table, so a store written before them is not one this build opens: `initDb` refuses the owner index over a table that lacks its columns (measured 2026-10-22: `no such column: owner`). **Rides the 0.4.0 reset** |
+| **the decay window and the paid squaring** (2026-10-28) | the verdict and the effects of every block that squares an identity (NODE_INTERFACE → Karma decay): the window's end starts the clock, a squaring writes the height it settles through, every owner the settlement pays is squared before the payment lands, and every squaring writes its clock however little the floor lets it burn — so the settlement's decay leg, the pool's inflow, `lastDecayBlock`, every `stateRoot` from the first such block, and the `adProofsRoot` of every block whose settlement pays an owner (the squared set's reads); the effective karma every valuation answers past a window's end. **Owes the reset**, and rides the 0.4.0 reset |
 
-**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule, the lapse leg's spent vouch, the two karma boxes, the mint id's genesis proof, the transactions root, headers-first sync, the handshake and the pool's output rows** (the eleven rows above). Testnet's live chain began at the
+**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule, the lapse leg's spent vouch, the two karma boxes, the mint id's genesis proof, the transactions root, headers-first sync, the handshake, the pool's output rows and the decay window with the paid squaring** (the twelve rows above). Testnet's live chain began at the
 2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
 empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
 

@@ -1342,10 +1342,6 @@ effective      = owedPeriods > 0
 settledThrough = clockStart + owedPeriods · decayIntervalBlocks
 ```
 
-> ⚠ **AHEAD OF CODE (2026-10-28).** The block above and the leads below lead `karma-valuation.ts`, whose `owedPeriods`
-> takes `(record, height, decayIntervalBlocks)` and counts from `max(lastActivityBlock, lastDecayBlock)`, whose
-> `effectiveKarma` gates on `isIdentityStale`, and which exports no `decaySettledThrough`.
-
 **Decay starts at the grace window's end, from nothing** (`NODE_INTERFACE → Karma decay` holds the rule): an identity
 last active at `A` owes its first period at `A + staleThresholdBlocks + decayIntervalBlocks`, and `owedPeriods` is
 negative or zero through the window. **No stale predicate stands beside it**: `owedPeriods > 0` holds only past the
@@ -3228,14 +3224,12 @@ divided by the marker input's 32 bytes, less what the block's other legs take.
 
 **Measured with the income leg** (`consensus`' `settlement-bound.test.ts`): an empty body's settlement with the three
 capped legs full is 17 395 bytes when every paid owner is a distinct identity already holding an income box, and
-8 632 when one owner is every bond's inviter and every escrow's owner. A decay squaring adds 100 to 111 bytes
+8 632 when one owner is every bond's inviter and every escrow's owner; **26 265 when every paid owner also owes decay**
+and holds an own box beside the income box, so the settlement squares each one before it pays them (`NODE_INTERFACE →
+Karma decay → "A block squares every identity it touches or pays"`) — 25 990 measured through `applyBlock` with each
+squaring burning (measured 2026-10-28). A decay squaring adds 100 to 111 bytes
 across heights 1 to 5 000 000 and values 1 to 2⁶³ − 1; `decayLegMaxBytes` — 115 at the current version — is its
 ceiling (`CONSENSUS_INTERFACE → The settlement build`).
-
-> ⚠ **AHEAD OF CODE (2026-10-28).** The settlement squares every owner it pays that owes decay (`NODE_INTERFACE →
-> Karma decay → "A block squares every identity it touches or pays"`), so the capped legs' settlement above, and
-> `CONSTANTS`' `MAX_SETTLEMENT_BYTES` row that quotes it, are measured again with every paid owner owing decay —
-> up to 128 squarings more, 14 720 bytes at `decayLegMaxBytes`, under the 100 000 bound.
 
 **The three encoded bounds are derived, never chosen: each is the longest encoding of something Stage 1
 accepts.** They are what a peer's bytes are weighed against before a decode

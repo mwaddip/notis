@@ -419,6 +419,10 @@ single-transaction run (`MEMPOOL_INTERFACE → The cost gate`) beyond a fixed te
 author's squaring, two boxes and a record. Measured: the tree view answers an owner at two boxes
 in five lookups — the range's start, two index entries and two boxes (`tree-view.test.ts`).
 
+**Measured 2026-10-28** (`settlement-bound.test.ts`, every paid owner owing decay): the empty-body block with
+the three capped legs full costs 38 040 of `MAX_BLOCK_COST`'s 600 000 — 1 872 lookups and 1 932 writes, each squaring
+burning — and a body of 50 likes each paying a distinct author who owes decay costs 18 280.
+
 ## The overlay
 
 **`applyBlock` reads through a block-local layer of its own writes, and the view underneath is never written.** A box
@@ -491,12 +495,6 @@ settlement's income leg pays, `NODE_INTERFACE → Karma decay → "A block squar
 the settlement's read wiring (`settlementDepsWith`), the reward (`computeBlockReward`) — so producer and applier
 derive from one implementation, and a settlement the build gets wrong is the speculative run's `body-rejected`
 (`NODE_INTERFACE → Post-block stateRoot`), never a mined block.
-
-> ⚠ **AHEAD OF CODE (2026-10-28).** The paid owners lead `decay.ts`' `collectPostBodyKarma`, which projects the owners
-> the body touches alone, and `settlement.ts`' `derive`, which enumerates the income leg's payees after decay's plans
-> are fixed; the author reservation below leads the node's fill, which reserves for `karma_owner` alone; and "What a
-> block reads before its verdict" below leads its measurement — a like's cost and the capped legs' settlement, every
-> payee owing decay, re-measured against `MAX_BLOCK_COST` and `MAX_SETTLEMENT_BYTES`.
 
 **The lapse list is one function's answer on both sides.** `lapseLegOf(captured, spent)` answers the view's
 `getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK)` over pre-body state, in its order, less every vouch whose id is

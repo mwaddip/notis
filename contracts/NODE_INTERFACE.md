@@ -627,8 +627,7 @@ strings** in the JSON (box values are `bigint`; JSON cannot carry one) — clien
 
 **`/karma/:userId` answers the balance twice, and a client spends against `effective`.** `total`
 is the face sum; `effective` is the same sum after virtual decay, computed by the one
-`effectiveKarma` every karma-sufficiency check on the node reads ("Karma decay (virtual, squared
-on touch)") — a client that derives it from the clocks holds a second implementation of a
+`effectiveKarma` every karma-sufficiency check on the node reads (→ Karma decay) — a client that derives it from the clocks holds a second implementation of a
 consensus valuation, which is the mirror class. The three plain numbers beside them —
 `lastActivityBlock` and `lastDecayBlock`, the owner's identity-record clocks (`0` where no record
 exists), and `height`, the chain height at the time of the response — are that valuation's inputs,
@@ -2536,15 +2535,6 @@ owedPeriods    = floor( (height − clockStart) / interval )
 effective      = owedPeriods > 0 ? clamp(faceTotal − owedPeriods · decayAmount) : faceTotal   // never below min(faceTotal, KARMA_MINIMUM)
 settledThrough = clockStart + owedPeriods · interval   // what a squaring at `height` writes as lastDecayBlock
 ```
-
-> ⚠ **AHEAD OF CODE (2026-10-28).** The four lines above and the four leads below them, through the floor's, lead
-> `types`' `karma-valuation.ts` — `owedPeriods(record, height, interval)` counts from `max(lastActivityBlock,
-> lastDecayBlock)`, `effectiveKarma` gates on a separate `isIdentityStale`, and no `decaySettledThrough` exists — and
-> `consensus`: `collectPostBodyKarma` projects the owners the body touches alone, the income leg's payees are
-> enumerated inside the settlement's derivation after decay's plans are fixed, `deriveKarmaDecay` gates on
-> `isIdentityStale`, skips an owner holding no box and emits no plan where nothing burns, and `commitDecayClocks`
-> writes `lastDecayBlock: currentHeight`. The node's fill reserves no squaring for the author a marker pays
-> (`MEMPOOL_INTERFACE → The fill budget is bytes`).
 
 **Decay starts at the grace window's end, and from nothing.** An identity last active at `A` owes nothing through
 `A + staleThresholdBlocks`, and its first period at `A + staleThresholdBlocks + interval`: the window costs nothing,
