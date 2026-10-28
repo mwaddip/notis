@@ -1809,7 +1809,7 @@ describe('block-apply mint provenance', () => {
       expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(false);
 
       // The received income does not move `lastActivityBlock` (NODE_INTERFACE
-      // → Karma decay → "received value ... is not activity").
+      // → Karma decay → "The clock reads the record").
       const records = await import('../../src/store/identity-records.js');
       const record = records.getIdentityRecord(idle.userId);
       expect(record?.lastActivityBlock ?? 0).toBe(0);
