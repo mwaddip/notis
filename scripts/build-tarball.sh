@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # build-tarball.sh — package the node as a zero-dependency linux-x64 tarball:
-# the built app, a production node_modules (linux-x64 better-sqlite3 prebuild),
+# the built app, a production node_modules (better-sqlite3 carries every platform's prebuild; nothing builds it),
 # and a bundled Node runtime, with run.sh (server) and run-miner.sh (miner)
 # launchers defaulting to testnet. No system Node required to run it.
 #
@@ -36,7 +36,7 @@ rsync -a --exclude-from="$REPO_ROOT/scripts/package-excludes.txt" \
 echo "==> Installing production dependencies"
 (
   cd "$APP/app"
-  pnpm approve-builds better-sqlite3 cbor-extract esbuild 2>&1 | tail -3 || true
+  pnpm approve-builds cbor-extract esbuild 2>&1 | tail -3 || true
   pnpm install --prod --frozen-lockfile 2>&1 | tail -5
 )
 
