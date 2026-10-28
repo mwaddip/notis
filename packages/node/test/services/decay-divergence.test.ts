@@ -32,8 +32,8 @@ import type { ScenarioCapture } from '../harness/decay-timeline.js';
  *
  * Decay is therefore measured from the most recent activity rather than from
  * the oldest surviving box, which is the clock NODE_INTERFACE → Karma decay
- * states: `owedPeriods` reads
- * `max(lastActivityBlock, lastDecayBlock)`. This file is the pinned record of
+ * states: `owedPeriods` counts from `clockStart`, which is
+ * `max(lastActivityBlock + staleThresholdBlocks, lastDecayBlock)`. This file is the pinned record of
  * the difference, kept out of the golden set so that neither can be mistaken
  * for the other.
  *

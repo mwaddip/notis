@@ -509,14 +509,14 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       const bc = await importBlockCreator();
       bc.startBlockCreator(plainConfig);
 
-      // Heights 1–3: currentHeight ≤ threshold → staleness guard skips decay.
+      // Heights 1–3: inside the grace window, `owedPeriods` is 0.
       await mineNextBlock(bc);
       await mineNextBlock(bc);
       await mineNextBlock(bc);
       expect(utxo.getBox(oldBox.id!)).not.toBeNull();
       const pre = takeSnapshot(db, handle, 3);
 
-      // Height 4 > threshold 3: stale but UNTOUCHED — virtual decay does
+      // Height 4: one period owed but the identity is UNTOUCHED — virtual decay does
       // not fire a settlement leg. The face value stays; the round-trip still
       // exercises the block's other mutations (coinbase, pool successor).
       const classBlock = await mineNextBlock(bc);

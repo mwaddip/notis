@@ -73,8 +73,8 @@ const testConfig: Config = makeTestConfig({
 
 /**
  * Register a mock of `src/config.js` whose `config` overrides
- * `karmaStaleThresholdBlocks` and `karmaDecayIntervalBlocks` so the stale
- * predicate fires at height 1.
+ * `karmaStaleThresholdBlocks` and `karmaDecayIntervalBlocks` so a record at 0
+ * owes a period at height 1.
  */
 function mockConfigForLowStale(opts: { threshold?: number; interval?: number } = {}): void {
   const threshold = opts.threshold ?? 0;

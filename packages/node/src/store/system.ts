@@ -96,9 +96,9 @@ export function ensureSystemKarmaBox(
   // record (NODE_INTERFACE → Populating the record).
   //
   // Left unwritten, the system identity would hold karma with no record, and
-  // decay would fall back to "never active" — staleness one block early and one
-  // extra interval charged on the first firing, because the box says
-  // `genesisHeight` and the fallback says 0. Writing it here is the root fix:
+  // decay would fall back to "never active" — a window that ends `genesisHeight`
+  // blocks early and that many blocks' worth of periods charged on the first
+  // firing, because the box says `genesisHeight` and the fallback says 0. Writing it here is the root fix:
   // the clock and the box get the same height from the same local, so they
   // cannot disagree.
   //

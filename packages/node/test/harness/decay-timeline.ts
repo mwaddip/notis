@@ -288,8 +288,8 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
           // ⛔ **Decay derives a plan; the block's settlement transaction
           // emits its boxes** (NODE_INTERFACE → The settlement transaction).
           // The harness stands in for that emission so the timeline keeps
-          // testing the decay ARITHMETIC — the staleness predicate, the
-          // interval count, the karma floor.
+          // testing the decay ARITHMETIC — the window in `owedPeriods`'
+          // clock start, the interval count, the karma floor.
           //
           // `commitDecayClocks(deps, plans)` writes each plan's
           // `settledThrough` as `lastDecayBlock` (NODE_INTERFACE → Karma decay

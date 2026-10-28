@@ -688,9 +688,10 @@ export function createOrderingBlock(): OrderingBlock | null {
     // `decayLegMaxBytes` for each distinct author its `like_accrual` outputs
     // name for whom the predicate holds** (MEMPOOL_INTERFACE → The fill
     // budget is bytes; getPendingEntries is a count → "An entry whose marker
-    // pays an author who owes decay adds that author's squaring"). Over the
-    // safe direction where two entries pay one author, where the payout
-    // stays in the carry, and where the author is also the entry's owner.
+    // pays an author who owes decay adds that author's squaring"). The
+    // reservation over-counts, the safe direction, where two entries pay one
+    // author, where the payout stays in the carry, and where the author is
+    // also the entry's owner.
     const squaringBytesForEntry = (karmaOwner: string | null, tx: UtxoTransaction): number => {
       let bytes = karmaOwner !== null && owesDecay(karmaOwner) ? squaringAtEra : 0;
       const distinctAuthors = new Set<string>();

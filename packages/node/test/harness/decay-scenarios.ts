@@ -67,9 +67,9 @@ export const EQUIVALENT_SCENARIOS: Scenario[] = [
     ],
   },
   {
-    // The staleness boundary, at exactly `height − lastActivity === threshold`.
-    // The single height where a `>` and a `>=` comparison disagree, so this is
-    // what pins which one the ledger uses.
+    // The grace window's end, at exactly `height − lastActivity === threshold`.
+    // `clockStart` equals the height there, so `owedPeriods` is 0: the window
+    // costs nothing, and the first period falls one interval after it.
     name: 'staleness-boundary-exactly-at-threshold',
     cfg: FAST,
     owners: ['alice'],
@@ -82,7 +82,8 @@ export const EQUIVALENT_SCENARIOS: Scenario[] = [
   {
     // An activity height of 0 at exactly the threshold height. Unreachable for
     // a box today (every producer clamps to ≥ 1), but it is the value a
-    // never-active identity's clock reads, so the guard has to hold there.
+    // never-active identity's clock reads, so its window ends at the threshold
+    // height itself and `owedPeriods` is 0 there.
     name: 'zero-activity-height-at-threshold',
     cfg: FAST,
     owners: ['alice'],
@@ -94,10 +95,11 @@ export const EQUIVALENT_SCENARIOS: Scenario[] = [
   },
   {
     // Decay twice, then a third time. The **only** path that exercises the
-    // `max(lastActivityBlock, lastDecayBlock)` fallback: after the first firing
-    // the owner's one karma box is the decay-burn box, whose height is exactly
-    // `lastDecayBlock`, and reading `lastActivityBlock` alone would charge from
-    // the original activity and over-burn.
+    // `lastDecayBlock` arm of `clockStart = max(lastActivityBlock +
+    // staleThresholdBlocks, lastDecayBlock)`: after the first firing
+    // `lastDecayBlock` lies past the window's end and is the larger term, and
+    // reading `lastActivityBlock + staleThresholdBlocks` alone would charge
+    // from the window's end again and over-burn.
     name: 'decay-twice-then-thrice',
     cfg: FAST,
     owners: ['alice'],
