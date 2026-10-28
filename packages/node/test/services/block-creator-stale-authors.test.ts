@@ -13,10 +13,13 @@ import {
   KARMA_DECAY_AMOUNT,
   LIKE_KARMA_COST,
   MAX_BLOCK_BODY_BYTES,
+  MAX_BLOCK_COST,
   MAX_SETTLEMENT_BYTES,
   PROTOCOL_VERSION,
   computeTxId,
+  utxoTxTreeByteLength,
 } from '@dagsocial/types';
+import { decayLegMaxBytes, settlementMarginalBytes } from '@dagsocial/consensus';
 import type {
   AnyBox,
   IdentityRecord,
@@ -378,5 +381,120 @@ describe('createOrderingBlock reserves one squaring per distinct author a marker
     const nonce = solveHeaderPow(template!.header);
     const hash = bc.submitMinedBlock(nonce, template!.header.height);
     expect(hash).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Measurements the MEMPOOL marker names — `block-creator-stale-owners.test.ts`
+// pools re-run with every owner AND every author owing decay, and a like pool
+// whose likers owe nothing but whose authors all do (MEMPOOL_INTERFACE → The
+// fill budget is bytes; getPendingEntries is a count).
+// ---------------------------------------------------------------------------
+
+describe('measurements for the fill under the author-squaring reservation', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(teardown);
+
+  it('every owner and every author owing decay: a 1500-like pool', async () => {
+    mockConfigForLowStale();
+    await freshStoreWithGenesisBoxes();
+
+    const author = newIdentity();
+    const commit: PostCommit = makePostCommit(author.pub, 'measurement authors');
+    const postId = fixturePostId(commit);
+    const authorKarma = karmaBoxForOwner(author.pub, STALE_FACE, 900_000);
+    const N = 1500;
+    const boxMutations: Array<{ kind: 'box'; op: 'insert'; boxId: string; box: AnyBox }> = [];
+    const recordMutations: Array<{ kind: 'record'; identityId: Uint8Array; record: IdentityRecord }> = [];
+    const likeTxs: UtxoTransaction[] = [];
+    recordMutations.push({ kind: 'record', identityId: author.pub, record: staleActiveRecord() });
+    boxMutations.push({ kind: 'box', op: 'insert', boxId: authorKarma.id!, box: authorKarma });
+    for (let i = 0; i < N; i++) {
+      const id = newIdentity();
+      const own = karmaBoxForOwner(id.pub, STALE_FACE, 920_000 + i);
+      boxMutations.push({ kind: 'box', op: 'insert', boxId: own.id!, box: own });
+      recordMutations.push({ kind: 'record', identityId: id.pub, record: staleActiveRecord() });
+      likeTxs.push(buildLikeOfOwnBox(id, own, author.pub, postId));
+    }
+    await seedCommittedState({
+      posts: [{ postId, txId: fixtureTxId(commit), post: commit }],
+      mutations: [...boxMutations, ...recordMutations] as never,
+    });
+
+    const mempool = await import('../../src/store/mempool.js');
+    for (const tx of likeTxs) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+    expect(template).not.toBeNull();
+
+    const kept = userTxIds(template!);
+    const settlementBytes = template!.utxoTxTree.utxoTxs[template!.utxoTxTree.utxoTxs.length - 1]!.length;
+    const bodyBytes = utxoTxTreeByteLength(template!.utxoTxTree);
+    process.stdout.write('MEASUREMENT: ' + JSON.stringify({
+      case: 'stale-owners-stale-author-likes',
+      poolSize: N,
+      keptCount: kept.length,
+      settlementBytes,
+      bodyBytes,
+      decayLegMaxBytes: decayLegMaxBytes(PROTOCOL_VERSION),
+      perEntryMarginal: settlementMarginalBytes(likeTxs[0]!),
+      budgets: { body: MAX_BLOCK_BODY_BYTES, settlement: MAX_SETTLEMENT_BYTES, cost: MAX_BLOCK_COST },
+    }) + '\n');
+  });
+
+  it('every liker owes nothing and every author owes decay: a 3000-like pool to distinct authors', async () => {
+    mockConfigForLowStale();
+    await freshStoreWithGenesisBoxes();
+
+    const N = 3000;
+    const boxMutations: Array<{ kind: 'box'; op: 'insert'; boxId: string; box: AnyBox }> = [];
+    const recordMutations: Array<{ kind: 'record'; identityId: Uint8Array; record: IdentityRecord }> = [];
+    const posts: Array<{ postId: string; txId: string; post: PostCommit }> = [];
+    const likeTxs: UtxoTransaction[] = [];
+    for (let i = 0; i < N; i++) {
+      const author = newIdentity();
+      const commit: PostCommit = makePostCommit(author.pub, `measurement author ${i}`);
+      const postId = fixturePostId(commit);
+      posts.push({ postId, txId: fixtureTxId(commit), post: commit });
+      const authorKarma = karmaBoxForOwner(author.pub, STALE_FACE, 940_000 + i);
+      boxMutations.push({ kind: 'box', op: 'insert', boxId: authorKarma.id!, box: authorKarma });
+      recordMutations.push({ kind: 'record', identityId: author.pub, record: staleActiveRecord() });
+
+      const liker = newIdentity();
+      const own = karmaBoxForOwner(liker.pub, STALE_FACE, 970_000 + i);
+      boxMutations.push({ kind: 'box', op: 'insert', boxId: own.id!, box: own });
+      recordMutations.push({ kind: 'record', identityId: liker.pub, record: freshActiveRecord(1) });
+      likeTxs.push(buildLikeOfOwnBox(liker, own, author.pub, postId));
+    }
+    await seedCommittedState({
+      posts,
+      mutations: [...boxMutations, ...recordMutations] as never,
+    });
+
+    const mempool = await import('../../src/store/mempool.js');
+    for (const tx of likeTxs) mempool.insertUtxoTx(tx, computeTxId(tx), 5000);
+
+    const bc = await import('../../src/services/block-creator.js');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    bc.startBlockCreator(testConfig);
+    const template = bc.getCurrentTemplate();
+    expect(template).not.toBeNull();
+
+    const kept = userTxIds(template!);
+    const settlementBytes = template!.utxoTxTree.utxoTxs[template!.utxoTxTree.utxoTxs.length - 1]!.length;
+    const bodyBytes = utxoTxTreeByteLength(template!.utxoTxTree);
+    process.stdout.write('MEASUREMENT: ' + JSON.stringify({
+      case: 'fresh-likers-stale-authors-distinct',
+      poolSize: N,
+      keptCount: kept.length,
+      settlementBytes,
+      bodyBytes,
+      decayLegMaxBytes: decayLegMaxBytes(PROTOCOL_VERSION),
+      perEntryMarginal: settlementMarginalBytes(likeTxs[0]!),
+      budgets: { body: MAX_BLOCK_BODY_BYTES, settlement: MAX_SETTLEMENT_BYTES, cost: MAX_BLOCK_COST },
+    }) + '\n');
   });
 });
