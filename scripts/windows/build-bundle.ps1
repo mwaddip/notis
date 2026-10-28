@@ -24,12 +24,16 @@ Write-Host "==> Building workspace"
 
 # --- 1. App tree (robocopy; 0-7 are success, >=8 is failure) -----------------
 # scripts/package-excludes.txt is the one exclude list, shared with
-# build-deb.sh and build-tarball.sh; rsync matches a bare name against files
-# and directories alike, so robocopy takes it in both /XD and /XF.
+# build-deb.sh and build-tarball.sh. A bare name goes to /XD and /XF as it
+# stands; an entry starting with '/' names one path from the repo root and goes
+# to /XD only, as the full path under $RepoRoot.
 Write-Host "==> Staging app tree"
-$Excludes = @(Get-Content (Join-Path $PSScriptRoot '..\package-excludes.txt') |
+$Entries = @(Get-Content (Join-Path $PSScriptRoot '..\package-excludes.txt') |
   Where-Object { $_ -ne '' -and -not $_.StartsWith('#') })
-& robocopy $RepoRoot "$Stage\app" /E /NFL /NDL /NJH /NJS /NP /XD $Excludes /XF $Excludes | Out-Null
+$ExcludeNames = @($Entries | Where-Object { -not $_.StartsWith('/') })
+$ExcludeDirs = @($ExcludeNames) + @($Entries | Where-Object { $_.StartsWith('/') } |
+  ForEach-Object { Join-Path $RepoRoot $_.Substring(1).Replace('/', '\') })
+& robocopy $RepoRoot "$Stage\app" /E /NFL /NDL /NJH /NJS /NP /XD $ExcludeDirs /XF $ExcludeNames | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 $global:LASTEXITCODE = 0
 
