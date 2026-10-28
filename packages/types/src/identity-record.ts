@@ -36,7 +36,11 @@ import type { StructCodec } from './codec.js';
 export interface IdentityRecord {
   /** u32 — bumped when the owner's post transaction applies. */
   lastActivityBlock: number;
-  /** u32 — bumped when decay fires. */
+  /**
+   * u32 — the height decay is settled through. A decay squaring writes it, at
+   * most the squaring's own height (NODE_INTERFACE → Karma decay → "A squaring
+   * writes the height it settles through, never its own height").
+   */
   lastDecayBlock: number;
   /**
    * u32 — the height an invite claim applied for this identity. `0` = never
