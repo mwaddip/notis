@@ -1,6 +1,6 @@
 # Notis — Firefox extension source review
 
-Notis is an invite-only decentralised social network on a dual-ledger design: a Posts DAG and a
+Notis is an invite-only decentralised notice board on a dual-ledger design: a Posts DAG and a
 UTXO ledger of non-tradeable rep and tradeable $NOTIS. The add-on is the Notis client built as a
 browser extension: the identity's secret key stays in the background script and is never
 transmitted. One content script runs on `https://notis.fun/web/p/*` and passes a post id to the
