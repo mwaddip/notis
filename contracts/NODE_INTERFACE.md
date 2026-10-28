@@ -6240,7 +6240,10 @@ no per-post serve path. `onPeerActive` is wired to peer-readiness
 - Node.js ≥ 24
 - `@dagsocial/types`, `@dagsocial/validation`, and `@dagsocial/net` packages
   built and importable
-- `better-sqlite3` native bindings built
+- `better-sqlite3`'s binding: the N-API prebuild the package ships for the platform and architecture
+  (`prebuilds/<platform>-<arch>.node`, one binary for every Node release). **No install builds it** — the
+  workspace approves no build script for it, and the packaging scripts approve none, so no compiler is
+  needed on any build host
 - Write access to `DB_PATH` directory
 - Port available at `PORT` and libp2p listen address available
 
