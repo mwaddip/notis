@@ -56,8 +56,8 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
   };
 }
 
-// The pure-piece tests — `isIdentityStale`, `owedPeriods`, `effectiveKarma` —
-// live in `@dagsocial/types`. The execution tests below drive the deps and
+// The pure-piece tests — `owedPeriods`, `decaySettledThrough`, `effectiveKarma`
+// — live in `@dagsocial/types`. The execution tests below drive the deps and
 // the plan.
 
 // ---------------------------------------------------------------------------
@@ -203,8 +203,10 @@ describe('deriveKarmaDecay', () => {
     // ⛔ **The clock is advanced by `commitDecayClocks`, after the settlement's
     // boxes are in** — so the journal's reverse replay undoes the record before
     // deleting the box that caused it.
-    commitDecayClocks(deps, plans, STALE_AT);
+    commitDecayClocks(deps, plans);
 
+    // `clockStart = ACTIVITY_AT + T`; `settledThrough = clockStart +
+    // CAP_INTERVALS · I`, which lands at STALE_AT by construction.
     expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT, STALE_AT));
   });
 
@@ -228,10 +230,14 @@ describe('deriveKarmaDecay', () => {
     const { deps, postBodyKarma, recordMap } = oneOwner([makeKarmaBox({ id: 'old-box', value: 100n })]);
 
     const journal = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
-    commitDecayClocks(deps, journal, STALE_AT);
+    commitDecayClocks(deps, journal);
 
     expect(journal).toHaveLength(1);
-    expect(recordMap.get(ownerKey)).toEqual(clock(0, STALE_AT));
+    // Null record values as `EMPTY_IDENTITY_RECORD`: `clockStart = T`, and
+    // `settledThrough = T + CAP_INTERVALS · I` is a period short of STALE_AT
+    // because ACTIVITY_AT is not a multiple of I.
+    const settledThrough = KARMA_STALE_THRESHOLD_BLOCKS + CAP_INTERVALS * KARMA_DECAY_INTERVAL_BLOCKS;
+    expect(recordMap.get(ownerKey)).toEqual(clock(0, settledThrough));
   });
 
   it('skips an owner with no karma boxes without touching its clock', () => {

@@ -180,7 +180,7 @@ describe('karma spend rule, a stale identity and a fresh one, each of face 1000'
 
   // A stale identity, face 1000, effective 10; a like refused at the 1st.
   it('a stale identity with effective 10 cannot afford one like', () => {
-    const s = seed('stale-like', [1000n], { lastActivityBlock: 1 });
+    const s = seed('stale-like', [1000n], { lastActivityBlock: 0 });
     const authorKey = seededIdentity('stale-like/author').userId;
     const postId = hex(uid('stale-like/post'));
     putConfirmedPost(s.view, postId, authorKey);
@@ -277,7 +277,7 @@ describe('a post at the floor', () => {
   // Thread 2 (spend 5): held = 995, owed_pre = 990, remaining = 5, 5 >= 5 ✓, change = 990.
   // Thread 3 (spend 5): held = 990, remaining = 0, 0 < 5 → refused with the post rule.
   it('stale effective 10 — a third thread is refused with the post rule', () => {
-    const s = seed('post-floor-3', [1000n], { lastActivityBlock: 1 });
+    const s = seed('post-floor-3', [1000n], { lastActivityBlock: 0 });
     const txs: Built[] = [];
     let input = s.view.getKarmaBoxes(s.actor.userId)[0]!;
     for (let i = 0; i < 3; i++) {

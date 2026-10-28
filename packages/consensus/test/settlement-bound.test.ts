@@ -121,6 +121,7 @@ describe('decayLegMaxBytes — the ceiling at every (height, value) pair', () =>
       consumedBoxIds: [b1.id!, b2.id!],
       newValue: value,
       burnAmount: 15n - value < 0n ? 0n : 15n - value,
+      settledThrough: height,
     };
     const withDecayDeps: SettlementDeps = {
       ...noDecayDeps,

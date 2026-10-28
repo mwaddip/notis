@@ -154,7 +154,7 @@ describe('settlementDepsWith — the settlement\'s reads over a view', () => {
     const escrows = [escrowBox(invitee, 1, 1)];
     const lapsed = [vouchBox(stranger, invitee, 2)];
     const pool = protocolBox('backer_pool', 0n, 3);
-    const plans = [{ owner: invitee, consumedBoxIds: [], newValue: 1n, burnAmount: 1n }];
+    const plans = [{ owner: invitee, consumedBoxIds: [], newValue: 1n, burnAmount: 1n, settledThrough: 0 }];
     const deps = settlementDepsWith(view, ctx, () => plans, escrows, lapsed, () => pool as never, new Set());
 
     expect(deps.getLifetimeLikes(invitee)).toBe(9n);
@@ -237,12 +237,13 @@ describe('buildBlockSettlement — the producer\'s settlement over a view', () =
     const produced = consolidate.outputs[0]!;
     const tx = built(buildBlockSettlement(view, [{ txId: consolidate.txId, txBytes: encodeTx(consolidate.tx) }], height, miner, miner, decayCtx));
 
-    // Stale at 9 with 3 whole intervals owed: 70 face, 15 burned, 55 re-emitted.
+    // Stale at 9 with one whole interval owed past the window's end: 70 face,
+    // 5 burned, 65 re-emitted.
     const planInputs = tx.inputs.slice(tx.inputs.indexOf(a2.id));
     expect(planInputs.slice(0, 2)).toEqual([a2.id, produced.id]);
     expect(tx.inputs).not.toContain(a1.id);
-    expect(tx.outputs).toContainEqual({ boxType: 'karma', value: 55n, owner: stale, createdAtBlock: height });
-    expect(tx.outputs).toContainEqual({ boxType: 'karma_pool', value: 1_000_015n, createdAtBlock: height });
+    expect(tx.outputs).toContainEqual({ boxType: 'karma', value: 65n, owner: stale, createdAtBlock: height });
+    expect(tx.outputs).toContainEqual({ boxType: 'karma_pool', value: 1_000_005n, createdAtBlock: height });
   });
 
   it('the escrow leg consumes what the view holds releasable, never an escrow the body creates', () => {

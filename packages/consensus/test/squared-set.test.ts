@@ -111,7 +111,7 @@ describe('rule 1: decay starts at the window\'s end, and from nothing', () => {
   // lastDecayBlock) = A + T`, so `owedPeriods = 0`. The settlement does not
   // charge their post-body karma box, and the clock does not move. Here with
   // `T = 6`, `I = 3`, `A = 0`.
-  it.fails('(a1) touched at A + T with T=6, I=3: no decay charge, no clock write', () => {
+  it('(a1) touched at A + T with T=6, I=3: no decay charge, no clock write', () => {
     const view = genesisView();
     const owner = seededIdentity('a1/owner');
     view.putIdentityRecord(owner.userId, identityRecord({ lastActivityBlock: 0 }));
@@ -136,7 +136,7 @@ describe('rule 1: decay starts at the window\'s end, and from nothing', () => {
 
   // (a) Touched one interval past the window's end — `H = A + T + I` — one
   // whole period is burned: `owedPeriods = 1`, burn = `decayAmount`.
-  it.fails('(a2) touched at A + T + I with T=6, I=3: one period burned, newValue is face minus decayAmount', () => {
+  it('(a2) touched at A + T + I with T=6, I=3: one period burned, newValue is face minus decayAmount', () => {
     const view = genesisView();
     const owner = seededIdentity('a2/owner');
     view.putIdentityRecord(owner.userId, identityRecord({ lastActivityBlock: 0 }));
@@ -163,7 +163,7 @@ describe('rule 1: decay starts at the window\'s end, and from nothing', () => {
   // offset falls strictly inside a period and the two heights differ.
   const CFG_B: DecayCfg = { ...CFG, decayIntervalBlocks: 4 };
   const CTX_B: ApplyContext = { ...CTX, decayCfg: CFG_B };
-  it.fails('(b) a squaring at A + T + 2I + 3 with T=6, I=4 writes lastDecayBlock = A + T + 2I = 14', () => {
+  it('(b) a squaring at A + T + 2I + 3 with T=6, I=4 writes lastDecayBlock = A + T + 2I = 14', () => {
     const view = genesisView();
     const owner = seededIdentity('b/owner');
     view.putIdentityRecord(owner.userId, identityRecord({ lastActivityBlock: 0 }));

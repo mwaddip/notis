@@ -139,6 +139,7 @@ const decayPlan: DecayPlan = {
   consumedBoxIds: [decayKarmaBox.id!],
   burnAmount: 2n,
   newValue: 8n,
+  settledThrough: 0,
 };
 
 const body: SettlementBody = {

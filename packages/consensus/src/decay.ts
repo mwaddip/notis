@@ -1,16 +1,16 @@
 import {
   EMPTY_IDENTITY_RECORD,
   bytesToHex,
+  decaySettledThrough,
   effectiveKarma,
-  isIdentityStale,
   owedPeriods,
 } from '@dagsocial/types';
 import type { AnyBox, DecayCfg, IdentityRecord, KarmaBox } from '@dagsocial/types';
 import type { StateView } from './state-view.js';
 
-// The valuation — `effectiveKarma`, `isIdentityStale`, `owedPeriods`, `DecayCfg`
-// — is `@dagsocial/types`' (TYPES_INTERFACE → Identity record and karma
-// valuation). The execution is `karmaOwed`, `collectPostBodyKarma`,
+// The valuation — `effectiveKarma`, `owedPeriods`, `decaySettledThrough`,
+// `DecayCfg` — is `@dagsocial/types`' (TYPES_INTERFACE → Identity record and
+// karma valuation). The execution is `karmaOwed`, `collectPostBodyKarma`,
 // `deriveKarmaDecay` and `commitDecayClocks` below.
 
 /**
@@ -53,6 +53,14 @@ export interface DecayDeps {
  *
  * ⚠ The trigger is touch: the squaring fires per identity when the block
  * body consumes their boxes. There is no per-block walk.
+ *
+ * `settledThrough` is `decaySettledThrough(record, h, cfg)` on the pre-body
+ * record — the height a squaring at `h` writes as `lastDecayBlock`
+ * (NODE_INTERFACE → Karma decay → "A squaring writes the height it settles
+ * through, never its own height"). Carried on the plan so `commitDecayClocks`
+ * does not read the record a second time after the body applied: an owner who
+ * posts in the block has `lastActivityBlock = h` by then, and a clock derived
+ * from that post-apply record would start one window later.
  */
 export interface DecayPlan {
   owner: Uint8Array;
@@ -62,6 +70,8 @@ export interface DecayPlan {
   newValue: bigint;
   /** What returns to the pool. */
   burnAmount: bigint;
+  /** The height the squaring settles through, from the pre-body record. */
+  settledThrough: number;
 }
 
 /**
@@ -146,6 +156,11 @@ export function collectPostBodyKarma(
  * transactions but BEFORE the settlement. The caller provides entries in
  * ascending owner-hex order (ARCHITECTURE → Karma decay). The identity record
  * is read from pre-body state (user transactions do not write it).
+ *
+ * The staleness gate is `owedPeriods(record, h, cfg) > 0`: the window-end
+ * clock makes a separate predicate redundant (NODE_INTERFACE → Karma decay →
+ * "Decay starts at the grace window's end, and from nothing"), and the
+ * plan carries `settledThrough` for the clock write.
  */
 export function deriveKarmaDecay(
   deps: DecayDeps,
@@ -159,12 +174,7 @@ export function deriveKarmaDecay(
     if (boxes.length === 0) continue;
 
     const record = deps.getIdentityRecord(owner);
-
-    if (!isIdentityStale(record, currentHeight, cfg.staleThresholdBlocks)) {
-      continue;
-    }
-
-    const periods = owedPeriods(record, currentHeight, cfg.decayIntervalBlocks);
+    const periods = owedPeriods(record, currentHeight, cfg);
     if (periods <= 0) continue;
 
     const faceTotal = boxes.reduce((sum, b) => sum + b.value, 0n);
@@ -177,6 +187,7 @@ export function deriveKarmaDecay(
       consumedBoxIds: boxes.filter((b) => b.id).map((b) => b.id!),
       newValue: effective,
       burnAmount,
+      settledThrough: decaySettledThrough(record, currentHeight, cfg),
     });
   }
 
@@ -192,24 +203,24 @@ export function deriveKarmaDecay(
  * keeps its clock where it was, rather than silently forfeiting the intervals it
  * is owed.
  *
- * `lastActivityBlock` is carried through unchanged: the decay-burn box the
- * settlement emitted is deliberately *not* activity, and resetting the activity
- * half here would make an identity look freshly active every time it was
- * charged. `invitedAtBlock` the same — block application's grant path owns it,
- * and a decay that reset it would both un-bar the address and move the paired
- * bond's settlement deadline. `lifetimeLikesReceived` too: it is monotonic, and
- * a decay that reset it would forfeit a bond the invitee had earned.
+ * Writes `plan.settledThrough` as `lastDecayBlock` (NODE_INTERFACE → Karma
+ * decay → "A squaring writes the height it settles through, never its own
+ * height"). The record read at commit carries every other field — the activity
+ * clock bumped by a post earlier in the block, the like counters, the
+ * membership state — and `lastDecayBlock` writes over whatever the record
+ * carries for it. `invitedAtBlock` and `lifetimeLikesReceived` are among those
+ * carried fields, so a decay-burn box the settlement emitted does not un-bar
+ * the address or forfeit a bond the invitee had earned.
  */
 export function commitDecayClocks(
   deps: DecayDeps,
   plans: DecayPlan[],
-  currentHeight: number,
 ): void {
   for (const plan of plans) {
     const record = deps.getIdentityRecord(plan.owner);
     deps.putIdentityRecord(plan.owner, {
       ...(record ?? EMPTY_IDENTITY_RECORD),
-      lastDecayBlock: currentHeight,
+      lastDecayBlock: plan.settledThrough,
     });
   }
 }

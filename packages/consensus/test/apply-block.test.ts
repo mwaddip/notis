@@ -311,7 +311,7 @@ describe('applyBlock — a chain of blocks over a stub view', () => {
     expect(view.getVouchEscrowsFor(r1.userId)).toEqual([]);
   });
 
-  it.fails('block 9: decay squares the stale owners the body touches, one of them posting; rent collects a dormant box', () => {
+  it('block 9: decay squares the stale owners the body touches, one of them posting; rent collects a dormant box', () => {
     const l2Karma = view.getKarmaBoxes(l2.userId);
     const consolidate = consolidateTx(l2, l2Karma, 9);
     const xThread = threadTx(x, largest(view, x), 'a stale owner posts', 9);

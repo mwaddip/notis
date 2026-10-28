@@ -942,7 +942,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   // ⚠ **Only firings reach here.** A stale identity sitting at the karma floor
   // produces no plan and keeps its clock where it was, rather than silently
   // forfeiting the intervals it is owed: the plan's existence is the gate.
-  commitDecayClocks(decayDeps, decayPlans, height);
+  commitDecayClocks(decayDeps, decayPlans);
 
   return {
     ok: true,
