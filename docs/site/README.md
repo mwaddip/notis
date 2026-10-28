@@ -5,6 +5,8 @@ source: pages here are byte-identical to what `https://docs.notis.fun` serves.
 
 ```
 index.html                 Introduction        /
+start/                     Getting started     /start/ — its screenshots in start/img/, taken by
+                           packages/web/scripts/docs-screens/ on a private devnet
 first-principles/          First principles    /first-principles/
 architecture/              Architecture        /architecture/
 economy/                   Economy             /economy/
