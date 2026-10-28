@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en" class="no-anim">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Notis — standing you can't buy</title>
+<meta name="description" content="An invite-only social network where reputation is earned from people and cannot be bought. No moderators, no ranking algorithm, nothing to purchase.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Notis">
+<meta property="og:url" content="https://notis.fun/">
+<meta property="og:title" content="Standing you can&#39;t buy.">
+<meta property="og:description" content="An invite-only social network where reputation is earned from people and cannot be bought. No moderators, no ranking algorithm, nothing to purchase.">
+<meta property="og:image" content="https://notis.fun/og.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Notis mark beside the words: Standing you can&#39;t buy.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Standing you can&#39;t buy.">
+<meta name="twitter:description" content="An invite-only social network where reputation is earned from people and cannot be bought. No moderators, no ranking algorithm, nothing to purchase.">
+<meta name="twitter:image" content="https://notis.fun/og.png">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="fonts/fonts.css">
+<script>
+  // Resolving the theme has to happen here, in <head>, before the first paint. Done at the
+  // bottom of the page instead, a remembered dark theme paints Sand and then flips to Bistre —
+  // and the no-anim class only stops that flip being *animated*, it does not stop it being
+  // seen. Restoring a stored preference is not motion; it has to be painted, not arrived at.
+  //
+  // Sand is the default on every fresh visit, on purpose. prefers-color-scheme is deliberately
+  // not consulted: this is the page that introduces the place, and it should introduce it the
+  // way it was designed. The docs are the opposite call — long-form reading answers to the
+  // reader's system, not to us.
+  //
+  // A choice made here lasts the browsing session and no longer. Someone who tries dark once
+  // still meets the designed page next time they come back.
+  try {
+    const t = sessionStorage.getItem('notis-theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}   // private mode, storage disabled — the default is a fine answer
+  if (location.hash === '#dark' || location.hash === '#light') {
+    document.documentElement.setAttribute('data-theme', location.hash.slice(1));
+  }
+</script>
+<style>
+  /* Notis landing page, rebuilt to contracts/HOUSE_STYLE.md.
+     No ambient motion anywhere: nothing moves that the reader did not ask to move.
+     Hover changes appearance only, never layout, and is suppressed during scroll. */
+  :root{
+    --ground:#E7DCC6; --surface:#EFE7D5; --border:#CFC1A6; --borderStrong:#8B7A61;
+    --ink:#2A2419; --inkMute:#696051;
+    --green:#5E8C3A; --greenText:#476A2C; --onGreen:#FAF6EC;
+    --gold:#7F5A1C; --goldFill:#9B762D; --clay:#9A4A2F; --keyline:#1B2A12;
+    --sans:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    /* Fixed handles for both grounds. The theme toggle renders the theme you would get,
+       not the one you are in, so it needs the other palette regardless of which is active. */
+    --sand:#E7DCC6; --sand-ink:#2A2419; --bistre:#211E18; --bistre-ink:#E9E1CF;
+    --col:1080px; --measure:62ch; --gut:48px;
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px; --s8:64px; --s9:96px;
+  }
+  :root[data-theme="dark"]{
+    --ground:#211E18; --surface:#2A261D; --border:#3D3830; --borderStrong:#7A6E5C;
+    --ink:#E9E1CF; --inkMute:#978B77;
+    --greenText:#679A40; --onGreen:#141A0C; --gold:#B78328; --goldFill:#E8B84B; --clay:#CC7658;
+  }
+  /* Applying a stored theme on load would otherwise animate every transitioned property
+     from the default palette to the chosen one — a flash of the wrong state, and motion
+     nobody asked for. Killed until after first paint. */
+  .no-anim *{transition:none !important}
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%; scroll-behavior:smooth}
+  @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} *{transition:none !important} }
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+       font-size:17px;line-height:1.62;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  /* The gutters are inert on purpose: no handlers, no hover states, always somewhere safe
+     to click to focus the window or drop focus. On touch that problem doesn't exist. */
+  .wrap{max-width:var(--col);margin:0 auto;padding:0 var(--gut)}
+  @media (max-width:720px){ :root{--gut:20px} }
+  a{color:var(--greenText);text-decoration:none}
+  p{margin:0 0 var(--s4);max-width:var(--measure)}
+  .mono{font-family:var(--mono)}
+
+  /* ---------- nav ---------- */
+  .nav{border-bottom:1px solid var(--border);background:var(--ground);position:sticky;top:0;z-index:20}
+  .nav-in{display:flex;align-items:center;gap:var(--s5);height:64px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;
+         letter-spacing:.01em;color:var(--ink)}
+  .brand svg{width:30px;height:30px;display:block}
+  .nl{display:flex;gap:var(--s4);margin-left:var(--s4);font-size:14.5px}
+  .nl a{color:var(--inkMute);transition:color .15s ease;white-space:nowrap}
+  .nl a:hover{color:var(--ink)}
+  .nr{margin-left:auto;display:flex;align-items:center;gap:var(--s3)}
+  .nr .btn{white-space:nowrap}
+  @media (max-width:1080px){ .nl{display:none} }
+
+  .btn{display:inline-block;font-size:14px;font-weight:600;padding:9px 16px;border-radius:8px;
+       border:1px solid var(--borderStrong);color:var(--ink);background:none;
+       font-family:inherit;cursor:pointer;transition:background-color .15s ease,border-color .15s ease}
+  .btn:hover{border-color:var(--ink)}
+  .btn.solid{background:var(--greenText);border-color:var(--greenText);color:var(--onGreen)}
+  .btn.solid:hover{background:var(--green);border-color:var(--green)}
+  .btn.lg{font-size:15.5px;padding:12px 22px}
+  /* The toggle is styled as the inverse of the active theme, so it shows what it does. */
+  #theme{background:var(--bistre);color:var(--bistre-ink);border-color:var(--bistre)}
+  #theme:hover{opacity:.86}
+  :root[data-theme="dark"] #theme{background:var(--sand);color:var(--sand-ink);border-color:var(--sand)}
+
+  /* ---------- section furniture ---------- */
+  section{padding:var(--s9) 0;border-bottom:1px solid var(--border)}
+  .kick{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;
+        color:var(--inkMute);margin-bottom:var(--s3)}
+  h1{font-size:clamp(34px,5.4vw,52px);line-height:1.08;letter-spacing:-.02em;font-weight:700;
+     margin:0 0 var(--s4);text-wrap:balance}
+  h2{font-size:clamp(26px,3.4vw,36px);line-height:1.15;letter-spacing:-.015em;font-weight:700;
+     margin:0 0 var(--s4);text-wrap:balance}
+  h3{font-size:19px;font-weight:700;margin:0 0 var(--s2);letter-spacing:-.005em}
+  h4{font-size:15.5px;font-weight:700;margin:0 0 6px}
+  .lede{font-size:19px;color:var(--ink);max-width:var(--measure)}
+
+  /* ---------- hero ---------- */
+  .hero{border-bottom:1px solid var(--border);padding:var(--s9) 0 var(--s9)}
+  .hero-in{display:grid;grid-template-columns:1fr auto;gap:var(--s8);align-items:center}
+  @media (max-width:840px){ .hero-in{grid-template-columns:1fr} .hero-mark{display:none} }
+  .hero-mark svg{width:230px;height:230px;display:block}
+  .hero .sub{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;
+             color:var(--greenText);margin-bottom:var(--s4)}
+  .cta{display:flex;gap:var(--s3);flex-wrap:wrap;margin-top:var(--s6)}
+  .facts{margin-top:var(--s7);display:flex;gap:var(--s5);flex-wrap:wrap;
+         font-family:var(--mono);font-size:12px;color:var(--inkMute)}
+  .facts b{color:var(--ink);font-weight:500}
+  .facts a{border-bottom:1px solid color-mix(in srgb,var(--greenText) 32%,transparent)}
+
+  /* ---------- grids ---------- */
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:var(--s5);margin-top:var(--s7)}
+  .three{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s5);margin-top:var(--s5)}
+  .four{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s5);margin-top:var(--s7)}
+  @media (max-width:900px){ .two,.three,.four{grid-template-columns:1fr 1fr} }
+  @media (max-width:620px){ .two,.three,.four{grid-template-columns:1fr} }
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:var(--s5)}
+  .card p{margin:0;font-size:15px;color:var(--ink);max-width:none}
+  .card .n{font-family:var(--mono);font-size:11.5px;color:var(--greenText);margin-bottom:var(--s2)}
+  .plain p{margin:0;font-size:15px;max-width:none;color:var(--ink)}
+  .plain{border-left:2px solid var(--border);padding-left:var(--s4)}
+
+  /* ---------- code ---------- */
+  pre{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+      padding:var(--s5);overflow-x:auto;margin:var(--s6) 0 0;
+      font-family:var(--mono);font-size:13px;line-height:1.75;color:var(--ink)}
+  pre .c{color:var(--inkMute)}
+
+  /* ---------- roadmap ---------- */
+  .road{margin-top:var(--s7);display:grid;gap:var(--s3)}
+  .row{display:grid;grid-template-columns:120px 1fr;gap:var(--s5);align-items:baseline;
+       padding:var(--s4) 0;border-top:1px solid var(--border)}
+  @media (max-width:620px){ .row{grid-template-columns:1fr;gap:var(--s2)} }
+  .tag{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+       font-weight:500;padding:3px 9px;border-radius:20px;justify-self:start}
+  .tag.live{color:var(--greenText);border:1px solid color-mix(in srgb,var(--greenText) 38%,transparent);
+            background:color-mix(in srgb,var(--greenText) 10%,transparent)}
+  .tag.building{color:var(--gold);border:1px solid color-mix(in srgb,var(--gold) 38%,transparent);
+                background:color-mix(in srgb,var(--gold) 10%,transparent)}
+  .tag.planned{color:var(--inkMute);border:1px solid var(--border)}
+
+  /* ---------- close ---------- */
+  .close{text-align:left;border-bottom:0}
+  .close-in{display:grid;grid-template-columns:1fr auto;gap:var(--s8);align-items:end}
+  @media (max-width:840px){ .close-in{grid-template-columns:1fr} }
+  /* The one thing that steps out of the grid. A bench, because ring6.svg calls the ring
+     exactly that — so the closing image is a seat kept open rather than a call to action. */
+  .bench{width:210px;height:auto;display:block}
+
+  footer{padding:var(--s8) 0 var(--s9);color:var(--inkMute);font-size:14px}
+  .fcols{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s5);margin-bottom:var(--s7)}
+  @media (max-width:720px){ .fcols{grid-template-columns:1fr 1fr} }
+  .fcols h5{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+            color:var(--inkMute);margin:0 0 var(--s3);font-weight:500}
+  .fcols a{display:block;color:var(--ink);font-size:14.5px;padding:3px 0;transition:color .15s ease}
+  .fcols a:hover{color:var(--greenText)}
+  .sprite{position:absolute;width:0;height:0;overflow:hidden}
+  /* Scroll-hover suppression: a wheel-scrolling reader leaves the pointer parked, and
+     without this whatever lands beneath it fires the moment scrolling stops. */
+  body.scrolling *{pointer-events:none !important}
+
+  /* karma vs credits comparison — two plain columns, no winner implied */
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:var(--s5);margin-top:var(--s7)}
+  @media (max-width:620px){ .vs{grid-template-columns:1fr} }
+  .vs .col{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:var(--s5)}
+  .vs h3{margin-bottom:var(--s4)}
+  .vs ul{margin:0;padding:0;list-style:none}
+  .vs li{font-size:15px;padding:7px 0;border-top:1px solid var(--border)}
+  .vs li:first-child{border-top:0}
+  .note{margin-top:var(--s6);border-left:2px solid var(--borderStrong);padding-left:var(--s4)}
+  .note h4{color:var(--inkMute)}
+  .note p{font-size:15px;margin:0 0 var(--s3)}
+  .note p:last-child{margin-bottom:0}
+  .proof{display:flex;gap:var(--s3);flex-wrap:wrap;font-size:13.5px}
+  .proof a{border:1px solid color-mix(in srgb,var(--greenText) 30%,transparent);
+           border-radius:20px;padding:3px 11px;white-space:nowrap;transition:border-color .15s ease}
+  .proof a:hover{border-color:var(--greenText)}
+  .ca{display:flex;gap:var(--s2);align-items:baseline;flex-wrap:wrap}
+  .ca span:first-child{font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+                       color:var(--inkMute);font-weight:650}
+  .ca .mono{font-size:12.5px;color:var(--inkMute);word-break:break-all}
+</style>
+</head>
+<body>
+
+<!-- MARK-DEFS-START — GENERATED ARTWORK, do not hand-edit. Everything between these two markers is emitted by a build script that is deliberately not in the repository; only its output is tracked. Editing the paths here is not how the mark changes. -->
+<svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Notis mark, full tier. GENERATED ARTWORK - do not hand-edit.
+       The build script that produced this is deliberately not in the repository; only its
+       output is. Changing the mark means regenerating it, not patching the paths below.
+       The parameters it was built from are recorded here so the drawing stays reproducible:
+       ring=figures, keyline=on, banner=full, recursion=on.
+       r_ring=372, stroke=64, head r=42 at radius 410, slit 3.2 deg.
+       Ink arcs span 58.03 deg against the green arcs' 56.8, so the keyline wraps
+       the butt-cut end of each arm and not only its long sides.
+       Banner shifted 29.53 units down N-space.
+       Colours come from the CSS custom properties notis-green and notis-keyline. -->
+  <defs>
+    <mask id="nk-i" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="1000"><rect width="1000" height="1000" fill="#fff"/><g fill="#000"><circle cx="500" cy="90" r="60"/><circle cx="855.07" cy="295" r="60"/><circle cx="855.07" cy="705" r="60"/><circle cx="500" cy="910" r="60"/><circle cx="144.93" cy="705" r="60"/><circle cx="144.93" cy="295" r="60"/></g></mask>
+    <mask id="nk-g" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="1000"><rect width="1000" height="1000" fill="#fff"/><g fill="#000"><circle cx="500" cy="90" r="64"/><circle cx="855.07" cy="295" r="64"/><circle cx="855.07" cy="705" r="64"/><circle cx="500" cy="910" r="64"/><circle cx="144.93" cy="705" r="64"/><circle cx="144.93" cy="295" r="64"/></g></mask>
+    <g id="parts"><g fill="none" stroke="var(--notis-keyline, #1B2A12)" stroke-linecap="butt"><path d="M 319.56 174.69 A 372 372 0 0 1 680.44 174.69" stroke-width="72" mask="url(#nk-i)"/><path d="M 691.5 181.08 A 372 372 0 0 1 871.95 493.61" stroke-width="72" mask="url(#nk-i)"/><path d="M 871.95 506.39 A 372 372 0 0 1 691.5 818.92" stroke-width="72" mask="url(#nk-i)"/><path d="M 680.44 825.31 A 372 372 0 0 1 319.56 825.31" stroke-width="72" mask="url(#nk-i)"/><path d="M 308.5 818.92 A 372 372 0 0 1 128.05 506.39" stroke-width="72" mask="url(#nk-i)"/><path d="M 128.05 493.61 A 372 372 0 0 1 308.5 181.08" stroke-width="72" mask="url(#nk-i)"/></g><g fill="var(--notis-keyline, #1B2A12)"><circle cx="500" cy="90" r="46"/><circle cx="855.07" cy="295" r="46"/><circle cx="855.07" cy="705" r="46"/><circle cx="500" cy="910" r="46"/><circle cx="144.93" cy="705" r="46"/><circle cx="144.93" cy="295" r="46"/></g><g transform="translate(302.34 247.97) scale(0.38218)" fill="none" stroke="var(--notis-keyline, #1B2A12)" stroke-width="20.93" stroke-linejoin="miter"><path d="M 291.49 52.04 L 279.19 60.04 L 0 1221.91 L 2.12 1236.43 L 156.3 1238.6 L 170.32 1234.11 L 355.22 617.08 L 364.03 604.41 L 374.69 616.29 L 651.51 1233.14 L 680.53 1238.49 L 768.58 1239.14 L 828.86 1238.01 L 840.28 1233.77 L 847.89 1214.23 L 1000 244.6 L 994.28 227.58 L 896.08 67.45 L 889.97 67.11 L 886.1 75.31 L 856.43 311.66 L 710.57 887.7 L 700.72 901.82 L 446.83 329.97 L 403.79 62.86 L 387.86 51.77 Z"/><path d="M 753.11 29.53 L 730.83 42.91 L 720.49 43.64 L 665.95 66.22 L 642.13 79.9 L 613.48 85.41 L 540.92 69.64 L 534.5 72.75 L 533.92 327.92 L 543.31 337.99 L 609.08 349.73 L 637.03 344.94 L 731.92 305.3 L 809.46 327.27 L 820.52 325.58 L 852.04 68.87 L 843.08 61.16 L 765.52 31.72 Z M 769.93 47.16 L 831.1 73.15 L 834.62 78.32 L 805.48 306.6 L 786.19 308.86 L 724.88 291.67 L 619.49 338.31 L 551.16 324.71 L 547.53 313.87 L 546.63 114.48 L 551.47 90.91 L 613.94 99.22 L 646.34 90 L 649.93 85.68 L 683.56 75.1 L 733.72 54.11 L 737.8 48.33 L 752.23 44.05 Z"/></g><g fill="none" stroke="var(--notis-green, #009B00)" stroke-linecap="butt"><path d="M 323.07 172.77 A 372 372 0 0 1 676.93 172.77" stroke-width="64" mask="url(#nk-g)"/><path d="M 694.92 183.16 A 372 372 0 0 1 871.85 489.61" stroke-width="64" mask="url(#nk-g)"/><path d="M 871.85 510.39 A 372 372 0 0 1 694.92 816.84" stroke-width="64" mask="url(#nk-g)"/><path d="M 676.93 827.23 A 372 372 0 0 1 323.07 827.23" stroke-width="64" mask="url(#nk-g)"/><path d="M 305.08 816.84 A 372 372 0 0 1 128.15 510.39" stroke-width="64" mask="url(#nk-g)"/><path d="M 128.15 489.61 A 372 372 0 0 1 305.08 183.16" stroke-width="64" mask="url(#nk-g)"/></g><g fill="var(--notis-green, #009B00)"><circle cx="500" cy="90" r="42"/><circle cx="855.07" cy="295" r="42"/><circle cx="855.07" cy="705" r="42"/><circle cx="500" cy="910" r="42"/><circle cx="144.93" cy="705" r="42"/><circle cx="144.93" cy="295" r="42"/></g><g transform="translate(302.34 247.97) scale(0.38218)" fill="var(--notis-green, #009B00)"><path d="M 291.49 52.04 L 279.19 60.04 L 0 1221.91 L 2.12 1236.43 L 156.3 1238.6 L 170.32 1234.11 L 355.22 617.08 L 364.03 604.41 L 374.69 616.29 L 651.51 1233.14 L 680.53 1238.49 L 768.58 1239.14 L 828.86 1238.01 L 840.28 1233.77 L 847.89 1214.23 L 1000 244.6 L 994.28 227.58 L 896.08 67.45 L 889.97 67.11 L 886.1 75.31 L 856.43 311.66 L 710.57 887.7 L 700.72 901.82 L 446.83 329.97 L 403.79 62.86 L 387.86 51.77 Z"/><path d="M 753.11 29.53 L 730.83 42.91 L 720.49 43.64 L 665.95 66.22 L 642.13 79.9 L 613.48 85.41 L 540.92 69.64 L 534.5 72.75 L 533.92 327.92 L 543.31 337.99 L 609.08 349.73 L 637.03 344.94 L 731.92 305.3 L 809.46 327.27 L 820.52 325.58 L 852.04 68.87 L 843.08 61.16 L 765.52 31.72 Z M 769.93 47.16 L 831.1 73.15 L 834.62 78.32 L 805.48 306.6 L 786.19 308.86 L 724.88 291.67 L 619.49 338.31 L 551.16 324.71 L 547.53 313.87 L 546.63 114.48 L 551.47 90.91 L 613.94 99.22 L 646.34 90 L 649.93 85.68 L 683.56 75.1 L 733.72 54.11 L 737.8 48.33 L 752.23 44.05 Z" fill-rule="evenodd"/></g></g>
+    <g id="L2"><use xlink:href="#parts" href="#parts"/></g>
+    <g id="L1"><use xlink:href="#parts" href="#parts"/><use xlink:href="#L2" href="#L2" transform="translate(528.308 285.365) scale(0.07213)"/></g>
+  </defs>
+  <g id="mark">
+    <use xlink:href="#parts" href="#parts"/>
+    <use xlink:href="#L1" href="#L1" transform="translate(528.308 285.365) scale(0.07213)"/>
+  </g>
+<!-- Notis mark, mid tier. GENERATED ARTWORK - do not hand-edit.
+       The build script that produced this is deliberately not in the repository; only its
+       output is. Changing the mark means regenerating it, not patching the paths below.
+       The parameters it was built from are recorded here so the drawing stays reproducible:
+       ring=figures, keyline=on, banner=full, recursion=off.
+       r_ring=372, stroke=64, head r=42 at radius 410, slit 3.2 deg.
+       Ink arcs span 58.03 deg against the green arcs' 56.8, so the keyline wraps
+       the butt-cut end of each arm and not only its long sides.
+       Banner shifted 29.53 units down N-space.
+       Colours come from the CSS custom properties notis-green and notis-keyline. -->
+  <defs>
+    <mask id="mmid-nk-i" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="1000"><rect width="1000" height="1000" fill="#fff"/><g fill="#000"><circle cx="500" cy="90" r="60"/><circle cx="855.07" cy="295" r="60"/><circle cx="855.07" cy="705" r="60"/><circle cx="500" cy="910" r="60"/><circle cx="144.93" cy="705" r="60"/><circle cx="144.93" cy="295" r="60"/></g></mask>
+    <mask id="mmid-nk-g" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="1000"><rect width="1000" height="1000" fill="#fff"/><g fill="#000"><circle cx="500" cy="90" r="64"/><circle cx="855.07" cy="295" r="64"/><circle cx="855.07" cy="705" r="64"/><circle cx="500" cy="910" r="64"/><circle cx="144.93" cy="705" r="64"/><circle cx="144.93" cy="295" r="64"/></g></mask>
+    <g id="mmid-parts"><g fill="none" stroke="var(--notis-keyline, #1B2A12)" stroke-linecap="butt"><path d="M 319.56 174.69 A 372 372 0 0 1 680.44 174.69" stroke-width="72" mask="url(#mmid-nk-i)"/><path d="M 691.5 181.08 A 372 372 0 0 1 871.95 493.61" stroke-width="72" mask="url(#mmid-nk-i)"/><path d="M 871.95 506.39 A 372 372 0 0 1 691.5 818.92" stroke-width="72" mask="url(#mmid-nk-i)"/><path d="M 680.44 825.31 A 372 372 0 0 1 319.56 825.31" stroke-width="72" mask="url(#mmid-nk-i)"/><path d="M 308.5 818.92 A 372 372 0 0 1 128.05 506.39" stroke-width="72" mask="url(#mmid-nk-i)"/><path d="M 128.05 493.61 A 372 372 0 0 1 308.5 181.08" stroke-width="72" mask="url(#mmid-nk-i)"/></g><g fill="var(--notis-keyline, #1B2A12)"><circle cx="500" cy="90" r="46"/><circle cx="855.07" cy="295" r="46"/><circle cx="855.07" cy="705" r="46"/><circle cx="500" cy="910" r="46"/><circle cx="144.93" cy="705" r="46"/><circle cx="144.93" cy="295" r="46"/></g><g transform="translate(302.34 247.97) scale(0.38218)" fill="none" stroke="var(--notis-keyline, #1B2A12)" stroke-width="20.93" stroke-linejoin="miter"><path d="M 291.49 52.04 L 279.19 60.04 L 0 1221.91 L 2.12 1236.43 L 156.3 1238.6 L 170.32 1234.11 L 355.22 617.08 L 364.03 604.41 L 374.69 616.29 L 651.51 1233.14 L 680.53 1238.49 L 768.58 1239.14 L 828.86 1238.01 L 840.28 1233.77 L 847.89 1214.23 L 1000 244.6 L 994.28 227.58 L 896.08 67.45 L 889.97 67.11 L 886.1 75.31 L 856.43 311.66 L 710.57 887.7 L 700.72 901.82 L 446.83 329.97 L 403.79 62.86 L 387.86 51.77 Z"/><path d="M 753.11 29.53 L 730.83 42.91 L 720.49 43.64 L 665.95 66.22 L 642.13 79.9 L 613.48 85.41 L 540.92 69.64 L 534.5 72.75 L 533.92 327.92 L 543.31 337.99 L 609.08 349.73 L 637.03 344.94 L 731.92 305.3 L 809.46 327.27 L 820.52 325.58 L 852.04 68.87 L 843.08 61.16 L 765.52 31.72 Z M 769.93 47.16 L 831.1 73.15 L 834.62 78.32 L 805.48 306.6 L 786.19 308.86 L 724.88 291.67 L 619.49 338.31 L 551.16 324.71 L 547.53 313.87 L 546.63 114.48 L 551.47 90.91 L 613.94 99.22 L 646.34 90 L 649.93 85.68 L 683.56 75.1 L 733.72 54.11 L 737.8 48.33 L 752.23 44.05 Z"/></g><g fill="none" stroke="var(--notis-green, #009B00)" stroke-linecap="butt"><path d="M 323.07 172.77 A 372 372 0 0 1 676.93 172.77" stroke-width="64" mask="url(#mmid-nk-g)"/><path d="M 694.92 183.16 A 372 372 0 0 1 871.85 489.61" stroke-width="64" mask="url(#mmid-nk-g)"/><path d="M 871.85 510.39 A 372 372 0 0 1 694.92 816.84" stroke-width="64" mask="url(#mmid-nk-g)"/><path d="M 676.93 827.23 A 372 372 0 0 1 323.07 827.23" stroke-width="64" mask="url(#mmid-nk-g)"/><path d="M 305.08 816.84 A 372 372 0 0 1 128.15 510.39" stroke-width="64" mask="url(#mmid-nk-g)"/><path d="M 128.15 489.61 A 372 372 0 0 1 305.08 183.16" stroke-width="64" mask="url(#mmid-nk-g)"/></g><g fill="var(--notis-green, #009B00)"><circle cx="500" cy="90" r="42"/><circle cx="855.07" cy="295" r="42"/><circle cx="855.07" cy="705" r="42"/><circle cx="500" cy="910" r="42"/><circle cx="144.93" cy="705" r="42"/><circle cx="144.93" cy="295" r="42"/></g><g transform="translate(302.34 247.97) scale(0.38218)" fill="var(--notis-green, #009B00)"><path d="M 291.49 52.04 L 279.19 60.04 L 0 1221.91 L 2.12 1236.43 L 156.3 1238.6 L 170.32 1234.11 L 355.22 617.08 L 364.03 604.41 L 374.69 616.29 L 651.51 1233.14 L 680.53 1238.49 L 768.58 1239.14 L 828.86 1238.01 L 840.28 1233.77 L 847.89 1214.23 L 1000 244.6 L 994.28 227.58 L 896.08 67.45 L 889.97 67.11 L 886.1 75.31 L 856.43 311.66 L 710.57 887.7 L 700.72 901.82 L 446.83 329.97 L 403.79 62.86 L 387.86 51.77 Z"/><path d="M 753.11 29.53 L 730.83 42.91 L 720.49 43.64 L 665.95 66.22 L 642.13 79.9 L 613.48 85.41 L 540.92 69.64 L 534.5 72.75 L 533.92 327.92 L 543.31 337.99 L 609.08 349.73 L 637.03 344.94 L 731.92 305.3 L 809.46 327.27 L 820.52 325.58 L 852.04 68.87 L 843.08 61.16 L 765.52 31.72 Z M 769.93 47.16 L 831.1 73.15 L 834.62 78.32 L 805.48 306.6 L 786.19 308.86 L 724.88 291.67 L 619.49 338.31 L 551.16 324.71 L 547.53 313.87 L 546.63 114.48 L 551.47 90.91 L 613.94 99.22 L 646.34 90 L 649.93 85.68 L 683.56 75.1 L 733.72 54.11 L 737.8 48.33 L 752.23 44.05 Z" fill-rule="evenodd"/></g></g>
+  </defs>
+  <g id="mark-mid">
+    <use xlink:href="#mmid-parts" href="#mmid-parts"/>
+  </g>
+<!-- Notis mark, small tier. GENERATED ARTWORK - do not hand-edit.
+       The build script that produced this is deliberately not in the repository; only its
+       output is. Changing the mark means regenerating it, not patching the paths below.
+       The parameters it was built from are recorded here so the drawing stays reproducible:
+       ring=figures, keyline=off, banner=none, recursion=off.
+       r_ring=372, stroke=64, head r=42 at radius 410, slit 3.2 deg.
+       Ink arcs span 58.03 deg against the green arcs' 56.8, so the keyline wraps
+       the butt-cut end of each arm and not only its long sides.
+       Banner shifted 29.53 units down N-space.
+       Colours come from the CSS custom properties notis-green and notis-keyline. -->
+  <defs>
+    <mask id="msml-nk-g" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="1000"><rect width="1000" height="1000" fill="#fff"/><g fill="#000"><circle cx="500" cy="90" r="56"/><circle cx="855.07" cy="295" r="56"/><circle cx="855.07" cy="705" r="56"/><circle cx="500" cy="910" r="56"/><circle cx="144.93" cy="705" r="56"/><circle cx="144.93" cy="295" r="56"/></g></mask>
+    <g id="msml-parts"><g fill="none" stroke="var(--notis-green, #009B00)" stroke-linecap="butt"><path d="M 323.07 172.77 A 372 372 0 0 1 676.93 172.77" stroke-width="64" mask="url(#msml-nk-g)"/><path d="M 694.92 183.16 A 372 372 0 0 1 871.85 489.61" stroke-width="64" mask="url(#msml-nk-g)"/><path d="M 871.85 510.39 A 372 372 0 0 1 694.92 816.84" stroke-width="64" mask="url(#msml-nk-g)"/><path d="M 676.93 827.23 A 372 372 0 0 1 323.07 827.23" stroke-width="64" mask="url(#msml-nk-g)"/><path d="M 305.08 816.84 A 372 372 0 0 1 128.15 510.39" stroke-width="64" mask="url(#msml-nk-g)"/><path d="M 128.15 489.61 A 372 372 0 0 1 305.08 183.16" stroke-width="64" mask="url(#msml-nk-g)"/></g><g fill="var(--notis-green, #009B00)"><circle cx="500" cy="90" r="42"/><circle cx="855.07" cy="295" r="42"/><circle cx="855.07" cy="705" r="42"/><circle cx="500" cy="910" r="42"/><circle cx="144.93" cy="705" r="42"/><circle cx="144.93" cy="295" r="42"/></g><g transform="translate(302.34 247.97) scale(0.38218)" fill="var(--notis-green, #009B00)"><path d="M 291.49 52.04 L 279.19 60.04 L 0 1221.91 L 2.12 1236.43 L 156.3 1238.6 L 170.32 1234.11 L 355.22 617.08 L 364.03 604.41 L 374.69 616.29 L 651.51 1233.14 L 680.53 1238.49 L 768.58 1239.14 L 828.86 1238.01 L 840.28 1233.77 L 847.89 1214.23 L 1000 244.6 L 994.28 227.58 L 896.08 67.45 L 889.97 67.11 L 886.1 75.31 L 856.43 311.66 L 710.57 887.7 L 700.72 901.82 L 446.83 329.97 L 403.79 62.86 L 387.86 51.77 Z"/></g></g>
+  </defs>
+  <g id="mark-small">
+    <use xlink:href="#msml-parts" href="#msml-parts"/>
+  </g>
+<!-- Notis mark, micro tier. GENERATED ARTWORK - do not hand-edit.
+       The build script that produced this is deliberately not in the repository; only its
+       output is. Changing the mark means regenerating it, not patching the paths below.
+       The parameters it was built from are recorded here so the drawing stays reproducible:
+       ring=continuous, keyline=off, banner=none, recursion=off.
+       r_ring=372, stroke=64, head r=42 at radius 410, slit 3.2 deg.
+       Ink arcs span 58.03 deg against the green arcs' 56.8, so the keyline wraps
+       the butt-cut end of each arm and not only its long sides.
+       Banner shifted 29.53 units down N-space.
+       Colours come from the CSS custom properties notis-green and notis-keyline. -->
+  <defs>
+    <g id="mmic-parts"><g fill="none" stroke="var(--notis-green, #009B00)"><path d="M 128 500 A 372 372 0 1 0 872 500 A 372 372 0 1 0 128 500" stroke-width="64"/></g><g fill="var(--notis-green, #009B00)"><circle cx="500" cy="90" r="42"/><circle cx="855.07" cy="295" r="42"/><circle cx="855.07" cy="705" r="42"/><circle cx="500" cy="910" r="42"/><circle cx="144.93" cy="705" r="42"/><circle cx="144.93" cy="295" r="42"/></g><g transform="translate(302.34 247.97) scale(0.38218)" fill="var(--notis-green, #009B00)"><path d="M 291.49 52.04 L 279.19 60.04 L 0 1221.91 L 2.12 1236.43 L 156.3 1238.6 L 170.32 1234.11 L 355.22 617.08 L 364.03 604.41 L 374.69 616.29 L 651.51 1233.14 L 680.53 1238.49 L 768.58 1239.14 L 828.86 1238.01 L 840.28 1233.77 L 847.89 1214.23 L 1000 244.6 L 994.28 227.58 L 896.08 67.45 L 889.97 67.11 L 886.1 75.31 L 856.43 311.66 L 710.57 887.7 L 700.72 901.82 L 446.83 329.97 L 403.79 62.86 L 387.86 51.77 Z"/></g></g>
+  </defs>
+  <g id="mark-micro">
+    <use xlink:href="#mmic-parts" href="#mmic-parts"/>
+  </g>
+</svg>
+<!-- MARK-DEFS-END -->
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 1000 1000" style="--notis-green:var(--green);--notis-keyline:var(--keyline)">
+        <use href="#mark-micro" xlink:href="#mark-micro"/></svg>
+      Notis
+    </a>
+    <nav class="nl">
+      <a href="#karma">karma</a><a href="#invites">invitations</a>
+      <a href="#nobody">no admins</a><a href="#words">your words</a>
+      <a href="#coin">the coin</a><a href="#road">roadmap</a>
+      <a href="https://github.com/mwaddip/notis">source</a>
+    </nav>
+    <div class="nr">
+      <button class="btn" id="theme">dark</button>
+      <a class="btn" href="https://docs.notis.fun/">read the docs</a>
+      <a class="btn solid" href="https://notis.fun/testnet/">open testnet</a>
+    </div>
+  </div>
+</header>
+
+<section class="hero" id="top">
+  <div class="wrap hero-in">
+    <div>
+      <div class="sub">standing, earned from people</div>
+      <h1>Standing you can't buy.</h1>
+      <p class="lede">Karma is standing you earn from other people. It can't be bought, sold,
+      transferred or converted — there is no market for it and no door in. Notis is invite-only,
+      and you arrive because somebody already here put their own reputation behind you.</p>
+      <div class="cta">
+        <a class="btn solid lg" href="https://notis.fun/testnet/">enter the testnet</a>
+        <a class="btn lg" href="https://github.com/mwaddip/notis">read the source</a>
+      </div>
+      <div class="facts">
+        <span>MIT licensed</span>
+        <span>built in the open at <a href="https://github.com/mwaddip/notis">github.com/mwaddip/notis</a></span>
+      </div>
+    </div>
+    <div class="hero-mark">
+      <svg viewBox="0 0 1000 1000" style="--notis-green:var(--green);--notis-keyline:var(--keyline)"
+           role="img" aria-label="Notis"><use href="#mark" xlink:href="#mark"/></svg>
+    </div>
+  </div>
+</section>
+
+<section id="karma">
+  <div class="wrap">
+    <div class="kick">karma</div>
+    <h2>A stake, not a score.</h2>
+    <p class="lede">Most reputation systems compute a number about you. Karma isn't computed —
+    it's held. It sits in the ledger as yours, it moves only under rules, and it is conserved:
+    every unit was created by one rule and destroyed by another. There is no formula weighing your
+    behaviour and no model deciding what you're worth.</p>
+    <p>A score can be recalculated; a stake has to be spent. When karma leaves you it goes
+    somewhere or it is burned, and either way the ledger shows it.</p>
+    <div class="four">
+      <div class="card"><h4>A like has to hurt</h4>
+        <p>It costs the giver a karma and it doesn't come back. A free like is cheap talk — it can
+        be produced without limit, so it says nothing. One that cost something is information.</p></div>
+      <div class="card"><h4>Most of it reaches you</h4>
+        <p>Likes accumulate, and for every five received the author is paid four. The fifth is
+        burned. Anything left over waits on your account rather than being lost.</p></div>
+      <div class="card"><h4>Standing decays if you stop showing up</h4>
+        <p>An inactive account loses a small flat amount each window; an active one loses nothing.
+        You can't earn standing once and coast on it for years.</p></div>
+      <div class="card"><h4>You can't fake being around</h4>
+        <p>Posting locks a bond that only returns as the post earns likes, so wash-posting to reset
+        the clock costs more than the decay it was dodging.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="invites">
+  <div class="wrap">
+    <div class="kick">invitations and vouches</div>
+    <h2>You're here because somebody brought you.</h2>
+    <p class="lede">New karma enters through exactly one door. Someone already here locks a bond of
+    their own reputation, and the newcomer receives a grant immediately. The bond comes back as
+    that newcomer earns real likes from real people, and is forfeited if they turn out to be a
+    ghost.</p>
+    <p>An invitation isn't a permission slip — you're underwriting someone. It also means the
+    network grows through its own members rather than through a signup funnel.</p>
+    <div class="four">
+      <div class="card"><h4>Nobody is ever verified</h4>
+        <p>No phone numbers, no documents, nothing. Notis doesn't need to know who you are, because
+        inviting yourself doesn't pay.</p></div>
+      <div class="card"><h4>Both roads lose</h4>
+        <p>Abandon the bond and you forfeit more than the grant was worth. Free it by liking your
+        own puppet and you burn more than you minted.</p></div>
+      <div class="card"><h4>A vouch is the one you can take back</h4>
+        <p>A like says you valued a post; a vouch says you stand behind a person. You stake a karma
+        and it stays yours, held in escrow, released after a cooldown if you withdraw it.</p></div>
+      <div class="card"><h4>The same move, every time</h4>
+        <p>Every mechanism here is one idea in different clothes: the identical action is cheap for
+        someone real and expensive for everyone else. Nowhere does the protocol decide who is
+        genuine. It never has to.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="nobody">
+  <div class="wrap">
+    <div class="kick">no one in the middle</div>
+    <h2>Nobody above you.</h2>
+    <p class="lede">There is no company in the middle, no moderator, no admin, and no one who
+    decides what may be said or who is worth listening to. Nothing you post can be taken down over
+    your head. The only person who can remove your words is you.</p>
+    <div class="three">
+      <div class="plain"><h4>The node records, it doesn't rank</h4>
+        <p>Feed ranking, reputation scoring, spam-flagging and curation live in clients and
+        indexers, never in the protocol. The chain hands everyone the same honest dataset; what to
+        surface, and how to weight it, is decided above it and in the open.</p></div>
+      <div class="plain"><h4>Nobody polices suspicion</h4>
+        <p>The protocol never tries to detect fake accounts or judge patterns. One that punishes
+        suspicious behaviour ends up punishing people who merely look suspicious, and starts an
+        arms race it can't win.</p></div>
+      <div class="plain"><h4>Consensus is work, not standing</h4>
+        <p>Validators are chosen by proof of work alone — no stake, no karma gating. Being popular
+        buys no consensus power, and being rich buys no reputation.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="words">
+  <div class="wrap">
+    <div class="kick">withdraw and prune</div>
+    <h2>Your words stay yours.</h2>
+    <p class="lede">Two different regrets, priced differently. Wanting your own words gone is not
+    the same as wanting a whole conversation gone, and older designs kept confusing them.</p>
+    <div class="two">
+      <div class="card"><h3>Withdraw</h3>
+        <p>Removes your post's content and leaves every reply beneath it standing. The conversation
+        still hangs together; your words are gone. It costs nothing — regret shouldn't be
+        expensive.</p></div>
+      <div class="card"><h3>Prune</h3>
+        <p>Removes a post and everything under it, including other people's replies. Your own bond
+        burns, everyone else's is returned, and you pay per post destroyed — so the price tracks
+        the damage rather than what's left of your stake.</p></div>
+    </div>
+    <div class="note"><h4>What it can't do</h4>
+      <p>Anyone who already saved a copy can republish it, which is true of anything ever sent over
+      a public network. What the protocol guarantees is that it stops spreading, and that your
+      decision is permanent and attributable. It cannot un-publish — which is why the interface
+      says <em>withdrawn</em> and never <em>deleted</em>.</p></div>
+  </div>
+</section>
+
+<section id="coin">
+  <div class="wrap">
+    <div class="kick">the coin</div>
+    <h2>There's a coin. You may never need it.</h2>
+    <p class="lede">Notis has a currency, the notis. You can use the network without ever touching
+    it: posting, liking, inviting and vouching are paid for in karma and proof of work, never in
+    money.</p>
+    <p>What it does pay for is the machinery — storage, priority, and the miners who secure the
+    chain. The public square runs on karma; the coin runs the plumbing underneath it.</p>
+    <div class="four">
+      <div class="card"><h4>The firewall</h4>
+        <p>Karma and notis never convert into each other, in either direction. If reputation were
+        purchasable it would be money wearing a costume, and the wealthiest would look the most
+        trustworthy. Sealing the two apart is what makes a shared currency safe to have at
+        all.</p></div>
+      <div class="card"><h4>Starts at zero</h4>
+        <p>No premine, no team allocation, no advertising, no company taking a cut of
+        anything.</p></div>
+      <div class="card"><h4>Nothing points outward</h4>
+        <p>No liquidity pool to drain, no governance token to dump, no revenue line aimed at
+        anyone's balance sheet. Value stays in because there's nowhere for it to be extracted
+        to.</p></div>
+      <div class="card"><h4>One money, not a thousand</h4>
+        <p>Every protocol issuing its own token splits liquidity a little thinner and adds one more
+        contract that can be hacked or "hacked". Notis has one, on a schedule nobody can
+        renegotiate.</p></div>
+    </div>
+    <div class="note"><h4>How the work is paid for</h4>
+      <p>The chain starts at zero, but the work still had to be paid for. A Notis token on Solana
+      predates it and funds development through creator fees — <strong>the project has never sold
+      any of it</strong>. Those fees also pay bounties for community contributions, and the 4.3%
+      the project holds is locked on-chain on a schedule anyone can check:</p>
+      <p class="proof">
+        <a href="https://app.streamflow.finance/contract/solana/mainnet/3XPth1oPRekzDcE795fgV2S3Mhemq2HeymVELfkyWB97">18M · 31 Aug</a>
+        <a href="https://app.streamflow.finance/contract/solana/mainnet/C4QUBLUCtbr1teMx5tEBT7W1kqvNaiEsWHU7hSn6J4Vc">15M · 30 Sept</a>
+        <a href="https://app.streamflow.finance/contract/solana/mainnet/4Wmfj1dsMesMMjdqvtgha2zWCQQZgaZN8Md91NR5qnWn">10M · 31 Oct</a>
+      </p>
+      <p>When mainnet launches, holders who want to can migrate their balance into a share of block
+      rewards, drawn for up to two years and redeemed whenever they choose.</p>
+      <p class="ca"><span>CA</span> <span class="mono">3FyrCnHdzQ2xiApdb1jcR7LRtDbXRaRusXXQDy8Ypump</span></p></div>
+  </div>
+</section>
+
+<section id="internals">
+  <div class="wrap">
+    <div class="kick">what's running</div>
+    <h2>What's running.</h2>
+    <p class="lede">TypeScript on Node 22, SQLite, libp2p, five packages under a design-by-contract
+    workflow. The demo client is one HTML page of vanilla JS — no build step.</p>
+    <div class="four">
+      <div class="card"><h4>Invite-only, with a bond</h4>
+        <p>An invite locks a bond of the inviter's karma and hands the newcomer a starter grant.
+        The bond vests back as they earn genuine likes, and burns if they never do.</p></div>
+      <div class="card"><h4>Gossipsub mesh</h4>
+        <p>Sub-blocks, ordering blocks and transactions propagate over libp2p. Nodes dial bootstrap
+        peers and join the mesh.</p></div>
+      <div class="card"><h4>Heaviest chain wins</h4>
+        <p>Headers-sync pulls peer headers, finds the fork point, reorgs. Resolution is
+        cumulative-work, not longest-chain.</p></div>
+      <div class="card"><h4>Mined, then fee-funded</h4>
+        <p>Block rewards taper on a fixed schedule, with fees and rent on long-dormant coins
+        carrying security afterwards.</p></div>
+    </div>
+<pre>pnpm install &amp;&amp; pnpm build
+./scripts/cluster.sh 5 --interval-ms 30000  <span class="c"># node 1 seeds, the rest dial in</span></pre>
+  </div>
+</section>
+
+<section id="road">
+  <div class="wrap">
+    <div class="kick">roadmap</div>
+    <h2>What's next.</h2>
+    <p class="lede">Parameters are still tunable and the ledger may be reset before mainnet.
+    Progress is in the open — the <a href="https://github.com/mwaddip/notis">repository</a> is
+    the source of truth for what is actually finished.</p>
+    <div class="road">
+      <div class="row"><span class="tag live">live</span>
+        <div><h4>Identity &amp; PoW posting</h4>
+        <p>Ed25519 keypairs in-browser, challenge-based post PoW, sub-block submission.</p></div></div>
+      <div class="row"><span class="tag live">live</span>
+        <div><h4>UTXO engine</h4>
+        <p>Karma and coin boxes, guard checks, epoch tally, AVL+ state root and proofs.</p></div></div>
+      <div class="row"><span class="tag live">live</span>
+        <div><h4>Verifiable pruning</h4>
+        <p>PruneEntry settlement, stumps, deterministic refunds without DAG content.</p></div></div>
+      <div class="row"><span class="tag live">live</span>
+        <div><h4>libp2p networking</h4>
+        <p>Gossipsub propagation, headers sync, cumulative-work fork resolution.</p></div></div>
+      <div class="row"><span class="tag building">building</span>
+        <div><h4>Web client</h4>
+        <p>Phase 3 — a real client against WEB_INTERFACE, replacing the vanilla demo UI.</p></div></div>
+      <div class="row"><span class="tag planned">planned</span>
+        <div><h4>Mainnet</h4>
+        <p>Faucets removed, invite graph seeded, emission live. No presale.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="close">
+  <div class="wrap close-in">
+    <div>
+      <h2>You'll need an invitation.</h2>
+      <p class="lede">On testnet you can generate a keypair in the browser, pull karma from the
+      faucet, and post — nothing to install, nothing to buy. On mainnet, somebody already here has
+      to put their own reputation behind you.</p>
+      <div class="cta"><a class="btn solid lg" href="https://notis.fun/testnet/">enter the testnet</a></div>
+    </div>
+    <svg class="bench" viewBox="0 0 100 100" aria-hidden="true"
+         fill="color-mix(in srgb, var(--greenText) 55%, transparent)">
+      <path d="M 20 25 L 82 23 L 83 33 L 21 35 Z"/>
+      <path d="M 26 34 L 32 34 L 31 55 L 25 55 Z"/>
+      <path d="M 71 33 L 77 33 L 76 54 L 70 54 Z"/>
+      <path d="M 12 53 L 88 51 L 89 62 L 13 64 Z"/>
+      <path d="M 20 63 L 27 63 L 29 87 L 22 88 Z"/>
+      <path d="M 74 62 L 81 61 L 83 86 L 76 87 Z"/>
+      <path d="M 8 90 L 92 88 L 92 90 L 8 92 Z" fill="var(--borderStrong)"/>
+    </svg>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="fcols">
+      <div><h5>How it works</h5>
+        <a href="#karma">karma</a><a href="#invites">invitations</a>
+        <a href="#nobody">no admins</a><a href="#words">withdraw &amp; prune</a></div>
+      <div><h5>Docs</h5>
+        <a href="https://docs.notis.fun/first-principles/">first principles</a>
+        <a href="https://docs.notis.fun/karma/">karma</a>
+        <a href="https://docs.notis.fun/economy/">economy</a>
+        <a href="https://docs.notis.fun/architecture/">architecture</a></div>
+      <div><h5>Run it</h5>
+        <a href="https://notis.fun/testnet/">testnet node</a>
+        <a href="https://github.com/mwaddip/notis">repository</a>
+        <a href="https://github.com/mwaddip/notis/tree/master/contracts">contracts</a>
+        <a href="https://github.com/mwaddip/notis">cluster script</a></div>
+      <div><h5>Notis</h5>
+        <p style="font-size:14px;margin:0">An invite-only social network. Reputation you earn from
+        people, and no way to buy it. No ads, no corporate servers. MIT licensed.</p></div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  const root = document.documentElement, btn = document.getElementById('theme');
+  // The button names and shows the theme you would switch TO, never the one you are in.
+  const setT = (t, remember) => { root.setAttribute('data-theme', t);
+    const other = t === 'dark' ? 'light' : 'dark';   // lowercase, to match the nav
+    btn.textContent = other;
+    btn.setAttribute('aria-label', `Switch to ${other} theme`);
+    // Only a click is remembered. A theme arrived at through a #dark link is someone else's
+    // choice about one visit, not the reader's about their own.
+    if (remember) { try { sessionStorage.setItem('notis-theme', t); } catch (e) {} } };
+  // The head script already painted the right ground; this only labels the control to match.
+  setT(root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light', false);
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('no-anim')));
+  btn.onclick = () => setT(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', true);
+
+  // Suppress hover while the wheel is moving and briefly after it stops, so a parked
+  // pointer never fires whatever scrolls underneath it.
+  let t; addEventListener('scroll', () => {
+    document.body.classList.add('scrolling'); clearTimeout(t);
+    t = setTimeout(() => document.body.classList.remove('scrolling'), 100);
+  }, {passive:true});
+</script>
+
+</body>
+</html>
