@@ -341,8 +341,8 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
 
 // devnet: compressed timescale, same economics. `karmaDecayIntervalBlocks` (3) and
 // `karmaStaleThresholdBlocks` (500) are short-run values that make decay observable
-// inside a short devnet run — an interval of 3 blocks fires decay quickly; stale after
-// 500 keeps staleness reachable within a test suite.
+// inside a short devnet run — a window of 500 and an interval of 3 put the first
+// period at 503, reachable within a test suite.
 // The remaining durations are compressed roughly two orders of magnitude,
 // preserving mainnet's orderings (epoch < fixed-rate period). Ordering difficulty is compressed too, and for a reason
 // that is not timescale; see orderingBlockPowTargetBits below.
@@ -370,14 +370,15 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   karmaDecayIntervalBlocks: 3,
   karmaStaleThresholdBlocks: 500,
   vouchCooldownBlocks: 3, // shortest wait that still spans block boundaries
-  // **Above `karmaStaleThresholdBlocks`, so decay fires during probation as it does on
-  // mainnet** (43200 > 40320). Not a ratio: what has to hold is that a devnet run can
-  // reach a block where the decay writer and the probation reader touch the same identity
-  // record. Under that height they never coincide, and every `putIdentityRecord` writer
-  // that carried `invitedAtBlock` or `lifetimeLikesReceived` through would be untested on
-  // the one network the suite actually runs — the fields are REQUIRED on the type, so a
-  // writer passing `0` instead of the stored value compiles and silently moves a
-  // probation deadline or forfeits a bond that had vested.
+  // **Above `karmaStaleThresholdBlocks + karmaDecayIntervalBlocks`, so probation outlasts
+  // the first period as it does on mainnet and testnet** (540 > 503; 43200 > 41760). Not a
+  // ratio: what has to hold is that a devnet run can reach a block where the decay writer
+  // and the probation reader touch the same identity record. Under that height they never
+  // coincide, and every `putIdentityRecord` writer that carries `invitedAtBlock` or
+  // `lifetimeLikesReceived` through would be untested on the one network the suite
+  // actually runs — the fields are REQUIRED on the type, so a writer passing `0` where
+  // the stored value belongs compiles and silently moves a probation deadline or forfeits
+  // a bond that has vested.
   inviteProbationBlocks: 540,
   creditMinerRewardDelay: 10, // small enough to spend, large enough to observe immaturity
 

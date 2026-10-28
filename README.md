@@ -81,9 +81,9 @@ threshold to reach or a tally to wait for.
 **Karma comes from a fixed supply, and nothing creates it.** Every grant draws
 on a supply pool and every burn returns to it, so `pool + circulating` is the
 same number at every height, forever. Karma is not scarce by policy — it is
-non-inflatable by construction. Inactivity decay bleeds dormant accounts down to
-a floor and returns what it takes to the pool; any protocol action resets the
-clock.
+non-inflatable by construction. Four weeks after an account's last post,
+inactivity decay starts bleeding it down to a floor and returns what it takes to
+the pool; only a post resets the clock.
 
 You cannot buy, sell, or transfer karma. That's the point.
 

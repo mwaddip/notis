@@ -1049,24 +1049,26 @@ describe('block-apply journal recording', () => {
       putIdentityRecord: records.putIdentityRecord,
     };
 
-    const staleHeight = KARMA_STALE_THRESHOLD_BLOCKS + 100;
+    // 100 intervals past the window end — `clockStart` for a never-active
+    // record is `0 + staleThresholdBlocks` (TYPES_INTERFACE → Identity
+    // record and karma valuation) and `owedPeriods` is 100 there.
+    const staleHeight = KARMA_STALE_THRESHOLD_BLOCKS + 100 * KARMA_DECAY_INTERVAL_BLOCKS;
     const ownerHex = Buffer.from(identity.userId).toString('hex');
     const ownerBox = utxo.getKarmaBox(identity.userId);
     const karmaBoxes = ownerBox ? [ownerBox] : [];
     const postBody = new Map([[ownerHex, { owner: identity.userId, boxes: karmaBoxes }]]);
     const entries: DecayPlan[] = deriveKarmaDecay(deps, postBody, staleHeight, decayCfg);
 
-    // Never-active clock ⇒ periods count from height 0:
-    // owed = floor(staleHeight / interval) × amount.
+    // Never-active clock ⇒ `clockStart = staleThresholdBlocks`:
+    // owed = floor((staleHeight − staleThresholdBlocks) / interval) × amount.
     //
     // The box value (1000n) keeps the value-over-minimum cap from binding, so
     // the assertion measures the period arithmetic itself. A clamped assertion
-    // can hide an unbounded error in its input — the pre-P2A version of this
-    // test hardcoded a 720 divisor and the cap swallowed the resulting 2×
-    // error. The premise is asserted so a future constant change cannot
-    // silently turn this back into a cap test.
+    // can hide an unbounded error in its input. The premise is asserted so a
+    // future constant change cannot silently turn this back into a cap test.
     const owed =
-      BigInt(Math.floor(staleHeight / KARMA_DECAY_INTERVAL_BLOCKS)) * KARMA_DECAY_AMOUNT;
+      BigInt(Math.floor((staleHeight - KARMA_STALE_THRESHOLD_BLOCKS) / KARMA_DECAY_INTERVAL_BLOCKS))
+      * KARMA_DECAY_AMOUNT;
     expect(owed < 1000n - KARMA_MINIMUM).toBe(true);
 
     expect(entries.length).toBe(1);
@@ -1725,10 +1727,14 @@ describe('block-apply mint provenance', () => {
     expect(blockApply.applyOrderingBlock(block)).toBe(false);
   });
 
-  it('a stale untouched identity keeps its face karma — no decay settlement leg', async () => {
-    // Under virtual decay a stale identity nothing touches keeps its face
-    // values; its effective dissolves but no settlement leg fires. The escrow
-    // survives as before.
+  it('a stale untouched identity paid via escrow return is squared beside the income leg', async () => {
+    // Under virtual decay a stale identity the settlement pays IS squared:
+    // the squaring takes its pre-body karma box and emits a new unmarked one
+    // of the effective value, and the income leg emits a marked karma box of
+    // the returned escrow (NODE_INTERFACE → Karma decay → "A block squares
+    // every identity it touches or pays"; → "An identity paid in the block
+    // that squares it ends the block with that own box and a new income
+    // box").
     try {
       vi.doMock('../../src/config.js', async () => {
         const actual = await vi.importActual<typeof import('../../src/config.js')>(
@@ -1782,17 +1788,28 @@ describe('block-apply mint provenance', () => {
         .map((m) => m.box as AnyBox)
         .filter((b) => b.boxType === 'karma' && hex((b as KarmaBox).owner) === ownerHex);
 
-      // The only karma mint is the escrow return. No decay leg fired — face stays.
-      expect(karmaMints.length).toBe(1);
-      expect((karmaMints[0] as KarmaBox).value).toBe(VOUCH_KARMA_AMOUNT);
+      // The squaring's own-box replacement and the escrow return's income
+      // box. `clockStart` for a null record is `0 + staleThresholdBlocks = 3`
+      // and the block is at height 4, so `owedPeriods` is 1 and the burn is
+      // `KARMA_DECAY_AMOUNT`.
+      expect(karmaMints.length).toBe(2);
+      const effective = 50n - 5n; // KARMA_DECAY_AMOUNT = 5n at one period
+      const unmarked = karmaMints.find((b) => (b as KarmaBox).income !== true);
+      const income = karmaMints.find((b) => (b as KarmaBox).income === true);
+      expect(unmarked).toBeDefined();
+      expect(income).toBeDefined();
+      expect((unmarked as KarmaBox).value).toBe(effective);
+      expect((income as KarmaBox).value).toBe(VOUCH_KARMA_AMOUNT);
 
-      // The karma box is live at face + the returned escrow.
-      expect(utxo.getKarmaValue(idle.userId)).toBe(50n + VOUCH_KARMA_AMOUNT);
+      // The owner's live karma is the squaring's own box plus the income
+      // box the escrow return emits.
+      expect(utxo.getKarmaValue(idle.userId)).toBe(effective + VOUCH_KARMA_AMOUNT);
 
       // The escrow was consumed by the settlement.
       expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(false);
 
-      // ⛔ The hazard: the returned karma must NOT have moved lastActivityBlock.
+      // The received income does not move `lastActivityBlock` (NODE_INTERFACE
+      // → Karma decay → "The clock reads the record").
       const records = await import('../../src/store/identity-records.js');
       const record = records.getIdentityRecord(idle.userId);
       expect(record?.lastActivityBlock ?? 0).toBe(0);
@@ -1801,9 +1818,11 @@ describe('block-apply mint provenance', () => {
     }
   });
 
-  it('a stale untouched identity keeps its record — no clock advances without a touch', async () => {
-    // Under virtual decay the record does not move for an untouched identity:
-    // no decay settlement leg fires, so lastDecayBlock stays where it was.
+  it('a stale paid identity has its clock advanced to settledThrough', async () => {
+    // Under virtual decay the squaring of a paid identity writes
+    // `lastDecayBlock = settledThrough` (NODE_INTERFACE → Karma decay →
+    // "A squaring writes the height it settles through, never its own
+    // height"). `lastActivityBlock` is not moved by received income.
     try {
       vi.doMock('../../src/config.js', async () => {
         const actual = await vi.importActual<typeof import('../../src/config.js')>(
@@ -1849,15 +1868,16 @@ describe('block-apply mint provenance', () => {
       for (let i = 0; i < 4; i++) await mineNextBlock(bc);
       expect(await mineNextBlock(bc)).not.toBeNull();
 
-      // No touch: the record is unchanged from genesis seeding.
+      // `clockStart` for a null record is `0 + staleThresholdBlocks = 3`;
+      // one period has elapsed at block 4, so `settledThrough = 3 + 1 = 4`.
       const record = records.getIdentityRecord(idle.userId);
-      expect(record?.lastDecayBlock ?? 0).toBe(0);
-      // ⛔ The hazard: lastActivityBlock must not have moved from the escrow return.
+      expect(record?.lastDecayBlock ?? 0).toBe(4);
+      // Received income does not move `lastActivityBlock`.
       expect(record?.lastActivityBlock ?? 0).toBe(0);
 
-      // Face + the returned escrow — decay is virtual, no squaring fired.
-
-      expect(utxo.getKarmaValue(idle.userId)).toBe(50n + VOUCH_KARMA_AMOUNT);
+      // The squaring's effective own box plus the escrow return's income box.
+      const effective = 50n - 5n; // one period at KARMA_DECAY_AMOUNT = 5n
+      expect(utxo.getKarmaValue(idle.userId)).toBe(effective + VOUCH_KARMA_AMOUNT);
       expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(false);
     } finally {
       vi.doUnmock('../../src/config.js');
@@ -1895,11 +1915,13 @@ describe('block-apply mint provenance', () => {
       const karmaBox = makeKarmaBox(50n, stale.userId, 0);
       utxo.insertBox(karmaBox);
 
+      // `clockStart` for the stale identity's null record is
+      // `0 + staleThresholdBlocks = 3`. Mine six empty blocks and apply the
+      // post at height 7, so `owedPeriods = 7 − 3 = 4` and the pool receives
+      // the full `periods · KARMA_DECAY_AMOUNT` burn.
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
-      await mineNextBlock(bc);
-      await mineNextBlock(bc);
-      await mineNextBlock(bc);
+      for (let i = 0; i < 6; i++) await mineNextBlock(bc);
 
       const { getKarmaPoolBox } = await import('../../src/store/utxo.js');
       const poolBefore = getKarmaPoolBox()!.value;
@@ -1930,7 +1952,8 @@ describe('block-apply mint provenance', () => {
       const burn = postBodyChange - effective;
 
       expect(utxo.getKarmaValue(stale.userId)).toBe(effective);
-      expect(records.getIdentityRecord(stale.userId)!.lastDecayBlock).toBe(4);
+      // `settledThrough = clockStart + periods · interval = 3 + 4 = 7`.
+      expect(records.getIdentityRecord(stale.userId)!.lastDecayBlock).toBe(7);
 
       const poolAfter = getKarmaPoolBox()!.value;
       expect(poolAfter - poolBefore).toBe(burn + POST_PRICE_THREAD);

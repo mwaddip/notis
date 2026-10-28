@@ -32,8 +32,8 @@ import type { ScenarioCapture } from '../harness/decay-timeline.js';
  *
  * Decay is therefore measured from the most recent activity rather than from
  * the oldest surviving box, which is the clock NODE_INTERFACE → Karma decay
- * states: `owedPeriods` reads
- * `max(lastActivityBlock, lastDecayBlock)`. This file is the pinned record of
+ * states: `owedPeriods` counts from `clockStart`, which is
+ * `max(lastActivityBlock + staleThresholdBlocks, lastDecayBlock)`. This file is the pinned record of
  * the difference, kept out of the golden set so that neither can be mistaken
  * for the other.
  *
@@ -83,19 +83,22 @@ describe('decay clock divergence on unconsolidated karma (Spec G phase D)', () =
     // Timeline: two spends at heights 1 and 10 (seed + activity each),
     // decay at height 30. Config: threshold 10, interval 3, burn 5, floor 10.
     //
-    //   pre-swap  oldest non-decay box = 1  → floor((30 − 1) / 3) = 9 → burn 45
-    //   post-swap lastActivityBlock    = 10 → floor((30 − 10) / 3) = 6 → burn 30
+    //   pre-swap  oldest non-decay box = 1 → floor((30 − 1) / 3) = 9 → burn 45
+    //   record    lastActivityBlock    = 10 → `clockStart = 10 + 10 = 20` →
+    //                                        floor((30 − 20) / 3) = 3 → burn 15
     //
-    // Staleness agrees (both read the newest activity); only the amount moves.
+    // The record counts from the window's end
+    // (TYPES_INTERFACE → Identity record and karma valuation → "Decay starts
+    // at the grace window's end, from nothing").
     expect(preSwap!.decayEvents).toEqual([
       { height: 30, owner: 'alice', burnAmount: '45', consumedCount: 2, balanceAfter: '55' },
     ]);
 
     const actual = await runScenario(DIVERGENT_SCENARIOS[0]!);
     expect(actual.decayEvents).toEqual([
-      { height: 30, owner: 'alice', burnAmount: '30', consumedCount: 2, balanceAfter: '70' },
+      { height: 30, owner: 'alice', burnAmount: '15', consumedCount: 2, balanceAfter: '85' },
     ]);
-    expect(actual.finalBalances).toEqual({ alice: '70' });
+    expect(actual.finalBalances).toEqual({ alice: '85' });
 
     // The deviation is the point of this file: if these ever compare equal
     // again, either the swap was reverted or the scenario stopped reaching the
@@ -104,10 +107,10 @@ describe('decay clock divergence on unconsolidated karma (Spec G phase D)', () =
   });
 
   it('the two clocks still agree on WHEN the identity goes stale', async () => {
-    // Only `owedPeriods` diverges. `isIdentityStale` reads the newest activity
-    // either way — the old predicate asked "is ANY non-decay box recent", which
-    // is the newest one. Pinned separately so a future change that also moved
-    // staleness could not hide inside the accepted amount difference.
+    // Only the amount diverges — both the oldest-box clock and the
+    // record-based one place staleness past `lastActivityBlock +
+    // staleThresholdBlocks`. Pinned separately so a future change that also
+    // moved staleness could not hide inside the accepted amount difference.
     const fixture = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')) as DivergenceFixture;
     const preSwap = fixture.preSwap['two-non-decay-boxes-at-different-heights']!;
     const actual = await runScenario(DIVERGENT_SCENARIOS[0]!);

@@ -93,13 +93,15 @@ function staleRecord(): IdentityRecord {
 }
 
 /** The height at which decay fires for every seeded identity under the devnet
- *  profile: threshold 500, interval 3. 501 catches each at owedPeriods > 0. */
-const TARGET_HEIGHT = 501;
+ *  profile: threshold 500, interval 3. `clockStart` is `0 + 500 = 500` for a
+ *  record with `lastActivityBlock: 0, lastDecayBlock: 0`; 167 intervals past
+ *  that puts each identity at `owedPeriods = 167`. */
+const TARGET_HEIGHT = 500 + 167 * 3;
 
 /** A karma value whose effective karma at TARGET_HEIGHT stays above the floor
  *  plus a like's cost: 167 periods × 5 karma per period = 835 reserved to the
  *  burn, plus the floor and a margin for the spend. */
-const STALE_KARMA_VALUE = 2000n + KARMA_DECAY_AMOUNT * BigInt(Math.floor(TARGET_HEIGHT / 3));
+const STALE_KARMA_VALUE = 2000n + KARMA_DECAY_AMOUNT * BigInt(167);
 
 function buildLikeNamingBoth(
   owner: Identity,
@@ -300,10 +302,9 @@ describe('the fill counts a squaring for an entry whose owner owes decay', () =>
 // to reach without mining — so each case mocks `src/config.js`'s `config` with
 // `karmaStaleThresholdBlocks: 0` and `karmaDecayIntervalBlocks: 1`. At height 1,
 // an identity whose record carries `lastActivityBlock: 0, lastDecayBlock: 0` is
-// stale and `karmaOwed > 0n`; one whose record carries `lastActivityBlock: 1`
-// has `owedPeriods: 0`, so the predicate is false and no squaring is reserved
-// for it. The guard in `isIdentityStale` (`currentHeight <= thresholdBlocks`
-// returns false) does not spare the second case, but `owedPeriods` does
+// owes decay: `clockStart` is 0 and `owedPeriods` is 1, so `karmaOwed > 0n`; one whose
+// record carries `lastActivityBlock: 1` has `clockStart` 1 and `owedPeriods: 0`,
+// so `karmaOwed` is zero and no squaring is reserved for it
 // (TYPES_INTERFACE → Identity record and karma valuation).
 // ---------------------------------------------------------------------------
 
@@ -328,8 +329,8 @@ async function freshStoreWithGenesisBoxes() {
 
 /**
  * Register a mock of `src/config.js` whose `config` overrides
- * `karmaStaleThresholdBlocks` and `karmaDecayIntervalBlocks` so the stale
- * predicate fires at height 1. Call ahead of any dynamic import of the node's
+ * `karmaStaleThresholdBlocks` and `karmaDecayIntervalBlocks` so a record at 0
+ * owes a period at height 1. Call ahead of any dynamic import of the node's
  * modules — the mock must be in place for `block-creator.ts`'s own module graph.
  */
 function mockConfigForLowStale(opts: { threshold?: number; interval?: number } = {}): void {
@@ -350,7 +351,7 @@ function mockConfigForLowStale(opts: { threshold?: number; interval?: number } =
 
 /**
  * The stale identity's record: lastActivity and lastDecay at 0. Under
- * `mockConfigForLowStale()` at height 1, `isIdentityStale` is true and
+ * `mockConfigForLowStale()` at height 1, `clockStart` is 0 and
  * `owedPeriods` is 1 for a karma face above `KARMA_MINIMUM`.
  */
 function staleActiveRecord(): IdentityRecord {

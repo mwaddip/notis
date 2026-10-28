@@ -411,11 +411,17 @@ caller's refusal names with the block's height — so each refuses the same bloc
 replay's work**: the signatures it verifies and the operations the block's proof carries.
 
 **What a block reads before its verdict is bounded by its bytes.** The pre-body captures read the box behind every
-input the body names — at most `MAX_BLOCK_BODY_BYTES / 32` of them — and, for each owner the body touches, that
-owner's karma boxes and record. An owner's karma boxes are two at most (→ StateView), so no state an owner holds, and
+input the body names — at most `MAX_BLOCK_BODY_BYTES / 32` of them — and, for each owner the body touches and each
+owner the settlement pays, that owner's karma boxes and record: a payee follows from a marker the body made or from a
+capped leg. An owner's karma boxes are two at most (→ StateView), so no state an owner holds, and
 nothing another party sends them, raises what a transaction of theirs costs a block or the cost gate's
-single-transaction run (`MEMPOOL_INTERFACE → The cost gate`). Measured: the tree view answers an owner at two boxes
+single-transaction run (`MEMPOOL_INTERFACE → The cost gate`) beyond a fixed term: a like or a reply carries its
+author's squaring, two boxes and a record. Measured: the tree view answers an owner at two boxes
 in five lookups — the range's start, two index entries and two boxes (`tree-view.test.ts`).
+
+**Measured 2026-10-28** (`settlement-bound.test.ts`, every paid owner owing decay): the empty-body block with
+the three capped legs full costs 38 040 of `MAX_BLOCK_COST`'s 600 000 — 1 872 lookups and 1 932 writes, each squaring
+burning — and a body of 50 likes each paying a distinct author who owes decay costs 18 280.
 
 ## The overlay
 
@@ -484,9 +490,11 @@ body's own outputs resolved from the body. **`body` is the user transactions as 
 → The cost gate`): the build decodes each body and hashes none, its outputs materialized under the id it is handed. A
 pair whose id its bytes do not produce builds a candidate `applyBlock` refuses at its declared-id check (→ Applying a
 block), so the producer's speculative run catches it before any block is mined. **It shares every derivation with
-`applyBlock`** — decay's projection (`collectPostBodyKarma`), the settlement's read wiring (`settlementDepsWith`), the
-reward (`computeBlockReward`) — so producer and applier derive from one implementation, and a settlement the build
-gets wrong is the speculative run's `body-rejected` (`NODE_INTERFACE → Post-block stateRoot`), never a mined block.
+`applyBlock`** — decay's projection (`collectPostBodyKarma`, over the owners the body touches and the owners the
+settlement's income leg pays, `NODE_INTERFACE → Karma decay → "A block squares every identity it touches or pays"`),
+the settlement's read wiring (`settlementDepsWith`), the reward (`computeBlockReward`) — so producer and applier
+derive from one implementation, and a settlement the build gets wrong is the speculative run's `body-rejected`
+(`NODE_INTERFACE → Post-block stateRoot`), never a mined block.
 
 **The lapse list is one function's answer on both sides.** `lapseLegOf(captured, spent)` answers the view's
 `getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK)` over pre-body state, in its order, less every vouch whose id is
@@ -503,9 +511,10 @@ where a box the body spent is gone — and over pre-body state the answer is one
 
 **`decayLegMaxBytes(protocolVersion)` is what one squaring adds to a settlement at most** — two inputs and one karma
 output, the output priced at the widest value and height the codec writes for a karma box: 115 bytes at the current
-version, against a measured 100 to 111 (`settlement-bound.test.ts`). The node's fill and its settlement trim add it for an entry whose owner owes decay
-(`MEMPOOL_INTERFACE → The fill budget is bytes`); `settlementMarginalBytes(tx)` stays a function of the transaction
-alone and prices no state.
+version, against a measured 100 to 111 (`settlement-bound.test.ts`). The node's fill and its settlement trim add it for an entry whose owner owes decay,
+and once more for each author its markers pay who owes decay (`MEMPOOL_INTERFACE → The fill budget is bytes`);
+`settlementMarginalBytes(tx)` stays a function of the transaction alone and prices no state. A squaring that burns
+nothing adds no bytes — it is a clock write.
 
 ## Cost
 

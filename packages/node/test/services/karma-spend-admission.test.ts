@@ -556,9 +556,10 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
   // -------- A stale identity with effective karma of 10 --------
 
   it('a stale identity whose effective karma is 10: a like refused, two threads admitted over the pool, a third refused by the post rule', () => {
-    // Stale is `lastActivityBlock + staleThresholdBlocks ≤ height` and
-    // `karmaOwed` grants decay to the floor. Face 20 under a stale clock
-    // gives `owed = 10`, leaving `effectiveKarma = 10`.
+    // `karmaOwed` grants decay to the floor past the window's end. Face 20
+    // past `clockStart + 2·interval` with `decayAmount` 5 gives `owed = 10`,
+    // leaving `effectiveKarma = 10` (TYPES_INTERFACE → Identity record and
+    // karma valuation).
     const karma = seedKarma(liker.pub, 20n, 1);
     const rec: IdentityRecord = {
       lastActivityBlock: 0,
@@ -572,7 +573,9 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
       invitesUsed: 0,
     };
     storePutIdentityRecord(liker.pub, rec);
-    const height = KARMA_STALE_THRESHOLD_BLOCKS + 1000;
+    // `clockStart` is `0 + staleThresholdBlocks`; two periods past it drives
+    // the face below the floor and the clamp caps the burn at `face - floor`.
+    const height = KARMA_STALE_THRESHOLD_BLOCKS + 2 * KARMA_DECAY_INTERVAL_BLOCKS;
     const deps = admissionDeps();
 
     // Pre-body: held 20, owed 10, remaining 10.
@@ -664,17 +667,18 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
   });
 
   it('a stale root with a thread in the pool is refused an invite, and the message names 5', () => {
-    // Face 1000, a stale clock (lastActivityBlock 0) at a height that drains
-    // its decay to the floor so `karmaOwed = 990` and `effectiveKarma = 10`.
-    // One POST_PRICE_THREAD (= 5) of karma spent by a pooled thread, so
-    // `held = 1000 - 5 = 995`, `owed = 990` over the confirmed sum, and
-    // `remaining = 995 - 990 = 5`.
+    // Face 1000, record with `lastActivityBlock: 0`, at a height past
+    // `clockStart + 198·interval` so the clamp drains karma to the floor:
+    // `karmaOwed = 990` and `effectiveKarma = 10`. One POST_PRICE_THREAD
+    // (= 5) spent by a pooled thread, so `held = 1000 - 5 = 995`,
+    // `owed = 990`, and `remaining = 5`.
     const inviter = newIdentity();
     putRoot(inviter.pub);
     const inviteeKey = new Uint8Array(32).fill(0x77);
     const karma = seedKarma(inviter.pub, 1000n, 1);
-    // decayAmount = 5, so 198 periods drain 1000 face to the floor of 10.
-    const height = (198 + 1) * KARMA_DECAY_INTERVAL_BLOCKS;
+    // `clockStart` is `0 + staleThresholdBlocks`; 198 periods past it with
+    // `decayAmount = 5` drains 1000 face to the floor of 10.
+    const height = KARMA_STALE_THRESHOLD_BLOCKS + 199 * KARMA_DECAY_INTERVAL_BLOCKS;
     const deps = admissionDeps();
 
     // A thread of POST_PRICE_THREAD (= 5) in the pool, through `createPost`.

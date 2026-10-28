@@ -13,17 +13,9 @@
     },
     "staleness-boundary-exactly-at-threshold": {
       "name": "staleness-boundary-exactly-at-threshold",
-      "decayEvents": [
-        {
-          "height": 11,
-          "owner": "alice",
-          "burnAmount": "15",
-          "consumedCount": 1,
-          "balanceAfter": "85"
-        }
-      ],
+      "decayEvents": [],
       "finalBalances": {
-        "alice": "85"
+        "alice": "100"
       },
       "finalBoxCounts": {
         "alice": 1
@@ -31,17 +23,9 @@
     },
     "zero-activity-height-at-threshold": {
       "name": "zero-activity-height-at-threshold",
-      "decayEvents": [
-        {
-          "height": 11,
-          "owner": "alice",
-          "burnAmount": "15",
-          "consumedCount": 1,
-          "balanceAfter": "85"
-        }
-      ],
+      "decayEvents": [],
       "finalBalances": {
-        "alice": "85"
+        "alice": "100"
       },
       "finalBoxCounts": {
         "alice": 1
@@ -53,27 +37,27 @@
         {
           "height": 20,
           "owner": "alice",
-          "burnAmount": "30",
+          "burnAmount": "15",
           "consumedCount": 1,
-          "balanceAfter": "70"
+          "balanceAfter": "85"
         },
         {
           "height": 26,
           "owner": "alice",
           "burnAmount": "10",
           "consumedCount": 1,
-          "balanceAfter": "60"
+          "balanceAfter": "75"
         },
         {
           "height": 32,
           "owner": "alice",
           "burnAmount": "10",
           "consumedCount": 1,
-          "balanceAfter": "50"
+          "balanceAfter": "65"
         }
       ],
       "finalBalances": {
-        "alice": "50"
+        "alice": "65"
       },
       "finalBoxCounts": {
         "alice": 1
@@ -85,20 +69,20 @@
         {
           "height": 20,
           "owner": "alice",
-          "burnAmount": "30",
+          "burnAmount": "15",
           "consumedCount": 1,
-          "balanceAfter": "70"
+          "balanceAfter": "85"
         },
         {
           "height": 40,
           "owner": "alice",
-          "burnAmount": "30",
+          "burnAmount": "10",
           "consumedCount": 2,
-          "balanceAfter": "50"
+          "balanceAfter": "85"
         }
       ],
       "finalBalances": {
-        "alice": "50"
+        "alice": "85"
       },
       "finalBoxCounts": {
         "alice": 1
@@ -110,20 +94,20 @@
         {
           "height": 20,
           "owner": "alice",
-          "burnAmount": "30",
+          "burnAmount": "15",
           "consumedCount": 1,
-          "balanceAfter": "70"
+          "balanceAfter": "85"
         },
         {
           "height": 35,
           "owner": "alice",
-          "burnAmount": "25",
+          "burnAmount": "5",
           "consumedCount": 2,
-          "balanceAfter": "55"
+          "balanceAfter": "90"
         }
       ],
       "finalBalances": {
-        "alice": "55"
+        "alice": "90"
       },
       "finalBoxCounts": {
         "alice": 1
@@ -138,6 +122,13 @@
           "burnAmount": "2",
           "consumedCount": 1,
           "balanceAfter": "10"
+        },
+        {
+          "height": 40,
+          "owner": "alice",
+          "burnAmount": "0",
+          "consumedCount": 0,
+          "balanceAfter": "10"
         }
       ],
       "finalBalances": {
@@ -149,7 +140,22 @@
     },
     "below-minimum-never-burns": {
       "name": "below-minimum-never-burns",
-      "decayEvents": [],
+      "decayEvents": [
+        {
+          "height": 20,
+          "owner": "alice",
+          "burnAmount": "0",
+          "consumedCount": 0,
+          "balanceAfter": "8"
+        },
+        {
+          "height": 40,
+          "owner": "alice",
+          "burnAmount": "0",
+          "consumedCount": 0,
+          "balanceAfter": "8"
+        }
+      ],
       "finalBalances": {
         "alice": "8"
       },
@@ -163,28 +169,28 @@
         {
           "height": 20,
           "owner": "alice",
-          "burnAmount": "30",
+          "burnAmount": "15",
           "consumedCount": 1,
-          "balanceAfter": "70"
+          "balanceAfter": "85"
         },
         {
           "height": 30,
           "owner": "alice",
           "burnAmount": "15",
           "consumedCount": 1,
-          "balanceAfter": "55"
+          "balanceAfter": "70"
         },
         {
           "height": 30,
           "owner": "bob",
-          "burnAmount": "25",
+          "burnAmount": "5",
           "consumedCount": 2,
-          "balanceAfter": "80"
+          "balanceAfter": "100"
         }
       ],
       "finalBalances": {
-        "alice": "55",
-        "bob": "80"
+        "alice": "70",
+        "bob": "100"
       },
       "finalBoxCounts": {
         "alice": 1,
@@ -195,29 +201,22 @@
       "name": "production-constants",
       "decayEvents": [
         {
-          "height": 20161,
-          "owner": "alice",
-          "burnAmount": "140",
-          "consumedCount": 1,
-          "balanceAfter": "860"
-        },
-        {
           "height": 20881,
           "owner": "alice",
           "burnAmount": "5",
           "consumedCount": 1,
-          "balanceAfter": "855"
+          "balanceAfter": "995"
         },
         {
           "height": 22321,
           "owner": "alice",
           "burnAmount": "10",
           "consumedCount": 1,
-          "balanceAfter": "845"
+          "balanceAfter": "985"
         }
       ],
       "finalBalances": {
-        "alice": "845"
+        "alice": "985"
       },
       "finalBoxCounts": {
         "alice": 1

@@ -181,8 +181,8 @@ export type { IdentityRecord } from './identity-record.js';
 // Karma valuation — TYPES_INTERFACE → Identity record and karma valuation
 export {
   decayCfgFor,
-  isIdentityStale,
   owedPeriods,
+  decaySettledThrough,
   effectiveKarma,
 } from './karma-valuation.js';
 export type { DecayCfg } from './karma-valuation.js';

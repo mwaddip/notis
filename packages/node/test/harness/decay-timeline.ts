@@ -141,10 +141,16 @@ type Modules = Awaited<ReturnType<typeof loadModules>>;
  */
 function applyDecayPlans(
   m: Modules,
-  plans: Array<{ owner: Uint8Array; consumedBoxIds: string[]; newValue: bigint }>,
+  plans: Array<{ owner: Uint8Array; consumedBoxIds: string[]; newValue: bigint; burnAmount: bigint }>,
   height: number,
 ): void {
   for (const plan of plans) {
+    // ⛔ **A plan whose `burnAmount` is `0n` is a clock write and no leg**
+    // (NODE_INTERFACE → Karma decay → "A squaring that burns nothing is a
+    // clock write and no leg"). The settlement names none of its boxes, so
+    // the harness consumes none and emits none; `commitDecayClocks` writes
+    // the clock below.
+    if (plan.burnAmount === 0n) continue;
     for (const id of plan.consumedBoxIds) m.utxo.consumeBox(id, height);
     if (plan.newValue <= 0n) continue;
     const box = {
@@ -282,11 +288,16 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
           // ⛔ **Decay derives a plan; the block's settlement transaction
           // emits its boxes** (NODE_INTERFACE → The settlement transaction).
           // The harness stands in for that emission so the timeline keeps
-          // testing the decay ARITHMETIC — the staleness predicate, the
-          // interval count, the karma floor — which this unit did not touch.
+          // testing the decay ARITHMETIC — the window in `owedPeriods`'
+          // clock start, the interval count, the karma floor.
+          //
+          // `commitDecayClocks(deps, plans)` writes each plan's
+          // `settledThrough` as `lastDecayBlock` (NODE_INTERFACE → Karma decay
+          // → "A squaring writes the height it settles through, never its
+          // own height").
           const entries = m.decay.deriveKarmaDecay(decayDeps(m), allKarmaPostBody(m), height, scenario.cfg);
           applyDecayPlans(m, entries, height);
-          m.decay.commitDecayClocks(decayDeps(m), entries, height);
+          m.decay.commitDecayClocks(decayDeps(m), entries);
           for (const entry of entries) {
             const ownerHex = Buffer.from(entry.owner).toString('hex');
             decayEvents.push({

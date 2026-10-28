@@ -672,12 +672,26 @@ bounded and not priced**, as the carry box's is: one per paid owner, beside mark
 input off with the entry. **The predicate is read once per owner per build** — the owner's karma sum and their
 record — and a second pass of the trim reads nothing.
 
+⛔ **An entry whose marker pays an author who owes decay adds that author's squaring.** The settlement squares every
+owner it pays (`NODE_INTERFACE → Karma decay → "A block squares every identity it touches or pays"`), and a like's or
+a reply's `like_accrual` output names the author it pays. The entry's figure gains `decayLegMaxBytes` for each author
+its markers name for whom the predicate above holds — read for the author as for an owner, once per author per
+build, in the accumulator and in the pop's covering sum alike. Over, the safe direction, where the payout stays in
+the author's carry, where two entries pay one author, and where the author is also an entry's owner. **The capped
+legs' payees** — a settling bond's inviter, a returning escrow's owner — are squared in the empty body's settlement
+the fill starts from, so their squarings sit in its baseline, priced by the build itself.
+
 **Measured 2026-10-12** (`block-creator-stale-owners.test.ts`; every owner owes decay and holds an own box and an
 income box): a pool of 1 000 consolidations fills to 868 — the settlement's budget over the 115-byte reservation —
 and that template's settlement encodes in 59 164 bytes; a pool of 1 500 likes fills to 679, at 32 + 115 an entry, in
 68 112 bytes. A squaring's own bytes are below its reservation — one input and one output where the spend named both
 boxes — so the fill ends short of the bound and the sizer pops nothing. A pool of 3 200 likes by owners who owe
 nothing fills to 2 590 with the term as without it.
+
+**Measured 2026-10-28** (`block-creator-stale-authors.test.ts`): a pool of 1 500 likes whose likers and author all
+owe decay fills to 381, at 32 + 115 + 115 an entry, and that template's settlement encodes in 38 380 bytes; a pool of
+3 000 likes by likers who owe nothing, each paying a distinct author who owes decay, fills to 679, at 32 + 115 an
+entry, in 45 590 bytes.
 
 ### Confirmed-entry cleanup reaches every row, and it is a lookup rather than a scan
 

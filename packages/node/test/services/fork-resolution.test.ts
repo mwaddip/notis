@@ -844,7 +844,10 @@ describe('revertBlock', () => {
       putIdentityRecord: records.putIdentityRecord,
     };
 
-    const DECAY_HEIGHT = KARMA_STALE_THRESHOLD_BLOCKS + 100;
+    // `clockStart` for a never-active record is `0 + staleThresholdBlocks`;
+    // 100 intervals past it puts the identity at `owedPeriods = 100`
+    // (TYPES_INTERFACE → Identity record and karma valuation).
+    const DECAY_HEIGHT = KARMA_STALE_THRESHOLD_BLOCKS + 100 * KARMA_DECAY_INTERVAL_BLOCKS;
     const ownerHex = Buffer.from(identity.userId).toString('hex');
     const karmaBoxes = getKarmaBoxes(identity.userId);
     const postBody = new Map([[ownerHex, { owner: identity.userId, boxes: karmaBoxes }]]);

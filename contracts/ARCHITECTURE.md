@@ -426,18 +426,21 @@ non-tradeable. An account's karma box can be consumed only to:
 - Create like boxes (spending karma to vote)
 - Create one new karma box for the same owner (a balance change)
 
-#### Karma decay (virtual, squared on touch)
+#### Karma decay (virtual, squared on touch or payment)
 
 Decay is a **valuation, not a per-block mutation**. After 28 days of
 inactivity an identity's karma decays *virtually*: every karma-sufficiency
 read computes the **effective** value from committed state, and the face
-values in boxes move only when a transaction touches the identity.
+values in boxes move only when a block touches the identity or pays it.
 
-- **Staleness:** `(height − lastActivityBlock) >= KARMA_STALE_THRESHOLD_BLOCKS`,
-  read from the identity record — the committed clock, not box heights.
+- **The grace window:** decay's clock starts at `lastActivityBlock + KARMA_STALE_THRESHOLD_BLOCKS`,
+  read from the identity record — the committed clock, not box heights — and starts from nothing:
+  the first period falls one `KARMA_DECAY_INTERVAL_BLOCKS` after the window ends, never the
+  window's worth at once (user, 2026-10-17).
 - **Effective value:** `faceTotal − owedPeriods · KARMA_DECAY_AMOUNT`, clamped
   so it never drops below `min(faceTotal, KARMA_MINIMUM)`, where
-  `owedPeriods = floor((height − max(lastActivityBlock, lastDecayBlock)) / KARMA_DECAY_INTERVAL_BLOCKS)`.
+  `owedPeriods = floor((height − max(lastActivityBlock + KARMA_STALE_THRESHOLD_BLOCKS, lastDecayBlock)) / KARMA_DECAY_INTERVAL_BLOCKS)`
+  and `lastDecayBlock` is the height the last squaring settled decay through.
   **One implementation** — the settlement's decay, the spend rule's `owed`
   and the verifier read the same exported valuation function (`VALIDATION_INTERFACE` → "One
   implementation per rule").
@@ -454,19 +457,23 @@ values in boxes move only when a transaction touches the identity.
   burn leave it standing. It binds every identity, stale or not; one that spent
   its floor on anything else would hold nothing to post with and have no way to
   earn more (user, 2026-10-11).
-- **Squaring, per identity, on touch:** when a block's body consumes any of an
-  identity's karma boxes, that block's settlement squares the identity — it
-  consumes their post-body karma boxes and re-emits the effective value to the
-  owner and the owed remainder to the karma pool. The touching transaction
-  itself conserves at face, unchanged.
+- **Squaring, per identity, on touch or payment:** when a block's body consumes any of an
+  identity's karma boxes, or its settlement pays the identity karma, that block's settlement
+  squares the identity — it consumes their post-body karma boxes and re-emits the effective
+  value to the owner and the owed remainder to the karma pool, before any payment lands. The
+  touching transaction itself conserves at face, unchanged.
+- **The floor forgives what it stops.** A squaring settles every period the identity owed,
+  whatever the floor let it burn, so time spent at the floor owes nothing: karma that reaches a
+  dormant identity decays from the block it lands in, never into a backlog (user, 2026-10-28).
 - **No periodic pass.** There is no per-block walk over karma owners and no
-  background sweep. An identity nothing touches keeps its face values and its
+  background sweep. An identity nothing touches or pays keeps its face values and its
   virtual decay indefinitely; its effective value still dissolves, and the
   pool — seeded with the supply total — does not depend on decay inflow.
 - **Clocks: posting is activity, and nothing else is.** `lastActivityBlock` advances
   when block application applies the identity's post transaction — a thread or a
   reply, the transaction carrying a `post` commit (`NODE_INTERFACE` → Populating the
-  record); squaring advances `lastDecayBlock`. No other spend moves the activity
+  record); squaring advances `lastDecayBlock` to the height it settles decay through,
+  never past it (`NODE_INTERFACE` → Karma decay). No other spend moves the activity
   half: a like, an invite, a vouch cast or unvouch, a username claim or burn, a
   withdrawal and a bare consolidation all leave it where it stands, so resetting the
   clock costs a post's price and never less. Received value — a like payout, a
@@ -1554,8 +1561,9 @@ chain or owed one:
 | **headers-first sync** (2026-10-17) | **no committed byte and no consensus verdict** — the sync wire: `SyncInfo` carries the tip hash, `GetHeaders` a locator, `GetBlocks` ids, and `Inv` (code 3) and block modifiers (type 101) retire (NET_INTERFACE → Historical Sync), so a node on it shares no sync with a node on 0.3.1; three store tables, additive (NODE_INTERFACE → Header tree); the reach floor, which reverts up to `maxReorgDepth` blocks above genesis where the fork walk it replaces stopped one short — a local fork-choice bound. **Rides the 0.4.0 reset**, with no era row |
 | **the handshake** (2026-10-19) | **no committed byte and no consensus verdict** — the handshake body: `sessionMagic` retires (NET_INTERFACE → Handshake Body), so a node on it completes no handshake with a node on 0.3.1. **Rides the 0.4.0 reset**, with no era row |
 | **the pool's output rows** (2026-10-22) | **no committed byte and no consensus verdict** — `mempool_outputs` carries each output's owner, type and value under an owner index (MEMPOOL_INTERFACE → Schema), and the store adds no column to a standing table, so a store written before them is not one this build opens: `initDb` refuses the owner index over a table that lacks its columns (measured 2026-10-22: `no such column: owner`). **Rides the 0.4.0 reset** |
+| **the decay window and the paid squaring** (2026-10-28) | the verdict and the effects of every block that squares an identity (NODE_INTERFACE → Karma decay): the window's end starts the clock, a squaring writes the height it settles through, every owner the settlement pays is squared before the payment lands, and every squaring writes its clock however little the floor lets it burn — so the settlement's decay leg, the pool's inflow, `lastDecayBlock`, every `stateRoot` from the first such block, and the `adProofsRoot` of every block whose settlement pays an owner (the squared set's reads); the effective karma every valuation answers past a window's end. **Owes the reset**, and rides the 0.4.0 reset |
 
-**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule, the lapse leg's spent vouch, the two karma boxes, the mint id's genesis proof, the transactions root, headers-first sync, the handshake and the pool's output rows** (the eleven rows above). Testnet's live chain began at the
+**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule, the lapse leg's spent vouch, the two karma boxes, the mint id's genesis proof, the transactions root, headers-first sync, the handshake, the pool's output rows and the decay window with the paid squaring** (the twelve rows above). Testnet's live chain began at the
 2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
 empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
 
