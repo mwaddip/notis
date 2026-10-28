@@ -3,21 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Notis — standing you can't buy</title>
-<meta name="description" content="An invite-only social network where reputation is earned from people and cannot be bought. No moderators, no ranking algorithm, nothing to purchase.">
+<title>Notis — reputation not for sale</title>
+<meta name="description" content="An invite-only notice board: post notices, discuss them, and earn rep from the people who engage. Stored on nodes anyone can run, with no company in the middle.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Notis">
 <meta property="og:url" content="https://notis.fun/">
-<meta property="og:title" content="Standing you can&#39;t buy.">
-<meta property="og:description" content="An invite-only social network where reputation is earned from people and cannot be bought. No moderators, no ranking algorithm, nothing to purchase.">
+<meta property="og:title" content="Reputation not for sale.">
+<meta property="og:description" content="An invite-only notice board: post notices, discuss them, and earn rep from the people who engage. Stored on nodes anyone can run, with no company in the middle.">
 <meta property="og:image" content="https://notis.fun/og.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="The Notis mark beside the words: Standing you can&#39;t buy.">
+<meta property="og:image:alt" content="The Notis mark beside the words: Reputation not for sale.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Standing you can&#39;t buy.">
-<meta name="twitter:description" content="An invite-only social network where reputation is earned from people and cannot be bought. No moderators, no ranking algorithm, nothing to purchase.">
+<meta name="twitter:title" content="Reputation not for sale.">
+<meta name="twitter:description" content="An invite-only notice board: post notices, discuss them, and earn rep from the people who engage. Stored on nodes anyone can run, with no company in the middle.">
 <meta name="twitter:image" content="https://notis.fun/og.png">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="fonts/fonts.css">
@@ -92,7 +92,8 @@
   .nl a:hover{color:var(--ink)}
   .nr{margin-left:auto;display:flex;align-items:center;gap:var(--s3)}
   .nr .btn{white-space:nowrap}
-  @media (max-width:1080px){ .nl{display:none} }
+  @media (max-width:520px){ .nr .btn.docs{display:none} }
+  @media (max-width:1200px){ .nl{display:none} }
 
   .btn{display:inline-block;font-size:14px;font-weight:600;padding:9px 16px;border-radius:8px;
        border:1px solid var(--borderStrong);color:var(--ink);background:none;
@@ -123,6 +124,8 @@
   .hero-in{display:grid;grid-template-columns:1fr auto;gap:var(--s8);align-items:center}
   @media (max-width:840px){ .hero-in{grid-template-columns:1fr} .hero-mark{display:none} }
   .hero-mark svg{width:230px;height:230px;display:block}
+  .hero .tagline{font-size:clamp(22px,2.8vw,28px);line-height:1.2;letter-spacing:-.01em;font-weight:600;
+                 color:var(--inkMute);margin:0 0 var(--s5)}
   .hero .sub{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;
              color:var(--greenText);margin-bottom:var(--s4)}
   .cta{display:flex;gap:var(--s3);flex-wrap:wrap;margin-top:var(--s6)}
@@ -139,7 +142,6 @@
   @media (max-width:620px){ .two,.three,.four{grid-template-columns:1fr} }
   .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:var(--s5)}
   .card p{margin:0;font-size:15px;color:var(--ink);max-width:none}
-  .card .n{font-family:var(--mono);font-size:11.5px;color:var(--greenText);margin-bottom:var(--s2)}
   .plain p{margin:0;font-size:15px;max-width:none;color:var(--ink)}
   .plain{border-left:2px solid var(--border);padding-left:var(--s4)}
 
@@ -158,8 +160,6 @@
        font-weight:500;padding:3px 9px;border-radius:20px;justify-self:start}
   .tag.live{color:var(--greenText);border:1px solid color-mix(in srgb,var(--greenText) 38%,transparent);
             background:color-mix(in srgb,var(--greenText) 10%,transparent)}
-  .tag.building{color:var(--gold);border:1px solid color-mix(in srgb,var(--gold) 38%,transparent);
-                background:color-mix(in srgb,var(--gold) 10%,transparent)}
   .tag.planned{color:var(--inkMute);border:1px solid var(--border)}
 
   /* ---------- close ---------- */
@@ -182,22 +182,10 @@
      without this whatever lands beneath it fires the moment scrolling stops. */
   body.scrolling *{pointer-events:none !important}
 
-  /* karma vs credits comparison — two plain columns, no winner implied */
-  .vs{display:grid;grid-template-columns:1fr 1fr;gap:var(--s5);margin-top:var(--s7)}
-  @media (max-width:620px){ .vs{grid-template-columns:1fr} }
-  .vs .col{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:var(--s5)}
-  .vs h3{margin-bottom:var(--s4)}
-  .vs ul{margin:0;padding:0;list-style:none}
-  .vs li{font-size:15px;padding:7px 0;border-top:1px solid var(--border)}
-  .vs li:first-child{border-top:0}
   .note{margin-top:var(--s6);border-left:2px solid var(--borderStrong);padding-left:var(--s4)}
   .note h4{color:var(--inkMute)}
   .note p{font-size:15px;margin:0 0 var(--s3)}
   .note p:last-child{margin-bottom:0}
-  .proof{display:flex;gap:var(--s3);flex-wrap:wrap;font-size:13.5px}
-  .proof a{border:1px solid color-mix(in srgb,var(--greenText) 30%,transparent);
-           border-radius:20px;padding:3px 11px;white-space:nowrap;transition:border-color .15s ease}
-  .proof a:hover{border-color:var(--greenText)}
   .ca{display:flex;gap:var(--s2);align-items:baseline;flex-wrap:wrap}
   .ca span:first-child{font-size:10px;letter-spacing:.14em;text-transform:uppercase;
                        color:var(--inkMute);font-weight:650}
@@ -291,15 +279,15 @@
       Notis
     </a>
     <nav class="nl">
-      <a href="#karma">karma</a><a href="#invites">invitations</a>
+      <a href="#board">the board</a><a href="#rep">rep</a><a href="#invites">invitations</a>
       <a href="#nobody">no admins</a><a href="#words">your words</a>
       <a href="#coin">the coin</a><a href="#road">roadmap</a>
       <a href="https://github.com/mwaddip/notis">source</a>
     </nav>
     <div class="nr">
       <button class="btn" id="theme">dark</button>
-      <a class="btn" href="https://docs.notis.fun/">read the docs</a>
-      <a class="btn solid" href="https://notis.fun/testnet/">open testnet</a>
+      <a class="btn docs" href="https://docs.notis.fun/">read the docs</a>
+      <a class="btn solid" href="https://notis.fun/web/">open testnet</a>
     </div>
   </div>
 </header>
@@ -307,14 +295,15 @@
 <section class="hero" id="top">
   <div class="wrap hero-in">
     <div>
-      <div class="sub">standing, earned from people</div>
-      <h1>Standing you can't buy.</h1>
-      <p class="lede">Karma is standing you earn from other people. It can't be bought, sold,
-      transferred or converted — there is no market for it and no door in. Notis is invite-only,
-      and you arrive because somebody already here put their own reputation behind you.</p>
+      <div class="sub">an invite-only notice board</div>
+      <h1>Reputation not for sale.</h1>
+      <p class="tagline">Your words are yours.</p>
+      <p class="lede">Rep comes from people engaging with what you post, and nothing converts into
+      it — not money, not $NOTIS, not a transfer. Your posts live on nodes anyone can run, and
+      nobody but you can take one down.</p>
       <div class="cta">
-        <a class="btn solid lg" href="https://notis.fun/testnet/">enter the testnet</a>
-        <a class="btn lg" href="https://github.com/mwaddip/notis">read the source</a>
+        <a class="btn solid lg" href="https://github.com/mwaddip/notis/releases/latest">get the extension</a>
+        <a class="btn lg" href="https://notis.fun/web/">open in the browser</a>
       </div>
       <div class="facts">
         <span>MIT licensed</span>
@@ -328,29 +317,57 @@
   </div>
 </section>
 
-<section id="karma">
+<section id="board">
   <div class="wrap">
-    <div class="kick">karma</div>
+    <div class="kick">the board</div>
+    <h2>A notice, and the talk beneath it.</h2>
+    <p class="lede">A notice is a post: a few words, a link, or a link to an image or a document.
+    Replies hang beneath it and can be answered in turn, so the discussion stays attached to the
+    thing it's about.</p>
+    <div class="four">
+      <div class="card"><h4>Up to 300 bytes</h4>
+        <p>Room for a thought, a title line and a link. An image goes up as its link and loads only
+        when a reader asks for it, so reading a notice never quietly contacts someone else's
+        server.</p></div>
+      <div class="card"><h4>On nodes, not a server</h4>
+        <p>Every notice is stored by a network of nodes that anyone can run. There is no company
+        server to go offline, change its terms, or be leaned on.</p></div>
+      <div class="card"><h4>Rep runs the board</h4>
+        <p>Posting, replying and liking each cost a little rep, and rep comes back as people like
+        what you post. A reply also passes part of its cost to the person it answers.</p></div>
+      <div class="card"><h4>The extension finds it</h4>
+        <p>The browser extension is the way in. It finds the network by itself and checks every
+        post, name and balance it shows you against the chain, so no node can show you something
+        that isn't there.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="rep">
+  <div class="wrap">
+    <div class="kick">rep</div>
     <h2>A stake, not a score.</h2>
-    <p class="lede">Most reputation systems compute a number about you. Karma isn't computed —
-    it's held. It sits in the ledger as yours, it moves only under rules, and it is conserved:
-    every unit was created by one rule and destroyed by another. There is no formula weighing your
-    behaviour and no model deciding what you're worth.</p>
-    <p>A score can be recalculated; a stake has to be spent. When karma leaves you it goes
-    somewhere or it is burned, and either way the ledger shows it.</p>
+    <p class="lede">Most reputation systems compute a number about you. Rep isn't computed — it's
+    held. It sits in the ledger as yours and moves only under rules, and the whole supply exists
+    from the first block: nothing creates more of it and nothing destroys it. What changes is where
+    it sits — with you, with someone you liked, or in the shared pool every invitation draws from.</p>
+    <p>A score can be recalculated; a stake has to be spent. When rep leaves you it goes to a person
+    or back to the pool, and either way the ledger shows it.</p>
     <div class="four">
       <div class="card"><h4>A like has to hurt</h4>
-        <p>It costs the giver a karma and it doesn't come back. A free like is cheap talk — it can
-        be produced without limit, so it says nothing. One that cost something is information.</p></div>
-      <div class="card"><h4>Most of it reaches you</h4>
-        <p>Likes accumulate, and for every five received the author is paid four. The fifth is
-        burned. Anything left over waits on your account rather than being lost.</p></div>
-      <div class="card"><h4>Standing decays if you stop showing up</h4>
-        <p>An inactive account loses a small flat amount each window; an active one loses nothing.
-        You can't earn standing once and coast on it for years.</p></div>
-      <div class="card"><h4>You can't fake being around</h4>
-        <p>Posting locks a bond that only returns as the post earns likes, so wash-posting to reset
-        the clock costs more than the decay it was dodging.</p></div>
+        <p>A free like is cheap talk — it can be produced without limit, so it says nothing. One
+        that cost the giver something they can't buy more of is information.</p></div>
+      <div class="card"><h4>Most of it reaches the author</h4>
+        <p>A slice of every like returns to the pool and the rest is paid to the author. Likes that
+        don't add up to a payout yet wait on your account rather than being lost.</p></div>
+      <div class="card"><h4>Quiet accounts fade</h4>
+        <p>After a few weeks without a post, an account starts losing a little rep a day, down to a
+        floor. One that keeps posting loses nothing. You can't earn reputation once and coast on
+        it for years.</p></div>
+      <div class="card"><h4>A post pays rent</h4>
+        <p>A post's price goes to the shared pool and doesn't come back, the same whether it's read
+        a thousand times or never. It's rent on the shared record, not a judgement of what you
+        wrote.</p></div>
     </div>
   </div>
 </section>
@@ -359,25 +376,28 @@
   <div class="wrap">
     <div class="kick">invitations and vouches</div>
     <h2>You're here because somebody brought you.</h2>
-    <p class="lede">New karma enters through exactly one door. Someone already here locks a bond of
-    their own reputation, and the newcomer receives a grant immediately. The bond comes back as
-    that newcomer earns real likes from real people, and is forfeited if they turn out to be a
-    ghost.</p>
-    <p>An invitation isn't a permission slip — you're underwriting someone. It also means the
-    network grows through its own members rather than through a signup funnel.</p>
+    <p class="lede">Rep reaches a newcomer through one door: an invitation. Only a member can invite,
+    and each invitation spends part of an allowance earned from other members' vouches. The inviter
+    also locks a bond of their own rep, and the newcomer receives a grant of the same size from the
+    pool. The bond comes back as the newcomer earns likes; what hasn't come back after a month
+    returns to the pool.</p>
+    <p>An invitation isn't a permission slip — you're underwriting someone. The network grows
+    through its own members rather than through a signup funnel.</p>
     <div class="four">
       <div class="card"><h4>Nobody is ever verified</h4>
         <p>No phone numbers, no documents, nothing. Notis doesn't need to know who you are, because
-        inviting yourself doesn't pay.</p></div>
-      <div class="card"><h4>Both roads lose</h4>
-        <p>Abandon the bond and you forfeit more than the grant was worth. Free it by liking your
-        own puppet and you burn more than you minted.</p></div>
+        the one thing a fake account can't produce is endorsement from members who were here
+        first.</p></div>
+      <div class="card"><h4>A ring of puppets gets nowhere</h4>
+        <p>A vouch counts only when it comes from a member older than you, so fake accounts
+        vouching for each other earn no allowance. With no allowance they can invite no one, and the
+        ring ends where it began.</p></div>
       <div class="card"><h4>A vouch is the one you can take back</h4>
-        <p>A like says you valued a post; a vouch says you stand behind a person. You stake a karma
-        and it stays yours, held in escrow, released after a cooldown if you withdraw it.</p></div>
+        <p>A like says you valued a post; a vouch says you stand behind a person. You stake a rep
+        and it stays yours, held in escrow, and returns after a cooldown if you withdraw it.</p></div>
       <div class="card"><h4>The same move, every time</h4>
         <p>Every mechanism here is one idea in different clothes: the identical action is cheap for
-        someone real and expensive for everyone else. Nowhere does the protocol decide who is
+        someone real and worthless for everyone else. Nowhere does the protocol decide who is
         genuine. It never has to.</p></div>
     </div>
   </div>
@@ -388,39 +408,37 @@
     <div class="kick">no one in the middle</div>
     <h2>Nobody above you.</h2>
     <p class="lede">There is no company in the middle, no moderator, no admin, and no one who
-    decides what may be said or who is worth listening to. Nothing you post can be taken down over
-    your head. The only person who can remove your words is you.</p>
+    decides what may be said or who is worth listening to.</p>
     <div class="three">
       <div class="plain"><h4>The node records, it doesn't rank</h4>
         <p>Feed ranking, reputation scoring, spam-flagging and curation live in clients and
-        indexers, never in the protocol. The chain hands everyone the same honest dataset; what to
+        indexers, never in the protocol. The chain hands everyone the same honest record; what to
         surface, and how to weight it, is decided above it and in the open.</p></div>
       <div class="plain"><h4>Nobody polices suspicion</h4>
         <p>The protocol never tries to detect fake accounts or judge patterns. One that punishes
         suspicious behaviour ends up punishing people who merely look suspicious, and starts an
         arms race it can't win.</p></div>
-      <div class="plain"><h4>Consensus is work, not standing</h4>
-        <p>Validators are chosen by proof of work alone — no stake, no karma gating. Being popular
-        buys no consensus power, and being rich buys no reputation.</p></div>
+      <div class="plain"><h4>Consensus is work, not reputation</h4>
+        <p>Blocks are made by proof of work alone — no stake, no rep gating. Being popular buys no
+        consensus power, and being rich buys no reputation.</p></div>
     </div>
   </div>
 </section>
 
 <section id="words">
   <div class="wrap">
-    <div class="kick">withdraw and prune</div>
+    <div class="kick">withdraw</div>
     <h2>Your words stay yours.</h2>
-    <p class="lede">Two different regrets, priced differently. Wanting your own words gone is not
-    the same as wanting a whole conversation gone, and older designs kept confusing them.</p>
+    <p class="lede">An author has one act over a published post: withdrawing it. It is yours alone,
+    and it costs nothing.</p>
     <div class="two">
       <div class="card"><h3>Withdraw</h3>
         <p>Removes your post's content and leaves every reply beneath it standing. The conversation
-        still hangs together; your words are gone. It costs nothing — regret shouldn't be
-        expensive.</p></div>
-      <div class="card"><h3>Prune</h3>
-        <p>Removes a post and everything under it, including other people's replies. Your own bond
-        burns, everyone else's is returned, and you pay per post destroyed — so the price tracks
-        the damage rather than what's left of your stake.</p></div>
+        still hangs together; your words are gone. You already paid to post, so taking it back is
+        free.</p></div>
+      <div class="card"><h3>Nothing reaches anyone else's</h3>
+        <p>No act reaches another author's post — not even the replies under your own. Each reply
+        belongs to whoever wrote it, so nobody can erase a discussion other people wrote.</p></div>
     </div>
     <div class="note"><h4>What it can't do</h4>
       <p>Anyone who already saved a copy can republish it, which is true of anything ever sent over
@@ -434,14 +452,13 @@
   <div class="wrap">
     <div class="kick">the coin</div>
     <h2>There's a coin. You may never need it.</h2>
-    <p class="lede">Notis has a currency, the notis. You can use the network without ever touching
-    it: posting, liking, inviting and vouching are paid for in karma and proof of work, never in
-    money.</p>
-    <p>What it does pay for is the machinery — storage, priority, and the miners who secure the
-    chain. The public square runs on karma; the coin runs the plumbing underneath it.</p>
+    <p class="lede">Notis has a currency, $NOTIS. You can use the board without ever touching it:
+    posting, replying, liking, inviting and vouching are paid for in rep, never in money.</p>
+    <p>What $NOTIS pays for is the machinery underneath — the miners who secure the chain, and rent
+    on coins left dormant. The board runs on rep; $NOTIS runs the plumbing under it.</p>
     <div class="four">
       <div class="card"><h4>The firewall</h4>
-        <p>Karma and notis never convert into each other, in either direction. If reputation were
+        <p>Rep and $NOTIS never convert into each other, in either direction. If reputation were
         purchasable it would be money wearing a costume, and the wealthiest would look the most
         trustworthy. Sealing the two apart is what makes a shared currency safe to have at
         all.</p></div>
@@ -449,24 +466,18 @@
         <p>No premine, no team allocation, no advertising, no company taking a cut of
         anything.</p></div>
       <div class="card"><h4>Nothing points outward</h4>
-        <p>No liquidity pool to drain, no governance token to dump, no revenue line aimed at
-        anyone's balance sheet. Value stays in because there's nowhere for it to be extracted
-        to.</p></div>
+        <p>On the chain there is no liquidity pool to drain, no governance token to dump, and no
+        revenue line aimed at anyone's balance sheet. Value stays in because there's nowhere for it
+        to be extracted to.</p></div>
       <div class="card"><h4>One money, not a thousand</h4>
         <p>Every protocol issuing its own token splits liquidity a little thinner and adds one more
         contract that can be hacked or "hacked". Notis has one, on a schedule nobody can
         renegotiate.</p></div>
     </div>
     <div class="note"><h4>How the work is paid for</h4>
-      <p>The chain starts at zero, but the work still had to be paid for. A Notis token on Solana
-      predates it and funds development through creator fees — <strong>the project has never sold
-      any of it</strong>. Those fees also pay bounties for community contributions, and the 4.3%
-      the project holds is locked on-chain on a schedule anyone can check:</p>
-      <p class="proof">
-        <a href="https://app.streamflow.finance/contract/solana/mainnet/3XPth1oPRekzDcE795fgV2S3Mhemq2HeymVELfkyWB97">18M · 31 Aug</a>
-        <a href="https://app.streamflow.finance/contract/solana/mainnet/C4QUBLUCtbr1teMx5tEBT7W1kqvNaiEsWHU7hSn6J4Vc">15M · 30 Sept</a>
-        <a href="https://app.streamflow.finance/contract/solana/mainnet/4Wmfj1dsMesMMjdqvtgha2zWCQQZgaZN8Md91NR5qnWn">10M · 31 Oct</a>
-      </p>
+      <p>The chain starts at zero, but the work still has to be paid for. A Notis token on Solana
+      predates it and funds development: through its creator fees, which also pay bounties for
+      community contributions, and through the sale of the project's own allocation.</p>
       <p>When mainnet launches, holders who want to can migrate their balance into a share of block
       rewards, drawn for up to two years and redeemed whenever they choose.</p>
       <p class="ca"><span>CA</span> <span class="mono">3FyrCnHdzQ2xiApdb1jcR7LRtDbXRaRusXXQDy8Ypump</span></p></div>
@@ -477,24 +488,25 @@
   <div class="wrap">
     <div class="kick">what's running</div>
     <h2>What's running.</h2>
-    <p class="lede">TypeScript on Node 22, SQLite, libp2p, five packages under a design-by-contract
-    workflow. The demo client is one HTML page of vanilla JS — no build step.</p>
+    <p class="lede">TypeScript on Node 24, SQLite and libp2p: ten packages and three tools under a
+    design-by-contract workflow. The client ships as a browser extension for Firefox and Chrome, and
+    the same client is served on the web.</p>
     <div class="four">
-      <div class="card"><h4>Invite-only, with a bond</h4>
-        <p>An invite locks a bond of the inviter's karma and hands the newcomer a starter grant.
-        The bond vests back as they earn genuine likes, and burns if they never do.</p></div>
+      <div class="card"><h4>A light node in the browser</h4>
+        <p>The extension checks the chain's tip with NiPoPoW proofs from several nodes, then proves
+        each post, name and balance it shows against the state root. It replays no blocks.</p></div>
       <div class="card"><h4>Gossipsub mesh</h4>
-        <p>Sub-blocks, ordering blocks and transactions propagate over libp2p. Nodes dial bootstrap
-        peers and join the mesh.</p></div>
+        <p>Blocks and transactions propagate over libp2p. Nodes dial bootstrap peers, sync headers
+        first, then fetch the blocks they lack.</p></div>
       <div class="card"><h4>Heaviest chain wins</h4>
-        <p>Headers-sync pulls peer headers, finds the fork point, reorgs. Resolution is
-        cumulative-work, not longest-chain.</p></div>
+        <p>Headers sync finds the fork point and reorgs onto the branch with the most cumulative
+        work, not the longest one.</p></div>
       <div class="card"><h4>Mined, then fee-funded</h4>
         <p>Block rewards taper on a fixed schedule, with fees and rent on long-dormant coins
         carrying security afterwards.</p></div>
     </div>
 <pre>pnpm install &amp;&amp; pnpm build
-./scripts/cluster.sh 5 --interval-ms 30000  <span class="c"># node 1 seeds, the rest dial in</span></pre>
+pnpm dev --nodes 3  <span class="c"># three meshed devnet nodes, a miner each</span></pre>
   </div>
 </section>
 
@@ -507,20 +519,23 @@
     the source of truth for what is actually finished.</p>
     <div class="road">
       <div class="row"><span class="tag live">live</span>
-        <div><h4>Identity &amp; PoW posting</h4>
-        <p>Ed25519 keypairs in-browser, challenge-based post PoW, sub-block submission.</p></div></div>
+        <div><h4>Posts and identity</h4>
+        <p>Ed25519 keys held by the client; posts, replies and likes as signed transactions;
+        withdrawal by the author alone.</p></div></div>
       <div class="row"><span class="tag live">live</span>
-        <div><h4>UTXO engine</h4>
-        <p>Karma and coin boxes, guard checks, epoch tally, AVL+ state root and proofs.</p></div></div>
+        <div><h4>The ledger</h4>
+        <p>Rep and $NOTIS boxes, per-block settlement, an AVL+ state root with a proof for every
+        read.</p></div></div>
       <div class="row"><span class="tag live">live</span>
-        <div><h4>Verifiable pruning</h4>
-        <p>PruneEntry settlement, stumps, deterministic refunds without DAG content.</p></div></div>
+        <div><h4>Peer-to-peer network</h4>
+        <p>Gossipsub propagation, headers-first sync, fork choice by cumulative work.</p></div></div>
       <div class="row"><span class="tag live">live</span>
-        <div><h4>libp2p networking</h4>
-        <p>Gossipsub propagation, headers sync, cumulative-work fork resolution.</p></div></div>
-      <div class="row"><span class="tag building">building</span>
-        <div><h4>Web client</h4>
-        <p>Phase 3 — a real client against WEB_INTERFACE, replacing the vanilla demo UI.</p></div></div>
+        <div><h4>The client</h4>
+        <p>A browser extension for Firefox and Chrome that checks what it reads against the chain,
+        and the same client on the web.</p></div></div>
+      <div class="row"><span class="tag live">live</span>
+        <div><h4>Node packages</h4>
+        <p>A Linux .deb and tarball and a Windows installer on every release.</p></div></div>
       <div class="row"><span class="tag planned">planned</span>
         <div><h4>Mainnet</h4>
         <p>Faucets removed, invite graph seeded, emission live. No presale.</p></div></div>
@@ -532,10 +547,13 @@
   <div class="wrap close-in">
     <div>
       <h2>You'll need an invitation.</h2>
-      <p class="lede">On testnet you can generate a keypair in the browser, pull karma from the
-      faucet, and post — nothing to install, nothing to buy. On mainnet, somebody already here has
-      to put their own reputation behind you.</p>
-      <div class="cta"><a class="btn solid lg" href="https://notis.fun/testnet/">enter the testnet</a></div>
+      <p class="lede">On testnet the faucet brings you in: install the extension or open the client
+      in the browser, take rep from the faucet, claim a name and post — nothing to buy. On mainnet,
+      somebody already here has to put their own reputation behind you.</p>
+      <div class="cta">
+        <a class="btn solid lg" href="https://github.com/mwaddip/notis/releases/latest">get the extension</a>
+        <a class="btn lg" href="https://notis.fun/web/">open in the browser</a>
+      </div>
     </div>
     <svg class="bench" viewBox="0 0 100 100" aria-hidden="true"
          fill="color-mix(in srgb, var(--greenText) 55%, transparent)">
@@ -554,21 +572,21 @@
   <div class="wrap">
     <div class="fcols">
       <div><h5>How it works</h5>
-        <a href="#karma">karma</a><a href="#invites">invitations</a>
-        <a href="#nobody">no admins</a><a href="#words">withdraw &amp; prune</a></div>
+        <a href="#board">the board</a><a href="#rep">rep</a><a href="#invites">invitations</a>
+        <a href="#nobody">no admins</a><a href="#words">withdrawing</a></div>
       <div><h5>Docs</h5>
         <a href="https://docs.notis.fun/first-principles/">first principles</a>
-        <a href="https://docs.notis.fun/karma/">karma</a>
+        <a href="https://docs.notis.fun/karma/">reputation</a>
         <a href="https://docs.notis.fun/economy/">economy</a>
         <a href="https://docs.notis.fun/architecture/">architecture</a></div>
       <div><h5>Run it</h5>
-        <a href="https://notis.fun/testnet/">testnet node</a>
+        <a href="https://notis.fun/web/">testnet client</a>
+        <a href="https://github.com/mwaddip/notis/releases/latest">releases</a>
         <a href="https://github.com/mwaddip/notis">repository</a>
-        <a href="https://github.com/mwaddip/notis/tree/master/contracts">contracts</a>
-        <a href="https://github.com/mwaddip/notis">cluster script</a></div>
+        <a href="https://github.com/mwaddip/notis/tree/master/contracts">contracts</a></div>
       <div><h5>Notis</h5>
-        <p style="font-size:14px;margin:0">An invite-only social network. Reputation you earn from
-        people, and no way to buy it. No ads, no corporate servers. MIT licensed.</p></div>
+        <p style="font-size:14px;margin:0">An invite-only notice board. No ads, no company in the
+        middle. MIT licensed.</p></div>
     </div>
   </div>
 </footer>
