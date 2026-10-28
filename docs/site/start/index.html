@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en" class="no-anim">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started — Notis docs</title>
+<meta name="description" content="From installing the Notis extension to your first notice on the testnet: an identity, rep from the faucet, a name, posting, replying, liking and withdrawing, and every window and button of the workspace.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Notis docs">
+<meta property="og:title" content="Getting started — Notis docs">
+<meta property="og:description" content="From installing the extension to your first notice on the testnet, and every window and button of the workspace.">
+<meta property="og:url" content="https://docs.notis.fun/start/">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/style.css">
+<!-- Not deferred: the theme has to be on <html> before the first paint, or every page in a
+     multi-page site flashes the default ground before settling into the stored one. -->
+<script src="/assets/site.js"></script>
+<style>
+  /* A screenshot: the client's own pixels on a framed ground, its caption beneath. The frame
+     keeps a light-theme capture legible as an object on the dark ground too. */
+  .shot{margin:var(--s5) 0}
+  .shot a{display:block;width:fit-content;max-width:100%}
+  .shot img{display:block;max-width:100%;height:auto;border:1px solid var(--border);border-radius:10px;
+            background:var(--surface)}
+  .shot figcaption{font-size:14px;color:var(--inkMute);margin-top:var(--s2)}
+  .shot.wide img{width:100%}
+  .shot.phone img{width:300px}
+  .steps{margin:var(--s4) 0;padding-left:1.4em}
+  .steps li{margin:0 0 var(--s2)}
+  .w{font-family:var(--mono);font-size:.88em;background:var(--surface);border:1px solid var(--border);
+     border-radius:5px;padding:1px 6px;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<button class="nav-btn" id="navBtn" type="button" aria-label="Toggle navigation"
+        aria-expanded="false" aria-controls="sidebar">☰</button>
+<div class="backdrop" id="backdrop"></div>
+
+<aside class="sidebar" id="sidebar">
+  <!--#include virtual="/assets/_nav.html" -->
+</aside>
+
+<main class="content">
+  <div class="wrap">
+    <header class="page">
+      <div class="crumb"><b>Notis</b> / getting started</div>
+      <h1>From install to your first notice.</h1>
+      <p class="lede">Notis runs as a public <strong>testnet</strong> today: rep comes free from a faucet, and the chain may be reset before mainnet. This page takes you from installing the extension to posting, replying and liking, then through the workspace — every window and every button.</p>
+    </header>
+
+    <section>
+      <h2>Quick start</h2>
+      <p>Install the extension from the <a href="https://github.com/mwaddip/notis/releases/latest">latest release</a> — the signed Firefox file, or the Chrome zip loaded unpacked — and open it from the toolbar. Open <span class="w">profile</span>, press <span class="w">create</span> and set a passphrase, then press <span class="w">export</span> and keep the key file somewhere safe. Press <span class="w">ask the faucet for rep</span>; your rep appears once a block takes the faucet's invitation. Type a name in the username row and press <span class="w">claim</span>. Press <span class="w">new post</span> above the feed, write up to 300 bytes, and press <span class="w">post</span>.</p>
+      <div class="note">
+        <div class="label">The numbers</div>
+        <p>Prices and grants you see in the client are the testnet's current values and may change; the <a href="/rep/">rep page</a> lists them with what each one balances. The screenshots below were taken on a private test chain, so a figure in them can differ from what testnet shows you.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Get the extension</h2>
+      <p>The extension is the way in. It holds your key inside the browser and checks every post, name and balance it shows you against the chain itself, so no node can show you something that isn't there. It finds the network on its own.</p>
+      <p><strong>Firefox</strong> (140 or later; Firefox for Android 142 or later): on the <a href="https://github.com/mwaddip/notis/releases/latest">latest release</a>, open the file ending in <code>-firefox.xpi</code>. Firefox asks whether to add Notis; once it's added, the Notis button in the toolbar opens the client in its own tab. The build is signed by Mozilla and updates itself. It isn't listed on Mozilla's add-on site, so the release is where you get it.</p>
+      <p><strong>Chrome</strong> (140 or later), and browsers built on it:</p>
+      <ol class="steps">
+        <li>Download the file ending in <code>-chrome.zip</code> from the latest release and unzip it into a folder you'll keep.</li>
+        <li>Open <code>chrome://extensions</code> and switch on <strong>Developer mode</strong>.</li>
+        <li>Press <strong>Load unpacked</strong> and choose that folder.</li>
+        <li>Pin Notis to the toolbar; its button opens the client.</li>
+      </ol>
+      <p>Chrome doesn't update an unpacked extension; repeat the steps with each new release.</p>
+      <p><strong>Without installing anything</strong>, the same client runs at <a href="https://notis.fun/web/">notis.fun/web</a>. It trusts the node it reads from instead of checking the chain, so the extension is the better home for a key you care about.</p>
+    </section>
+
+    <section>
+      <h2>Create your identity</h2>
+      <p>Your identity is a key pair made in your browser; nobody issues it and nobody else holds it. Press <span class="w">profile</span> in the header. With no identity yet, the window offers two words: <span class="w">create</span> a new one, or <span class="w">import</span> a key file you exported before.</p>
+      <p>Press <span class="w">create</span> and choose a passphrase, twice. It seals the key in this browser: to sign anything you unlock it with this passphrase. Your password manager may offer to save it — let it. Press <span class="w">set</span>, and the window shows your public key and the rows the next steps use.</p>
+      <figure class="shot">
+        <a href="/start/img/profile.png"><img src="/start/img/profile.png" width="666" height="416" alt="The profile window of a new identity: the key with its export reminder, the rep the faucet gave, the username claim form with a name typed, and the invites, passphrase, export and forget rows" loading="lazy"></a>
+        <figcaption>Your profile window, after the faucet and with a name about to be claimed — the next three steps happen here.</figcaption>
+      </figure>
+      <div class="note warn">
+        <div class="label">Export before anything else</div>
+        <p>The key lives only in this browser until you export it. Clear the browser's data or lose the device and it's gone — nobody can recover it for you, and the faucet gives each key rep only once.</p>
+      </div>
+      <p>Press <span class="w">export</span>, choose a passphrase for the file (it may differ from the browser's), and the client downloads <code>notis-identity-…json</code>. Keep it somewhere you'd keep a house key. To use the identity in another browser, open <span class="w">profile</span> there, press <span class="w">import</span>, pick the file and enter its passphrase.</p>
+    </section>
+
+    <section>
+      <h2>Get rep from the faucet</h2>
+      <p>Rep is what posting, replying and liking spend, and on mainnet you arrive with it because a member invited you. On testnet the faucet does the inviting. In your profile's rep row, press <span class="w">ask the faucet for rep</span>. The extension first asks your browser to let it reach the faucet's site — the one site it asks for. The row reads <em>working…</em> until a block takes the faucet's invitation; then your rep appears, as in the picture above.</p>
+      <p>A muted line may stand beneath the number for a while, such as <em>… rep not checked yet</em>. The extension checks every figure it shows against the chain itself, and a grant that just landed is newer than its last check; the line goes once the figure is proven. A line in clay is different: it means a node's answer and the chain disagree.</p>
+      <p>It's once per key, for good: a second press on the same key reads <em>this key already had its faucet grant.</em> If the faucet is busy it says so; try again later. The wallet has its own <span class="w">ask the faucet for $NOTIS</span>, which you can repeat — but nothing on the board needs $NOTIS.</p>
+    </section>
+
+    <section>
+      <h2>Claim a name</h2>
+      <p>Without a name you appear as the start of your key. In the username row, type a name — letters, digits and <code>_</code>, up to 24 — and press <span class="w">claim</span>, as in the picture above. The first claim on a key is free. A name shows as you typed it, but one name is one name whatever its case: if <code>Ada</code> is taken, so is <code>ada</code>. Once it's yours, the row shows <code>@</code> and your name, with <span class="w">burn</span> beside it: that gives the name up for a price in rep and restores your free claim.</p>
+    </section>
+
+    <section>
+      <h2>Post a notice</h2>
+      <p>Press <span class="w">new post</span> above the feed. The composer opens with a count of the bytes you have left and the post's price in rep. Write, then press <span class="w">post</span> — or Ctrl+Enter. A notice holds 300 bytes, not characters: an accented letter takes two, an emoji four.</p>
+      <figure class="shot">
+        <a href="/start/img/composer.png"><img src="/start/img/composer.png" width="674" height="172" alt="The composer with a first notice typed: the type control, the bytes left, the price, and the post and cancel buttons" loading="lazy"></a>
+        <figcaption>The composer: the type control, the bytes left, the price, <span class="w">post</span> and <span class="w">cancel</span>.</figcaption>
+      </figure>
+      <p>Your notice shows at once as a hollow card, waiting for a block; when a block takes it, it fills in. If none does by the height it names, the card offers <span class="w">try again</span>.</p>
+      <p>A notice can carry a little formatting: a first line starting <code># </code> becomes its title, <code>**bold**</code> and <code>*italic*</code> work, and a link is <code>[words](https://…)</code> or the bare address. An image is posted as its link — <code>![what it shows](https://…/photo.jpg)</code>, or an address ending in <code>.png</code>, <code>.jpg</code> and the like — and the composer's type control has <span class="w">link</span> and <span class="w">image</span> forms that write these for you. A reader sees an image's description and <span class="w">show image from</span> its host; it loads only when they press it, so reading a notice never quietly contacts someone else's server.</p>
+    </section>
+
+    <section>
+      <h2>Reply, like and withdraw</h2>
+      <p>The <span class="w">›</span> at a card's edge opens its thread in a window to the right, with every reply beneath it.</p>
+      <figure class="shot wide">
+        <a href="/start/img/workspace.png"><img src="/start/img/workspace.png" width="1440" height="900" alt="The workspace: the feed of notices on the left, and a thread window to its right holding a notice and your own reply beneath it" loading="lazy"></a>
+        <figcaption>A thread open beside the feed. The notice carries <span class="w">like</span> and <span class="w">↩ reply</span>; your own reply carries <span class="w">↩ reply</span> and <span class="w">withdraw</span>.</figcaption>
+      </figure>
+      <p><strong>Reply.</strong> Inside a thread window each post has <span class="w">↩ reply</span>; the composer opens beneath the post you're answering. A reply costs less than a notice, and part of its price goes to the person you answer.</p>
+      <p><strong>Like.</strong> On someone else's post, <span class="w">like</span> spends a rep of yours, and most of it reaches the author. A like is permanent, and you can't like your own.</p>
+      <p><strong>Withdraw.</strong> On your own post in a thread window, <span class="w">withdraw</span> asks first — <em>withdraw this post? the content goes; the replies stay.</em> — and a second <span class="w">withdraw</span> does it. It's free, and it's the one thing you can do to a post once it's up. Nobody else can do it for you, or to you.</p>
+      <p>Withdrawn is not deleted: honest nodes drop the words and stop passing them on, but anyone who already saved a copy still has it. That is true of anything sent over a public network.</p>
+    </section>
+
+    <section>
+      <h2>The workspace</h2>
+      <p>The feed sits on the left, and everything you open becomes a <strong>window</strong> in a column to its right, as the thread does in the picture above. A window opens in the column just right of where you pressed it; a column stacks its windows' title bars at the top and shows the focused one beneath, and a bar's <span class="w">→</span> gives its window a column of its own. The arrangement is remembered between visits.</p>
+      <p>The windows:</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Window</th><th>What it holds</th></tr></thead>
+        <tbody>
+          <tr><td><b>a thread</b></td><td>A notice and every reply beneath it, opened from a card's <span class="w">›</span>.</td></tr>
+          <tr><td><b>profile</b></td><td>Your name, key, rep and invites; the passphrase, export and forget.</td></tr>
+          <tr><td><b>wallet</b></td><td>Your $NOTIS balance and sending it to a key or an @name.</td></tr>
+          <tr><td><b>settings</b></td><td>The theme, the identity tint, the node, and — in the extension — whether each rep action asks before signing, and whether a Notis link opens here or on the site.</td></tr>
+          <tr><td><b>an author</b></td><td>Someone's name, who vouches for them, your own vouch, and a way to their posts — opened from a name on a card.</td></tr>
+          <tr><td><b>an author's posts</b></td><td>Everything one author has posted, in the feed's format.</td></tr>
+        </tbody>
+      </table></div>
+      <p>At the bottom right, the <strong>status corner</strong> shows the chain's height and a dot, as in the picture above. Green means the chain is moving — in the extension, verified across the nodes it asked. Hover it for the details; press it to check again.</p>
+      <p>On a phone the workspace is one column at a time. The header's profile, wallet and settings become icons, the theme moves into settings, and your browser's back button walks back through the screens you opened.</p>
+      <figure class="shot phone">
+        <a href="/start/img/phone.png"><img src="/start/img/phone.png" width="390" height="844" alt="The client on a phone: one column, the header's person, wallet and gear icons" loading="lazy"></a>
+        <figcaption>One column on a phone.</figcaption>
+      </figure>
+
+      <h3>Every button</h3>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Control</th><th>Where</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td class="n">profile · wallet · settings</td><td>the header</td><td>Open your profile, wallet or settings window. With an identity loaded, <span class="w">profile</span> shows your @name, or the start of your key.</td></tr>
+          <tr><td class="n">dark · light</td><td>the header</td><td>Switches the theme; the word names the one it switches to.</td></tr>
+          <tr><td class="n">‹ ›</td><td>the header's edges</td><td>Scroll the workspace one column left or right.</td></tr>
+          <tr><td class="n">↻</td><td>the feed's head, and every window's bar</td><td>Reads that list or window again.</td></tr>
+          <tr><td class="n">new post</td><td>the feed's head</td><td>Opens the composer.</td></tr>
+          <tr><td class="n">load older</td><td>the feed's foot</td><td>Shows the next page of older notices.</td></tr>
+          <tr><td class="n">›</td><td>a card's edge</td><td>Opens its thread in a window, or brings the open one forward.</td></tr>
+          <tr><td class="n">@name or key</td><td>a card's author</td><td>Opens that author's window.</td></tr>
+          <tr><td class="n">like</td><td>someone else's post</td><td>Likes it — permanent, and moves rep to its author.</td></tr>
+          <tr><td class="n">↩ reply</td><td>a post in a thread window</td><td>Opens a reply beneath it.</td></tr>
+          <tr><td class="n">withdraw</td><td>your own post in a thread window</td><td>Asks, then withdraws it: the words go, the replies stay.</td></tr>
+          <tr><td class="n">copy</td><td>a card's bottom right</td><td>Copies the post's link, which opens for anyone, with or without the extension.</td></tr>
+          <tr><td class="n">← →</td><td>a window's bar</td><td><span class="w">→</span> moves the window to a column of its own; <span class="w">←</span> folds it back into the column on its left.</td></tr>
+          <tr><td class="n">✕</td><td>a window's bar</td><td>Closes the window.</td></tr>
+          <tr><td class="n">vouch</td><td>an author's window</td><td>Stakes a rep to say you stand behind this person; you can take it back.</td></tr>
+          <tr><td class="n">unlock · lock</td><td>your profile</td><td>Unlocks the key with its passphrase to sign, or locks it again.</td></tr>
+          <tr><td class="n">export · forget</td><td>your profile</td><td>Saves the key to a file; removes it from this browser after asking.</td></tr>
+          <tr><td class="n">claim · burn</td><td>your profile's username row</td><td>Takes a name; gives it up.</td></tr>
+          <tr><td class="n">send</td><td>your wallet</td><td>Sends $NOTIS to a key or an @name. The extension shows what you're signing in a window of its own first.</td></tr>
+          <tr><td class="n">keep</td><td>any question</td><td>Leaves things as they were; it's where the focus starts.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section>
+      <h2>Where to go from here</h2>
+      <div class="glance">
+        <div class="card k">
+          <div class="tag">Read next</div>
+          <h4><a href="/rep/">Rep →</a></h4>
+          <p>How rep is earned and spent: invitations, likes that cost, the price of a post, decay — and the numbers.</p>
+        </div>
+        <div class="card c">
+          <div class="tag">Read next</div>
+          <h4><a href="/architecture/">Architecture →</a></h4>
+          <p>How Notis is built: the two ledgers, author-owned posts, withdrawal, and the proof of work that secures it.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p class="mono">NOTIS · decentralized notice board · dual-ledger · proof-of-work</p>
+      <p>Design in progress — some mechanics described in these docs are still being implemented. · <a href="https://notis.fun">notis.fun</a></p>
+    </footer>
+  </div>
+</main>
+
+</body>
+</html>
