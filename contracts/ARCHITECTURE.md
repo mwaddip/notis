@@ -69,12 +69,12 @@ of requiring `git blame`.
 
 ## Overview
 
-DAGsocial is an invite-only decentralized social network built on a dual-ledger
+DAGsocial is an invite-only decentralized notice board built on a dual-ledger
 architecture:
 
 | Layer | Purpose | Mutability |
 |-------|---------|------------|
-| **Posts DAG** | Content, social graph | Author-sovereign (a post is its author's to withdraw) |
+| **Posts DAG** | Content and its reply threads | Author-sovereign (a post is its author's to withdraw) |
 | **UTXO Ledger** | Karma & credits state | Owner-controlled (spendable) |
 
 These layers are interdependent but cryptographically independent: the DAG's
