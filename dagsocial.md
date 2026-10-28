@@ -1,8 +1,8 @@
 
-# DAGsocial: A Self-Governing, Invite-Only Social Network
+# DAGsocial: A Self-Governing, Invite-Only Notice Board
 
 ## Abstract
-DAGsocial is a decentralized social networking protocol designed to eliminate spam, bots, and centralized moderation through economic incentives, proof-of-work, and community governance. Users control their experience, advertisers fund the network without buying influence, and reputation is earned—not purchased.
+DAGsocial is a decentralized notice board protocol designed to eliminate spam, bots, and centralized moderation through economic incentives, proof-of-work, and community governance. Users control their experience, advertisers fund the network without buying influence, and reputation is earned—not purchased.
 
 ---
 
@@ -14,7 +14,7 @@ Current social networks suffer from:
 - **Privacy erosion** – Users are the product, not the customer
 - **Incentive misalignment** – Platforms profit from outrage, not quality content
 
-**Our goal:** A social network that runs without admin intervention, where quality content is rewarded, spam is economically irrational, and users control their own experience.
+**Our goal:** A notice board that runs without admin intervention, where quality content is rewarded, spam is economically irrational, and users control their own experience.
 
 ---
 
@@ -246,7 +246,7 @@ Validator minimum stake None, 100, 1000 coins 100 coins (lowers barrier to entry
 
 8. Why This Matters
 
-We're building a social network where:
+We're building a notice board where:
 
 · You own your data (no surveillance economy)
 · You control who joins (invite-only with real stake)

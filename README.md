@@ -1,6 +1,6 @@
 # Notis
 
-A decentralized social network where your words stay yours and your reputation
+A decentralized notice board where your words stay yours and your reputation
 can't be bought.
 
 No corporate servers, no ads, no token sale. Content lives in a DAG where
