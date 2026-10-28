@@ -12,18 +12,22 @@ import {
   hasKarma,
   getBlockCurrent,
   getPosts,
+  type KarmaPage,
 } from '../src/http.js';
 import {
   NETWORK_PROFILES,
   KARMA_DECAY_AMOUNT,
-  KARMA_MINIMUM,
   POST_PRICE_THREAD,
+  decayCfgFor,
+  effectiveKarma,
+  type IdentityRecord,
 } from '@dagsocial/types';
 import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 13;
 
 const devnet = NETWORK_PROFILES.devnet;
+const CFG = decayCfgFor(devnet);
 const THRESHOLD = devnet.karmaStaleThresholdBlocks;   // 500
 const INTERVAL  = devnet.karmaDecayIntervalBlocks;     // 3
 
@@ -37,22 +41,19 @@ function karmaBoxes(
   );
 }
 
-// NODE_INTERFACE → Karma decay (virtual, squared on touch)
-function expectedEffective(
-  faceTotal: bigint,
-  height: number,
-  lastActivity: number,
-  lastDecay: number,
-): bigint {
-  const stale = height - lastActivity >= THRESHOLD;
-  if (!stale) return faceTotal;
-  const clockStart = Math.max(lastActivity, lastDecay);
-  const periods = Math.floor((height - clockStart) / INTERVAL);
-  if (periods <= 0) return faceTotal;
-  const owed = BigInt(periods) * KARMA_DECAY_AMOUNT;
-  const floor = faceTotal < KARMA_MINIMUM ? faceTotal : KARMA_MINIMUM;
-  const decayed = faceTotal - owed;
-  return decayed > floor ? decayed : floor;
+// The record the route serves, as `effectiveKarma` reads it (NODE_INTERFACE → UTXO queries).
+function recordOf(k: KarmaPage): IdentityRecord {
+  return {
+    lastActivityBlock: k.lastActivityBlock,
+    lastDecayBlock: k.lastDecayBlock,
+    invitedAtBlock: k.invitedAtBlock,
+    lifetimeLikesReceived: BigInt(k.lifetimeLikesReceived),
+    memberSinceBlock: k.memberSinceBlock,
+    memberBar: k.memberBar,
+    memberVouches: k.memberVouches,
+    memberLikes: BigInt(k.memberLikes),
+    invitesUsed: k.invitesUsed,
+  };
 }
 
 describe('decay', () => {
@@ -108,7 +109,8 @@ describe('decay', () => {
     const claimHeight = karmaAfterInvite.height;
 
     // ---- step 4: mine to stale + one interval ----
-    // ARCHITECTURE → Karma decay: stale = (height − lastActivityBlock) >= threshold
+    // NODE_INTERFACE → Karma decay → "Decay starts at the grace window's end, and from nothing":
+    // the clock starts at lastActivityBlock + staleThresholdBlocks and the first period falls one interval later.
     const targetHeight = claimHeight + THRESHOLD + INTERVAL;
     const currentTip = await getBlockCurrent(node);
     const blocksNeeded = targetHeight - currentTip.height;
@@ -123,14 +125,13 @@ describe('decay', () => {
     expect(staleTotal).toBe(aliceTotal);
     expect(staleEffective).toBeLessThan(staleTotal);
 
-    // the exact figure, computed from the profile's numbers
-    const expected = expectedEffective(
-      staleTotal,
-      karmaStale.height,
-      claimHeight,
-      0,
+    // one period owed at claimHeight + T + I: the valuation and the stated figure both hold
+    expect(karmaStale.height).toBe(targetHeight);
+    expect(karmaStale.lastActivityBlock).toBe(claimHeight);
+    expect(staleEffective).toBe(
+      effectiveKarma(staleTotal, recordOf(karmaStale), karmaStale.height, CFG),
     );
-    expect(staleEffective).toBe(expected);
+    expect(staleEffective).toBe(aliceTotal - KARMA_DECAY_AMOUNT);
 
     // ---- step 5: activity resets the clock ----
     let aliceK = (await getKarma(node, alice.publicKeyHex))!;
@@ -155,11 +156,16 @@ describe('decay', () => {
     const postTotal = BigInt(karmaAfterPost.total);
     const postEffective = BigInt(karmaAfterPost.effective);
 
-    // ARCHITECTURE → Karma decay: squaring materializes the decay on touch.
-    // The user tx deducted POST_PRICE_THREAD from face total (50n → 45n),
-    // then the settlement squared 45n to effective (10n, clamped at KARMA_MINIMUM).
+    // NODE_INTERFACE → Karma decay: the post's block squares alice over her pre-body record,
+    // read off the served record at the block's height. The body deducted POST_PRICE_THREAD.
+    const postRow = (await getPosts(node)).posts.find((r) => r.id === postRes.postId)!;
     const postBodyFace = aliceTotal - POST_PRICE_THREAD;
-    const squaredValue = expectedEffective(postBodyFace, karmaStale.height, claimHeight, 0);
+    const squaredValue = effectiveKarma(
+      postBodyFace,
+      recordOf(karmaStale),
+      postRow.blockHeight!,
+      CFG,
+    );
     expect(postTotal).toBe(squaredValue);
     // activity reset the clock — effective equals the post-squaring total
     expect(postEffective).toBe(postTotal);
