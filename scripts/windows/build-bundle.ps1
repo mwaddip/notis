@@ -1,8 +1,8 @@
 # build-bundle.ps1 — package the node as a win-x64 installer.
 #
 # Mirrors scripts/build-tarball.sh for Windows: builds the workspace, stages a
-# self-contained app tree with a production node_modules (the win-x64
-# better-sqlite3 prebuild is fetched HERE, on the Windows runner), bundles the
+# self-contained app tree with a production node_modules (better-sqlite3
+# carries every platform's prebuild; nothing builds it), bundles the
 # official node.exe, adds the three .cmd launchers, and wraps it all with Inno
 # Setup. Run on windows-latest after `pnpm install --frozen-lockfile`.
 #
@@ -33,10 +33,10 @@ $Excludes = @(Get-Content (Join-Path $PSScriptRoot '..\package-excludes.txt') |
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 $global:LASTEXITCODE = 0
 
-# --- 2. Production node_modules (win-x64 better-sqlite3 prebuild) -------------
+# --- 2. Production node_modules (better-sqlite3 carries its prebuilds) -------------
 Write-Host "==> Installing production dependencies"
 Push-Location "$Stage\app"
-& pnpm approve-builds better-sqlite3 cbor-extract esbuild 2>&1 | Out-Null
+& pnpm approve-builds cbor-extract esbuild 2>&1 | Out-Null
 & pnpm install --prod --frozen-lockfile
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "pnpm install --prod failed" }
 Pop-Location

@@ -46,8 +46,8 @@ rsync -a --exclude-from="$REPO_ROOT/scripts/package-excludes.txt" \
 # ---------------------------------------------------------------------------
 echo "==> Installing production dependencies..."
 cd "$APP_DIR"
-# Approve native module builds (pnpm v11 gate, harmless on v10)
-pnpm approve-builds better-sqlite3 cbor-extract esbuild 2>&1 | tail -3 || true
+# Approve the native module builds (pnpm v11 gate, harmless on v10); better-sqlite3 ships its prebuilds and is not built
+pnpm approve-builds cbor-extract esbuild 2>&1 | tail -3 || true
 pnpm install --prod --frozen-lockfile 2>&1 | tail -5
 
 # pnpm workspaces link local packages via symlinks — ensure they resolve.

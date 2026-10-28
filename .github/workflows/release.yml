@@ -1,8 +1,8 @@
 name: release
 
-# Manual only. Builds the three testnet packages, each on its own OS so the
-# native better-sqlite3 prebuild matches, and attaches them to a GitHub Release
-# for the given tag. The Release and its assets are public.
+# Manual only. Builds the three testnet packages, each on its own OS for the
+# Node runtime it bundles, and attaches them to a GitHub Release for the given
+# tag. The Release and its assets are public.
 on:
   workflow_dispatch:
     inputs:
