@@ -1563,9 +1563,9 @@ chain or owed one:
 | **the pool's output rows** (2026-10-22) | **no committed byte and no consensus verdict** — `mempool_outputs` carries each output's owner, type and value under an owner index (MEMPOOL_INTERFACE → Schema), and the store adds no column to a standing table, so a store written before them is not one this build opens: `initDb` refuses the owner index over a table that lacks its columns (measured 2026-10-22: `no such column: owner`). **Rides the 0.4.0 reset** |
 | **the decay window and the paid squaring** (2026-10-28) | the verdict and the effects of every block that squares an identity (NODE_INTERFACE → Karma decay): the window's end starts the clock, a squaring writes the height it settles through, every owner the settlement pays is squared before the payment lands, and every squaring writes its clock however little the floor lets it burn — so the settlement's decay leg, the pool's inflow, `lastDecayBlock`, every `stateRoot` from the first such block, and the `adProofsRoot` of every block whose settlement pays an owner (the squared set's reads); the effective karma every valuation answers past a window's end. **Owes the reset**, and rides the 0.4.0 reset |
 
-**Outstanding against the live node: the tree layout, the block proof, the rent rule, the karma spend rule, the lapse leg's spent vouch, the two karma boxes, the mint id's genesis proof, the transactions root, headers-first sync, the handshake, the pool's output rows and the decay window with the paid squaring** (the twelve rows above). Testnet's live chain began at the
-2026-09-15 reset; every row above is in it, and the usernames row owes none. The profile leaves testnet's `genesisId`
-empty (§What varies per network) until the reset the tree layout owes mines a new block 1.
+**Outstanding against the live node: nothing.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
+whose block 1 the profile pins as `genesisId` (§What varies per network); every reset row is in it, and the usernames
+row owes none.
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
@@ -1592,8 +1592,9 @@ and the extension (`WEB_INTERFACE → "The client ships as its own product"`). A
 the minor; a milestone release that owes none moves the patch. It is not `protocolVersion`, which the chain
 schedules by height (→ Protocol Versioning) and no release number moves.
 
-> ⚠ **UNENFORCED — verified 2026-09-20.** Nothing checks a bump against this register. The four tags conform:
-> `v0.1.1` shipped without a reset, `v0.2.0` and `v0.3.0` each with one.
+> ⚠ **UNENFORCED — verified 2026-10-28.** Nothing checks a bump against this register. The five tags conform:
+> `v0.1.1` and `v0.3.1` shipped without a reset, `v0.2.0` and `v0.3.0` each with one; the 2026-10-28 reset ships as
+> 0.4.0, moving the minor.
 
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
 >
