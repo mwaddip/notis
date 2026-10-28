@@ -1,8 +1,9 @@
 # scripts/package-excludes.txt — paths left out when scripts/build-deb.sh,
 # scripts/build-tarball.sh and scripts/windows/build-bundle.ps1 copy the
 # working tree into their staging directory. One pattern per line, matched
-# against every path component's name — a bare name or a wildcard with no
-# slash catches a file or a directory of that name at any depth.
+# against every path component's name. A bare name or a wildcard with no
+# slash matches a file or a directory of that name at any depth; an entry
+# starting with / names one path from the repo root.
 
 # Version control, dependencies, local database files.
 .git
@@ -21,6 +22,11 @@ node_modules
 # The signed Firefox build, which packages/web/scripts/sign-extension.sh
 # copies into the repo root.
 *.xpi
+
+# The web client ships as its own zip.
+/packages/web
+# The mesh suite is a test suite.
+/tools/e2e
 
 # Working scaffolding and cross-session notes.
 prompts
