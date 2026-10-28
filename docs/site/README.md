@@ -15,6 +15,8 @@ assets/_nav.html           shared sidebar: mark, brand, nav, theme control (SSI 
 assets/style.css           tokens, theme, shell, and every component used site-wide
 assets/site.js             theme, sidebar, active nav item, scroll-hover suppression
 assets/fonts/              Plus Jakarta Sans + JetBrains Mono, self-hosted (SIL OFL 1.1)
+assets/og-mark.png         the mark on Sand, 1200×1200: every page's og:image (its source is
+                           docs/landing/og-mark.html)
 ```
 
 The site is built to **`contracts/HOUSE_STYLE.md`**. Read it before changing

@@ -7,6 +7,7 @@ byte-identical to what `/var/www/notis.fun/` serves at the site root.
 index.html             the page — its CSS and its two scripts are inline
 og.png                 the share card (1200×630) the page's Open Graph tags name
 og.html                the page og.png is rendered from — never served
+og-mark.html           the page docs.notis.fun's og-mark.png is rendered from — never served
 favicon.svg            the mark, colours baked in
 favicon.ico            16, 32 and 48 px rasters of the mark
 apple-touch-icon.png   180 px raster of the mark
@@ -60,6 +61,9 @@ firefox --headless --no-remote --profile "$(mktemp -d)" --window-size=1200,630 \
         --screenshot og.png http://127.0.0.1:8765/og.html
 kill %1
 ```
+
+`og-mark.html` renders the same way at 1200×1200 into `docs/site/assets/og-mark.png`, the square
+preview image every docs page names as `og:image`.
 
 The card's text is the page's: `og.html`'s kicker, headline and line match the hero's label,
 `<h1>` and tagline, and `index.html`'s `og:image:alt` names the headline.
