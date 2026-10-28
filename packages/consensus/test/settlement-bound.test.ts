@@ -135,11 +135,16 @@ describe('decayLegMaxBytes — the ceiling at every (height, value) pair', () =>
       noDecayDeps, height, ONE_ERA, 0n, PROFILE.creditMinerRewardDelay, refBody, miner.userId,
     );
     if ('error' in refResult) throw new Error(refResult.error);
+    // `burnAmount` is positive so the decay leg emits its output: the test
+    // probes the widest karma box a leg can emit (NODE_INTERFACE → Karma
+    // decay → "The leg is two inputs at most and one output"). A zero-burn
+    // plan emits nothing by design, so the measurement needs a positive
+    // burn to see the output's width.
     const plan: DecayPlan = {
       owner,
       consumedBoxIds: [b1.id!, b2.id!],
       newValue: value,
-      burnAmount: 15n - value < 0n ? 0n : 15n - value,
+      burnAmount: 1n,
       settledThrough: height,
     };
     const withDecayDeps: SettlementDeps = {

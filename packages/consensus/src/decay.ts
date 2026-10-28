@@ -232,22 +232,23 @@ export function deriveKarmaDecay(
 }
 
 /**
- * Advance the decay half of the clock for every identity the settlement charged.
+ * Advance the decay half of the clock for every identity the squared set
+ * includes at this height.
  *
  * Written **after** the settlement's boxes are in, so the journal's reverse
- * replay undoes the record before deleting the box that caused it. Only firings
- * reach here — a stale identity sitting at the karma floor produces no plan and
- * keeps its clock where it was, rather than silently forfeiting the intervals it
- * is owed.
+ * replay undoes the record before deleting the box that caused it. Every
+ * plan writes its clock — a zero-burn plan included: the periods the floor
+ * stopped are settled, never carried (NODE_INTERFACE → Karma decay → "The
+ * floor forgives what it stops").
  *
  * Writes `plan.settledThrough` as `lastDecayBlock` (NODE_INTERFACE → Karma
  * decay → "A squaring writes the height it settles through, never its own
- * height"). The record read at commit carries every other field — the activity
- * clock bumped by a post earlier in the block, the like counters, the
- * membership state — and `lastDecayBlock` writes over whatever the record
- * carries for it. `invitedAtBlock` and `lifetimeLikesReceived` are among those
- * carried fields, so a decay-burn box the settlement emitted does not un-bar
- * the address or forfeit a bond the invitee had earned.
+ * height"). The record read at commit carries every other field — the
+ * activity clock bumped by a post earlier in the block, the like counters,
+ * the membership state — and `lastDecayBlock` writes over whatever the
+ * record carries for it. `invitedAtBlock` and `lifetimeLikesReceived` are
+ * among those carried fields, so a decay-burn box the settlement emitted
+ * does not un-bar the address or forfeit a bond the invitee had earned.
  */
 export function commitDecayClocks(
   deps: DecayDeps,

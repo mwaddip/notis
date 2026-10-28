@@ -6,7 +6,6 @@ import {
   decodeTx,
   encodeTx,
   MAX_BLOCK_COST,
-  MAX_BOND_SETTLEMENTS_PER_BLOCK,
   MAX_ESCROW_RETURNS_PER_BLOCK,
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   membershipBar as membershipBarFn,
@@ -18,7 +17,6 @@ import type {
   AnyBox,
   IdentityRecord,
   KarmaBox,
-  LikeAccrualBox,
   OrderingBlock,
   UsernameBox,
   UtxoTransaction,
@@ -31,7 +29,7 @@ import { postsOf, withdrawalsOf } from './block-posts.js';
 import type { BlockPost, BlockWithdrawal } from './block-posts.js';
 import { computeBlockReward, countKarmaActors, isCreditSideTx, type EmbeddedTx } from './coinbase-split.js';
 import { collectPostBodyKarma, commitDecayClocks, deriveKarmaDecay, karmaOwed } from './decay.js';
-import type { DecayDeps } from './decay.js';
+import type { DecayDeps, DecayPlan } from './decay.js';
 import type { DecayCfg } from '@dagsocial/types';
 import { BlockOverlay } from './overlay.js';
 import type { BlockMutation } from './overlay.js';
@@ -219,10 +217,13 @@ export function overSignedReason(
 }
 
 /**
- * The pre-body owed capture: `postBodyKarma` and `owed` for every identity the body touches, from
- * the view as it stands before the block writes (CONSENSUS_INTERFACE → Applying a block →
- * "The owed-decay capture reads the record of every identity the body touches"). The caller
- * derives decay plans from the returned `postBodyKarma`.
+ * The pre-body owed capture: `postBodyKarma` for every identity the squared
+ * set includes — the owners the body touches and the owners `payees` names
+ * — and `owed` for each one, from the view as it stands before the block
+ * writes (NODE_INTERFACE → Karma decay → "A block squares every identity it
+ * touches or pays"; CONSENSUS_INTERFACE → Applying a block → "The owed-decay
+ * capture reads the record of every identity the body touches"). The
+ * caller derives decay plans from the returned `postBodyKarma`.
  */
 export function capturePreBodyOwed(
   view: Pick<StateView, 'getBox' | 'getKarmaBoxes' | 'getIdentityRecord'>,
@@ -243,7 +244,6 @@ export function capturePreBodyOwed(
   }
   return { postBodyKarma, preBodyOwed };
 }
-
 
 /**
  * The loop body for one queued transaction (CONSENSUS_INTERFACE → Applying a block): inputs resolve
@@ -530,14 +530,16 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   const state = new BlockOverlay(view);
   const reject = (reason: string): ApplyResult => ({ ok: false, reason });
 
-  // ⛔ **DECAY AND ESCROWS ARE DERIVED FROM PRE-BODY STATE, AND THEY HAVE
-  // TO BE.** Decay is computed after decoding (the touched set comes from the
-  // decoded transactions' inputs) but before the apply loop, so the UTXO
-  // state is pre-body. Escrows are captured here for the same reason: the
-  // body can create one (an unvouch of a long-held vouch), and a post-body
-  // read would see it on one side only
+  // ⛔ **THE SQUARED SET AND THE STATE-DRIVEN LEGS ARE DERIVED FROM PRE-BODY
+  // STATE, AND THEY HAVE TO BE.** The squared set is computed after decoding
+  // (the touched owners come from the decoded transactions' inputs; the
+  // payees from the body's markers and the pre-body captures) but before
+  // the apply loop, so the UTXO state is pre-body. The escrows, lapsed
+  // vouches, settling bonds and backer pool are captured here for the same
+  // reason: the body can create an escrow (an unvouch of a long-held
+  // vouch), and a post-body read would see it on one side only
   // (NODE_INTERFACE → The settlement transaction).
-  // Both are assigned at §9b, after decoding and before the apply loop.
+  // All are assigned at §9b, after decoding and before the apply loop.
 
   // Every post id the block commits to, read once from the committed
   // transaction list: the effects carry this list, and the node confirms — and
@@ -692,31 +694,21 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
   for (const q of queue) for (const inp of q.tx.inputs) spentByBody.add(inp);
   const lapsedVouches = lapseLegOf(lapsedCapture, spentByBody);
   const capturedBackerPool = state.getBackerPoolBox();
-  const invitedAtFloor = height - ctx.inviteProbationBlocks;
-  const bondsSettling = invitedAtFloor <= 0
-    ? []
-    : state.getBondsInvitedAt(invitedAtFloor, MAX_BOND_SETTLEMENTS_PER_BLOCK);
 
-  // The squared set's payees: owners the income leg pays (NODE_INTERFACE →
-  // The settlement transaction → "The income leg pays each owner once"), one
-  // function's answer on both sides (CONSENSUS_INTERFACE → The settlement
-  // build). Reads the body's markers through a sketch and the state-derived
-  // legs through the pre-body captures above.
-  const sketch = sketchBodyForPayees(queue.map((q) => ({ txId: q.txId, outputs: q.outputs })));
-  const markerIdSet = new Set(sketch.markers.map((m) => m.id));
-  const getCarryBox = (author: Uint8Array, exclude: ReadonlySet<string>): LikeAccrualBox | null => {
-    for (const box of state.getLikeAccrualBoxes(author)) {
-      if (box.id && !exclude.has(box.id) && !markerIdSet.has(box.id)) return box;
-    }
-    return null;
-  };
-  const payees = computeSquaredSetPayees(
-    sketch,
-    bondsSettling,
-    escrows,
-    (invitee) => state.getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
-    getCarryBox,
+  // One deps object the squared-set payee computation and `checkSettlement`
+  // both read through (CONSENSUS_INTERFACE → The settlement build). Its
+  // `getDecayPlans` thunk resolves to the plans the derivation below
+  // produces; `derive` reads it later, when the plans stand.
+  let decayPlans: DecayPlan[] = [];
+  const settlementDeps = settlementDepsWith(
+    state, ctx,
+    () => decayPlans,
+    escrows, lapsedVouches,
+    () => capturedBackerPool,
+    spentByBody,
   );
+  const sketch = sketchBodyForPayees(queue.map((q) => ({ txId: q.txId, outputs: q.outputs })));
+  const payees = computeSquaredSetPayees(sketch, height, settlementDeps);
   const { postBodyKarma, preBodyOwed } = capturePreBodyOwed(
     state,
     queue.map((q) => ({ txId: q.txId, inputs: q.tx.inputs, outputs: q.outputs })),
@@ -725,7 +717,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     payees,
   );
   const decayDeps = decayDepsOver(state);
-  const decayPlans = deriveKarmaDecay(decayDeps, postBodyKarma, height, ctx.decayCfg);
+  decayPlans = deriveKarmaDecay(decayDeps, postBodyKarma, height, ctx.decayCfg);
   const utxoDeps = utxoDepsOver(state, ctx, verified, preBodyOwed, height);
 
   // One pass, in committed order (NODE_INTERFACE → Block finalization). The
@@ -767,7 +759,7 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
 
   const emission = computeBlockReward(height, ctx);
   const settlementCheck = checkSettlement(
-    settlementDepsWith(state, ctx, () => decayPlans, escrows, lapsedVouches, () => capturedBackerPool, spentByBody),
+    settlementDeps,
     height,
     ctx.protocolVersionSchedule,
     emission,
@@ -961,11 +953,12 @@ export function applyBlock(view: StateView, block: OrderingBlock, ctx: ApplyCont
     }
   }
 
-  // 13. Advance the decay clock for every identity the settlement charged.
+  // 13. Advance the decay clock for every identity the squared set includes.
   //
-  // ⚠ **Only firings reach here.** A stale identity sitting at the karma floor
-  // produces no plan and keeps its clock where it was, rather than silently
-  // forfeiting the intervals it is owed: the plan's existence is the gate.
+  // ⚠ **Every plan writes its clock, a zero-burn plan included.** The periods
+  // the floor stopped are settled, never carried (NODE_INTERFACE → Karma
+  // decay → "The floor forgives what it stops"), and a payee the body does
+  // not touch holds the same clock after the block as any touched owner.
   commitDecayClocks(decayDeps, decayPlans);
 
   return {

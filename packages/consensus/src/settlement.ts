@@ -295,6 +295,29 @@ export function computeLikePayouts(
 }
 
 /**
+ * The vested part of a settling bond (NODE_INTERFACE → The settlement
+ * transaction, the bond-settlement paragraph): the lesser of `bond.value`
+ * and `lifetimeLikes / INVITE_BOND_VEST_PER_LIKES`. `derive`'s bond leg and
+ * the squared-set payee computation both call this.
+ */
+export function vestedPart(bond: BondBox, lifetimeLikes: bigint): bigint {
+  const VEST_PER_LIKES = BigInt(INVITE_BOND_VEST_PER_LIKES);
+  const earned = lifetimeLikes / VEST_PER_LIKES;
+  return earned < bond.value ? earned : bond.value;
+}
+
+/**
+ * The reads `computeSquaredSetPayees` makes of pre-body state — a strict
+ * subset of `SettlementDeps`. Named here so the caller passes the one deps
+ * object both this and `derive` read through, and no second wiring states
+ * the same reads inline.
+ */
+export type PayeeReads = Pick<
+  SettlementDeps,
+  'getBondsSettlingAt' | 'getEscrowsReleasableAt' | 'getLifetimeLikes' | 'getLikeCarryBox'
+>;
+
+/**
  * The block's squared-set payees: every owner whose `income(owner) > 0`
  * (NODE_INTERFACE → The settlement transaction → "The income leg pays each
  * owner once"), in ascending owner hex. Pre-body reads throughout
@@ -308,23 +331,20 @@ export function computeLikePayouts(
  */
 export function computeSquaredSetPayees(
   body: SettlementBody,
-  bonds: BondBox[],
-  escrows: VouchEscrowBox[],
-  getLifetimeLikes: (invitee: Uint8Array) => bigint,
-  getCarryBox: (author: Uint8Array, exclude: ReadonlySet<string>) => LikeAccrualBox | null,
+  height: number,
+  deps: PayeeReads,
 ): Map<string, Uint8Array> {
   const payees = new Map<string, Uint8Array>();
-  const { payouts } = computeLikePayouts(body, getCarryBox);
+  const { payouts } = computeLikePayouts(body, deps.getLikeCarryBox);
   for (const p of payouts) {
     if (p.paid > 0n) payees.set(hexOf(p.author), p.author);
   }
-  const VEST_PER_LIKES = BigInt(INVITE_BOND_VEST_PER_LIKES);
-  for (const bond of bonds) {
-    const earned = getLifetimeLikes(bond.inviteePublicKey) / VEST_PER_LIKES;
-    const vested = earned < bond.value ? earned : bond.value;
-    if (vested > 0n) payees.set(hexOf(bond.inviterId), bond.inviterId);
+  for (const bond of deps.getBondsSettlingAt(height)) {
+    if (vestedPart(bond, deps.getLifetimeLikes(bond.inviteePublicKey)) > 0n) {
+      payees.set(hexOf(bond.inviterId), bond.inviterId);
+    }
   }
-  for (const escrow of escrows) {
+  for (const escrow of deps.getEscrowsReleasableAt(height)) {
     if (escrow.value > 0n) payees.set(hexOf(escrow.owner), escrow.owner);
   }
   return payees;
@@ -499,15 +519,14 @@ function derive(
   // 3c. The bonds settling at this height (ARCHITECTURE → Bond outcomes). The
   // vested part returns to the inviter out of the `BondBox`; ⛔ **the unvested
   // remainder's sink is the POOL**, named here rather than left as the
-  // difference between two figures.
-  const VEST_PER_LIKES = BigInt(INVITE_BOND_VEST_PER_LIKES);
+  // difference between two figures. `vestedPart` is the one statement of the
+  // formula — the squared-set payee computation reads it too.
   const bonds = deps.getBondsSettlingAt(height);
   const bondSettlements: Array<{ inviter: Uint8Array; invitee: Uint8Array; vested: bigint }> = [];
   for (const bond of bonds) {
     if (!bond.id) return { error: 'bond box carries no id' };
     inputs.push(bond.id);
-    const earned = deps.getLifetimeLikes(bond.inviteePublicKey) / VEST_PER_LIKES;
-    const vested = earned < bond.value ? earned : bond.value;
+    const vested = vestedPart(bond, deps.getLifetimeLikes(bond.inviteePublicKey));
     bondSettlements.push({
       inviter: bond.inviterId,
       invitee: bond.inviteePublicKey,
@@ -547,8 +566,10 @@ function derive(
 
   // 3e. Decay. ⛔ **The burn's sink is the pool** (ARCHITECTURE → The
   // conservation axiom: "burn" means *move back to the supply pool*). The
-  // mechanism is untouched — the same eager per-identity pass, staleness
-  // predicate and karma floor; only the destination is named.
+  // plans cover the squared set — the owners the body touches and the
+  // owners the income leg pays (NODE_INTERFACE → Karma decay → "A block
+  // squares every identity it touches or pays") — a zero-burn plan among
+  // them is a clock write that names none of the owner's boxes.
   const decayPlans = deps.getDecayPlans();
   const decayedBoxIds = new Set<string>();
   for (const plan of decayPlans) {
@@ -663,10 +684,11 @@ function derive(
     });
   }
   for (const plan of decayPlans) {
-    // A zero-burn plan is a clock write and no leg (NODE_INTERFACE → Karma
-    // decay → "The floor forgives what it stops"): no consumed boxes, no
-    // emission. The owner's own karma stands post-body.
-    if (plan.consumedBoxIds.length > 0 && plan.newValue > 0n) {
+    // A leg is a plan whose burn is positive (NODE_INTERFACE → Karma decay →
+    // "The floor forgives what it stops"): a zero-burn plan is a clock write
+    // and names none of the owner's boxes, so the decay leg emits nothing
+    // for it.
+    if (plan.burnAmount > 0n) {
       outputs.push({
         boxType: 'karma',
         value: plan.newValue,
@@ -1431,28 +1453,6 @@ export function buildBlockSettlement(
   for (const d of decoded) for (const inp of d.inputs) spent.add(inp);
   const lapsed = lapseLegOf(lapsedCapture, spent);
   const capturedPool = view.getBackerPoolBox();
-
-  // The squared set's payees: one function's answer on both sides
-  // (CONSENSUS_INTERFACE → The settlement build). Reads the body's markers
-  // through a sketch and the state-derived legs through pre-body captures.
-  const invitedAtFloor = height - ctx.inviteProbationBlocks;
-  const bondsSettling = invitedAtFloor <= 0
-    ? []
-    : view.getBondsInvitedAt(invitedAtFloor, MAX_BOND_SETTLEMENTS_PER_BLOCK);
-  const sketch = sketchBodyForPayees(decoded);
-  const markerIdSet = new Set(sketch.markers.map((m) => m.id));
-  const getCarryBox = (author: Uint8Array, exclude: ReadonlySet<string>): LikeAccrualBox | null => {
-    for (const box of view.getLikeAccrualBoxes(author)) {
-      if (box.id && !exclude.has(box.id) && !markerIdSet.has(box.id)) return box;
-    }
-    return null;
-  };
-  const payees = computeSquaredSetPayees(
-    sketch, bondsSettling, escrows,
-    (invitee) => view.getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
-    getCarryBox,
-  );
-  const postBody = collectPostBodyKarma(view, decoded, payees);
   // The build writes no state, and `deriveKarmaDecay` writes no record.
   const decayDeps: DecayDeps = {
     getIdentityRecord: (identityId) => view.getIdentityRecord(identityId),
@@ -1460,14 +1460,24 @@ export function buildBlockSettlement(
       throw new Error('buildBlockSettlement writes no state, and deriveKarmaDecay wrote a record');
     },
   };
+  // One deps object the squared-set payee computation and the settlement
+  // derivation both read through (CONSENSUS_INTERFACE → The settlement
+  // build). Its `getDecayPlans` thunk resolves to the plans the derivation
+  // produces below; `derive` reads it later, when the plans stand.
+  let decayPlans: DecayPlan[] = [];
+  const deps = settlementDepsWith(
+    view, ctx,
+    () => decayPlans,
+    escrows, lapsed,
+    () => capturedPool,
+    spent,
+  );
+  const sketch = sketchBodyForPayees(decoded);
+  const payees = computeSquaredSetPayees(sketch, height, deps);
+  const postBody = collectPostBodyKarma(view, decoded, payees);
+  decayPlans = deriveKarmaDecay(decayDeps, postBody, height, ctx.decayCfg);
   return buildSettlement(
-    settlementDepsWith(
-      view, ctx,
-      () => deriveKarmaDecay(decayDeps, postBody, height, ctx.decayCfg),
-      escrows, lapsed,
-      () => capturedPool,
-      spent,
-    ),
+    deps,
     height,
     ctx.protocolVersionSchedule,
     computeBlockReward(height, ctx),
@@ -1479,30 +1489,16 @@ export function buildBlockSettlement(
 
 /**
  * The pre-body body sketch for the squared-set payee computation
- * (CONSENSUS_INTERFACE → The settlement build): markers alone, in committed
- * transaction order. The other `SettlementBody` fields are untouched by
- * `computeSquaredSetPayees`.
+ * (CONSENSUS_INTERFACE → The settlement build): the decoded transactions'
+ * outputs read through `contributeToBody`, so the markers the sketch names
+ * are the markers the apply loop fills the body with — one extractor on
+ * both sides. The payee computation reads `body.markers` alone, so the
+ * sketch's other fields come along by construction, unread.
  */
 export function sketchBodyForPayees(
   decoded: ReadonlyArray<{ outputs: AnyBox[] }>,
 ): SettlementBody {
-  const sketch: SettlementBody = {
-    fees: 0n,
-    rent: 0n,
-    actors: 0,
-    feeBoxIds: [],
-    invites: [],
-    markers: [],
-    priceBoxes: [],
-    unstakes: [],
-  };
-  for (const d of decoded) {
-    for (const out of d.outputs) {
-      if (out.boxType === 'like_accrual') {
-        const k = out as LikeAccrualBox;
-        if (k.id) sketch.markers.push({ id: k.id, author: k.author, value: k.value });
-      }
-    }
-  }
+  const sketch = emptyBody();
+  for (const d of decoded) contributeToBody(sketch, d.outputs);
   return sketch;
 }
