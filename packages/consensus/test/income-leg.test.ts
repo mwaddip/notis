@@ -118,7 +118,10 @@ describe('an author paid in twenty consecutive blocks ends with one marked box o
     () => {
       const view = genesisView();
       const author = seededIdentity('payouts-gather/author');
-      const authorRec = identityRecord({ lastActivityBlock: 0 });
+      // lastActivityBlock = 100 keeps `clockStart = 100 + T` past every
+      // block the test runs, so the author stays non-stale across the
+      // twenty payouts and the test probes payout accumulation alone.
+      const authorRec = identityRecord({ lastActivityBlock: 100 });
       view.putIdentityRecord(author.userId, authorRec);
       const authorOwnBox = karmaBox(author.userId, 10n, 1, 0);
       view.insertBox(authorOwnBox);
@@ -647,6 +650,10 @@ describe('an author paid in twenty consecutive blocks over the tree view', () =>
       const author = seededIdentity('twenty-over-tree/author');
       const authorOwn = karmaBox(author.userId, 10n, 1, 0);
       const BLOCKS = 20;
+      // lastActivityBlock = 100 keeps the author non-stale across every
+      // block the test runs; the test probes payout accumulation over the
+      // tree view, not the squaring extension.
+      const authorLastActivity = 100;
       const likers = Array.from({ length: BLOCKS }, (_, i) =>
         seededIdentity(`twenty-over-tree/liker-${i}`),
       );
@@ -659,7 +666,7 @@ describe('an author paid in twenty consecutive blocks over the tree view', () =>
       for (let i = 0; i < BLOCKS; i++) {
         initialBoxes.push(karmaBox(likers[i]!.userId, 11n, seedNonce++, 0));
       }
-      const authorRec: IdentityRecord = identityRecord();
+      const authorRec: IdentityRecord = identityRecord({ lastActivityBlock: authorLastActivity });
       const initialRecords: Array<{ identityId: Uint8Array; record: IdentityRecord }> = [
         { identityId: miner.userId, record: identityRecord({ memberSinceBlock: 1 }) },
         { identityId: author.userId, record: authorRec },

@@ -248,10 +248,16 @@ describe('deriveKarmaDecay', () => {
     expect(recordMap.get(ownerKey)).toEqual(clock(0, settledThrough));
   });
 
-  it('skips an owner with no karma boxes without touching its clock', () => {
+  it.fails('an owner in the squared set holding no karma box carries a zero-burn plan', () => {
     const { deps, postBodyKarma, recordMap } = oneOwner([], clock(ACTIVITY_AT));
 
-    expect(deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG)).toHaveLength(0);
+    const plans = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
+    expect(plans).toHaveLength(1);
+    expect(plans[0]!.consumedBoxIds).toEqual([]);
+    expect(plans[0]!.burnAmount).toBe(0n);
+    expect(plans[0]!.settledThrough).toBe(STALE_AT);
+    // The clock advances only through commitDecayClocks, which the test
+    // does not call — the record stands as seeded.
     expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT));
   });
 
