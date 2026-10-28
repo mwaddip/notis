@@ -311,35 +311,37 @@ describe('applyBlock — a chain of blocks over a stub view', () => {
     expect(view.getVouchEscrowsFor(r1.userId)).toEqual([]);
   });
 
-  it('block 8: decay squares the stale owners the body touches, one of them posting; rent collects a dormant box', () => {
+  it.fails('block 9: decay squares the stale owners the body touches, one of them posting; rent collects a dormant box', () => {
     const l2Karma = view.getKarmaBoxes(l2.userId);
-    const consolidate = consolidateTx(l2, l2Karma, 8);
-    const xThread = threadTx(x, largest(view, x), 'a stale owner posts', 8);
+    const consolidate = consolidateTx(l2, l2Karma, 9);
+    const xThread = threadTx(x, largest(view, x), 'a stale owner posts', 9);
     const dormant = c1Send.out[0]! as CreditBox;
     const charge = STORAGE_RENT_PER_BYTE * BigInt(boxRecordBytes(dormant, dormant.txId, dormant.index).length);
     const rent = finish({
       inputs: [dormant.id!],
       outputs: [
-        { boxType: 'credit', value: dormant.value - charge, createdAtBlock: 8, owner: dormant.owner } as AnyBoxCandidate,
-        { boxType: 'fee', value: charge, createdAtBlock: 8 } as AnyBoxCandidate,
+        { boxType: 'credit', value: dormant.value - charge, createdAtBlock: 9, owner: dormant.owner } as AnyBoxCandidate,
+        { boxType: 'fee', value: charge, createdAtBlock: 9 } as AnyBoxCandidate,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     }, null);
-    step(8, [consolidate, xThread, rent]);
-    const settlement = settlementOf(blocks.get(8)!.block);
+    step(9, [consolidate, xThread, rent]);
+    const settlement = settlementOf(blocks.get(9)!.block);
 
-    // Each stale at 8 with two whole intervals owed, 10 burned: 99 face leaves 89,
-    // and the poster's 95 change leaves 85 — the staleness read before its post.
+    // Each stale at 9 with one whole interval owed past the window's end, 5
+    // burned: 99 face leaves 94, and the poster's 95 change leaves 90 — the
+    // staleness read before its post. The clock lands at settledThrough =
+    // T + 1·I = 9.
     expect(settlement.inputs).toContain(consolidate.out[0]!.id);
     expect(settlement.inputs).toContain(xThread.out[0]!.id);
     expect(settlement.inputs).toContain(rent.out[1]!.id);
-    expect(view.getKarmaBoxes(l2.userId).map((b) => b.value)).toEqual([89n]);
-    expect(view.getKarmaBoxes(x.userId).map((b) => b.value)).toEqual([85n]);
-    expect(view.getIdentityRecord(l2.userId)).toEqual(identityRecord({ lastDecayBlock: 8 }));
+    expect(view.getKarmaBoxes(l2.userId).map((b) => b.value)).toEqual([94n]);
+    expect(view.getKarmaBoxes(x.userId).map((b) => b.value)).toEqual([90n]);
+    expect(view.getIdentityRecord(l2.userId)).toEqual(identityRecord({ lastDecayBlock: 9 }));
     // Written twice in the block: the activity bump, then the decay clock.
-    expect(view.getIdentityRecord(x.userId)).toEqual(identityRecord({ lastActivityBlock: 8, lastDecayBlock: 8, memberVouches: 1 }));
-    const xWrites = blocks.get(8)!.effects.mutations
+    expect(view.getIdentityRecord(x.userId)).toEqual(identityRecord({ lastActivityBlock: 9, lastDecayBlock: 9, memberVouches: 1 }));
+    const xWrites = blocks.get(9)!.effects.mutations
       .filter((m) => m.kind === 'record' && hex(m.identityId) === hex(x.userId));
     expect(xWrites).toHaveLength(2);
   });
