@@ -12,7 +12,8 @@ verifiable operation, not a favor from a moderation team.
 *Notis is the network; the code ships under the working scope `@dagsocial/*`.*
 
 **Status:** a node with an HTTP API, libp2p networking and PoW consensus; a browser client that is
-a product of its own; a light client; and a public testnet at [notis.fun](https://notis.fun).
+a product of its own, shipped also as a browser extension that checks the chain it reads; a light
+client; and a public testnet at [notis.fun](https://notis.fun).
 Pre-mainnet: consensus formats change freely, and a change to any committed byte starts the
 testnet chain again from genesis — an additive change deploys onto the running chain. Node.js ≥ 24,
 TypeScript, pnpm. MIT licensed.
@@ -82,8 +83,9 @@ threshold to reach or a tally to wait for.
 on a supply pool and every burn returns to it, so `pool + circulating` is the
 same number at every height, forever. Karma is not scarce by policy — it is
 non-inflatable by construction. Four weeks after an account's last post,
-inactivity decay starts bleeding it down to a floor and returns what it takes to
-the pool; only a post resets the clock.
+inactivity decay starts taking `KARMA_DECAY_AMOUNT` a day down to a floor and
+returns it to the pool — never the four weeks' worth at once, and nothing for time
+spent at the floor; only a post resets the clock.
 
 You cannot buy, sell, or transfer karma. That's the point.
 
@@ -155,7 +157,7 @@ identity, `@handle` is accepted as an alias for the key.
 
 A **withdrawal** is a transaction the author signs, naming the post. At block
 application every node verifies that the signer is the consensus-recorded author
-of that post — read from the chain's own `block_topology`, never from the post —
+of that post — read from the post's record under the state root, never from the post —
 so a miner cannot withdraw someone else's words, and a node that never held the
 content reaches the same verdict. The content is dropped; the post's identity,
 its place in the thread and every reply beneath it stay, and nothing is refunded:
@@ -173,20 +175,22 @@ horizon; past the horizon a chain does not reorganise. Every block, transaction 
 carries a protocol version scheduled by height, so an old object validates under its era's rules and
 a new one cannot pose as old.
 
-`@dagsocial/net` runs libp2p with Gossipsub for ordering blocks and UTXO transactions, plus a sync
-protocol that moves whole ordering blocks: a fresh node downloads the blocks — which carry every
-post's commit and content hash, and enough topology and authorship to verify every settlement — and
-fetches post bodies by id afterwards. Peers accrue penalties for misbehaviour and are banned for a
-while past a threshold.
+`@dagsocial/net` runs libp2p with Gossipsub for ordering blocks and UTXO transactions, plus
+headers-first sync: a node fetches headers by locator, chooses the chain by verified work, then
+downloads that chain's blocks by id — which carry every post's commit and content hash, and enough
+topology and authorship to verify every settlement — and fetches post bodies by id afterwards. Peers
+accrue penalties for misbehaviour and are banned for a while past a threshold.
 
 Every value movement a block owes — like payouts, the post price's return, invite grants, vested
 bonds, decay, a lapsed member's withdrawn vouches — is paid by a single **settlement transaction**
 the block carries, derived from the block's own contents. No signer authorizes it; every node
 recomputes the same verdict from the same body.
 
-Every block header commits an AVL+ **state root** over the whole UTXO set, so a light client can
-verify any box against a chain of headers — and a NiPoPoW proof lets it verify the headers without
-downloading them all.
+Every block header commits an AVL+ **state root** over the whole state — every box, every account's
+record, each post's author and standing, every like, and the indexes the rules look things up by — and
+the root of the proof of every read and write the block made. A light client can prove any record
+against a chain of headers, and a NiPoPoW proof lets it verify the headers without downloading them
+all.
 
 Every protocol number — prices, thresholds, emission, decay, caps — is in one place,
 [contracts/CONSTANTS.md](contracts/CONSTANTS.md), with what argues it and its standing.
@@ -203,6 +207,9 @@ reorg):
   are rejected
 - **The state root** — every header's committed `stateRoot` is recomputed at
   apply; a body that does not produce it is rejected
+- **The block proof and its cost** — a block's proof is regenerated from its own
+  execution and checked against the header's `adProofsRoot`, and a block whose
+  signatures and tree operations cost more than `MAX_BLOCK_COST` is rejected
 - **Withdrawal authorship** — binding a withdrawal to the consensus-recorded
   author (see above); censorship-by-miner is rejected structurally
 - **Invite eligibility** — an invite may only name a key that holds no identity
@@ -457,13 +464,16 @@ name's box in that chain — held by the key it stands beside, under that name e
 answer does not verify or the node cannot back a name it shows; a send to a typed `@handle` reads *checking @bob…*,
 then goes to the key the name's box names once that box is 20 blocks deep — a newer name is sent to by its key —
 or is refused and nothing is signed. A node that shows a key without its
-name is not caught by it. **A Notis link lands in the extension**: a post's
+name is not caught by it. **It checks every post it shows against the transaction that created it**, keeps the
+posts it has checked in a local cache named for the chain, and reads every list as ids with the node's word —
+drawing the posts it already holds from that cache at once, and reading the rest by id from the seed list's
+nodes in turn. **A Notis link lands in the extension**: a post's
 link stays a plain `https` link to the website, and one that opens a tab of its own is taken into the extension's
 workspace — the setting *a Notis link opens: on the site · here* turns that off — while a link followed inside a
 page stays on the site, where `add to workspace` hands the thread over. For that the extension asks, at install,
 for the site's post pages (`https://notis.fun/web/p/*`) and nothing else; its one script there holds no key and
-passes on a post id. **Firefox (140 or later) installs the signed `notis-extension-<ver>-firefox.xpi` from a
-release with a click, and the installed copy updates itself**: Mozilla signs it through addons.mozilla.org's
+passes on a post id. **Firefox (140 or later, and Firefox for Android 142 or later) installs the signed
+`notis-extension-<ver>-firefox.xpi` from a release with a click, and the installed copy updates itself**: Mozilla signs it through addons.mozilla.org's
 unlisted channel, so it has no store page, and the browser checks this repository's `updates` branch for a newer
 version — the one request made on the extension's behalf that you did not press. At install Firefox shows what
 the extension sends: what you publish and your `$NOTIS` sends, under your public key; there is no telemetry, and
@@ -475,18 +485,22 @@ from source, file for file.
 ### Light client
 
 `tools/nipopow-client` trusts a chain without holding it: it fetches NiPoPoW proofs from two or more
-nodes (`NODE_URLS`), verifies and compares them, and proves a key's boxes against the winning
-proof's `stateRoot`; as a library it proves a name's holder the same way, through the name's box. The trust model it
-embodies is `contracts/NIPOPOW_INTERFACE.md`.
+nodes (`NODE_URLS`), verifies and compares them, and proves what a key holds — each ledger's range,
+read whole — against the winning proof's `stateRoot`. As a library it proves a name's holder the same
+way, through the name's box, and checks a post row against the transaction that created it; the
+extension imports it for every one of those checks. The trust model it embodies is
+`contracts/NIPOPOW_INTERFACE.md`.
 
 ---
 
 ## API
 
-Everything is JSON over HTTP, hex for byte-valued fields: posts and threads, withdrawal, likes,
-vouches, invites, usernames, the karma, credit and invite views of an identity, credit transfer,
-blocks and status, AVL+ state proofs — one key (`GET /api/v1/proof/:key`) and a page of what a key holds
-(`GET /api/v1/range/:kind/:owner`) — NiPoPoW proofs
+Everything is JSON over HTTP, hex for byte-valued fields: posts and threads — lists read whole or
+light (`light=1`: ids with the node's word) and posts by id in one call (`POST /posts/batch`) —
+withdrawal, likes, vouches, invites, usernames, the karma, credit and invite views of an identity
+(confirmed, or with the pool's pending spends under `pending=1`), credit transfer, blocks and status,
+each block's proof (`GET /blocks/:height/proof`), AVL+ state proofs — one key
+(`GET /api/v1/proof/:key`) and a page of what a key holds (`GET /api/v1/range/:kind/:owner`) — NiPoPoW proofs
 (`GET /nipopow/proof/:m/:k`), link previews (`GET /shell/:id`), the authenticated mining endpoints
 of a miner node, and `/health` and `/stats` on the admin port. Wherever a route takes an identity,
 `@handle` is accepted for the key.
@@ -511,19 +525,25 @@ pnpm typecheck      # Type-check every member, src and test trees
 The gate before a commit is `pnpm -r build && pnpm -r typecheck && pnpm -r test`: tests resolve
 `@dagsocial/*` to `src`, so a green suite does not prove a package builds.
 
-**Ten workspace members** (`packages/*` and `tools/*`), in dependency order:
+**Thirteen workspace members** (`packages/*` and `tools/*`), in dependency order:
 
 - **`@dagsocial/wire`** — stream framing: VLQ, blake2b checksums, magic bytes.
-- **`@dagsocial/types`** — data structures, base58, the positional codecs, hashing, protocol
-  constants, box selection. Pure functions only.
+- **`@dagsocial/types`** — data structures, the positional codecs, hashing, protocol constants,
+  network profiles, box selection, the karma valuation. Pure functions only.
+- **`@dagsocial/node-reads`** — reading the node's HTTP answers for every client: capped reads under
+  one deadline, each route's byte cap and field checks, the whole-list bound.
+- **`@dagsocial/avltree`** — the authenticated AVL+ tree as Notis uses it, over `@ergots/avltree`.
 - **`@dagsocial/validation`** — pure stateless checks: PoW, signatures, block structure, Merkle
   roots. No panics on untrusted input.
+- **`@dagsocial/consensus`** — the state-transition rules: block application, the transaction engine,
+  the per-block settlement, decay, the coinbase split, the page of a key's holdings. No I/O: the node
+  runs the rules over its store, and the light client runs the holdings page over a proof.
 - **`@dagsocial/nipopow`** — NiPoPoW proofs over the header chain: the proof codecs, the verifier,
   the comparator, the prover a node serves.
 - **`@dagsocial/net`** — libp2p + Gossipsub relay, headers-first sync, peer discovery and penalties.
-- **`@dagsocial/node`** — Express server, UTXO engine, SQLite store, AVL+ state root, block creator,
-  the per-block settlement transaction, decay.
-- **`@dagsocial/web`** — the browser client, built with vite.
+- **`@dagsocial/node`** — Express server, SQLite store, AVL+ state root, block creator, the header
+  pipeline; it runs `consensus`' rules over its store.
+- **`@dagsocial/web`** — the browser client and the browser extension, built with vite.
 - **`@dagsocial/faucet`** (`tools/faucet`) — the invite service.
 - **`@dagsocial/e2e`** (`tools/e2e`) — the mesh suite: spawns built nodes and asserts the protocol
   across them over HTTP.
@@ -539,6 +559,8 @@ for every interface, and contracts are updated **before** implementation code.
 | `contracts/ARCHITECTURE.md` | System architecture, invariants, protocol versioning, the deploy gate |
 | `contracts/CONSTANTS.md` | Every protocol number, with what argues it and its standing |
 | `contracts/TYPES_INTERFACE.md` | Data structures, hashing, serialization, network profiles |
+| `contracts/CONSENSUS_INTERFACE.md` | The state-transition rules: where they run, how state reaches them, a block's cost |
+| `contracts/AVLTREE_INTERFACE.md` | The authenticated tree: neighbor lookups, the strict verifier, nodes loaded on first access |
 | `contracts/VALIDATION_INTERFACE.md` | Stateless validation functions |
 | `contracts/NODE_INTERFACE.md` | HTTP API, verifier, store, block application |
 | `contracts/MEMPOOL_INTERFACE.md` | Mempool semantics |
@@ -559,12 +581,15 @@ Built: the dual ledger; ordering-block consensus with a derived per-block settle
 price; likes as one-way karma spends with per-block accrual; invites with bonds and a budget;
 membership earned by vouches and likes; usernames; verifiable withdrawal; karma decay against a
 fixed supply pool; credit emission with the coinbase split, fees and storage rent; an AVL+ state
-root with box proofs, NiPoPoW proofs and a light client; the ASERT difficulty schedule; the reorg
-horizon; the protocol version schedule; libp2p networking with headers-first sync and fork choice by
-verified work; split mining; a browser client with its write surface; release packaging.
+root over the whole state, per-block proofs and a block cost budget; NiPoPoW proofs and a light
+client; the ASERT difficulty schedule; the reorg horizon; the protocol version schedule; libp2p
+networking with headers-first sync and fork choice by verified work; split mining; a browser client
+with its write surface; a browser extension that checks the chain's tip, its figures, the names it
+shows and every post it shows; release packaging with a Mozilla-signed extension.
 
 Deferred to future protocol versions: credit sinks (ads, boosts, tips); reply earning;
 karma-proportional PoW; storage pruning for lean nodes; view keys; parameter governance and treasury
 spending by karma vote; replacement of a pooled transaction by a higher-paying one; the username
-marketplace; username proofs in the light client; release of a name whose holder's karma is gone; a
-live fee market (the mechanism ships; the rate is 0).
+marketplace; proof of a name's absence in the light client; release of a name whose holder's karma is
+gone; a client that validates blocks without holding the state; a live fee market (the mechanism
+ships; the rate is 0).
