@@ -51,8 +51,10 @@ export interface DecayDeps {
  * and a mint separated by steps, which `ARCHITECTURE → The conservation axiom`
  * forbids by name.
  *
- * ⚠ The trigger is touch: the squaring fires per identity when the block
- * body consumes their boxes. There is no per-block walk.
+ * ⚠ The trigger is touch or payment (NODE_INTERFACE → Karma decay → "A block
+ * squares every identity it touches or pays"): the squaring fires per identity
+ * when the block body consumes their boxes or the income leg pays them. There
+ * is no per-block walk.
  *
  * `settledThrough` is `decaySettledThrough(record, h, cfg)` on the pre-body
  * record — the height a squaring at `h` writes as `lastDecayBlock`
@@ -75,19 +77,26 @@ export interface DecayPlan {
 }
 
 /**
- * Post-body karma projection for each identity the block's body touches.
+ * Post-body karma projection for every identity in the block's squared set:
+ * the owners the body touches and the owners the income leg pays
+ * (NODE_INTERFACE → Karma decay → "A block squares every identity it touches
+ * or pays"). A touched owner carries the body's post-body karma
+ * projection — surviving pre-body boxes less the body's own inputs, plus the
+ * body's new karma outputs for them. A payee the body does not touch keeps
+ * its pre-body karma boxes as read from the view.
  *
  * ⛔ **The plan must name boxes the settlement can consume — post-body, not
  * pre-body.** A touched identity had a body tx consume one of its pre-body
  * karma boxes, so naming pre-body boxes in the plan double-spends. The
  * projection removes consumed boxes and adds the body's karma change outputs.
  *
- * The identity record is not projected: `deriveKarmaDecay` reads it before the
- * body applies, so producer and applier read the same pre-body record
+ * The identity record is not projected: `deriveKarmaDecay` reads it before
+ * the body applies, so producer and applier read the same pre-body record
  * (NODE_INTERFACE → A derived quantity has TWO kinds of input).
  *
- * Both the creator and the applier call this with the same decoded txs over
- * the same pre-body state, so both derive the same post-body set.
+ * Both the creator and the applier call this with the same decoded txs and
+ * the same `payees` map over the same pre-body state, so both derive the
+ * same squared set.
  *
  * ⛔ **Order is a consensus obligation.** Entries are sorted ascending by
  * owner hex; `deriveKarmaDecay` emits plans in that order.
@@ -95,6 +104,7 @@ export interface DecayPlan {
 export function collectPostBodyKarma(
   view: Pick<StateView, 'getBox' | 'getKarmaBoxes'>,
   decodedTxs: { txId: string; inputs: string[]; outputs: AnyBox[] }[],
+  payees: ReadonlyMap<string, Uint8Array> = new Map(),
 ): Map<string, { owner: Uint8Array; boxes: KarmaBox[] }> {
   const allInputIds = new Set<string>();
   for (const tx of decodedTxs) {
@@ -102,7 +112,7 @@ export function collectPostBodyKarma(
   }
 
   const touchedOwnerHexes = new Set<string>();
-  const touchedOwners = new Map<string, Uint8Array>();
+  const owners = new Map<string, Uint8Array>();
 
   for (const id of allInputIds) {
     const box = view.getBox(id);
@@ -110,9 +120,12 @@ export function collectPostBodyKarma(
       const hex = bytesToHex((box as KarmaBox).owner);
       if (!touchedOwnerHexes.has(hex)) {
         touchedOwnerHexes.add(hex);
-        touchedOwners.set(hex, (box as KarmaBox).owner);
+        owners.set(hex, (box as KarmaBox).owner);
       }
     }
+  }
+  for (const [hex, owner] of payees) {
+    if (!owners.has(hex)) owners.set(hex, owner);
   }
 
   const bodyKarmaOutputs = new Map<string, KarmaBox[]>();
@@ -130,37 +143,50 @@ export function collectPostBodyKarma(
     }
   }
 
-  const sorted = [...touchedOwnerHexes].sort();
+  const sorted = [...owners.keys()].sort();
   const result = new Map<string, { owner: Uint8Array; boxes: KarmaBox[] }>();
   for (const hex of sorted) {
-    const preBody = view.getKarmaBoxes(touchedOwners.get(hex)!);
-    const surviving = preBody.filter((b) => b.id && !allInputIds.has(b.id));
-    const produced = (bodyKarmaOutputs.get(hex) ?? []).filter(
-      (b) => b.id && !allInputIds.has(b.id),
-    );
-    result.set(hex, { owner: touchedOwners.get(hex)!, boxes: [...surviving, ...produced] });
+    const owner = owners.get(hex)!;
+    const preBody = view.getKarmaBoxes(owner);
+    let boxes: KarmaBox[];
+    if (touchedOwnerHexes.has(hex)) {
+      const surviving = preBody.filter((b) => b.id && !allInputIds.has(b.id));
+      const produced = (bodyKarmaOutputs.get(hex) ?? []).filter(
+        (b) => b.id && !allInputIds.has(b.id),
+      );
+      boxes = [...surviving, ...produced];
+    } else {
+      // A payee the body does not touch keeps its pre-body boxes.
+      boxes = preBody;
+    }
+    result.set(hex, { owner, boxes });
   }
   return result;
 }
 
 /**
- * Derive the decay owed by each TOUCHED identity at `currentHeight`.
+ * Derive the decay owed by every identity in the block's squared set at
+ * `currentHeight` (NODE_INTERFACE → Karma decay → "A block squares every
+ * identity it touches or pays").
  *
  * ⛔ **Pure with respect to the ledger: it reads and returns, and writes
- * nothing.** The settlement emits its boxes and `commitDecayClocks` advances the
- * clocks, so a block whose settlement is refused has not moved a decay clock
- * either.
+ * nothing.** The settlement emits its boxes and `commitDecayClocks` writes
+ * the clocks, so a block whose settlement is refused has not moved a decay
+ * clock either.
  *
- * `postBodyKarma` is the post-body karma projection — for each identity the
- * block's body touched, the karma boxes they hold AFTER the body's user
- * transactions but BEFORE the settlement. The caller provides entries in
- * ascending owner-hex order (ARCHITECTURE → Karma decay). The identity record
- * is read from pre-body state (user transactions do not write it).
+ * `postBodyKarma` is the squared set's post-body karma projection — a touched
+ * owner holds the boxes they are left with after the body's user
+ * transactions, a payee the body does not touch holds their pre-body boxes
+ * (`collectPostBodyKarma`). The caller provides entries in ascending
+ * owner-hex order. The identity record is read from pre-body state (user
+ * transactions do not write it).
  *
- * The staleness gate is `owedPeriods(record, h, cfg) > 0`: the window-end
- * clock makes a separate predicate redundant (NODE_INTERFACE → Karma decay →
- * "Decay starts at the grace window's end, and from nothing"), and the
- * plan carries `settledThrough` for the clock write.
+ * A plan exists for every owner whose `owedPeriods(record, h, cfg) > 0`.
+ * Where the burn is positive the plan names the post-body boxes as inputs
+ * and `effective` as its newValue. Where the burn is zero the plan is a
+ * clock write and no leg: `consumedBoxIds` is empty, no karma output is
+ * emitted, and `newValue` is the face the plan did not touch (NODE_INTERFACE
+ * → Karma decay → "The floor forgives what it stops").
  */
 export function deriveKarmaDecay(
   deps: DecayDeps,
@@ -171,8 +197,6 @@ export function deriveKarmaDecay(
   const plans: DecayPlan[] = [];
 
   for (const [, { owner, boxes }] of postBodyKarma) {
-    if (boxes.length === 0) continue;
-
     const record = deps.getIdentityRecord(owner);
     const periods = owedPeriods(record, currentHeight, cfg);
     if (periods <= 0) continue;
@@ -180,15 +204,28 @@ export function deriveKarmaDecay(
     const faceTotal = boxes.reduce((sum, b) => sum + b.value, 0n);
     const effective = effectiveKarma(faceTotal, record, currentHeight, cfg);
     const burnAmount = faceTotal - effective;
-    if (burnAmount <= 0n) continue;
+    const settledThrough = decaySettledThrough(record, currentHeight, cfg);
 
-    plans.push({
-      owner,
-      consumedBoxIds: boxes.filter((b) => b.id).map((b) => b.id!),
-      newValue: effective,
-      burnAmount,
-      settledThrough: decaySettledThrough(record, currentHeight, cfg),
-    });
+    if (burnAmount > 0n) {
+      plans.push({
+        owner,
+        consumedBoxIds: boxes.filter((b) => b.id).map((b) => b.id!),
+        newValue: effective,
+        burnAmount,
+        settledThrough,
+      });
+    } else {
+      // Zero burn — a clock write and no leg. `consumedBoxIds` empty keeps
+      // the settlement's decay leg from naming any of the owner's boxes;
+      // `newValue` records the face the plan did not touch.
+      plans.push({
+        owner,
+        consumedBoxIds: [],
+        newValue: faceTotal,
+        burnAmount: 0n,
+        settledThrough,
+      });
+    }
   }
 
   return plans;

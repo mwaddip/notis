@@ -150,7 +150,7 @@ describe('deriveKarmaDecay', () => {
     expect(journal[0]!.burnAmount).toBe(12n - KARMA_MINIMUM);
   });
 
-  it.fails('a zero-burn plan at or below the minimum carries settledThrough and names no box', () => {
+  it('a zero-burn plan at or below the minimum carries settledThrough and names no box', () => {
     const { deps, postBodyKarma } = oneOwner(
       [makeKarmaBox({ id: 'old-box-1', value: 8n })],
       clock(ACTIVITY_AT),
@@ -167,7 +167,7 @@ describe('deriveKarmaDecay', () => {
     expect(journal[0]!.settledThrough).toBe(STALE_AT);
   });
 
-  it.fails('the floor\'s clock-write forgives the periods it stopped at', () => {
+  it('the floor\'s clock-write forgives the periods it stopped at', () => {
     // An identity sitting at the floor keeps no periods: the squaring writes
     // the clock, and effective karma over the owner's boxes and record
     // answers the same from the block onward.
@@ -248,7 +248,7 @@ describe('deriveKarmaDecay', () => {
     expect(recordMap.get(ownerKey)).toEqual(clock(0, settledThrough));
   });
 
-  it.fails('an owner in the squared set holding no karma box carries a zero-burn plan', () => {
+  it('an owner in the squared set holding no karma box carries a zero-burn plan', () => {
     const { deps, postBodyKarma, recordMap } = oneOwner([], clock(ACTIVITY_AT));
 
     const plans = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);

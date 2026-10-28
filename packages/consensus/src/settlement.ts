@@ -155,7 +155,7 @@ export interface SettlementDeps {
    * return one of this block's own markers. The block's marker ids are the only
    * thing that separates them.
    */
-  getLikeCarryBox: (author: Uint8Array, exclude: Set<string>) => LikeAccrualBox | null;
+  getLikeCarryBox: (author: Uint8Array, exclude: ReadonlySet<string>) => LikeAccrualBox | null;
   /**
    * Bonds whose probation deadline is at or before this height — every invitee's
    * `invitedAtBlock` up to `height − inviteProbationBlocks` — `(invitedAtBlock, id)`.
@@ -237,6 +237,98 @@ interface DerivedSettlement {
 
 /** Hex of a raw key, for grouping and for ordering. */
 const hexOf = (b: Uint8Array): string => bytesToHex(b);
+
+/**
+ * The income leg's like payout for one author in one block (NODE_INTERFACE →
+ * Per-block like settlement). `carryBoxId` names the author's pre-body carry
+ * box the derivation consumed, if one was consumed.
+ */
+export interface LikePayout {
+  author: Uint8Array;
+  paid: bigint;
+  carry: bigint;
+  carryBoxId?: string;
+}
+
+/**
+ * The like payouts for a block's body, one entry per credited author in
+ * ascending author hex (NODE_INTERFACE → The settlement transaction → "The
+ * income leg pays each owner once"). `pooled` is `Σ q` across authors — what
+ * the like leg returns to the pool.
+ *
+ * ⛔ **One statement of the formula.** `derive`'s income leg and the squared-set
+ * computation both call this; a second inline statement would drift (CONSENSUS_INTERFACE
+ * → The settlement build → "The payouts are one function's answer on both sides").
+ */
+export function computeLikePayouts(
+  body: SettlementBody,
+  getCarryBox: (author: Uint8Array, exclude: ReadonlySet<string>) => LikeAccrualBox | null,
+): { payouts: LikePayout[]; pooled: bigint } {
+  const PAYOUT_X = BigInt(LIKES_PER_KARMA_PAYOUT);
+  const markerIds = new Set(body.markers.map((m) => m.id));
+  const byAuthor = new Map<string, { author: Uint8Array; total: bigint }>();
+  for (const marker of body.markers) {
+    const key = hexOf(marker.author);
+    const entry = byAuthor.get(key);
+    if (entry) entry.total += marker.value;
+    else byAuthor.set(key, { author: marker.author, total: marker.value });
+  }
+  const authorsInOrder = [...byAuthor.keys()].sort();
+  const payouts: LikePayout[] = [];
+  let pooled = 0n;
+  for (const key of authorsInOrder) {
+    const entry = byAuthor.get(key)!;
+    const carryBox = getCarryBox(entry.author, markerIds);
+    let total = entry.total;
+    const carryBoxId = carryBox && carryBox.id ? carryBox.id : undefined;
+    if (carryBoxId !== undefined) total += carryBox!.value;
+    const q = total / PAYOUT_X;
+    payouts.push({
+      author: entry.author,
+      paid: q * (PAYOUT_X - 1n),
+      carry: total % PAYOUT_X,
+      carryBoxId,
+    });
+    pooled += q;
+  }
+  return { payouts, pooled };
+}
+
+/**
+ * The block's squared-set payees: every owner whose `income(owner) > 0`
+ * (NODE_INTERFACE → The settlement transaction → "The income leg pays each
+ * owner once"), in ascending owner hex. Pre-body reads throughout
+ * (CONSENSUS_INTERFACE → The settlement build): the body's like markers
+ * resolved through `computeLikePayouts`, the bonds the capture lists and the
+ * invitees' `lifetimeLikesReceived`, each releasable escrow's owner.
+ *
+ * ⛔ **One function on both sides.** `applyBlock` and `buildBlockSettlement`
+ * both call this before `deriveKarmaDecay`, so the squared set the plans
+ * cover and the one the income leg pays are the same set.
+ */
+export function computeSquaredSetPayees(
+  body: SettlementBody,
+  bonds: BondBox[],
+  escrows: VouchEscrowBox[],
+  getLifetimeLikes: (invitee: Uint8Array) => bigint,
+  getCarryBox: (author: Uint8Array, exclude: ReadonlySet<string>) => LikeAccrualBox | null,
+): Map<string, Uint8Array> {
+  const payees = new Map<string, Uint8Array>();
+  const { payouts } = computeLikePayouts(body, getCarryBox);
+  for (const p of payouts) {
+    if (p.paid > 0n) payees.set(hexOf(p.author), p.author);
+  }
+  const VEST_PER_LIKES = BigInt(INVITE_BOND_VEST_PER_LIKES);
+  for (const bond of bonds) {
+    const earned = getLifetimeLikes(bond.inviteePublicKey) / VEST_PER_LIKES;
+    const vested = earned < bond.value ? earned : bond.value;
+    if (vested > 0n) payees.set(hexOf(bond.inviterId), bond.inviterId);
+  }
+  for (const escrow of escrows) {
+    if (escrow.value > 0n) payees.set(hexOf(escrow.owner), escrow.owner);
+  }
+  return payees;
+}
 
 /**
  * Derive everything the body decides.
@@ -381,17 +473,10 @@ function derive(
   // `LIKE_KARMA_COST` is `1`. Summing value conserves at any cost and agrees
   // with the contract at this one, so the arithmetic does not quietly depend on
   // a constant it never names.
-  const PAYOUT_X = BigInt(LIKES_PER_KARMA_PAYOUT);
-  const markerIds = new Set(body.markers.map((m) => m.id));
-  const byAuthor = new Map<string, { author: Uint8Array; total: bigint }>();
-  // Marker inputs first, in committed transaction order — the enumeration order
-  // the block already fixes, so it needs no sort and no rule of its own.
+  // Marker inputs first, in committed transaction order — the enumeration
+  // order the block already fixes, so it needs no sort and no rule of its own.
   for (const marker of body.markers) {
     inputs.push(marker.id);
-    const key = hexOf(marker.author);
-    const entry = byAuthor.get(key);
-    if (entry) entry.total += marker.value;
-    else byAuthor.set(key, { author: marker.author, total: marker.value });
   }
   // 3b′. The price leg — every KarmaPriceBox the body's transactions created
   // — a post's price or a burn's — in committed transaction order. Their sum
@@ -400,26 +485,17 @@ function derive(
     inputs.push(price.id);
     poolSink += price.value;
   }
-  // Then each credited author's carry box, ascending author-hex — the order the
-  // contract pins for emitting an author's outputs.
-  const authorsInOrder = [...byAuthor.keys()].sort();
-  const likePayouts: Array<{ author: Uint8Array; paid: bigint; carry: bigint }> = [];
-  for (const key of authorsInOrder) {
-    const entry = byAuthor.get(key)!;
-    const carryBox = deps.getLikeCarryBox(entry.author, markerIds);
-    let total = entry.total;
-    if (carryBox && carryBox.id) {
-      inputs.push(carryBox.id);
-      total += carryBox.value;
-    }
-    const q = total / PAYOUT_X;
-    likePayouts.push({
-      author: entry.author,
-      paid: q * (PAYOUT_X - 1n),
-      carry: total % PAYOUT_X,
-    });
-    poolSink += q;
+  // Then each credited author's carry box, ascending author-hex — the order
+  // the contract pins for emitting an author's outputs. `computeLikePayouts`
+  // is the one derivation `applyBlock`'s pre-body payee computation and this
+  // leg both read (CONSENSUS_INTERFACE → The settlement build → "The payouts
+  // are one function's answer on both sides").
+  const likeResult = computeLikePayouts(body, deps.getLikeCarryBox);
+  const likePayouts = likeResult.payouts;
+  for (const p of likePayouts) {
+    if (p.carryBoxId !== undefined) inputs.push(p.carryBoxId);
   }
+  poolSink += likeResult.pooled;
 
   // 3c. The bonds settling at this height (ARCHITECTURE → Bond outcomes). The
   // vested part returns to the inviter out of the `BondBox`; ⛔ **the unvested
@@ -588,7 +664,10 @@ function derive(
     });
   }
   for (const plan of decayPlans) {
-    if (plan.newValue > 0n) {
+    // A zero-burn plan is a clock write and no leg (NODE_INTERFACE → Karma
+    // decay → "The floor forgives what it stops"): no consumed boxes, no
+    // emission. The owner's own karma stands post-body.
+    if (plan.consumedBoxIds.length > 0 && plan.newValue > 0n) {
       outputs.push({
         boxType: 'karma',
         value: plan.newValue,
@@ -1342,7 +1421,6 @@ export function buildBlockSettlement(
     const outputs = tx.outputs.map((out, i) => materializeOutput(out, txId, i));
     return { tx, txId, inputs: tx.inputs, outputs };
   });
-  const postBody = collectPostBodyKarma(view, decoded);
   const escrows = view.getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
   // The leg is the pre-body capture less every vouch a body transaction
   // names as an input (NODE_INTERFACE → The settlement transaction → "The
@@ -1354,6 +1432,28 @@ export function buildBlockSettlement(
   for (const d of decoded) for (const inp of d.inputs) spent.add(inp);
   const lapsed = lapseLegOf(lapsedCapture, spent);
   const capturedPool = view.getBackerPoolBox();
+
+  // The squared set's payees: one function's answer on both sides
+  // (CONSENSUS_INTERFACE → The settlement build). Reads the body's markers
+  // through a sketch and the state-derived legs through pre-body captures.
+  const invitedAtFloor = height - ctx.inviteProbationBlocks;
+  const bondsSettling = invitedAtFloor <= 0
+    ? []
+    : view.getBondsInvitedAt(invitedAtFloor, MAX_BOND_SETTLEMENTS_PER_BLOCK);
+  const sketch = sketchBodyForPayees(decoded);
+  const markerIdSet = new Set(sketch.markers.map((m) => m.id));
+  const getCarryBox = (author: Uint8Array, exclude: ReadonlySet<string>): LikeAccrualBox | null => {
+    for (const box of view.getLikeAccrualBoxes(author)) {
+      if (box.id && !exclude.has(box.id) && !markerIdSet.has(box.id)) return box;
+    }
+    return null;
+  };
+  const payees = computeSquaredSetPayees(
+    sketch, bondsSettling, escrows,
+    (invitee) => view.getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
+    getCarryBox,
+  );
+  const postBody = collectPostBodyKarma(view, decoded, payees);
   // The build writes no state, and `deriveKarmaDecay` writes no record.
   const decayDeps: DecayDeps = {
     getIdentityRecord: (identityId) => view.getIdentityRecord(identityId),
@@ -1376,4 +1476,34 @@ export function buildBlockSettlement(
     predictSettlementBody(view, decoded, validator),
     minerOwner,
   );
+}
+
+/**
+ * The pre-body body sketch for the squared-set payee computation
+ * (CONSENSUS_INTERFACE → The settlement build): markers alone, in committed
+ * transaction order. The other `SettlementBody` fields are untouched by
+ * `computeSquaredSetPayees`.
+ */
+export function sketchBodyForPayees(
+  decoded: ReadonlyArray<{ outputs: AnyBox[] }>,
+): SettlementBody {
+  const sketch: SettlementBody = {
+    fees: 0n,
+    rent: 0n,
+    actors: 0,
+    feeBoxIds: [],
+    invites: [],
+    markers: [],
+    priceBoxes: [],
+    unstakes: [],
+  };
+  for (const d of decoded) {
+    for (const out of d.outputs) {
+      if (out.boxType === 'like_accrual') {
+        const k = out as LikeAccrualBox;
+        if (k.id) sketch.markers.push({ id: k.id, author: k.author, value: k.value });
+      }
+    }
+  }
+  return sketch;
 }

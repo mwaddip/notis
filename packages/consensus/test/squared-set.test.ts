@@ -5,7 +5,7 @@
 // once". Each case enters through `applyBlock` over a block built by
 // `candidateBlock` and asserts the effects (`lastDecayBlock`, the
 // settlement's inputs and outputs, the pool's change, the owner's boxes
-// after). A case marked `it.fails` is one the current tree gets wrong.
+// after).
 import { describe, it, expect } from 'vitest';
 import {
   KARMA_DECAY_AMOUNT,
@@ -193,7 +193,7 @@ describe('rule 2–4: a block squares every identity it touches or pays', () => 
   // stale from `A = 0`, and the block at `H = 20` carries one like whose
   // marker tips a pre-seeded accrual of 4 to a payout — `q = 1`,
   // `paid = q · (x − 1) = 4`.
-  it.fails('(c) a stale author paid by a like is squared: own + income consumed, effective unmarked, payout in new income box, clock written', () => {
+  it('(c) a stale author paid by a like is squared: own + income consumed, effective unmarked, payout in new income box, clock written', () => {
     const view = genesisView();
     const author = seededIdentity('c/author');
     view.putIdentityRecord(author.userId, identityRecord({ lastActivityBlock: 0 }));
@@ -241,7 +241,7 @@ describe('rule 2–4: a block squares every identity it touches or pays', () => 
 
   // (d) The same for a stale inviter paid a vested bond. Empty body + a
   // pre-existing bond settling at `H`. The inviter is in the squared set.
-  it.fails('(d) a stale inviter paid a vested bond is squared: own consumed, effective unmarked, vested amount in income box, clock written', () => {
+  it('(d) a stale inviter paid a vested bond is squared: own consumed, effective unmarked, vested amount in income box, clock written', () => {
     const view = genesisView();
     const inviter = seededIdentity('d/inviter');
     view.putIdentityRecord(inviter.userId, identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1 }));
@@ -287,7 +287,7 @@ describe('rule 2–4: a block squares every identity it touches or pays', () => 
   // consumes none of their boxes (none in pre-body state), the payout in
   // a new income box; and the floor's clock-write forgives the owed
   // periods it stopped at.
-  it.fails('(e) the floor: a stale author at KARMA_MINIMUM paid by a like has their clock written, no leg; at settledThrough + I the floor stands', () => {
+  it('(e) the floor: a stale author at KARMA_MINIMUM paid by a like has their clock written, no leg; at settledThrough + I the floor stands', () => {
     const view = genesisView();
     const author = seededIdentity('e/author');
     view.putIdentityRecord(author.userId, identityRecord({ lastActivityBlock: 0 }));
@@ -346,7 +346,7 @@ describe('rule 2–4: a block squares every identity it touches or pays', () => 
   // (f) A paid owner holding no karma box: a clock write and the income
   // box, no leg. Empty body + a pre-existing bond settling for the
   // inviter, who holds no karma.
-  it.fails('(f) a paid owner holding no karma box: clock written and income box emitted, no decay leg', () => {
+  it('(f) a paid owner holding no karma box: clock written and income box emitted, no decay leg', () => {
     const view = genesisView();
     const inviter = seededIdentity('f/inviter');
     view.putIdentityRecord(inviter.userId, identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1 }));
@@ -387,7 +387,7 @@ describe('rule 2–4: a block squares every identity it touches or pays', () => 
   // (g) An owner touched at its floor: a free name claim. The claim's own
   // box of value 10 (the floor) is spent and re-emitted at the same value;
   // the clock is written, no leg.
-  it.fails('(g) an owner touched at its floor (free name claim): clock written, no leg', () => {
+  it('(g) an owner touched at its floor (free name claim): clock written, no leg', () => {
     const view = genesisView();
     const owner = seededIdentity('g/owner');
     view.putIdentityRecord(owner.userId, identityRecord({ lastActivityBlock: 0 }));
