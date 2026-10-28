@@ -317,8 +317,8 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // the payload moves with it. `network.test.ts` holds the two together.
   // TYPES_INTERFACE → Network profiles → "Testnet's names its release line"
   // ARCHITECTURE → Deploy gate → "A reset mints a new genesis proof payload"
-  // hex("dagsocial/testnet/genesis-proof/0.3")
-  genesisProofPayload: '646167736f6369616c2f746573746e65742f67656e657369732d70726f6f662f302e33',
+  // hex("dagsocial/testnet/genesis-proof/0.4")
+  genesisProofPayload: '646167736f6369616c2f746573746e65742f67656e657369732d70726f6f662f302e34',
   // Overridden for the same reason as the payload above — the spread would hand
   // testnet mainnet's root. Fourteen leaves, height byte `04`: `0x01` box ×7 (the
   // genesis proof, the emission box, the karma pool box, the backer pool box, one
@@ -330,7 +330,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // backer stake box carry no index entry. What separates this root from
   // mainnet's: the proof payload, the faucet identity (mainnet names none) and
   // the backer table (mainnet's is empty; this one seeds a single row).
-  genesisStateRoot: 'c0da272f8e01ef1ab37d46719b6a897d1ab7af2d519dc00309ed6382ce7e22de04',
+  genesisStateRoot: 'a4a84bb6a44f962ec0eff18174c4cc724783c93e0376e7c7971f949e6808a07d04',
   // TYPES_INTERFACE → "genesisId pins block 1, and is empty until a network
   // has one" — testnet has none pinned.
   genesisId: '',
