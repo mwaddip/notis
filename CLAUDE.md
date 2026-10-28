@@ -1,6 +1,6 @@
 # Notis
 
-An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG**
+An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG**
 (author-sovereign content) and a **UTXO ledger** (non-tradeable **karma** + tradeable
 **credits**); every post, like and withdrawal is a transaction on the UTXO ledger, and withdrawal is
 the author's only act over a post. Consensus is single-phase PoW — validator-produced ordering blocks; posts and

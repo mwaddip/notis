@@ -13,7 +13,7 @@ standing context — read it and the linked docs before touching code.
 6. `../../contracts/AVLTREE_INTERFACE.md` — this package's contract.
 
 ## What Notis is
-An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign)
+An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** (author-sovereign)
 and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and withdrawal
 is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post. Consensus is
 single-phase PoW over validator-produced ordering blocks. TypeScript, pnpm workspaces, Node.js ≥ 22.

@@ -15,7 +15,7 @@ context — read it and the linked docs before touching code.
 7. Your task's spec in `../../docs/specs/`.
 
 ## What Notis is
-An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** and a **UTXO
+An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** and a **UTXO
 ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
 withdrawal is the author's only act over a post. Consensus is single-phase PoW — validator-produced
 ordering blocks, gossiped and synced peer-to-peer; posts and likes ride them as ordinary

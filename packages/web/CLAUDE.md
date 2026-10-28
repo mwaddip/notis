@@ -18,7 +18,7 @@ context — read it and the linked docs before touching code.
 infer weights from a neighbouring package's.
 
 ## What Notis is
-An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** and a **UTXO
+An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** and a **UTXO
 ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
 withdrawal is the author's only act over a post. TypeScript, pnpm workspaces, Node ≥ 22.
 
