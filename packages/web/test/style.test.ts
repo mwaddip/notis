@@ -55,6 +55,14 @@ describe('app.css — a word control wears no box', () => {
     expect(css).toMatch(/\.seg \.word\s*\{[^}]*color: var\(--inkMute\)/);
     expect(css).toMatch(/\.seg \.word\[aria-pressed="true"\]\s*\{[^}]*color: var\(--ink\)/);
   });
+  // A button directly inside a window field sizes to its label and reads from
+  // the field's left edge — the stretch default of a flex column centres text
+  // on a button. The rule covers every window with word controls in a .field
+  // (profile, wallet, settings, author), so no per-class override is needed
+  // (HOUSE_STYLE → Interaction → "A word is a control, and it wears no box").
+  it('.winbody .field > button sizes to its label (no stretched centred text)', () => {
+    expect(css).toMatch(/\.winbody \.field > button\s*\{[^}]*align-self: flex-start/);
+  });
 });
 
 describe('app.css — the content grammar and the composer type control', () => {
