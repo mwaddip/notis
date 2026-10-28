@@ -190,10 +190,12 @@ describe('the listings under pending=1', () => {
     // the running node's `staleThresholdBlocks` and `decayIntervalBlocks`
     // (NODE_INTERFACE → Karma transition rules → "Engine inputs the rule
     // needs"), and the two numbers decide what owed decay reads at
-    // `tip + 1`. One past the threshold so an owner with
-    // `lastActivityBlock = 0` is stale under both `tip` and `tip + 1`
+    // `tip + 1`. 150 intervals past the window end so an owner with
+    // `lastActivityBlock = 0` owes 150 periods at `tip + 1` and 149 at
+    // `tip` — a face of 1000 reads effective `250` at the next height,
+    // which puts `E − KARMA_MINIMUM` in the invite bond range
     // (TYPES_INTERFACE → Identity record and karma valuation).
-    pinTipAt(nodeConfig.karmaStaleThresholdBlocks + 1);
+    pinTipAt(nodeConfig.karmaStaleThresholdBlocks + 150 * nodeConfig.karmaDecayIntervalBlocks + 1);
   });
 
   afterAll(() => {
@@ -218,9 +220,9 @@ describe('the listings under pending=1', () => {
     };
   }
 
-  // Stale from genesis: `lastActivityBlock = 0` with the pinned tip at
-  // `karmaStaleThresholdBlocks` makes `isIdentityStale` true at
-  // `tip + 1 = karmaStaleThresholdBlocks + 1`.
+  // `lastActivityBlock = 0` with the pinned tip past
+  // `karmaStaleThresholdBlocks + karmaDecayIntervalBlocks` so
+  // `owedPeriods > 0` at `tip + 1`.
   function staleRootRecord(): Parameters<typeof putIdentityRecord>[1] {
     return {
       lastActivityBlock: 0,
@@ -583,17 +585,20 @@ describe('the listings under pending=1', () => {
     const seedKarmaValue = 1000n;
     const seeded = seedKarma(owner.pub, seedKarmaValue);
 
-    // Pin a tip whose next height is a decay-interval multiple of
-    // `(tip + 1 - lastActivityBlock)`: `(tip - 0) % interval ≠ 0` and
-    // `(tip + 1 - 0) % interval = 0`, so periods counted at `tip + 1`
-    // exceed periods at `tip` by one (TYPES_INTERFACE → Identity record
-    // and karma valuation).
+    // Pin a tip whose next height is a decay-interval boundary off the
+    // record's `clockStart` — `lastActivityBlock + staleThresholdBlocks` for
+    // a never-active record: `(tip - clockStart) % interval ≠ 0` and
+    // `(tip + 1 - clockStart) % interval = 0`, so periods counted at
+    // `tip + 1` exceed periods at `tip` by one (TYPES_INTERFACE → Identity
+    // record and karma valuation). The tip is above the beforeAll's pin so
+    // `pinTipAt` moves `MAX(height)` to it, and well below `clockStart +
+    // (face / decayAmount) · interval` so the floor stays off both reads.
     const interval = nodeConfig.karmaDecayIntervalBlocks;
-    const base = nodeConfig.karmaStaleThresholdBlocks + 1;
-    const tipForNewInterval = base + ((interval - 1 - (base % interval)) % interval);
+    const threshold = nodeConfig.karmaStaleThresholdBlocks;
+    const tipForNewInterval = threshold + 160 * interval - 1;
     pinTipAt(tipForNewInterval);
-    expect((tipForNewInterval + 1 - 0) % interval).toBe(0);
-    expect((tipForNewInterval - 0) % interval).not.toBe(0);
+    expect((tipForNewInterval + 1 - threshold) % interval).toBe(0);
+    expect((tipForNewInterval - threshold) % interval).not.toBe(0);
 
     const firstBond = nodeConfig.inviteBondMin;
     const invitee1 = newIdentity().pub;

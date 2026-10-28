@@ -93,13 +93,15 @@ function staleRecord(): IdentityRecord {
 }
 
 /** The height at which decay fires for every seeded identity under the devnet
- *  profile: threshold 500, interval 3. 501 catches each at owedPeriods > 0. */
-const TARGET_HEIGHT = 501;
+ *  profile: threshold 500, interval 3. `clockStart` is `0 + 500 = 500` for a
+ *  record with `lastActivityBlock: 0, lastDecayBlock: 0`; 167 intervals past
+ *  that puts each identity at `owedPeriods = 167`. */
+const TARGET_HEIGHT = 500 + 167 * 3;
 
 /** A karma value whose effective karma at TARGET_HEIGHT stays above the floor
  *  plus a like's cost: 167 periods × 5 karma per period = 835 reserved to the
  *  burn, plus the floor and a margin for the spend. */
-const STALE_KARMA_VALUE = 2000n + KARMA_DECAY_AMOUNT * BigInt(Math.floor(TARGET_HEIGHT / 3));
+const STALE_KARMA_VALUE = 2000n + KARMA_DECAY_AMOUNT * BigInt(167);
 
 function buildLikeNamingBoth(
   owner: Identity,

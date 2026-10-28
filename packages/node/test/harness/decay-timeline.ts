@@ -283,10 +283,15 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
           // emits its boxes** (NODE_INTERFACE → The settlement transaction).
           // The harness stands in for that emission so the timeline keeps
           // testing the decay ARITHMETIC — the staleness predicate, the
-          // interval count, the karma floor — which this unit did not touch.
+          // interval count, the karma floor.
+          //
+          // `commitDecayClocks(deps, plans)` writes each plan's
+          // `settledThrough` as `lastDecayBlock` (NODE_INTERFACE → Karma decay
+          // → "A squaring writes the height it settles through, never its
+          // own height").
           const entries = m.decay.deriveKarmaDecay(decayDeps(m), allKarmaPostBody(m), height, scenario.cfg);
           applyDecayPlans(m, entries, height);
-          m.decay.commitDecayClocks(decayDeps(m), entries, height);
+          m.decay.commitDecayClocks(decayDeps(m), entries);
           for (const entry of entries) {
             const ownerHex = Buffer.from(entry.owner).toString('hex');
             decayEvents.push({

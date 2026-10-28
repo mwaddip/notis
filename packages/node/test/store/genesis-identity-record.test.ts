@@ -16,13 +16,17 @@ import { TEST_GENESIS_PROOF_PAYLOAD } from '../helpers.js';
  * `ensureSystemKarmaBox` is the one non-decay karma producer that runs
  * **outside** block application, so no block's activity bump writes its
  * record: the system identity would otherwise hold its whole stake with no
- * clock at all and decay would fall back to "never active".
+ * clock at all and decay would fall back to "never active"
+ * (`EMPTY_IDENTITY_RECORD`, `lastActivityBlock: 0`).
  *
- * That fallback is not equivalent. The guard (`height <= threshold` → not
- * stale) happens to make *staleness* agree, but `owedPeriods` counts from 0
- * instead of from `genesisHeight`, so the very first firing over-charges
- * whenever `(threshold + 1) % interval === 0`. The config below is chosen to sit
- * exactly on that boundary, because a config off it would let the bug through.
+ * That fallback is not equivalent. `owedPeriods` counts from
+ * `max(lastActivityBlock + staleThresholdBlocks, lastDecayBlock)`
+ * (TYPES_INTERFACE → Identity record and karma valuation), so a record with
+ * `lastActivityBlock: 0` has `clockStart` at `staleThresholdBlocks` and one
+ * with `lastActivityBlock: genesisHeight` has `clockStart` at
+ * `genesisHeight + staleThresholdBlocks`. At every height between those two
+ * `clockStart`s and the next period after, the first owes more periods than
+ * the second.
  */
 
 async function importFresh() {
@@ -155,14 +159,13 @@ describe('genesis identity record (Spec G phase D)', () => {
     s.initDb(':memory:');
     s.system.ensureSystemKarmaBox(TEST_GENESIS_PROOF_PAYLOAD, faucetPubKey(), 0);
 
-    // threshold 11, interval 3 — chosen so `(threshold + 1) % interval === 0`,
-    // the exact boundary where counting from 0 buys a whole extra interval.
+    // threshold 11, interval 3 — chosen so a never-active clock has
+    // `clockStart = 11` and the genesis clock has `clockStart = 12`, and at
+    // height 23 the two differ by exactly one period:
     //
-    //   genesis clock (1) : floor((12 − 1) / 3) = 3 periods → burn 15
-    //   never-active  (0) : floor((12 − 0) / 3) = 4 periods → burn 20
-    //
-    // 15 is what the box-height clock produced, `createdAtBlock` being 1.
-    const entries = s.decay.deriveKarmaDecay(decayDeps(s), allKarmaPostBody(s), 12, {
+    //   genesis clock (1) : floor((23 − 12) / 3) = 3 periods → burn 15
+    //   never-active  (0) : floor((23 − 11) / 3) = 4 periods → burn 20
+    const entries = s.decay.deriveKarmaDecay(decayDeps(s), allKarmaPostBody(s), 23, {
       staleThresholdBlocks: 11,
       decayIntervalBlocks: 3,
       decayAmount: 5n,

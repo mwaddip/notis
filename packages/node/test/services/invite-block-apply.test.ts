@@ -554,27 +554,29 @@ describe('the invite at block application', () => {
   });
 
   it('an invitee idle past the threshold decays from the claim height, not from 0', async () => {
-    // The boundary path: the epoch shifts where decay measures from. An
-    // invitee whose clock started at 0 would owe periods back to genesis; one
-    // whose clock starts at the claim height owes only from there.
+    // The epoch shifts where decay measures from. An invitee whose
+    // `lastActivityBlock` is 0 owes periods back from `staleThresholdBlocks`;
+    // one whose `lastActivityBlock` is the claim height owes periods from
+    // `claimHeight + staleThresholdBlocks` (TYPES_INTERFACE → Identity record
+    // and karma valuation).
     //
-    // Pick a claim height and test height so the owed-periods differ enough
-    // to produce different effective karma. With KARMA_DECAY_AMOUNT = 5 and
-    // FIXTURE_BOND_KARMA = 25, it takes 3 periods to reach the floor (10).
-    // The claim-epoch identity must owe <= 2 periods while the clock-0
-    // identity owes >= 3.
+    // Pick a claim height and test height so the two owed-periods counts
+    // differ enough to produce different effective karma: 29 periods for the
+    // claim-epoch identity, 29 + 28 = 57 for the clock-0 identity.
     const db = await importDb();
     db.initDb(':memory:');
     const records = await importRecords();
 
-    const { isIdentityStale, owedPeriods: owedPeriodsFromDecay, effectiveKarma } =
+    const { owedPeriods: owedPeriodsFromDecay, effectiveKarma } =
       await import('@dagsocial/types');
 
-    // Claimed at a height that puts the claim-epoch owed periods at exactly 1
-    // when measured at boundaryHeight, while the clock-0 identity owes many
-    // more. claimHeight chosen so (boundaryHeight - claimHeight) / interval = 1.
+    // `boundaryHeight = claimHeight + staleThresholdBlocks + 29·interval` so
+    // the claim-epoch's `clockStart` is `claimHeight + staleThresholdBlocks`
+    // and 29 periods have elapsed.
     const claimHeight = KARMA_STALE_THRESHOLD_BLOCKS;
-    const boundaryHeight = claimHeight + KARMA_STALE_THRESHOLD_BLOCKS + KARMA_DECAY_INTERVAL_BLOCKS;
+    const EXPECTED_PERIODS = 29;
+    const boundaryHeight =
+      claimHeight + KARMA_STALE_THRESHOLD_BLOCKS + EXPECTED_PERIODS * KARMA_DECAY_INTERVAL_BLOCKS;
 
     records.putIdentityRecord(uid('boundary-invitee'), {
       lastActivityBlock: claimHeight,
@@ -597,27 +599,27 @@ describe('the invite at block application', () => {
 
     const record = records.getIdentityRecord(uid('boundary-invitee'))!;
 
-    // Stale: the identity has been idle for threshold + interval blocks.
-    expect(isIdentityStale(record, boundaryHeight, cfg.staleThresholdBlocks)).toBe(true);
-    const periods = owedPeriodsFromDecay(record, boundaryHeight, cfg.decayIntervalBlocks);
-    // owedPeriods = floor((boundaryHeight − claimHeight) / interval) = threshold/interval + 1 = 29
-    expect(periods).toBe(Math.floor(KARMA_STALE_THRESHOLD_BLOCKS / KARMA_DECAY_INTERVAL_BLOCKS) + 1);
+    const periods = owedPeriodsFromDecay(record, boundaryHeight, cfg);
+    expect(periods).toBe(EXPECTED_PERIODS);
 
-    // Contrast: with clock 0 the owed periods are much larger.
+    // Contrast: with clock 0 the owed periods are
+    //   floor((boundaryHeight − staleThresholdBlocks) / interval)
+    //   = (claimHeight + 29·interval) / interval
+    //   = EXPECTED_PERIODS + staleThresholdBlocks / interval
     const clockZero = { ...record, lastActivityBlock: 0 };
-    const periodsFromZero = owedPeriodsFromDecay(clockZero, boundaryHeight, cfg.decayIntervalBlocks);
+    const periodsFromZero = owedPeriodsFromDecay(clockZero, boundaryHeight, cfg);
     expect(periodsFromZero).toBeGreaterThan(periods);
+    expect(periodsFromZero).toBe(
+      EXPECTED_PERIODS + Math.floor(KARMA_STALE_THRESHOLD_BLOCKS / KARMA_DECAY_INTERVAL_BLOCKS),
+    );
 
-    // Effective karma: from the claim height, only 29 periods of decay
-    // (5 × 29 = 145, which exceeds 25 → clamped to min(25, 10) = 10).
-    // But from clock 0, even MORE periods are owed.
-    // To show the difference clearly, use a larger face value.
+    // Effective karma: 200 - 29·5 = 55 for the claim-epoch, well above the
+    // floor; from clock 0 the many more periods take the face past the floor
+    // and the clamp hands back the floor.
     const face = 200n;
     const effective = effectiveKarma(face, record, boundaryHeight, cfg);
     const effectiveFromZero = effectiveKarma(face, clockZero, boundaryHeight, cfg);
-    // From the claim height: 200 - 29*5 = 200 - 145 = 55
     expect(effective).toBe(face - BigInt(periods) * cfg.decayAmount);
-    // From clock 0: many more periods, floored to minimum.
     expect(effectiveFromZero).toBeLessThan(effective);
   });
 
@@ -1100,8 +1102,8 @@ describe('the invite at block application — decay adjacency', () => {
   });
 
   it('the counter survives to the bond deadline under virtual decay', async () => {
-    // Under virtual decay the invitee is untouched at the deadline, so no
-    // decay settlement leg fires — the counter is trivially preserved. The
+    // The invitee is untouched at the deadline but the invitee stays in
+    // payees via the bond vest — the counter the vest reads survives. The
     // write-collision between decay and bond settlement needs a touch at the
     // deadline height; an empty block cannot reach it.
     const db = await import('../../src/store/db.js');
@@ -1225,14 +1227,18 @@ describe('the invite at block application — decay adjacency', () => {
     const deadline = invitedAtBlock + DECAY_PROBATION;
     while (ordering.getCurrentHeight() < deadline) await mine();
 
-    // Under virtual decay no empty block touches the invitee, so no decay
-    // fires and the clock is unchanged from the last touch.
+    // No empty block touches the invitee, so the counter the invite body
+    // bumped stands at the deadline.
     const after = records.getIdentityRecord(invitee.userId)!;
     expect(after.lifetimeLikesReceived).toBe(earned);
-    // The bond settled on the correct counter — no forfeit.
+    // The bond settled on the counter it reads — the box the invite made is
+    // consumed in the vest.
     expect(utxo.getBox(bond.id!)).toBeNull();
-    // The inviter's final karma is their invite's change (bond + floor + 5
-    // less the bond = floor + 5) plus the 1 karma the bond vested.
-    expect(utxo.getKarmaValue(inviter.userId)).toBe(KARMA_MINIMUM + 5n + 1n);
+    // The inviter is a payee at the deadline (the vest), so the settlement
+    // squares them (NODE_INTERFACE → Karma decay → "A block squares every
+    // identity it touches or pays"). The inviter's change box of value
+    // `KARMA_MINIMUM + 5n` holds through many periods past the window end,
+    // which clamps to the floor; the 1 karma the bond vests sits on top.
+    expect(utxo.getKarmaValue(inviter.userId)).toBe(KARMA_MINIMUM + 1n);
   });
 });
