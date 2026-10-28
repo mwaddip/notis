@@ -8,7 +8,7 @@ index.html                 Introduction        /
 first-principles/          First principles    /first-principles/
 architecture/              Architecture        /architecture/
 economy/                   Economy             /economy/
-karma/                     Karma               /karma/
+rep/                       Rep                 /rep/
 assets/_nav.html           shared sidebar: mark, brand, nav, theme control (SSI include)
 assets/style.css           tokens, theme, shell, and every component used site-wide
 assets/site.js             theme, sidebar, active nav item, scroll-hover suppression
@@ -78,11 +78,11 @@ Passwordless sudo is available for `linuxuser@notis.fun`.
 
 ```bash
 # one page
-scp docs/site/karma/index.html linuxuser@notis.fun:/tmp/karma-index.html
+scp docs/site/rep/index.html linuxuser@notis.fun:/tmp/rep-index.html
 ssh linuxuser@notis.fun '
-  sudo install -d -o root -g root -m 755 /var/www/docs.notis.fun/karma
-  sudo install -o root -g root -m 664 /tmp/karma-index.html \
-       /var/www/docs.notis.fun/karma/index.html'
+  sudo install -d -o root -g root -m 755 /var/www/docs.notis.fun/rep
+  sudo install -o root -g root -m 664 /tmp/rep-index.html \
+       /var/www/docs.notis.fun/rep/index.html'
 
 # the nav (touches every page's sidebar at once — back it up first)
 scp docs/site/assets/_nav.html linuxuser@notis.fun:/tmp/_nav.html
@@ -113,8 +113,8 @@ Verify afterwards — a broken include fails quietly, serving a page with no
 sidebar rather than an error:
 
 ```bash
-curl -s https://docs.notis.fun/karma/ | grep -c 'siteNav'          # expect 1+
-curl -s https://docs.notis.fun/karma/ | grep -c 'include virtual'  # expect 0
+curl -s https://docs.notis.fun/rep/ | grep -c 'siteNav'            # expect 1+
+curl -s https://docs.notis.fun/rep/ | grep -c 'include virtual'    # expect 0
 curl -s -o /dev/null -w '%{http_code}\n' https://docs.notis.fun/assets/style.css   # expect 200
 curl -s -o /dev/null -w '%{http_code}\n' https://docs.notis.fun/assets/fonts/Plus-Jakarta-Sans.woff2
 ```
@@ -122,6 +122,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://docs.notis.fun/assets/fonts/Plu
 `docs.notis.fun` serves static files normally (`try_files $uri $uri/ =404`), so
 `/assets/` needs no nginx whitelist — unlike `notis.fun`, whose `location /`
 returns 404 for anything not explicitly listed.
+
+The one redirect: `/karma` and everything under it answers 301 to `/rep/` — a
+`location = /karma` and a `location ^~ /karma/` in the vhost, ahead of `location /`.
 
 To re-sync this directory from the server:
 
@@ -170,5 +173,5 @@ wrong is visible:
   needs it.
 - **Reputation is `rep`.** **Rep** the unit, **reputation** the concept; never
   "standing" for a person's reputation, never "score". `karma` is the API's
-  name for it, stated once where a page needs it. The page at `/karma/` keeps
-  its name and URL.
+  name for it, stated once where a page needs it. The page is `/rep/`, titled
+  "Reputation not for sale."; `/karma/` answers 301 to it.
