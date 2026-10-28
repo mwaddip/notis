@@ -17,6 +17,7 @@ import type {
   BondsResult, UsernameResult, PostResult, FeedResult, FeedRow, ThreadResult,
   PostJson, WithdrawnJson, LightJson,
 } from './dto';
+import { isWithdrawn } from './dto';
 import { readBoundRow, readWithdrawnRow } from './post-row';
 import { readLightRow } from './light-page';
 
@@ -282,6 +283,15 @@ export function readPostResult(data: unknown, withTx: boolean): PostResult | nul
   else return null;
   if (row === null) return null;
   if (withTx) {
+    // NODE_INTERFACE → Posts → "The creating transaction rides a post row":
+    // "A `WithdrawnJson` carries no `tx`". The withdrawn row takes no `tx`
+    // on the result; a server that carries one has broken `WithdrawnJson`'s
+    // shape, so refuse. A bound row keeps today's rule: `tx` is null (a
+    // pending row whose pool entry is gone) or whole-byte lowercase hex.
+    if (isWithdrawn(row)) {
+      if (data['tx'] !== undefined) return null;
+      return { ...row, confirmedAuthor } as PostResult;
+    }
     const tx = data['tx'];
     if (tx !== null && !(typeof tx === 'string' && HEX_WHOLE_BYTES.test(tx))) return null;
     return { ...row, confirmedAuthor, tx } as PostResult;

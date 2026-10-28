@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { App } from '../src/app';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
+import { PageError } from '../src/api/client';
 import type { AppIdentity, AppState } from '../src/model/state';
 import type { WriteClient, Rejection, WithdrawSubmitResult } from '../src/api/write';
 import type {
@@ -68,6 +69,7 @@ function harness(resp: WithdrawResp = { kind: 'ok' }, karmaBoxes: Array<{ boxId:
   // The node's current view of each post — flipped to a tombstone on withdrawal.
   const nodePosts = new Map<string, PostResult>();
   const nodeThreads = new Map<string, ThreadResult>();
+  const postThrows = new Set<string>();
   let feedPosts: PostJson[] = [];
 
   const karma: KarmaResult = karmaResult({
@@ -81,7 +83,10 @@ function harness(resp: WithdrawResp = { kind: 'ok' }, karmaBoxes: Array<{ boxId:
   const fakeApi: Api = {
     feed: async (): Promise<FeedResult> => ({ posts: feedPosts, next: null, pending: [], pendingCount: 0 }),
     thread: async (id) => nodeThreads.get(id) ?? null,
-    post: async (id) => nodePosts.get(id) ?? null,
+    post: async (id) => {
+      if (postThrows.has(id)) throw new PageError();
+      return nodePosts.get(id) ?? null;
+    },
     status: async () => statusResult(),
     currentBlock: async (): Promise<BlockCurrent> => ({ height: blockHeight, hash: null }),
     karma: async () => karma,
@@ -132,6 +137,7 @@ function harness(resp: WithdrawResp = { kind: 'ok' }, karmaBoxes: Array<{ boxId:
     setNode: (id: string, p: PostResult) => nodePosts.set(id, p),
     setThread: (id: string, t: ThreadResult) => nodeThreads.set(id, t),
     setFeed: (posts: PostJson[]) => { feedPosts = posts; },
+    setPostThrow: (id: string) => { postThrows.add(id); },
     fireIdentityChange: () => listener?.({ pubKeyHex: PUB }),
   };
 }
@@ -448,5 +454,43 @@ describe('the withdraw control reads the /karma listing for its gate', () => {
     expect(wb).not.toBeNull();
     expect(wb!.disabled).toBe(false);
     expect(wb!.title).toBe('');
+  });
+});
+
+// WEB_INTERFACE → The extension → "The post check" → "A withheld answer to the
+// single post read decides nothing": the per-entry reconciles take a withheld
+// flag and keep the entry pending until expiry. A single-post read that
+// refuses (any reader-level throw) is a withheld answer for that entry, and
+// one entry's refusal must not stall another's landing in the same tick.
+describe("one entry's reader refusal does not block other entries' reconciles", () => {
+  it('entry A throws, entry B is a landed tombstone — B settles in the same tick', async () => {
+    const h = harness();
+    const A = 'd1'.repeat(32), B = 'd2'.repeat(32);
+    const S_ = 'ee'.repeat(32);
+    h.setNode(A, asResult(postJson(A, PUB)));
+    h.setNode(B, asResult(postJson(B, PUB)));
+    h.setThread(A, singleThread(postJson(A, PUB), [postJson('bb'.repeat(32), S_, [A])]));
+    h.setThread(B, singleThread(postJson(B, PUB), [postJson('cc'.repeat(32), S_, [B])]));
+    h.setFeed([postJson(A, PUB), postJson(B, PUB)]);
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    h.drive.openThread(A, { from: 'feed' });
+    h.drive.openThread(B, { from: 'pane', ci: 0 });
+    await flush();
+    await h.drive.withdrawPost(A);
+    await h.drive.withdrawPost(B);
+    expect(h.ledger.all().map((e) => e.postId).sort()).toEqual([A, B].sort());
+
+    // The server answers B with a tombstone; A's single-post read refuses
+    // (a reader throw stands in for every reader-level failure the client
+    // normalises as a `PageError`). The tick runs.
+    h.setNode(B, tomb(B, []));
+    h.setPostThrow(A);
+    h.setHeight(6002);
+    await h.drive.pollTick();
+
+    const ledger = h.ledger.all().map((e) => e.postId);
+    expect(ledger).toContain(A); // A still pending — withheld by its refusal
+    expect(ledger).not.toContain(B); // B landed — the throw did not stall it
   });
 });

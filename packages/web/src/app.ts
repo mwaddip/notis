@@ -1,5 +1,5 @@
 import { NodeClient, PageError, type Api } from './api/client';
-import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
+import type { PostJson, WithdrawnJson, LightJson, FeedRow, FeedResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult, PostResult } from './api/dto';
 import { isFull, isWithdrawn, isLight } from './api/dto';
 import { readBoundRow, readWithdrawnRow } from './api/post-row';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE, USERNAME_MAX_BYTES, KARMA_MINIMUM, LIKE_KARMA_COST, PAGE_LIMIT_DEFAULT, computePostId, encodeTx, bytesToHex, isHex64 } from '@dagsocial/types';
@@ -5202,7 +5202,18 @@ export class App {
         usernameChanged = true;
         continue;
       }
-      const rawFetched = await this.client.post(entry.postId, this.viewer(), this.postsTx());
+      let rawFetched: PostResult | null = null;
+      let readerRefused = false;
+      try {
+        rawFetched = await this.client.post(entry.postId, this.viewer(), this.postsTx());
+      } catch {
+        // A reader refusal — any client-level throw on the single post read
+        // — is a withheld answer for THIS entry alone, per
+        // WEB_INTERFACE → The extension → "The post check" → "A withheld
+        // answer to the single post read decides nothing". The other
+        // entries in this tick still reconcile.
+        readerRefused = true;
+      }
       if (gen !== this.readerGen) return;
       // The single post read's answer passes through the one-row gate
       // (WEB_INTERFACE → The extension → "The post check"): the rebuilt
@@ -5211,7 +5222,7 @@ export class App {
       // `unserved` or not well-formed — and each reconcile keeps the
       // entry pending until the tip passes its `expiresAtHeight`.
       const fetched = rawFetched === null ? null : this.ingestOne(rawFetched);
-      const withheld: boolean = rawFetched !== null && fetched === null;
+      const withheld: boolean = readerRefused || (rawFetched !== null && fetched === null);
       if (entry.kind === 'post') {
         const outcome = reconcilePost(entry, fetched, tip, withheld);
         if (outcome === 'pending') continue;

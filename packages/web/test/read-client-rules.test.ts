@@ -130,6 +130,41 @@ describe("every answer is rebuilt from its own fields", () => {
     await expect(client().post('ab'.repeat(32))).rejects.toBeInstanceOf(PageError);
   });
 
+  // NODE_INTERFACE → Posts → "The creating transaction rides a post row":
+  // "A `WithdrawnJson` carries no `tx`" — a withdrawn marker has no text for a
+  // transaction to bind, so the node omits the field under `?tx=1`. The
+  // single-post read must accept the row.
+  it('GET /posts/:id?tx=1 — a withdrawn row without `tx` answers as the row', async () => {
+    const id = 'ab'.repeat(32);
+    const withdrawn = {
+      kind: 'withdrawn', id, txId: 'cc'.repeat(32), author: 'dd'.repeat(32),
+      parentRefs: [], withdrawnAtHeight: 42, descendantCount: 0, authorName: null,
+      confirmedAuthor: 'dd'.repeat(32),
+    };
+    serveJson(withdrawn);
+    const got = await client().post(id, undefined, true) as unknown as Record<string, unknown>;
+    expect(got).not.toBeNull();
+    expect(got.kind).toBe('withdrawn');
+    expect(got.id).toBe(id);
+    // The withdrawn result keeps no `tx` — WithdrawnJson's type does not name
+    // one and WEB_INTERFACE → The extension → "The post check" says "A
+    // checked row is taken field by field" with "no `tx` and no key beyond".
+    expect(got.tx).toBeUndefined();
+  });
+
+  // Conversely, if a non-conforming node sends `tx` on a withdrawn row, the
+  // row is malformed — WithdrawnJson's shape names no `tx` field.
+  it('GET /posts/:id?tx=1 — a withdrawn row that carries `tx` is refused', async () => {
+    const id = 'ab'.repeat(32);
+    const withdrawnWithTx = {
+      kind: 'withdrawn', id, txId: 'cc'.repeat(32), author: 'dd'.repeat(32),
+      parentRefs: [], withdrawnAtHeight: 42, descendantCount: 0, authorName: null,
+      confirmedAuthor: 'dd'.repeat(32), tx: 'ee'.repeat(10),
+    };
+    serveJson(withdrawnWithTx);
+    await expect(client().post(id, undefined, true)).rejects.toBeInstanceOf(PageError);
+  });
+
   it('/posts — a feed row whose text is MAX_CONTENT_BYTES+1 bytes is refused', async () => {
     const tooLong = 'x'.repeat(MAX_CONTENT_BYTES + 1);
     serveJson({
