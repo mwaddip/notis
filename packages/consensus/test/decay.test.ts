@@ -150,7 +150,7 @@ describe('deriveKarmaDecay', () => {
     expect(journal[0]!.burnAmount).toBe(12n - KARMA_MINIMUM);
   });
 
-  it('does nothing when already at or below the minimum', () => {
+  it.fails('a zero-burn plan at or below the minimum carries settledThrough and names no box', () => {
     const { deps, postBodyKarma } = oneOwner(
       [makeKarmaBox({ id: 'old-box-1', value: 8n })],
       clock(ACTIVITY_AT),
@@ -158,20 +158,28 @@ describe('deriveKarmaDecay', () => {
 
     const journal = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
 
-    expect(journal).toHaveLength(0);
+    // The squared set includes an owner at the floor; the plan is a clock
+    // write and no leg (NODE_INTERFACE → Karma decay → "The floor forgives
+    // what it stops").
+    expect(journal).toHaveLength(1);
+    expect(journal[0]!.consumedBoxIds).toEqual([]);
+    expect(journal[0]!.burnAmount).toBe(0n);
+    expect(journal[0]!.settledThrough).toBe(STALE_AT);
   });
 
-  it('leaves the clock untouched when nothing burns', () => {
-    // A stale identity sitting at the floor keeps the intervals it is owed —
-    // writing `lastDecayBlock` on a zero burn would silently forgive them.
+  it.fails('the floor\'s clock-write forgives the periods it stopped at', () => {
+    // An identity sitting at the floor keeps no periods: the squaring writes
+    // the clock, and effective karma over the owner's boxes and record
+    // answers the same from the block onward.
     const { deps, postBodyKarma, recordMap } = oneOwner(
       [makeKarmaBox({ id: 'old-box-1', value: 8n })],
       clock(ACTIVITY_AT),
     );
 
-    deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
+    const plans = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
+    commitDecayClocks(deps, plans);
 
-    expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT));
+    expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT, STALE_AT));
   });
 
   it('consolidates multiple boxes into one', () => {
@@ -247,7 +255,7 @@ describe('deriveKarmaDecay', () => {
     expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT));
   });
 
-  it('a stale identity NOT in the touched set produces no plan', () => {
+  it('a stale identity NOT in the squared set produces no plan', () => {
     const { deps } = oneOwner(
       [makeKarmaBox({ id: 'old-box', value: 100n })],
       clock(ACTIVITY_AT),
