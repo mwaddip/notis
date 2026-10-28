@@ -1,6 +1,6 @@
 # How DAGsocial Works
 
-DAGsocial is an invite-only decentralized social network. There are no tokens to
+DAGsocial is an invite-only decentralized notice board. There are no tokens to
 buy, no ads, no corporate servers. The network runs on karma — a non-tradeable
 social currency you earn by contributing content that other people like.
 

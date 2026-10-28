@@ -19,7 +19,7 @@ context — read it and the linked docs before touching code.
 7. Your task's spec in `../../docs/specs/` (e.g. `2026-08-01-node-value-integrity.md`).
 
 ## What Notis is
-An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign
+An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** (author-sovereign
 content) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post,
 like and withdrawal is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post.
 Consensus is single-phase PoW — validator-produced ordering blocks; posts and likes ride

@@ -33,7 +33,7 @@ says it accepts, or accepts what it says it refuses, that is a FINDING to report
 workaround written into this tool.**
 
 ## What Notis is
-An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** and a **UTXO
+An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** and a **UTXO
 ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
 withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
 
