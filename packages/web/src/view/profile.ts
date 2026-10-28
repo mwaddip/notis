@@ -103,9 +103,11 @@ interface BodyRow {
 }
 
 /** The profile window's body: `update` draws every row and places the
- *  username row; `karma`, `invites` and `username` draw one row where it
- *  stands, for a landing that moves text and colour in a fixed row
- *  (HOUSE_STYLE → Motion). */
+ *  username row; `karma` draws every row the rep view feeds — the rep row,
+ *  the username row (which reads `canSignClaim` and `canAffordBurn`) and
+ *  the invites row (which reads `canAffordMinBond`); `invites` and
+ *  `username` draw one row where it stands, for a landing that moves
+ *  text and colour in a fixed row (HOUSE_STYLE → Motion). */
 export interface ProfileBody extends WindowBody {
   karma(): void;
   invites(): void;
@@ -139,7 +141,19 @@ export function profileBody(handlers: ProfileHandlers, read: () => ProfileCtx, o
       if ((ctx.identity?.pubKeyHex ?? null) !== builtFor) build(ctx);
       else rows?.update(ctx);
     },
-    karma: () => rows?.rep.update(read()),
+    // A rep view change feeds every row that reads it: the rep row for its
+    // number, the username row for `canSignClaim` and `canAffordBurn`, and
+    // the invites row for `canAffordMinBond` (WEB_INTERFACE → The username
+    // row, → The profile window → "The `invites` row"). Each row's update
+    // leaves an open form and a field with text alone (→ The workspace →
+    // "A window's body stands while the window is open").
+    karma: () => {
+      if (rows === null) return;
+      const now = read();
+      rows.rep.update(now);
+      rows.username.update(now);
+      rows.invites.update(now);
+    },
     invites: () => rows?.invites.update(read()),
     username: () => rows?.username.update(read()),
   };

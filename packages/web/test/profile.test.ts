@@ -662,6 +662,54 @@ describe('profile window — the karma field and the faucet step', () => {
     expect(expired.textContent).toContain('5999');
     expect(button(expired, 'ask again')).not.toBeNull();
   });
+
+  // WEB_INTERFACE → The username row — the claim form is offered on "holding
+  // none, nothing pending, a rep box to spend", so a karma landing that
+  // crosses canSignClaim 0→1 brings the form in place. The username row
+  // reads the rep view's state through canSignClaim (false while the key
+  // has no karma box, true once it has one), and `.karma()` is the one
+  // in-place draw the grant-landing path runs.
+  it('.karma() brings the claim form once canSignClaim crosses false→true', () => {
+    const w = live(handlers(), ctx({
+      identity: unlocked,
+      karma: karmaResult({ boxCount: 0 }),
+      canSignClaim: false,
+    }));
+    const username = rowField(w.body.el, 'username')!;
+    expect(username.textContent).toContain('a claim spends and returns one rep box');
+    expect(username.querySelector('form')).toBeNull();
+    // A grant lands: one box in the rep view, canSignClaim true.
+    w.set(ctx({
+      identity: unlocked,
+      karma: karmaResult({ boxCount: 1, total: '250', effective: '250' }),
+      canSignClaim: true,
+    }));
+    w.body.karma();
+    expect(username.querySelector('form')).not.toBeNull();
+    const input = username.querySelector('form input') as HTMLInputElement;
+    expect(input.getAttribute('aria-label')).toBe('the name to claim');
+  });
+
+  // WEB_INTERFACE → The profile window → "The `invites` row" — the invite
+  // form is offered where `canAffordMinBond` holds and the key has invites
+  // available, so a karma landing that crosses canAffordMinBond 0→1 brings
+  // the form in place. The invites row reads the rep view through
+  // canAffordMinBond.
+  it('.karma() brings the invite form once canAffordMinBond crosses false→true', () => {
+    const w = live(handlers(), memberCtx({
+      karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 2, memberSinceBlock: 5, effective: '0' }),
+      canAffordMinBond: false,
+    }));
+    const invites = rowField(w.body.el, 'invites')!;
+    expect(invites.querySelector('form.invite-form')).toBeNull();
+    // A grant lands: the key now holds more than the min bond.
+    w.set(memberCtx({
+      karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 2, memberSinceBlock: 5, effective: '500' }),
+      canAffordMinBond: true,
+    }));
+    w.body.karma();
+    expect(invites.querySelector('form.invite-form')).not.toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
