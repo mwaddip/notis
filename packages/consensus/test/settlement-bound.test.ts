@@ -431,78 +431,149 @@ describe('block cost: a body of likes each paying a distinct stale author', () =
   });
 });
 
+/** The capped-legs empty-body block, parametrized on the paid owner's own-box value. */
+function cappedLegsBlockCost(ownValue: bigint, label: string): void {
+  const COST_H = 20;
+  const B = MAX_BOND_SETTLEMENTS_PER_BLOCK;
+  const E = MAX_ESCROW_RETURNS_PER_BLOCK;
+  const L = MAX_LAPSE_WITHDRAWALS_PER_BLOCK;
+
+  const inviters = Array.from({ length: B }, (_, i) => seededIdentity(`cost-legs/${label}/inviter-${i}`));
+  const invitees = Array.from({ length: B }, (_, i) => seededIdentity(`cost-legs/${label}/invitee-${i}`));
+  const escrowOwners = Array.from({ length: E }, (_, i) => seededIdentity(`cost-legs/${label}/escrow-${i}`));
+  const vouchers = Array.from({ length: L }, (_, i) => seededIdentity(`cost-legs/${label}/voucher-${i}`));
+  const targets = Array.from({ length: L }, (_, i) => seededIdentity(`cost-legs/${label}/target-${i}`));
+
+  const initialBoxes: AnyBox[] = [
+    seedProvenance<AnyBox>(
+      { boxType: 'emission', value: PROFILE.creditEmissionTotal, createdAtBlock: 0 }, 0, labelNonce(`cost-legs/${label}/emission`),
+    ),
+    seedProvenance<AnyBox>(
+      { boxType: 'karma_pool', value: 1_000_000n, createdAtBlock: 0 }, 0, labelNonce(`cost-legs/${label}/pool`),
+    ),
+  ];
+  let nonce = 1;
+  const paidOwners = new Set<string>();
+  for (const inviter of inviters) paidOwners.add(hex(inviter.userId));
+  for (const o of escrowOwners) paidOwners.add(hex(o.userId));
+  for (const ownerHex of [...paidOwners].sort()) {
+    const owner = hexToBytes(ownerHex);
+    initialBoxes.push(karmaBox(owner, ownValue, nonce++, 0));
+    initialBoxes.push(incomeBox(owner, 1n, nonce++, 0));
+  }
+  for (let i = 0; i < B; i++) initialBoxes.push(bondBox(inviters[i]!.userId, invitees[i]!.userId, nonce++, 1));
+  for (let i = 0; i < E; i++) initialBoxes.push(escrowBox(escrowOwners[i]!.userId, 1, nonce++, 1));
+  for (let i = 0; i < L; i++) initialBoxes.push(vouchBox(vouchers[i]!.userId, targets[i]!.userId, nonce++, 1));
+
+  const initialRecords: Array<{ identityId: Uint8Array; record: IdentityRecord }> = [
+    { identityId: COST_MINER.userId, record: identityRecord({ memberSinceBlock: 1 }) },
+  ];
+  for (const ownerHex of [...paidOwners].sort()) {
+    initialRecords.push({ identityId: hexToBytes(ownerHex), record: identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1 }) });
+  }
+  for (const invitee of invitees) initialRecords.push({ identityId: invitee.userId, record: identityRecord({ invitedAtBlock: 1, lifetimeLikesReceived: 1_000_000n, memberSinceBlock: 1 }) });
+  // Each voucher is a lapsed member — `memberSinceBlock > 0` and
+  // `memberVouches < memberBar`.
+  for (const voucher of vouchers) initialRecords.push({ identityId: voucher.userId, record: identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1, memberBar: 2, memberVouches: 1 }) });
+  for (const target of targets) initialRecords.push({ identityId: target.userId, record: identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1 }) });
+  const network: NetworkRecord = { memberCount: 1 };
+
+  const initialWrites = seedTreeWrites(initialBoxes, initialRecords, network);
+  const session = mapSessionFrom(initialWrites);
+
+  const buildView = treeStateView(session);
+  const block = candidateBlock(buildView, COST_H, [], COST_MINER.userId, COST_CTX);
+
+  const applyView = treeStateView(session);
+  const result = applyBlock(applyView, block, COST_CTX);
+  if (!result.ok) throw new Error(`cost legs block refused: ${result.reason}`);
+  const writes = treeWritesOf(result.effects, COST_H, applyView);
+  const cost = {
+    signatures: result.effects.signatures,
+    lookups: applyView.lookupCount(),
+    writes: writes.length,
+  };
+  const total = blockCost(cost);
+  expect(total).toBeLessThanOrEqual(MAX_BLOCK_COST);
+  // eslint-disable-next-line no-console
+  console.log(
+    `empty-body capped legs, ${label}: cost ${total} of ${MAX_BLOCK_COST} — ` +
+    `signatures ${cost.signatures}, lookups ${cost.lookups}, writes ${cost.writes}`,
+  );
+}
+
 describe('block cost: an empty-body block with capped legs and every paid owner owing decay', () => {
-  it('fits under MAX_BLOCK_COST and reports the figure', () => {
-    const COST_H = 20;
-    const B = MAX_BOND_SETTLEMENTS_PER_BLOCK;
-    const E = MAX_ESCROW_RETURNS_PER_BLOCK;
-    const L = MAX_LAPSE_WITHDRAWALS_PER_BLOCK;
+  it('with the floor own box — fits under MAX_BLOCK_COST and reports the figure', () => {
+    cappedLegsBlockCost(KARMA_MINIMUM, 'floor own box');
+  });
 
-    const inviters = Array.from({ length: B }, (_, i) => seededIdentity(`cost-legs/inviter-${i}`));
-    const invitees = Array.from({ length: B }, (_, i) => seededIdentity(`cost-legs/invitee-${i}`));
-    const escrowOwners = Array.from({ length: E }, (_, i) => seededIdentity(`cost-legs/escrow-${i}`));
-    const vouchers = Array.from({ length: L }, (_, i) => seededIdentity(`cost-legs/voucher-${i}`));
-    const targets = Array.from({ length: L }, (_, i) => seededIdentity(`cost-legs/target-${i}`));
+  it('with an own box well above the floor so each squaring burns and emits — fits under MAX_BLOCK_COST and reports the figure', () => {
+    // Face above floor plus income gives a per-period burn `cfg.decayAmount`
+    // for several periods; each squaring consumes own + income and emits
+    // one unmarked karma box of effective (NODE_INTERFACE → Karma decay →
+    // "The leg is two inputs at most and one output").
+    cappedLegsBlockCost(100n, 'own box well above the floor');
+  });
+});
 
-    const initialBoxes: AnyBox[] = [
-      seedProvenance<AnyBox>(
-        { boxType: 'emission', value: PROFILE.creditEmissionTotal, createdAtBlock: 0 }, 0, labelNonce('cost-legs/emission'),
-      ),
-      seedProvenance<AnyBox>(
-        { boxType: 'karma_pool', value: 1_000_000n, createdAtBlock: 0 }, 0, labelNonce('cost-legs/pool'),
-      ),
-    ];
-    let nonce = 1;
-    const paidOwners = new Set<string>();
-    for (const inviter of inviters) paidOwners.add(hex(inviter.userId));
-    for (const o of escrowOwners) paidOwners.add(hex(o.userId));
-    // Each paid owner holds an own box and an income box, both at the floor
-    // so decay fires zero-burn plans — the clock write and the squaring the
-    // squared set extension drives.
-    for (const ownerHex of [...paidOwners].sort()) {
-      const owner = hexToBytes(ownerHex);
-      initialBoxes.push(karmaBox(owner, KARMA_MINIMUM, nonce++, 0));
-      initialBoxes.push(incomeBox(owner, 1n, nonce++, 0));
-    }
-    for (let i = 0; i < B; i++) initialBoxes.push(bondBox(inviters[i]!.userId, invitees[i]!.userId, nonce++, 1));
-    for (let i = 0; i < E; i++) initialBoxes.push(escrowBox(escrowOwners[i]!.userId, 1, nonce++, 1));
-    for (let i = 0; i < L; i++) initialBoxes.push(vouchBox(vouchers[i]!.userId, targets[i]!.userId, nonce++, 1));
+/** The capped-legs empty-body block's settlement bytes, parametrized on the paid owner's own-box value, measured through applyBlock. */
+function cappedLegsSettlementBytes(ownValue: bigint, label: string): void {
+  const COST_H = 20;
+  const B = MAX_BOND_SETTLEMENTS_PER_BLOCK;
+  const E = MAX_ESCROW_RETURNS_PER_BLOCK;
+  const L = MAX_LAPSE_WITHDRAWALS_PER_BLOCK;
 
-    const initialRecords: Array<{ identityId: Uint8Array; record: IdentityRecord }> = [
-      { identityId: COST_MINER.userId, record: identityRecord({ memberSinceBlock: 1 }) },
-    ];
-    for (const ownerHex of [...paidOwners].sort()) {
-      initialRecords.push({ identityId: hexToBytes(ownerHex), record: identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1 }) });
-    }
-    for (const invitee of invitees) initialRecords.push({ identityId: invitee.userId, record: identityRecord({ invitedAtBlock: 1, lifetimeLikesReceived: 1_000_000n, memberSinceBlock: 1 }) });
-    // Each voucher is a lapsed member — `memberSinceBlock > 0` and
-    // `memberVouches < memberBar`.
-    for (const voucher of vouchers) initialRecords.push({ identityId: voucher.userId, record: identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1, memberBar: 2, memberVouches: 1 }) });
-    for (const target of targets) initialRecords.push({ identityId: target.userId, record: identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1 }) });
-    const network: NetworkRecord = { memberCount: 1 };
+  const inviters = Array.from({ length: B }, (_, i) => seededIdentity(`bytes-legs/${label}/inviter-${i}`));
+  const invitees = Array.from({ length: B }, (_, i) => seededIdentity(`bytes-legs/${label}/invitee-${i}`));
+  const escrowOwners = Array.from({ length: E }, (_, i) => seededIdentity(`bytes-legs/${label}/escrow-${i}`));
+  const vouchers = Array.from({ length: L }, (_, i) => seededIdentity(`bytes-legs/${label}/voucher-${i}`));
+  const targets = Array.from({ length: L }, (_, i) => seededIdentity(`bytes-legs/${label}/target-${i}`));
 
-    const initialWrites = seedTreeWrites(initialBoxes, initialRecords, network);
-    const session = mapSessionFrom(initialWrites);
+  const initialBoxes: AnyBox[] = [
+    seedProvenance<AnyBox>(
+      { boxType: 'emission', value: PROFILE.creditEmissionTotal, createdAtBlock: 0 }, 0, labelNonce(`bytes-legs/${label}/emission`),
+    ),
+    seedProvenance<AnyBox>(
+      { boxType: 'karma_pool', value: 1_000_000n, createdAtBlock: 0 }, 0, labelNonce(`bytes-legs/${label}/pool`),
+    ),
+  ];
+  let nonce = 1;
+  const paidOwners = new Set<string>();
+  for (const inviter of inviters) paidOwners.add(hex(inviter.userId));
+  for (const o of escrowOwners) paidOwners.add(hex(o.userId));
+  for (const ownerHex of [...paidOwners].sort()) {
+    const owner = hexToBytes(ownerHex);
+    initialBoxes.push(karmaBox(owner, ownValue, nonce++, 0));
+    initialBoxes.push(incomeBox(owner, 1n, nonce++, 0));
+  }
+  for (let i = 0; i < B; i++) initialBoxes.push(bondBox(inviters[i]!.userId, invitees[i]!.userId, nonce++, 1));
+  for (let i = 0; i < E; i++) initialBoxes.push(escrowBox(escrowOwners[i]!.userId, 1, nonce++, 1));
+  for (let i = 0; i < L; i++) initialBoxes.push(vouchBox(vouchers[i]!.userId, targets[i]!.userId, nonce++, 1));
 
-    const buildView = treeStateView(session);
-    const block = candidateBlock(buildView, COST_H, [], COST_MINER.userId, COST_CTX);
+  const initialRecords: Array<{ identityId: Uint8Array; record: IdentityRecord }> = [
+    { identityId: COST_MINER.userId, record: identityRecord({ memberSinceBlock: 1 }) },
+  ];
+  for (const ownerHex of [...paidOwners].sort()) {
+    initialRecords.push({ identityId: hexToBytes(ownerHex), record: identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1 }) });
+  }
+  for (const invitee of invitees) initialRecords.push({ identityId: invitee.userId, record: identityRecord({ invitedAtBlock: 1, lifetimeLikesReceived: 1_000_000n, memberSinceBlock: 1 }) });
+  for (const voucher of vouchers) initialRecords.push({ identityId: voucher.userId, record: identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1, memberBar: 2, memberVouches: 1 }) });
+  for (const target of targets) initialRecords.push({ identityId: target.userId, record: identityRecord({ lastActivityBlock: 0, memberSinceBlock: 1 }) });
+  const network: NetworkRecord = { memberCount: 1 };
 
-    const applyView = treeStateView(session);
-    const result = applyBlock(applyView, block, COST_CTX);
-    if (!result.ok) throw new Error(`cost legs block refused: ${result.reason}`);
-    const writes = treeWritesOf(result.effects, COST_H, applyView);
-    const cost = {
-      signatures: result.effects.signatures,
-      lookups: applyView.lookupCount(),
-      writes: writes.length,
-    };
-    const total = blockCost(cost);
-    expect(total).toBeLessThanOrEqual(MAX_BLOCK_COST);
-    // eslint-disable-next-line no-console
-    console.log(
-      `empty-body capped legs, every paid owner owing decay: cost ${total} of ${MAX_BLOCK_COST} — ` +
-      `signatures ${cost.signatures}, lookups ${cost.lookups}, writes ${cost.writes}`,
-    );
+  const initialWrites = seedTreeWrites(initialBoxes, initialRecords, network);
+  const session = mapSessionFrom(initialWrites);
+  const buildView = treeStateView(session);
+  const block = candidateBlock(buildView, COST_H, [], COST_MINER.userId, COST_CTX);
+  const settlementBytes = block.utxoTxTree.utxoTxs.at(-1)!.length;
+  expect(settlementBytes).toBeLessThanOrEqual(MAX_SETTLEMENT_BYTES);
+  // eslint-disable-next-line no-console
+  console.log(`empty-body capped legs, ${label}: settlement = ${settlementBytes} bytes`);
+}
+
+describe('settlement bytes: an empty-body block with capped legs and every paid owner owing decay, measured through applyBlock', () => {
+  it('with an own box well above the floor so each squaring burns and emits — fits under MAX_SETTLEMENT_BYTES', () => {
+    cappedLegsSettlementBytes(100n, 'own box well above the floor');
   });
 });
 
