@@ -5749,6 +5749,13 @@ The reference miner unit, `packages/node/scripts/dagsocial-miner.service`, carri
 `MINER_PUBKEY` as `Environment=` lines for the operator to fill, and `gen-miner-key.mjs` writes the miner key with
 the process's default mode.
 
+**The packages carry the node and its tools, never the client or the mesh suite.** `scripts/package-excludes.txt`,
+the one exclude list the `.deb`, the tarball and the Windows installer share, leaves out `packages/web` — the web
+client ships as its own zip (→ The node serves no client) — and `tools/e2e`, the test suite. On Windows it is also
+what keeps the installer buildable: Inno Setup follows pnpm's hoisted workspace links, and each link a chain
+crosses lengthens the path, so the deepest path the staged app holds is 270 characters with the two and 242
+without (measured 2026-10-28 under the runner's `D:\a\_temp\notis-stage\app\` prefix) against Windows' 260.
+
 **The bundled Node runtime is the one nodejs.org serves.** `scripts/build-tarball.sh` and
 `scripts/windows/build-bundle.ps1` download the build host's Node version from `https://nodejs.org/dist/` over
 HTTPS and check no checksum: the official source is trusted as served.
