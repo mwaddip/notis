@@ -11,6 +11,16 @@
               "strict_min_version": "140.0"
             }
           }
+        },
+        {
+          "version": "0.4.0",
+          "update_link": "https://github.com/mwaddip/notis/releases/download/v0.4.0/notis-extension-0.4.0-firefox.xpi",
+          "update_hash": "sha256:4e8f7848c6ce9873214884c0a7fa2a804eb35566d2c2bc819d69aecfbffb3295",
+          "applications": {
+            "gecko": {
+              "strict_min_version": "140.0"
+            }
+          }
         }
       ]
     }
