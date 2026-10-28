@@ -258,7 +258,7 @@ export interface LikePayout {
  *
  * ⛔ **One statement of the formula.** `derive`'s income leg and the squared-set
  * computation both call this; a second inline statement would drift (CONSENSUS_INTERFACE
- * → The settlement build → "The payouts are one function's answer on both sides").
+ * → The settlement build).
  */
 export function computeLikePayouts(
   body: SettlementBody,
@@ -488,8 +488,7 @@ function derive(
   // Then each credited author's carry box, ascending author-hex — the order
   // the contract pins for emitting an author's outputs. `computeLikePayouts`
   // is the one derivation `applyBlock`'s pre-body payee computation and this
-  // leg both read (CONSENSUS_INTERFACE → The settlement build → "The payouts
-  // are one function's answer on both sides").
+  // leg both read (CONSENSUS_INTERFACE → The settlement build).
   const likeResult = computeLikePayouts(body, deps.getLikeCarryBox);
   const likePayouts = likeResult.payouts;
   for (const p of likePayouts) {
