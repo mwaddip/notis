@@ -68,9 +68,11 @@ js-libp2p's WebTransport does not listen on Node.js, and a Notis node is Node.js
 
 ## NAT
 
-A **public** node runs a circuit relay v2 server, AutoNAT v2, and a STUN server on UDP port `STUN_PORT` of its own IP.
-A **private** node — one AutoNAT finds unreachable — takes relay reservations on public nodes and is reached through
-them; between nodes, DCUtR upgrades a relayed connection to a direct one where the NATs allow it. A browser reaches a
+**A node's role is its operator's setting**, `public` or `private`. A **public** node runs a circuit relay v2 server,
+AutoNAT v2 — the dial-back that tells other nodes which of their addresses answer — and a STUN server on UDP port
+`STUN_PORT` of its own IP. A **private** node, one run with no public address, takes relay reservations on public nodes
+and is reached through them; between nodes, DCUtR upgrades a relayed connection to a direct one where the NATs allow
+it. A browser reaches a
 private node over WebRTC signalled through the relay, gathering ICE candidates against public nodes' STUN servers
 alone.
 
