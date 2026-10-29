@@ -107,8 +107,9 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   ];
 
   // `MESH_INTERFACE → Discovery` — Kademlia on `/notis/<network>/kad/1.0.0`
-  // alone. The protocol field replaces `/ipfs/kad/1.0.0` for both the server
-  // and client sides of the handler registration (see probes in the report).
+  // alone. The `protocol` option replaces the default `/ipfs/kad/1.0.0` for
+  // both the server and the client sides of the handler registration, so a
+  // Notis node never answers an IPFS DHT walk.
   // Role-specific services ride on a shared skeleton: the public role adds
   // AutoNAT v2 and the circuit-relay server; the private role adds DCUtR
   // (`MESH_INTERFACE → NAT`).

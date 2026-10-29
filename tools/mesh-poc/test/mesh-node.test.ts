@@ -143,45 +143,71 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     expect(peerId1).toBe(peerId2);
   }, 30_000);
 
-  it('a DNS address is refused', async () => {
+  // One case per guard, so a missing refusal fails its own case and nothing
+  // else: `startMeshNode` with a deleted guard may return a running node
+  // instead of throwing, which the file's shared `afterEach` would catch too
+  // late to keep the suite's other cases on their feet. Each case here
+  // tracks what it started in a local holder and stops it in a `finally`
+  // (`MESH_INTERFACE → Transports / Discovery`).
+  async function expectConfigError(
+    start: () => Promise<MeshNode>,
+  ): Promise<void> {
+    let started: MeshNode | null = null;
+    let thrown: unknown;
+    try {
+      started = await start();
+    } catch (e) {
+      thrown = e;
+    } finally {
+      if (started) { try { await started.stop(); } catch { /* already stopped */ } }
+    }
+    expect(thrown).toBeInstanceOf(MeshConfigError);
+  }
+
+  it('a DNS bootstrap address is refused', async () => {
     const stub = await makeStub(); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-node-')); dirs.push(dir);
-    // A valid peer id to tack on the bootstrap addr (the config rule is DNS,
-    // not peer id presence) — use the fresh key's own peer id string.
     const otherPeer = freshKey().peerId.toString();
-
-    // bootstrap with /dns4/
-    await expect(startMeshNode({
+    await expectConfigError(() => startMeshNode({
       key: freshKey(), network: 'devnet', role: 'private',
       listen: ['/ip4/127.0.0.1/tcp/0'],
       bootstrap: [`/dns4/example.com/tcp/1/p2p/${otherPeer}`],
       stateDir: dir, upstream: stub.base,
-    })).rejects.toThrow(MeshConfigError);
+    }));
+  }, 30_000);
 
-    // listen with /dns6/
-    await expect(startMeshNode({
+  it('a DNS listen address is refused', async () => {
+    const stub = await makeStub(); stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-node-')); dirs.push(dir);
+    await expectConfigError(() => startMeshNode({
       key: freshKey(), network: 'devnet', role: 'private',
       listen: ['/dns6/example.com/tcp/0'],
       bootstrap: [],
       stateDir: dir, upstream: stub.base,
-    })).rejects.toThrow(MeshConfigError);
+    }));
+  }, 30_000);
 
-    // announce with /dnsaddr/
-    await expect(startMeshNode({
+  it('a DNS announce address is refused', async () => {
+    const stub = await makeStub(); stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-node-')); dirs.push(dir);
+    await expectConfigError(() => startMeshNode({
       key: freshKey(), network: 'devnet', role: 'private',
       listen: ['/ip4/127.0.0.1/tcp/0'],
       announce: ['/dnsaddr/example.com/tcp/1'],
       bootstrap: [],
       stateDir: dir, upstream: stub.base,
-    })).rejects.toThrow(MeshConfigError);
+    }));
+  }, 30_000);
 
-    // bootstrap address without /p2p/ component
-    await expect(startMeshNode({
+  it('a bootstrap address without a peer id is refused', async () => {
+    const stub = await makeStub(); stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-node-')); dirs.push(dir);
+    await expectConfigError(() => startMeshNode({
       key: freshKey(), network: 'devnet', role: 'private',
       listen: ['/ip4/127.0.0.1/tcp/0'],
       bootstrap: ['/ip4/127.0.0.1/tcp/1'],
       stateDir: dir, upstream: stub.base,
-    })).rejects.toThrow(MeshConfigError);
+    }));
   }, 30_000);
 
   it('the endpoint is reachable by key over WebRTC-direct', async () => {
