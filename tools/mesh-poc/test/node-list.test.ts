@@ -224,7 +224,7 @@ describe('node-list', () => {
     expect(list.candidates()).toContain(idA);
   });
 
-  it.fails('an event for an id the list does not hold throws', () => {
+  it('an event for an id the list does not hold throws', () => {
     // Every correct caller sends an event only for an id it `add`ed or saw
     // through `candidates()`; an unknown id is a bug in the caller, so the
     // list throws rather than swallows. The two no-ops the contract keeps

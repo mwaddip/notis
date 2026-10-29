@@ -121,8 +121,8 @@ export class NodeList {
 
   success(id: string): void {
     assertNotisId(id);
-    const e = this.entries_.get(id);
-    if (!e || e.status === 'blacklisted') return;
+    const e = this.unknown('success', id);
+    if (e.status === 'blacklisted') return;
     e.failures = 0;
     e.storedRetryAtMs = 0;
     e.status = 'ok';
@@ -130,8 +130,8 @@ export class NodeList {
 
   failure(id: string, _kind: FailureKind): void {
     assertNotisId(id);
-    const e = this.entries_.get(id);
-    if (!e || e.status === 'blacklisted') return;
+    const e = this.unknown('failure', id);
+    if (e.status === 'blacklisted') return;
     e.failures += 1;
     // `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(failures − 1))` on a monotonic
     // clock (MESH_INTERFACE → The client's node list, Retry).
@@ -144,8 +144,8 @@ export class NodeList {
 
   behind(id: string): void {
     assertNotisId(id);
-    const e = this.entries_.get(id);
-    if (!e || e.status === 'blacklisted') return;
+    const e = this.unknown('behind', id);
+    if (e.status === 'blacklisted') return;
     e.failures = 0;
     e.storedRetryAtMs = 0;
     e.status = 'behind';
@@ -153,8 +153,8 @@ export class NodeList {
 
   wrongKey(id: string, addr: string, _answeredId: string | null): void {
     assertNotisId(id);
-    const e = this.entries_.get(id);
-    if (!e) return;
+    const e = this.unknown('wrongKey', id);
+    if (e.status === 'blacklisted') return;
     // "the address lied, not the key" (MESH_INTERFACE → The client's node
     // list): the address drops; status and failure count are unchanged.
     const idx = e.addrs.indexOf(addr);
@@ -164,8 +164,7 @@ export class NodeList {
 
   lie(id: string, evidence: LieEvidence): void {
     assertNotisId(id);
-    const e = this.entries_.get(id);
-    if (!e) return;
+    const e = this.unknown('lie', id);
     // "no later event or `add` changes either": the first lie fixes both the
     // status and the evidence (MESH_INTERFACE → The client's node list).
     if (e.status === 'blacklisted') return;
@@ -222,6 +221,19 @@ export class NodeList {
       // `blacklisted` is dropped: never a candidate.
     }
     return [...ok, ...behind, ...fresh, ...retry];
+  }
+
+  /**
+   * Fetch the entry under `id` and throw a plain `Error` naming the method
+   * and the id when the list does not hold it: a correct caller sends an
+   * event only for an id it `add`ed or saw through `candidates()`, so an
+   * unknown id is a bug on the caller's side and silence would hide it
+   * (MESH_INTERFACE → The client's node list).
+   */
+  private unknown(method: string, id: string): InternalEntry {
+    const e = this.entries_.get(id);
+    if (!e) throw new Error(`${method}: unknown id ${id}`);
+    return e;
   }
 
   private mergeAddrs(e: InternalEntry, addrs: string[]): void {
