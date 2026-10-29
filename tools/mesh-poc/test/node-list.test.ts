@@ -223,4 +223,33 @@ describe('node-list', () => {
     t = 6000;
     expect(list.candidates()).toContain(idA);
   });
+
+  it.fails('an event for an id the list does not hold throws', () => {
+    // Every correct caller sends an event only for an id it `add`ed or saw
+    // through `candidates()`; an unknown id is a bug in the caller, so the
+    // list throws rather than swallows. The two no-ops the contract keeps
+    // apply only to a `blacklisted` entry (the lie is for good) and to `add`
+    // on one (MESH_INTERFACE → The client's node list).
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    const unknown = idB; // valid 64-hex, not held
+    const calls: Array<[string, () => void]> = [
+      ['success', () => list.success(unknown)],
+      ['failure', () => list.failure(unknown, 'timeout')],
+      ['behind', () => list.behind(unknown)],
+      ['wrongKey', () => list.wrongKey(unknown, a1, null)],
+      ['lie', () => list.lie(unknown, { kind: 'malformed', atMs: 0, detail: 'x' })],
+    ];
+    for (const [name, fn] of calls) {
+      let thrown: unknown;
+      try {
+        fn();
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect(thrown).not.toBeInstanceOf(MeshKeyError);
+      expect((thrown as Error).message).toContain(name);
+      expect((thrown as Error).message).toContain(unknown);
+    }
+  });
 });
