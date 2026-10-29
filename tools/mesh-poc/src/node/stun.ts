@@ -5,11 +5,9 @@
 // id and an XOR-MAPPED-ADDRESS attribute (0x0020) of the request's
 // source address and port. Anything else gets no answer and never throws
 // out of the socket handler. Node-only: it opens a UDP socket.
-//
-// Written inline rather than importing the `stun` package (10 transitive
-// dependencies for an RFC 8489 Binding handler of this size).
 
 import { createSocket, type Socket, type RemoteInfo } from 'node:dgram';
+import type { AddressInfo } from 'node:net';
 import { isIPv4, isIPv6 } from 'node:net';
 
 const STUN_MAGIC_COOKIE = 0x2112a442;
@@ -28,12 +26,10 @@ export async function startStunServer(
   socket.on('message', (msg, rinfo) => {
     const out = tryBuildResponse(msg, rinfo);
     if (out === null) return;
+    // A send error to a remote stays unlogged: UDP, the peer may have gone
+    // away between request and response.
     socket.send(out, rinfo.port, rinfo.address, () => { /* send errors are dropped */ });
   });
-
-  // A late `error` event never throws out of the socket handler — the
-  // caller sees it on their next request and closes the server.
-  socket.on('error', () => { /* dropped */ });
 
   await new Promise<void>((resolve, reject) => {
     const onErr = (e: Error): void => reject(e);
@@ -42,6 +38,21 @@ export async function startStunServer(
       socket.off('error', onErr);
       resolve();
     });
+  });
+
+  // A late `error` event never throws out of the socket handler and never
+  // falls silent either: it is logged with the bound address, so a server
+  // that has gone dead is visible from the node's output. Attached after
+  // bind so a bind failure is handled only by the transient `once` above.
+  socket.on('error', (err) => {
+    let where: string;
+    try {
+      const a = socket.address() as AddressInfo;
+      where = `${a.address}:${a.port}`;
+    } catch {
+      where = `${opts.host}:${opts.port}`;
+    }
+    console.error(`stun: socket error on ${where}: ${err.message}`);
   });
 
   return {
@@ -54,32 +65,31 @@ export async function startStunServer(
 }
 
 function tryBuildResponse(msg: Buffer, rinfo: RemoteInfo): Buffer | null {
+  // Ordinary refusals — expected traffic from the wider UDP world. They
+  // are silent: a size cap, a wrong cookie, a non-Binding-request method
+  // or class, and a length-mismatched header all return null without a
+  // log. The size cap also keeps every readUInt below from throwing on a
+  // short packet.
+  if (msg.length < STUN_HEADER_LEN || msg.length > STUN_MAX_PACKET) return null;
+
+  const messageType = msg.readUInt16BE(0);
+  const messageLength = msg.readUInt16BE(2);
+  const magicCookie = msg.readUInt32BE(4);
+  const transactionId = msg.subarray(8, 20);
+
+  if (magicCookie !== STUN_MAGIC_COOKIE) return null;
+  if (messageType !== STUN_BINDING_REQUEST) return null;
+  if (STUN_HEADER_LEN + messageLength !== msg.length) return null;
+
+  // The builder itself may still throw on an unexpected input — a bug or
+  // an rinfo shape dgram does not usually produce. One bad packet never
+  // takes the server down, so the throw is caught and logged with the
+  // peer; the next valid request is answered as before.
   try {
-    // Size cap: a packet smaller than one STUN header or past the sane
-    // cap is dropped.
-    if (msg.length < STUN_HEADER_LEN || msg.length > STUN_MAX_PACKET) return null;
-
-    const messageType = msg.readUInt16BE(0);
-    const messageLength = msg.readUInt16BE(2);
-    const magicCookie = msg.readUInt32BE(4);
-    const transactionId = msg.subarray(8, 20);
-
-    // The cookie guard — a packet without 0x2112A442 at offset 4 is not
-    // a STUN message by RFC 8489.
-    if (magicCookie !== STUN_MAGIC_COOKIE) return null;
-
-    // The method/class guard — only a Binding request (0x0001) is
-    // answered. A Binding indication, success response or error response,
-    // and any other method, is dropped.
-    if (messageType !== STUN_BINDING_REQUEST) return null;
-
-    // A malformed length — the header's length field names an attributes
-    // section the packet does not carry — is dropped.
-    if (STUN_HEADER_LEN + messageLength !== msg.length) return null;
-
     return buildBindingSuccess(transactionId, rinfo);
-  } catch {
-    // A read past the buffer, or any other unexpected throw, is dropped.
+  } catch (e) {
+    const addr = `${rinfo.address}:${rinfo.port}`;
+    console.error(`stun: build response failed for ${addr}: ${(e as Error).message}`);
     return null;
   }
 }
