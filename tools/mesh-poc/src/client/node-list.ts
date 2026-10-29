@@ -46,16 +46,18 @@ function assertNotisId(id: string): void {
 }
 
 /**
- * Each entry's writable form; `storedRetryAtMs` is the raw clock + wait at the
- * moment of the last failure. The exposed `retryAtMs` clamps it to
- * `clock() + RETRY_CAP_MS` on read, so a clock that steps back cannot hold a
- * node out past the cap (MESH_INTERFACE → The client's node list, Retry).
+ * Each entry's writable form. `clockAtFailure` is the clock reading at the
+ * latest failure; `storedRetryAtMs` is that reading plus the capped wait. The
+ * exposed `retryAtMs` is the stored value except when the current clock sits
+ * behind `clockAtFailure` — the stepped-back case, where the clamp caps the
+ * exposed wait (MESH_INTERFACE → The client's node list, Retry).
  */
 interface InternalEntry {
   notisId: string;
   anchor: boolean;
   status: NodeStatus;
   failures: number;
+  clockAtFailure: number;
   storedRetryAtMs: number;
   addrs: string[];
   droppedAddrs: string[];
@@ -84,6 +86,7 @@ export class NodeList {
           anchor: true,
           status: 'new',
           failures: 0,
+          clockAtFailure: 0,
           storedRetryAtMs: 0,
           addrs: [...a.addrs],
           droppedAddrs: [],
@@ -108,6 +111,7 @@ export class NodeList {
       anchor: false,
       status: 'new',
       failures: 0,
+      clockAtFailure: 0,
       storedRetryAtMs: 0,
       addrs: [...addrs],
       droppedAddrs: [],
@@ -132,7 +136,9 @@ export class NodeList {
     // `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(failures − 1))` on a monotonic
     // clock (MESH_INTERFACE → The client's node list, Retry).
     const wait = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * Math.pow(2, e.failures - 1));
-    e.storedRetryAtMs = this.clock() + wait;
+    const now = this.clock();
+    e.clockAtFailure = now;
+    e.storedRetryAtMs = now + wait;
     e.status = 'retry';
   }
 
@@ -228,13 +234,18 @@ export class NodeList {
   }
 
   /**
-   * The clamp: a `retry` entry's exposed `retryAtMs` never exceeds
-   * `clock() + RETRY_CAP_MS`, so a clock stepped back of its own does not
-   * hold the entry out past the longest wait the schedule allows
-   * (MESH_INTERFACE → The client's node list, Retry).
+   * The clamp caps the exposed wait at `RETRY_CAP_MS` from the current clock
+   * when, and only when, the clock has stepped back of its own below the
+   * failure moment: on a monotonic clock the write-time cap suffices, and the
+   * clamp exists for the stepped-back case alone — an injected test clock, a
+   * laptop sleep, an NTP step (MESH_INTERFACE → The client's node list, Retry).
    */
   private clampedRetryAt(e: InternalEntry): number {
-    return Math.min(e.storedRetryAtMs, this.clock() + RETRY_CAP_MS);
+    const now = this.clock();
+    if (now < e.clockAtFailure) {
+      return Math.min(e.storedRetryAtMs, now + RETRY_CAP_MS);
+    }
+    return e.storedRetryAtMs;
   }
 
   private view(e: InternalEntry): NodeEntry {
