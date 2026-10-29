@@ -9,6 +9,15 @@ export { MeshUrlError, meshBaseUrl, parseMeshUrl } from './mesh-url.js';
 
 export { MeshFetchError, meshFetch } from './http-fetch.js';
 
+export { NodeList } from './client/node-list.js';
+export type {
+  Anchor,
+  FailureKind,
+  LieEvidence,
+  NodeStatus,
+  NodeEntry,
+} from './client/node-list.js';
+
 export {
   dhtProtocol,
   RETRY_BASE_MS,

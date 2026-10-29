@@ -26,7 +26,7 @@ const a2 = '/ip4/2.2.2.2/tcp/1';
 const a3 = '/ip4/3.3.3.3/tcp/1';
 
 describe('node-list', () => {
-  it.fails('no answer never blacklists', () => {
+  it('no answer never blacklists', () => {
     const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
     const kinds: FailureKind[] = ['timeout', 'refused', 'dropped', 'transport'];
     for (const k of kinds) {
@@ -38,7 +38,7 @@ describe('node-list', () => {
     expect(e!.failures).toBe(400);
   });
 
-  it.fails('retry intervals double to the cap', () => {
+  it('retry intervals double to the cap', () => {
     let t = 0;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t);
     list.failure(idA, 'timeout');
@@ -55,7 +55,7 @@ describe('node-list', () => {
     expect(list.entry(idA)!.retryAtMs - t).toBe(600000);
   });
 
-  it.fails('a success clears the count', () => {
+  it('a success clears the count', () => {
     let t = 0;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t);
     list.failure(idA, 'timeout');
@@ -70,7 +70,7 @@ describe('node-list', () => {
     expect(list.entry(idA)!.retryAtMs - t).toBe(5000);
   });
 
-  it.fails('a lie is permanent and keeps its evidence', () => {
+  it('a lie is permanent and keeps its evidence', () => {
     const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
     const ev: LieEvidence = { kind: 'malformed', atMs: 1000, detail: 'bad bytes' };
     list.lie(idA, ev);
@@ -85,7 +85,7 @@ describe('node-list', () => {
     expect(list.candidates()).not.toContain(idA);
   });
 
-  it.fails('a wrong key drops that address only', () => {
+  it('a wrong key drops that address only', () => {
     const list = new NodeList([{ notisId: idA, addrs: [a1, a2] }], own, () => 0);
     const before = list.entry(idA)!;
     list.wrongKey(idA, a1, idB);
@@ -103,7 +103,7 @@ describe('node-list', () => {
     expect(after.droppedAddrs).toContain(a1);
   });
 
-  it.fails('behind ranks below ok', () => {
+  it('behind ranks below ok', () => {
     const list = new NodeList(
       [
         { notisId: idA, addrs: [] },
@@ -117,7 +117,7 @@ describe('node-list', () => {
     expect(list.candidates()).toEqual([idA, idB]);
   });
 
-  it.fails('a changed address revives an anchor', () => {
+  it('a changed address revives an anchor', () => {
     const list = new NodeList([{ notisId: idA, addrs: [a1, a2] }], own, () => 0);
     list.wrongKey(idA, a1, idB);
     list.wrongKey(idA, a2, idB);
@@ -133,7 +133,7 @@ describe('node-list', () => {
     expect(e.droppedAddrs).toEqual([a1, a2]);
   });
 
-  it.fails('a clock that steps back does not hold a node out', () => {
+  it('a clock that steps back does not hold a node out', () => {
     let t = 1_000_000;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t);
     list.failure(idA, 'timeout');
@@ -144,7 +144,7 @@ describe('node-list', () => {
     expect(wait).toBeGreaterThanOrEqual(0);
   });
 
-  it.fails("the client's own key is dropped and duplicate anchors are merged", () => {
+  it("the client's own key is dropped and duplicate anchors are merged", () => {
     const anchors: Anchor[] = [
       { notisId: idA, addrs: [a1] },
       { notisId: idA, addrs: [a2] },
@@ -153,13 +153,13 @@ describe('node-list', () => {
     const list = new NodeList(anchors, own, () => 0);
     const es = list.entries();
     expect(es.length).toBe(1);
-    expect(es[0].notisId).toBe(idA);
-    expect(es[0].anchor).toBe(true);
-    expect(es[0].addrs).toEqual([a1, a2]);
+    expect(es[0]!.notisId).toBe(idA);
+    expect(es[0]!.anchor).toBe(true);
+    expect(es[0]!.addrs).toEqual([a1, a2]);
     expect(list.entry(own)).toBeUndefined();
   });
 
-  it.fails("anchorReached follows the anchors' latest event", () => {
+  it("anchorReached follows the anchors' latest event", () => {
     const list = new NodeList(
       [
         { notisId: idA, addrs: [] },
@@ -179,7 +179,7 @@ describe('node-list', () => {
     expect(list.anchorReached()).toBe(false);
   });
 
-  it.fails('an id that is not 64 lowercase hex is refused', () => {
+  it('an id that is not 64 lowercase hex is refused', () => {
     const bad = 'AB'.repeat(32);
     const tooShort = 'ab'.repeat(31);
     expect(() => new NodeList([{ notisId: bad, addrs: [] }], own, () => 0)).toThrow(MeshKeyError);
@@ -194,14 +194,14 @@ describe('node-list', () => {
     expect(() => list.lie(bad, { kind: 'malformed', atMs: 0, detail: 'x' })).toThrow(MeshKeyError);
   });
 
-  it.fails('an anchor that answers behind is reached', () => {
+  it('an anchor that answers behind is reached', () => {
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => 0);
     expect(list.anchorReached()).toBe(false);
     list.behind(idA);
     expect(list.anchorReached()).toBe(true);
   });
 
-  it.fails('candidates() keeps first-known order inside a status', () => {
+  it('candidates() keeps first-known order inside a status', () => {
     const list = new NodeList([], own, () => 0);
     list.add(idB, []);
     list.add(idA, []);
@@ -212,7 +212,7 @@ describe('node-list', () => {
     expect(list.candidates()).toEqual([idB, idA, idC]);
   });
 
-  it.fails('a retry whose time has not come is not a candidate, and is once it has', () => {
+  it('a retry whose time has not come is not a candidate, and is once it has', () => {
     let t = 1000;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t);
     list.failure(idA, 'timeout');
