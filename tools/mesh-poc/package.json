@@ -1,0 +1,33 @@
+{
+  "name": "@dagsocial/mesh-poc",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/lib.js",
+  "types": "./dist/lib.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/lib.d.ts",
+      "default": "./dist/lib.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/lib.ts --format esm --dts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc -p tsconfig.browser.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@dagsocial/types": "workspace:*",
+    "@libp2p/crypto": "^5.2.0",
+    "@libp2p/interface": "^3.4.0",
+    "@libp2p/peer-id": "^6.0.18"
+  },
+  "devDependencies": {
+    "@noble/curves": "2.2.0",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
