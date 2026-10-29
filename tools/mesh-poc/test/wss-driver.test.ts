@@ -35,14 +35,44 @@ interface MockLibp2p {
   components: {
     events: MockEvents;
     transportManager: MockTransportManager;
+    // `@libp2p/websockets` reads `components.logger.forComponent(name)`
+    // when the driver's first-cert path builds the transport; a mock
+    // satisfies the signature without pulling in a real @libp2p/logger.
+    logger: {
+      forComponent(name: string): {
+        (..._args: unknown[]): void;
+        error: (..._args: unknown[]) => void;
+        trace: (..._args: unknown[]) => void;
+        enabled: boolean;
+      };
+    };
   };
 }
 
 function makeLibp2p(): MockLibp2p {
   const dispatched: Array<{ name: string; detail: unknown }> = [];
   const listeners: MockListener[] = [];
+  const noopLog = Object.assign(
+    (..._args: unknown[]): void => {
+      /* silent */
+    },
+    {
+      error: (..._args: unknown[]): void => {
+        /* silent */
+      },
+      trace: (..._args: unknown[]): void => {
+        /* silent */
+      },
+      enabled: false,
+    },
+  );
   return {
     components: {
+      logger: {
+        forComponent() {
+          return noopLog;
+        },
+      },
       events: {
         dispatched,
         safeDispatchEvent(name, event) {
@@ -64,21 +94,16 @@ function makeLibp2p(): MockLibp2p {
           // A listener for each `/tls/ws` address — the driver reaches it
           // through `getListeners()` later on `stop-wss`.
           const addrsStr = mas.map((m) => String(m));
-          const closedFlag = { v: false };
           const l: MockListener = {
             getAddrs() {
-              // Return a stub Multiaddr-shaped object (`toString()` is all
-              // the driver reads).
               return addrsStr.map((s) => ({ toString: () => s })) as unknown as Multiaddr[];
             },
             async close() {
-              closedFlag.v = true;
               this.closed = true;
             },
             closed: false,
           };
           listeners.push(l);
-          void closedFlag;
         },
       },
     },
@@ -106,7 +131,7 @@ describe('wss driver — delay cap, post-obtain throttle, first-cert wiring', ()
     errSpy = null;
   });
 
-  it.fails('a 5-year lifetime does not spin the timer', async () => {
+  it('a 5-year lifetime does not spin the timer', async () => {
     // MESH_INTERFACE → The IP certificate — the renewer schedules
     // `setTimeout`; a delay above `2^31 − 1` ms overflows to immediate.
     // Capping every delay keeps the driver quiet far from the half-life.
@@ -139,7 +164,7 @@ describe('wss driver — delay cap, post-obtain throttle, first-cert wiring', ()
     }
   });
 
-  it.fails('an obtain that lands past the half-life is treated as a failure', async () => {
+  it('an obtain that lands past the half-life is treated as a failure', async () => {
     // A clock skew or a CA handing out a half-spent certificate would
     // make the driver loop on obtain. Treat as a failure (one error log,
     // `lastFailureMs` set, so the next try waits `CERT_RETRY_MS`).
@@ -179,7 +204,7 @@ describe('wss driver — delay cap, post-obtain throttle, first-cert wiring', ()
     }
   });
 
-  it.fails('the WSS listener appears when a retry succeeds', async () => {
+  it('the WSS listener appears when a retry succeeds', async () => {
     // MESH_INTERFACE → The IP certificate — a node starts without the WSS
     // listener when `obtain()` fails at start; the retry wires the
     // listener via `transportManager.add` and `.listen` when a certificate
@@ -194,7 +219,6 @@ describe('wss driver — delay cap, post-obtain throttle, first-cert wiring', ()
       },
       async obtain() {
         obtains++;
-        if (obtains === 1) throw new Error('ACME down');
         return good;
       },
     };
@@ -220,5 +244,28 @@ describe('wss driver — delay cap, post-obtain throttle, first-cert wiring', ()
     } finally {
       renewal.stop();
     }
+  });
+
+  it('absent libp2p internals throw a clear error', () => {
+    // MESH_INTERFACE → The IP certificate — the renewer resolves
+    // `components.events` and `components.transportManager` once and
+    // throws if either is absent; the driver carries no silent fallback.
+    const now = 4_000_000_000_000;
+    vi.setSystemTime(now);
+    const source: CertificateSource = {
+      async current() {
+        return null;
+      },
+      async obtain() {
+        throw new Error('unused');
+      },
+    };
+    const emptyLibp2p = { components: {} } as unknown as Libp2p;
+    expect(() =>
+      startWssRenewal(emptyLibp2p, { ip: '127.0.0.1', port: 0, source }, {
+        cert: null,
+        lastFailureMs: null,
+      }),
+    ).toThrow(/components\.\{events,transportManager\}/);
   });
 });

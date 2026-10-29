@@ -115,7 +115,7 @@ describe('acme — acmeSource reads the state directory', () => {
     }
   });
 
-  it.fails('a leftover temp file beside a good certificate file is ignored', async () => {
+  it('a leftover temp file beside a good certificate file is ignored', async () => {
     // MESH_INTERFACE → The IP certificate — "The certificate and its key
     // live under `<stateDir>/acme/`". A crash between writes leaves a temp
     // name that the next start must not treat as the current certificate.

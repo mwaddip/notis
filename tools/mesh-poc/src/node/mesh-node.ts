@@ -147,9 +147,13 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
 
   // `MESH_INTERFACE → The IP certificate` — a WSS listener needs its TLS
   // cert and key at construction time, so the initial certificate is
-  // resolved before libp2p starts. `initialCertificate` reads what the
-  // state directory already holds and refreshes it if its half-life has
-  // gone; it never silently serves an expired certificate.
+  // resolved before libp2p starts. `initialCertificate` returns null when
+  // `current()` reads nothing (or an expired cert) and `obtain()` fails:
+  // the node then starts without the WSS listener and the renewal timer
+  // retries every `CERT_RETRY_MS` until a certificate arrives, at which
+  // point the renewal driver wires the listener in through
+  // `transportManager.add` and `.listen`. The WSS fallback must never
+  // take the node down.
   let initialCert: IpCertificate | null = null;
   if (opts.wss) initialCert = await initialCertificate(opts.wss);
 
@@ -166,7 +170,7 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
       : []),
   ];
 
-  if (opts.wss) {
+  if (opts.wss && initialCert) {
     const ipFamily = isIPv6(opts.wss.ip) ? 'ip6' : 'ip4';
     listen.push(`/${ipFamily}/${opts.wss.ip}/tcp/${opts.wss.port}/tls/ws`);
   }
@@ -236,13 +240,15 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
 
   // `MESH_INTERFACE → The IP certificate` — the renewal timer swaps the
   // listener's certificate in place at half the lifetime and closes the
-  // WSS listener at `notAfter`. Started after libp2p because it fires
-  // events on the shared bus and may reach into the transport manager.
+  // WSS listener at `notAfter`; with no initial certificate it retries
+  // `obtain()` every `CERT_RETRY_MS` and wires the listener in on the
+  // first successful retry. Started after libp2p because it fires events
+  // on the shared bus and may reach into the transport manager.
   let wssRenewal: WssRenewal | null = null;
-  if (opts.wss && initialCert) {
+  if (opts.wss) {
     wssRenewal = startWssRenewal(typed, opts.wss, {
       cert: initialCert,
-      lastFailureMs: null,
+      lastFailureMs: initialCert === null ? Date.now() : null,
     });
   }
 
@@ -255,7 +261,10 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
         wssRenewal = null;
       }
       if (stun) {
-        try { await stun.close(); } catch { /* already closed */ }
+        // `startStunServer`'s close is idempotent (fix 7, matching
+        // `stream.abort`): a bare call surfaces a surprise instead of
+        // swallowing it.
+        await stun.close();
         stun = null;
       }
       await typed.stop();

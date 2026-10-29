@@ -323,7 +323,6 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     dirs.push(dir);
     const now = Date.now();
     const cert1 = await makeSelfSigned(now, now + 4_000);
-    const cert2 = await makeSelfSigned(now, now + 4_000);
     let obtains = 0;
     const source: CertificateSource = {
       async current() {
@@ -331,7 +330,10 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
       },
       async obtain() {
         obtains++;
-        return cert2;
+        // Each obtain mints a fresh cert valid 10 s from now so the
+        // renewer's post-obtain `renewalStep` reads `serve` (fix 5's
+        // throttle only trips on a half-spent reply, not on a fresh one).
+        return makeSelfSigned(Date.now(), Date.now() + 10_000);
       },
     };
     const server = await startMeshNode({
@@ -470,7 +472,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(res.status).toBe(200);
   }, 30_000);
 
-  it.fails('the node starts without a WSS listener when the initial obtain fails', async () => {
+  it('the node starts without a WSS listener when the initial obtain fails', async () => {
     // MESH_INTERFACE → The IP certificate — "A failed renewal is retried
     // every `CERT_RETRY_MS` while the current certificate serves"; the WSS
     // fallback never takes the node down. With no stored certificate and

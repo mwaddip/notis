@@ -5,10 +5,10 @@
 // Node-only: `acmeSource` reads and writes a file and runs an HTTP server
 // for the challenge (`MESH_INTERFACE → Place in the workspace`).
 
-import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
-import { X509Certificate } from 'node:crypto';
+import { X509Certificate, randomBytes } from 'node:crypto';
 import acme from 'acme-client';
 import { CERT_RETRY_MS } from '../protocols.js';
 
@@ -64,13 +64,17 @@ export function renewalStep(
 }
 
 const ACCOUNT_KEY_FILE = 'account.key';
-const CERT_FILE = 'cert.pem';
-const KEY_FILE = 'key.pem';
+// The certificate and its key share one atomic file: a crash between two
+// separate writes would leave a pair that does not match, and the next
+// start would read a certPem belonging to a vanished keyPem (or the
+// reverse). `wss-cert.json` is written to a tempname in the same directory
+// and renamed into place; `rename` is atomic on POSIX.
+const CERT_FILE = 'wss-cert.json';
 
 /**
  * MESH_INTERFACE → The IP certificate — the ACME driver: an account key,
  * the certificate and its key under `<stateDir>/acme/`, the two keys mode
- * `0600`. `current()` reads what the directory holds, `obtain()` runs the
+ * `0600`. `current()` reads the atomic cert+key file, `obtain()` runs the
  * ACME order against the given directory for the `ip` identifier under the
  * `shortlived` profile, answers `http-01` on `challengePort` (default 80) of
  * the node's IP, and writes the result before resolving.
@@ -87,16 +91,14 @@ export function acmeSource(o: {
   return {
     async current(): Promise<IpCertificate | null> {
       try {
-        const [certPem, keyPem] = await Promise.all([
-          readFile(join(acmeDir, CERT_FILE), 'utf8'),
-          readFile(join(acmeDir, KEY_FILE), 'utf8'),
-        ]);
-        const parsed = new X509Certificate(certPem);
+        const raw = await readFile(join(acmeDir, CERT_FILE), 'utf8');
+        const parsed = JSON.parse(raw) as { certPem: string; keyPem: string };
+        const certInfo = new X509Certificate(parsed.certPem);
         return {
-          certPem,
-          keyPem,
-          notBefore: new Date(parsed.validFrom).getTime(),
-          notAfter: new Date(parsed.validTo).getTime(),
+          certPem: parsed.certPem,
+          keyPem: parsed.keyPem,
+          notBefore: new Date(certInfo.validFrom).getTime(),
+          notAfter: new Date(certInfo.validTo).getTime(),
         };
       } catch (err) {
         if ((err as { code?: string }).code === 'ENOENT') return null;
@@ -143,10 +145,13 @@ export function acmeSource(o: {
 
       const authorizations = await client.getAuthorizations(order);
 
-      // One in-process HTTP server on the challenge port answers every
-      // `GET /.well-known/acme-challenge/<token>` from the ACME server
-      // for the duration of the order. A single server covers every
-      // authorization's challenge.
+      // The challenge server binds to `o.ip` (not every interface) and the
+      // configured `challengePort`. `MESH_INTERFACE → The IP certificate`
+      // reads "port 80 of the IP" and the stage's ACME server reaches
+      // whichever port the operator opts in on; the server's own
+      // validation (surfaced by `waitForValidStatus`) is the authoritative
+      // check and `client.verifyChallenge`'s local self-check is skipped:
+      // its `http://<ip>/…` always lands on port 80.
       const tokens = new Map<string, string>();
       const challengeServer = createServer((req, res) => {
         const prefix = '/.well-known/acme-challenge/';
@@ -165,7 +170,7 @@ export function acmeSource(o: {
       await new Promise<void>((resolve, reject) => {
         const onErr = (e: Error): void => reject(e);
         challengeServer.once('error', onErr);
-        challengeServer.listen(challengePort, () => {
+        challengeServer.listen(challengePort, o.ip, () => {
           challengeServer.off('error', onErr);
           resolve();
         });
@@ -179,7 +184,6 @@ export function acmeSource(o: {
           }
           const keyAuth = await client.getChallengeKeyAuthorization(challenge);
           tokens.set(challenge.token, keyAuth);
-          await client.verifyChallenge(authz, challenge);
           await client.completeChallenge(challenge);
           await client.waitForValidStatus(challenge);
         }
@@ -194,21 +198,22 @@ export function acmeSource(o: {
           client.getCertificate(o2),
         );
 
-        await writeFile(join(acmeDir, KEY_FILE), keyPem, {
-          mode: 0o600,
-          flag: 'w',
-        });
-        await writeFile(join(acmeDir, CERT_FILE), certPem, { flag: 'w' });
-        // `writeFile` with `flag: 'w'` keeps the existing file's mode on
-        // overwrite; a renewal must still land on mode 0600 for the key.
-        await chmod(join(acmeDir, KEY_FILE), 0o600);
+        // One file for the pair, written atomically through tempname +
+        // rename: a crash cannot leave half-written state behind. The
+        // temp lives in the same directory so the rename stays on one
+        // filesystem.
+        const payload = JSON.stringify({ certPem, keyPem: keyPem.toString('utf8') });
+        const tempName = `${CERT_FILE}.tmp.${randomBytes(6).toString('hex')}`;
+        const tempPath = join(acmeDir, tempName);
+        await writeFile(tempPath, payload, { mode: 0o600, flag: 'wx' });
+        await rename(tempPath, join(acmeDir, CERT_FILE));
 
-        const parsed = new X509Certificate(certPem);
+        const certInfo = new X509Certificate(certPem);
         return {
           certPem,
           keyPem: keyPem.toString('utf8'),
-          notBefore: new Date(parsed.validFrom).getTime(),
-          notAfter: new Date(parsed.validTo).getTime(),
+          notBefore: new Date(certInfo.validFrom).getTime(),
+          notAfter: new Date(certInfo.validTo).getTime(),
         };
       } finally {
         await new Promise<void>((resolve) => {
