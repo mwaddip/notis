@@ -107,6 +107,26 @@ async function meshFetchOne(
 
   // Race the fetch against the combined signal — @libp2p/http.fetch does not
   // reliably reject once the connection is open, so we end the wait ourselves.
+  const fetchPromise = node.services.http.fetch(resource, { signal: ctrl.signal });
+
+  // On abort, make sure a Response that resolves after the race leaves no
+  // dangling body (a late response's `TransformStream` keeps buffering
+  // upstream chunks otherwise), and a late rejection does not surface as
+  // an unhandled promise rejection.
+  ctrl.signal.addEventListener(
+    'abort',
+    () => {
+      fetchPromise.then(
+        (lateRes) => {
+          const body = lateRes.body;
+          if (body !== null) body.cancel(ctrl.signal.reason).catch(() => undefined);
+        },
+        () => undefined,
+      );
+    },
+    { once: true },
+  );
+
   const abortPromise = new Promise<never>((_, reject) => {
     ctrl.signal.addEventListener(
       'abort',
@@ -117,7 +137,6 @@ async function meshFetchOne(
 
   let res: Response;
   try {
-    const fetchPromise = node.services.http.fetch(resource, { signal: ctrl.signal });
     res = await Promise.race([fetchPromise, abortPromise]);
   } catch (e) {
     // A signal-fired failure keeps its reason (fetchJson's deadline rule).
@@ -135,9 +154,23 @@ async function meshFetchOne(
   const wrapped = new ReadableStream<Uint8Array>({
     start(controller) {
       const reader = original.getReader();
+      // One place ends the stream, once; a second close/error must stay
+      // silent to keep ReadableStream happy, but a different failure must
+      // not be swallowed.
+      let ended = false;
+      const endNormally = (): void => {
+        if (ended) return;
+        ended = true;
+        controller.close();
+      };
+      const endWith = (reason: unknown): void => {
+        if (ended) return;
+        ended = true;
+        controller.error(reason);
+      };
       const stopOnAbort = (): void => {
         reader.cancel(ctrl.signal.reason).catch(() => undefined);
-        try { controller.error(ctrl.signal.reason); } catch { /* already errored */ }
+        endWith(ctrl.signal.reason);
       };
       if (ctrl.signal.aborted) stopOnAbort();
       else ctrl.signal.addEventListener('abort', stopOnAbort, { once: true });
@@ -145,14 +178,11 @@ async function meshFetchOne(
         try {
           for (;;) {
             const r = await reader.read();
-            if (r.done) {
-              try { controller.close(); } catch { /* already closed */ }
-              return;
-            }
+            if (r.done) { endNormally(); return; }
             controller.enqueue(r.value);
           }
         } catch (e) {
-          try { controller.error(e); } catch { /* already errored */ }
+          endWith(e);
         }
       })();
     },
