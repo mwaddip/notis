@@ -47,6 +47,12 @@ export interface MeshNodeOptions {
   readonly bootstrap: string[];
   readonly stateDir: string;
   readonly upstream: string;
+  /**
+   * MESH_INTERFACE → NAT — a public node runs a STUN server on UDP port
+   * `STUN_PORT` of its own IP. A private node with STUN set is refused:
+   * STUN serves from a public address.
+   */
+  readonly stun?: { host: string; port: number };
 }
 
 export interface MeshNode {
