@@ -118,14 +118,14 @@ async function meshFetchOne(
   // On signal fire, close the libp2p stream directly: `@libp2p/http-fetch`'s
   // response-parser listens for 'message' and 'remoteCloseWrite' and ignores
   // a local abort, so without this call the stream stays open against a
-  // server that never finishes its body.
+  // server that never finishes its body. `stream.abort` is idempotent — on a
+  // closed, reset or already-aborted stream it transitions the state and
+  // throws nothing, so no guard is needed around the call.
   ctrl.signal.addEventListener(
     'abort',
     () => {
       const reason = ctrl.signal.reason;
-      try {
-        stream.abort(reason instanceof Error ? reason : new Error('aborted'));
-      } catch { /* already closed */ }
+      stream.abort(reason instanceof Error ? reason : new Error('aborted'));
     },
     { once: true },
   );

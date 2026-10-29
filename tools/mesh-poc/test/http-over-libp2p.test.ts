@@ -247,8 +247,9 @@ describe('HTTP over libp2p — meshFetch and the node endpoint', () => {
 
   // MESH_INTERFACE → The node endpoint — a client that gave up before the
   // answer owns no `/http/1.1` stream once the upstream has eventually
-  // answered: meshFetch cancels the Response body on a late resolve, and the
-  // libp2p stream closes with the server's own `stream.close` on completion.
+  // answered: meshFetch aborts the libp2p stream it opened on the signal
+  // fire, so the server sees the reset (or finishes its own write and
+  // calls `stream.close` on completion) and both sides fall closed.
   it('an abort before the answer leaks no stream once the upstream answers', async () => {
     const id = notisIdFromPeerId(server!.peerId);
     const base = meshBaseUrl(id);
@@ -363,5 +364,35 @@ describe('HTTP over libp2p — meshFetch and the node endpoint', () => {
       expect(r.status).toBe(0);
       expect(r.timedOut).toBe(true);
     }
+  }, 15_000);
+
+  // MESH_INTERFACE → The node endpoint — the success path has to prove
+  // the same cleanup the failure paths do: a GET read to the end by the
+  // caller leaves no `/http/1.1` stream open on either side. `@libp2p/
+  // http-fetch` closes its write end after sending the request, and the
+  // server's `responseToStream` ends with `stream.close` when the body
+  // is fully written, so both ends are closed by the time `fetchJson`
+  // has read the body in full.
+  it('a completed GET leaves no stream', async () => {
+    const id = notisIdFromPeerId(server!.peerId);
+    const base = meshBaseUrl(id);
+    const fetch = meshFetch(client!);
+
+    expect(httpStreamCount(client!)).toBe(0);
+    expect(httpStreamCount(server!)).toBe(0);
+
+    // Small GET
+    const small = await fetchJson(fetch, `${base}/blocks/current`, 10_000);
+    expect(small.ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(httpStreamCount(client!)).toBe(0);
+    expect(httpStreamCount(server!)).toBe(0);
+
+    // 300 KB GET
+    const big = await fetchJson(fetch, `${base}/nipopow/proof/24/20`, 1_000_000);
+    expect(big.ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(httpStreamCount(client!)).toBe(0);
+    expect(httpStreamCount(server!)).toBe(0);
   }, 15_000);
 });

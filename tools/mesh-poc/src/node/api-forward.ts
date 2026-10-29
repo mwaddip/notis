@@ -58,9 +58,10 @@ export function nodeApiServer(
         );
         await stream.close().catch(() => undefined);
       } catch (err) {
-        try {
-          stream.abort(err instanceof Error ? err : new Error(String(err)));
-        } catch { /* stream already torn down */ }
+        // `stream.abort` is idempotent — on a stream the client has already
+        // reset it transitions the state and throws nothing, so no guard is
+        // needed around the call.
+        stream.abort(err instanceof Error ? err : new Error(String(err)));
       }
     },
   };
