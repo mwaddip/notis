@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, statSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, statSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPair as libp2pGenerateKeyPair } from '@libp2p/crypto/keys';
@@ -64,15 +64,27 @@ describe('identity', () => {
     }
   });
 
-  it('a key file of the wrong length is refused', async () => {
+  it('a key file of the wrong length is refused, never replaced', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-poc-key-'));
     try {
       const p = join(dir, 'node.key');
-      writeFileSync(p, new Uint8Array(47), { mode: 0o600 });
+      const before = new Uint8Array(47);
+      for (let i = 0; i < 47; i++) before[i] = i;
+      writeFileSync(p, before, { mode: 0o600 });
       await expect(loadOrCreateNodeKey(p)).rejects.toThrow(MeshKeyError);
+      const after = readFileSync(p);
+      expect(after.length).toBe(47);
+      expect(Array.from(after)).toEqual(Array.from(before));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it.fails("a key pair whose public key is not its seed's is refused", () => {
+    const a = generateKeyPair();
+    const b = generateKeyPair();
+    const crossed = { publicKey: b.publicKey, secretKey: a.secretKey };
+    expect(() => nodeKeyFromKeyPair(crossed)).toThrow(MeshKeyError);
   });
 
   it("the DHT protocol is Notis's own", () => {
