@@ -4,8 +4,8 @@
 
 export type NetworkName = 'devnet' | 'testnet' | 'mainnet';
 
-export function dhtProtocol(_network: NetworkName): string {
-  throw new Error('not implemented yet');
+export function dhtProtocol(network: NetworkName): string {
+  return `/notis/${network}/kad/1.0.0`;
 }
 
 export const RETRY_BASE_MS: 5000 = 5000;
