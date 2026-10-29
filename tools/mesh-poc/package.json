@@ -18,14 +18,22 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@dagsocial/node-reads": "workspace:*",
     "@dagsocial/types": "workspace:*",
     "@libp2p/crypto": "^5.2.0",
+    "@libp2p/http": "^2.0.6",
+    "@libp2p/http-utils": "^2.0.6",
     "@libp2p/interface": "^3.4.0",
     "@libp2p/peer-id": "^6.0.18",
+    "@multiformats/multiaddr": "^13.0.0",
     "@noble/curves": "2.2.0"
   },
   "devDependencies": {
+    "@libp2p/noise": "^17.0.0",
+    "@libp2p/tcp": "^11.0.0",
+    "@libp2p/yamux": "^8.0.0",
     "@types/node": "^22.0.0",
+    "libp2p": "^3.5.1",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
