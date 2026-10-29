@@ -1,12 +1,15 @@
 // MESH_INTERFACE → The node endpoint — `meshFetch` is the client's HTTP over
 // libp2p: an `HttpFetch` (CONSTANTS → Client reads) that reads a mesh URL
 // `notis-mesh://<notisId><path>` by opening a libp2p stream to the node whose
-// key is `notisId` and letting `@libp2p/http` run the HTTP over it. Browser-
-// safe: no `node:` imports (`MESH_INTERFACE → Place in the workspace`).
+// key is `notisId` and running `@libp2p/http-fetch` over it. The stream is
+// opened by this module so a signal fire can close it directly; `@libp2p/
+// http.fetch` hides its stream and leaves it open against a never-ending
+// server. Browser-safe: no `node:` imports (`MESH_INTERFACE → Place in the
+// workspace`).
 
-import type { Libp2p } from '@libp2p/interface';
-import type { HTTP } from '@libp2p/http';
-import { multiaddr } from '@multiformats/multiaddr';
+import type { Libp2p, Stream } from '@libp2p/interface';
+import { HTTP_PROTOCOL, type HTTP } from '@libp2p/http';
+import { fetch as httpFetch } from '@libp2p/http-fetch';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import { REQUEST_TIMEOUT_MS } from '@dagsocial/node-reads';
 import { peerIdFromNotisId, MeshKeyError } from './identity.js';
@@ -38,9 +41,10 @@ export class MeshFetchError extends Error {
 /**
  * `MESH_INTERFACE → The node endpoint` — build an `HttpFetch` over a given
  * libp2p node. The returned function takes a mesh URL `notis-mesh://<notisId>
- * <path>`, dials the peer whose key is `notisId`, and runs the GET as HTTP
- * over libp2p (`@libp2p/http`'s `fetch`). `init.signal` and `timeoutMs`
- * compose: whichever fires first ends the request with its reason.
+ * <path>`, opens a libp2p stream to the peer whose key is `notisId`, and
+ * runs `@libp2p/http-fetch` over it. `init.signal` and `timeoutMs` compose:
+ * whichever fires first closes the stream and ends the body reader with
+ * the signal's reason.
  */
 export function meshFetch(
   node: Libp2p<{ http: HTTP }>,
@@ -73,21 +77,14 @@ async function meshFetchOne(
   }
 
   let peerIdString: string;
+  let peerId;
   try {
-    peerIdString = peerIdFromNotisId(notisId).toString();
+    peerId = peerIdFromNotisId(notisId);
+    peerIdString = peerId.toString();
   } catch (e) {
     if (e instanceof MeshKeyError) throw new MeshFetchError('url', e.message);
     throw e;
   }
-
-  // `MESH_INTERFACE → The mesh URL` — `path` keeps its leading `/`. The
-  // multiaddr `/http-path/` codec URL-decodes its value and prepends a
-  // leading `/`, so the inner value is the path WITHOUT its own leading
-  // slash, URL-encoded.
-  const inner = path.slice(1);
-  const resource = multiaddr(
-    `/p2p/${peerIdString}/http-path/${encodeURIComponent(inner)}`,
-  );
 
   // Combine the caller's signal with our own timeout. Whichever fires
   // first wins, and its reason reaches the caller unchanged — a
@@ -105,28 +102,43 @@ async function meshFetchOne(
   if (timeoutSignal.aborted) abortWith(timeoutSignal.reason);
   else timeoutSignal.addEventListener('abort', () => abortWith(timeoutSignal.reason), { once: true });
 
-  // Race the fetch against the combined signal — @libp2p/http.fetch does not
-  // reliably reject once the connection is open, so we end the wait ourselves.
-  const fetchPromise = node.services.http.fetch(resource, { signal: ctrl.signal });
+  // Open the libp2p stream ourselves. @libp2p/http.fetch hides its stream
+  // and never closes it from the outside, so a server that keeps writing
+  // after the client gives up leaves the stream open on both ends; owning
+  // the handle here lets a signal fire call stream.abort directly.
+  let stream: Stream;
+  try {
+    stream = await node.dialProtocol(peerId, HTTP_PROTOCOL, { signal: ctrl.signal });
+  } catch (e) {
+    if (ctrl.signal.aborted) throw ctrl.signal.reason;
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new MeshFetchError('transport', msg);
+  }
 
-  // On abort, make sure a Response that resolves after the race leaves no
-  // dangling body (a late response's `TransformStream` keeps buffering
-  // upstream chunks otherwise), and a late rejection does not surface as
-  // an unhandled promise rejection.
+  // On signal fire, close the libp2p stream directly: `@libp2p/http-fetch`'s
+  // response-parser listens for 'message' and 'remoteCloseWrite' and ignores
+  // a local abort, so without this call the stream stays open against a
+  // server that never finishes its body.
   ctrl.signal.addEventListener(
     'abort',
     () => {
-      fetchPromise.then(
-        (lateRes) => {
-          const body = lateRes.body;
-          if (body !== null) body.cancel(ctrl.signal.reason).catch(() => undefined);
-        },
-        () => undefined,
-      );
+      const reason = ctrl.signal.reason;
+      try {
+        stream.abort(reason instanceof Error ? reason : new Error('aborted'));
+      } catch { /* already closed */ }
     },
     { once: true },
   );
 
+  // The response-parser needs a URL for the request line; the peer id
+  // string is the Host header, exactly as `@libp2p/http.fetch` would set
+  // it when addressed by peer id.
+  const httpUrl = new URL(`http://${peerIdString}${path}`);
+  const fetchPromise = httpFetch(stream, httpUrl, { signal: ctrl.signal });
+  // Prevent an unhandled rejection: once the race is lost, nothing holds
+  // the fetch promise, and a late reject (e.g. the stream reset above)
+  // would otherwise surface at the process level.
+  fetchPromise.catch(() => undefined);
   const abortPromise = new Promise<never>((_, reject) => {
     ctrl.signal.addEventListener(
       'abort',
@@ -139,7 +151,6 @@ async function meshFetchOne(
   try {
     res = await Promise.race([fetchPromise, abortPromise]);
   } catch (e) {
-    // A signal-fired failure keeps its reason (fetchJson's deadline rule).
     if (ctrl.signal.aborted) throw ctrl.signal.reason;
     const msg = e instanceof Error ? e.message : String(e);
     throw new MeshFetchError('transport', msg);
@@ -148,8 +159,10 @@ async function meshFetchOne(
   if (!res.body) return res;
 
   // Wrap the Response body so a signal fire past the headers also ends the
-  // reader with the signal's reason: without this, a reader waiting on a
-  // chunk never returns, and fetchJson's deadline never fires in the body.
+  // reader with the signal's reason: `stream.abort` closes the libp2p
+  // stream but the parser's output stream has no abort listener of its
+  // own, so a reader waiting on a chunk never returns and `fetchJson`'s
+  // deadline never fires in the body.
   const original = res.body;
   const wrapped = new ReadableStream<Uint8Array>({
     start(controller) {

@@ -22,6 +22,7 @@
     "@dagsocial/types": "workspace:*",
     "@libp2p/crypto": "^5.2.0",
     "@libp2p/http": "^2.0.6",
+    "@libp2p/http-fetch": "^4.0.0",
     "@libp2p/http-utils": "^2.0.6",
     "@libp2p/interface": "^3.4.0",
     "@libp2p/peer-id": "^6.0.18",

@@ -392,6 +392,9 @@ importers:
       '@libp2p/http':
         specifier: ^2.0.6
         version: 2.0.6
+      '@libp2p/http-fetch':
+        specifier: ^4.0.0
+        version: 4.0.4
       '@libp2p/http-utils':
         specifier: ^2.0.6
         version: 2.0.6

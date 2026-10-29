@@ -81,6 +81,24 @@ async function makeStub(): Promise<Stub> {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ late: true }));
       }, 500);
+    } else if (req.url === '/slow-then-forever') {
+      // Headers past the 100 ms client deadline, then one chunk every
+      // 100 ms forever: proves that abort closes the stream even against
+      // a server that never ends its body.
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.write('{"start":true,');
+        const iv = setInterval(() => {
+          try { res.write('"x":0,'); } catch { clearInterval(iv); }
+        }, 100);
+        res.on('close', () => clearInterval(iv));
+      }, 500);
+    } else if (req.url === '/first-then-stall') {
+      // Headers and one chunk, then nothing: proves the body wrapper's
+      // abort listener ends the reader at the client's own deadline.
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"first":"chunk",');
+      // deliberately never write again
     } else if (req.url === '/dead') {
       // deliberately never answer: tests the upstream deadline on the node
     } else {
@@ -301,6 +319,49 @@ describe('HTTP over libp2p — meshFetch and the node endpoint', () => {
       try { await localClient.stop(); } catch { /* already stopped */ }
       try { await localServer.stop(); } catch { /* already stopped */ }
       localStub.srv.close();
+    }
+  }, 15_000);
+
+  // MESH_INTERFACE → The node endpoint — a client that gave up before the
+  // headers owns no stream to a server whose body never ends: the libp2p
+  // stream is closed on the signal, not by the upstream's completion.
+  it('a late answer that never ends is cancelled', async () => {
+    const id = notisIdFromPeerId(server!.peerId);
+    const base = meshBaseUrl(id);
+    const fastFetch = meshFetch(client!, { timeoutMs: 100 });
+
+    expect(httpStreamCount(client!)).toBe(0);
+
+    let caught: unknown;
+    try { await fastFetch(`${base}/slow-then-forever`); } catch (e) { caught = e; }
+    expect(caught instanceof Error && caught.name === 'TimeoutError').toBe(true);
+
+    // The stub's headers land at ~500 ms (past the 100 ms deadline) and
+    // one chunk every 100 ms thereafter: at 1 000 ms (`+ 500 ms` past the
+    // headers) the client owns no `/http/1.1` stream, and the server
+    // sees its own stream closed too.
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(httpStreamCount(client!)).toBe(0);
+    expect(httpStreamCount(server!)).toBe(0);
+  }, 15_000);
+
+  // MESH_INTERFACE → The node endpoint — a body that stalls after the
+  // first chunk ends at the client's own deadline: the wrapped stream's
+  // reader rejects with the signal reason instead of waiting on the
+  // upstream reader forever.
+  it('a body that stalls mid-way ends at the deadline', async () => {
+    const id = notisIdFromPeerId(server!.peerId);
+    const base = meshBaseUrl(id);
+    const fastFetch = meshFetch(client!, { timeoutMs: 1_000 });
+
+    const t0 = Date.now();
+    const r = await fetchJson(fastFetch, `${base}/first-then-stall`, 10_000);
+    const elapsed = Date.now() - t0;
+    expect(elapsed).toBeLessThan(1_500);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe(0);
+      expect(r.timedOut).toBe(true);
     }
   }, 15_000);
 });
