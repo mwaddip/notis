@@ -6,6 +6,8 @@
 import { isIPv4, isIPv6 } from 'node:net';
 import { loadOrCreateNodeKey } from './key-store.js';
 import { startMeshNode } from './mesh-node.js';
+import { acmeSource } from './acme.js';
+import type { WssOptions } from './wss.js';
 import type { NetworkName } from '../protocols.js';
 
 function need(name: string): string {
@@ -75,6 +77,75 @@ function parseStun(v: string | undefined): { host: string; port: number } | unde
   return { host, port };
 }
 
+// MESH_INTERFACE → The IP certificate — `MESH_WSS` is `<ip>:<port>` (an
+// IPv6 host in brackets); it names the WSS listener's bind address and
+// requires `MESH_ACME_DIRECTORY` for the ACME directory URL. The
+// challenge port defaults to 80 (`http-01` on the node's IP). A hostname
+// is refused — a mesh client never resolves a name on the browser's path
+// (`MESH_INTERFACE → Discovery`).
+function parseWss(
+  v: string | undefined,
+  stateDir: string,
+): WssOptions | undefined {
+  if (v === undefined || v === '') return undefined;
+  let host: string;
+  let portStr: string;
+  if (v.startsWith('[')) {
+    const idx = v.indexOf(']:');
+    if (idx < 0) {
+      console.error(`MESH_WSS bracketed host must end with ]:<port>, not ${JSON.stringify(v)}`);
+      process.exit(1);
+    }
+    host = v.substring(1, idx);
+    portStr = v.substring(idx + 2);
+    if (!isIPv6(host)) {
+      console.error(`MESH_WSS bracketed host must be an IPv6, not ${JSON.stringify(host)}`);
+      process.exit(1);
+    }
+  } else {
+    const idx = v.lastIndexOf(':');
+    if (idx < 0) {
+      console.error(`MESH_WSS must be <ip>:<port>, not ${JSON.stringify(v)}`);
+      process.exit(1);
+    }
+    host = v.substring(0, idx);
+    portStr = v.substring(idx + 1);
+    if (!isIPv4(host)) {
+      console.error(`MESH_WSS host must be an IPv4 (or [IPv6]), not ${JSON.stringify(host)}`);
+      process.exit(1);
+    }
+  }
+  const port = Number(portStr);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    console.error(`MESH_WSS port must be 0..65535, not ${JSON.stringify(portStr)}`);
+    process.exit(1);
+  }
+  const directoryUrl = process.env.MESH_ACME_DIRECTORY;
+  if (directoryUrl === undefined || directoryUrl === '') {
+    console.error('MESH_WSS requires MESH_ACME_DIRECTORY');
+    process.exit(1);
+  }
+  const chPortStr = process.env.MESH_ACME_CHALLENGE_PORT;
+  let challengePort: number | undefined;
+  if (chPortStr !== undefined && chPortStr !== '') {
+    const n = Number(chPortStr);
+    if (!Number.isInteger(n) || n < 0 || n > 65535) {
+      console.error(
+        `MESH_ACME_CHALLENGE_PORT must be 0..65535, not ${JSON.stringify(chPortStr)}`,
+      );
+      process.exit(1);
+    }
+    challengePort = n;
+  }
+  const source = acmeSource({
+    directoryUrl,
+    ip: host,
+    stateDir,
+    ...(challengePort !== undefined ? { challengePort } : {}),
+  });
+  return { ip: host, port, source };
+}
+
 const keyPath = need('MESH_KEY_PATH');
 const network = parseNetwork(need('MESH_NETWORK'));
 const role = parseRole(need('MESH_ROLE'));
@@ -84,6 +155,7 @@ const bootstrap = list('MESH_BOOTSTRAP');
 const stateDir = need('MESH_STATE_DIR');
 const upstream = need('MESH_UPSTREAM');
 const stun = parseStun(process.env.MESH_STUN);
+const wss = parseWss(process.env.MESH_WSS, stateDir);
 
 const key = await loadOrCreateNodeKey(keyPath);
 const node = await startMeshNode({
@@ -96,6 +168,7 @@ const node = await startMeshNode({
   stateDir,
   upstream,
   ...(stun ? { stun } : {}),
+  ...(wss ? { wss } : {}),
 });
 
 // MESH_INTERFACE → Discovery — anchors read `(notisId, addrs)`; print one

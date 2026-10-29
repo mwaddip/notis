@@ -176,7 +176,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     errSpy = null;
   });
 
-  it.fails('WSS on a private node is refused', async () => {
+  it('WSS on a private node is refused', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-wss-'));
@@ -217,7 +217,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(thrown).toBeInstanceOf(MeshConfigError);
   });
 
-  it.fails('WSS with a hostname is refused', async () => {
+  it('WSS with a hostname is refused', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-wss-'));
@@ -258,7 +258,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(thrown).toBeInstanceOf(MeshConfigError);
   });
 
-  it.fails('a client reaches the node by key over WSS', async () => {
+  it('a client reaches the node by key over WSS', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-wss-'));
@@ -316,7 +316,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     await expect(client.dial(multiaddr(wrongPeer))).rejects.toThrow();
   }, 60_000);
 
-  it.fails('the certificate is reloaded without a restart', async () => {
+  it('the certificate is reloaded without a restart', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-wss-'));
@@ -374,7 +374,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(res.status).toBe(200);
   }, 30_000);
 
-  it.fails('a failed renewal keeps serving and is logged', async () => {
+  it('a failed renewal keeps serving and is logged', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-wss-'));
@@ -419,7 +419,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(renewalLogs.length).toBe(1);
   }, 30_000);
 
-  it.fails('the WSS listener stops at notAfter and nothing else does', async () => {
+  it('the WSS listener stops at notAfter and nothing else does', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-wss-'));

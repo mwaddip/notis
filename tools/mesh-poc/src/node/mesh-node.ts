@@ -10,6 +10,7 @@ import { tcp } from '@libp2p/tcp';
 import { noise } from '@libp2p/noise';
 import { yamux } from '@libp2p/yamux';
 import { webRTCDirect } from '@libp2p/webrtc';
+import { webSockets } from '@libp2p/websockets';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { kadDHT } from '@libp2p/kad-dht';
@@ -24,12 +25,19 @@ import { keychain } from '@libp2p/keychain';
 import { FsDatastore } from 'datastore-fs';
 import { http as httpService, type HTTP } from '@libp2p/http';
 import { mkdirSync } from 'node:fs';
+import { isIPv4, isIPv6 } from 'node:net';
 import { join } from 'node:path';
 import type { NodeKey } from '../identity.js';
 import { dhtProtocol, type NetworkName } from '../protocols.js';
 import { nodeApiServer } from './api-forward.js';
 import { startStunServer } from './stun.js';
-import type { WssOptions } from './wss.js';
+import type { IpCertificate } from './acme.js';
+import {
+  initialCertificate,
+  startWssRenewal,
+  type WssOptions,
+  type WssRenewal,
+} from './wss.js';
 
 /**
  * MESH_INTERFACE → Transports / Discovery — a start-time refusal: a
@@ -105,6 +113,20 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
     throw new MeshConfigError('stun refused: a private node does not serve STUN');
   }
 
+  // `MESH_INTERFACE → Transports / The IP certificate` — WSS rides a public
+  // node's bare IP; a private role, and a hostname where an IP is required,
+  // are refused at start before any socket, datastore or ACME account is
+  // touched. Address refusal mirrors the DNS guards above: a hostname is
+  // never a legitimate `wss.ip`.
+  if (opts.wss && opts.role === 'private') {
+    throw new MeshConfigError('wss refused: a private node does not serve WSS');
+  }
+  if (opts.wss && !isIPv4(opts.wss.ip) && !isIPv6(opts.wss.ip)) {
+    throw new MeshConfigError(
+      `wss.ip refused: ${JSON.stringify(opts.wss.ip)} is not an IP literal`,
+    );
+  }
+
   // `datastore-fs` is a pure-JS filesystem datastore (no native, no WASM) —
   // the one dependency the WebRTC-direct certificate's persistence rides on
   // (`MESH_INTERFACE → Transports` → "The WebRTC-direct certificate
@@ -123,11 +145,31 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
     ? [bootstrap({ list: [...opts.bootstrap] })]
     : [];
 
+  // `MESH_INTERFACE → The IP certificate` — a WSS listener needs its TLS
+  // cert and key at construction time, so the initial certificate is
+  // resolved before libp2p starts. `initialCertificate` reads what the
+  // state directory already holds and refreshes it if its half-life has
+  // gone; it never silently serves an expired certificate.
+  let initialCert: IpCertificate | null = null;
+  if (opts.wss) initialCert = await initialCertificate(opts.wss);
+
   const transports = [
     tcp(),
     webRTCDirect(),
     ...(opts.role === 'private' ? [circuitRelayTransport()] : []),
+    ...(opts.wss && initialCert
+      ? [
+          webSockets({
+            https: { cert: initialCert.certPem, key: initialCert.keyPem },
+          }),
+        ]
+      : []),
   ];
+
+  if (opts.wss) {
+    const ipFamily = isIPv6(opts.wss.ip) ? 'ip6' : 'ip4';
+    listen.push(`/${ipFamily}/${opts.wss.ip}/tcp/${opts.wss.port}/tls/ws`);
+  }
 
   // `MESH_INTERFACE → Discovery` — Kademlia on `/notis/<network>/kad/1.0.0`
   // alone. The `protocol` option replaces the default `/ipfs/kad/1.0.0` for
@@ -192,10 +234,23 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
     }
   }
 
+  // `MESH_INTERFACE → The IP certificate` — the renewal timer swaps the
+  // listener's certificate in place at half the lifetime and closes the
+  // WSS listener at `notAfter`. Started after libp2p because it fires
+  // events on the shared bus and may reach into the transport manager.
+  let wssRenewal: WssRenewal | null = null;
+  if (opts.wss && initialCert) {
+    wssRenewal = startWssRenewal(typed, opts.wss, initialCert);
+  }
+
   return {
     libp2p: typed,
     multiaddrs: () => typed.getMultiaddrs().map((a) => a.toString()),
     async stop() {
+      if (wssRenewal) {
+        wssRenewal.stop();
+        wssRenewal = null;
+      }
       if (stun) {
         try { await stun.close(); } catch { /* already closed */ }
         stun = null;
