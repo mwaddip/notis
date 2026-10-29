@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import type { NodeKey } from '../identity.js';
 import { dhtProtocol, type NetworkName } from '../protocols.js';
 import { nodeApiServer } from './api-forward.js';
+import { startStunServer } from './stun.js';
 
 /**
  * MESH_INTERFACE → Transports / Discovery — a start-time refusal: a
@@ -87,6 +88,13 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   if (opts.announce) assertNoDns('announce', opts.announce);
   assertNoDns('bootstrap', opts.bootstrap);
   assertBootstrapHasPeer(opts.bootstrap);
+
+  // `MESH_INTERFACE → NAT` — STUN serves from a public address. A private
+  // node with `stun` set is a config error at start, before any socket or
+  // datastore is created.
+  if (opts.stun && opts.role === 'private') {
+    throw new MeshConfigError('stun refused: a private node does not serve STUN');
+  }
 
   // `datastore-fs` is a pure-JS filesystem datastore (no native, no WASM) —
   // the one dependency the WebRTC-direct certificate's persistence rides on
@@ -162,10 +170,27 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
 
   const typed = node as unknown as Libp2p<{ http: HTTP }>;
 
+  // `MESH_INTERFACE → NAT` — a public node runs a STUN server on UDP
+  // port `STUN_PORT` of its own IP. Started after libp2p so a failure
+  // to bind the UDP socket tears libp2p down before returning.
+  let stun: { close(): Promise<void> } | null = null;
+  if (opts.stun) {
+    try {
+      stun = await startStunServer(opts.stun);
+    } catch (e) {
+      try { await typed.stop(); } catch { /* already stopped */ }
+      throw e;
+    }
+  }
+
   return {
     libp2p: typed,
     multiaddrs: () => typed.getMultiaddrs().map((a) => a.toString()),
     async stop() {
+      if (stun) {
+        try { await stun.close(); } catch { /* already closed */ }
+        stun = null;
+      }
       await typed.stop();
     },
   };

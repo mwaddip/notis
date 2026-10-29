@@ -225,7 +225,7 @@ describe('stun server', () => {
     sockets = [];
   });
 
-  it.fails("a binding request learns the sender's address", async () => {
+  it("a binding request learns the sender's address", async () => {
     const port = await pickFreeUdpPort('127.0.0.1');
     const server = await startStunServer({ host: '127.0.0.1', port });
     servers.push(server);
@@ -249,7 +249,7 @@ describe('stun server', () => {
     expect(mapped.host).toBe('127.0.0.1');
   }, 15_000);
 
-  it.fails('the same over IPv6', async () => {
+  it('the same over IPv6', async () => {
     const ok = await hasIPv6Loopback();
     if (!ok) {
       // ::1 does not bind — skip with a stated reason.
@@ -279,7 +279,7 @@ describe('stun server', () => {
     expect(Array.from(canonicalIPv6(mapped.host))).toEqual(Array.from(canonicalIPv6('::1')));
   }, 15_000);
 
-  it.fails('anything else is ignored', async () => {
+  it('anything else is ignored', async () => {
     const port = await pickFreeUdpPort('127.0.0.1');
     const server = await startStunServer({ host: '127.0.0.1', port });
     servers.push(server);
@@ -317,7 +317,7 @@ describe('stun server', () => {
     expect(Array.from(parsed.txId)).toEqual(Array.from(txId));
   }, 15_000);
 
-  it.fails('a public node serves STUN and stops it', async () => {
+  it('a public node serves STUN and stops it', async () => {
     const stub = await makeStub();
     const dir = mkdtempSync(join(tmpdir(), 'mesh-stun-'));
     const stunPort = await pickFreeUdpPort('127.0.0.1');
@@ -368,7 +368,7 @@ describe('stun server', () => {
     }
   }, 60_000);
 
-  it.fails('a private node with STUN is refused', async () => {
+  it('a private node with STUN is refused', async () => {
     const stub = await makeStub();
     const dir = mkdtempSync(join(tmpdir(), 'mesh-stun-'));
     let node: MeshNode | null = null;
