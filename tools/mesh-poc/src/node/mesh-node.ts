@@ -29,6 +29,7 @@ import type { NodeKey } from '../identity.js';
 import { dhtProtocol, type NetworkName } from '../protocols.js';
 import { nodeApiServer } from './api-forward.js';
 import { startStunServer } from './stun.js';
+import type { WssOptions } from './wss.js';
 
 /**
  * MESH_INTERFACE → Transports / Discovery — a start-time refusal: a
@@ -54,6 +55,14 @@ export interface MeshNodeOptions {
    * STUN serves from a public address.
    */
   readonly stun?: { host: string; port: number };
+  /**
+   * MESH_INTERFACE → Transports / The IP certificate — a public node's
+   * secure WebSocket fallback: a TLS WebSocket listener for the node's
+   * bare IP, swapped in place at renewal and stopped at `notAfter`. A
+   * private node with `wss` set, or `wss.ip` that is not an IP literal,
+   * is refused.
+   */
+  readonly wss?: WssOptions;
 }
 
 export interface MeshNode {

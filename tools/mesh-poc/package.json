@@ -37,14 +37,18 @@
     "@libp2p/ping": "^3.1.17",
     "@libp2p/tcp": "^11.0.0",
     "@libp2p/webrtc": "^7.0.2",
+    "@libp2p/websockets": "^10.1.25",
     "@libp2p/yamux": "^8.0.0",
     "@multiformats/multiaddr": "^13.0.0",
     "@noble/curves": "2.2.0",
+    "acme-client": "^5.4.0",
     "datastore-fs": "^12.0.1",
     "libp2p": "^3.5.1"
   },
   "devDependencies": {
+    "@peculiar/x509": "^2.2.0",
     "@types/node": "^22.0.0",
+    "reflect-metadata": "^0.2.2",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
