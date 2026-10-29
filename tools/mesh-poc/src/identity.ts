@@ -2,9 +2,9 @@
 // the 64-lowercase-hex Notis spelling, and the libp2p peer id whose identity-multihash
 // digest is the protobuf-encoded Ed25519 public key.
 //
-// Pure, browser-safe. The on-disk key file lives in `src/node/key-store.ts`
-// (`MESH_INTERFACE → Place in the workspace`).
+// Pure, browser-safe (`MESH_INTERFACE → Place in the workspace`).
 
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { privateKeyFromRaw, publicKeyFromRaw } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey, peerIdFromPublicKey } from '@libp2p/peer-id';
 import type { Ed25519PublicKey, PeerId, PrivateKey } from '@libp2p/interface';
@@ -34,17 +34,31 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
+/**
+ * Read the 32-byte Ed25519 seed out of a `KeyPair.secretKey`
+ * (`TYPES_INTERFACE → Identity`): the layout is the RFC 8410 PKCS8 prefix ‖
+ * seed, 48 bytes in all. `MeshKeyError` on a wrong length or a wrong prefix.
+ */
+export function seedOfSecretKey(secretKey: Uint8Array): Uint8Array {
+  if (secretKey.length !== SECRET_KEY_LEN) {
+    throw new MeshKeyError(`secretKey length ${secretKey.length}, must be ${SECRET_KEY_LEN}`);
+  }
+  if (!bytesEqual(secretKey.subarray(0, PKCS8_PREFIX_LEN), PKCS8_PREFIX_BYTES)) {
+    throw new MeshKeyError('secretKey does not carry the RFC 8410 PKCS8 prefix');
+  }
+  return secretKey.subarray(PKCS8_PREFIX_LEN);
+}
+
 export function nodeKeyFromKeyPair(kp: KeyPair): NodeKey {
   if (kp.publicKey.length !== 32) {
     throw new MeshKeyError(`publicKey length ${kp.publicKey.length}, must be 32`);
   }
-  if (kp.secretKey.length !== SECRET_KEY_LEN) {
-    throw new MeshKeyError(`secretKey length ${kp.secretKey.length}, must be ${SECRET_KEY_LEN}`);
+  const seed = seedOfSecretKey(kp.secretKey);
+  // The two halves of a KeyPair must name the same key — a crossed pair would
+  // build a libp2p identity the private key cannot sign for.
+  if (!bytesEqual(ed25519.getPublicKey(seed), kp.publicKey)) {
+    throw new MeshKeyError("publicKey does not match the secretKey's seed");
   }
-  if (!bytesEqual(kp.secretKey.subarray(0, PKCS8_PREFIX_LEN), PKCS8_PREFIX_BYTES)) {
-    throw new MeshKeyError('secretKey does not carry the RFC 8410 PKCS8 prefix');
-  }
-  const seed = kp.secretKey.subarray(PKCS8_PREFIX_LEN);
   // `@libp2p/crypto`'s `privateKeyFromRaw` reads a 64-byte Ed25519 private key as
   // seed ‖ publicKey; its 32-byte form is read as secp256k1, so the length
   // disambiguates the key type (`MESH_INTERFACE → Identity`).

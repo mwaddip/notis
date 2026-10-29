@@ -392,10 +392,10 @@ importers:
       '@libp2p/peer-id':
         specifier: ^6.0.18
         version: 6.0.18
-    devDependencies:
       '@noble/curves':
         specifier: 2.2.0
         version: 2.2.0
+    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1

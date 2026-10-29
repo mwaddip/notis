@@ -21,10 +21,10 @@
     "@dagsocial/types": "workspace:*",
     "@libp2p/crypto": "^5.2.0",
     "@libp2p/interface": "^3.4.0",
-    "@libp2p/peer-id": "^6.0.18"
+    "@libp2p/peer-id": "^6.0.18",
+    "@noble/curves": "2.2.0"
   },
   "devDependencies": {
-    "@noble/curves": "2.2.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",

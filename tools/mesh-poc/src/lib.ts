@@ -1,7 +1,7 @@
 // The importable entry — re-exports only, no side effect at import time.
+// Browser-safe exports only; anything that reads a file is kept out of this
+// module's reach (`MESH_INTERFACE → Place in the workspace`).
 
-// Browser-safe exports only. `loadOrCreateNodeKey` reads a file and lives in
-// `src/node/` (`MESH_INTERFACE → Place in the workspace`).
 export { MeshKeyError, nodeKeyFromKeyPair, peerIdFromNotisId, notisIdFromPeerId } from './identity.js';
 export type { NodeKey } from './identity.js';
 

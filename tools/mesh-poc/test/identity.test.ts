@@ -80,7 +80,7 @@ describe('identity', () => {
     }
   });
 
-  it.fails("a key pair whose public key is not its seed's is refused", () => {
+  it("a key pair whose public key is not its seed's is refused", () => {
     const a = generateKeyPair();
     const b = generateKeyPair();
     const crossed = { publicKey: b.publicKey, secretKey: a.secretKey };
