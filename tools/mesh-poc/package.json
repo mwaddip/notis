@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsup src/lib.ts --format esm --dts",
+    "build": "tsup src/lib.ts src/node/main.ts --format esm --dts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc -p tsconfig.browser.json",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -20,21 +20,31 @@
   "dependencies": {
     "@dagsocial/node-reads": "workspace:*",
     "@dagsocial/types": "workspace:*",
+    "@libp2p/autonat-v2": "^2.1.8",
+    "@libp2p/bootstrap": "^12.0.36",
+    "@libp2p/circuit-relay-v2": "^4.2.17",
     "@libp2p/crypto": "^5.2.0",
+    "@libp2p/dcutr": "^3.0.32",
     "@libp2p/http": "^2.0.6",
     "@libp2p/http-fetch": "^4.0.0",
     "@libp2p/http-utils": "^2.0.6",
+    "@libp2p/identify": "^4.1.18",
     "@libp2p/interface": "^3.4.0",
+    "@libp2p/kad-dht": "^16.4.9",
+    "@libp2p/keychain": "^6.1.10",
+    "@libp2p/noise": "^17.0.7",
     "@libp2p/peer-id": "^6.0.18",
+    "@libp2p/ping": "^3.1.17",
+    "@libp2p/tcp": "^11.0.0",
+    "@libp2p/webrtc": "^7.0.2",
+    "@libp2p/yamux": "^8.0.0",
     "@multiformats/multiaddr": "^13.0.0",
-    "@noble/curves": "2.2.0"
+    "@noble/curves": "2.2.0",
+    "datastore-fs": "^12.0.1",
+    "libp2p": "^3.5.1"
   },
   "devDependencies": {
-    "@libp2p/noise": "^17.0.0",
-    "@libp2p/tcp": "^11.0.0",
-    "@libp2p/yamux": "^8.0.0",
     "@types/node": "^22.0.0",
-    "libp2p": "^3.5.1",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
