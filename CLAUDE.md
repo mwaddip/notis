@@ -19,7 +19,7 @@ Repo directory is `dagsocial`; the project is Notis.
 ```bash
 pnpm build                          # Build every workspace member
 pnpm test                           # Run all tests — includes tools/e2e, which spawns BUILT nodes: build first
-pnpm typecheck                      # src AND test trees — and a browser pass in the seven the browser runs
+pnpm typecheck                      # src AND test trees — and a browser pass in the eight the browser runs
 node packages/node/dist/index.js    # Start a node on :3000
 ```
 
