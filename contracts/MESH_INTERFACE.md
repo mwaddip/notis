@@ -139,8 +139,9 @@ the constants register (`CONSTANTS → Scope`).
 
 ## No anchor reached
 
-`anchorReached` is true while at least one anchor's latest event is a success, and false otherwise: at start, and
-whenever every anchor's latest event is a failure or a lie. While it is false the client treats every node it reaches
+`anchorReached` is true while at least one anchor's latest event is an answer it could check — a success, or a valid
+proof that is behind — and false otherwise: at start, and whenever every anchor's latest event is a failure or a lie.
+An anchor that is behind was still reached. While it is false the client treats every node it reaches
 as unverified, and the page says, in these words: `No anchor reached. Nothing shown here is verified.`
 
 ## The IP certificate
