@@ -35,8 +35,9 @@ export function nodeApiServer(
         // The upstream wait is bounded: `fetch` with `AbortSignal.timeout`
         // ends both the request-headers wait and the body-stream read at
         // `upstreamTimeoutMs`; the catch below invents no status and aborts
-        // the libp2p stream, which the client's reader surfaces as a
-        // transport failure (MESH_INTERFACE → The node endpoint).
+        // the libp2p stream. `@libp2p/http`'s client parser does not watch
+        // for a stream reset, so the client learns of this abort at its own
+        // deadline, not here (MESH_INTERFACE → The node endpoint).
         const upstreamRes = await fetch(base + url.pathname + url.search, {
           signal: AbortSignal.timeout(upstreamTimeoutMs),
         });

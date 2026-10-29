@@ -283,9 +283,11 @@ describe('HTTP over libp2p — meshFetch and the node endpoint', () => {
       await new Promise((r) => setTimeout(r, upstreamTimeoutMs + margin));
       expect(httpStreamCount(localServer)).toBe(0);
 
-      // The caller gets either a transport failure (the server aborted the
-      // stream and the client saw it) or its own 5 s deadline — the brief
-      // allows both.
+      // The caller's request ends at its own 5 s deadline here: `@libp2p/
+      // http`'s client parser does not watch for a stream reset, so the
+      // server's `stream.abort` is not seen as a transport failure and the
+      // client waits out its own timeout. The assertion accepts either
+      // outcome so the test holds whichever path lands.
       const r = await outcome;
       expect(r.kind).toBe('rejected');
       if (r.kind === 'rejected') {
