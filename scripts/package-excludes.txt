@@ -36,8 +36,6 @@ SESSION_CONTEXT.md
 # SETTINGS.md is the machine-local workflow file, kept out of git by
 # .git/info/exclude.
 SETTINGS.md
-dagsocial.md
-HOW_IT_WORKS.md
 AUDIT-*.md
 
 # The daemon needs nothing under docs, and rsync copies the working tree,
