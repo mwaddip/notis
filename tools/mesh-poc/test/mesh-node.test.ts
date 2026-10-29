@@ -71,7 +71,7 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     nodes = []; stubs = []; dirs = [];
   });
 
-  it.fails('the DHT speaks only Notis\'s protocol', async () => {
+  it('the DHT speaks only Notis\'s protocol', async () => {
     const stub = await makeStub(); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-node-')); dirs.push(dir);
     const n = await startMeshNode({
@@ -86,13 +86,17 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     nodes.push(n);
     const protos = n.libp2p.getProtocols();
     expect(protos).toContain(dhtProtocol('devnet'));
-    for (const p of protos) {
+    // Every other registered protocol stays clear of kad-dht's defaults —
+    // the IPFS WAN/LAN pair — and of any /kad/ family at all. Notis's own
+    // `/notis/devnet/kad/1.0.0` is the only `/kad/` here.
+    const others = protos.filter((p) => p !== dhtProtocol('devnet'));
+    for (const p of others) {
       expect(p).not.toMatch(/\/ipfs\/kad\//);
       expect(p).not.toMatch(/\/kad\//);
     }
   }, 30_000);
 
-  it.fails('a private node runs the DHT as a client', async () => {
+  it('a private node runs the DHT as a client', async () => {
     const stub = await makeStub(); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-node-')); dirs.push(dir);
     const n = await startMeshNode({
@@ -108,7 +112,7 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     expect(n.libp2p.getProtocols()).not.toContain(dhtProtocol('devnet'));
   }, 30_000);
 
-  it.fails('the WebRTC-direct certificate persists', async () => {
+  it('the WebRTC-direct certificate persists', async () => {
     const stub = await makeStub(); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-node-')); dirs.push(dir);
     const key = freshKey();
@@ -139,7 +143,7 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     expect(peerId1).toBe(peerId2);
   }, 30_000);
 
-  it.fails('a DNS address is refused', async () => {
+  it('a DNS address is refused', async () => {
     const stub = await makeStub(); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-node-')); dirs.push(dir);
     // A valid peer id to tack on the bootstrap addr (the config rule is DNS,
@@ -180,7 +184,7 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     })).rejects.toThrow(MeshConfigError);
   }, 30_000);
 
-  it.fails('the endpoint is reachable by key over WebRTC-direct', async () => {
+  it('the endpoint is reachable by key over WebRTC-direct', async () => {
     const stub = await makeStub(); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-node-')); dirs.push(dir);
     const server = await startMeshNode({
@@ -218,7 +222,7 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     }
   }, 60_000);
 
-  it.fails('main prints its addresses', async () => {
+  it('main prints its addresses', async () => {
     const stub = await makeStub(); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-main-')); dirs.push(dir);
     const stateDir = join(dir, 'state');
