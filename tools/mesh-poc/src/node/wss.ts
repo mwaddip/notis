@@ -73,11 +73,17 @@ export async function initialCertificate(
 export function startWssRenewal(
   libp2p: Libp2p,
   opts: WssOptions,
-  initial: IpCertificate,
+  state: { cert: IpCertificate | null; lastFailureMs: number | null },
 ): WssRenewal {
+  // The "no cert at start" state carries a `null` initial cert; the real
+  // retry-until-arrival path is wired in the fix commit. Here the no-cert
+  // branch is a no-op to keep existing tests isolated from the new API.
+  if (state.cert === null) {
+    return { stop(): void { /* no-op */ } };
+  }
   const clock = opts.clock ?? Date.now;
-  let current: IpCertificate = initial;
-  let lastFailureMs: number | null = null;
+  let current: IpCertificate = state.cert;
+  let lastFailureMs: number | null = state.lastFailureMs;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
 

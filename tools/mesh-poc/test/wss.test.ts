@@ -469,4 +469,54 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     );
     expect(res.status).toBe(200);
   }, 30_000);
+
+  it.fails('the node starts without a WSS listener when the initial obtain fails', async () => {
+    // MESH_INTERFACE → The IP certificate — "A failed renewal is retried
+    // every `CERT_RETRY_MS` while the current certificate serves"; the WSS
+    // fallback never takes the node down. With no stored certificate and
+    // an ACME server that is down, the node starts with every other
+    // transport up and no `/tls/ws` multiaddr.
+    const stub = await makeStub();
+    stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-wss-'));
+    dirs.push(dir);
+    const source: CertificateSource = {
+      async current() {
+        return null;
+      },
+      async obtain() {
+        throw new Error('ACME down');
+      },
+    };
+    const server = await startMeshNode({
+      key: freshKey(),
+      network: 'devnet',
+      role: 'public',
+      listen: ['/ip4/127.0.0.1/tcp/0'],
+      bootstrap: [],
+      stateDir: dir,
+      upstream: stub.base,
+      wss: { ip: '127.0.0.1', port: 0, source },
+    });
+    nodes.push(server);
+
+    const addrs = server.multiaddrs();
+    expect(addrs.some((a) => a.includes('/tls/ws'))).toBe(false);
+    const tcpAddr = addrs.find((a) => /\/tcp\/\d+(\/|$)/.test(a))!;
+    expect(tcpAddr).toBeTruthy();
+
+    const client: Libp2p<{ http: HTTP }> = await createLibp2p({
+      transports: [tcp()],
+      connectionEncrypters: [noise()],
+      streamMuxers: [yamux()],
+      services: { identify: identify(), ping: ping(), http: httpService() },
+    });
+    clients.push(client);
+    await client.dial(multiaddr(tcpAddr));
+    const notisId = notisIdFromPeerId(server.libp2p.peerId);
+    const res = await meshFetch(client, { timeoutMs: 10_000 })(
+      `${meshBaseUrl(notisId)}/blocks/current`,
+    );
+    expect(res.status).toBe(200);
+  }, 30_000);
 });

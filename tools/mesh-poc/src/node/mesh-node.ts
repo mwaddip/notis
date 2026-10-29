@@ -240,7 +240,10 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   // events on the shared bus and may reach into the transport manager.
   let wssRenewal: WssRenewal | null = null;
   if (opts.wss && initialCert) {
-    wssRenewal = startWssRenewal(typed, opts.wss, initialCert);
+    wssRenewal = startWssRenewal(typed, opts.wss, {
+      cert: initialCert,
+      lastFailureMs: null,
+    });
   }
 
   return {
