@@ -90,7 +90,7 @@ describe('HTTP over libp2p — meshFetch and forwardNodeApi', () => {
     client = null; server = null; stub = null;
   });
 
-  it.fails('a GET answers the upstream bytes', async () => {
+  it('a GET answers the upstream bytes', async () => {
     const id = notisIdFromPeerId(server!.peerId);
     const base = meshBaseUrl(id);
     const fetch = meshFetch(client!);
@@ -112,7 +112,7 @@ describe('HTTP over libp2p — meshFetch and forwardNodeApi', () => {
     expect(Buffer.from(bufB).toString('utf8')).toBe(stub!.bigJson);
   }, 15_000);
 
-  it.fails('a non-GET is refused at both ends', async () => {
+  it('a non-GET is refused at both ends', async () => {
     const id = notisIdFromPeerId(server!.peerId);
     const base = meshBaseUrl(id);
     const fetch = meshFetch(client!);
@@ -135,7 +135,7 @@ describe('HTTP over libp2p — meshFetch and forwardNodeApi', () => {
     expect(raw.status).toBe(405);
   }, 15_000);
 
-  it.fails('a stalled answer ends at the timeout', async () => {
+  it('a stalled answer ends at the timeout', async () => {
     const id = notisIdFromPeerId(server!.peerId);
     const base = meshBaseUrl(id);
     const fastFetch = meshFetch(client!, { timeoutMs: 1_000 });
@@ -158,7 +158,7 @@ describe('HTTP over libp2p — meshFetch and forwardNodeApi', () => {
     }
   }, 15_000);
 
-  it.fails('the cap holds over the mesh', async () => {
+  it('the cap holds over the mesh', async () => {
     const id = notisIdFromPeerId(server!.peerId);
     const base = meshBaseUrl(id);
     const fetch = meshFetch(client!);
@@ -172,7 +172,7 @@ describe('HTTP over libp2p — meshFetch and forwardNodeApi', () => {
     if (!direct.ok) expect(direct.body).toBe('body over 1024 bytes');
   }, 15_000);
 
-  it.fails('a peer that is not reachable rejects as transport', async () => {
+  it('a peer that is not reachable rejects as transport', async () => {
     // A key no node holds: generate a fresh one that is not in the
     // client's peerstore.
     const strangerId = bytesToHex(generateKeyPair().publicKey);
@@ -184,7 +184,7 @@ describe('HTTP over libp2p — meshFetch and forwardNodeApi', () => {
     if (caught instanceof MeshFetchError) expect(caught.kind).toBe('transport');
   }, 10_000);
 
-  it.fails('a mesh URL that does not parse rejects as url', async () => {
+  it('a mesh URL that does not parse rejects as url', async () => {
     const fetch = meshFetch(client!);
     const uppercase = 'notis-mesh://' + 'AB'.repeat(32) + '/x';
     for (const bad of ['http://x/y', 'notis-mesh://ab/x', uppercase]) {

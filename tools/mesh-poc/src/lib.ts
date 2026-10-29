@@ -7,6 +7,8 @@ export type { NodeKey } from './identity.js';
 
 export { MeshUrlError, meshBaseUrl, parseMeshUrl } from './mesh-url.js';
 
+export { MeshFetchError, meshFetch } from './http-fetch.js';
+
 export {
   dhtProtocol,
   RETRY_BASE_MS,
