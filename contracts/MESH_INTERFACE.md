@@ -1,0 +1,178 @@
+# MESH Interface Contract
+
+> ⚠ **AHEAD OF CODE (2026-10-29).** The whole of this contract leads `tools/mesh-poc` (`@dagsocial/mesh-poc`), which
+> the tree does not hold yet: the key and mesh-URL modules, the node's mesh service, the client and its node list,
+> the page, and the stage.
+
+## Scope
+
+`@dagsocial/mesh-poc` is a proof of concept beside the protocol: a browser page reaches a Notis node's HTTP API by the
+node's key over libp2p, with no DNS name and no hosted page. **It changes no consensus, wire, gossip or HTTP API
+rule.** Every node it reaches is an unmodified `@dagsocial/node`, and every answer it checks is checked by code the
+extension already runs. What it has to show is → Acceptance.
+
+It carries Notis's own traffic and nothing else: no exit to the wider network, no IP tunnel.
+
+## Place in the workspace
+
+A member under `tools/`. It depends on `@dagsocial/types`, `@dagsocial/node-reads`, `@dagsocial/nipopow-client` and
+libp2p 3.x, the line `@dagsocial/net` runs. `src/lib.ts` and everything it reaches runs in the browser as written;
+`src/node/` runs on Node.js. No WASM. One native module, `node-datachannel` under `@libp2p/webrtc`, serves the
+WebRTC-direct listener.
+
+## Identity
+
+**One key, two spellings.** A mesh node's identity is an Ed25519 key in the form a Notis identity takes
+(`TYPES_INTERFACE → Identity`):
+
+- **the Notis spelling** — the 32-byte public key as 64 lowercase hex characters, the `UserId` spelling of the HTTP
+  API. The client shows it and an anchor lists it.
+- **the peer id** — libp2p's identity multihash over its protobuf key encoding: `00 24 08 01 12 20` followed by the 32
+  bytes.
+
+Each converts to the other. A peer id of any other key type, and any spelling but 64 lowercase hex, is refused.
+
+**The key persists.** A node's key file holds `KeyPair.secretKey`, the seed's PKCS8 DER, 48 bytes. It is created on
+first start with mode `0600` and never overwritten; a file of any other length is refused, never replaced. A node
+that restarts keeps its peer id.
+
+Nothing about a mesh key touches the chain.
+
+## The mesh URL
+
+`notis-mesh://<notisId><path>` names a path on a node's HTTP API by the node's key —
+`notis-mesh://<64 hex>/nipopow/proof/24/20`. The path keeps its query. Any other scheme, a key that is not 64
+lowercase hex, or an empty path is refused.
+
+It is the `url` an `HttpFetch` over the mesh takes, so every reader that takes an `HttpFetch` — `@dagsocial/node-reads`'
+readers, `@dagsocial/nipopow-client`'s `resolveTip` — runs over the mesh unchanged.
+
+## Transports
+
+| Between | Transport | |
+|---|---|---|
+| node and node | TCP; WebRTC-direct | |
+| browser to a public node | **WebRTC-direct** | the one path with no domain and no certificate authority: the address carries the certificate's hash |
+| browser to a node behind NAT | WebRTC, signalled over a circuit relay | → NAT |
+| browser to an opted-in public node, UDP blocked | secure WebSocket, with a certificate for the node's bare IP | → The IP certificate |
+
+**Every link is authenticated by the key it was dialled for.** libp2p's Noise handshake runs inside every transport
+here — over WebRTC it binds the DTLS certificates to the two keys — and a node whose key is not the one dialled is
+refused, whatever certificate it holds.
+
+**The WebRTC-direct certificate persists** in the node's state directory. Its hash is part of the address an anchor
+lists, so a new certificate at a restart would leave every anchor naming the node unreachable.
+
+**Plain `ws://` is no browser path**: a browser client's home is a secure context. **WebTransport is not used**:
+js-libp2p's WebTransport does not listen on Node.js, and a Notis node is Node.js.
+
+## NAT
+
+A **public** node runs a circuit relay v2 server, AutoNAT v2, and a STUN server on UDP port `STUN_PORT` of its own IP.
+A **private** node — one AutoNAT finds unreachable — takes relay reservations on public nodes and is reached through
+them; between nodes, DCUtR upgrades a relayed connection to a direct one where the NATs allow it. A browser reaches a
+private node over WebRTC signalled through the relay, gathering ICE candidates against public nodes' STUN servers
+alone.
+
+**Every STUN server is a mesh node named by IP** — `stun:<ip>:<port>`; a client refuses an ICE server named by a
+hostname. Only the relayed WebRTC path uses STUN; WebRTC-direct to a public address needs none.
+
+## Discovery
+
+**Anchors.** A client starts from a list of anchors, each `(notisId, addrs)`: a key it trusts and the addresses that
+key was last reached at — IP multiaddrs ending in the key's `/p2p/` peer id, a browser's carrying the WebRTC-direct
+certificate's hash. **An address is a hint; the key is the identity.** A client refuses an anchor address with a
+`/dns4/`, `/dns6/` or `/dnsaddr/` component. Two anchors with one key are one anchor; the client's own key is none.
+
+**The DHT is Notis's own.** Kademlia runs on the protocol `/notis/<network>/kad/1.0.0`, `<network>` one of `devnet`,
+`testnet`, `mainnet` — never on libp2p's default, which is the public IPFS DHT. Public nodes serve it, each listening
+on WebRTC-direct so a browser can walk it; private nodes and browsers run it as clients. It finds further nodes, and a
+known key's current addresses.
+
+## The node endpoint
+
+A node's mesh service answers HTTP over libp2p (`@libp2p/http`) by forwarding each `GET` to its own Notis node's HTTP
+base and answering with the upstream's status, `content-type` and body bytes as they came. Any other method answers
+`405`.
+
+The client's side is an `HttpFetch` over the mesh URL: `GET` only, ending at `REQUEST_TIMEOUT_MS` as every read does
+(`CONSTANTS → Client reads`). Every cap a reader holds an answer to over HTTP holds over the mesh the same.
+
+**The client checks what it can with the extension's verifier**: `resolveTip` over its candidates' mesh URLs, each
+proof held to the client's network profile (`NIPOPOW_INTERFACE → The trust model`). There is no second verifier.
+
+## The client's node list
+
+The client keeps one entry per node key and moves it by what a failure is evidence of — the split
+`NET_INTERFACE → Handshake → "Ban policy"` draws between nodes:
+
+| What happened | Evidence of | The entry |
+|---|---|---|
+| a timeout, a refused connection, a dropped link, another transport failure, a non-2xx answer | nothing | `retry`, at growing intervals, never permanent |
+| a valid proof that is not the winner's, or a chain too short to prove | being behind | `behind`, ranked below `ok` |
+| an address answers with a key other than the one dialled | the address | that address dropped for that key; the entry otherwise unchanged |
+| a malformed answer, or a proof that fails verification, over a link authenticated to the key | a lie | `blacklisted` for good, the evidence kept |
+
+**A valid proof of a lighter chain is not a lie**: an honest node that was itself cut off serves one.
+
+**Retry.** After the `n`th failure in a row, a node is next tried `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))` later,
+on a monotonic clock. A success ends the run.
+
+**Candidates** are tried in this order: `ok`, `behind`, nodes not yet tried, then `retry` nodes whose time has come. A
+`blacklisted` node is never one.
+
+**A check** — `resolveTip` over the candidates — runs at start, every `CHECK_INTERVAL_MS`, and at once after a failed
+fetch to the node in use. The node in use is the first candidate after it.
+
+| Name | Value | Reads as |
+|---|---|---|
+| `RETRY_BASE_MS` | `5_000` | 5 s, the first retry's wait |
+| `RETRY_CAP_MS` | `600_000` | 10 min, the longest wait |
+| `CHECK_INTERVAL_MS` | `30_000` | 30 s between checks |
+| `CERT_RETRY_MS` | `3_600_000` | 1 h between attempts at a failed renewal |
+| `STUN_PORT` | `3478` | the STUN port of RFC 8489 |
+
+These are a proof of concept's local cadences, chosen 2026-10-29 and argued by nothing yet; local cadences are outside
+the constants register (`CONSTANTS → Scope`).
+
+## No anchor reached
+
+`anchorReached` is true while at least one anchor's latest event is a success, and false otherwise: at start, and
+whenever every anchor's latest event is a failure or a lie. While it is false the client treats every node it reaches
+as unverified, and the page says, in these words: `No anchor reached. Nothing shown here is verified.`
+
+## The IP certificate
+
+**A public node's operator may opt in to the secure WebSocket fallback.** The node then obtains a certificate for its
+own bare IP over ACME — the `http-01` challenge on port 80 of that IP — with no step by the operator after opting in,
+and renews it at half its lifetime, `notBefore + (notAfter − notBefore) / 2`. A failed renewal is retried every
+`CERT_RETRY_MS` while the current certificate serves. At `notAfter` the WebSocket listener stops, and every other
+transport carries on. A renewed certificate replaces the old one without a restart, and open connections stay up.
+
+**The certificate is the browser's admission ticket alone.** The link inside it is authenticated by the node's key
+like every other (→ Transports). Let's Encrypt has issued IP certificates since 2026-01-15, valid 160 hours; a node
+behind NAT cannot hold one.
+
+## Acceptance
+
+A stage on one machine runs the proof of concept end to end: public nodes, a node behind an endpoint-independent NAT
+and one behind a symmetric NAT, a browser behind NAT, an ACME test server, and hostile nodes — each mesh node beside an
+unmodified devnet `@dagsocial/node`. The proof of concept holds when every step of the six scenarios passes on what it
+measured; a step that did not run reads `skipped`, never a pass.
+
+1. **No name, no hosted page.** The client reads a node's API by key from anchors alone; the mesh's answers equal the
+   node's direct HTTP answers byte for byte; the browser host's resolver logs no query.
+2. **Behind NAT.** A node behind the endpoint-independent NAT answers through a relay, then directly; one behind the
+   symmetric NAT answers through the relay.
+3. **A node goes away.** Killed, then firewalled: the client moves to another node within two checks, the node reads
+   `retry`, never `blacklisted`, and reads `ok` again once it is back.
+4. **A transport is cut.** UDP to one public node, then to all: the client gets in through another node, then through
+   the secure WebSocket; a renewal replaces the certificate with no request dropped.
+5. **Impersonation.** A node with its own key and a copy of an anchor's certificate, at the anchor's address: refused
+   at the link, that address dropped, the anchor not blacklisted.
+6. **Hostile nodes.** With every anchor out of reach, `anchorReached` is false and the page says so. A node answering
+   malformed proofs and one answering failing proofs are blacklisted with their evidence; a node serving a valid proof
+   of a lighter chain is `behind`.
+
+**Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
+untested. The proof of concept holds only where WebRTC-direct connects on defaults in both.
