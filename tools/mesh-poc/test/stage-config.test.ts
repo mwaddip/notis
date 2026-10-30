@@ -260,6 +260,83 @@ describe('stage up --dry-run', () => {
     expect(out, 'page-server spawn').toContain('[spawn:page-server]');
     expect(out, 'chromium spawn').toContain('[spawn:chromium]');
   }, 30_000);
+
+  // MESH_INTERFACE → Acceptance / The client's node list — scenario 6b's
+  // "behind, never blacklisted" needs `hostile-lagging`'s mesh node to answer
+  // the browser (`behind` on a valid proof of a lighter chain). An output
+  // `policy drop` would drop the mesh node's replies too — the mesh client
+  // would read it as unreachable (`retry`), never `behind`. The cut drops
+  // only TCP to/from the Notis p2p port, and nothing else.
+  it.fails('the hostile-lagging cut is Notis-p2p-only, not an output-drop policy', () => {
+    runDryOnce();
+    const lagLines = out.split('\n').filter((l) => l.includes('lag_cut'));
+    expect(lagLines.length, 'the cut has at least one rule').toBeGreaterThan(0);
+    const joined = lagLines.join('\n');
+    expect(joined, 'the cut has no output-drop policy').not.toMatch(/policy\s+drop/);
+    expect(joined, 'the cut drops TCP to the Notis p2p port').toMatch(/tcp\s+dport\s+9100.*drop/);
+    expect(joined, 'the cut drops TCP from the Notis p2p port').toMatch(/tcp\s+sport\s+9100.*drop/);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — the lag cut only after the height wait, so
+  // `hostile-lagging` is behind from a synced start, not from a slow sync
+  // that may still be running.
+  it('the hostile-lagging cut appears after the height wait', () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const waitIdx = lines.findIndex((l) => l.startsWith('[wait]') && l.includes('/blocks/current.height'));
+    const cutIdx = lines.findIndex((l) => l.includes('lag_cut'));
+    expect(waitIdx, 'height wait is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(cutIdx, 'lag cut is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(cutIdx, 'cut comes after the wait').toBeGreaterThan(waitIdx);
+  }, 30_000);
+
+  // MESH_INTERFACE → The IP certificate — the Pebble root fetch has to reach
+  // Pebble's management port; the host has no route into the stage, so the
+  // fetch runs inside a stage namespace (`notismesh-browser` reaches the
+  // internet segment through natC's masquerade).
+  it.fails('the Pebble root fetch runs inside a stage namespace', () => {
+    runDryOnce();
+    const line = out.split('\n').find((l) => l.includes('curl') && l.includes('/roots/0'));
+    expect(line, 'pebble root fetch is in the dry-run').toBeDefined();
+    expect(line, `pebble root fetch runs in a namespace: ${line}`).toMatch(/ip netns exec notismesh-/);
+  }, 30_000);
+
+  // MESH_INTERFACE → The IP certificate — `certutil -N` creates the NSS
+  // database. Running it unconditionally with `|| true` would swallow every
+  // failure; create it only when `cert9.db` is absent, and let a real
+  // failure stop `up`.
+  it.fails('certutil -N only runs when cert9.db is absent, and never swallows failure', () => {
+    runDryOnce();
+    const line = out.split('\n').find((l) => l.includes('certutil') && l.includes(' -N '));
+    expect(line, 'certutil -N is in the dry-run').toBeDefined();
+    expect(line, `certutil -N is guarded by a cert9.db test: ${line}`).toMatch(/test -f .*cert9\.db/);
+    expect(line, `certutil -N does not swallow failure: ${line}`).not.toMatch(/\|\|\s*true/);
+    expect(line, `certutil -N does not throw stderr away: ${line}`).not.toMatch(/2>\s*\/dev\/null/);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — every wait the exec path performs appears
+  // in the dry-run as a `[wait]` line, so a reader of the dry-run sees what
+  // the real `up` is going to block on.
+  it.fails('every wait the exec path performs appears in the dry-run', () => {
+    runDryOnce();
+    const waits = out.split('\n').filter((l) => l.startsWith('[wait] '));
+    const descriptions = waits.map((l) => l.slice('[wait] '.length));
+    expect(descriptions, 'the Pebble directory wait').toContain(
+      expect.stringMatching(/pebble/i),
+    );
+    expect(descriptions, 'the mesh multiaddr wait').toContain(
+      expect.stringMatching(/multiaddr/i),
+    );
+    expect(descriptions, 'the height wait').toContain(
+      expect.stringMatching(/\/blocks\/current.*>=\s*50/),
+    );
+    expect(descriptions, 'the page-server wait').toContain(
+      expect.stringMatching(/page.*server/i),
+    );
+    expect(descriptions, 'the CDP wait').toContain(
+      expect.stringMatching(/cdp|chromium/i),
+    );
+  }, 30_000);
 });
 
 function hexToBytes(hex: string): Uint8Array {
