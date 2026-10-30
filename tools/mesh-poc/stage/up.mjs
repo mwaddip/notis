@@ -908,12 +908,13 @@ log.shell('mkdir', ['-p', browserNssDir]);
 // swallow a real failure; this test lets one fail.
 log.shell('sh', ['-c', `test -f ${join(browserNssDir, 'cert9.db')} || certutil -N -d sql:${browserNssDir} --empty-password`]);
 log.shell('certutil', ['-A', '-d', `sql:${browserNssDir}`, '-n', 'pebble-root', '-t', 'C,,', '-i', pebbleRootPath]);
-// Read back the installed trust. `certutil -L -n <nickname>` prints
-// `Certificate Trust Flags:\n  SSL Flags: Valid CA\n ...` AND a line of
-// the form `CT,,` or `C,,` in the summary table. A quick grep for
-// `C,,` suffices to tell "trusted for SSL servers" from "no trust at
-// all"; before Chromium starts, fail unless the stored trust reads it.
-log.shell('sh', ['-c', `certutil -L -d sql:${browserNssDir} -n pebble-root | grep -q 'C,,' || { echo "pebble-root in NSS db but trust is not C,, — Chromium will refuse the IP cert as ERR_CERT_AUTHORITY_INVALID" >&2; exit 1; }`]);
+// Read back the installed trust. The `-n <nickname>` form prints the
+// trust in WORDS ("Certificate Trust Flags: / SSL Flags: / Valid CA /
+// Trusted CA") — it never prints `C,,`. The LIST form (no `-n`)
+// prints a table whose rows read `pebble-root   C,,`; grep against
+// THAT, anchored to our nickname so another row's `C,,` cannot
+// satisfy the check.
+log.shell('sh', ['-c', `certutil -L -d sql:${browserNssDir} | grep -E '^pebble-root[[:space:]]+C,,' >/dev/null || { echo "pebble-root in NSS db but trust is not C,, (list-form row) — Chromium will refuse the IP cert as ERR_CERT_AUTHORITY_INVALID" >&2; exit 1; }`]);
 
 // MESH_INTERFACE → Discovery — `config.json` is written from the keys'
 // real notisIds and the mesh nodes' printed multiaddrs (which carry

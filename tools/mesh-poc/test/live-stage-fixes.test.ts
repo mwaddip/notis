@@ -101,7 +101,7 @@ describe('fix cert — certutil trust is C,, (not ,,) and up verifies it', () =>
     expect(addLine, 'certutil -A uses -t C,,').toMatch(/-t\s+C,,/);
     expect(addLine, "certutil -A does not use -t ',,' (no trust)").not.toMatch(/-t\s+'?,,'?(?:\s|$)/);
   }, 30_000);
-  it.fails("up --dry-run reads the LIST form of certutil -L (no -n) and anchors the grep to the pebble-root row", () => {
+  it("up --dry-run reads the LIST form of certutil -L (no -n) and anchors the grep to the pebble-root row", () => {
     // Main measured in a scratch NSS db: `certutil -L -d <db> -n <nick>`
     // prints the trust in WORDS ("Certificate Trust Flags: / SSL Flags:
     // / Valid CA"), never `C,,`. Only the LIST form
