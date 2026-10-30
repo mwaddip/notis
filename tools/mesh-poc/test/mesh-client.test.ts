@@ -382,10 +382,16 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const distLib = fileURLToPath(new URL('../dist/lib.js', import.meta.url));
     expect(existsSync(distLib), `dist/lib.js must exist — run pnpm build first (${distLib})`).toBe(true);
     const code = readFileSync(distLib, 'utf8');
-    // tsup externalises every dependency, so an import from a Node builtin
-    // appears verbatim as `from "node:…"` in dist/lib.js. The scan refuses
-    // the prefix in any import form a tsup bundle emits.
-    const nodeImport = /(?:from\s*['"]|require\s*\(\s*['"]|import\s*\(\s*['"])node:/;
-    expect(code).not.toMatch(nodeImport);
+    const { builtinModules } = await import('node:module');
+    // tsup externalises Node builtins, but it rewrites `node:fs` to `fs` in
+    // its output: the refuse-node-builtins script checks both forms, so the
+    // scan does the same (packages/web/scripts/refuse-node-builtins.mjs).
+    const importRe = /(?:from\s*['"]|require\s*\(\s*['"]|import\s*\(\s*['"])([^'"\s)]+)['"]/g;
+    const banned: string[] = [];
+    for (const match of code.matchAll(importRe)) {
+      const spec = match[1]!;
+      if (spec.startsWith('node:') || builtinModules.includes(spec)) banned.push(spec);
+    }
+    expect(banned, `banned Node imports in dist/lib.js: ${banned.join(', ')}`).toEqual([]);
   }, 30_000);
 });
