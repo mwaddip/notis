@@ -1,8 +1,8 @@
 // MESH_INTERFACE → The IP certificate — Pebble's v2.8.0 release ships only
 // the binary (no sample certs), and even its repo's `localhost` cert does
-// not name `10.100.0.21`. The stage generates its own: a self-signed CA
-// and a Pebble TLS server certificate signed by it, whose SAN names
-// Pebble's bare IP.
+// not name Pebble's bare IP (the stage puts it on 11.100.0.21). The stage
+// generates its own: a self-signed CA and a Pebble TLS server certificate
+// signed by it, whose SAN names Pebble's bare IP.
 //
 // `pub1`'s mesh node trusts the stage CA through `NODE_EXTRA_CA_CERTS`.
 // Every curl to Pebble passes `--cacert <stage-ca>` instead of `-k`.

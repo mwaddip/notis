@@ -1,15 +1,16 @@
 {
   "network": "devnet",
+  "_comment_subnet": "The internet segment uses 11.100.0.0/24, outside @libp2p/utils/private-ip's PRIVATE_IP_RANGES. The browser's connection gater refuses every address inside that list (10/8, 100.64/10, 169.254/16, 172.16/12, 192.0.0/24, 192.0.2/24, 192.88.99/24, 192.168/16, 198.18/15, 198.51.100/24, 203.0.113/24, 240/4, ...), so a stage internet segment inside those would make the browser refuse every public anchor it is handed. 11/8 is public (US DoD) and the stage namespaces have no route out, so no real host at 11.100.0.x is ever reached. NAT-inside segments stay inside the private list.",
   "internet": {
     "bridgeName": "notismesh-br0",
-    "subnet": "10.100.0.0/24",
-    "gateway": "10.100.0.1"
+    "subnet": "11.100.0.0/24",
+    "gateway": "11.100.0.1"
   },
   "hosts": {
     "pub1": {
       "role": "public",
       "nat": "none",
-      "addr": "10.100.0.11",
+      "addr": "11.100.0.11",
       "veth": "p1",
       "mesh": {
         "role": "public",
@@ -30,7 +31,7 @@
     "pub2": {
       "role": "public",
       "nat": "none",
-      "addr": "10.100.0.12",
+      "addr": "11.100.0.12",
       "veth": "p2",
       "mesh": {
         "role": "public",
@@ -47,7 +48,7 @@
     "pebble": {
       "role": "acme",
       "nat": "none",
-      "addr": "10.100.0.21",
+      "addr": "11.100.0.21",
       "veth": "pb",
       "pebble": {
         "listen": "0.0.0.0:14000",
@@ -58,14 +59,14 @@
     "dns-log": {
       "role": "dns-log",
       "nat": "none",
-      "addr": "10.100.0.22",
+      "addr": "11.100.0.22",
       "veth": "dl",
       "dnsPort": 53
     },
     "hostile-malformed": {
       "role": "hostile",
       "nat": "none",
-      "addr": "10.100.0.31",
+      "addr": "11.100.0.31",
       "veth": "hm",
       "mesh": {
         "role": "private",
@@ -80,7 +81,7 @@
     "hostile-invalid": {
       "role": "hostile",
       "nat": "none",
-      "addr": "10.100.0.32",
+      "addr": "11.100.0.32",
       "veth": "hi",
       "mesh": {
         "role": "private",
@@ -95,7 +96,7 @@
     "hostile-lagging": {
       "role": "hostile",
       "nat": "none",
-      "addr": "10.100.0.33",
+      "addr": "11.100.0.33",
       "veth": "hl",
       "mesh": {
         "role": "private"
@@ -109,7 +110,7 @@
     "natA": {
       "role": "nat",
       "nat": "endpoint-independent",
-      "outsideAddr": "10.100.0.101",
+      "outsideAddr": "11.100.0.101",
       "insideSubnet": "10.101.0.0/24",
       "insideGateway": "10.101.0.1",
       "veth": "nA"
@@ -132,7 +133,7 @@
     "natB": {
       "role": "nat",
       "nat": "symmetric",
-      "outsideAddr": "10.100.0.102",
+      "outsideAddr": "11.100.0.102",
       "insideSubnet": "10.102.0.0/24",
       "insideGateway": "10.102.0.1",
       "veth": "nB"
@@ -155,7 +156,7 @@
     "natC": {
       "role": "nat",
       "nat": "endpoint-independent",
-      "outsideAddr": "10.100.0.103",
+      "outsideAddr": "11.100.0.103",
       "insideSubnet": "10.103.0.0/24",
       "insideGateway": "10.103.0.1",
       "veth": "nC"
