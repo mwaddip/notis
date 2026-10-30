@@ -7,8 +7,12 @@ dist-page/
 SESSION_CONTEXT.md
 
 # mesh-poc stage output and binary cache — written by `pnpm --filter
-# @dagsocial/mesh-poc stage:up`, kept local
+# @dagsocial/mesh-poc stage:up`, kept local. `out.prev/` is the previous
+# run's `out/`, rotated aside at every start; it carries the stage CA's
+# private key and every mesh node's key file, so it must never show as
+# untracked.
 tools/mesh-poc/stage/out/
+tools/mesh-poc/stage/out.prev/
 tools/mesh-poc/stage/cache/
 
 # Remediation working files — held from this PUBLIC repo while audit fixes are in progress
