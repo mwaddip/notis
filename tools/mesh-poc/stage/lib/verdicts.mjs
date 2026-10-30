@@ -228,3 +228,13 @@ export function verdictS6Hostile(m) {
   if (m.lagging?.blacklisted !== false) return 'FAIL';
   return 'PASS';
 }
+
+// MESH_INTERFACE → Acceptance 4 — "A transport is cut" step 4: "record
+// what still answers" after the inter-node Notis-p2p TCP is cut. The
+// browser's state is read after a check cycle fires on the cut, and the
+// verdict is PASS when the record carries a `nodeId` and a `transport`
+// — never on an empty read.
+// Measurement: `{ transport, nodeId, tip }`.
+export function verdictS4InterNodeTcp(_m) {
+  throw new Error('verdictS4InterNodeTcp: not implemented');
+}

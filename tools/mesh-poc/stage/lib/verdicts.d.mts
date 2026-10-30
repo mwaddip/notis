@@ -13,3 +13,4 @@ export function verdictS4Renewal(m: unknown): Verdict;
 export function verdictS5(m: unknown): Verdict;
 export function verdictS6NoAnchor(m: unknown): Verdict;
 export function verdictS6Hostile(m: unknown): Verdict;
+export function verdictS4InterNodeTcp(m: unknown): Verdict;

@@ -832,6 +832,48 @@ function pathOf(ma: string): 'direct' | 'relay' | null {
 }
 
 /**
+ * MESH_INTERFACE → The client's node list — "when every address fails,
+ * each one's failure is recorded against it". A wrong-key answer under a
+ * key-authenticated link shows up through two libp2p error types in
+ * practice: `UnexpectedPeerError` from the upgrader's own identity check
+ * (upgrader.ts), and `EncryptionFailedError` from the noise handshake
+ * (`libp2p/src/errors.ts`), which wraps noise's `Payload peer id X does
+ * not match expected remote peer id Y` as its message. This function
+ * reads both and returns the answered peer-id string; it returns `null`
+ * for every other error (a timeout, a plain refusal, …).
+ */
+export function wrongKeyInfo(_e: unknown): { answeredPeerIdString: string } | null {
+  throw new Error('wrongKeyInfo: not implemented');
+}
+
+/**
+ * MESH_INTERFACE → The client's node list — "A node's addresses are
+ * dialled as one operation ... When every address fails, each one's
+ * failure is recorded against it". libp2p 3.5's `AggregateError` carries
+ * one inner error per address in the ORDER its own
+ * `defaultMultiaddrSorter` applies. This helper sorts the dialable list
+ * the same way and returns one row per sorted address, with the inner
+ * error's attribution: wrong-key (through `wrongKeyInfo`) carries the
+ * answered id; every other error carries its message and kind. Returns
+ * `null` when `errors.length !== dialable.length` — libp2p dropped one
+ * before dialling (gater, no transport, dedup), so a one-to-one match is
+ * no longer sound and the caller falls back to a single aggregate
+ * failure.
+ */
+export interface AttributedDialError {
+  addr: string;
+  wrongKey: { answeredPeerIdString: string } | null;
+  kind: 'timeout' | 'transport';
+  message: string;
+}
+export function attributeAggregateDialErrors(
+  _dialable: readonly string[],
+  _errors: readonly unknown[],
+): AttributedDialError[] | null {
+  throw new Error('attributeAggregateDialErrors: not implemented');
+}
+
+/**
  * MESH_INTERFACE → The node endpoint — `/blocks/current` answers
  * `{ height, hash }`: height a non-negative safe integer, hash either
  * 64 lowercase hex or null (the genesis marker). Mirrors
