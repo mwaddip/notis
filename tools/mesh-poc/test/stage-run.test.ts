@@ -28,7 +28,7 @@ describe('stage:run --dry-run', () => {
     }
   }
 
-  it.fails('exits 0 and prints the six scenarios in order', () => {
+  it('exits 0 and prints the six scenarios in order', () => {
     runDryOnce();
     expect(status).toBe(0);
     for (const name of ['s1', 's2', 's3', 's4', 's5', 's6']) {
@@ -43,7 +43,7 @@ describe('stage:run --dry-run', () => {
     }
   }, 30_000);
 
-  it.fails('every [fault:*] line runs sudo ip netns exec notismesh-*', () => {
+  it('every [fault:*] line runs sudo ip netns exec notismesh-*', () => {
     runDryOnce();
     const bad: string[] = [];
     for (const line of out.split('\n')) {
@@ -64,7 +64,7 @@ describe('stage:run --dry-run', () => {
   // <scenario>:<name>]` appears later in the output. The scenarios
   // carry the pairing explicitly: `nft add table ip <T>` pairs with
   // `nft delete table ip <T>`.
-  it.fails('every scenario that adds an nft table removes it before it ends', () => {
+  it('every scenario that adds an nft table removes it before it ends', () => {
     runDryOnce();
     const addLines = out.split('\n').filter((l) => l.startsWith('[fault:') && / nft add table ip /.test(l));
     expect(addLines.length, 'at least one nft table added by scenarios').toBeGreaterThan(0);
@@ -89,7 +89,7 @@ describe('stage:run --dry-run', () => {
   // MESH_INTERFACE → Acceptance — "`--dry-run` ... creates no
   // namespace, file or process". The scenarios' dry-run also writes no
   // scenario JSON under `stage/out/scenarios/`.
-  it.fails('the dry-run complete marker is in the output', () => {
+  it('the dry-run complete marker is in the output', () => {
     runDryOnce();
     expect(out, 'dry-run complete marker').toMatch(/\[dry-run complete\] 6 scenario\(s\)/);
   }, 30_000);
@@ -100,7 +100,7 @@ describe('stage:run --dry-run — nft ruleset syntax', () => {
   // under `sudo ip netns exec notismesh-* nft` passes `nft -c -f` in an
   // unprivileged user + network namespace. A kernel that disallows them
   // reads the preflight and skips with the reason.
-  it.fails('every nft ruleset the scenarios would apply passes nft -c under unshare -rn', () => {
+  it('every nft ruleset the scenarios would apply passes nft -c under unshare -rn', () => {
     const res = spawnSync(process.execPath, [RUN_SCRIPT, '--dry-run'], {
       encoding: 'utf8',
       timeout: 30_000,
@@ -156,7 +156,7 @@ describe('stage:run --dry-run — nft ruleset syntax', () => {
 });
 
 describe('fault-log.assertStagePrivileged', () => {
-  it.fails('accepts sudo ip netns exec notismesh-pub1 ...', () => {
+  it('accepts sudo ip netns exec notismesh-pub1 ...', () => {
     expect(() => assertStagePrivileged(['sudo', 'ip', 'netns', 'exec', 'notismesh-pub1', 'nft', 'add', 'table', 'ip', 'x'])).not.toThrow();
   });
   it('refuses a non-sudo prefix', () => {

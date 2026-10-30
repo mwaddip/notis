@@ -998,10 +998,18 @@ const CHROMIUM_QUIET_FLAGS = [
   '--password-store=basic',
   '--use-mock-keychain',
 ];
+// MESH_INTERFACE → Acceptance — scenario 1: the browser's resolver answers
+// no name. Chromium's own name resolver sees `MAP * ~NOTFOUND` and refuses
+// every host but the one in `EXCLUDE`, so the page (`http://localhost`) is
+// the one URL that resolves and every ICE server or address a client would
+// dial by name fails before touching DNS. The DNS log then holds only what
+// goes around Chromium's resolver — nothing in the clean run.
+const CHROMIUM_HOST_RESOLVER_RULES = '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost';
 log.spawn(userWrap(nsOf('browser'), { HOME: browserProfileHome, DISPLAY: process.env.DISPLAY ?? ':0' }, chromiumBin).concat([
   '--headless=new',
   `--user-data-dir=${browserProfileDir}`,
   ...CHROMIUM_QUIET_FLAGS,
+  CHROMIUM_HOST_RESOLVER_RULES,
   '--remote-debugging-port=9222',
   `http://localhost:${browserHost.httpPort}/`,
 ]), { description: 'chromium', logPath: logPathFor('chromium') });

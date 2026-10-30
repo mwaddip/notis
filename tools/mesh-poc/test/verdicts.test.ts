@@ -41,13 +41,13 @@ describe('skipped — missing measurement', () => {
     ['verdictS6Hostile', verdictS6Hostile],
   ];
   for (const [name, f] of verdicts) {
-    it.fails(`${name}: null → skipped`, () => {
+    it(`${name}: null → skipped`, () => {
       expect(f(null)).toBe('skipped');
     });
-    it.fails(`${name}: undefined → skipped`, () => {
+    it(`${name}: undefined → skipped`, () => {
       expect(f(undefined)).toBe('skipped');
     });
-    it.fails(`${name}: {} → skipped`, () => {
+    it(`${name}: {} → skipped`, () => {
       expect(f({})).toBe('skipped');
     });
   }
@@ -55,16 +55,16 @@ describe('skipped — missing measurement', () => {
 
 describe('verdictS1Node — the node is an anchor within 60 s', () => {
   const PASS = { nodeId: 'a'.repeat(64), isAnchor: true, timeMs: 10_000 };
-  it.fails('every pass condition holds → PASS', () => {
+  it('every pass condition holds → PASS', () => {
     expect(verdictS1Node(PASS)).toBe('PASS');
   });
-  it.fails('nodeId null → FAIL', () => {
+  it('nodeId null → FAIL', () => {
     expect(verdictS1Node({ ...PASS, nodeId: null })).toBe('FAIL');
   });
-  it.fails('isAnchor false (a discovered node, not an anchor) → FAIL', () => {
+  it('isAnchor false (a discovered node, not an anchor) → FAIL', () => {
     expect(verdictS1Node({ ...PASS, isAnchor: false })).toBe('FAIL');
   });
-  it.fails('timeMs past 60 s → FAIL', () => {
+  it('timeMs past 60 s → FAIL', () => {
     expect(verdictS1Node({ ...PASS, timeMs: 60_001 })).toBe('FAIL');
   });
 });
@@ -74,19 +74,19 @@ describe('verdictS1Probe — the mesh answer equals the node\'s direct HTTP answ
     probe: { sha256: 'ab'.repeat(32), bytes: 123 },
     direct: { sha256: 'ab'.repeat(32), bytes: 123 },
   };
-  it.fails('equal sha256 and bytes → PASS', () => {
+  it('equal sha256 and bytes → PASS', () => {
     expect(verdictS1Probe(PASS)).toBe('PASS');
   });
-  it.fails('different sha256 → FAIL', () => {
+  it('different sha256 → FAIL', () => {
     expect(verdictS1Probe({ ...PASS, direct: { sha256: 'cd'.repeat(32), bytes: 123 } })).toBe('FAIL');
   });
-  it.fails('different bytes → FAIL', () => {
+  it('different bytes → FAIL', () => {
     expect(verdictS1Probe({ ...PASS, direct: { sha256: PASS.probe.sha256, bytes: 999 } })).toBe('FAIL');
   });
-  it.fails('direct missing → FAIL', () => {
+  it('direct missing → FAIL', () => {
     expect(verdictS1Probe({ probe: PASS.probe })).toBe('FAIL');
   });
-  it.fails('tip moved: first direct differs but retryDirect matches → PASS', () => {
+  it('tip moved: first direct differs but retryDirect matches → PASS', () => {
     expect(verdictS1Probe({
       probe: { sha256: 'ab'.repeat(32), bytes: 123 },
       direct: { sha256: 'cd'.repeat(32), bytes: 456 },
@@ -97,13 +97,13 @@ describe('verdictS1Probe — the mesh answer equals the node\'s direct HTTP answ
 
 describe('verdictS1DnsSilent — no DNS during the scenario', () => {
   const PASS = { dnsLines: 0, nftCounterPackets: 0 };
-  it.fails('both counters zero → PASS', () => {
+  it('both counters zero → PASS', () => {
     expect(verdictS1DnsSilent(PASS)).toBe('PASS');
   });
-  it.fails('one DNS log line → FAIL', () => {
+  it('one DNS log line → FAIL', () => {
     expect(verdictS1DnsSilent({ ...PASS, dnsLines: 1 })).toBe('FAIL');
   });
-  it.fails('one nft counter packet → FAIL', () => {
+  it('one nft counter packet → FAIL', () => {
     expect(verdictS1DnsSilent({ ...PASS, nftCounterPackets: 1 })).toBe('FAIL');
   });
 });
@@ -115,16 +115,16 @@ describe('verdictS2Priv1 — endpoint-independent NAT: relay, then direct', () =
     relayedTimeMs: 5_000,
     directTimeMs: 12_000,
   };
-  it.fails('relay before direct, right node → PASS', () => {
+  it('relay before direct, right node → PASS', () => {
     expect(verdictS2Priv1(PASS)).toBe('PASS');
   });
-  it.fails('wrong node → FAIL', () => {
+  it('wrong node → FAIL', () => {
     expect(verdictS2Priv1({ ...PASS, nodeId: 'a'.repeat(64) })).toBe('FAIL');
   });
-  it.fails('direct before relay (never upgraded) → FAIL', () => {
+  it('direct before relay (never upgraded) → FAIL', () => {
     expect(verdictS2Priv1({ ...PASS, directTimeMs: 1_000 })).toBe('FAIL');
   });
-  it.fails('direct missing → FAIL', () => {
+  it('direct missing → FAIL', () => {
     expect(verdictS2Priv1({ nodeId: PASS.nodeId, expectedNodeId: PASS.expectedNodeId, relayedTimeMs: 5_000 })).toBe('FAIL');
   });
 });
@@ -136,13 +136,13 @@ describe('verdictS2Priv2 — symmetric NAT: through the relay', () => {
     relayedTimeMs: 7_000,
     everDirect: false,
   };
-  it.fails('relayed, right node → PASS (direct not required)', () => {
+  it('relayed, right node → PASS (direct not required)', () => {
     expect(verdictS2Priv2(PASS)).toBe('PASS');
   });
-  it.fails('wrong node → FAIL', () => {
+  it('wrong node → FAIL', () => {
     expect(verdictS2Priv2({ ...PASS, nodeId: 'a'.repeat(64) })).toBe('FAIL');
   });
-  it.fails('relay missing → FAIL', () => {
+  it('relay missing → FAIL', () => {
     expect(verdictS2Priv2({ nodeId: PASS.nodeId, expectedNodeId: PASS.expectedNodeId, everDirect: false })).toBe('FAIL');
   });
 });
@@ -155,42 +155,42 @@ describe('verdictS3Moved — move to another node, old reads retry, within 2 che
     movedWithinChecks: 1,
     checkIntervalMs: 30_000,
   };
-  it.fails('moved + retry within 2 checks → PASS', () => {
+  it('moved + retry within 2 checks → PASS', () => {
     expect(verdictS3Moved(PASS)).toBe('PASS');
   });
-  it.fails('did not move (same node) → FAIL', () => {
+  it('did not move (same node) → FAIL', () => {
     expect(verdictS3Moved({ ...PASS, newNodeId: PASS.oldNodeId })).toBe('FAIL');
   });
-  it.fails('old reads blacklisted (not retry) → FAIL', () => {
+  it('old reads blacklisted (not retry) → FAIL', () => {
     expect(verdictS3Moved({ ...PASS, oldStatus: 'blacklisted' })).toBe('FAIL');
   });
-  it.fails('took more than 2 checks → FAIL', () => {
+  it('took more than 2 checks → FAIL', () => {
     expect(verdictS3Moved({ ...PASS, movedWithinChecks: 3 })).toBe('FAIL');
   });
 });
 
 describe('verdictS3Recovered — once the node is back it reads ok', () => {
   const PASS = { nodeId: 'a'.repeat(64), status: 'ok', recoveryTimeMs: 20_000 };
-  it.fails('status ok with a recovery time → PASS', () => {
+  it('status ok with a recovery time → PASS', () => {
     expect(verdictS3Recovered(PASS)).toBe('PASS');
   });
-  it.fails('status still retry → FAIL', () => {
+  it('status still retry → FAIL', () => {
     expect(verdictS3Recovered({ ...PASS, status: 'retry' })).toBe('FAIL');
   });
-  it.fails('recoveryTimeMs missing → FAIL', () => {
+  it('recoveryTimeMs missing → FAIL', () => {
     expect(verdictS3Recovered({ nodeId: PASS.nodeId, status: 'ok' })).toBe('FAIL');
   });
 });
 
 describe('verdictS4Pub1UdpDrop — UDP to pub1 cut, client gets in through another', () => {
   const PASS = { connected: true, nodeId: 'b'.repeat(64), blockedNodeId: 'a'.repeat(64) };
-  it.fails('connected via a different node → PASS', () => {
+  it('connected via a different node → PASS', () => {
     expect(verdictS4Pub1UdpDrop(PASS)).toBe('PASS');
   });
-  it.fails('not connected → FAIL', () => {
+  it('not connected → FAIL', () => {
     expect(verdictS4Pub1UdpDrop({ ...PASS, connected: false })).toBe('FAIL');
   });
-  it.fails('connected but still using the blocked node → FAIL', () => {
+  it('connected but still using the blocked node → FAIL', () => {
     expect(verdictS4Pub1UdpDrop({ ...PASS, nodeId: PASS.blockedNodeId })).toBe('FAIL');
   });
 });
@@ -203,32 +203,32 @@ describe('verdictS4AllUdpDrop — UDP to all cut: WSS to pub1, Pebble-issued cer
     certIssuerName: 'Pebble Intermediate CA',
     expectedIssuerName: 'Pebble Intermediate CA',
   };
-  it.fails('WSS to pub1 with Pebble-issued cert → PASS', () => {
+  it('WSS to pub1 with Pebble-issued cert → PASS', () => {
     expect(verdictS4AllUdpDrop(PASS)).toBe('PASS');
   });
-  it.fails('transport is not wss → FAIL', () => {
+  it('transport is not wss → FAIL', () => {
     expect(verdictS4AllUdpDrop({ ...PASS, transport: 'webrtc-direct' })).toBe('FAIL');
   });
-  it.fails('not pub1 → FAIL', () => {
+  it('not pub1 → FAIL', () => {
     expect(verdictS4AllUdpDrop({ ...PASS, nodeId: 'b'.repeat(64) })).toBe('FAIL');
   });
-  it.fails('cert issuer mismatch → FAIL', () => {
+  it('cert issuer mismatch → FAIL', () => {
     expect(verdictS4AllUdpDrop({ ...PASS, certIssuerName: 'Someone Else' })).toBe('FAIL');
   });
 });
 
 describe('verdictS4Renewal — across one renewal the probes keep succeeding', () => {
   const PASS = { renewalSeen: true, probeSuccessAcrossRenewal: true, lastLeftFailure: false };
-  it.fails('renewal + probe success + no failure → PASS', () => {
+  it('renewal + probe success + no failure → PASS', () => {
     expect(verdictS4Renewal(PASS)).toBe('PASS');
   });
-  it.fails('no renewal seen → FAIL', () => {
+  it('no renewal seen → FAIL', () => {
     expect(verdictS4Renewal({ ...PASS, renewalSeen: false })).toBe('FAIL');
   });
-  it.fails('probe did not succeed across renewal → FAIL', () => {
+  it('probe did not succeed across renewal → FAIL', () => {
     expect(verdictS4Renewal({ ...PASS, probeSuccessAcrossRenewal: false })).toBe('FAIL');
   });
-  it.fails('lastLeft names a failure → FAIL', () => {
+  it('lastLeft names a failure → FAIL', () => {
     expect(verdictS4Renewal({ ...PASS, lastLeftFailure: true })).toBe('FAIL');
   });
 });
@@ -239,26 +239,26 @@ describe('verdictS5 — impostor: anchor not blacklisted, its address dropped', 
     droppedAddrs: ['/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/abc'],
     blockedAddr: '/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/abc',
   };
-  it.fails('address dropped, anchor not blacklisted → PASS', () => {
+  it('address dropped, anchor not blacklisted → PASS', () => {
     expect(verdictS5(PASS)).toBe('PASS');
   });
-  it.fails('anchor blacklisted → FAIL', () => {
+  it('anchor blacklisted → FAIL', () => {
     expect(verdictS5({ ...PASS, anchorStatus: 'blacklisted' })).toBe('FAIL');
   });
-  it.fails('address not in droppedAddrs → FAIL', () => {
+  it('address not in droppedAddrs → FAIL', () => {
     expect(verdictS5({ ...PASS, droppedAddrs: [] })).toBe('FAIL');
   });
 });
 
 describe('verdictS6NoAnchor — all anchors unreachable, page says the contract words', () => {
   const PASS = { anchorReached: false, bannerText: 'No anchor reached. Nothing shown here is verified.' };
-  it.fails('anchorReached false + exact banner words → PASS', () => {
+  it('anchorReached false + exact banner words → PASS', () => {
     expect(verdictS6NoAnchor(PASS)).toBe('PASS');
   });
-  it.fails('anchorReached true → FAIL', () => {
+  it('anchorReached true → FAIL', () => {
     expect(verdictS6NoAnchor({ ...PASS, anchorReached: true })).toBe('FAIL');
   });
-  it.fails('banner text differs by one byte → FAIL', () => {
+  it('banner text differs by one byte → FAIL', () => {
     expect(verdictS6NoAnchor({ ...PASS, bannerText: 'No anchor reached. Nothing shown here is verified' })).toBe('FAIL');
   });
 });
@@ -269,25 +269,25 @@ describe('verdictS6Hostile — malformed + invalid blacklisted; lagging behind, 
     invalid: { status: 'blacklisted', evidenceKind: 'proof-invalid' },
     lagging: { status: 'behind', blacklisted: false },
   };
-  it.fails('every row holds → PASS', () => {
+  it('every row holds → PASS', () => {
     expect(verdictS6Hostile(PASS)).toBe('PASS');
   });
-  it.fails('malformed not blacklisted → FAIL', () => {
+  it('malformed not blacklisted → FAIL', () => {
     expect(verdictS6Hostile({ ...PASS, malformed: { status: 'retry', evidenceKind: 'malformed' } })).toBe('FAIL');
   });
-  it.fails('malformed evidence of a different kind → FAIL', () => {
+  it('malformed evidence of a different kind → FAIL', () => {
     expect(verdictS6Hostile({ ...PASS, malformed: { status: 'blacklisted', evidenceKind: 'proof-invalid' } })).toBe('FAIL');
   });
-  it.fails('invalid not blacklisted → FAIL', () => {
+  it('invalid not blacklisted → FAIL', () => {
     expect(verdictS6Hostile({ ...PASS, invalid: { status: 'retry', evidenceKind: 'proof-invalid' } })).toBe('FAIL');
   });
-  it.fails('invalid evidence of a different kind → FAIL', () => {
+  it('invalid evidence of a different kind → FAIL', () => {
     expect(verdictS6Hostile({ ...PASS, invalid: { status: 'blacklisted', evidenceKind: 'malformed' } })).toBe('FAIL');
   });
-  it.fails('lagging status is not behind → FAIL', () => {
+  it('lagging status is not behind → FAIL', () => {
     expect(verdictS6Hostile({ ...PASS, lagging: { status: 'blacklisted', blacklisted: true } })).toBe('FAIL');
   });
-  it.fails('lagging also blacklisted → FAIL', () => {
+  it('lagging also blacklisted → FAIL', () => {
     expect(verdictS6Hostile({ ...PASS, lagging: { status: 'behind', blacklisted: true } })).toBe('FAIL');
   });
 });

@@ -18,6 +18,7 @@ import type { Anchor } from '../src/client/node-list.js';
 import type { NetworkName } from '../src/protocols.js';
 import { MeshConfigError } from '../src/config.js';
 import { render } from './render.js';
+import { runProbe } from './probe.js';
 
 export interface PageConfig {
   network: NetworkName;
@@ -72,6 +73,21 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
 
   client.onState((s) => render(s, opts.root));
   render(client.state(), opts.root);
+
+  // MESH_INTERFACE → Acceptance — the one query parameter the page honours:
+  // `?probe=<path>` reads `<path>` through the client's own fetch after the
+  // first state with a non-null `nodeId`, and writes `<pre id="probe">`.
+  const probePath = readProbePath();
+  if (probePath !== null) {
+    void runProbe({ client, path: probePath, root: opts.root });
+  }
+}
+
+function readProbePath(): string | null {
+  if (typeof globalThis.location === 'undefined') return null;
+  const params = new URLSearchParams(globalThis.location.search);
+  const value = params.get('probe');
+  return value === null || value === '' ? null : value;
 }
 
 async function loadConfig(fetchFn: typeof globalThis.fetch): Promise<PageConfig> {

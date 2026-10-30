@@ -163,7 +163,7 @@ describe('page/probe.ts', () => {
     return { client, emit, fetched };
   }
 
-  it.fails('writes <pre id="probe"> with { path, nodeId, status, bytes, sha256 } after the first state with a nodeId', async () => {
+  it('writes <pre id="probe"> with { path, nodeId, status, bytes, sha256 } after the first state with a nodeId', async () => {
     const root = document.createElement('div');
     const nodeId = 'a'.repeat(64);
     const path = '/blocks/current';
@@ -189,7 +189,7 @@ describe('page/probe.ts', () => {
     expect(parsed).toEqual({ path, nodeId, status: 200, bytes: body.length, sha256: expectedSha });
   });
 
-  it.fails('reads the first non-null state when the client already has a nodeId', async () => {
+  it('reads the first non-null state when the client already has a nodeId', async () => {
     const root = document.createElement('div');
     const nodeId = 'b'.repeat(64);
     const body = new Uint8Array([1, 2, 3, 4]);

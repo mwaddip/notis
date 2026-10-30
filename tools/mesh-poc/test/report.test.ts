@@ -35,20 +35,20 @@ function sampleScenarios(): ScenarioResult[] {
 }
 
 describe('report/buildSummary — pure', () => {
-  it.fails('writes one `## <scenario>` section per scenario', () => {
+  it('writes one `## <scenario>` section per scenario', () => {
     const md = buildSummary(sampleScenarios());
     expect(md).toContain('## s1');
     expect(md).toContain('## s6');
   });
 
-  it.fails("every step's verdict appears in its row", () => {
+  it("every step's verdict appears in its row", () => {
     const md = buildSummary(sampleScenarios());
     expect(md).toMatch(/\|.*nodeId is an anchor.*\|\s*PASS\s*\|/);
     expect(md).toMatch(/\|.*DNS silent.*\|\s*skipped\s*\|/);
     expect(md).toMatch(/\|.*no anchor reached.*\|\s*FAIL\s*\|/);
   });
 
-  it.fails('skipped measurements render as "-" (no PASS by mistake)', () => {
+  it('skipped measurements render as "-" (no PASS by mistake)', () => {
     const md = buildSummary(sampleScenarios());
     const skippedLine = md.split('\n').find((l) => l.includes('DNS silent'));
     expect(skippedLine, 'DNS silent row').toBeDefined();
@@ -56,13 +56,13 @@ describe('report/buildSummary — pure', () => {
     expect(skippedLine, 'skipped row does not show PASS').not.toContain('| PASS |');
   });
 
-  it.fails('marks Firefox rows as the hand pass', () => {
+  it('marks Firefox rows as the hand pass', () => {
     const md = buildSummary(sampleScenarios());
     expect(md).toContain('### Firefox');
     expect(md).toContain('(hand pass — this stage measures Chromium alone)');
   });
 
-  it.fails('an empty list of scenarios produces a well-formed summary', () => {
+  it('an empty list of scenarios produces a well-formed summary', () => {
     const md = buildSummary([]);
     expect(md).toContain('# mesh-poc stage — scenario summary');
     expect(md).toContain('Chromium is the one browser');
@@ -70,7 +70,7 @@ describe('report/buildSummary — pure', () => {
 });
 
 describe('report/writeSummaryFromDir — reads a fixture directory', () => {
-  it.fails('reads every <name>.json in the directory and writes summary.md', () => {
+  it('reads every <name>.json in the directory and writes summary.md', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-report-'));
     try {
       for (const s of sampleScenarios()) {

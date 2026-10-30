@@ -18,7 +18,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "stage:up": "node stage/up.mjs",
-    "stage:down": "node stage/down.mjs"
+    "stage:down": "node stage/down.mjs",
+    "stage:run": "node stage/run.mjs",
+    "stage:report": "node stage/report.mjs"
   },
   "dependencies": {
     "@dagsocial/nipopow": "workspace:*",

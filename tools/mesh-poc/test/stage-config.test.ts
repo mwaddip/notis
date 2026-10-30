@@ -435,7 +435,7 @@ describe('stage up --dry-run', () => {
   // and every background query of the browser's own that goes by name
   // fails before touching DNS, so the DNS log holds only what went
   // around Chromium's resolver.
-  it.fails("Chromium carries --host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost", () => {
+  it("Chromium carries --host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost", () => {
     runDryOnce();
     const line = out.split('\n').find((l) => l.startsWith('[spawn:chromium]'));
     expect(line, 'chromium spawn is in the dry-run').toBeDefined();
