@@ -178,6 +178,31 @@ describe('stage up --dry-run', () => {
     }
   }
 
+  // MESH_INTERFACE → Acceptance — nothing a scenario reads may come
+  // from an earlier run. `stage/out/` is moved aside to
+  // `stage/out.prev/` (replacing any older `.prev`) as the first step,
+  // before any key, cert or log is written. `stage/cache/` (the
+  // Pebble tarball + binary) is left in place.
+  it.fails("rotates stage/out/ to stage/out.prev/ as its first step", () => {
+    runDryOnce();
+    const lines = out.split('\n').filter((l) => l !== '');
+    const firstLine = lines[0];
+    expect(firstLine, 'the dry-run has at least one line').toBeDefined();
+    expect(firstLine, `first step rotates stage/out: ${firstLine}`).toMatch(
+      /stage\/out(?:['"]?)\s|stage\/out['"]?\s|stage\/out\.prev/,
+    );
+    // The rotation precedes every other step: no `[privileged]`, no
+    // `[cert]`, no `[spawn:*]` runs before it.
+    const rotIdx = lines.findIndex((l) => /stage\/out\.prev/.test(l));
+    expect(rotIdx, 'rotation present').toBeGreaterThanOrEqual(0);
+    const privIdx = lines.findIndex((l) => l.startsWith('[privileged]'));
+    const certIdx = lines.findIndex((l) => l.startsWith('[cert]'));
+    const spawnIdx = lines.findIndex((l) => l.startsWith('[spawn:'));
+    expect(rotIdx, 'rotation before any [privileged]').toBeLessThan(privIdx);
+    if (certIdx >= 0) expect(rotIdx, 'rotation before any [cert]').toBeLessThan(certIdx);
+    if (spawnIdx >= 0) expect(rotIdx, 'rotation before any [spawn:]').toBeLessThan(spawnIdx);
+  }, 30_000);
+
   it('exits 0, prints at least one privileged command, creates no namespace, file or process', () => {
     runDryOnce();
     expect(status).toBe(0);
