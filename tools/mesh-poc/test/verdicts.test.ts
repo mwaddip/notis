@@ -263,8 +263,18 @@ describe('verdictS5 — impostor: anchor not blacklisted, its address dropped', 
 });
 
 describe('verdictS6NoAnchor — all anchors unreachable, page says the contract words', () => {
-  const PASS = { anchorReached: false, bannerText: 'No anchor reached. Nothing shown here is verified.' };
-  it('anchorReached false + exact banner words → PASS', () => {
+  const PASS = {
+    anchorReached: false,
+    bannerText: 'No anchor reached. Nothing shown here is verified.',
+    // Positive evidence: at least one seed answered inside the window.
+    // The property is "a client talking to hostile nodes alone says no
+    // anchor was reached", not "a page that reached nothing shows the
+    // banner" (which the stage's own broken page would also do).
+    seedAnswered: true,
+    seedId: 'cc'.repeat(32),
+    seedStatus: 'blacklisted',
+  };
+  it('anchorReached false + exact banner words + a seed answered → PASS', () => {
     expect(verdictS6NoAnchor(PASS)).toBe('PASS');
   });
   it('anchorReached true → FAIL', () => {
@@ -272,6 +282,23 @@ describe('verdictS6NoAnchor — all anchors unreachable, page says the contract 
   });
   it('banner text differs by one byte → FAIL', () => {
     expect(verdictS6NoAnchor({ ...PASS, bannerText: 'No anchor reached. Nothing shown here is verified' })).toBe('FAIL');
+  });
+  it.fails('page reached nothing (no seed answered) → FAIL (no vacuous PASS)', () => {
+    expect(verdictS6NoAnchor({
+      anchorReached: false,
+      bannerText: 'No anchor reached. Nothing shown here is verified.',
+      seedAnswered: false,
+      seedId: null,
+      seedStatus: null,
+    })).toBe('FAIL');
+  });
+  it.fails("a seed in 'new' (never contacted) does not count as answered", () => {
+    expect(verdictS6NoAnchor({
+      ...PASS,
+      seedAnswered: false,
+      seedId: 'cc'.repeat(32),
+      seedStatus: 'new',
+    })).toBe('FAIL');
   });
 });
 
