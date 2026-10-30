@@ -81,6 +81,12 @@ it. A browser reaches a
 private node over WebRTC signalled through the relay, gathering ICE candidates against public nodes' STUN servers
 alone.
 
+**A public node announces its listen addresses from the start.** libp2p holds back a listen address on a public IP
+until a peer confirms it, but an operator who declares a node `public` has said the address is reachable, and a node
+that announced nothing could be found by no one. So a `public` node announces every listen address with a concrete
+port — the WebRTC-direct ones carrying their certificate hash — and prints its identity only once they are announced.
+A `private` node announces its relay reservations alone.
+
 **Every STUN server is a mesh node named by IP** — `stun:<ip>:<port>`; a client refuses an ICE server named by a
 hostname. Only the relayed WebRTC path uses STUN; WebRTC-direct to a public address needs none.
 
