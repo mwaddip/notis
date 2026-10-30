@@ -29,6 +29,7 @@ import { isIPv4, isIPv6 } from 'node:net';
 import { join } from 'node:path';
 import type { NodeKey } from '../identity.js';
 import { dhtProtocol, type NetworkName } from '../protocols.js';
+import { MeshConfigError, assertNoDns } from '../config.js';
 import { nodeApiServer } from './api-forward.js';
 import { startStunServer } from './stun.js';
 import type { IpCertificate } from './acme.js';
@@ -39,14 +40,11 @@ import {
   type WssRenewal,
 } from './wss.js';
 
-/**
- * MESH_INTERFACE → Transports / Discovery — a start-time refusal: a
- * `/dns4/`, `/dns6/` or `/dnsaddr/` component in a `listen`, `announce` or
- * `bootstrap` address, or a `bootstrap` address without a `/p2p/` component.
- */
-export class MeshConfigError extends Error {
-  override readonly name = 'MeshConfigError';
-}
+// MESH_INTERFACE → Transports / Discovery — the DNS and `MeshConfigError`
+// rule is browser-safe and shared with the client: a second class or regex
+// would make a refusal land in one caller and not the other, so both come
+// from one source (`src/config.ts`).
+export { MeshConfigError };
 
 export interface MeshNodeOptions {
   readonly key: NodeKey;
@@ -77,16 +75,6 @@ export interface MeshNode {
   readonly libp2p: Libp2p<{ http: HTTP }>;
   multiaddrs(): string[];
   stop(): Promise<void>;
-}
-
-const DNS_RE = /\/dns4\/|\/dns6\/|\/dnsaddr\//;
-
-function assertNoDns(label: string, addrs: readonly string[]): void {
-  for (const a of addrs) {
-    if (DNS_RE.test(a)) {
-      throw new MeshConfigError(`${label} address refused: ${a} carries a DNS component`);
-    }
-  }
 }
 
 function assertBootstrapHasPeer(addrs: readonly string[]): void {
