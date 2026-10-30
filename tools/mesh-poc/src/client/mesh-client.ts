@@ -84,14 +84,18 @@ const BODY_UNPARSEABLE = 'unparseable body:';
  * synchronous function. One check, called from `startMeshClient` as its first
  * statement and reused by any caller (such as the page) that wants to refuse
  * a config before starting a libp2p node. A `MeshConfigError` is thrown for
- * a `/dns4/`, `/dns6/`, `/dnsaddr/` anchor address or an ICE server that is
- * not `stun:<IPv4>:<port>` / `stun:[<IPv6>]:<port>`.
+ * a `/dns4/`, `/dns6/`, `/dnsaddr/` anchor or seed address, or an ICE server
+ * that is not `stun:<IPv4>:<port>` / `stun:[<IPv6>]:<port>`.
  */
 export function assertClientConfig(o: {
   anchors: readonly Anchor[];
+  seeds?: readonly Anchor[];
   stunServers: readonly string[];
 }): void {
   for (const a of o.anchors) assertNoDns('anchor', a.addrs);
+  if (o.seeds !== undefined) {
+    for (const s of o.seeds) assertNoDns('seed', s.addrs);
+  }
   assertIceServers(o.stunServers);
 }
 
@@ -166,6 +170,13 @@ export interface MeshClient {
 
 export interface StartMeshClientOptions {
   anchors: Anchor[];
+  /**
+   * MESH_INTERFACE → Discovery → Seeds — contacts the client holds without
+   * trusting them. A seed is a candidate like any node the DHT finds; no answer
+   * from one makes `anchorReached` true. Addresses meet the same refusals as
+   * an anchor's.
+   */
+  seeds?: Anchor[];
   network: NetworkName;
   profile: NetworkProfile;
   stunServers: string[];
@@ -251,6 +262,18 @@ class MeshClientImpl implements MeshClient {
     this.resolveFn = resolveFn;
     this.profile = o.profile;
     this.nodeList = new NodeList(o.anchors, ownId, clock);
+    // MESH_INTERFACE → Discovery → Seeds — "a seed is a candidate like any
+    // node the DHT finds". Added before the first check, so a seed is in
+    // the candidates `resolveTip` reads from the start; `NodeList.add`
+    // records them as non-anchor entries, so a seed's success leaves
+    // `anchorReached` false. The client's own key is dropped the same way
+    // an anchor list's own-key entry is.
+    if (o.seeds !== undefined) {
+      for (const s of o.seeds) {
+        if (s.notisId === ownId) continue;
+        this.nodeList.add(s.notisId, s.addrs);
+      }
+    }
     this.state_ = {
       nodeId: null,
       transport: null,

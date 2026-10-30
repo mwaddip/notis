@@ -22,6 +22,12 @@ import { render } from './render.js';
 export interface PageConfig {
   network: NetworkName;
   anchors: Anchor[];
+  /**
+   * MESH_INTERFACE → Discovery → Seeds — contacts without trust. Optional;
+   * default none. A seed's addresses meet the same refusals as an anchor's,
+   * and no answer from a seed makes `anchorReached` true.
+   */
+  seeds?: Anchor[];
   stunServers: string[];
 }
 
@@ -51,6 +57,7 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
   try {
     client = await startMeshClient({
       anchors: config.anchors,
+      ...(config.seeds !== undefined ? { seeds: config.seeds } : {}),
       network: config.network,
       profile,
       stunServers: config.stunServers,
@@ -93,9 +100,21 @@ function validateConfig(raw: unknown): PageConfig {
   if (!Array.isArray(stunServers)) {
     throw new Error('config.stunServers must be an array');
   }
+  // MESH_INTERFACE → Discovery → Seeds — optional, default none; when present
+  // it must be an array (its addresses are refused by `assertClientConfig`,
+  // not here).
+  const seedsRaw = o['seeds'];
+  let seeds: Anchor[] | undefined;
+  if (seedsRaw !== undefined) {
+    if (!Array.isArray(seedsRaw)) {
+      throw new Error('config.seeds must be an array when present');
+    }
+    seeds = seedsRaw as Anchor[];
+  }
   return {
     network: net,
     anchors: anchors as Anchor[],
+    ...(seeds !== undefined ? { seeds } : {}),
     stunServers: stunServers as string[],
   };
 }
