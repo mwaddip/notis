@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { classifyConnectionAddr } from '../src/client/mesh-client.js';
-import { verdictIceServers, verdictS2Priv1 } from '../stage/lib/verdicts.mjs';
+import { verdictIceServers, verdictS2Priv1, verdictS2Priv2 } from '../stage/lib/verdicts.mjs';
 import { readTopology } from '../stage/lib/topology.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -342,6 +342,121 @@ describe('fix E — verdictS2Priv1 reads transport, path, anchorAddrRelayed and 
     // D says "skipped when nothing was recorded"; s2's priv1 step then
     // FAILs — the whole step cannot PASS on an unmeasured ICE path.
     expect(verdictS2Priv1({ ...base(), iceServers: [] })).toBe('FAIL');
+  });
+});
+
+// --- Part F — priv2 stays retry, the client stays on another node ----------
+
+describe('part F — verdictS2Priv2 reads a retried entry with ≥1 failure, the page on another node', () => {
+  // MESH_INTERFACE → NAT → "A relay carries signalling, not data" /
+  // Acceptance 2 — "The node behind the symmetric NAT has no direct
+  // path to the browser behind its NAT: it reads `retry`, never
+  // `blacklisted`, and the client stays on a node it reaches." The
+  // verdict reads a measurement the scenario builds across the poll
+  // window; a mutation deleting any pass condition turns one of these
+  // cases red.
+
+  const PRIV2 = 'p2'.repeat(32);
+  const OTHER = 'oo'.repeat(32);
+
+  function base() {
+    return {
+      // New fields
+      expectedNodeId: PRIV2,
+      priv2Status: 'retry',
+      priv2Failures: 2,
+      priv2LastFailure: { kind: 'other', message: 'All multiaddr dials failed' },
+      nodeIdInUse: OTHER,
+      everInUse: false,
+      blacklistedAtAnyPoll: false,
+      // Pre-fix fields so the current verdict reads PASS on `base()`:
+      // FAIL cases below break ONE new field alone, giving a case that
+      // is red under the current rule (which does not read the new
+      // fields) and green under the new one.
+      nodeId: PRIV2,
+      relayedTimeMs: 7_000,
+    };
+  }
+
+  it('skipped on missing measurement', () => {
+    expect(verdictS2Priv2(null)).toBe('skipped');
+    expect(verdictS2Priv2(undefined)).toBe('skipped');
+    expect(verdictS2Priv2({})).toBe('skipped');
+  });
+
+  it('PASS on the full green shape', () => {
+    // Invariant: green under both pre-fix (reads nodeId + relayedTimeMs)
+    // and post-fix (reads the new fields). Stays plain `it`.
+    expect(verdictS2Priv2(base())).toBe('PASS');
+  });
+
+  it.fails('FAIL when priv2\'s status is blacklisted at the end', () => {
+    expect(verdictS2Priv2({ ...base(), priv2Status: 'blacklisted' })).toBe('FAIL');
+  });
+
+  it.fails('FAIL when priv2\'s status is ok (never retried)', () => {
+    expect(verdictS2Priv2({ ...base(), priv2Status: 'ok' })).toBe('FAIL');
+  });
+
+  it.fails('FAIL when priv2 has no recorded failure', () => {
+    expect(verdictS2Priv2({ ...base(), priv2Failures: 0 })).toBe('FAIL');
+  });
+
+  it.fails('FAIL when priv2 was blacklisted at any poll', () => {
+    expect(verdictS2Priv2({ ...base(), blacklistedAtAnyPoll: true })).toBe('FAIL');
+  });
+
+  it.fails('FAIL when the page reached no other node (nodeIdInUse null)', () => {
+    expect(verdictS2Priv2({ ...base(), nodeIdInUse: null })).toBe('FAIL');
+  });
+
+  it.fails('FAIL when the page\'s node in use is priv2 itself', () => {
+    expect(verdictS2Priv2({ ...base(), nodeIdInUse: PRIV2 })).toBe('FAIL');
+  });
+
+  it('FAIL when expectedNodeId is missing', () => {
+    // Invariant: both pre-fix (reads nodeId !== expectedNodeId with
+    // undefined expected) and post-fix (typeof expectedNodeId check)
+    // return FAIL.
+    const m = base();
+    // @ts-expect-error — remove a required field
+    delete m.expectedNodeId;
+    expect(verdictS2Priv2(m)).toBe('FAIL');
+  });
+});
+
+describe('part F — s2\'s priv2 step walks priv2\'s entry and the page\'s nodeId', () => {
+  // MESH_INTERFACE → Acceptance 2 — "The node behind the symmetric NAT
+  // ... reads `retry`, never `blacklisted`, and the client stays on a
+  // node it reaches." The scenario body uses
+  // `buildPrivateViaAnnouncedRelayPairVariant` to list priv2 by both
+  // its /p2p-circuit/webrtc and plain /p2p-circuit addresses, polls
+  // the state, and records what each poll holds.
+
+  it.fails('s2 imports buildPrivateViaAnnouncedRelayPairVariant', () => {
+    const src = readFileSync(SRC_S2, 'utf8');
+    expect(src, 's2 imports the pair variant').toContain('buildPrivateViaAnnouncedRelayPairVariant');
+  });
+
+  it.fails('s2 records blacklistedAtAnyPoll and the final nodeIdInUse', () => {
+    const src = readFileSync(SRC_S2, 'utf8');
+    expect(src, 'blacklistedAtAnyPoll tracked').toContain('blacklistedAtAnyPoll');
+    expect(src, 'nodeIdInUse tracked').toContain('nodeIdInUse');
+    expect(src, 'priv2Status tracked').toContain('priv2Status');
+    expect(src, 'priv2Failures tracked').toContain('priv2Failures');
+  });
+
+  it.fails('s2\'s priv2 step has no catch{} that swallows a poll error', () => {
+    const src = readFileSync(SRC_S2, 'utf8');
+    // The scenario's one acceptable catch is in the teardown
+    // (`writeStageDefault`, which already carries an explicit stderr
+    // write). The body of either sub-step has none.
+    const priv2Start = src.indexOf('priv2');
+    const teardownStart = src.indexOf('} finally {');
+    const priv2Body = (priv2Start >= 0 && teardownStart > priv2Start)
+      ? src.slice(priv2Start, teardownStart) : '';
+    expect(priv2Body, 's2 priv2 body has no `catch {}`').not.toMatch(/catch\s*\(\s*(?:_|[a-z])\s*\)\s*\{/);
+    expect(priv2Body, 's2 priv2 body has no `catch {`').not.toMatch(/\}\s*catch\s*\{/);
   });
 });
 
