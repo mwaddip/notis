@@ -77,7 +77,7 @@ describe('stage/lib/commands.mjs', () => {
     // `pids.json` to find the children. The process-group check — pgid
     // equals the child's pid — is the direct evidence `detached: true`
     // took effect.
-    it.fails('starts the child in its own process group (detached: true + unref)', async () => {
+    it('starts the child in its own process group (detached: true + unref)', async () => {
       const log = new CommandLog({ dryRun: false });
       const logPath = join(dir, 'detached.log');
       const child = log.spawn(['sh', '-c', 'sleep 10'], {

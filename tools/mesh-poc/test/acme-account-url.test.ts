@@ -82,7 +82,7 @@ describe('acmeSource — account URL persistence', () => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
 
-  it.fails('writes account-url.txt after first obtain() and skips createAccount on later obtain()', async () => {
+  it('writes account-url.txt after first obtain() and skips createAccount on later obtain()', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'mesh-acme-account-'));
     dirs.push(stateDir);
     const src = acmeSource({
