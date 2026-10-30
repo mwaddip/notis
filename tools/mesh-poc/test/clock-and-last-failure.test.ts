@@ -47,6 +47,8 @@ function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     evidence: over.evidence ?? null,
     lastFailure: over.lastFailure ?? null,
     lastFailures: over.lastFailures ?? {},
+    transport: over.transport ?? null,
+    path: over.path ?? null,
   };
 }
 function emptyState(over: Partial<ClientState> = {}): ClientState {

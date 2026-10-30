@@ -55,6 +55,18 @@ export interface NodeEntry {
    */
   lastFailure: LastFailure | null;
   lastFailures: Record<string, LastFailure>;
+  /**
+   * MESH_INTERFACE → NAT / The client's node list — the transport and
+   * path of the connection libp2p would run a stream on for this
+   * entry's key, read with the same pick + classify the top-level pair
+   * uses (`pickConnectionForStream` + `classifyConnectionAddr`). `null`
+   * when the client holds no open connection to this key. The pair for
+   * the node in use agrees with `ClientState.transport` /
+   * `ClientState.path`. Written by `mesh-client`'s decoration pass; the
+   * node list itself holds no transport state.
+   */
+  transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
+  path: 'direct' | 'relay' | null;
 }
 
 const NOTIS_ID_RE = /^[0-9a-f]{64}$/;
@@ -332,6 +344,11 @@ export class NodeList {
       evidence: e.evidence,
       lastFailure: e.lastFailure,
       lastFailures: { ...e.lastFailures },
+      // The transport/path pair is written by `mesh-client`'s decoration
+      // pass over `getConnections()`; the node list itself holds no
+      // transport state, so it emits `null`/`null` here.
+      transport: null,
+      path: null,
     };
   }
 }

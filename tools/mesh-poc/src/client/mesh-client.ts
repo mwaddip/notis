@@ -309,7 +309,7 @@ class MeshClientImpl implements MeshClient {
       lastLeft: null,
       anchorReached: false,
       tip: null,
-      nodes: this.nodeList.entries(),
+      nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
     };
     this.meshFetchFn = meshFetch(node);
     this.onDiscovery = (evt): void => this.handleDiscovery(evt.detail);
@@ -363,7 +363,7 @@ class MeshClientImpl implements MeshClient {
   state(): ClientState {
     return {
       ...this.state_,
-      nodes: this.nodeList.entries(),
+      nodes: decorateEntries(this.nodeList.entries(), this.libp2p.getConnections()),
     };
   }
 
@@ -639,11 +639,14 @@ class MeshClientImpl implements MeshClient {
   }
 
   private refreshTransportPathAndEmit(): void {
-    const before = { transport: this.state_.transport, path: this.state_.path };
+    // MESH_INTERFACE → NAT / The client's node list — a connection
+    // open/close changes the top-level pair for the node in use and
+    // the entry pair for whichever peer the event names. Both are
+    // read lazily from `getConnections()` at the next `state()` call,
+    // so an unconditional emit is enough — listeners see the fresh
+    // entries and top-level pair without waiting for the next check.
     this.refreshTransportPath();
-    if (before.transport !== this.state_.transport || before.path !== this.state_.path) {
-      this.emitStateChange();
-    }
+    this.emitStateChange();
   }
 
   private firstConnectionFor(notisId: string): Connection | null {
@@ -889,6 +892,31 @@ export function classifyConnectionAddr(ma: string): {
     return { transport: 'webrtc-direct', path: 'direct' };
   }
   return { transport: base, path: 'relay' };
+}
+
+/**
+ * MESH_INTERFACE → NAT / The client's node list — every `nodes[]`
+ * entry carries the pair `{ transport, path }` of its connection, read
+ * with the same pick + classify the top-level pair uses
+ * (`pickConnectionForStream` + `classifyConnectionAddr`). An entry
+ * with no open connection reads `null` / `null`; the pair for the
+ * node in use agrees with `ClientState.transport` / `ClientState.path`.
+ * Pure: the caller passes `getConnections()` in. Called from `state()`
+ * and the initial state build, so entries emitted anywhere carry the
+ * fresh pair; the connection open/close listener re-emits so a new
+ * entry pair reaches listeners without waiting for the next check.
+ */
+export function decorateEntries(
+  entries: readonly NodeEntry[],
+  connections: readonly Connection[],
+): NodeEntry[] {
+  return entries.map((e) => {
+    const expected = toLibp2pPeerIdString(e.notisId);
+    const conn = pickConnectionForStream(connections, expected);
+    if (conn === null) return { ...e, transport: null, path: null };
+    const { transport, path } = classifyConnectionAddr(conn.remoteAddr.toString());
+    return { ...e, transport, path };
+  });
 }
 
 /**

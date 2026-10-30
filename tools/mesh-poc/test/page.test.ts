@@ -31,6 +31,8 @@ function makeEntry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     evidence: over.evidence ?? null,
     lastFailure: over.lastFailure ?? null,
     lastFailures: over.lastFailures ?? {},
+    transport: over.transport ?? null,
+    path: over.path ?? null,
   };
 }
 
@@ -76,7 +78,7 @@ describe('page/render.ts', () => {
     expect(parsed).toEqual(state);
   });
 
-  it.fails('renderNode shows each entry\'s transport and path alongside its other fields', () => {
+  it('renderNode shows each entry\'s transport and path alongside its other fields', () => {
     const root = document.createElement('div');
     const nodes = [
       makeEntry({

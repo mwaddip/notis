@@ -112,25 +112,30 @@ describe('verdictS1DnsSilent — no DNS during the scenario', () => {
 });
 
 describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through a relay', () => {
-  // MESH_INTERFACE → NAT — "A browser reaches a private node over
-  // WebRTC signalled through the relay"; the connection reads
-  // `transport: 'webrtc'`, `path: 'direct'` once the DCUtR upgrade
-  // completes, with the anchor address naming the circuit's webrtc
-  // form and the ICE-server record passing the IP-only rule.
+  // MESH_INTERFACE → Acceptance 2 — reach, not ranking: priv1's entry
+  // reads `status` ok or behind (both say a checked answer; `behind`
+  // is ranking, not reach) with a WebRTC-direct link on the relayed
+  // anchor address and an IP-only ICE-server record. `nodeIdInUse`
+  // and `priv1Failures` are recorded, not conditions.
   const PASS = {
-    nodeId: 'f'.repeat(64),
     expectedNodeId: 'f'.repeat(64),
+    priv1Status: 'ok',
+    priv1Failures: 0,
     transport: 'webrtc',
     path: 'direct',
     anchorAddrRelayed: '/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/webrtc/p2p/P',
     connectMs: 1_200,
     iceServers: [{ urls: ['stun:11.100.0.11:3478'] }],
+    nodeIdInUse: 'f'.repeat(64),
   };
-  it('relay-signalled WebRTC, right node → PASS', () => {
+  it('relay-signalled WebRTC, priv1 ok → PASS', () => {
     expect(verdictS2Priv1(PASS)).toBe('PASS');
   });
-  it('wrong node → FAIL', () => {
-    expect(verdictS2Priv1({ ...PASS, nodeId: 'a'.repeat(64) })).toBe('FAIL');
+  it('priv1 behind (ranks below pub1 but was reached) → PASS', () => {
+    expect(verdictS2Priv1({ ...PASS, priv1Status: 'behind' })).toBe('PASS');
+  });
+  it('priv1 retry → FAIL', () => {
+    expect(verdictS2Priv1({ ...PASS, priv1Status: 'retry' })).toBe('FAIL');
   });
   it('transport other than webrtc → FAIL', () => {
     expect(verdictS2Priv1({ ...PASS, transport: 'webrtc-direct' })).toBe('FAIL');
@@ -143,6 +148,9 @@ describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through 
   });
   it('ICE record carries a host name → FAIL', () => {
     expect(verdictS2Priv1({ ...PASS, iceServers: [{ urls: ['stun:stun.example.com:3478'] }] })).toBe('FAIL');
+  });
+  it('nodeIdInUse null (priv1 reached but ranks below the node in use) → PASS', () => {
+    expect(verdictS2Priv1({ ...PASS, nodeIdInUse: null })).toBe('PASS');
   });
 });
 

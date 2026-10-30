@@ -7,10 +7,12 @@
 // Two sub-steps, each writing its own `config.json` variant:
 //   priv1 (endpoint-independent NAT) — the single anchor is priv1 by
 //     its `/p2p-circuit/webrtc/p2p/<priv1>` address through a public
-//     node's WebRTC-direct address. The step polls until the page
-//     reads priv1 as the node in use and records
-//     `{ nodeId, transport, path, anchorAddrRelayed, connectMs,
-//        iceServers }`.
+//     node's WebRTC-direct address. The step polls until priv1's own
+//     NodeList entry answers (`status` ok or behind, a checked answer
+//     — `behind` is ranking, not reach) with a non-null entry
+//     transport, and records
+//     `{ expectedNodeId, priv1Status, priv1Failures, transport, path,
+//        anchorAddrRelayed, connectMs, iceServers, nodeIdInUse }`.
 //   priv2 (symmetric NAT) — the single anchor is priv2 by BOTH its
 //     `/p2p-circuit/webrtc` and plain `/p2p-circuit` relayed
 //     addresses. The step polls priv2's `NodeList` entry and the page
@@ -83,25 +85,42 @@ export async function run(ctx) {
         writeConfigVariant(ctx.outDir, variant);
         const anchorAddrRelayed = variant.anchors[0]?.addrs?.[0] ?? null;
         const started1 = Date.now();
-        // Poll until the page's `nodeId` reads priv1. The ICE record
-        // is captured alongside through `cdp.mjs poll-ice`.
+        // MESH_INTERFACE → Acceptance 2 — the step measures reach, not
+        // ranking. Poll `#state` until priv1's own entry carries a
+        // `status` of ok or behind AND a non-null `transport`
+        // (`decorateEntries` writes the entry pair from
+        // `pickConnectionForStream` + `classifyConnectionAddr` for each
+        // id). The ICE record is captured alongside through
+        // `cdp.mjs poll-ice`.
+        const expectedNotisId = priv1Row.notisId;
         const { value, iceRecord } = await cdpPollIce(ctx, browserUrl,
           "document.getElementById('state')?.textContent ?? null",
           `if (v === null) return false;
-           try { const s = JSON.parse(v); return s.nodeId === ${JSON.stringify(priv1Row.notisId)}; }
-           catch (_e) { return false; }`,
+           try {
+             const s = JSON.parse(v);
+             if (!s || !Array.isArray(s.nodes)) return false;
+             const entry = s.nodes.find(function (n) { return n && n.notisId === ${JSON.stringify(expectedNotisId)}; });
+             if (!entry) return false;
+             if (entry.status !== 'ok' && entry.status !== 'behind') return false;
+             return entry.transport !== null && entry.transport !== undefined;
+           } catch (_e) { return false; }`,
           PRIV1_WAIT_MS, POLL_MS,
         );
         const connectMs = Date.now() - started1;
         const state = JSON.parse(value);
+        const entry = Array.isArray(state.nodes)
+          ? state.nodes.find((n) => n?.notisId === expectedNotisId)
+          : null;
         const measurement = {
-          nodeId: state.nodeId,
-          expectedNodeId: priv1Row.notisId,
-          transport: state.transport,
-          path: state.path,
+          expectedNodeId: expectedNotisId,
+          priv1Status: typeof entry?.status === 'string' ? entry.status : 'new',
+          priv1Failures: typeof entry?.failures === 'number' ? entry.failures : 0,
+          transport: entry?.transport ?? null,
+          path: entry?.path ?? null,
           anchorAddrRelayed,
           connectMs,
           iceServers: iceRecord,
+          nodeIdInUse: state.nodeId ?? null,
         };
         return { verdict: verdictS2Priv1(measurement), measurement };
       });

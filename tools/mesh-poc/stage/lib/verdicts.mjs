@@ -130,14 +130,24 @@ export function verdictIceServers(record) {
 // node over WebRTC signalled through the relay, gathering ICE
 // candidates against public nodes' STUN servers alone". priv1's step
 // writes a variant whose anchor is priv1 reached through a public
-// node's `/p2p-circuit/webrtc` address, polls the page for
-// `nodeId === priv1`, and reads what the page's own state carries.
+// node's `/p2p-circuit/webrtc` address, polls the page for priv1's
+// entry answering (`status` ok or behind — both say a checked answer
+// came back; `behind` is ranking, not reach) with a non-null entry
+// transport. The reach criterion: priv1's status is ok or behind, the
+// entry's transport is webrtc with path direct, the anchor address
+// holds `/p2p-circuit/webrtc`, and the ICE record passes the IP-only
+// rule. `nodeIdInUse` and `priv1Failures` are recorded for the
+// reader, not conditions — priv1 may rank below pub1 (behind) and
+// still be reached.
 // Measurement:
-//   `{ nodeId, expectedNodeId, transport, path, anchorAddrRelayed,
-//      connectMs: number, iceServers: Array<{ urls: string[] }> }`.
+//   `{ expectedNodeId, priv1Status, priv1Failures,
+//      transport, path, anchorAddrRelayed,
+//      connectMs: number, iceServers: Array<{ urls: string[] }>,
+//      nodeIdInUse: string | null }`.
 export function verdictS2Priv1(m) {
   if (missing(m)) return 'skipped';
-  if (typeof m.nodeId !== 'string' || m.nodeId !== m.expectedNodeId) return 'FAIL';
+  if (typeof m.expectedNodeId !== 'string') return 'FAIL';
+  if (m.priv1Status !== 'ok' && m.priv1Status !== 'behind') return 'FAIL';
   if (m.transport !== 'webrtc') return 'FAIL';
   if (m.path !== 'direct') return 'FAIL';
   if (typeof m.anchorAddrRelayed !== 'string') return 'FAIL';

@@ -446,7 +446,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
     };
   }
 
-  it.fails('an entry with an unlimited WebRTC-over-relay connection reads { webrtc, direct }', () => {
+  it('an entry with an unlimited WebRTC-over-relay connection reads { webrtc, direct }', () => {
     const aaPeerString = peerIdFor(AA_NOTIS);
     const conn = fakeConn({
       status: 'open', direct: true, limited: false,
@@ -457,12 +457,12 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
     expect(decorated).toMatchObject({ transport: 'webrtc', path: 'direct' });
   });
 
-  it.fails('an entry with no open connection reads null transport and null path', () => {
+  it('an entry with no open connection reads null transport and null path', () => {
     const [decorated] = decorateEntries([entry({ notisId: AA_NOTIS })], []);
     expect(decorated).toMatchObject({ transport: null, path: null });
   });
 
-  it.fails('the pair for the node in use matches the pair top-level refreshTransportPath reads', () => {
+  it('the pair for the node in use matches the pair top-level refreshTransportPath reads', () => {
     // Both the top-level pair and the entry pair are derived from the
     // same `pickConnectionForStream` + `classifyConnectionAddr` for the
     // same id; they must agree. This case asserts that invariant on a
@@ -489,7 +489,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
 
   // --- mutation round --------------------------------------------------
 
-  it.fails('MUTATION: peer filter — a connection to another peer leaves the entry at null/null', () => {
+  it('MUTATION: peer filter — a connection to another peer leaves the entry at null/null', () => {
     const bbPeerString = peerIdFor(BB_NOTIS);
     const conn = fakeConn({
       status: 'open', direct: true, limited: false,
@@ -500,7 +500,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
     expect(decorated).toMatchObject({ transport: null, path: null });
   });
 
-  it.fails('MUTATION: status filter — a closed connection leaves the entry at null/null', () => {
+  it('MUTATION: status filter — a closed connection leaves the entry at null/null', () => {
     const aaPeerString = peerIdFor(AA_NOTIS);
     const conn = fakeConn({
       status: 'closed', direct: true, limited: false,
@@ -511,7 +511,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
     expect(decorated).toMatchObject({ transport: null, path: null });
   });
 
-  it.fails('MUTATION: limited-only connection reads { webrtc-direct, relay } for its entry', () => {
+  it('MUTATION: limited-only connection reads { webrtc-direct, relay } for its entry', () => {
     const aaPeerString = peerIdFor(AA_NOTIS);
     const conn = fakeConn({
       status: 'open', direct: false, limited: true,
@@ -680,11 +680,11 @@ describe('verdictS2Priv1 reads reach — priv1Status (ok|behind), transport, pat
     expect(verdictS2Priv1(undefined)).toBe('skipped');
   });
 
-  it.fails('PASS on the full green shape (priv1Status ok)', () => {
+  it('PASS on the full green shape (priv1Status ok)', () => {
     expect(verdictS2Priv1(base())).toBe('PASS');
   });
 
-  it.fails('PASS when priv1 is behind — behind is a ranking, not a reach failure', () => {
+  it('PASS when priv1 is behind — behind is a ranking, not a reach failure', () => {
     expect(verdictS2Priv1({ ...base(), priv1Status: 'behind' })).toBe('PASS');
   });
 
@@ -724,15 +724,15 @@ describe('verdictS2Priv1 reads reach — priv1Status (ok|behind), transport, pat
   //
   // Each PASS condition is load-bearing; nodeIdInUse is NOT a condition.
 
-  it.fails('MUTATION: nodeIdInUse is recorded, not a condition — null still PASS', () => {
+  it('MUTATION: nodeIdInUse is recorded, not a condition — null still PASS', () => {
     expect(verdictS2Priv1({ ...base(), nodeIdInUse: null })).toBe('PASS');
   });
 
-  it.fails('MUTATION: nodeIdInUse is recorded, not a condition — a different node still PASS', () => {
+  it('MUTATION: nodeIdInUse is recorded, not a condition — a different node still PASS', () => {
     expect(verdictS2Priv1({ ...base(), nodeIdInUse: 'cc'.repeat(32) })).toBe('PASS');
   });
 
-  it.fails('MUTATION: priv1Failures is recorded, not a condition — a non-zero count under ok still PASS', () => {
+  it('MUTATION: priv1Failures is recorded, not a condition — a non-zero count under ok still PASS', () => {
     // A past failure that recovered to `ok` records a failure count the
     // reader sees, but it does not FAIL the step on reach.
     expect(verdictS2Priv1({ ...base(), priv1Failures: 3 })).toBe('PASS');
@@ -955,7 +955,7 @@ describe('s2\'s priv1 step measures reach, not ranking', () => {
     };
   }
 
-  it.fails('polls poll-ice until priv1 answers and builds the reach measurement', async () => {
+  it('polls poll-ice until priv1 answers and builds the reach measurement', async () => {
     execInMock.reset();
     const state = cannedBehindState();
     const iceRecord = [{ urls: ['stun:11.100.0.11:3478'] }];
