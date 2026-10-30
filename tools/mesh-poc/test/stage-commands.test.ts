@@ -144,7 +144,7 @@ describe('stage/lib/commands.mjs', () => {
     // spawn's argvFull; `env` carries only the explicit vars the
     // spawner passed, so a restart picks up the current process's
     // PATH and HOME as a fresh `up` would.
-    it.fails('records argv and env on each pid entry so a scenario can restart it', () => {
+    it('records argv and env on each pid entry so a scenario can restart it', () => {
       const log = new CommandLog({ dryRun: false });
       const logPath = join(dir, 'test-argv.log');
       const argvFull = ['sh', '-c', 'exit 0'];

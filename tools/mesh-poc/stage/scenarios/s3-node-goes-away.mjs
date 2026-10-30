@@ -3,16 +3,35 @@
 // node reads `retry`, never `blacklisted`, and reads `ok` again once
 // it is back."
 //
-// Faults applied, in order:
-//   - A1: stop pub1's mesh node (`kill -TERM`), measure the move, restart
-//   - A2: nft `s3_fw` table in pub1's namespace drops its mesh ports,
-//     measure the move, remove the table
+// Four sub-steps, in order:
+//   1. stop pub1's mesh node (`kill -TERM` the recorded PID);
+//      poll until the client's `state.nodes[pub1].status === 'retry'`
+//      AND, if pub1 was in use, `state.nodeId !== pub1`.
+//   2. restart pub1's mesh node from the recorded `argv` and `env`;
+//      poll until `state.nodes[pub1].status === 'ok'`.
+//   3. apply the firewall rules in pub1's namespace (`s3_fw`) that
+//      drop UDP/TCP to pub1's mesh listener; poll same as step 1.
+//   4. remove `s3_fw`; poll same as step 2.
+//
+// Faults are applied inside `run(ctx)` one at a time between the
+// measurements, not up front. The dry-run still records every fault so
+// a reader of the dry-run sees the whole set.
 
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS3Moved, verdictS3Recovered } from '../lib/verdicts.mjs';
+import {
+  execIn, findPid, nftApply, pollUntil,
+  restartFromEntry, sigterm,
+} from '../lib/measure.mjs';
 
 export const NAME = 's3';
 const FW_TABLE = 's3_fw';
+const TARGET_HOST = 'pub1';
+const TARGET_MESH_DESC = `mesh:${TARGET_HOST}`;
+const CHECK_INTERVAL_MS = 30_000;
+const RETRY_WAIT_MS = 2 * CHECK_INTERVAL_MS + 10_000; // 2 checks + slack
 
 export function describe() {
   return [
@@ -24,10 +43,8 @@ export function describe() {
 }
 
 /**
- * s3's faults are applied inside the scenario body (between step 1 and
- * step 3) rather than up front: the client has to see each state in
- * turn. The signatures below are the fault argvs each sub-step uses,
- * exported so a case can hold them against the recorded dry-run.
+ * The nft argvs the scenario applies and removes inside `notismesh-pub1`.
+ * Exported so a case can hold them against the recorded dry-run.
  */
 export function pub1FirewallArgs(topology) {
   const pub1 = topology.hosts.pub1;
@@ -46,13 +63,10 @@ export function pub1FirewallArgs(topology) {
 }
 
 export function applyFaults(log, topology) {
-  // The dry-run of `stage:run` prints every fault s3 would apply and
-  // its removal; in dry-run we record them up-front so a reader of the
-  // whole output sees the full set per scenario. The real run applies
-  // them one at a time inside `run(ctx)` (not reached from the gate).
+  // Dry-run: record every fault the scenario would apply so a reader
+  // of the whole output sees the set per scenario. Exec mode applies
+  // them inside `run(ctx)` one at a time.
   const f = pub1FirewallArgs(topology);
-  // The signal is paired with a restart; the scenario holds the pid and
-  // the recorded argv on exec.
   log.apply('pub1-fw-add-table', f.addTable, f.deleteTable);
   log.apply('pub1-fw-add-chain', f.addChain, null);
   log.apply('pub1-fw-drop-udp', f.dropUdp, null);
@@ -64,14 +78,204 @@ export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
   const steps = [];
-  try {
+
+  if (ctx.dryRun) {
     applyFaults(log, ctx.topology);
     for (const name of describe()) {
       steps.push({ name, verdict: 'skipped', measurement: null, timeMs: 0 });
     }
-    void verdictS3Moved;
-    void verdictS3Recovered;
+    log.removeAll();
+    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps, faults: log.records };
+  }
+
+  const identities = readIdentities(ctx);
+  const pub1Row = identities?.[TARGET_HOST];
+  if (!pub1Row) throw new Error(`s3: identities.json has no ${TARGET_HOST} row`);
+  const pub1Id = pub1Row.notisId;
+  const pub1Entry = findPid(ctx.pids?.pids, TARGET_MESH_DESC);
+  if (!pub1Entry) throw new Error(`s3: pids.json has no ${TARGET_MESH_DESC} entry`);
+
+  const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
+  const checkState = async () => {
+    const text = await cdpEval(ctx, browserUrl, "document.getElementById('state')?.textContent ?? null");
+    if (text === null) return null;
+    try { return JSON.parse(text); } catch { return null; }
+  };
+  const findEntry = (state, id) => state?.nodes?.find((n) => n.notisId === id) ?? null;
+
+  // Current state before the scenario — needed for the "moved" measurement.
+  const stateBefore = await pollUntil(
+    checkState,
+    (s) => s !== null && s.nodeId !== null,
+    { timeoutMs: 60_000, pollMs: 500, name: 'initial state' },
+  );
+  const oldNodeId = stateBefore.nodeId;
+
+  // Track what we have to roll back on exit, pass or fail.
+  let pub1Stopped = false;
+  let firewallApplied = false;
+  const f = pub1FirewallArgs(ctx.topology);
+
+  try {
+    // --- Step 1: stop pub1 ---
+    const step1Start = Date.now();
+    const stopResult = sigterm(pub1Entry.pid);
+    pub1Stopped = stopResult.sent;
+    log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM ${pub1Entry.pid}`);
+    // Wait for the client to see pub1 as retry (and move off it if it
+    // was the node in use).
+    let afterStop;
+    try {
+      afterStop = await pollUntil(
+        checkState,
+        (s) => {
+          if (s === null) return false;
+          const e = findEntry(s, pub1Id);
+          if (e === null) return false;
+          if (e.status === 'blacklisted') return true; // short-circuit a bad state so we report it
+          const moved = oldNodeId === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
+          return e.status === 'retry' && moved;
+        },
+        { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry + move' },
+      );
+    } catch (err) {
+      afterStop = await checkState();
+      if (afterStop === null) throw err;
+    }
+    const step1Time = Date.now() - step1Start;
+    const pub1EntryAfterStop = findEntry(afterStop, pub1Id);
+    const step1Measurement = {
+      oldNodeId,
+      newNodeId: afterStop.nodeId,
+      oldStatus: pub1EntryAfterStop?.status ?? null,
+      movedWithinChecks: Math.ceil(step1Time / CHECK_INTERVAL_MS),
+      checkIntervalMs: CHECK_INTERVAL_MS,
+    };
+    steps.push({
+      name: describe()[0],
+      verdict: verdictS3Moved(step1Measurement),
+      measurement: step1Measurement,
+      timeMs: step1Time,
+    });
+
+    // --- Step 2: restart pub1, poll for ok ---
+    const step2Start = Date.now();
+    const newPid = restartFromEntry(pub1Entry);
+    // The pids list in-memory is updated so down.mjs's reader (next
+    // run) still has a live pid for mesh:pub1. The on-disk file is
+    // written by up; this scenario does not persist, so a `stage:down`
+    // would still signal the old pid (safe no-op).
+    pub1Entry.pid = newPid;
+    pub1Stopped = false;
+    const afterRestart = await pollUntil(
+      checkState,
+      (s) => {
+        const e = findEntry(s, pub1Id);
+        return e !== null && e.status === 'ok';
+      },
+      { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after restart' },
+    );
+    const step2Time = Date.now() - step2Start;
+    const step2Measurement = {
+      nodeId: pub1Id,
+      status: findEntry(afterRestart, pub1Id)?.status ?? null,
+      recoveryTimeMs: step2Time,
+    };
+    steps.push({
+      name: describe()[1],
+      verdict: verdictS3Recovered(step2Measurement),
+      measurement: step2Measurement,
+      timeMs: step2Time,
+    });
+
+    // --- Step 3: firewall pub1 ---
+    const step3Start = Date.now();
+    // Apply the four rules; `removeAll` on the FaultLog pairs them.
+    log.apply('pub1-fw-add-table', f.addTable, f.deleteTable);
+    firewallApplied = true;
+    log.apply('pub1-fw-add-chain', f.addChain, null);
+    log.apply('pub1-fw-drop-udp', f.dropUdp, null);
+    log.apply('pub1-fw-drop-tcp-mesh', f.dropTcpMesh, null);
+    log.apply('pub1-fw-drop-tcp-wss', f.dropTcpWss, null);
+    // The client reads pub1 as retry when its next check fails.
+    const beforeFw = await checkState();
+    const oldNodeId3 = beforeFw?.nodeId ?? oldNodeId;
+    const afterFw = await pollUntil(
+      checkState,
+      (s) => {
+        if (s === null) return false;
+        const e = findEntry(s, pub1Id);
+        if (e === null) return false;
+        if (e.status === 'blacklisted') return true;
+        const moved = oldNodeId3 === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
+        return e.status === 'retry' && moved;
+      },
+      { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry under firewall' },
+    );
+    const step3Time = Date.now() - step3Start;
+    const step3Measurement = {
+      oldNodeId: oldNodeId3,
+      newNodeId: afterFw.nodeId,
+      oldStatus: findEntry(afterFw, pub1Id)?.status ?? null,
+      movedWithinChecks: Math.ceil(step3Time / CHECK_INTERVAL_MS),
+      checkIntervalMs: CHECK_INTERVAL_MS,
+    };
+    steps.push({
+      name: describe()[2],
+      verdict: verdictS3Moved(step3Measurement),
+      measurement: step3Measurement,
+      timeMs: step3Time,
+    });
+
+    // --- Step 4: unfirewall, poll for ok ---
+    const step4Start = Date.now();
+    // Remove the firewall rules; the FaultLog's removeAll pairs the
+    // deletes with their adds, so we drive it here by letting the
+    // scenario fall through to `finally`. For the time measurement
+    // we remove the table first.
+    nftApply('notismesh-pub1', ['delete', 'table', 'ip', FW_TABLE]);
+    firewallApplied = false;
+    // Drop the paired removal from the fault log so `removeAll` in
+    // `finally` does not try to delete a missing table.
+    log.removals.length = 0;
+    log.records.push(`[fault:remove:${NAME}:pub1-fw-add-table] sudo ip netns exec notismesh-pub1 nft delete table ip ${FW_TABLE}`);
+    const afterUnfw = await pollUntil(
+      checkState,
+      (s) => {
+        const e = findEntry(s, pub1Id);
+        return e !== null && e.status === 'ok';
+      },
+      { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after unfirewall' },
+    );
+    const step4Time = Date.now() - step4Start;
+    const step4Measurement = {
+      nodeId: pub1Id,
+      status: findEntry(afterUnfw, pub1Id)?.status ?? null,
+      recoveryTimeMs: step4Time,
+    };
+    steps.push({
+      name: describe()[3],
+      verdict: verdictS3Recovered(step4Measurement),
+      measurement: step4Measurement,
+      timeMs: step4Time,
+    });
   } finally {
+    // Teardown: if we stopped pub1 and did not restart it, restart now.
+    if (pub1Stopped) {
+      try {
+        const newPid = restartFromEntry(pub1Entry);
+        pub1Entry.pid = newPid;
+      } catch (err) {
+        process.stderr.write(`[s3 teardown] failed to restart ${TARGET_MESH_DESC}: ${err?.message ?? err}\n`);
+      }
+    }
+    if (firewallApplied) {
+      try {
+        nftApply('notismesh-pub1', ['delete', 'table', 'ip', FW_TABLE]);
+      } catch (err) {
+        process.stderr.write(`[s3 teardown] failed to remove ${FW_TABLE}: ${err?.message ?? err}\n`);
+      }
+    }
     log.removeAll();
   }
   return {
@@ -81,4 +285,19 @@ export async function run(ctx) {
     steps,
     faults: log.records,
   };
+}
+
+function readIdentities(ctx) {
+  const p = join(ctx.outDir, 'identities.json');
+  if (!existsSync(p)) return null;
+  return JSON.parse(readFileSync(p, 'utf8'));
+}
+
+async function cdpEval(ctx, url, expression) {
+  const argv = [ctx.nodeBin, ctx.cdpScript, 'eval', url, expression];
+  const buf = execIn('notismesh-browser', argv, {
+    user: ctx.invokingUser,
+    timeoutMs: 30_000,
+  });
+  return JSON.parse(buf.toString('utf8'));
 }

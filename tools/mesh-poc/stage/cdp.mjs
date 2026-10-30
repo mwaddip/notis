@@ -169,6 +169,62 @@ export async function pollEvaluate(url, expression, predicate, {
   throw new Error(`pollEvaluate timed out after ${timeoutMs}ms; last value: ${JSON.stringify(last)}`);
 }
 
+/**
+ * Open one Chromium target on `url`, keep its CDP session alive, and
+ * return a page handle whose `.eval(expression)` runs a `Runtime.evaluate`
+ * on it with `returnByValue: true`. `page.close()` closes the session and
+ * the target. A single `/json/new` + WebSocket means repeated `eval`s on
+ * the same page (polling `#state` and `#probe` during a scenario) do not
+ * open and tear down a target each time.
+ */
+export async function openPage(url, {
+  cdpUrl = DEFAULT_CDP_URL,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
+  const target = await openTarget(url, cdpUrl);
+  const wsUrl = target.webSocketDebuggerUrl;
+  if (typeof wsUrl !== 'string') throw new Error(`target has no webSocketDebuggerUrl: ${JSON.stringify(target)}`);
+  const session = openSession(wsUrl, { timeoutMs });
+  await session.ready;
+  let closed = false;
+  return {
+    target,
+    async eval(expression, { awaitPromise = true, perCallTimeoutMs } = {}) {
+      if (closed) throw new Error('page is closed');
+      const r = await session.send('Runtime.evaluate', {
+        expression,
+        returnByValue: true,
+        awaitPromise,
+        ...(perCallTimeoutMs !== undefined ? { timeout: perCallTimeoutMs } : {}),
+      });
+      if (r?.exceptionDetails) {
+        throw new Error(`Runtime.evaluate threw: ${JSON.stringify(r.exceptionDetails)}`);
+      }
+      return r?.result?.value;
+    },
+    /**
+     * Poll an expression every `pollMs` until it returns a value matching
+     * `predicate`, or `timeoutMs` elapses. The matching value is returned.
+     */
+    async pollEval(expression, predicate, { timeoutMs: pTimeout = timeoutMs, pollMs = 500 } = {}) {
+      const deadline = Date.now() + pTimeout;
+      let last;
+      while (Date.now() < deadline) {
+        last = await this.eval(expression);
+        if (predicate(last)) return last;
+        await sleepP(pollMs);
+      }
+      throw new Error(`pollEval timed out after ${pTimeout}ms; last value: ${JSON.stringify(last)}`);
+    },
+    async close() {
+      if (closed) return;
+      closed = true;
+      session.close();
+      await closeTarget(target.id, cdpUrl);
+    },
+  };
+}
+
 async function main(argv) {
   const [cmd, ...rest] = argv;
   if (cmd === 'eval') {
@@ -181,6 +237,33 @@ async function main(argv) {
     process.stdout.write(JSON.stringify(value) + '\n');
     return;
   }
+  if (cmd === 'poll') {
+    // `cdp.mjs poll <url> <expression> <predicate-body> <timeoutMs> <pollMs>`:
+    // keeps a target open, polls `<expression>` every `<pollMs>` until a
+    // `new Function('v', <predicate-body>)` reads it as truthy. Writes
+    // the matching value as JSON on stdout. The predicate body is run
+    // in this process (not the page), so it stays short — eg
+    // `return v !== null && JSON.parse(v).nodeId !== null`.
+    const [url, expression, predicateBody, timeoutStr, pollStr] = rest;
+    if (typeof url !== 'string' || typeof expression !== 'string' || typeof predicateBody !== 'string') {
+      process.stderr.write('usage: cdp.mjs poll <url> <expression> <predicate-body> [<timeoutMs>] [<pollMs>]\n');
+      process.exit(2);
+    }
+    const timeoutMs = timeoutStr !== undefined ? parseInt(timeoutStr, 10) : DEFAULT_TIMEOUT_MS;
+    const pollMs = pollStr !== undefined ? parseInt(pollStr, 10) : 500;
+    // The Function constructor is restricted here to a predicate body
+    // the scenario itself writes (no attacker surface): the scenario
+    // process is the only caller of this command.
+    const predicate = new Function('v', predicateBody);
+    const page = await openPage(url, { timeoutMs });
+    try {
+      const result = await page.pollEval(expression, predicate, { timeoutMs, pollMs });
+      process.stdout.write(JSON.stringify(result) + '\n');
+    } finally {
+      await page.close();
+    }
+    return;
+  }
   if (cmd === 'targets') {
     const list = await listTargets();
     process.stdout.write(JSON.stringify(list, null, 2) + '\n');
@@ -188,6 +271,7 @@ async function main(argv) {
   }
   process.stderr.write(`cdp.mjs: unknown command ${JSON.stringify(cmd)}\n`);
   process.stderr.write('usage: cdp.mjs eval <url> <expression>\n');
+  process.stderr.write('       cdp.mjs poll <url> <expression> <predicate-body> [<timeoutMs>] [<pollMs>]\n');
   process.exit(2);
 }
 

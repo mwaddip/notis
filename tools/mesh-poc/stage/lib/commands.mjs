@@ -93,7 +93,21 @@ export class CommandLog {
     });
     child.unref();
     closeSync(fd);
-    this.pids.push({ pid: child.pid, description, logPath });
+    // `argv` and `env` ride with the pid so a scenario can restart the
+    // process as it was. The brief: "up records each process's full
+    // argv and environment in pids.json so a scenario can restart it
+    // as it was." The outer env (`process.env`) is not stored — only
+    // the explicit env the spawner supplied — so a scenario's restart
+    // picks up the current process's PATH, HOME, etc. as it would on
+    // a fresh `up`.
+    this.pids.push({
+      pid: child.pid,
+      description,
+      logPath,
+      argv: argvFull,
+      env,
+      ...(cwd !== undefined ? { cwd } : {}),
+    });
     return child;
   }
 }

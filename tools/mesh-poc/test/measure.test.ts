@@ -17,15 +17,15 @@ import {
 } from '../stage/lib/measure.mjs';
 
 describe('sumNftCounters', () => {
-  it.fails('empty JSON → 0', () => {
+  it('empty JSON → 0', () => {
     expect(sumNftCounters({ nftables: [] })).toBe(0);
   });
-  it.fails('null-like → 0', () => {
+  it('null-like → 0', () => {
     expect(sumNftCounters(null)).toBe(0);
     expect(sumNftCounters(undefined)).toBe(0);
     expect(sumNftCounters({})).toBe(0);
   });
-  it.fails('sums every counter.packets across every rule in the ruleset', () => {
+  it('sums every counter.packets across every rule in the ruleset', () => {
     const json = {
       nftables: [
         { table: { family: 'ip', name: 'dns_witness' } },
@@ -36,7 +36,7 @@ describe('sumNftCounters', () => {
     };
     expect(sumNftCounters(json)).toBe(8);
   });
-  it.fails('a rule with no counter contributes 0', () => {
+  it('a rule with no counter contributes 0', () => {
     const json = {
       nftables: [
         { rule: { expr: [{ match: { left: {}, right: 'x' } }] } },
@@ -47,10 +47,10 @@ describe('sumNftCounters', () => {
 });
 
 describe('readLineCount', () => {
-  it.fails('a missing file → 0', () => {
+  it('a missing file → 0', () => {
     expect(readLineCount('/nowhere-under-sun-mesh-poc.log')).toBe(0);
   });
-  it.fails('an empty file → 0', () => {
+  it('an empty file → 0', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-measure-'));
     try {
       const p = join(dir, 'empty.log');
@@ -58,7 +58,7 @@ describe('readLineCount', () => {
       expect(readLineCount(p)).toBe(0);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
-  it.fails('three newline-terminated lines → 3', () => {
+  it('three newline-terminated lines → 3', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-measure-'));
     try {
       const p = join(dir, 'three.log');
@@ -66,7 +66,7 @@ describe('readLineCount', () => {
       expect(readLineCount(p)).toBe(3);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
-  it.fails('a trailing partial line counts as a line', () => {
+  it('a trailing partial line counts as a line', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-measure-'));
     try {
       const p = join(dir, 'partial.log');
@@ -77,10 +77,10 @@ describe('readLineCount', () => {
 });
 
 describe('readMtimeMs', () => {
-  it.fails('a missing file → null', () => {
+  it('a missing file → null', () => {
     expect(readMtimeMs('/nowhere-under-sun-mesh-poc.log')).toBe(null);
   });
-  it.fails('a present file → a number', () => {
+  it('a present file → a number', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-measure-'));
     try {
       const p = join(dir, 'x.log');
@@ -98,15 +98,15 @@ describe('findPid', () => {
     { pid: 11, description: 'mesh:pub2', logPath: '/y', argv: ['b'] },
     { pid: 12, description: 'miner-steady', logPath: '/z', argv: ['c'] },
   ];
-  it.fails('finds a matching description', () => {
+  it('finds a matching description', () => {
     const r = findPid(pids, 'mesh:pub1');
     expect(r).not.toBeNull();
     expect(r!.pid).toBe(10);
   });
-  it.fails('returns null for a description that is not present', () => {
+  it('returns null for a description that is not present', () => {
     expect(findPid(pids, 'mesh:nowhere')).toBeNull();
   });
-  it.fails('undefined or null input → null', () => {
+  it('undefined or null input → null', () => {
     expect(findPid(undefined as unknown as typeof pids, 'anything')).toBeNull();
     expect(findPid(null as unknown as typeof pids, 'anything')).toBeNull();
   });

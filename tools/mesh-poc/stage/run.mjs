@@ -81,6 +81,8 @@ async function main(argv) {
     mkdirSync(SCENARIOS_OUT_DIR, { recursive: true });
   }
 
+  const cdpScript = join(HERE, 'cdp.mjs');
+
   for (const name of toRun) {
     const scenario = SCENARIOS[name];
     if (dryRun) process.stdout.write(`[scenario:${name}] start\n`);
@@ -91,6 +93,8 @@ async function main(argv) {
       invokingUser,
       nodeBin,
       meshMain,
+      cdpScript,
+      outDir: OUT_DIR,
     });
     if (!dryRun) {
       writeFileSync(

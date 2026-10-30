@@ -25,7 +25,7 @@ const TOPOLOGY = {
 };
 
 describe('s1 (no name)', () => {
-  it.fails('describe() lists four steps: node + two probes + DNS silent', () => {
+  it('describe() lists four steps: node + two probes + DNS silent', () => {
     const names = s1.describe();
     expect(names.length, 'four steps').toBe(4);
     expect(names[0]).toMatch(/anchor within/);
@@ -33,7 +33,7 @@ describe('s1 (no name)', () => {
     expect(names[2]).toMatch(/\/nipopow\/proof\/24\/20/);
     expect(names[3]).toMatch(/DNS log/);
   });
-  it.fails('run({dryRun:true}) returns one result per describe() name, every verdict skipped', async () => {
+  it('run({dryRun:true}) returns one result per describe() name, every verdict skipped', async () => {
     const r = await s1.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s1');
     expect(r.steps.length).toBe(4);
@@ -43,7 +43,7 @@ describe('s1 (no name)', () => {
     }
     expect(r.faults).toEqual([]); // s1 applies no faults.
   });
-  it.fails('hostOfNodeId maps a notisId to the host that owns it', () => {
+  it('hostOfNodeId maps a notisId to the host that owns it', () => {
     const identities = {
       pub1: { notisId: 'aa'.repeat(32), meshRole: 'public', addr: '10.100.0.11', httpPort: 3100 },
       pub2: { notisId: 'bb'.repeat(32), meshRole: 'public', addr: '10.100.0.12', httpPort: 3100 },
@@ -53,7 +53,7 @@ describe('s1 (no name)', () => {
     expect(s1.hostOfNodeId(identities, 'cc'.repeat(32))).toBe(null);
     expect(s1.hostOfNodeId(null, 'aa'.repeat(32))).toBe(null);
   });
-  it.fails('anchorIdSet reads config.anchors[].notisId into a Set', () => {
+  it('anchorIdSet reads config.anchors[].notisId into a Set', () => {
     const config = { anchors: [{ notisId: 'a'.repeat(64) }, { notisId: 'b'.repeat(64) }] };
     const s = s1.anchorIdSet(config);
     expect(s.size).toBe(2);

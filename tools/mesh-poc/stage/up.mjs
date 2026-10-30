@@ -929,6 +929,25 @@ const pageConfig = buildPageConfig(topology, notisIds, realMultiaddrs);
 if (!dryRun) {
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify(pageConfig, null, 2));
+  // MESH_INTERFACE → Acceptance — a scenario reads a node's HTTP
+  // directly from its own namespace and compares the probe byte for
+  // byte. It needs the host↔notisId mapping to find the right ns.
+  // `stage/out/identities.json` is the simplest answer: `{ host:
+  // { notisId, meshRole, httpPort? } }`, one row per host up spawned
+  // a mesh node for.
+  const identitiesPath = join(OUT_DIR, 'identities.json');
+  const identitiesOut = {};
+  for (const [host, hostConfig] of Object.entries(topology.hosts)) {
+    const id = notisIds[host];
+    if (typeof id !== 'string') continue;
+    identitiesOut[host] = {
+      notisId: id,
+      meshRole: hostConfig.mesh?.role ?? null,
+      addr: hostConfig.addr ?? null,
+      httpPort: hostConfig.node?.httpPort ?? null,
+    };
+  }
+  writeFileSync(identitiesPath, JSON.stringify(identitiesOut, null, 2));
 }
 
 // Serve the page over plain HTTP on the browser host's loopback. A tiny
