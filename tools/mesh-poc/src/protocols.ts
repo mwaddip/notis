@@ -20,5 +20,14 @@ export const DIAL_TIMEOUT_MS: 3000 = 3000;
  * PEER_DIAL_MIN_MS)`.
  */
 export const PEER_DIAL_MIN_MS: 20000 = 20000;
+/**
+ * MESH_INTERFACE → The client's node list — "`RELAY_LISTEN_TIMEOUT_MS`
+ * | `10_000` | 10 s for one attempt at a relay reservation; past it
+ * the attempt is a failure and the relay is tried again on the retry
+ * cadence". A `transportManager.listen([<circuit>])` whose
+ * reservation does not complete inside this deadline rejects, and
+ * `startRelayRetry` schedules the next attempt per `retryIntervalMs`.
+ */
+export const RELAY_LISTEN_TIMEOUT_MS: 10000 = 10000;
 export const CERT_RETRY_MS: 3600000 = 3600000;
 export const STUN_PORT: 3478 = 3478;

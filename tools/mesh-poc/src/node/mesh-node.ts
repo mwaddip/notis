@@ -30,7 +30,7 @@ import { mkdirSync } from 'node:fs';
 import { isIPv4, isIPv6 } from 'node:net';
 import { join } from 'node:path';
 import type { NodeKey } from '../identity.js';
-import { dhtProtocol, type NetworkName, RETRY_BASE_MS, RETRY_CAP_MS } from '../protocols.js';
+import { dhtProtocol, type NetworkName, RETRY_BASE_MS, RETRY_CAP_MS, RELAY_LISTEN_TIMEOUT_MS } from '../protocols.js';
 import { MeshConfigError, assertNoDns } from '../config.js';
 import { nodeApiServer } from './api-forward.js';
 import { startStunServer } from './stun.js';
@@ -464,15 +464,13 @@ function startRelayRetry(
     timer = setTimeout(() => { void attempt(); }, ms);
   };
 
-  // Each listen attempt runs under its own deadline — the circuit
-  // relay's reservation attempt times out at
-  // `DEFAULT_RESERVATION_COMPLETION_TIMEOUT = 5_000` ms, but a
-  // multistream negotiation that opens a stream and hangs can stall
-  // the listener's promise past that. The attempt deadline reads 10 s
-  // (two reservation-completion timeouts), after which the attempt
-  // counts as a failure and the retry schedule runs.
-  const ATTEMPT_DEADLINE_MS = 10_000;
-
+  // Each listen attempt runs under its own `RELAY_LISTEN_TIMEOUT_MS`
+  // (`protocols.ts`, 10 s) — the circuit relay's reservation attempt
+  // times out at `DEFAULT_RESERVATION_COMPLETION_TIMEOUT = 5_000` ms,
+  // but a multistream negotiation that opens a stream and hangs can
+  // stall the listener's promise past that; past the deadline the
+  // attempt counts as a failure and `retryIntervalMs` schedules the
+  // next one.
   const attempt = async (): Promise<void> => {
     if (stopped) return;
     if (hasReservation()) {
@@ -491,8 +489,8 @@ function startRelayRetry(
       let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
       const deadlinePromise = new Promise<never>((_, reject) => {
         deadlineTimer = setTimeout(
-          () => reject(new Error(`listen deadline (${ATTEMPT_DEADLINE_MS} ms)`)),
-          ATTEMPT_DEADLINE_MS,
+          () => reject(new Error(`listen deadline (${RELAY_LISTEN_TIMEOUT_MS} ms)`)),
+          RELAY_LISTEN_TIMEOUT_MS,
         );
       });
       try {
