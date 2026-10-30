@@ -1,9 +1,5 @@
 # MESH Interface Contract
 
-> ⚠ **AHEAD OF CODE (2026-10-29).** The whole of this contract leads `tools/mesh-poc` (`@dagsocial/mesh-poc`), which
-> the tree does not hold yet: the key and mesh-URL modules, the node's mesh service, the client and its node list,
-> the page, and the stage.
-
 ## Scope
 
 `@dagsocial/mesh-poc` is a proof of concept beside the protocol: a browser page reaches a Notis node's HTTP API by the
