@@ -738,6 +738,23 @@ for (const [name, host] of Object.entries(topology.hosts)) {
       const pubPeerId = peerIdStringOf(notisIds[pubName]);
       bootstrapAddrs.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}`);
     }
+    // MESH_INTERFACE → NAT — "A private node ... takes relay
+    // reservations on public nodes". libp2p 3.5's circuit-relay
+    // listener (`@libp2p/circuit-relay-v2/src/transport/listener.ts`)
+    // reserves on a named relay when the listen address names it,
+    // and does a non-deterministic RelayDiscovery walk when the
+    // listen address is bare `/p2p-circuit`. One specific listen
+    // address per public relay bootstraps gives the browser a
+    // relay-path through each public node deterministically. A
+    // public role has no circuit listens.
+    const circuitListens = [];
+    if (host.mesh.role === 'private') {
+      for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {
+        if (pubName === name) continue;
+        const pubPeerId = peerIdStringOf(notisIds[pubName]);
+        circuitListens.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}/p2p-circuit`);
+      }
+    }
     const meshEnv = {
       MESH_KEY_PATH: meshKeyPath,
       MESH_NETWORK: 'devnet',
@@ -746,13 +763,18 @@ for (const [name, host] of Object.entries(topology.hosts)) {
       MESH_UPSTREAM: upstream,
       // MESH_INTERFACE → NAT — "A public node announces its listen
       // addresses from the start" with concrete-port WebRTC-direct and
-      // TCP addresses on its own IP; a private node listens on its own
-      // (NAT-inside) IP with concrete ports and lets `startMeshNode`
-      // append `/p2p-circuit` (mesh-node.ts handles the private role).
-      // Neither path ever names 127.0.0.1 or a /tcp/0, /udp/0: a browser
-      // in another namespace cannot reach a loopback-bound mesh node,
-      // and a port-0 bind announces an address nothing can dial.
-      MESH_LISTEN: `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct,/ip4/${host.addr}/tcp/${host.mesh.tcpPort}`,
+      // TCP addresses on its own IP; a private node listens on its
+      // own (NAT-inside) IP with concrete ports AND on one
+      // /ip4/<pub>/tcp/<port>/p2p/<pub-peer>/p2p-circuit per public
+      // relay it bootstraps from. Neither path ever names 127.0.0.1
+      // or a /tcp/0, /udp/0: a browser in another namespace cannot
+      // reach a loopback-bound mesh node, and a port-0 bind announces
+      // an address nothing can dial.
+      MESH_LISTEN: [
+        `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct`,
+        `/ip4/${host.addr}/tcp/${host.mesh.tcpPort}`,
+        ...circuitListens,
+      ].join(','),
       MESH_BOOTSTRAP: bootstrapAddrs.join(','),
       ...(host.mesh.stunPort !== undefined ? { MESH_STUN: `${host.addr}:${host.mesh.stunPort}` } : {}),
       ...(host.mesh.wss !== undefined ? {
@@ -782,11 +804,19 @@ for (const [name, host] of Object.entries(topology.hosts)) {
       // node, request a reservation, and wait for the relay to grant
       // one. 120 s covers the slowest of these on the stage.
       const identityTimeoutMs = host.mesh.role === 'private' ? 120_000 : 60_000;
+      // MESH_INTERFACE → NAT — the private node reserves on each
+      // circuit listen address. A timeout here is "none of these
+      // reserved in time"; the error message names the relays the
+      // node was told to try so a reader sees what the attempt was.
+      const circuitListensSnapshot = [...circuitListens];
       meshIdentityPromises[name] = readMeshIdentityUntil(meshChild, meshLogPath, predicate, { timeoutMs: identityTimeoutMs })
         .catch((err) => {
           const tail = tailLog(meshLogPath, 20);
           const body = tail === '' ? '<no output>' : tail;
-          throw new Error(`mesh:${name} identity line not read: ${err.message}\n--- last 20 lines of ${meshLogPath} ---\n${body}`);
+          const relaysDetail = circuitListensSnapshot.length > 0
+            ? `\n--- circuit listens the node was told to reserve on ---\n${circuitListensSnapshot.join('\n')}`
+            : '';
+          throw new Error(`mesh:${name} identity line not read: ${err.message}${relaysDetail}\n--- last 20 lines of ${meshLogPath} ---\n${body}`);
         });
     }
   }

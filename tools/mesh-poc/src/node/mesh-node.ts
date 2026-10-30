@@ -157,10 +157,16 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
 
   const clientMode = opts.role === 'private';
   const listen = [...opts.listen];
-  // A private node accepts circuit-relay reservations on `/p2p-circuit`
-  // (`MESH_INTERFACE → NAT`); listening on it is cheap when no relay is
-  // configured and makes the role's capability explicit.
-  if (opts.role === 'private') listen.push('/p2p-circuit');
+  // MESH_INTERFACE → NAT — "A private node ... takes relay reservations
+  // on public nodes and is reached through them". libp2p 3.5's
+  // circuit-relay listener keys off the listen address's shape
+  // (`@libp2p/circuit-relay-v2/src/transport/listener.ts`): a bare
+  // `/p2p-circuit` triggers RelayDiscovery (a DHT walk / discovery
+  // topology / peer-store scan) whose timing varies, while a
+  // `/ip4/.../p2p/<relay-peer>/p2p-circuit` opens a connection to the
+  // named relay and reserves on it directly. The caller supplies the
+  // specific form, one per public relay it bootstraps from, so no
+  // auto-append here.
 
   const peerDiscovery = opts.bootstrap.length > 0
     ? [bootstrap({ list: [...opts.bootstrap] })]

@@ -44,7 +44,7 @@ describe('a private mesh node listens on a /p2p-circuit per public relay it boot
   // the stage prints inline (`notisIds` map); the case asserts the
   // CIRCUIT SHAPE and the per-public coverage, not the particular id.
   for (const priv of privateHosts) {
-    it.fails(`${priv.name}'s MESH_LISTEN names a /p2p-circuit through each public relay by id`, () => {
+    it(`${priv.name}'s MESH_LISTEN names a /p2p-circuit through each public relay by id`, () => {
       const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
         encoding: 'utf8', timeout: 30_000,
       });
@@ -88,7 +88,7 @@ describe('mesh-node.ts does not auto-append a bare /p2p-circuit for private role
   // `startMeshNode` (previously `if (role === 'private') listen.push('/p2p-circuit')`)
   // would re-introduce the non-deterministic discovery path, so it must
   // be gone.
-  it.fails('src/node/mesh-node.ts has no listen.push(\'/p2p-circuit\')', () => {
+  it('src/node/mesh-node.ts has no listen.push(\'/p2p-circuit\')', () => {
     const src = readFileSync(SRC_MESH_NODE, 'utf8');
     expect(src, 'mesh-node.ts does not auto-push /p2p-circuit').not.toMatch(/listen\.push\(\s*['"]\/p2p-circuit['"]/);
   });
