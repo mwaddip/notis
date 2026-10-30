@@ -267,7 +267,7 @@ describe('stage up --dry-run', () => {
   // `policy drop` would drop the mesh node's replies too — the mesh client
   // would read it as unreachable (`retry`), never `behind`. The cut drops
   // only TCP to/from the Notis p2p port, and nothing else.
-  it.fails('the hostile-lagging cut is Notis-p2p-only, not an output-drop policy', () => {
+  it('the hostile-lagging cut is Notis-p2p-only, not an output-drop policy', () => {
     runDryOnce();
     const lagLines = out.split('\n').filter((l) => l.includes('lag_cut'));
     expect(lagLines.length, 'the cut has at least one rule').toBeGreaterThan(0);
@@ -294,7 +294,7 @@ describe('stage up --dry-run', () => {
   // Pebble's management port; the host has no route into the stage, so the
   // fetch runs inside a stage namespace (`notismesh-browser` reaches the
   // internet segment through natC's masquerade).
-  it.fails('the Pebble root fetch runs inside a stage namespace', () => {
+  it('the Pebble root fetch runs inside a stage namespace', () => {
     runDryOnce();
     const line = out.split('\n').find((l) => l.includes('curl') && l.includes('/roots/0'));
     expect(line, 'pebble root fetch is in the dry-run').toBeDefined();
@@ -305,7 +305,7 @@ describe('stage up --dry-run', () => {
   // database. Running it unconditionally with `|| true` would swallow every
   // failure; create it only when `cert9.db` is absent, and let a real
   // failure stop `up`.
-  it.fails('certutil -N only runs when cert9.db is absent, and never swallows failure', () => {
+  it('certutil -N only runs when cert9.db is absent, and never swallows failure', () => {
     runDryOnce();
     const line = out.split('\n').find((l) => l.includes('certutil') && l.includes(' -N '));
     expect(line, 'certutil -N is in the dry-run').toBeDefined();
@@ -317,25 +317,15 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance — every wait the exec path performs appears
   // in the dry-run as a `[wait]` line, so a reader of the dry-run sees what
   // the real `up` is going to block on.
-  it.fails('every wait the exec path performs appears in the dry-run', () => {
+  it('every wait the exec path performs appears in the dry-run', () => {
     runDryOnce();
     const waits = out.split('\n').filter((l) => l.startsWith('[wait] '));
-    const descriptions = waits.map((l) => l.slice('[wait] '.length));
-    expect(descriptions, 'the Pebble directory wait').toContain(
-      expect.stringMatching(/pebble/i),
-    );
-    expect(descriptions, 'the mesh multiaddr wait').toContain(
-      expect.stringMatching(/multiaddr/i),
-    );
-    expect(descriptions, 'the height wait').toContain(
-      expect.stringMatching(/\/blocks\/current.*>=\s*50/),
-    );
-    expect(descriptions, 'the page-server wait').toContain(
-      expect.stringMatching(/page.*server/i),
-    );
-    expect(descriptions, 'the CDP wait').toContain(
-      expect.stringMatching(/cdp|chromium/i),
-    );
+    const joined = waits.join('\n');
+    expect(joined, 'the Pebble directory wait').toMatch(/\[wait\].*pebble.*\/dir/i);
+    expect(joined, 'the mesh multiaddr wait').toMatch(/\[wait\].*multiaddr/i);
+    expect(joined, 'the height wait').toMatch(/\[wait\].*\/blocks\/current.*>=\s*50/);
+    expect(joined, 'the page-server wait').toMatch(/\[wait\].*page.*server/i);
+    expect(joined, 'the CDP wait').toMatch(/\[wait\].*(?:cdp|chromium)/i);
   }, 30_000);
 });
 

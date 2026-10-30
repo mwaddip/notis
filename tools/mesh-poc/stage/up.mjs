@@ -20,9 +20,9 @@
 // creates no namespace, writes nothing under `stage/out/`, and starts no
 // process.
 
-import { mkdirSync, writeFileSync, existsSync, chmodSync, rmSync } from 'node:fs';
-import { execFileSync, spawnSync, spawn } from 'node:child_process';
-import { dirname, join, resolve } from 'node:path';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { CommandLog } from './lib/commands.mjs';
@@ -98,6 +98,55 @@ function userWrap(ns, env, binary = NODE_ABS) {
     'env', ...userEnv(env),
     binary,
   ];
+}
+
+// MESH_INTERFACE → Acceptance — every wait the exec path performs is
+// recorded (printed, in dry-run) so a reader sees what the real `up` is
+// going to block on. The exec path runs the actual poll beside this
+// record; the dry-run only prints.
+function recordWait(description) {
+  const line = `[wait] ${description}`;
+  log.records.push(line);
+  if (dryRun) process.stdout.write(line + '\n');
+}
+
+async function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Poll `check` until it returns truthy or the deadline passes. `check` may
+ * throw; a throw is treated as "not yet". A pass is immediate. On timeout
+ * the last error (if any) is surfaced beside the description.
+ */
+async function pollUntil(description, check, { timeoutMs, pollMs = 2000 }) {
+  const start = Date.now();
+  let lastErr = null;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const r = await check();
+      if (r !== undefined && r !== null && r !== false) return r;
+    } catch (err) {
+      lastErr = err;
+    }
+    await sleep(pollMs);
+  }
+  const detail = lastErr ? `: ${lastErr.message}` : '';
+  throw new Error(`${description} timed out after ${timeoutMs}ms${detail}`);
+}
+
+/**
+ * Run `argv` inside `ns` as the invoking user and return stdout. The
+ * `sudo` wrap is the same `userWrap` the long-lived processes use, so
+ * the exec path's checks run under the same privilege as the services.
+ */
+function execIn(ns, argv, { timeoutMs = 10_000 } = {}) {
+  const full = [
+    'ip', 'netns', 'exec', ns,
+    'sudo', '-u', INVOKING_USER, '--',
+    ...argv,
+  ];
+  return execFileSync('sudo', full, { encoding: 'utf8', timeout: timeoutMs });
 }
 
 // -----------------------------------------------------------------------
@@ -303,6 +352,20 @@ if (pebbleHost && !dryRun) {
 
 if (pebbleHost) {
   log.spawn(userWrap(nsOf('pebble'), { PEBBLE_VA_NOSLEEP: '1' }, pebbleBin).concat(['-config', pebbleConfigPath]), { description: 'pebble' });
+  recordWait(`pebble answers https://${pebbleHost.addr}:${pebbleListenPort}/dir`);
+  if (!dryRun) {
+    await pollUntil(
+      'pebble directory',
+      async () => {
+        execIn(nsOf('browser'), [
+          'curl', '-sfk', '--max-time', '5',
+          `https://${pebbleHost.addr}:${pebbleListenPort}/dir`,
+        ], { timeoutMs: 8_000 });
+        return true;
+      },
+      { timeoutMs: 60_000, pollMs: 1_000 },
+    );
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -329,6 +392,13 @@ const hostileUpstreamScript = join(HERE, 'hostile-upstream.mjs');
 
 const pub1Host = topology.hosts.pub1;
 const pub1Base = `http://${pub1Host.addr}:${pub1Host.node.httpPort}`;
+
+// Each public mesh node prints one JSON line on stdout (`{notisId, peerId,
+// multiaddrs}`) when it is listening. Exec mode captures this line to
+// write the real multiaddrs (with WebRTC-direct certhash) into
+// `config.json`; dry-run uses the shape `buildPageConfig` computes from
+// the topology alone.
+const meshIdentityPromises = {};
 
 for (const [name, host] of Object.entries(topology.hosts)) {
   const ns = nsOf(name);
@@ -383,8 +453,52 @@ for (const [name, host] of Object.entries(topology.hosts)) {
         NODE_EXTRA_CA_CERTS: pebbleRootPath,
       } : {}),
     };
-    log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}` });
+    const meshChild = log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}` });
+    if (!dryRun && meshChild !== null && host.mesh.role === 'public') {
+      meshIdentityPromises[name] = waitFirstJsonLine(meshChild, `mesh:${name}`);
+    }
   }
+}
+
+/**
+ * Resolve with the first stdout line of `child` that parses as JSON with
+ * a `notisId` field. The mesh node prints exactly that line when it is
+ * ready to serve. Rejects on `exit` before the line, so a crashed mesh
+ * node fails the stage rather than hanging the wait.
+ */
+function waitFirstJsonLine(child, label) {
+  return new Promise((resolve, reject) => {
+    let buf = '';
+    const onData = (chunk) => {
+      buf += chunk.toString('utf8');
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (line === '') continue;
+        if (line.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(line);
+            if (typeof parsed.notisId === 'string') {
+              child.stdout.off('data', onData);
+              child.off('exit', onExit);
+              resolve(parsed);
+              return;
+            }
+          } catch {
+            // The mesh node has written something that is not its JSON
+            // identity line yet — keep reading.
+          }
+        }
+      }
+    };
+    const onExit = (code) => {
+      child.stdout.off('data', onData);
+      reject(new Error(`${label} exited with code ${code} before printing its identity line`));
+    };
+    child.stdout.on('data', onData);
+    child.once('exit', onExit);
+  });
 }
 
 // -----------------------------------------------------------------------
@@ -400,16 +514,49 @@ log.spawn(userWrap(nsOf('pub1'), {
 }).concat([minerScript]), { description: 'miner' });
 
 const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2'];
-log.records.push(`[wait] every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
-if (dryRun) {
-  process.stdout.write(`[wait] every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}\n`);
+recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
+if (!dryRun) {
+  // Each honest node is polled inside its own namespace as the user —
+  // the host has no route into the stage, and the user has no privilege
+  // beyond what `ip netns exec` grants in that namespace.
+  const HEIGHT_TARGET = 50;
+  await Promise.all(honestHeightTargetHost.map(async (name) => {
+    const host = topology.hosts[name];
+    const port = host.node.httpPort;
+    let lastHeight = null;
+    await pollUntil(
+      `height on ${name}`,
+      async () => {
+        const stdout = execIn(nsOf(name), [
+          'curl', '-sf', '--max-time', '5',
+          `http://127.0.0.1:${port}/blocks/current`,
+        ], { timeoutMs: 8_000 });
+        const data = JSON.parse(stdout);
+        if (typeof data.height !== 'number') return false;
+        lastHeight = data.height;
+        return data.height >= HEIGHT_TARGET;
+      },
+      { timeoutMs: 600_000, pollMs: 2_000 },
+    ).catch((err) => {
+      throw new Error(`${name}: last height ${lastHeight} — ${err.message}`);
+    });
+  }));
 }
 
+// MESH_INTERFACE → The client's node list — `hostile-lagging`'s mesh node
+// stays up and reachable; only its Notis node is cut off from the other
+// Notis nodes' p2p port, so scenario 6b's "behind, never blacklisted" sees
+// a mesh node that serves a valid proof of a lighter chain. The cut is
+// applied AFTER the height wait, so the lagging node is behind from a
+// synced start.
 const laggingHost = topology.hosts['hostile-lagging'];
 if (laggingHost) {
+  const laggingP2pPort = laggingHost.node.p2pPort;
   log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'table', 'ip', 'lag_cut'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'chain', 'ip', 'lag_cut', 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', 'policy', 'drop', ';', '}'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'rule', 'ip', 'lag_cut', 'out', 'oifname', 'lo', 'accept'], { privileged: true });
+  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'chain', 'ip', 'lag_cut', 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'], { privileged: true });
+  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'rule', 'ip', 'lag_cut', 'out', 'tcp', 'dport', String(laggingP2pPort), 'drop'], { privileged: true });
+  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'chain', 'ip', 'lag_cut', 'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', '}'], { privileged: true });
+  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'rule', 'ip', 'lag_cut', 'in', 'tcp', 'sport', String(laggingP2pPort), 'drop'], { privileged: true });
 }
 
 // -----------------------------------------------------------------------
@@ -422,19 +569,61 @@ const pageServeDir = join(PACKAGE_ROOT, 'dist-page');
 const chromiumBin = '/home/mwaddip/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome';
 
 // MESH_INTERFACE → The IP certificate — the root Pebble answers from its
-// management API. The real run fetches it after Pebble starts; the dry-run
-// prints the command.
-log.shell('sh', ['-c', `curl -sfk https://${pebbleHost.addr}:${pebbleManagementPort}/roots/0 -o ${pebbleRootPath} || { echo "pebble root fetch failed" >&2; exit 1; }`]);
+// management API. The host has no route into the stage, so the fetch
+// runs inside `notismesh-browser` as the user (natC's masquerade reaches
+// the internet segment). The out path lives in `stage/out/`, which the
+// user already owns.
+const browserNssDir = join(browserProfileHome, '.pki', 'nssdb');
+log.shell('sudo', [
+  'ip', 'netns', 'exec', nsOf('browser'),
+  'sudo', '-u', INVOKING_USER, '--',
+  'curl', '-sfk', '--max-time', '15',
+  `https://${pebbleHost.addr}:${pebbleManagementPort}/roots/0`,
+  '-o', pebbleRootPath,
+]);
 
 // `certutil -d sql:<home>/.pki/nssdb -A -n pebble-root -t ",,"` installs the
 // root into the NSS db Chromium reads when `HOME` is set to that profile.
 // `libnss3-tools` provides it — a missing certutil is a stop-condition for
 // `up`, since the browser host cannot trust the IP certificate without it.
 log.shell('sh', ['-c', `which certutil >/dev/null || { echo "certutil (libnss3-tools) not installed on this machine — install it before stage:up" >&2; exit 1; }`]);
-log.shell('mkdir', ['-p', join(browserProfileHome, '.pki', 'nssdb')]);
-log.shell('sh', ['-c', `certutil -N -d sql:${join(browserProfileHome, '.pki', 'nssdb')} --empty-password 2>/dev/null || true`]);
-log.shell('certutil', ['-A', '-d', `sql:${join(browserProfileHome, '.pki', 'nssdb')}`, '-n', 'pebble-root', '-t', ',,', '-i', pebbleRootPath]);
-log.shell('sh', ['-c', `certutil -L -d sql:${join(browserProfileHome, '.pki', 'nssdb')} | grep -q pebble-root || { echo "pebble-root not in profile NSS db" >&2; exit 1; }`]);
+log.shell('mkdir', ['-p', browserNssDir]);
+// Create the NSS database only when it is absent (`cert9.db` is the SQL
+// backend's file). An unconditional `certutil -N` plus `|| true` would
+// swallow a real failure; this test lets one fail.
+log.shell('sh', ['-c', `test -f ${join(browserNssDir, 'cert9.db')} || certutil -N -d sql:${browserNssDir} --empty-password`]);
+log.shell('certutil', ['-A', '-d', `sql:${browserNssDir}`, '-n', 'pebble-root', '-t', ',,', '-i', pebbleRootPath]);
+log.shell('sh', ['-c', `certutil -L -d sql:${browserNssDir} | grep -q pebble-root || { echo "pebble-root not in profile NSS db" >&2; exit 1; }`]);
+
+// MESH_INTERFACE → Discovery — `config.json` is written from the keys'
+// real notisIds and the mesh nodes' printed multiaddrs (which carry each
+// WebRTC-direct cert's hash). Dry-run uses the topology shape alone and
+// an in-process ephemeral key for the peer id; no placeholder lands in a
+// written file.
+recordWait('each public mesh node prints its identity line (notisId, peerId, multiaddrs with /certhash/)');
+const configPath = join(OUT_DIR, 'browser', 'config.json');
+const pidsPath = join(OUT_DIR, 'pids.json');
+let realMultiaddrs;
+if (!dryRun) {
+  const resolved = await Promise.all(
+    Object.entries(meshIdentityPromises).map(async ([name, p]) => {
+      const parsed = await Promise.race([
+        p,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 60_000)),
+      ]).catch((err) => {
+        throw new Error(`mesh:${name}: ${err.message}`);
+      });
+      return [name, parsed.multiaddrs ?? []];
+    }),
+  );
+  realMultiaddrs = Object.fromEntries(resolved);
+}
+const pageConfig = buildPageConfig(topology, notisIds, realMultiaddrs);
+
+if (!dryRun) {
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, JSON.stringify(pageConfig, null, 2));
+}
 
 // Serve the page over plain HTTP on the browser host's loopback. A tiny
 // static server is enough; the browser dials it over `http://localhost`,
@@ -442,9 +631,24 @@ log.shell('sh', ['-c', `certutil -L -d sql:${join(browserProfileHome, '.pki', 'n
 const pageServerScript = join(HERE, 'page-server.mjs');
 log.spawn(userWrap(nsOf('browser'), {
   SERVE_DIR: pageServeDir,
-  CONFIG_PATH: join(OUT_DIR, 'browser', 'config.json'),
+  CONFIG_PATH: configPath,
   PAGE_PORT: String(browserHost.httpPort),
 }).concat([pageServerScript]), { description: 'page-server' });
+
+recordWait(`page server answers http://localhost:${browserHost.httpPort}/config.json`);
+if (!dryRun) {
+  await pollUntil(
+    'page-server /config.json',
+    () => {
+      execIn(nsOf('browser'), [
+        'curl', '-sf', '--max-time', '5',
+        `http://localhost:${browserHost.httpPort}/config.json`,
+      ], { timeoutMs: 8_000 });
+      return true;
+    },
+    { timeoutMs: 30_000, pollMs: 500 },
+  );
+}
 
 // Chromium under the throwaway profile. `HOME` points to the browser host's
 // private directory so Chromium reads the NSS db we populated above; no
@@ -458,16 +662,25 @@ log.spawn(userWrap(nsOf('browser'), { HOME: browserProfileHome, DISPLAY: process
   `http://localhost:${browserHost.httpPort}/`,
 ]), { description: 'chromium' });
 
-const configPath = join(OUT_DIR, 'browser', 'config.json');
-const pidsPath = join(OUT_DIR, 'pids.json');
-const pageConfig = buildPageConfig(topology, notisIds);
+recordWait('chromium CDP answers http://127.0.0.1:9222/json/version');
+if (!dryRun) {
+  await pollUntil(
+    'chromium CDP',
+    () => {
+      execIn(nsOf('browser'), [
+        'curl', '-sf', '--max-time', '5',
+        'http://127.0.0.1:9222/json/version',
+      ], { timeoutMs: 8_000 });
+      return true;
+    },
+    { timeoutMs: 60_000, pollMs: 1_000 },
+  );
+}
 
 if (dryRun) {
   process.stdout.write(`\n[would write] ${configPath}:\n${JSON.stringify(pageConfig, null, 2)}\n`);
   process.stdout.write(`\n[dry-run complete] ${log.privilegedCount} privileged command(s) listed; no namespace, file or process was created.\n`);
 } else {
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, JSON.stringify(pageConfig, null, 2));
   writeFileSync(pidsPath, JSON.stringify({
     pids: log.pids,
     namespaces: [bridgeNs, ...Object.keys(topology.hosts).map(nsOf)],
