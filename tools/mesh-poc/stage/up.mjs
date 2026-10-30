@@ -25,7 +25,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { CommandLog } from './lib/commands.mjs';
+import { CommandLog, isProcessAlive } from './lib/commands.mjs';
 import { readTopology, natRouters, publicMeshHosts } from './lib/topology.mjs';
 import { buildPageConfig, peerIdStringOf } from './lib/config.mjs';
 import { generateStageCerts } from './lib/pebble-certs.mjs';
@@ -1047,11 +1047,11 @@ if (dryRun) {
   process.stdout.write(`[live-check] ${log.pids.length} PID(s) alive; ${liveListenerChecks.length} hostile-upstream listener(s) answer\n`);
 } else {
   for (const entry of log.pids) {
-    try { process.kill(entry.pid, 0); }
-    catch (err) {
+    const r = isProcessAlive(entry.pid);
+    if (!r.alive) {
       const tail = tailLog(entry.logPath, 20);
       const body = tail === '' ? '<no output>' : tail;
-      throw new Error(`${entry.description} (pid ${entry.pid}) is not alive: ${(err).message}\n--- last 20 lines of ${entry.logPath} ---\n${body}`);
+      throw new Error(`${entry.description} (pid ${entry.pid}) is not alive: ${r.reason}\n--- last 20 lines of ${entry.logPath} ---\n${body}`);
     }
   }
   for (const chk of liveListenerChecks) {

@@ -6,6 +6,8 @@ export interface PidEntry {
   logPath?: string;
 }
 
+export function isProcessAlive(pid: number): { alive: boolean; reason: string };
+
 export class CommandLog {
   dryRun: boolean;
   records: string[];

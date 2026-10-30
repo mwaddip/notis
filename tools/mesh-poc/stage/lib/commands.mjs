@@ -107,3 +107,23 @@ function decodeOutput(buf) {
 function quoteCommand(argv) {
   return argv.map((a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)).join(' ');
 }
+
+/**
+ * Read whether a PID is alive without signalling it. `process.kill(pid, 0)`
+ * sends no signal but checks the process's existence; a root-owned
+ * process (every outer `sudo` on `log.pids`) throws `EPERM` from a
+ * non-root parent, which means the process exists and signalling is
+ * forbidden — alive, not dead. `ESRCH` is the only "gone"; anything
+ * else is a real error named by its code.
+ */
+export function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return { alive: true, reason: 'signal 0 accepted' };
+  } catch (err) {
+    const code = err?.code ?? 'unknown';
+    if (code === 'EPERM') return { alive: true, reason: 'EPERM: process exists, signalling it is forbidden' };
+    if (code === 'ESRCH') return { alive: false, reason: 'ESRCH: no such process' };
+    return { alive: false, reason: `kill(${pid}, 0) threw ${code}: ${err?.message ?? err}` };
+  }
+}

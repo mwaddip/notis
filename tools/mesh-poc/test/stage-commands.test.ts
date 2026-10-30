@@ -105,13 +105,13 @@ describe('stage/lib/commands.mjs', () => {
     // treat `EPERM` as alive (the process exists; signalling is just
     // forbidden) and only `ESRCH` as dead. PID 1 is init, root-owned,
     // always alive, and never ours.
-    it.fails('isProcessAlive reads PID 1 as alive (EPERM, not ESRCH)', () => {
+    it('isProcessAlive reads PID 1 as alive (EPERM, not ESRCH)', () => {
       const r = isProcessAlive(1);
       expect(r.alive, 'PID 1 is alive: EPERM is alive, not dead').toBe(true);
       expect(r.reason, 'reason names EPERM so a reader sees why').toContain('EPERM');
     });
 
-    it.fails('isProcessAlive reads an unused pid as dead (ESRCH)', () => {
+    it('isProcessAlive reads an unused pid as dead (ESRCH)', () => {
       // POSIX pid_max defaults to 32768 on this kernel; a very high
       // unused value is reliably absent. Pick one above 2^22 (far
       // above pid_max on any default-configured Linux) and expect
