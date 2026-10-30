@@ -77,7 +77,7 @@ describe('tipEvents', () => {
       -1,
     );
     const events = tipEvents(r, 100);
-    expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'failure', kind: 'transport' }]);
+    expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'failure', kind: 'transport', message: 'unreachable: xyz' }]);
   });
 
   it('an HTTP refusal answers failure refused', () => {
@@ -86,7 +86,7 @@ describe('tipEvents', () => {
       -1,
     );
     const events = tipEvents(r, 100);
-    expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'failure', kind: 'refused' }]);
+    expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'failure', kind: 'refused', message: 'HTTP 500: x' }]);
   });
 
   it('an invalid refusal with a proof answers lie proof-invalid', () => {

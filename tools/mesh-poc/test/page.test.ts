@@ -29,6 +29,7 @@ function makeEntry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     addrs: over.addrs ?? [],
     droppedAddrs: over.droppedAddrs ?? [],
     evidence: over.evidence ?? null,
+    lastFailure: over.lastFailure ?? null,
   };
 }
 

@@ -3,9 +3,12 @@
 // the winner is success; a verified non-winner is behind; `too-short`
 // is behind, the chain not yet long enough to prove; `unreachable` is a
 // failure of kind `transport`; `http` is a failure of kind `refused`;
-// `invalid` with a proof is a lie of kind `proof-invalid`, the proof
-// verified under the wrong key; `invalid` without a proof is a lie of
-// kind `malformed`, the answer not even a proof.
+// `invalid` with `verifyResult.reason === 'clock'` is a failure of kind
+// `clock` — "a proof refused by the clock check alone is a failure,
+// never a lie" (MESH_INTERFACE → The client's node list, the clock
+// row); `invalid` with any other proof-verifier reason is a lie of
+// kind `proof-invalid`; `invalid` without a proof is a lie of kind
+// `malformed`.
 //
 // Total over what `resolveTip` answers today: a `refuseCode` outside the
 // table above is a change to read, not to guess, and throws. Pure,
@@ -18,7 +21,7 @@ import type { FailureKind, LieEvidence } from './node-list.js';
 export type TipEvent =
   | { id: string; ev: 'success' }
   | { id: string; ev: 'behind' }
-  | { id: string; ev: 'failure'; kind: FailureKind }
+  | { id: string; ev: 'failure'; kind: FailureKind; message?: string }
   | { id: string; ev: 'lie'; evidence: LieEvidence };
 
 export function tipEvents(r: TipResult, nowMs: number): TipEvent[] {
@@ -60,13 +63,22 @@ function eventFor(id: string, node: NodeTipResult, isWinner: boolean, nowMs: num
     case 'too-short':
       return { id, ev: 'behind' };
     case 'unreachable':
-      return { id, ev: 'failure', kind: 'transport' };
+      return { id, ev: 'failure', kind: 'transport', message: detail };
     case 'http':
-      return { id, ev: 'failure', kind: 'refused' };
-    case 'invalid':
+      return { id, ev: 'failure', kind: 'refused', message: detail };
+    case 'invalid': {
+      // MESH_INTERFACE → The client's node list, clock row — a proof
+      // refused by the client's clock check alone is a failure, never
+      // a lie: an honest node's header stamped later than the client's
+      // own clock allows would otherwise blacklist every honest node.
+      const vr = node.verifyResult;
+      if (vr !== null && vr.ok === false && vr.reason === 'clock') {
+        return { id, ev: 'failure', kind: 'clock', message: detail };
+      }
       return node.proof !== null
         ? { id, ev: 'lie', evidence: { kind: 'proof-invalid', atMs: nowMs, detail } }
         : { id, ev: 'lie', evidence: { kind: 'malformed', atMs: nowMs, detail } };
+    }
     default:
       throw new Error(`tipEvents: unknown refuseCode ${JSON.stringify(node.refuseCode)}`);
   }

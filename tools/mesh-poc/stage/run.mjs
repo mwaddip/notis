@@ -83,28 +83,64 @@ async function main(argv) {
 
   const cdpScript = join(HERE, 'cdp.mjs');
 
+  // MESH_INTERFACE → Acceptance — "A step that times out or throws is
+  // recorded FAIL with its last measured value and the error, the
+  // scenario's faults are removed, and the run goes on to the next
+  // step or scenario; the run's exit code is non-zero if any step
+  // failed." Scenarios catch per-step throws with their own
+  // `StepRecorder` helper (`stage/lib/step-recorder.mjs`); the
+  // orchestrator still catches a scenario-level throw so one bad
+  // scenario cannot abort the run.
+  let hadFailure = false;
   for (const name of toRun) {
     const scenario = SCENARIOS[name];
     if (dryRun) process.stdout.write(`[scenario:${name}] start\n`);
-    const result = await scenario.run({
-      dryRun,
-      topology,
-      pids,
-      invokingUser,
-      nodeBin,
-      meshMain,
-      cdpScript,
-      outDir: OUT_DIR,
-    });
+    let result;
+    try {
+      result = await scenario.run({
+        dryRun,
+        topology,
+        pids,
+        invokingUser,
+        nodeBin,
+        meshMain,
+        cdpScript,
+        outDir: OUT_DIR,
+      });
+    } catch (err) {
+      // Scenario threw before returning a result (uncaught in its own
+      // `finally` chain). Record a single FAIL step so the summary
+      // sees it, and continue to the next scenario.
+      result = {
+        scenario: name,
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+        steps: [{
+          name: 'scenario raised before completing',
+          verdict: 'FAIL',
+          measurement: { error: String(err?.message ?? err) },
+          timeMs: 0,
+        }],
+        faults: [],
+      };
+      process.stderr.write(`[scenario:${name}] raised: ${err?.message ?? err}\n`);
+    }
     if (!dryRun) {
       writeFileSync(
         join(SCENARIOS_OUT_DIR, `${name}.json`),
         JSON.stringify(result, null, 2),
       );
     }
+    for (const step of result.steps) {
+      if (step.verdict === 'FAIL') hadFailure = true;
+    }
     if (dryRun) process.stdout.write(`[scenario:${name}] end (${result.steps.length} step(s); every verdict is skipped under --dry-run)\n`);
   }
   if (dryRun) process.stdout.write(`[dry-run complete] ${toRun.length} scenario(s) listed; no namespace, process, file or fault was created.\n`);
+  if (!dryRun && hadFailure) {
+    process.stderr.write('stage:run: one or more steps FAILed\n');
+    process.exitCode = 1;
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

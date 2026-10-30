@@ -129,6 +129,17 @@ function renderNode(n: NodeEntry): HTMLElement {
     ev.textContent = `evidence: kind=${n.evidence.kind} · detail=${n.evidence.detail}`;
     li.appendChild(ev);
   }
+  // MESH_INTERFACE → The client's node list — "An entry keeps its last
+  // failure's kind and message, for the page to show why a node is in
+  // `retry`; the message is shown, never acted on." The message is a
+  // libp2p / verifier string a hostile node has no control over, but
+  // `textContent` is still what keeps it a string.
+  if (n.lastFailure !== null && n.status === 'retry') {
+    const lf = document.createElement('div');
+    lf.className = 'last-failure';
+    lf.textContent = `last failure: kind=${n.lastFailure.kind} · message=${n.lastFailure.message}`;
+    li.appendChild(lf);
+  }
   return li;
 }
 

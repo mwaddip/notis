@@ -16,12 +16,23 @@ export interface Anchor {
   addrs: string[];
 }
 
-export type FailureKind = 'timeout' | 'refused' | 'dropped' | 'transport';
+export type FailureKind = 'timeout' | 'refused' | 'dropped' | 'transport' | 'clock';
 
 export interface LieEvidence {
   kind: 'malformed' | 'proof-invalid';
   atMs: number;
   detail: string;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list — "An entry keeps its last
+ * failure's kind and message, for the page to show why a node is in
+ * `retry`; the message is shown, never acted on."
+ */
+export interface LastFailure {
+  kind: FailureKind;
+  message: string;
+  atMs: number;
 }
 
 export type NodeStatus = 'ok' | 'retry' | 'behind' | 'blacklisted' | 'new';
@@ -35,6 +46,7 @@ export interface NodeEntry {
   addrs: string[];
   droppedAddrs: string[];
   evidence: LieEvidence | null;
+  lastFailure: LastFailure | null;
 }
 
 const NOTIS_ID_RE = /^[0-9a-f]{64}$/;
@@ -62,6 +74,7 @@ interface InternalEntry {
   addrs: string[];
   droppedAddrs: string[];
   evidence: LieEvidence | null;
+  lastFailure: LastFailure | null;
 }
 
 export class NodeList {
@@ -91,6 +104,7 @@ export class NodeList {
           addrs: [...a.addrs],
           droppedAddrs: [],
           evidence: null,
+          lastFailure: null,
         });
       }
     }
@@ -116,6 +130,7 @@ export class NodeList {
       addrs: [...addrs],
       droppedAddrs: [],
       evidence: null,
+      lastFailure: null,
     });
   }
 
@@ -126,9 +141,12 @@ export class NodeList {
     e.failures = 0;
     e.storedRetryAtMs = 0;
     e.status = 'ok';
+    // MESH_INTERFACE → The client's node list — "cleared on success":
+    // a node that answers again clears the diagnostic that was on it.
+    e.lastFailure = null;
   }
 
-  failure(id: string, _kind: FailureKind): void {
+  failure(id: string, kind: FailureKind, message = ''): void {
     assertNotisId(id);
     const e = this.unknown('failure', id);
     if (e.status === 'blacklisted') return;
@@ -140,6 +158,11 @@ export class NodeList {
     e.clockAtFailure = now;
     e.storedRetryAtMs = now + wait;
     e.status = 'retry';
+    // MESH_INTERFACE → The client's node list — "An entry keeps its
+    // last failure's kind and message". Captured here, cleared on
+    // success. The clock reading is the monotonic one — same clock
+    // every other `atMs` reads.
+    e.lastFailure = { kind, message, atMs: now };
   }
 
   behind(id: string): void {
@@ -271,6 +294,7 @@ export class NodeList {
       addrs: [...e.addrs],
       droppedAddrs: [...e.droppedAddrs],
       evidence: e.evidence,
+      lastFailure: e.lastFailure,
     };
   }
 }

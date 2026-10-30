@@ -180,7 +180,20 @@ export interface StartMeshClientOptions {
   network: NetworkName;
   profile: NetworkProfile;
   stunServers: string[];
+  /**
+   * MESH_INTERFACE → "Two clocks" — the retry timers' clock. The list and
+   * every per-entry deadline reads this; a clock that steps never holds a
+   * node out or retries it at once. Monotonic (`performance.now`) by
+   * default.
+   */
   clock?: () => number;
+  /**
+   * MESH_INTERFACE → "Two clocks" — the verifier's clock. A header's
+   * stamp is wall-clock time, so the nipopow proof verifier reads this,
+   * never the monotonic one. `Date.now` by default. Scenarios may inject
+   * a fake wall clock to assert the handoff.
+   */
+  wallClock?: () => number;
   resolve?: typeof resolveTip;
 }
 
@@ -190,6 +203,7 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   assertClientConfig(o);
 
   const clock = o.clock ?? defaultClock;
+  const wallClock = o.wallClock ?? (() => Date.now());
   const resolveFn = o.resolve ?? resolveTip;
 
   // A fresh Ed25519 key for the client's own peer id — `MESH_INTERFACE →
@@ -218,7 +232,7 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
     },
   });
 
-  const client = new MeshClientImpl(node, key.notisId, o, clock, resolveFn);
+  const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, resolveFn);
   client.start();
   return client;
 }
@@ -243,6 +257,7 @@ class MeshClientImpl implements MeshClient {
   private readonly state_: ClientState;
   private readonly meshFetchFn: HttpFetch;
   private readonly latestEventReason = new Map<string, string>();
+  private readonly wallClock: () => number;
   private checkInProgress: Promise<TipResult> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
@@ -255,10 +270,12 @@ class MeshClientImpl implements MeshClient {
     ownId: string,
     o: StartMeshClientOptions,
     clock: () => number,
+    wallClock: () => number,
     resolveFn: typeof resolveTip,
   ) {
     this.libp2p = node;
     this.clock = clock;
+    this.wallClock = wallClock;
     this.resolveFn = resolveFn;
     this.profile = o.profile;
     this.nodeList = new NodeList(o.anchors, ownId, clock);
@@ -410,12 +427,17 @@ class MeshClientImpl implements MeshClient {
     // candidate here.
     const afterIds = this.nodeList.candidates();
     const urls = afterIds.map((id) => meshBaseUrl(id));
+    // MESH_INTERFACE → "Two clocks" — the verifier reads the wall clock
+    // (`wallClock`); the node list keeps its monotonic clock for retries.
+    // A header's `createdAt` is wall-clock time, so a client whose own
+    // monotonic clock reads tens of seconds would see every honest
+    // header as decades ahead and refuse the proof under `clock`.
     const result = await this.resolveFn(
       urls,
       DEFAULT_M,
       DEFAULT_K,
       this.profile,
-      this.clock,
+      this.wallClock,
       this.fetch,
     );
 
@@ -467,8 +489,8 @@ class MeshClientImpl implements MeshClient {
         this.latestEventReason.set(ev.id, 'behind');
         break;
       case 'failure':
-        this.nodeList.failure(ev.id, ev.kind);
-        this.latestEventReason.set(ev.id, `failure: ${ev.kind}`);
+        this.nodeList.failure(ev.id, ev.kind, ev.message ?? '');
+        this.latestEventReason.set(ev.id, ev.message ? `failure: ${ev.kind}: ${ev.message}` : `failure: ${ev.kind}`);
         break;
       case 'lie':
         this.nodeList.lie(ev.id, ev.evidence);
@@ -482,6 +504,7 @@ class MeshClientImpl implements MeshClient {
     if (!entry) return;
     const addrs = [...entry.addrs];
     let lastKind: FailureKind = 'transport';
+    let lastMessage = '';
     for (const addr of addrs) {
       if (this.stopped) return;
       // Secure WebSockets alone (`MESH_INTERFACE → Transports`): a plain
@@ -490,6 +513,7 @@ class MeshClientImpl implements MeshClient {
       // would refuse it too under its mixed-content policy.
       if (/\/ws(?:\/|$)/.test(addr) && !/\/wss(?:\/|$)/.test(addr) && !/\/tls\//.test(addr)) {
         lastKind = 'transport';
+        lastMessage = `plain ws refused: ${addr}`;
         continue;
       }
       try {
@@ -506,6 +530,12 @@ class MeshClientImpl implements MeshClient {
           continue;
         }
         lastKind = classifyDialError(e);
+        // MESH_INTERFACE → "An entry keeps its last failure's kind and
+        // message" — the dial's Error.message carries the libp2p
+        // reason (DialDeniedError, DialTimeoutError, …) that put the
+        // node in retry. The message is read into the entry on the
+        // final `failure` below.
+        lastMessage = messageOf(e);
         // continue to the next address
       }
     }
@@ -515,8 +545,8 @@ class MeshClientImpl implements MeshClient {
     // `MESH_INTERFACE → The client's node list`.
     const stillHere = this.nodeList.entry(id);
     if (stillHere && stillHere.status !== 'blacklisted') {
-      this.nodeList.failure(id, lastKind);
-      this.latestEventReason.set(id, `failure: ${lastKind}`);
+      this.nodeList.failure(id, lastKind, lastMessage);
+      this.latestEventReason.set(id, lastMessage ? `failure: ${lastKind}: ${lastMessage}` : `failure: ${lastKind}`);
     }
   }
 
@@ -708,6 +738,14 @@ function classifyDialError(e: unknown): FailureKind {
   const msg = (e as { message?: unknown })?.message;
   if (typeof msg === 'string' && /timed? ?out/i.test(msg)) return 'timeout';
   return 'transport';
+}
+
+function messageOf(e: unknown): string {
+  if (e === null || e === undefined) return '';
+  const anyE = e as { message?: unknown; name?: unknown };
+  const name = typeof anyE.name === 'string' ? anyE.name : '';
+  const msg = typeof anyE.message === 'string' ? anyE.message : String(e);
+  return name && !msg.startsWith(name) ? `${name}: ${msg}` : msg;
 }
 
 function transportOf(ma: string): 'webrtc-direct' | 'webrtc' | 'wss' | null {
