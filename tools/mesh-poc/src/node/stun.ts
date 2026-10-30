@@ -1,10 +1,11 @@
-// MESH_INTERFACE → NAT — a public node runs a STUN server on UDP port
-// `STUN_PORT` of its own IP. The server answers RFC 8489 Binding requests
-// (message type 0x0001, magic cookie 0x2112A442, 96-bit transaction id)
-// with Binding success responses (0x0101) carrying the same transaction
-// id and an XOR-MAPPED-ADDRESS attribute (0x0020) of the request's
-// source address and port. Anything else gets no answer and never throws
-// out of the socket handler. Node-only: it opens a UDP socket.
+// MESH_INTERFACE → NAT — a public node runs a STUN server where its
+// operator names an IP and UDP port for one. The server answers RFC 8489
+// Binding requests (message type 0x0001, magic cookie 0x2112A442, 96-bit
+// transaction id) with Binding success responses (0x0101) carrying the
+// same transaction id and an XOR-MAPPED-ADDRESS attribute (0x0020) of
+// the request's source address and port. Anything else gets no answer
+// and never throws out of the socket handler. Node-only: it opens a UDP
+// socket.
 
 import { createSocket, type Socket, type RemoteInfo } from 'node:dgram';
 import type { AddressInfo } from 'node:net';

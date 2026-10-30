@@ -260,12 +260,10 @@ Four sub-steps against UDP from the browser namespace, then TCP between the Noti
 | 3 | `across one renewal the probes keep succeeding, no lastLeft names a failure` | Pebble log shows at least one renewal across the 240 000 ms window; the client was connected over WSS at the window boundary and at its end; no `state.lastLeft.reason` named `timeout`/`refused`/`dropped`/`transport`/`lie`/`malformed`/`proof-invalid` in the window. **Positive evidence required**: `connectedBeforeWindow === true` and `connectedAfterWindow === true`. | A dropped request named by `lastLeft.reason`; no renewal in the Pebble log; a window boundary with no connection. |
 | 4 | `TCP between the Notis nodes p2p port cut: record what still answers` | After one `CHECK_INTERVAL_MS` the page's `state.transport` and `state.nodeId` are both non-null. | Neither field settled. |
 
-**What a tester reports even on PASS:** the renewal step's measurement in
-`stage/out/scenarios/s4.json` reads `probeSuccessAcrossRenewal: true` on positive evidence
-(the regex above matched nothing). A measurement whose `lastLeftFailure: false` rests on an
-empty window (`connectedBeforeWindow` or `connectedAfterWindow` not `true`) still FAILs by
-`verdictS4Renewal`, but is worth naming in the report so the next run's renewal window is wide
-enough.
+**What a tester reports:** a renewal step whose window held no renewal, or a
+`connectedBeforeWindow` or `connectedAfterWindow` that is not `true`, reads FAIL — report the
+step's measurement from `stage/out/scenarios/s4.json` when it does, so the next run's window can
+be widened.
 
 ### s5 — Impersonation (`MESH_INTERFACE → Acceptance 5`)
 
@@ -384,10 +382,13 @@ services is a failure.
    `/dns6/` and `/dnsaddr/`), so the only hostnames the page could have asked for are a STUN
    host, a relay host, or a name a probe path carried. `tail stage/out/dns.log` through the whole
    Firefox run. **Fails** on any line whose `name` is a STUN host, a relay host, or any name
-   that is not one of Firefox's own services. Firefox may resolve over DNS-over-HTTPS in the
-   tester's region, in which case its lookups never reach `dns.log` — also open
-   `about:networking#dns` in the same Firefox window and read the DNS entries list. **Fails** if
-   that list carries any STUN or relay host.
+   that is not one of Firefox's own services — the browser's own lookups seen live on the stage
+   in a Firefox 157 run are `services.addons.mozilla.org`, `aus5.mozilla.org`,
+   `ciscobinary.openh264.org` and `update.googleapis.com` (the last two are its video-codec
+   plugin updater). Firefox may resolve over DNS-over-HTTPS in the tester's region, in which
+   case its lookups never reach `dns.log` — also open `about:networking#dns` in the same
+   Firefox window and read the DNS entries list. **Fails** if that list carries any STUN or
+   relay host.
 
 ### What to report
 

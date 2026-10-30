@@ -1,10 +1,10 @@
-// MESH_INTERFACE → NAT — a public node runs a STUN server on UDP port
-// `STUN_PORT` of its own IP; a private node with STUN set is refused.
-// RFC 8489: a Binding request (type 0x0001, magic cookie 0x2112A442,
-// 96-bit transaction id) is answered with a Binding success response
-// (0x0101) carrying the same transaction id and an XOR-MAPPED-ADDRESS
-// attribute (0x0020) of the request's source address and port. Anything
-// else gets no answer.
+// MESH_INTERFACE → NAT — a public node runs a STUN server where its
+// operator names an IP and UDP port for one; a private node with STUN
+// set is refused. RFC 8489: a Binding request (type 0x0001, magic
+// cookie 0x2112A442, 96-bit transaction id) is answered with a Binding
+// success response (0x0101) carrying the same transaction id and an
+// XOR-MAPPED-ADDRESS attribute (0x0020) of the request's source address
+// and port. Anything else gets no answer.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSocket } from 'node:dgram';

@@ -73,9 +73,9 @@ export interface MeshNodeOptions {
   readonly stateDir: string;
   readonly upstream: string;
   /**
-   * MESH_INTERFACE → NAT — a public node runs a STUN server on UDP port
-   * `STUN_PORT` of its own IP. A private node with STUN set is refused:
-   * STUN serves from a public address.
+   * MESH_INTERFACE → NAT — a public node runs a STUN server where its
+   * operator names an IP and UDP port for one. A private node with STUN
+   * set is refused: STUN serves from a public address.
    */
   readonly stun?: { host: string; port: number };
   /**
@@ -357,9 +357,9 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
 
   const typed = node as unknown as Libp2p<{ http: HTTP }>;
 
-  // `MESH_INTERFACE → NAT` — a public node runs a STUN server on UDP
-  // port `STUN_PORT` of its own IP. Started after libp2p so a failure
-  // to bind the UDP socket tears libp2p down before returning.
+  // `MESH_INTERFACE → NAT` — a public node runs a STUN server where its
+  // operator names an IP and UDP port for one. Started after libp2p so
+  // a failure to bind the UDP socket tears libp2p down before returning.
   let stun: { close(): Promise<void> } | null = null;
   if (opts.stun) {
     try {
