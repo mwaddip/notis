@@ -101,15 +101,28 @@ describe('fix cert — certutil trust is C,, (not ,,) and up verifies it', () =>
     expect(addLine, 'certutil -A uses -t C,,').toMatch(/-t\s+C,,/);
     expect(addLine, "certutil -A does not use -t ',,' (no trust)").not.toMatch(/-t\s+'?,,'?(?:\s|$)/);
   }, 30_000);
-  it("up --dry-run reads back pebble-root trust after install, fails unless 'C,,'", () => {
+  it.fails("up --dry-run reads the LIST form of certutil -L (no -n) and anchors the grep to the pebble-root row", () => {
+    // Main measured in a scratch NSS db: `certutil -L -d <db> -n <nick>`
+    // prints the trust in WORDS ("Certificate Trust Flags: / SSL Flags:
+    // / Valid CA"), never `C,,`. Only the LIST form
+    // `certutil -L -d <db>` (no -n) prints the table row
+    // `pebble-root   C,,`. The verify grep has to read THAT form and
+    // anchor the match to our nickname (so another row's `C,,` cannot
+    // satisfy it).
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], { encoding: 'utf8', timeout: 30_000 });
     expect(res.status).toBe(0);
-    // The verify step runs `certutil -L -d <nssdb> -n pebble-root` and
-    // greps for `C,,`.
-    const verifyLines = res.stdout.split('\n').filter((l) => /\bcertutil\b/.test(l) && / -L /.test(l) && / -n pebble-root/.test(l));
-    expect(verifyLines.length, 'certutil -L -n pebble-root line is in the dry-run').toBeGreaterThan(0);
-    const anyChecksForC = verifyLines.some((l) => /C,,/.test(l));
-    expect(anyChecksForC, 'at least one -L -n pebble-root line checks for C,,').toBe(true);
+    // Among all certutil -L lines, the verify step is the one that is
+    // NOT scoped by -n (the list form), AND whose grep anchors to the
+    // nickname beside C,,.
+    const certutilLs = res.stdout.split('\n').filter((l) => /\bcertutil\b/.test(l) && / -L /.test(l));
+    const listFormLines = certutilLs.filter((l) => !/ -n /.test(l));
+    expect(listFormLines.length, 'certutil -L (list form, no -n) is in the dry-run').toBeGreaterThan(0);
+    const verifyLine = listFormLines.find((l) => /pebble-root/.test(l) && /C,,/.test(l));
+    expect(verifyLine, 'the list-form grep names pebble-root AND C,,').toBeDefined();
+    // The grep must anchor the match to the `pebble-root` row — a
+    // generic `grep -q 'C,,'` would be satisfied by any other row
+    // whose trust column happens to be `C,,`.
+    expect(verifyLine!, 'anchored to pebble-root row').toMatch(/pebble-root[^|&]*C,,|C,,[^|&]*pebble-root/);
   }, 30_000);
 });
 
