@@ -281,7 +281,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
     } as unknown as Connection;
   }
 
-  it.fails('a limited relayed connection listed before an unlimited WebRTC one reads { webrtc, direct }', () => {
+  it('a limited relayed connection listed before an unlimited WebRTC one reads { webrtc, direct }', () => {
     const limitedRelayed = fake({
       status: 'open', direct: false, limited: true,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`,
@@ -296,7 +296,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       .toEqual({ transport: 'webrtc', path: 'direct' });
   });
 
-  it.fails('a closed unlimited connection is passed over for an open limited one', () => {
+  it('a closed unlimited connection is passed over for an open limited one', () => {
     const closedUnlimited = fake({
       status: 'closed', direct: true, limited: false,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${TARGET}`,
@@ -311,7 +311,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       .toEqual({ transport: 'webrtc-direct', path: 'relay' });
   });
 
-  it.fails('only a limited connection open reads { webrtc-direct, relay }', () => {
+  it('only a limited connection open reads { webrtc-direct, relay }', () => {
     const limitedRelay = fake({
       status: 'open', direct: false, limited: true,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`,
@@ -322,7 +322,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       .toEqual({ transport: 'webrtc-direct', path: 'relay' });
   });
 
-  it.fails('no connection to the expected peer reads null', () => {
+  it('no connection to the expected peer reads null', () => {
     expect(pickConnectionForStream([], TARGET)).toBeNull();
     const toOther = fake({
       status: 'open', direct: true, limited: false, peer: OTHER,
@@ -334,7 +334,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
 
   // --- mutation round ----------------------------------------------------
 
-  it.fails('MUTATION: direct-first sort — a direct unlimited later in the list still wins over an indirect unlimited first', () => {
+  it('MUTATION: direct-first sort — a direct unlimited later in the list still wins over an indirect unlimited first', () => {
     const indirectUnlimited = fake({
       status: 'open', direct: false, limited: false,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
@@ -346,7 +346,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
     expect(pickConnectionForStream([indirectUnlimited, directUnlimited], TARGET)).toBe(directUnlimited);
   });
 
-  it.fails('MUTATION: status filter — a closed direct unlimited is skipped for an open indirect unlimited', () => {
+  it('MUTATION: status filter — a closed direct unlimited is skipped for an open indirect unlimited', () => {
     const closedDirect = fake({
       status: 'closed', direct: true, limited: false,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${TARGET}`,
@@ -358,7 +358,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
     expect(pickConnectionForStream([closedDirect, openIndirect], TARGET)).toBe(openIndirect);
   });
 
-  it.fails('MUTATION: limits filter — an unlimited indirect is picked over a limited direct', () => {
+  it('MUTATION: limits filter — an unlimited indirect is picked over a limited direct', () => {
     const limitedDirect = fake({
       status: 'open', direct: true, limited: true,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${TARGET}`,
@@ -370,7 +370,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
     expect(pickConnectionForStream([limitedDirect, unlimitedIndirect], TARGET)).toBe(unlimitedIndirect);
   });
 
-  it.fails('MUTATION: peer filter — a direct unlimited to a different peer does not win over an indirect unlimited to the target', () => {
+  it('MUTATION: peer filter — a direct unlimited to a different peer does not win over an indirect unlimited to the target', () => {
     const directToOther = fake({
       status: 'open', direct: true, limited: false, peer: OTHER,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${OTHER}`,
