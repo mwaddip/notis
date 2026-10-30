@@ -406,6 +406,69 @@ describe('stage up --dry-run', () => {
     expect(steadyIdx, 'steady miner at a lower duty follows the height wait').toBeGreaterThan(waitIdx);
   }, 30_000);
 
+  // MESH_INTERFACE → Acceptance — each hostile host runs its own Notis
+  // node (as `hostile-lagging` does); the hostile upstream forwards to
+  // that node on 127.0.0.1 inside its namespace, never to pub1's remote
+  // HTTP (pub1 binds its namespace loopback alone). Scenario 6 reads
+  // what the hostile upstreams answer; a hostile upstream pointed at a
+  // host that is not reachable would die without printing.
+  it.fails('every hostile host carries its own Notis node and its hostile upstream points at loopback', () => {
+    runDryOnce();
+    for (const host of ['hostile-malformed', 'hostile-invalid']) {
+      const notisSpawn = out.split('\n').find((l) => l.startsWith(`[spawn:notis:${host}]`));
+      expect(notisSpawn, `[spawn:notis:${host}] is in the dry-run`).toBeDefined();
+      expect(notisSpawn, `${host}'s Notis node runs inside its own namespace`).toContain(`ip netns exec notismesh-${host}`);
+      const hostileSpawn = out.split('\n').find((l) => l.startsWith(`[spawn:hostile-upstream:${host}]`));
+      expect(hostileSpawn, `[spawn:hostile-upstream:${host}] is in the dry-run`).toBeDefined();
+      // The hostile upstream's PUB1_BASE points at the local Notis
+      // node on 127.0.0.1, not pub1's remote address.
+      expect(hostileSpawn, `${host}'s hostile upstream points at 127.0.0.1`).toMatch(/PUB1_BASE=http:\/\/127\.0\.0\.1:\d+\b/);
+      expect(hostileSpawn, `${host}'s hostile upstream does not point at 10.100.0.11`).not.toMatch(/PUB1_BASE=http:\/\/10\.100\.0\.11\b/);
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — Chromium's quiet set from Playwright and
+  // Puppeteer, not Chromium's own `--help` listing. Playwright's switches
+  // live at `playwright-core/src/server/chromium/chromiumSwitches.ts` and
+  // Puppeteer's at `packages/puppeteer-core/src/node/ChromeLauncher.ts`;
+  // the stage adopts the quiet set both tools pass by default.
+  it.fails('Chromium carries the quiet switches Playwright and Puppeteer set by default', () => {
+    runDryOnce();
+    const line = out.split('\n').find((l) => l.startsWith('[spawn:chromium]'));
+    expect(line, 'chromium spawn is in the dry-run').toBeDefined();
+    for (const flag of [
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-breakpad',
+      '--disable-hang-monitor',
+      '--disable-ipc-flooding-protection',
+      '--disable-popup-blocking',
+      '--disable-prompt-on-repost',
+      '--disable-extensions',
+      '--disable-component-extensions-with-background-pages',
+      '--force-color-profile=srgb',
+      '--password-store=basic',
+      '--use-mock-keychain',
+      '--no-service-autorun',
+    ]) {
+      expect(line, `chromium carries ${flag}`).toContain(flag);
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — before `stage up:` is printed, `up`
+  // live-checks every long-lived process on `pids.json`. A `[live-check]`
+  // record names what is checked (every PID alive, every listener
+  // reachable), so a reader of the dry-run sees the invariant without
+  // waiting for the run to show it.
+  it.fails('up live-checks every pids.json entry before printing stage up', () => {
+    runDryOnce();
+    const liveCheckIdx = out.split('\n').findIndex((l) => l.startsWith('[live-check]'));
+    expect(liveCheckIdx, '[live-check] is in the dry-run').toBeGreaterThanOrEqual(0);
+    const chromiumIdx = out.split('\n').findIndex((l) => l.startsWith('[spawn:chromium]'));
+    expect(liveCheckIdx, 'live-check follows every spawn').toBeGreaterThan(chromiumIdx);
+  }, 30_000);
+
   // MESH_INTERFACE → Acceptance — the Pebble v2.8.0 tarball records the
   // binary as mode 0644 (no execute bit). The release's own `tar tvzf`
   // shows `-rw-r--r--`; extracting it leaves `env` unable to run it, so
