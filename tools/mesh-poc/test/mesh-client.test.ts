@@ -570,8 +570,8 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const importRe = /(?:from\s*['"]|require\s*\(\s*['"]|import\s*\(\s*['"])([^'"\s)]+)['"]/g;
     const banned: string[] = [];
     for (const match of code.matchAll(importRe)) {
-      const spec = match[1]!;
-      if (spec.startsWith('node:') || builtinModules.includes(spec)) banned.push(spec);
+      const importSpecifier = match[1]!;
+      if (importSpecifier.startsWith('node:') || builtinModules.includes(importSpecifier)) banned.push(importSpecifier);
     }
     expect(banned, `banned Node imports in dist/lib.js: ${banned.join(', ')}`).toEqual([]);
   }, 30_000);

@@ -486,9 +486,10 @@ class MeshClientImpl implements MeshClient {
         // continue to the next address
       }
     }
-    // Every address refused — the brief maps this to `failure(id, kind)`.
-    // The last kind seen is the one that reaches the list: the brief says
-    // `'timeout'` for a dial that hit its deadline, `'transport'` otherwise.
+    // Every address refused: the node moves by `failure(id, kind)` on the last
+    // kind seen — `'timeout'` for a dial that hit its deadline, `'transport'`
+    // for any other transport-level failure, both the `retry` row of
+    // `MESH_INTERFACE → The client's node list`.
     const stillHere = this.nodeList.entry(id);
     if (stillHere && stillHere.status !== 'blacklisted') {
       this.nodeList.failure(id, lastKind);

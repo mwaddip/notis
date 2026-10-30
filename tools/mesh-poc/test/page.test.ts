@@ -159,9 +159,9 @@ describe('page/build output', () => {
       if (!/\.(?:js|mjs|html|css|map)$/.test(f)) continue;
       const code = readFileSync(f, 'utf8');
       for (const match of code.matchAll(importRe)) {
-        const spec = match[1]!;
-        if (spec.startsWith('node:')) builtinHits.push(`${f}: ${spec}`);
-        else if (builtinModules.includes(spec)) builtinHits.push(`${f}: ${spec}`);
+        const importSpecifier = match[1]!;
+        if (importSpecifier.startsWith('node:')) builtinHits.push(`${f}: ${importSpecifier}`);
+        else if (builtinModules.includes(importSpecifier)) builtinHits.push(`${f}: ${importSpecifier}`);
       }
     }
     expect(builtinHits, `Node built-in imports in the bundle: ${builtinHits.join(', ')}`).toEqual([]);
