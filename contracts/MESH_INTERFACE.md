@@ -86,6 +86,11 @@ key was last reached at — IP multiaddrs ending in the key's `/p2p/` peer id, a
 certificate's hash. **An address is a hint; the key is the identity.** A client refuses an anchor address with a
 `/dns4/`, `/dns6/` or `/dnsaddr/` component. Two anchors with one key are one anchor; the client's own key is none.
 
+**Seeds.** A client may also start from seeds — `(notisId, addrs)` contacts it holds without trusting them, such as a
+peer list it was handed or the nodes it knew before. A seed is a candidate like any node the DHT finds: it is not an
+anchor, and no answer from it makes `anchorReached` true. The same refusals hold for a seed's addresses as for an
+anchor's.
+
 **The DHT is Notis's own.** Kademlia runs on the protocol `/notis/<network>/kad/1.0.0`, `<network>` one of `devnet`,
 `testnet`, `mainnet` — never on libp2p's default, which is the public IPFS DHT. Public nodes serve it, each listening
 on WebRTC-direct so a browser can walk it; private nodes and browsers run it as clients. It finds further nodes, and a
