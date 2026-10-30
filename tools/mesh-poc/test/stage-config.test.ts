@@ -191,7 +191,7 @@ describe('stage up --dry-run', () => {
   // <other>` places both ends at creation), so no `ip link ...` line
   // without `-n` or `netns exec` appears for a link operation other than
   // `netns add`/`del`.
-  it.fails('no command creates or changes a link outside a notismesh-* namespace', () => {
+  it('no command creates or changes a link outside a notismesh-* namespace', () => {
     runDryOnce();
     const bad: string[] = [];
     for (const raw of out.split('\n')) {
@@ -212,7 +212,7 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance — every stage process runs as the invoking
   // user with Node 24's absolute path. Every `[spawn:*]` line carries
   // `sudo -u <user> --` and names an absolute Node 24 binary.
-  it.fails('every [spawn:*] names the invoking user and Node 24', () => {
+  it('every [spawn:*] names the invoking user and Node 24', () => {
     runDryOnce();
     const user = process.env.SUDO_USER ?? process.env.USER;
     expect(typeof user, 'the test needs USER set to match up.mjs').toBe('string');
@@ -233,7 +233,7 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance — the miner reads pub1's HTTP; pub1's HTTP
   // binds pub1's namespace loopback, so the miner runs inside
   // `notismesh-pub1`.
-  it.fails('the miner spawn runs inside notismesh-pub1', () => {
+  it('the miner spawn runs inside notismesh-pub1', () => {
     runDryOnce();
     const minerLine = out.split('\n').find((l) => l.startsWith('[spawn:miner]'));
     expect(minerLine, 'miner spawn is present').toBeDefined();
@@ -243,7 +243,7 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance — pub1 binds 443 and 80, dns-log binds 53,
   // the browser profile is a user; the per-namespace sysctl lifts the
   // unprivileged-port floor to 0 inside pub1, dns-log and browser alone.
-  it.fails('the ip_unprivileged_port_start sysctl is set inside pub1 and dns-log', () => {
+  it('the ip_unprivileged_port_start sysctl is set inside pub1 and dns-log', () => {
     runDryOnce();
     for (const host of ['pub1', 'dns-log']) {
       const re = new RegExp(`ip netns exec notismesh-${host} sysctl -w net\\.ipv4\\.ip_unprivileged_port_start=0`);
@@ -253,7 +253,7 @@ describe('stage up --dry-run', () => {
 
   // MESH_INTERFACE → Acceptance — the browser host's resolver, nft counter,
   // Chromium launch and the page server are part of the dry-run.
-  it.fails('the browser host carries resolver, nft counter, page-server and Chromium', () => {
+  it('the browser host carries resolver, nft counter, page-server and Chromium', () => {
     runDryOnce();
     expect(out, 'resolv.conf write').toContain('/etc/netns/notismesh-browser/resolv.conf');
     expect(out, 'nft dns_witness counter').toContain('dns_witness');

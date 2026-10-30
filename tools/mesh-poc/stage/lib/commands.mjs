@@ -3,11 +3,16 @@
 // Every command this file runs or logs says what it does, and `up --dry-run`
 // prints the privileged ones for a reader to check before `up` runs for real.
 //
-// `logShell(line, { privileged })` records one command. In dry-run mode it
-// prints it with its marking; in exec mode it runs it through `execFileSync`
-// so a non-zero exit stops `up`.
+// `shell(name, argv, { privileged })` records one short-lived command. In
+// dry-run mode it prints the line with its marking; in exec mode it runs it
+// through `execFileSync` so a non-zero exit stops `up`.
+//
+// `spawn([name, ...argv], { description, env, cwd })` records a long-lived
+// process. In dry-run it prints the line marked with its description; in
+// exec it spawns the process and records its PID so `down` can end exactly
+// those.
 
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 
 export class CommandLog {
   constructor({ dryRun }) {
@@ -17,12 +22,8 @@ export class CommandLog {
     this.pids = [];
   }
 
-  // A command the stage would run on the host, through `sudo` or `ip netns
-  // exec` (which itself needs root to enter a namespace). The log line names
-  // the host's own binary and arguments; `privileged: true` marks it so a
-  // reader can see what `sudo` the stage would run.
   shell(name, argv, { privileged = false } = {}) {
-    const line = quoteCommand(name, argv);
+    const line = quoteCommand([name, ...argv]);
     if (privileged) this.privilegedCount += 1;
     const marked = privileged ? `[privileged] ${line}` : line;
     this.records.push(marked);
@@ -33,17 +34,22 @@ export class CommandLog {
     execFileSync(name, argv, { stdio: 'inherit' });
   }
 
-  // Spawn a long-running process in a namespace. In dry-run, log and skip;
-  // in exec, start it and record its PID so `down` can end exactly those.
-  spawn(name, argv, { description, env = {}, cwd }) {
-    const line = quoteCommand(name, argv);
+  // `argvFull` is the complete command — `argvFull[0]` is the binary and
+  // the rest are its arguments. `spawn` keeps the full line in the record
+  // so a reader of the dry-run sees exactly what will run.
+  spawn(argvFull, { description, env = {}, cwd }) {
+    if (!Array.isArray(argvFull) || argvFull.length === 0) {
+      throw new Error('spawn needs a non-empty argv array');
+    }
+    const [name, ...argv] = argvFull;
+    const line = quoteCommand(argvFull);
     const marked = `[spawn:${description}] ${line}`;
     this.records.push(marked);
     if (this.dryRun) {
       process.stdout.write(marked + '\n');
       return null;
     }
-    const child = spawn(name, argv, {
+    const child = nodeSpawn(name, argv, {
       env: { ...process.env, ...env },
       ...(cwd !== undefined ? { cwd } : {}),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -53,7 +59,6 @@ export class CommandLog {
   }
 }
 
-function quoteCommand(name, argv) {
-  const parts = [name, ...argv].map((a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a));
-  return parts.join(' ');
+function quoteCommand(argv) {
+  return argv.map((a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)).join(' ');
 }
