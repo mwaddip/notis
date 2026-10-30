@@ -11,7 +11,7 @@
 
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, openSync, closeSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, existsSync, statSync, mkdirSync, openSync, closeSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 /**
@@ -177,13 +177,46 @@ export function sigterm(pid) {
 }
 
 /**
+ * Direct children of `pid` from `/proc/<pid>/task/{tid}/children`. A
+ * dead process or missing /proc entry is silently skipped. Pure
+ * read of `/proc`; no privilege.
+ */
+function directChildren(pid) {
+  const out = [];
+  let tasks;
+  try { tasks = readdirSync(`/proc/${pid}/task`); } catch { return out; }
+  for (const tid of tasks) {
+    let line;
+    try { line = readFileSync(`/proc/${pid}/task/${tid}/children`, 'utf8').trim(); }
+    catch { continue; }
+    if (line === '') continue;
+    for (const cs of line.split(/\s+/)) {
+      const c = Number(cs);
+      if (!Number.isInteger(c) || c <= 0) continue;
+      out.push(c);
+    }
+  }
+  return out;
+}
+
+/**
  * Walk `/proc/<pid>/task/{tid}/children` recursively and return every
  * descendant pid of `pid` (not including `pid` itself). A dead
  * process or missing /proc entry is silently skipped. Pure read of
  * `/proc`; no privilege.
  */
-export function descendantPids(_pid) {
-  throw new Error('descendantPids: not implemented');
+export function descendantPids(pid) {
+  const seen = new Set();
+  const stack = [pid];
+  while (stack.length > 0) {
+    const p = stack.pop();
+    for (const c of directChildren(p)) {
+      if (seen.has(c)) continue;
+      seen.add(c);
+      stack.push(c);
+    }
+  }
+  return [...seen];
 }
 
 /**
@@ -192,8 +225,9 @@ export function descendantPids(_pid) {
  * reach the innermost process (sudo does not relay SIGSTOP to its
  * children, so signalling the recorded outer pid does nothing).
  */
-export function leafPids(_pid) {
-  throw new Error('leafPids: not implemented');
+export function leafPids(pid) {
+  const all = descendantPids(pid);
+  return all.filter((p) => directChildren(p).length === 0);
 }
 
 /**

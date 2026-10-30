@@ -11,7 +11,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@libp2p/noise';
 import { yamux } from '@libp2p/yamux';
-import { webRTCDirect } from '@libp2p/webrtc';
+import { webRTC, webRTCDirect } from '@libp2p/webrtc';
 import { webSockets } from '@libp2p/websockets';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
@@ -223,25 +223,33 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   // lines 100-105 "ensure we don't listen on multiple relays
   // simultaneously") runs a PeerQueue of `DEFAULT_RESERVATION_CONCURRENCY = 1`
   // (`src/constants.ts:19`): a second configured relay queues
-  // behind the first and a stalled first blocks every other. The
-  // configured path has no `maxReservations` limit (that caps
-  // discovered reservations alone — `src/transport/reservation-store.ts`
-  // line 254), so the only option that matters for a private node
-  // with N named relays is `reservationConcurrency = N`: each named
-  // relay runs its reservation in parallel.
+  // behind the first and a stalled first blocks every other.
+  // `reservationConcurrency = <relay count>` lets each named relay
+  // run its reservation in parallel. `webRTC()` is the browser's
+  // path to a private: a circuit-relay v2 connection is LIMITED
+  // (`@libp2p/circuit-relay-v2/src/utils.ts` `LimitTracker`), so
+  // the relay carries only the SDP signalling and the data goes
+  // direct over WebRTC. `WebRTCPeerListener`
+  // (`@libp2p/webrtc@7.0.2/src/private-to-private/listener.ts`
+  // lines 41-52) encapsulates `/webrtc` onto every circuit listener
+  // address, so a `/webrtc` listen entry on a private node makes
+  // it announce `<relay>/p2p-circuit/webrtc/p2p/<self>` as soon as
+  // each reservation lands.
   const relayCount = opts.bootstrap.length;
+  const stunServers = opts.stunServers ?? [];
   const transports = [
     tcp(),
     webRTCDirect(),
-    ...(opts.role === 'private' ? [circuitRelayTransport({
-      // Hold a slot per bootstrap relay — "configure it so a private
-      // node holds a reservation per relay it is told of". The
-      // reservation store caps `maxReservationQueueLength` at 100
-      // by default, well above anything the stage reaches, and the
-      // `configured` reservation path has no `maxReservations` limit
-      // (that caps `discovered` reservations alone).
-      reservationConcurrency: Math.max(1, relayCount),
-    })] : []),
+    ...(opts.role === 'private' ? [
+      webRTC({
+        rtcConfiguration: {
+          iceServers: stunServers.map((url) => ({ urls: url })),
+        },
+      }),
+      circuitRelayTransport({
+        reservationConcurrency: Math.max(1, relayCount),
+      }),
+    ] : []),
     ...(opts.wss && initialCert
       ? [
           webSockets({
@@ -250,6 +258,14 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
         ]
       : []),
   ];
+  // MESH_INTERFACE → NAT — the `/webrtc` listen on a private role
+  // tells the WebRTC listener to publish an address per circuit
+  // reservation. The marker has no transport components; the
+  // listener encapsulates it on top of circuit addresses the
+  // relays confirm.
+  if (opts.role === 'private' && !listen.includes('/webrtc')) {
+    listen.push('/webrtc');
+  }
 
   if (opts.wss && initialCert) {
     const ipFamily = isIPv6(opts.wss.ip) ? 'ip6' : 'ip4';

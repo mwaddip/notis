@@ -245,14 +245,15 @@ async function readMeshIdentityUntil(child, logPath, predicate, { timeoutMs }) {
 }
 
 // MESH_INTERFACE → NAT — "A `private` node announces its relay
-// reservations alone". The latest identity line for a private role has
-// to carry at least one `/p2p-circuit` address so the stage's
-// `identities.json` names an address a browser can dial. A public role
-// passes on the first non-empty identity.
+// reservations alone", and a browser reaches it through
+// `/p2p-circuit/webrtc/p2p/<priv>`. The latest identity line for a
+// private role has to carry at least one `/p2p-circuit/webrtc/p2p/`
+// address so the stage's `identities.json` names an address a browser
+// can dial. A public role passes on the first non-empty identity.
 function identityPredicateForMeshRole(meshRole) {
   if (meshRole === 'private') {
     return (parsed) => Array.isArray(parsed.multiaddrs)
-      && parsed.multiaddrs.some((m) => typeof m === 'string' && m.includes('/p2p-circuit'));
+      && parsed.multiaddrs.some((m) => typeof m === 'string' && m.includes('/p2p-circuit/webrtc/p2p/'));
   }
   return () => true;
 }
@@ -770,11 +771,19 @@ function startMeshNodeForHost(name, host) {
   // public relay bootstraps gives the browser a relay-path through
   // each public node deterministically.
   const circuitListens = [];
+  const stunServers = [];
   if (host.mesh.role === 'private') {
     for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {
       if (pubName === name) continue;
       const pubPeerId = peerIdStringOf(notisIds[pubName]);
       circuitListens.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}/p2p-circuit`);
+      // MESH_INTERFACE → NAT — "every STUN server is a mesh node
+      // named by IP". A private node gathers ICE candidates against
+      // the public mesh nodes' STUN by IP for its WebRTC
+      // reservations.
+      if (pubHost.mesh.stunPort !== undefined) {
+        stunServers.push(`stun:${pubHost.addr}:${pubHost.mesh.stunPort}`);
+      }
     }
   }
   const meshEnv = {
@@ -796,6 +805,7 @@ function startMeshNodeForHost(name, host) {
     ].join(','),
     MESH_BOOTSTRAP: bootstrapAddrs.join(','),
     ...(host.mesh.stunPort !== undefined ? { MESH_STUN: `${host.addr}:${host.mesh.stunPort}` } : {}),
+    ...(stunServers.length > 0 ? { MESH_STUN_SERVERS: stunServers.join(',') } : {}),
     ...(host.mesh.wss !== undefined ? {
       MESH_WSS: `${host.addr}:${host.mesh.wss.port}`,
       MESH_ACME_DIRECTORY: `https://${pebbleHost.addr}:${pebbleListenPort}/dir`,

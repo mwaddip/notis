@@ -64,7 +64,7 @@ const IDENTITIES = {
     httpPort: 3100,
     multiaddrs: [
       '/ip4/10.101.0.11/udp/4001/webrtc-direct/certhash/PRIV1HASH/p2p/PRIV1PEER',
-      '/ip4/11.100.0.12/tcp/4002/p2p/PUB2PEER/p2p-circuit/p2p/PRIV1PEER',
+      '/ip4/11.100.0.12/tcp/4002/p2p/PUB2PEER/p2p-circuit/webrtc/p2p/PRIV1PEER',
     ],
   },
   priv2: {
@@ -74,7 +74,7 @@ const IDENTITIES = {
     httpPort: 3100,
     multiaddrs: [
       '/ip4/10.102.0.11/udp/4001/webrtc-direct/certhash/PRIV2HASH/p2p/PRIV2PEER',
-      '/ip4/11.100.0.12/tcp/4002/p2p/PUB2PEER/p2p-circuit/p2p/PRIV2PEER',
+      '/ip4/11.100.0.12/tcp/4002/p2p/PUB2PEER/p2p-circuit/webrtc/p2p/PRIV2PEER',
     ],
   },
 };
@@ -94,8 +94,8 @@ describe('finding 6 — s2 variant is built from the private node\'s own announc
     expect(r.network).toBe('devnet');
     expect(r.anchors.length).toBe(1);
     expect(r.anchors[0]!.notisId).toBe('cc'.repeat(32));
-    // Composed from pub2's WebRTC-direct (not pub1's), /p2p-circuit/p2p/<priv1 peer>.
-    expect(r.anchors[0]!.addrs[0]).toBe('/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER/p2p-circuit/p2p/PRIV1PEER');
+    // Composed from pub2's WebRTC-direct (not pub1's), /p2p-circuit/webrtc/p2p/<priv1 peer>.
+    expect(r.anchors[0]!.addrs[0]).toBe('/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER/p2p-circuit/webrtc/p2p/PRIV1PEER');
     // No other address — a browser dials only through the relay here.
     expect(r.anchors[0]!.addrs.length).toBe(1);
     expect(r.seeds).toEqual([]);
@@ -107,7 +107,7 @@ describe('finding 6 — s2 variant is built from the private node\'s own announc
       privRow: IDENTITIES.priv2,
       identities: IDENTITIES,
     });
-    expect(r.anchors[0]!.addrs[0]).toBe('/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER/p2p-circuit/p2p/PRIV2PEER');
+    expect(r.anchors[0]!.addrs[0]).toBe('/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER/p2p-circuit/webrtc/p2p/PRIV2PEER');
   });
 
   it('fails loudly when the private node announces no /p2p-circuit address a browser can reach', () => {

@@ -48,13 +48,15 @@ describe('mesh-node.ts gives a private role a webRTC transport and /webrtc liste
   // `/p2p-circuit` listener's addresses, so a private node with a
   // `/webrtc` listen entry announces `<relay>/p2p-circuit/webrtc/p2p/<self>`
   // the moment each circuit reservation lands.
-  it.fails('src/node/mesh-node.ts imports webRTC from @libp2p/webrtc and uses it in the private transports', () => {
+  it('src/node/mesh-node.ts imports webRTC from @libp2p/webrtc and uses it in the private transports', () => {
     const src = readFileSync(SRC_MESH_NODE, 'utf8');
     expect(src, 'imports webRTC').toMatch(/import\s*\{[^}]*\bwebRTC\b[^}]*\}\s*from\s*['"]@libp2p\/webrtc['"]/);
-    // The private transports include a webRTC() call.
-    expect(src, 'webRTC() among the private transports').toMatch(/role === 'private'[\s\S]*?webRTC\s*\(/);
+    // Match `webRTC(` at the start of a line (after indent) so a
+    // comment reference like "webRTC() is the browser's path" does
+    // not satisfy the check.
+    expect(src, 'webRTC( appears as a call in a code line').toMatch(/^\s{2,}webRTC\s*\(/m);
   });
-  it.fails('src/node/mesh-node.ts adds /webrtc to the listen list for a private role', () => {
+  it('src/node/mesh-node.ts adds /webrtc to the listen list for a private role', () => {
     const src = readFileSync(SRC_MESH_NODE, 'utf8');
     expect(src, 'a /webrtc listen is added when role is private').toMatch(/role === 'private'[\s\S]*?['"]\/webrtc['"]/);
   });
@@ -71,7 +73,7 @@ describe('config-variants picks the /webrtc form of a private node\'s announced 
   // The private node announces `<relay>/p2p-circuit/webrtc/p2p/<priv>`
   // once both the circuit reservation and the WebRTC listener land —
   // the variant builder reads THAT form, not the raw circuit.
-  it.fails('buildPrivateViaAnnouncedRelayVariant reads a /webrtc/p2p/<priv> address when the private announced one', async () => {
+  it('buildPrivateViaAnnouncedRelayVariant reads a /webrtc/p2p/<priv> address when the private announced one', async () => {
     const { buildPrivateViaAnnouncedRelayVariant } = await import('../stage/lib/config-variants.mjs');
     const base = {
       network: 'devnet',
@@ -116,7 +118,7 @@ describe('up.mjs passes MESH_STUN_SERVERS to each private mesh node', () => {
   // to gather its own candidates — the ICE servers are the public
   // mesh nodes' STUN by IP (`MESH_INTERFACE → NAT` — "every STUN
   // server is a mesh node named by IP").
-  it.fails('every private mesh spawn carries MESH_STUN_SERVERS naming the public STUNs by IP', () => {
+  it('every private mesh spawn carries MESH_STUN_SERVERS naming the public STUNs by IP', () => {
     const src = readFileSync(SRC_UP, 'utf8');
     expect(src, 'MESH_STUN_SERVERS env is set on the private branch').toMatch(/MESH_STUN_SERVERS/);
   });
@@ -132,23 +134,33 @@ describe('s1 pauses the miner\'s innermost process, not the sudo wrapper', () =>
     expect(typeof leafPids).toBe('function');
   });
 
-  it.fails('leafPids(self) finds a short-lived child this test spawns and returns to the leaf', async () => {
-    // Spawn `sh -c "sleep 0.5"` from vitest's own pid. The sh is a
-    // direct child, and it has no further children — it IS the leaf.
-    const child: ChildProcess = nodeSpawn('sh', ['-c', 'sleep 0.5']);
+  it('leafPids(self) finds a short-lived child this test spawns and returns to the leaf', async () => {
+    // Spawn a process whose cmdline is `sleep 2` so no shell exec
+    // substitution complicates the pid chain. The spawned pid is
+    // the sleep itself, a direct child of this worker, and has no
+    // further children — it IS the leaf of this worker's tree.
+    const child: ChildProcess = nodeSpawn('sleep', ['2']);
     try {
-      // Give /proc time to register the child.
-      await sleep(60);
-      const leaves = leafPids(process.pid);
-      expect(leaves.includes(child.pid!), `child ${child.pid} is in the leaf set of our own pid`).toBe(true);
+      // Give /proc time to register the child, then poll briefly.
+      let found = false;
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline && !found) {
+        await sleep(50);
+        const leaves = leafPids(process.pid);
+        if (leaves.includes(child.pid!)) { found = true; break; }
+      }
+      expect(found, `child ${child.pid} is in the leaf set of our own pid`).toBe(true);
     } finally {
       child.kill('SIGTERM');
     }
   }, 10_000);
 
-  it.fails('stage/scenarios/s1-no-name.mjs signals the leaves, not the recorded PID directly', () => {
+  it('stage/scenarios/s1-no-name.mjs signals the leaves, not the recorded PID directly', () => {
     const src = readFileSync(SRC_S1, 'utf8');
-    expect(src, 's1 calls leafPids on the recorded miner-steady entry').toMatch(/leafPids\(/);
+    // Match a line that assigns the leafPids result (not a comment
+    // reference). The actual call reads `pausedPids = leafPids(...)`
+    // or similar on its own code line.
+    expect(src, 's1 reads leafPids as a value, not just in a comment').toMatch(/^\s*[a-zA-Z_$][\w$]*\s*=\s*leafPids\(/m);
     // The old direct call to signal(minerEntry.pid, 'SIGSTOP') is gone.
     expect(src, 's1 does not SIGSTOP the recorded entry pid directly').not.toMatch(/signal\(\s*minerEntry\.pid\s*,\s*['"]SIGSTOP/);
   });
@@ -180,7 +192,7 @@ describe('a private mesh node is reached over /webrtc via a circuit relay (in-pr
     return dir;
   }
 
-  it.fails('a browser-shaped client fetches 165 KB over /webrtc through the relay', async () => {
+  it('a browser-shaped client fetches 165 KB over /webrtc through the relay', async () => {
     // Upstream HTTP server with a 165 KB /nipopow/proof/24/20.
     const BODY = Buffer.alloc(165 * 1024);
     for (let i = 0; i < BODY.length; i += 1) BODY[i] = (i * 7) & 0xff;

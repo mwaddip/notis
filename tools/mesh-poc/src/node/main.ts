@@ -146,6 +146,28 @@ function parseWss(
   return { ip: host, port, source };
 }
 
+// MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
+// IP". `MESH_STUN_SERVERS` reads a comma-separated list of
+// `stun:<ip>:<port>` URLs; each is refused if it names a hostname
+// (same rule as the client's `assertClientConfig`). Private-only;
+// the WebRTC transport reads these as ICE servers.
+const STUN_IPV4_RE = /^stun:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5})$/;
+const STUN_IPV6_RE = /^stun:\[([0-9a-fA-F:]+)\]:(\d{1,5})$/;
+function parseStunServers(csv: string | undefined): string[] {
+  if (csv === undefined || csv === '') return [];
+  const out: string[] = [];
+  for (const raw of csv.split(',')) {
+    const s = raw.trim();
+    if (s === '') continue;
+    if (!STUN_IPV4_RE.test(s) && !STUN_IPV6_RE.test(s)) {
+      console.error(`MESH_STUN_SERVERS entry refused: ${JSON.stringify(s)} is not stun:<IPv4>:<port> or stun:[<IPv6>]:<port>`);
+      process.exit(1);
+    }
+    out.push(s);
+  }
+  return out;
+}
+
 const keyPath = need('MESH_KEY_PATH');
 const network = parseNetwork(need('MESH_NETWORK'));
 const role = parseRole(need('MESH_ROLE'));
@@ -155,6 +177,7 @@ const bootstrap = list('MESH_BOOTSTRAP');
 const stateDir = need('MESH_STATE_DIR');
 const upstream = need('MESH_UPSTREAM');
 const stun = parseStun(process.env.MESH_STUN);
+const stunServers = parseStunServers(process.env.MESH_STUN_SERVERS);
 const wss = parseWss(process.env.MESH_WSS, stateDir);
 
 const key = await loadOrCreateNodeKey(keyPath);
@@ -168,6 +191,7 @@ const node = await startMeshNode({
   stateDir,
   upstream,
   ...(stun ? { stun } : {}),
+  ...(stunServers.length > 0 ? { stunServers } : {}),
   ...(wss ? { wss } : {}),
 });
 

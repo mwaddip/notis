@@ -75,15 +75,22 @@ export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, iden
     throw new Error('identities must be an object');
   }
   const announced = Array.isArray(privRow.multiaddrs) ? privRow.multiaddrs : [];
-  // Pick the first announced `/p2p-circuit` address. Its shape is
-  // `<relay-prefix>/p2p/<relay-peer>/p2p-circuit/p2p/<priv-peer>`.
-  const circuit = announced.find((a) => typeof a === 'string' && a.includes('/p2p-circuit'));
+  // MESH_INTERFACE → NAT — pick the WebRTC form of the private
+  // node's announced circuit address. A circuit-relay v2 connection
+  // is limited (relay caps bytes and time), so an application stream
+  // over the raw `/p2p-circuit/p2p/<priv>` is refused by libp2p's
+  // own guard; the browser's path to a private node is a direct
+  // WebRTC connection signalled through the relay — the private
+  // announces `<relay-prefix>/p2p/<relay-peer>/p2p-circuit/webrtc/p2p/<priv>`.
+  const circuit = announced.find((a) =>
+    typeof a === 'string' && a.includes('/p2p-circuit/webrtc/p2p/'),
+  );
   if (circuit === undefined) {
-    throw new Error(`priv ${privRow.notisId}: announces no /p2p-circuit address a browser can reach`);
+    throw new Error(`priv ${privRow.notisId}: announces no /p2p-circuit/webrtc address a browser can reach`);
   }
-  const m = /^(.+)\/p2p\/([^/]+)\/p2p-circuit\/p2p\/([^/]+)$/.exec(circuit);
+  const m = /^(.+)\/p2p\/([^/]+)\/p2p-circuit\/webrtc\/p2p\/([^/]+)$/.exec(circuit);
   if (!m) {
-    throw new Error(`priv ${privRow.notisId}: unexpected /p2p-circuit shape: ${circuit}`);
+    throw new Error(`priv ${privRow.notisId}: unexpected /p2p-circuit/webrtc shape: ${circuit}`);
   }
   const relayPeerIdString = m[2];
   const privPeerIdString = m[3];
@@ -116,8 +123,11 @@ export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, iden
     throw new Error(`relay ${relayPeerIdString}: no /webrtc-direct/certhash/ address a browser can dial`);
   }
   // `relayWebrtc` ends in `/p2p/<relay-peer>`. Compose by appending
-  // `/p2p-circuit/p2p/<priv-peer>`.
-  const relayAnchor = `${relayWebrtc}/p2p-circuit/p2p/${privPeerIdString}`;
+  // `/p2p-circuit/webrtc/p2p/<priv-peer>` so the browser dials the
+  // relay over WebRTC-direct, signals SDP across the limited
+  // relayed stream, and establishes a direct WebRTC connection to
+  // the private.
+  const relayAnchor = `${relayWebrtc}/p2p-circuit/webrtc/p2p/${privPeerIdString}`;
   return {
     network: baseConfig.network,
     anchors: [{ notisId: privRow.notisId, addrs: [relayAnchor] }],

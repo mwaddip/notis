@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS1Node, verdictS1Probe, verdictS1DnsSilent } from '../lib/verdicts.mjs';
 import {
-  execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal,
+  execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal, leafPids,
 } from '../lib/measure.mjs';
 import { writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
@@ -32,14 +32,16 @@ export function describe() {
 export function applyFaults(log, _topology) {
   // MESH_INTERFACE → Acceptance 1 — the probe window pauses
   // `miner-steady` so `/blocks/current` and the proof route do not
-  // move between the bracket and the probe. The dry-run records the
-  // signal pair so a reader sees the fault without running the
-  // stage; exec mode applies them in `run(ctx)` with the live pid.
-  log.records.push(`[fault:${NAME}:miner-steady-pause] kill -STOP <miner-steady-pid>`);
-  log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT <miner-steady-pid>`);
+  // move between the bracket and the probe. The dry-run names the
+  // leaves of the recorded wrapper PID (the inner Node process is
+  // the one SIGSTOP has to reach — sudo does not relay SIGSTOP to
+  // its children); exec mode walks `/proc` down to the leaves at
+  // pause time and signals each. The dry-run uses a placeholder.
+  log.records.push(`[fault:${NAME}:miner-steady-pause] kill -STOP <miner-steady-innermost-pids>`);
+  log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT <miner-steady-innermost-pids>`);
   if (log.dryRun) {
-    process.stdout.write(`[fault:${NAME}:miner-steady-pause] kill -STOP <miner-steady-pid>\n`);
-    process.stdout.write(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT <miner-steady-pid>\n`);
+    process.stdout.write(`[fault:${NAME}:miner-steady-pause] kill -STOP <miner-steady-innermost-pids>\n`);
+    process.stdout.write(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT <miner-steady-innermost-pids>\n`);
   }
 }
 
@@ -113,7 +115,14 @@ export async function run(ctx) {
   // or timed out. The non-probe steps (step 1, step 4) run while the
   // chain still moves.
   const minerEntry = findPid(ctx.pids?.pids, 'miner-steady');
-  let minerPaused = false;
+  // MESH_INTERFACE → Acceptance 1 — the recorded `miner-steady` PID
+  // is the outer `sudo ip netns exec ... sudo -u user -- node ...`
+  // wrapper. sudo does not relay SIGSTOP to its child, so signalling
+  // the recorded PID stops nothing. `leafPids(minerEntry.pid)`
+  // walks /proc down to the leaves (the inner Node process is the
+  // one that runs the miner); each leaf gets SIGSTOP on pause and
+  // SIGCONT on resume.
+  let pausedPids = [];
   try {
     const step1 = await rec.step(describe()[0], async () => {
       const step1Start = Date.now();
@@ -134,9 +143,11 @@ export async function run(ctx) {
     const hostName = anchorNodeId !== null ? hostOfNodeId(identities, anchorNodeId) : null;
     const hostRow = hostName !== null ? identities[hostName] : null;
     if (hostName !== null && hostRow !== null && minerEntry !== null) {
-      const r = signal(minerEntry.pid, 'SIGSTOP');
-      log.records.push(`[fault:${NAME}:miner-steady-pause] kill -STOP ${minerEntry.pid}`);
-      minerPaused = r.sent;
+      pausedPids = leafPids(minerEntry.pid);
+      for (const leaf of pausedPids) {
+        signal(leaf, 'SIGSTOP');
+      }
+      log.records.push(`[fault:${NAME}:miner-steady-pause] kill -STOP ${pausedPids.join(' ')} (leaves of ${minerEntry.pid})`);
     }
     for (const [stepIndex, probePath] of [[1, '/blocks/current'], [2, '/nipopow/proof/24/20']]) {
       if (hostName === null || hostRow === null) {
@@ -187,15 +198,14 @@ export async function run(ctx) {
   } finally {
     // Release the miner whether the probes passed, raised or timed
     // out — a paused miner holds up every other scenario that reads
-    // the chain. The SIGCONT runs even on ESRCH (the miner's own
-    // crash) and the result is logged.
-    if (minerPaused && minerEntry !== null) {
-      try {
-        signal(minerEntry.pid, 'SIGCONT');
-        log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT ${minerEntry.pid}`);
-      } catch (err) {
-        process.stderr.write(`[s1 teardown] SIGCONT ${minerEntry.pid}: ${err?.message ?? err}\n`);
+    // the chain. SIGCONT runs on each leaf we paused; a leaf that
+    // died mid-run reads ESRCH and is a no-op.
+    if (pausedPids.length > 0) {
+      for (const leaf of pausedPids) {
+        try { signal(leaf, 'SIGCONT'); }
+        catch (err) { process.stderr.write(`[s1 teardown] SIGCONT ${leaf}: ${err?.message ?? err}\n`); }
       }
+      log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT ${pausedPids.join(' ')}`);
     }
     log.removeAll();
   }
