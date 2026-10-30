@@ -102,12 +102,16 @@ export async function run(ctx) {
   };
   const findEntry = (state, id) => state?.nodes?.find((n) => n.notisId === id) ?? null;
 
-  // Current state before the scenario — needed for the "moved" measurement.
-  const stateBefore = await pollUntil(
-    checkState,
-    (s) => s !== null && s.nodeId !== null,
-    { timeoutMs: 60_000, pollMs: 500, name: 'initial state' },
+  // Initial state wait: use `cdpPoll` (one target held open across polls)
+  // the same way s1 does, so a slow `cdpEval` cycle does not blow the
+  // deadline before the page's first render lands. The predicate is
+  // identical to s1's "nodeId is non-null".
+  const initialStateJson = await cdpPoll(ctx, browserUrl,
+    "document.getElementById('state')?.textContent ?? null",
+    "if (v === null) return false; try { return JSON.parse(v).nodeId !== null; } catch (_e) { return false; }",
+    60_000, 500,
   );
+  const stateBefore = JSON.parse(initialStateJson);
   const oldNodeId = stateBefore.nodeId;
 
   // Track what we have to roll back on exit, pass or fail.
@@ -153,7 +157,9 @@ export async function run(ctx) {
     // --- Step 2: restart pub1, poll for ok ---
     await rec.step(describe()[1], async () => {
       const t0 = Date.now();
-      const newPid = restartFromEntry(pub1Entry);
+      // `pidsPath` rewrites `pids.json` with the new pid in place of
+      // the old, so `stage:down` signals the live process.
+      const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
       pub1Entry.pid = newPid;
       pub1Stopped = false;
       const afterRestart = await pollUntil(
@@ -231,7 +237,7 @@ export async function run(ctx) {
     // Teardown: if we stopped pub1 and did not restart it, restart now.
     if (pub1Stopped) {
       try {
-        const newPid = restartFromEntry(pub1Entry);
+        const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
         pub1Entry.pid = newPid;
       } catch (err) {
         process.stderr.write(`[s3 teardown] failed to restart ${TARGET_MESH_DESC}: ${err?.message ?? err}\n`);
@@ -266,6 +272,18 @@ async function cdpEval(ctx, url, expression) {
   const buf = execIn('notismesh-browser', argv, {
     user: ctx.invokingUser,
     timeoutMs: 30_000,
+  });
+  return JSON.parse(buf.toString('utf8'));
+}
+
+async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
+  const argv = [
+    ctx.nodeBin, ctx.cdpScript, 'poll', url, expression, predicateBody,
+    String(timeoutMs), String(pollMs),
+  ];
+  const buf = execIn('notismesh-browser', argv, {
+    user: ctx.invokingUser,
+    timeoutMs: timeoutMs + 10_000,
   });
   return JSON.parse(buf.toString('utf8'));
 }

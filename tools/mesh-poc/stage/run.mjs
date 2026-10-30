@@ -101,6 +101,7 @@ async function main(argv) {
         dryRun,
         topology,
         pids,
+        pidsPath: PIDS_PATH,
         invokingUser,
         nodeBin,
         meshMain,

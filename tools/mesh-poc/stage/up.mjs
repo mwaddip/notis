@@ -1019,11 +1019,14 @@ const CHROMIUM_QUIET_FLAGS = [
 ];
 // MESH_INTERFACE → Acceptance — scenario 1: the browser's resolver answers
 // no name. Chromium's own name resolver sees `MAP * ~NOTFOUND` and refuses
-// every host but the one in `EXCLUDE`, so the page (`http://localhost`) is
-// the one URL that resolves and every ICE server or address a client would
-// dial by name fails before touching DNS. The DNS log then holds only what
-// goes around Chromium's resolver — nothing in the clean run.
-const CHROMIUM_HOST_RESOLVER_RULES = '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost';
+// every host but the ones in `EXCLUDE`, so the page (`http://localhost`)
+// resolves, and so does every public IP literal in the stage's internet
+// segment (`EXCLUDE 11.100.0.*`, derived from `topology.internet.subnet`).
+// Chromium's `MAP * ~NOTFOUND` matches an IP-literal host too, so without
+// the subnet EXCLUDE the browser refuses every anchor address with
+// `net::ERR_NAME_NOT_RESOLVED`.
+const internetSubnetPrefix = topology.internet.subnet.replace(/\.0\/\d+$/, '.*');
+const CHROMIUM_HOST_RESOLVER_RULES = `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE ${internetSubnetPrefix}`;
 log.spawn(userWrap(nsOf('browser'), { HOME: browserProfileHome, DISPLAY: process.env.DISPLAY ?? ':0' }, chromiumBin).concat([
   '--headless=new',
   `--user-data-dir=${browserProfileDir}`,

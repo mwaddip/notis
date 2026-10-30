@@ -62,10 +62,14 @@ export function verdictS1Probe(m) {
 // MESH_INTERFACE → Acceptance 1 — "the browser host's DNS log holds no
 // query ... anything there went around the browser's resolver". The
 // clean scenario-1 run leaves `stage/out/dns.log` with no new line and
-// the browser namespace's nft DNS counter unmoved.
-// Measurement: `{ dnsLines: number, nftCounterPackets: number }`.
+// the browser namespace's nft DNS counter unmoved — AND the page did
+// reach a node inside the window: a page that never connected has no
+// DNS traffic vacuously, which is not evidence of the property.
+// Measurement:
+//   `{ dnsLines: number, nftCounterPackets: number, connected: boolean }`.
 export function verdictS1DnsSilent(m) {
   if (missing(m)) return 'skipped';
+  if (m.connected !== true) return 'FAIL';
   if (typeof m.dnsLines !== 'number' || m.dnsLines !== 0) return 'FAIL';
   if (typeof m.nftCounterPackets !== 'number' || m.nftCounterPackets !== 0) return 'FAIL';
   return 'PASS';
@@ -147,14 +151,22 @@ export function verdictS4AllUdpDrop(m) {
 }
 
 // MESH_INTERFACE → The IP certificate — "a renewal replaces the
-// certificate with no request dropped": across one `[wait] renewal` the
-// page's probes keep succeeding and `lastLeft` does not name a failure.
-// Measurement: `{ renewalSeen: boolean, probeSuccessAcrossRenewal: boolean, lastLeftFailure: boolean }`.
+// certificate with no request dropped": across one renewal the page's
+// probes keep succeeding and `lastLeft` does not name a failure. A page
+// that never connected has no `lastLeft` to name a failure (vacuously
+// true), so this verdict requires positive evidence: a node was in use
+// BEFORE the renewal window AND after.
+// Measurement:
+//   `{ renewalSeen: boolean, probeSuccessAcrossRenewal: boolean,
+//      lastLeftFailure: boolean,
+//      connectedBeforeWindow: boolean, connectedAfterWindow: boolean }`.
 export function verdictS4Renewal(m) {
   if (missing(m)) return 'skipped';
   if (m.renewalSeen !== true) return 'FAIL';
   if (m.probeSuccessAcrossRenewal !== true) return 'FAIL';
   if (m.lastLeftFailure !== false) return 'FAIL';
+  if (m.connectedBeforeWindow !== true) return 'FAIL';
+  if (m.connectedAfterWindow !== true) return 'FAIL';
   return 'PASS';
 }
 

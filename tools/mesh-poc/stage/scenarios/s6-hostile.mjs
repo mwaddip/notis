@@ -183,8 +183,10 @@ export async function run(ctx) {
 }
 
 function runFault(log, name, argv) {
+  // `argv` is `[sudo, ip, netns, exec, <ns>, nft, ...sub]`; nftApply
+  // prepends `nft`, so we slice(6) to drop the duplicate.
   log.records.push(`[fault:${NAME}:${name}] ${argv.join(' ')}`);
-  nftApply(argv[4], argv.slice(5));
+  nftApply(argv[4], argv.slice(6));
 }
 
 async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {

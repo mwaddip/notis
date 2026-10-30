@@ -11,7 +11,7 @@
 
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, existsSync, statSync, mkdirSync, openSync, closeSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, openSync, closeSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 /**
@@ -181,8 +181,13 @@ export function sigterm(pid) {
  * as a detached process with its stdout and stderr re-routed to its
  * recorded `logPath`. Returns the new `pid`. Mirrors `CommandLog.spawn`'s
  * exec path, so a scenario's restart matches `up`'s own first spawn.
+ *
+ * MESH_INTERFACE → Acceptance — "Record every restart's PID in pids.json
+ * in place of the old one". When `pidsPath` is given, the matching
+ * entry on disk is rewritten so a later `stage:down` reads the LIVE
+ * pid, not a stale one.
  */
-export function restartFromEntry(entry) {
+export function restartFromEntry(entry, { pidsPath = null } = {}) {
   if (!entry || !Array.isArray(entry.argv) || entry.argv.length === 0) {
     throw new Error(`restartFromEntry: entry has no argv: ${JSON.stringify(entry)}`);
   }
@@ -202,6 +207,24 @@ export function restartFromEntry(entry) {
   });
   child.unref();
   closeSync(fd);
+  const oldPid = entry.pid;
+  entry.pid = child.pid;
+  if (typeof pidsPath === 'string' && pidsPath !== '') {
+    try {
+      const raw = readFileSync(pidsPath, 'utf8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.pids)) {
+        for (const row of data.pids) {
+          if (row.pid === oldPid && row.description === entry.description) {
+            row.pid = child.pid;
+          }
+        }
+        writeFileSync(pidsPath, JSON.stringify(data, null, 2));
+      }
+    } catch (err) {
+      process.stderr.write(`restartFromEntry: pids.json rewrite failed: ${err?.message ?? err}\n`);
+    }
+  }
   return child.pid;
 }
 

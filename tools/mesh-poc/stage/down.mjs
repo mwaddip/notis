@@ -62,16 +62,55 @@ if (namespacesToRemove.length === 0) {
 
 // Step 2: SIGTERM every recorded PID. In dry-run we show which PIDs we would
 // signal; a PID whose process ended on its own is logged but not reported.
+// MESH_INTERFACE → Acceptance — "down waits for each signalled PID to exit
+// (a deadline, then SIGKILL, reported) before it deletes any namespace".
+// A sudo-wrapped process whose child ignores SIGTERM survives otherwise;
+// a surviving process in a deleted namespace is the live-stage trap main
+// hit on bec3efbf (ended it by hand with SIGKILL).
+const SIGNALLED_WAIT_MS = 10_000;
+const SIGNALLED_POLL_MS = 200;
+const signalled = [];
 for (const entry of recorded.pids ?? []) {
   if (typeof entry.pid !== 'number') continue;
   if (dryRun) {
     logShell(`kill -TERM ${entry.pid}  # ${entry.description ?? ''}`);
+    logShell(`wait ≤ ${SIGNALLED_WAIT_MS} ms, then kill -KILL ${entry.pid}  # ${entry.description ?? ''}`);
     continue;
   }
   try {
     process.kill(entry.pid, 'SIGTERM');
+    signalled.push(entry);
   } catch {
     // Already gone — a half-started stage is clean here.
+  }
+}
+
+// Step 2b: wait for each signalled PID to exit; SIGKILL if the deadline
+// passes. `kill(pid, 0)` with EPERM reads as "still alive" (the sudo
+// outer runs as root; this process is the user).
+if (!dryRun) {
+  for (const entry of signalled) {
+    const deadline = Date.now() + SIGNALLED_WAIT_MS;
+    let alive = isAliveFor(entry.pid);
+    while (alive && Date.now() < deadline) {
+      const sleepFor = Math.min(SIGNALLED_POLL_MS, deadline - Date.now());
+      await new Promise((resolve) => setTimeout(resolve, sleepFor));
+      alive = isAliveFor(entry.pid);
+    }
+    if (alive) {
+      process.stderr.write(`stage:down: ${entry.description ?? '<unnamed>'} (pid ${entry.pid}) did not exit on SIGTERM within ${SIGNALLED_WAIT_MS}ms; sending SIGKILL\n`);
+      try { process.kill(entry.pid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+  }
+}
+
+function isAliveFor(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // ESRCH → gone. EPERM → alive but owned by root (sudo outer).
+    return (err?.code ?? '') === 'EPERM';
   }
 }
 

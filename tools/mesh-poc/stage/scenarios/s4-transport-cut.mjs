@@ -110,8 +110,10 @@ export async function run(ctx) {
   const notisTcp = notisTcpCutArgs(ctx.topology);
   const applied = []; // every nft table added so far
   const removeOne = (argv) => {
-    try { nftApply(argv[4], argv.slice(5)); } catch (err) {
-      process.stderr.write(`[s4 teardown] ${argv.slice(5, 10).join(' ')}: ${err?.message ?? err}\n`);
+    // argv is `[sudo, ip, netns, exec, <ns>, nft, delete, ...]`;
+    // nftApply prepends `nft`, so slice(6).
+    try { nftApply(argv[4], argv.slice(6)); } catch (err) {
+      process.stderr.write(`[s4 teardown] ${argv.slice(6, 10).join(' ')}: ${err?.message ?? err}\n`);
     }
   };
   const removeTable = (ns, table) => {
@@ -169,6 +171,19 @@ export async function run(ctx) {
     // --- Step 3: across one renewal, probes keep succeeding ---
     await rec.step(describe()[2], async () => {
       const pebbleSizeBefore = readFileSize(pebbleLog);
+      // MESH_INTERFACE → "no lastLeft names a failure" is PASS only on
+      // positive evidence of a connection before AND after the window.
+      // Read `state.nodeId` at both boundaries; a page that never
+      // connected has null at both and the verdict refuses PASS.
+      let connectedBeforeWindow = false;
+      try {
+        const text0 = await cdpEval(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null");
+        if (typeof text0 === 'string') {
+          const s0 = JSON.parse(text0);
+          connectedBeforeWindow = s0.nodeId !== null && s0.transport === 'wss';
+        }
+      } catch { /* transient; stays false */ }
       let lastLeftFailureSeen = false;
       const probeDeadline = Date.now() + RENEWAL_WINDOW_MS;
       while (Date.now() < probeDeadline) {
@@ -188,6 +203,15 @@ export async function run(ctx) {
         }
         await new Promise((r) => setTimeout(r, 10_000));
       }
+      let connectedAfterWindow = false;
+      try {
+        const textN = await cdpEval(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null");
+        if (typeof textN === 'string') {
+          const sN = JSON.parse(textN);
+          connectedAfterWindow = sN.nodeId !== null && sN.transport === 'wss';
+        }
+      } catch { /* transient; stays false */ }
       const renewalCount = pebbleSizeBefore !== null
         ? countMatchesSince(pebbleLog, pebbleSizeBefore, /Issued certificate|Order (?:valid|finalized)/i)
         : 0;
@@ -195,6 +219,8 @@ export async function run(ctx) {
         renewalSeen: renewalCount > 0,
         probeSuccessAcrossRenewal: !lastLeftFailureSeen,
         lastLeftFailure: lastLeftFailureSeen,
+        connectedBeforeWindow,
+        connectedAfterWindow,
       };
       return { verdict: verdictS4Renewal(m), measurement: m };
     });
@@ -244,8 +270,13 @@ function runFault(log, name, argv) {
   // Record the fault on the log for the summary, and apply it in exec
   // mode. The paired removal is tracked separately through the
   // `applied` list (one `delete table` per table).
+  //
+  // `argv` is `[sudo, ip, netns, exec, <ns>, nft, ...sub]`; `nftApply`
+  // prepends `nft` to its own argv, so we hand it `argv.slice(6)` — the
+  // subcommand only. slice(5) would double the `nft` token and nft
+  // would refuse the ruleset with a syntax error.
   log.records.push(`[fault:${NAME}:${name}] ${argv.join(' ')}`);
-  nftApply(argv[4], argv.slice(5));
+  nftApply(argv[4], argv.slice(6));
 }
 
 async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {

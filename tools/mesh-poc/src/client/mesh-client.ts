@@ -740,12 +740,26 @@ function classifyDialError(e: unknown): FailureKind {
   return 'transport';
 }
 
-function messageOf(e: unknown): string {
+/**
+ * Describe a throwable. An `Error` reads as `name: message`; a DOM
+ * `Event` (no `message`, carries `type`) reads as `Event: <type>`; an
+ * `ErrorEvent` (has `message`) reads its message; anything else goes
+ * through `String()`. Export so scenarios and tests can call it on any
+ * value they catch — a WebSocket's `error` event, say, which `String()`
+ * reads as `[object Event]`.
+ */
+export function messageOf(e: unknown): string {
   if (e === null || e === undefined) return '';
-  const anyE = e as { message?: unknown; name?: unknown };
-  const name = typeof anyE.name === 'string' ? anyE.name : '';
-  const msg = typeof anyE.message === 'string' ? anyE.message : String(e);
-  return name && !msg.startsWith(name) ? `${name}: ${msg}` : msg;
+  if (e instanceof Error) {
+    const name = typeof e.name === 'string' ? e.name : '';
+    const msg = typeof e.message === 'string' ? e.message : '';
+    return name && !msg.startsWith(name) ? `${name}: ${msg}` : msg;
+  }
+  // Event-shaped: has `type`. ErrorEvent-shaped: also has `message`.
+  const anyE = e as { type?: unknown; message?: unknown };
+  if (typeof anyE.message === 'string' && anyE.message !== '') return anyE.message;
+  if (typeof anyE.type === 'string' && anyE.type !== '') return `Event: ${anyE.type}`;
+  return String(e);
 }
 
 function transportOf(ma: string): 'webrtc-direct' | 'webrtc' | 'wss' | null {

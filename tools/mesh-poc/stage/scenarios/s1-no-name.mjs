@@ -135,9 +135,14 @@ export async function run(ctx) {
     await rec.step(describe()[3], async () => {
       const dnsLinesEnd = readLineCount(dnsLogPath);
       const nftCounterEnd = readNftCounterSum('notismesh-browser', 'dns_witness');
+      // MESH_INTERFACE → Acceptance 1 — "no DNS traffic" is PASS only
+      // on positive evidence that the page connected. A page that never
+      // reached a node has no DNS traffic vacuously. `anchorNodeId` is
+      // the nodeId Step 1 found (null if step 1 FAILed).
       const m = {
         dnsLines: dnsLinesEnd - dnsLinesStart,
         nftCounterPackets: nftCounterEnd - nftCounterStart,
+        connected: anchorNodeId !== null,
       };
       return { verdict: verdictS1DnsSilent(m), measurement: m };
     });

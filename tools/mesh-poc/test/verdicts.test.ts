@@ -96,8 +96,8 @@ describe('verdictS1Probe — the mesh answer equals the node\'s direct HTTP answ
 });
 
 describe('verdictS1DnsSilent — no DNS during the scenario', () => {
-  const PASS = { dnsLines: 0, nftCounterPackets: 0 };
-  it('both counters zero → PASS', () => {
+  const PASS = { dnsLines: 0, nftCounterPackets: 0, connected: true };
+  it('both counters zero and the page connected → PASS', () => {
     expect(verdictS1DnsSilent(PASS)).toBe('PASS');
   });
   it('one DNS log line → FAIL', () => {
@@ -105,6 +105,9 @@ describe('verdictS1DnsSilent — no DNS during the scenario', () => {
   });
   it('one nft counter packet → FAIL', () => {
     expect(verdictS1DnsSilent({ ...PASS, nftCounterPackets: 1 })).toBe('FAIL');
+  });
+  it('both counters zero but the page never connected → FAIL (no vacuous PASS)', () => {
+    expect(verdictS1DnsSilent({ dnsLines: 0, nftCounterPackets: 0, connected: false })).toBe('FAIL');
   });
 });
 
@@ -218,8 +221,11 @@ describe('verdictS4AllUdpDrop — UDP to all cut: WSS to pub1, Pebble-issued cer
 });
 
 describe('verdictS4Renewal — across one renewal the probes keep succeeding', () => {
-  const PASS = { renewalSeen: true, probeSuccessAcrossRenewal: true, lastLeftFailure: false };
-  it('renewal + probe success + no failure → PASS', () => {
+  const PASS = {
+    renewalSeen: true, probeSuccessAcrossRenewal: true, lastLeftFailure: false,
+    connectedBeforeWindow: true, connectedAfterWindow: true,
+  };
+  it('renewal + probe success + no failure + connected before/after → PASS', () => {
     expect(verdictS4Renewal(PASS)).toBe('PASS');
   });
   it('no renewal seen → FAIL', () => {
@@ -230,6 +236,12 @@ describe('verdictS4Renewal — across one renewal the probes keep succeeding', (
   });
   it('lastLeft names a failure → FAIL', () => {
     expect(verdictS4Renewal({ ...PASS, lastLeftFailure: true })).toBe('FAIL');
+  });
+  it('page never connected before the window → FAIL (no vacuous PASS)', () => {
+    expect(verdictS4Renewal({ ...PASS, connectedBeforeWindow: false })).toBe('FAIL');
+  });
+  it('page never connected after the window → FAIL (no vacuous PASS)', () => {
+    expect(verdictS4Renewal({ ...PASS, connectedAfterWindow: false })).toBe('FAIL');
   });
 });
 

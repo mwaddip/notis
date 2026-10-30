@@ -185,7 +185,9 @@ export async function run(ctx) {
       try {
         // Give the impostor a moment to release the ports.
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        const newPid = restartFromEntry(pub1Entry);
+        // `pidsPath` rewrites `pids.json` with the new pid in place of
+        // the stale one, so `stage:down` signals the live process.
+        const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
         pub1Entry.pid = newPid;
       } catch (err) {
         process.stderr.write(`[s5 teardown] pub1 restart: ${err?.message ?? err}\n`);

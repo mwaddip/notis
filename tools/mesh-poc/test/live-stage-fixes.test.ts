@@ -12,9 +12,7 @@ import { readTopology } from '../stage/lib/topology.mjs';
 import {
   verdictS1DnsSilent,
   verdictS4Renewal,
-  // @ts-expect-error — .mjs source
 } from '../stage/lib/verdicts.mjs';
-// @ts-expect-error — .mjs source without .d.mts for the client-only helper
 import { messageOf } from '../src/client/mesh-client.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -24,7 +22,7 @@ const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
 const RUN_SCRIPT = join(PACKAGE_ROOT, 'stage', 'run.mjs');
 
 describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct address', () => {
-  it.fails('exec-mode: a public anchor whose realMultiaddrs lack /certhash/ fails fast', () => {
+  it('exec-mode: a public anchor whose realMultiaddrs lack /certhash/ fails fast', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const notisIds: Record<string, string> = {
       pub1: 'a'.repeat(64),
@@ -40,7 +38,7 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
     };
     expect(() => buildPageConfig(topology, notisIds, realMultiaddrs)).toThrow(/certhash/i);
   });
-  it.fails('dry-run output has a /certhash/ placeholder on every /webrtc-direct/ address', () => {
+  it('dry-run output has a /certhash/ placeholder on every /webrtc-direct/ address', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const notisIds: Record<string, string> = {
       pub1: 'a'.repeat(64),
@@ -58,7 +56,7 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
 });
 
 describe('fix 2 — Chromium host-resolver-rules excludes the stage public range', () => {
-  it.fails("stage:up --dry-run's Chromium line carries EXCLUDE for the internet-subnet range", () => {
+  it("stage:up --dry-run's Chromium line carries EXCLUDE for the internet-subnet range", () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], { encoding: 'utf8', timeout: 30_000 });
     expect(res.status).toBe(0);
     const line = res.stdout.split('\n').find((l) => l.startsWith('[spawn:chromium]'));
@@ -72,31 +70,31 @@ describe('fix 2 — Chromium host-resolver-rules excludes the stage public range
 });
 
 describe('fix 3 — messageOf describes an Event (not "[object Event]")', () => {
-  it.fails('a DOM Event reads as `Event: <type>`', () => {
+  it('a DOM Event reads as `Event: <type>`', () => {
     // happy-dom provides globalThis.Event in test env, but we build a plain
     // Event-shaped object so the test does not depend on an environment.
     const ev = { type: 'error', bubbles: false };
     expect(messageOf(ev)).toContain('error');
     expect(messageOf(ev)).not.toContain('[object Event]');
   });
-  it.fails('an ErrorEvent reads its `message` field', () => {
+  it('an ErrorEvent reads its `message` field', () => {
     const ev = { type: 'error', message: 'WebSocket closed before the handshake' };
     expect(messageOf(ev)).toContain('WebSocket closed before the handshake');
   });
-  it.fails('an Error reads name + message as before', () => {
+  it('an Error reads name + message as before', () => {
     const e = new TypeError('bad arg');
     const m = messageOf(e);
     expect(m).toContain('TypeError');
     expect(m).toContain('bad arg');
   });
-  it.fails('null / undefined read as empty string', () => {
+  it('null / undefined read as empty string', () => {
     expect(messageOf(null)).toBe('');
     expect(messageOf(undefined)).toBe('');
   });
 });
 
 describe('fix 4 — faults are single `nft`, not doubled, and pass unshare -rn nft -c', () => {
-  it.fails('scenarios do not call nftApply with an argv slice that still carries the "nft" token', () => {
+  it('scenarios do not call nftApply with an argv slice that still carries the "nft" token', () => {
     // The exec-mode bug main saw: `nftApply(ns, argvThatStartsWithNft)` ran
     // `sudo ip netns exec <ns> nft nft add ...`, which nft refused as a
     // syntax error. The fix: scenarios slice past the `nft` token
@@ -154,7 +152,7 @@ describe('fix 4 — faults are single `nft`, not doubled, and pass unshare -rn n
 });
 
 describe('fix 5 — vacuous PASS: a verdict is PASS only on positive evidence', () => {
-  it.fails("verdictS1DnsSilent: no DNS and no counter movement is NOT PASS unless the page connected", () => {
+  it("verdictS1DnsSilent: no DNS and no counter movement is NOT PASS unless the page connected", () => {
     // The brief: "s1's DNS step: only when the page reached a node inside
     // the window, else `skipped`". But a verdict given a measurement
     // without a `connected` field must not read PASS — require positive
@@ -164,7 +162,7 @@ describe('fix 5 — vacuous PASS: a verdict is PASS only on positive evidence', 
     const positive = { dnsLines: 0, nftCounterPackets: 0, connected: true };
     expect(verdictS1DnsSilent(positive), 'positive evidence → PASS').toBe('PASS');
   });
-  it.fails("verdictS4Renewal: 'no lastLeft names a failure' is NOT PASS when the page never connected", () => {
+  it("verdictS4Renewal: 'no lastLeft names a failure' is NOT PASS when the page never connected", () => {
     // Vacuous: a page that never connected has no lastLeft to name a
     // failure, so probeSuccessAcrossRenewal reads true. The verdict must
     // see positive evidence of connection across the window.
@@ -182,7 +180,7 @@ describe('fix 5 — vacuous PASS: a verdict is PASS only on positive evidence', 
 });
 
 describe('fix 6 — restart writes new pid to pids.json; down waits for signalled pids', () => {
-  it.fails('restartFromEntry rewrites pids.json entry when a pidsPath is supplied', async () => {
+  it('restartFromEntry rewrites pids.json entry when a pidsPath is supplied', async () => {
     const { mkdtempSync, writeFileSync, readFileSync: rfs, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { restartFromEntry } = await import('../stage/lib/measure.mjs');
@@ -209,9 +207,9 @@ describe('fix 6 — restart writes new pid to pids.json; down waits for signalle
       void tmpdir;
     }
   });
-  it.fails("down.mjs's dry-run names a wait-and-SIGKILL path for each PID", async () => {
+  it("down.mjs's dry-run names a wait-and-SIGKILL path for each PID", async () => {
     const DOWN_SCRIPT = join(PACKAGE_ROOT, 'stage', 'down.mjs');
-    const { mkdtempSync, writeFileSync, rmSync, mkdirSync } = await import('node:fs');
+    const { mkdtempSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const dir = mkdtempSync(join(tmpdir(), 'mesh-fix6-down-'));
     try {
@@ -221,7 +219,9 @@ describe('fix 6 — restart writes new pid to pids.json; down waits for signalle
       // CODE path exists by grepping down.mjs for the SIGKILL fallback.
       const src = readFileSync(DOWN_SCRIPT, 'utf8');
       expect(src, 'down.mjs waits for a PID with SIGKILL fallback').toMatch(/SIGKILL/);
-      expect(src, 'down.mjs waits for a signalled PID to exit').toMatch(/exit.*(?:wait|poll)|waitFor|isProcessAlive/);
+      // The wait loop reads a PID's status before signalling it again;
+      // isAliveFor (or similar) exists.
+      expect(src, 'down.mjs waits for a signalled PID to exit').toMatch(/isAliveFor|process\.kill\(.*,\s*0\s*\)/);
       void outDir;
     } finally {
       rmSync(dir, { recursive: true, force: true });

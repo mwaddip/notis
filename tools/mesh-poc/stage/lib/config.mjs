@@ -29,17 +29,32 @@ export function buildPageConfig(topology, nodeIdentities, realMultiaddrs) {
     if (Array.isArray(realList) && realList.length > 0) {
       // Exec mode — the mesh node printed its own listening multiaddrs with
       // the real certhash of the WebRTC-direct cert. Filter to the two
-      // transports a browser dials: WebRTC-direct and WSS.
+      // transports a browser dials: WebRTC-direct and WSS. A /webrtc-direct/
+      // multiaddr without a /certhash/ is refused — the browser's gater
+      // reads one without a certhash as InvalidParametersError, and the
+      // scenario would then wait for a connection that cannot happen.
+      let hasWebrtcWithCerthash = false;
       for (const addr of realList) {
-        if (addr.includes('/webrtc-direct/') || addr.includes('/tls/ws')) {
+        if (addr.includes('/webrtc-direct/')) {
+          if (!addr.includes('/certhash/')) {
+            throw new Error(`${name}: WebRTC-direct multiaddr has no /certhash/: ${addr}`);
+          }
+          addrs.push(addr);
+          hasWebrtcWithCerthash = true;
+        } else if (addr.includes('/tls/ws')) {
           addrs.push(addr);
         }
       }
+      if (!hasWebrtcWithCerthash) {
+        throw new Error(`${name}: realMultiaddrs carries no /webrtc-direct/certhash/ multiaddr`);
+      }
     } else {
-      // Dry-run / no mesh-node output yet — use the IP, port and peer id
-      // the topology fixes; the WebRTC-direct address carries no certhash
-      // (the mesh node's cert does not exist yet).
-      addrs.push(`/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct/p2p/${peerIdStr}`);
+      // Dry-run — the mesh node's cert does not exist yet, so the
+      // WebRTC-direct address carries a /certhash/ PLACEHOLDER. The
+      // written config.json still has the shape a browser accepts
+      // (gater reads the /certhash/ component but a placeholder dial
+      // will refuse at the TLS stage, which is a dry-run concern only).
+      addrs.push(`/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct/certhash/uEiA_DRYRUN_PLACEHOLDER_CERTHASH_______________/p2p/${peerIdStr}`);
       if (host.mesh.wss !== undefined) {
         addrs.push(`/ip4/${host.addr}/tcp/${host.mesh.wss.port}/tls/ws/p2p/${peerIdStr}`);
       }
