@@ -79,14 +79,19 @@ export class CommandLog {
     mkdirSync(dirname(logPath), { recursive: true });
     // `openSync(path, 'w')` truncates on open; the child's stdout and
     // stderr both write into this one fd (interleaved — ok for a log).
-    // The parent's copy is closed after spawn so a reader that opens the
-    // file for reading sees the child's writes.
+    // The parent's copy is closed after spawn so a reader that opens
+    // the file for reading sees the child's writes. `detached: true`
+    // starts the child in its own process group; `child.unref()` drops
+    // it from the parent's reference count, so `up` returns right after
+    // its last line and `down` reads `pids.json` to find the children.
     const fd = openSync(logPath, 'w');
     const child = nodeSpawn(name, argv, {
       env: { ...process.env, ...env },
       ...(cwd !== undefined ? { cwd } : {}),
       stdio: ['ignore', fd, fd],
+      detached: true,
     });
+    child.unref();
     closeSync(fd);
     this.pids.push({ pid: child.pid, description, logPath });
     return child;

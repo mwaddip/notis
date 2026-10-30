@@ -64,6 +64,12 @@ export function renewalStep(
 }
 
 const ACCOUNT_KEY_FILE = 'account.key';
+// The ACME account URL is persisted beside the account key: `createAccount`
+// on an existing key sends an empty account update (RFC 8555 §7.3) which
+// servers refuse with `Use POST-as-GET to retrieve account data instead of
+// doing an empty update`. On a later `obtain()` the client is constructed
+// with `accountUrl` set to this file's content and `createAccount` is skipped.
+const ACCOUNT_URL_FILE = 'account-url.txt';
 // The certificate and its key share one atomic file: a crash between two
 // separate writes would leave a pair that does not match, and the next
 // start would read a certPem belonging to a vanished keyPem (or the
@@ -123,15 +129,32 @@ export function acmeSource(o: {
         });
       }
 
+      // Load the persisted account URL, if any. acme-client's
+      // `createAccount` on an existing key sends an empty update that
+      // RFC 8555 servers refuse; constructing the client with
+      // `accountUrl` skips that step and uses the existing account.
+      let accountUrl: string | null = null;
+      try {
+        accountUrl = (await readFile(join(acmeDir, ACCOUNT_URL_FILE), 'utf8')).trim();
+        if (accountUrl === '') accountUrl = null;
+      } catch (err) {
+        if ((err as { code?: string }).code !== 'ENOENT') throw err;
+      }
+
       const client = new acme.Client({
         directoryUrl: o.directoryUrl,
         accountKey: accountKeyPem,
+        ...(accountUrl !== null ? { accountUrl } : {}),
       });
 
-      // `createAccount` is idempotent on `acme-client`: a known account key
-      // returns the existing account URL. `termsOfServiceAgreed: true` is
-      // required by RFC 8555 §7.3 and is standard for ACME v2.
-      await client.createAccount({ termsOfServiceAgreed: true });
+      if (accountUrl === null) {
+        // `termsOfServiceAgreed: true` is required by RFC 8555 §7.3 and
+        // is standard for ACME v2. The first `obtain()` registers the
+        // account and the URL goes beside the key for later runs.
+        await client.createAccount({ termsOfServiceAgreed: true });
+        const url = client.getAccountUrl();
+        await writeFile(join(acmeDir, ACCOUNT_URL_FILE), url + '\n', { mode: 0o600 });
+      }
 
       // `acme-client` passes the payload through to the ACME `newOrder`
       // POST verbatim; the `ip` identifier type (RFC 8738) and the ACME

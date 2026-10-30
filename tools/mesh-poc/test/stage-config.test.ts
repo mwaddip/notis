@@ -247,9 +247,11 @@ describe('stage up --dry-run', () => {
   // `notismesh-pub1`.
   it('the miner spawn runs inside notismesh-pub1', () => {
     runDryOnce();
-    const minerLine = out.split('\n').find((l) => l.startsWith('[spawn:miner]'));
-    expect(minerLine, 'miner spawn is present').toBeDefined();
-    expect(minerLine).toContain('ip netns exec notismesh-pub1');
+    const minerLines = out.split('\n').filter((l) => l.startsWith('[spawn:miner'));
+    expect(minerLines.length, 'at least one miner spawn is present').toBeGreaterThan(0);
+    for (const minerLine of minerLines) {
+      expect(minerLine, `miner inside pub1 namespace: ${minerLine}`).toContain('ip netns exec notismesh-pub1');
+    }
   }, 30_000);
 
   // MESH_INTERFACE → Acceptance — pub1 binds 443 and 80, dns-log binds 53,
@@ -334,7 +336,7 @@ describe('stage up --dry-run', () => {
   // scenario 1 measures the PAGE's DNS traffic, so the browser's own
   // background networking is off. The flags are listed in Chromium's
   // `--help` on this build (ms-playwright chromium-1228, Chromium ≥ 139).
-  it.fails('Chromium is launched with background networking disabled', () => {
+  it('Chromium is launched with background networking disabled', () => {
     runDryOnce();
     const line = out.split('\n').find((l) => l.startsWith('[spawn:chromium]'));
     expect(line, 'chromium spawn is in the dry-run').toBeDefined();
@@ -363,7 +365,7 @@ describe('stage up --dry-run', () => {
   // height wait, the miner is restarted at a gentle duty so the chain
   // keeps growing for `hostile-lagging` to fall behind of but does not
   // starve the host.
-  it.fails('the miner is restarted at a gentle duty after the height wait', () => {
+  it('the miner is restarted at a gentle duty after the height wait', () => {
     runDryOnce();
     const lines = out.split('\n');
     const bootIdx = lines.findIndex((l) => l.startsWith('[spawn:miner') && /MINER_PCT=100\b/.test(l));

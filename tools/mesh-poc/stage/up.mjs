@@ -764,11 +764,15 @@ if (!dryRun) {
 
 // MESH_INTERFACE → Acceptance — the miner reads `pub1`'s HTTP; pub1's HTTP
 // binds pub1's namespace loopback, so the miner runs inside notismesh-pub1.
-log.spawn(userWrap(nsOf('pub1'), {
+// `MINER_PCT=100` while the chain reaches height 50; after the height
+// wait the boot miner is replaced by a `miner-steady` at
+// `MINER_PCT=10`, which keeps the chain growing so `hostile-lagging`
+// falls further behind without burning a core for the whole run.
+const minerBootChild = log.spawn(userWrap(nsOf('pub1'), {
   NODE_URL: `http://127.0.0.1:${pub1Host.node.httpPort}`,
   MINING_SECRET: 'stage-mining-secret',
   MINER_PCT: '100',
-}).concat([minerScript]), { description: 'miner', logPath: logPathFor('miner') });
+}).concat([minerScript]), { description: 'miner-boot', logPath: logPathFor('miner-boot') });
 
 const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2'];
 recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
@@ -800,6 +804,25 @@ if (!dryRun) {
     });
   }));
 }
+
+// MESH_INTERFACE → Acceptance — stop the 100 %-duty boot miner and
+// restart at `MINER_PCT=10`, chosen so the chain still grows at ~1
+// block per 10 s on this devnet (the miner script's duty cycle is a
+// percentage of CPU time, so 10 % keeps roughly one block in flight
+// per 10 s on a single core). A seven-hour run at that duty uses
+// ~0.1 cores on average rather than one full core.
+if (!dryRun && minerBootChild !== null) {
+  try { process.kill(minerBootChild.pid, 'SIGTERM'); } catch { /* already gone */ }
+  // Drop the boot miner's pid from the recorded list so `down` does
+  // not try to signal it a second time.
+  const idx = log.pids.findIndex((e) => e.description === 'miner-boot');
+  if (idx >= 0) log.pids.splice(idx, 1);
+}
+log.spawn(userWrap(nsOf('pub1'), {
+  NODE_URL: `http://127.0.0.1:${pub1Host.node.httpPort}`,
+  MINING_SECRET: 'stage-mining-secret',
+  MINER_PCT: '10',
+}).concat([minerScript]), { description: 'miner-steady', logPath: logPathFor('miner-steady') });
 
 // MESH_INTERFACE → The client's node list — `hostile-lagging`'s mesh node
 // stays up and reachable; only its Notis node is cut off from the other
@@ -910,14 +933,30 @@ if (!dryRun) {
   );
 }
 
-// Chromium under the throwaway profile. `HOME` points to the browser host's
-// private directory so Chromium reads the NSS db we populated above; no
-// flag, no system store — the root is scoped to this launch.
+// Chromium under the throwaway profile. `HOME` points to the browser
+// host's private directory so Chromium reads the NSS db we populated
+// above; no flag, no system store — the root is scoped to this launch.
+//
+// Background-networking flags silence Chromium's housekeeping (sync,
+// safebrowsing, component updates, metrics, translate, media routing,
+// optimization hints) so scenario 1's DNS witness measures the PAGE
+// alone and not the browser. Every flag is listed in Chromium's
+// `--help` on this build (ms-playwright chromium-1228, Chromium ≥
+// 139); `--disable-features` names three features Chromium otherwise
+// resolves names for.
 log.spawn(userWrap(nsOf('browser'), { HOME: browserProfileHome, DISPLAY: process.env.DISPLAY ?? ':0' }, chromiumBin).concat([
   '--headless=new',
   `--user-data-dir=${browserProfileDir}`,
   '--no-first-run',
   '--no-default-browser-check',
+  '--disable-background-networking',
+  '--disable-component-update',
+  '--disable-sync',
+  '--disable-default-apps',
+  '--disable-client-side-phishing-detection',
+  '--disable-domain-reliability',
+  '--metrics-recording-only',
+  '--disable-features=OptimizationHints,MediaRouter,Translate',
   '--remote-debugging-port=9222',
   `http://localhost:${browserHost.httpPort}/`,
 ]), { description: 'chromium', logPath: logPathFor('chromium') });
