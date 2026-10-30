@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS1Node, verdictS1Probe, verdictS1DnsSilent, verdictIceServers } from '../lib/verdicts.mjs';
 import {
-  execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal, leafPids,
+  execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal, leafPids, descendantPids,
 } from '../lib/measure.mjs';
 import { writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
@@ -216,14 +216,20 @@ export async function run(ctx) {
   } finally {
     // Release the miner whether the probes passed, raised or timed
     // out — a paused miner holds up every other scenario that reads
-    // the chain. SIGCONT runs on each leaf we paused; a leaf that
-    // died mid-run reads ESRCH and is a no-op.
-    if (pausedPids.length > 0) {
-      for (const leaf of pausedPids) {
-        try { signal(leaf, 'SIGCONT'); }
-        catch (err) { process.stderr.write(`[s1 teardown] SIGCONT ${leaf}: ${err?.message ?? err}\n`); }
+    // the chain. SIGSTOP on a leaf makes `sudo -u`'s job-control
+    // relay suspend the wrapper too (sudo's tcsetpgrp wait path), so
+    // SIGCONT on the leaf alone leaves the wrapper `T` and the
+    // stage's `down` cannot pass SIGTERM through it. The resume
+    // sends SIGCONT to the whole tree: the recorded pid and every
+    // descendant, wrappers included. A pid that died mid-run reads
+    // ESRCH and is a no-op.
+    if (pausedPids.length > 0 && minerEntry !== null) {
+      const treePids = [minerEntry.pid, ...descendantPids(minerEntry.pid)];
+      for (const pid of treePids) {
+        try { signal(pid, 'SIGCONT'); }
+        catch (err) { process.stderr.write(`[s1 teardown] SIGCONT ${pid}: ${err?.message ?? err}\n`); }
       }
-      log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT ${pausedPids.join(' ')}`);
+      log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT ${treePids.join(' ')} (tree of ${minerEntry.pid})`);
     }
     log.removeAll();
   }

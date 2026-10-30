@@ -1152,7 +1152,7 @@ describe('s1 resumes the miner\'s whole tree with SIGCONT, wrappers included', (
     return { pub1: { notisId: anchorNotisId, httpPort: 3100 } };
   }
 
-  it.fails('SIGCONT reaches the recorded pid and every descendant on resume, not the leaf alone', async () => {
+  it('SIGCONT reaches the recorded pid and every descendant on resume, not the leaf alone', async () => {
     execInMock.reset();
     measureMock.reset();
     measureMock.setFindPid({ pid: 100, description: 'miner-steady' });
@@ -1216,7 +1216,7 @@ describe('s1 resumes the miner\'s whole tree with SIGCONT, wrappers included', (
       'with no leaves there is nothing to pause, so no SIGCONT either').toBe(0);
   });
 
-  it.fails('MUTATION: when leafPids and descendantPids disagree, SIGCONT still reaches every leaf that got SIGSTOP', async () => {
+  it('MUTATION: when leafPids and descendantPids disagree, SIGCONT still reaches every leaf that got SIGSTOP', async () => {
     execInMock.reset();
     measureMock.reset();
     measureMock.setFindPid({ pid: 100, description: 'miner-steady' });
@@ -1276,7 +1276,7 @@ describe('stage:down --dry-run prints CONT/TERM/KILL per tree and ip netns pids 
     writeFileSync(join(outDir, 'pids.json'), JSON.stringify(obj));
   }
 
-  it.fails('prints kill -CONT then kill -TERM then kill -KILL on the recorded tree for each pid', () => {
+  it('prints kill -CONT then kill -TERM then kill -KILL on the recorded tree for each pid', () => {
     const outDir = mkdtempSync(join(tmpdir(), 'mesh-down-'));
     try {
       writePidsJson(outDir, {
@@ -1300,7 +1300,7 @@ describe('stage:down --dry-run prints CONT/TERM/KILL per tree and ip netns pids 
     }
   });
 
-  it.fails('prints ip netns pids <ns> before every ip netns delete <ns>', () => {
+  it('prints ip netns pids <ns> before every ip netns delete <ns>', () => {
     const outDir = mkdtempSync(join(tmpdir(), 'mesh-down-'));
     try {
       writePidsJson(outDir, {
@@ -1326,7 +1326,7 @@ describe('stage:down --dry-run prints CONT/TERM/KILL per tree and ip netns pids 
     }
   });
 
-  it.fails('MUTATION: a second recorded pid gets its own CONT/TERM/KILL on its own tree', () => {
+  it('MUTATION: a second recorded pid gets its own CONT/TERM/KILL on its own tree', () => {
     const outDir = mkdtempSync(join(tmpdir(), 'mesh-down-'));
     try {
       writePidsJson(outDir, {

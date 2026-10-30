@@ -30,6 +30,7 @@ import { readTopology, natRouters, publicMeshHosts } from './lib/topology.mjs';
 import { buildPageConfig, peerIdStringOf } from './lib/config.mjs';
 import { generateStageCerts } from './lib/pebble-certs.mjs';
 import { buildPebbleConfig } from './lib/pebble-config.mjs';
+import { descendantPids } from './lib/measure.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -376,13 +377,29 @@ function teardown(cause) {
     return;
   }
   process.stdout.write('[teardown] rolling back what up created\n');
-  // 1) Kill every recorded PID (SIGTERM).
+  // 1) End every recorded tree. SIGSTOP on a leaf makes `sudo -u`'s
+  //    job-control relay suspend the wrapper too (sudo's tcsetpgrp
+  //    wait path), so SIGTERM on the recorded outer pid alone cannot
+  //    pass through a stopped wrapper. CONT first (so a stopped
+  //    wrapper relays the next signal), then TERM to the whole tree,
+  //    and KILL deepest-first so no descendant survives its wrapper.
   for (const entry of log.pids) {
-    const killLine = `kill -TERM ${entry.pid}  # ${entry.description}`;
-    log.records.push(killLine);
+    const tree = [entry.pid, ...descendantPids(entry.pid)];
+    const deepestFirst = [...tree].reverse();
+    const contLine = `kill -CONT ${tree.join(' ')}  # ${entry.description} (tree of ${entry.pid})`;
+    const termLine = `kill -TERM ${tree.join(' ')}  # ${entry.description} (tree of ${entry.pid})`;
+    const killLine = `kill -KILL ${deepestFirst.join(' ')}  # ${entry.description} (deepest-first)`;
+    log.records.push(contLine, termLine, killLine);
+    process.stdout.write(contLine + '\n');
+    process.stdout.write(termLine + '\n');
     process.stdout.write(killLine + '\n');
     if (!dryRun) {
-      try { process.kill(entry.pid, 'SIGTERM'); } catch { /* already gone */ }
+      for (const pid of tree) { try { process.kill(pid, 'SIGCONT'); } catch { /* already gone */ } }
+      for (const pid of tree) { try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ } }
+      // Teardown runs on `up`'s error path; it does not wait on
+      // children — `down` is the gate that polls. Deepest-first
+      // SIGKILL is sent at once so no descendant survives.
+      for (const pid of deepestFirst) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
     }
   }
   // 2) Delete every namespace up created, in reverse order.
