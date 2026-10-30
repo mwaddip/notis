@@ -287,7 +287,7 @@ describe('stage up --dry-run', () => {
   // the public mesh node's notisId. The previous commit's mesh nodes all
   // died with `bootstrap address refused: /ip4/10.100.0.11/tcp/9100 has
   // no /p2p/ component`.
-  it.fails('every mesh spawn\'s MESH_BOOTSTRAP names a mesh port with a /p2p/ id, not the Notis p2p port', () => {
+  it('every mesh spawn\'s MESH_BOOTSTRAP names a mesh port with a /p2p/ id, not the Notis p2p port', () => {
     runDryOnce();
     const meshSpawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
     expect(meshSpawnLines.length, 'at least one mesh spawn').toBeGreaterThan(0);
@@ -308,7 +308,7 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance — identity waits run before the height
   // wait so a mesh crash fails `up` at once; the previous commit waited
   // for identities only in Phase 9, after the 10-minute height wait.
-  it.fails('each public mesh node\'s identity wait appears before the height wait', () => {
+  it('each public mesh node\'s identity wait appears before the height wait', () => {
     runDryOnce();
     const lines = out.split('\n');
     const identityIdx = lines.findIndex((l) => l.startsWith('[wait] each public mesh node prints its identity line'));

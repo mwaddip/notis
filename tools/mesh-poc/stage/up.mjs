@@ -27,8 +27,9 @@ import { fileURLToPath } from 'node:url';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { CommandLog } from './lib/commands.mjs';
 import { readTopology, natRouters, publicMeshHosts } from './lib/topology.mjs';
-import { buildPageConfig } from './lib/config.mjs';
+import { buildPageConfig, peerIdStringOf } from './lib/config.mjs';
 import { generateStageCerts } from './lib/pebble-certs.mjs';
+import { buildPebbleConfig } from './lib/pebble-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -191,9 +192,15 @@ async function waitWithTail(description, check, logPath, options) {
  * Read the first JSON line from `logPath` whose parse carries a `notisId`
  * field. The mesh node writes exactly that line to stdout when it is
  * ready to serve; its stdout goes to this file through an fd `openSync`
- * gave to the spawn. Resolves with the parsed line; rejects on timeout.
+ * gave to the spawn. The caller passes the child so this helper can
+ * fail fast when the mesh node exits before writing the line.
  */
-async function readFirstMeshIdentity(logPath, { timeoutMs }) {
+async function readFirstMeshIdentity(child, logPath, { timeoutMs }) {
+  let exited = false;
+  let exitCode = null;
+  if (child !== null) {
+    child.once('exit', (code) => { exited = true; exitCode = code; });
+  }
   const start = Date.now();
   let offset = 0;
   let buf = '';
@@ -221,6 +228,9 @@ async function readFirstMeshIdentity(logPath, { timeoutMs }) {
       } finally {
         closeSync(fd);
       }
+    }
+    if (exited) {
+      throw new Error(`mesh process exited (code ${exitCode}) before printing its identity line`);
     }
     await sleep(100);
   }
@@ -550,7 +560,6 @@ if (pebbleHost) {
 
 const pebbleConfigPath = join(OUT_DIR, 'pebble-config.json');
 const pebbleRootPath = join(OUT_DIR, 'pebble-root.pem');
-const pebbleTrustBundlePath = join(OUT_DIR, 'pebble-trust-bundle.pem');
 const stageCaPath = join(OUT_DIR, 'stage-ca.pem');
 const stageCaKeyPath = join(OUT_DIR, 'stage-ca-key.pem');
 const pebbleServerCertPath = join(OUT_DIR, 'pebble-server-cert.pem');
@@ -573,21 +582,21 @@ if (pebbleHost) {
   }
 
   if (!dryRun) {
-    writeFileSync(pebbleConfigPath, JSON.stringify({
-      pebble: {
-        listenAddress: `${pebbleHost.addr}:${pebbleListenPort}`,
-        managementListenAddress: `${pebbleHost.addr}:${pebbleManagementPort}`,
-        httpPort: pebbleHost.pebble.httpChallengePort,
-        tlsPort: 5001,
-        ocspResponderURL: '',
-        certificate: pebbleServerCertPath,
-        privateKey: pebbleServerKeyPath,
-        profile: 'shortlived',
-      },
-    }, null, 2));
+    writeFileSync(pebbleConfigPath, JSON.stringify(buildPebbleConfig({
+      listenAddress: `${pebbleHost.addr}:${pebbleListenPort}`,
+      managementListenAddress: `${pebbleHost.addr}:${pebbleManagementPort}`,
+      httpChallengePort: pebbleHost.pebble.httpChallengePort,
+      certificatePath: pebbleServerCertPath,
+      privateKeyPath: pebbleServerKeyPath,
+    }), null, 2));
   }
 
-  log.spawn(userWrap(nsOf('pebble'), { PEBBLE_VA_NOSLEEP: '1' }, pebbleBin).concat(['-config', pebbleConfigPath]), { description: 'pebble', logPath: logPathFor('pebble') });
+  // PEBBLE_WFE_NONCEREJECT=0 turns off Pebble's 5 % random nonce
+  // rejection. acme-client v5 retries badNonce per RFC 8555 §6.5, so
+  // the rejection does not break correctness, but switching it off
+  // keeps the stage deterministic — a cert issuance either succeeds or
+  // fails for a reason the test can act on.
+  log.spawn(userWrap(nsOf('pebble'), { PEBBLE_VA_NOSLEEP: '1', PEBBLE_WFE_NONCEREJECT: '0' }, pebbleBin).concat(['-config', pebbleConfigPath]), { description: 'pebble', logPath: logPathFor('pebble') });
   recordWait(`pebble answers https://${pebbleHost.addr}:${pebbleListenPort}/dir`);
   if (!dryRun) {
     await waitWithTail(
@@ -672,31 +681,54 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     } else {
       continue;
     }
+    // MESH_INTERFACE → Discovery / Transports — a mesh node bootstraps
+    // from OTHER public mesh nodes' TCP addresses, each named with its
+    // `/p2p/<peer id>` derived from the key file created in Phase 4. A
+    // public mesh node skips itself in its own bootstrap list; the
+    // previous commit's `MESH_BOOTSTRAP` named the Notis p2p port and
+    // every mesh node died at start with `bootstrap address refused:
+    // ... has no /p2p/ component`.
+    const bootstrapAddrs = [];
+    for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {
+      if (pubName === name) continue;
+      const pubPeerId = peerIdStringOf(notisIds[pubName]);
+      bootstrapAddrs.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}`);
+    }
     const meshEnv = {
       MESH_KEY_PATH: meshKeyPath,
       MESH_NETWORK: 'devnet',
       MESH_ROLE: host.mesh.role,
       MESH_STATE_DIR: meshStateDir,
       MESH_UPSTREAM: upstream,
+      // Public mesh nodes listen on WebRTC-direct and TCP; the TCP
+      // address is what other mesh nodes bootstrap through.
       MESH_LISTEN: host.mesh.role === 'public'
-        ? `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct`
+        ? `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct,/ip4/${host.addr}/tcp/${host.mesh.tcpPort}`
         : '/ip4/127.0.0.1/udp/0/webrtc-direct',
-      MESH_BOOTSTRAP: `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}`,
+      MESH_BOOTSTRAP: bootstrapAddrs.join(','),
       ...(host.mesh.stunPort !== undefined ? { MESH_STUN: `${host.addr}:${host.mesh.stunPort}` } : {}),
       ...(host.mesh.wss !== undefined ? {
         MESH_WSS: `${host.addr}:${host.mesh.wss.port}`,
         MESH_ACME_DIRECTORY: `https://${pebbleHost.addr}:${pebbleListenPort}/dir`,
         MESH_ACME_CHALLENGE_PORT: String(host.mesh.wss.acmeChallengePort),
-        NODE_EXTRA_CA_CERTS: pebbleTrustBundlePath,
+        // MESH_INTERFACE → The IP certificate — pub1 trusts the stage
+        // CA alone through its node TLS store: pub1's ACME HTTPS to
+        // Pebble verifies against the CA that signed Pebble's TLS. The
+        // Pebble issuing root is the browser's business (installed in
+        // its NSS db), not pub1's.
+        NODE_EXTRA_CA_CERTS: stageCaPath,
       } : {}),
     };
     const meshLogPath = logPathFor(`mesh:${name}`);
-    log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}`, logPath: meshLogPath });
-    if (!dryRun && host.mesh.role === 'public') {
+    const meshChild = log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}`, logPath: meshLogPath });
+    if (!dryRun) {
       // The mesh node's stdout is a file; tail it until the first JSON
-      // identity line lands. A pipe-based reader would have blocked at
-      // 64 KB once the mesh node started logging in earnest.
-      meshIdentityPromises[name] = readFirstMeshIdentity(meshLogPath, { timeoutMs: 60_000 })
+      // identity line lands. The reader also watches the child's exit
+      // event: a mesh node that dies before printing fails the stage
+      // at once, with the log tail named. Every mesh node (public and
+      // private) is awaited so a crash in any one surfaces here, not
+      // ten minutes later at the height wait.
+      meshIdentityPromises[name] = readFirstMeshIdentity(meshChild, meshLogPath, { timeoutMs: 60_000 })
         .catch((err) => {
           const tail = tailLog(meshLogPath, 20);
           const body = tail === '' ? '<no output>' : tail;
@@ -704,6 +736,26 @@ for (const [name, host] of Object.entries(topology.hosts)) {
         });
     }
   }
+}
+
+// MESH_INTERFACE → Acceptance — fail fast on a dead mesh node. The
+// identity promises are awaited HERE, before the miner and the
+// 10-minute height wait, so a crash shows up in seconds. Each promise
+// carries the log tail; Promise.all rejects on the first failure.
+recordWait('each public mesh node prints its identity line (notisId, peerId, multiaddrs with /certhash/)');
+let meshIdentities = {};
+if (!dryRun) {
+  const settled = await Promise.allSettled(
+    Object.entries(meshIdentityPromises).map(async ([name, p]) => {
+      const identity = await p;
+      return [name, identity];
+    }),
+  );
+  const failures = settled.filter((s) => s.status === 'rejected');
+  if (failures.length > 0) {
+    throw new Error(failures.map((f) => f.reason?.message ?? String(f.reason)).join('\n\n'));
+  }
+  meshIdentities = Object.fromEntries(settled.map((s) => s.value));
 }
 
 // -----------------------------------------------------------------------
@@ -788,12 +840,12 @@ log.shell('sudo', [
   '-o', pebbleRootPath,
 ]);
 
-// `pub1`'s mesh node trusts two CAs through `NODE_EXTRA_CA_CERTS`: the
-// stage CA, which signs Pebble's TLS cert (so pub1's ACME HTTPS to Pebble
-// verifies); and Pebble's own issuing root, so the certificate Pebble
-// issues to pub1 verifies on the browser's path. Concatenating them into
-// one file is Node's documented way to trust multiple roots.
-log.shell('sh', ['-c', `cat ${stageCaPath} ${pebbleRootPath} > ${pebbleTrustBundlePath}`]);
+// MESH_INTERFACE → The IP certificate — pub1's mesh node trusts only
+// the stage CA (`NODE_EXTRA_CA_CERTS=stage-ca.pem`); its ACME HTTPS to
+// Pebble verifies against the CA that signed Pebble's TLS. Pebble's
+// own issuing root (`pebble-root.pem`) is the browser's business: the
+// certificate Pebble issues to pub1 verifies on the browser's path
+// through the NSS db certutil populates below.
 
 // `certutil -d sql:<home>/.pki/nssdb -A -n pebble-root -t ",,"` installs the
 // root into the NSS db Chromium reads when `HOME` is set to that profile.
@@ -809,27 +861,21 @@ log.shell('certutil', ['-A', '-d', `sql:${browserNssDir}`, '-n', 'pebble-root', 
 log.shell('sh', ['-c', `certutil -L -d sql:${browserNssDir} | grep -q pebble-root || { echo "pebble-root not in profile NSS db" >&2; exit 1; }`]);
 
 // MESH_INTERFACE → Discovery — `config.json` is written from the keys'
-// real notisIds and the mesh nodes' printed multiaddrs (which carry each
-// WebRTC-direct cert's hash). Dry-run uses the topology shape alone and
-// an in-process ephemeral key for the peer id; no placeholder lands in a
-// written file.
-recordWait('each public mesh node prints its identity line (notisId, peerId, multiaddrs with /certhash/)');
+// real notisIds and the mesh nodes' printed multiaddrs (which carry
+// each WebRTC-direct cert's hash). The identities were awaited right
+// after the mesh spawn so a dead mesh node fails fast; here we read
+// the stored multiaddrs for the public nodes alone — the ones a
+// browser dials. Dry-run uses the topology shape and an in-process
+// ephemeral key for the peer id; no placeholder lands in a written file.
 const configPath = join(OUT_DIR, 'browser', 'config.json');
 const pidsPath = join(OUT_DIR, 'pids.json');
 let realMultiaddrs;
 if (!dryRun) {
-  const resolved = await Promise.all(
-    Object.entries(meshIdentityPromises).map(async ([name, p]) => {
-      const parsed = await Promise.race([
-        p,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 60_000)),
-      ]).catch((err) => {
-        throw new Error(`mesh:${name}: ${err.message}`);
-      });
-      return [name, parsed.multiaddrs ?? []];
-    }),
-  );
-  realMultiaddrs = Object.fromEntries(resolved);
+  realMultiaddrs = {};
+  for (const { name } of publicMeshHosts(topology)) {
+    const identity = meshIdentities[name];
+    if (identity !== undefined) realMultiaddrs[name] = identity.multiaddrs ?? [];
+  }
 }
 const pageConfig = buildPageConfig(topology, notisIds, realMultiaddrs);
 

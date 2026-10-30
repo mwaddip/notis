@@ -13,7 +13,7 @@ import {
 } from '../stage/lib/pebble-config.mjs';
 
 describe('stage/lib/pebble-config.mjs', () => {
-  it.fails('writes a profiles map with shortlived and default', () => {
+  it('writes a profiles map with shortlived and default', () => {
     const cfg = buildPebbleConfig({
       listenAddress: '10.100.0.21:14000',
       managementListenAddress: '10.100.0.21:15000',
@@ -23,26 +23,26 @@ describe('stage/lib/pebble-config.mjs', () => {
     });
     expect(cfg.pebble.profiles, 'profiles map is present').toBeDefined();
     expect(cfg.pebble.profiles.shortlived, 'shortlived profile').toBeDefined();
-    expect(typeof cfg.pebble.profiles.shortlived.validityPeriod).toBe('number');
-    expect(cfg.pebble.profiles.shortlived.validityPeriod, 'shortlived validityPeriod > 0').toBeGreaterThan(0);
+    expect(typeof cfg.pebble.profiles.shortlived!.validityPeriod).toBe('number');
+    expect(cfg.pebble.profiles.shortlived!.validityPeriod, 'shortlived validityPeriod > 0').toBeGreaterThan(0);
     expect(cfg.pebble.profiles.default, 'default profile').toBeDefined();
-    expect(typeof cfg.pebble.profiles.default.validityPeriod).toBe('number');
+    expect(typeof cfg.pebble.profiles.default!.validityPeriod).toBe('number');
   });
 
-  it.fails('shortlived is short enough for a scenario to see a renewal', () => {
+  it('shortlived is short enough for a scenario to see a renewal', () => {
     // Mesh node renews at half lifetime; scenario 4 runs on the order
     // of a few minutes, so the shortlived validity is a few minutes.
     expect(SHORTLIVED_VALIDITY_SECONDS, 'shortlived under 15 minutes').toBeLessThan(15 * 60);
     expect(SHORTLIVED_VALIDITY_SECONDS, 'shortlived at least 60 seconds').toBeGreaterThanOrEqual(60);
   });
 
-  it.fails('default sits near the Pebble reference (90 days)', () => {
+  it('default sits near the Pebble reference (90 days)', () => {
     // Pebble's test config carries 7776000 (90 days). Keeping it close
     // lets `default` behave as the Pebble reference would.
     expect(DEFAULT_VALIDITY_SECONDS, 'default around 90 days').toBeGreaterThan(60 * 60 * 24);
   });
 
-  it.fails('carries certificate, privateKey, listenAddress and management from its options', () => {
+  it('carries certificate, privateKey, listenAddress and management from its options', () => {
     const cfg = buildPebbleConfig({
       listenAddress: '10.0.0.1:14000',
       managementListenAddress: '10.0.0.1:15000',
