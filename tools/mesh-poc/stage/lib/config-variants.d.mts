@@ -8,6 +8,17 @@ export declare function buildPrivateViaRelayVariant(
   baseConfig: PageConfigShape,
   opts: { privNotisId: string; privPeerIdString: string; viaPublicNotisId: string },
 ): PageConfigShape;
+export interface IdentityRow {
+  notisId: string;
+  meshRole?: string | null;
+  addr?: string | null;
+  httpPort?: number | null;
+  multiaddrs?: string[];
+}
+export declare function buildPrivateViaAnnouncedRelayVariant(
+  baseConfig: PageConfigShape,
+  opts: { privRow: IdentityRow; identities: Record<string, IdentityRow> },
+): PageConfigShape;
 export declare function buildWithHostileSeedsVariant(
   baseConfig: PageConfigShape,
   seeds: Array<{ notisId: string; addrs: string[] }>,

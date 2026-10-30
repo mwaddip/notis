@@ -177,6 +177,25 @@ export function sigterm(pid) {
 }
 
 /**
+ * Send an arbitrary signal to `pid` — e.g. `'SIGSTOP'` to pause and
+ * `'SIGCONT'` to resume. A missing process reads
+ * `{ sent: false, reason: 'ESRCH' }`; every other error is re-raised.
+ * Scenarios pair SIGSTOP + SIGCONT inside a try / finally so the paused
+ * process still resumes if the probe raises
+ * (MESH_INTERFACE → Acceptance 1).
+ */
+export function signal(pid, sig) {
+  try {
+    process.kill(pid, sig);
+    return { sent: true, reason: null };
+  } catch (err) {
+    const code = err?.code ?? 'unknown';
+    if (code === 'ESRCH') return { sent: false, reason: 'ESRCH' };
+    throw err;
+  }
+}
+
+/**
  * Spawn an argv recorded in `pids.json` (its `argv` and `env` fields)
  * as a detached process with its stdout and stderr re-routed to its
  * recorded `logPath`. Returns the new `pid`. Mirrors `CommandLog.spawn`'s

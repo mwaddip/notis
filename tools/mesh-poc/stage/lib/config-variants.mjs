@@ -49,6 +49,26 @@ export function buildPrivateViaRelayVariant(baseConfig, {
 }
 
 /**
+ * Build a config variant whose single anchor is a private node reached
+ * through the relay the private node ACTUALLY reserved on, taken from
+ * its own announced circuit multiaddr. A private node picks its relay
+ * at run time; the stage cannot name the via-public node in advance.
+ * The relay's WebRTC-direct address (not its TCP address — a browser
+ * cannot dial that) is read from `identities[<relay-host>]`.
+ *
+ * Signature: `(baseConfig, { privRow, identities })` where `privRow`
+ * is the private node's `stage/out/identities.json` row (holds
+ * `notisId` and `multiaddrs`), and `identities` is the full map.
+ *
+ * Throws when the private node announces no `/p2p-circuit` address,
+ * when the circuit's relay is missing from identities, or when the
+ * relay has no WebRTC-direct address a browser can dial.
+ */
+export function buildPrivateViaAnnouncedRelayVariant(_baseConfig, { privRow: _privRow, identities: _identities }) {
+  throw new Error('buildPrivateViaAnnouncedRelayVariant: not implemented');
+}
+
+/**
  * Build a config variant that keeps the stage's own anchors AND adds a
  * list of hostile seed anchors. The seeds are refused by
  * `assertClientConfig` under the same rules anchors are, so each seed's
