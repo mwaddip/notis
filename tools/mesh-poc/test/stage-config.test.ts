@@ -281,6 +281,20 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance — the lag cut only after the height wait, so
   // `hostile-lagging` is behind from a synced start, not from a slow sync
   // that may still be running.
+  // MESH_INTERFACE → Acceptance — the Pebble v2.8.0 tarball records the
+  // binary as mode 0644 (no execute bit). The release's own `tar tvzf`
+  // shows `-rw-r--r--`; extracting it leaves `env` unable to run it, so
+  // `up` has to set the mode after the checksum passes and the tar runs.
+  // The chmod step must appear after `sha256sum --check`.
+  it.fails('up chmods the Pebble binary 0755 after the sha256sum check', () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const shaIdx = lines.findIndex((l) => /echo .* sha256sum --check/.test(l));
+    expect(shaIdx, 'sha256sum --check is in the dry-run').toBeGreaterThanOrEqual(0);
+    const chmodIdx = lines.findIndex((l, i) => i > shaIdx && /chmod\b.*(?:0?755|\+x).*pebble-linux-amd64\/linux\/amd64\/pebble/.test(l));
+    expect(chmodIdx, 'chmod 0755 on the Pebble binary appears after sha256sum').toBeGreaterThan(shaIdx);
+  }, 30_000);
+
   it('the hostile-lagging cut appears after the height wait', () => {
     runDryOnce();
     const lines = out.split('\n');
