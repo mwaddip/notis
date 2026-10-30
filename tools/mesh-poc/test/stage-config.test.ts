@@ -286,7 +286,7 @@ describe('stage up --dry-run', () => {
   // shows `-rw-r--r--`; extracting it leaves `env` unable to run it, so
   // `up` has to set the mode after the checksum passes and the tar runs.
   // The chmod step must appear after `sha256sum --check`.
-  it.fails('up chmods the Pebble binary 0755 after the sha256sum check', () => {
+  it('up chmods the Pebble binary 0755 after the sha256sum check', () => {
     runDryOnce();
     const lines = out.split('\n');
     const shaIdx = lines.findIndex((l) => /echo .* sha256sum --check/.test(l));

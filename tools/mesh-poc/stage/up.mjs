@@ -539,10 +539,13 @@ const pebbleArchive = join(CACHE_DIR, 'pebble-linux-amd64.tar.gz');
 const pebbleBin = join(CACHE_DIR, PEBBLE_INNER_PATH);
 if (pebbleHost) {
   // Download, verify, extract — all three on the host as the user; nothing
-  // the stage runs as root.
+  // the stage runs as root. The v2.8.0 tarball records the binary at
+  // mode 0644 (`tar tvzf` shows `-rw-r--r--`), so chmod it 0755 after
+  // extraction, else `env` refuses with "Permission denied".
   log.shell('sh', ['-c', `test -f ${pebbleArchive} || curl -L ${PEBBLE_URL} -o ${pebbleArchive}`]);
   log.shell('sh', ['-c', `echo "${PEBBLE_SHA256}  ${pebbleArchive}" | sha256sum --check`]);
   log.shell('tar', ['xzf', pebbleArchive, '-C', CACHE_DIR]);
+  log.shell('chmod', ['0755', pebbleBin]);
 }
 
 const pebbleConfigPath = join(OUT_DIR, 'pebble-config.json');
