@@ -91,6 +91,84 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
   });
 });
 
+describe('fix — a public mesh node announces its listen addresses at once', () => {
+  // libp2p 3.5's `AddressManager.getAddresses()` filters by `verified`;
+  // `TransportAddresses.get()` sets `verified: !isPrivate(ma)` on first
+  // read (`node_modules/.../libp2p/src/address-manager/transport-addresses.ts`
+  // lines 32-47). A public IP therefore reads unverified until AutoNAT
+  // or an observed-address path calls `confirm(ma)` — so pub1 with a
+  // public listen address announces NOTHING at start. The public API
+  // that bypasses this: pass `addresses.announce: [...]`. The
+  // `getAddressesWithMetadata` branch at
+  // `node_modules/.../libp2p/src/address-manager/index.ts` lines 391-408
+  // reads: when the announce list is non-empty, every announce entry
+  // reads as verified AND every transport listener's
+  // `updateAnnounceAddrs(announceMultiaddrs)` runs. WebRTC-direct's
+  // listener (`node_modules/.../@libp2p/webrtc/src/private-to-public/
+  // listener.ts` lines 246-276) walks the announce list and splices
+  // its `/certhash/` into every `/webrtc-direct/` multiaddr. So the
+  // right fix is: for a `public` mesh node, default `announce` to
+  // `listen`; the certhash lands onto the announced WebRTC-direct
+  // address at once.
+  it.fails('effectiveAnnounce for a public role with no explicit announce reads as the listen list', async () => {
+    const { effectiveAnnounce } = await import('../src/node/mesh-node.js');
+    expect(effectiveAnnounce({
+      role: 'public',
+      listen: ['/ip4/11.100.0.11/udp/4001/webrtc-direct', '/ip4/11.100.0.11/tcp/4002'],
+    })).toEqual(['/ip4/11.100.0.11/udp/4001/webrtc-direct', '/ip4/11.100.0.11/tcp/4002']);
+  });
+  it.fails('effectiveAnnounce honours an explicit announce (public role)', async () => {
+    const { effectiveAnnounce } = await import('../src/node/mesh-node.js');
+    expect(effectiveAnnounce({
+      role: 'public',
+      listen: ['/ip4/11.100.0.11/udp/4001/webrtc-direct'],
+      announce: ['/ip4/other/udp/0/webrtc-direct'],
+    })).toEqual(['/ip4/other/udp/0/webrtc-direct']);
+  });
+  it.fails('effectiveAnnounce for a private role defaults to undefined (relay reservations announce themselves)', async () => {
+    const { effectiveAnnounce } = await import('../src/node/mesh-node.js');
+    expect(effectiveAnnounce({
+      role: 'private',
+      listen: ['/ip4/10.101.0.11/udp/4001/webrtc-direct'],
+    })).toBeUndefined();
+  });
+  it('startMeshNode on a public role with no announce has a non-empty multiaddrs() at start with /certhash/', async () => {
+    // Loopback is PRIVATE per `isPrivate`, so it reads verified via the
+    // transport-address path too — this smoke test asserts the overall
+    // shape without catching the specific bug (that fires on a public
+    // range listen). The three pure cases above assert the real fix.
+    const { startMeshNode } = await import('../src/node/mesh-node.js');
+    const { generateKeyPair } = await import('@dagsocial/types');
+    const { nodeKeyFromKeyPair } = await import('../src/identity.js');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const stateDir = mkdtempSync(join(tmpdir(), 'mesh-publ-'));
+    try {
+      const key = nodeKeyFromKeyPair(generateKeyPair());
+      const node = await startMeshNode({
+        key, network: 'devnet', role: 'public',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+        bootstrap: [],
+        stateDir,
+        upstream: 'http://127.0.0.1:9/does-not-matter',
+      });
+      try {
+        const addrs = node.multiaddrs();
+        expect(addrs.length, 'public node announces at least one address at start').toBeGreaterThan(0);
+        const webrtc = addrs.filter((a) => a.includes('/webrtc-direct/'));
+        expect(webrtc.length, 'webrtc-direct announced').toBeGreaterThan(0);
+        for (const a of webrtc) {
+          expect(a, `/certhash/ on ${a}`).toContain('/certhash/');
+        }
+      } finally {
+        await node.stop();
+      }
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
 describe('fix cert — certutil trust is C,, (not ,,) and up verifies it', () => {
   it("up --dry-run installs pebble-root with trust 'C,,' (CA for SSL servers)", () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], { encoding: 'utf8', timeout: 30_000 });
