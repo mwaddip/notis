@@ -204,8 +204,9 @@ measured; a step that did not run reads `skipped`, never a pass.
    symmetric NAT answers through the relay.
 3. **A node goes away.** Killed, then firewalled: the client moves to another node within two checks, the node reads
    `retry`, never `blacklisted`, and reads `ok` again once it is back.
-4. **A transport is cut.** UDP to one public node, then to all: the client gets in through another node, then through
-   the secure WebSocket; a renewal replaces the certificate with no request dropped.
+4. **A transport is cut.** UDP to one public node: the client stays connected, through another node or over that
+   node's secure WebSocket — whichever ranks first. UDP to all: the client gets in through the secure WebSocket; a
+   renewal replaces the certificate with no request dropped.
 5. **Impersonation.** A node with its own key and a copy of an anchor's certificate, at the anchor's address: refused
    at the link, that address dropped, the anchor not blacklisted.
 6. **Hostile nodes.** With every anchor out of reach, `anchorReached` is false and the page says so. A node answering
