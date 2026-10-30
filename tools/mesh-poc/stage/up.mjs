@@ -312,9 +312,25 @@ log.shell = (name, argv, opts) => {
     createdEtcNetnsPaths.push(argv[2]);
   }
 };
+// MESH_INTERFACE → Acceptance — write `pids.json` after every spawn,
+// not only once at the end. A `--keep-on-failure` run (or any crash
+// mid-up) must leave `pids.json` naming every live process so
+// `down` can SIGTERM each; otherwise `down` falls back to each
+// namespace's `ip netns pids` list.
+const PIDS_PATH = join(OUT_DIR, 'pids.json');
+function writePidsJson() {
+  if (dryRun) return;
+  mkdirSync(dirname(PIDS_PATH), { recursive: true });
+  writeFileSync(PIDS_PATH, JSON.stringify({
+    pids: log.pids,
+    namespaces: [...createdNamespaces],
+  }, null, 2));
+}
 log.spawn = (argvFull, opts) => {
   countedStep();
-  return originalSpawn(argvFull, opts);
+  const r = originalSpawn(argvFull, opts);
+  writePidsJson();
+  return r;
 };
 
 assertNoStageNamespaces(dryRun);
@@ -1004,7 +1020,6 @@ log.shell('sh', ['-c', `certutil -L -d sql:${browserNssDir} | grep -E '^pebble-r
 // browser dials. Dry-run uses the topology shape and an in-process
 // ephemeral key for the peer id; no placeholder lands in a written file.
 const configPath = join(OUT_DIR, 'browser', 'config.json');
-const pidsPath = join(OUT_DIR, 'pids.json');
 let realMultiaddrs;
 if (!dryRun) {
   realMultiaddrs = {};
@@ -1210,10 +1225,9 @@ if (dryRun) {
   process.stdout.write(`\n[would write] ${join(dirname(configPath), 'config.default.json')}: (bytes-for-bytes copy of config.json)\n`);
   process.stdout.write(`\n[dry-run complete] ${log.privilegedCount} privileged command(s) listed; no namespace, file or process was created.\n`);
 } else {
-  writeFileSync(pidsPath, JSON.stringify({
-    pids: log.pids,
-    namespaces: [...createdNamespaces],
-  }, null, 2));
+  // Final rewrite catches any state change since the last spawn (the
+  // created-namespace list may have grown too).
+  writePidsJson();
   process.stdout.write(`stage up: ${log.pids.length} processes, ${createdNamespaces.length} namespaces\n`);
 }
 

@@ -209,10 +209,30 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   let initialCert: IpCertificate | null = null;
   if (opts.wss) initialCert = await initialCertificate(opts.wss);
 
+  // MESH_INTERFACE → NAT — libp2p 3.5's circuit-relay reservation
+  // store (`@libp2p/circuit-relay-v2@4.2.17/src/transport/reservation-store.ts`
+  // lines 100-105 "ensure we don't listen on multiple relays
+  // simultaneously") runs a PeerQueue of `DEFAULT_RESERVATION_CONCURRENCY = 1`
+  // (`src/constants.ts:19`): a second configured relay queues
+  // behind the first and a stalled first blocks every other. The
+  // configured path has no `maxReservations` limit (that caps
+  // discovered reservations alone — `src/transport/reservation-store.ts`
+  // line 254), so the only option that matters for a private node
+  // with N named relays is `reservationConcurrency = N`: each named
+  // relay runs its reservation in parallel.
+  const relayCount = opts.bootstrap.length;
   const transports = [
     tcp(),
     webRTCDirect(),
-    ...(opts.role === 'private' ? [circuitRelayTransport()] : []),
+    ...(opts.role === 'private' ? [circuitRelayTransport({
+      // Hold a slot per bootstrap relay — "configure it so a private
+      // node holds a reservation per relay it is told of". The
+      // reservation store caps `maxReservationQueueLength` at 100
+      // by default, well above anything the stage reaches, and the
+      // `configured` reservation path has no `maxReservations` limit
+      // (that caps `discovered` reservations alone).
+      reservationConcurrency: Math.max(1, relayCount),
+    })] : []),
     ...(opts.wss && initialCert
       ? [
           webSockets({
@@ -255,20 +275,28 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
     ...(announce !== undefined ? { announce } : {}),
   };
   // MESH_INTERFACE → NAT — "A relay that does not answer never stops
-  // a private node. One that is down when the node starts, or that
-  // goes away, is tried again on the node list's retry cadence
-  // (RETRY_BASE_MS doubling to RETRY_CAP_MS)". libp2p 3.5's transport
-  // manager fails startup when any configured listen fails
-  // (`FaultTolerance.FATAL_ALL` by default,
-  // `libp2p/src/transport-manager.ts` line 54); a private node's
-  // circuit listen addresses are relay-dependent and can fail at
-  // start without that being a defect of the node, so a private role
-  // starts under `NO_FATAL` and reschedules each failed circuit
-  // listen below.
+  // a private node ... is tried again on the node list's retry cadence
+  // (RETRY_BASE_MS doubling to RETRY_CAP_MS)". libp2p 3.5 awaits every
+  // listener at start (`libp2p/src/transport-manager.ts`
+  // `Promise.allSettled(tasks)` line 296): a `/p2p-circuit` listen
+  // whose reservation never completes holds the whole start forever —
+  // `FaultTolerance.NO_FATAL` tolerates a FAILED listen, not one
+  // that never returns. So a private node starts on its own
+  // (non-circuit) listen addresses alone, and each circuit listen is
+  // added AFTER start through `startRelayRetry` below — one
+  // `transportManager.listen([addr])` call at a time, under its own
+  // deadline. `NO_FATAL` stays set as a defence in depth for the
+  // retry calls themselves.
+  const initialListen = addresses.listen.filter((a) => !a.includes('/p2p-circuit'));
+  const circuitAddrs = addresses.listen.filter((a) => a.includes('/p2p-circuit'));
+  const initialAddresses = {
+    ...addresses,
+    listen: initialListen,
+  };
   const common = {
     privateKey: opts.key.privateKey,
     datastore,
-    addresses,
+    addresses: initialAddresses,
     transports,
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
@@ -329,16 +357,17 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   // MESH_INTERFACE → NAT — "A relay that does not answer never stops a
   // private node ... is tried again on the node list's retry cadence
   // (RETRY_BASE_MS doubling to RETRY_CAP_MS)". Each `/p2p-circuit`
-  // listen address is retried on its own schedule; a reservation that
-  // lands and later goes away (`relay:removed`) starts a fresh retry.
-  // The retry calls `transportManager.listen([addr])` — the same
-  // public code path `@libp2p/circuit-relay-v2`'s own transport uses
-  // in `onStop` (`transport/index.ts` line 269). `transportManager`
-  // is a public field of the libp2p instance (`libp2p/src/libp2p.ts`
-  // line 40 `public components`).
+  // listen address is added after start on its own schedule — the
+  // initial `createLibp2p` saw none of them, so no reservation stall
+  // could have held up start. A reservation that lands and later
+  // goes away (`relay:removed`) starts a fresh retry. The retry
+  // calls `transportManager.listen([addr])` — the same public code
+  // path `@libp2p/circuit-relay-v2`'s own transport uses in `onStop`
+  // (`transport/index.ts` line 269). `transportManager` is a public
+  // field of the libp2p instance (`libp2p/src/libp2p.ts` line 40
+  // `public components`).
   const retries: Array<RelayRetry> = [];
   if (opts.role === 'private') {
-    const circuitAddrs = listen.filter((a) => a.includes('/p2p-circuit'));
     for (const addr of circuitAddrs) {
       retries.push(startRelayRetry(typed, addr, {
         baseMs: opts.relayRetryBaseMs ?? RETRY_BASE_MS,
@@ -410,6 +439,15 @@ function startRelayRetry(
     timer = setTimeout(() => { void attempt(); }, ms);
   };
 
+  // Each listen attempt runs under its own deadline — the circuit
+  // relay's reservation attempt times out at
+  // `DEFAULT_RESERVATION_COMPLETION_TIMEOUT = 5_000` ms, but a
+  // multistream negotiation that opens a stream and hangs can stall
+  // the listener's promise past that. The attempt deadline reads 10 s
+  // (two reservation-completion timeouts), after which the attempt
+  // counts as a failure and the retry schedule runs.
+  const ATTEMPT_DEADLINE_MS = 10_000;
+
   const attempt = async (): Promise<void> => {
     if (stopped) return;
     if (hasReservation()) {
@@ -424,7 +462,19 @@ function startRelayRetry(
       // instance (see the comment above the call site); the typed
       // interface does not expose it, so the cast is unavoidable.
       const components = (node as unknown as { components: { transportManager: { listen(ma: unknown[]): Promise<void> } } }).components;
-      await components.transportManager.listen([addr]);
+      const listenPromise = components.transportManager.listen([addr]);
+      let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+      const deadlinePromise = new Promise<never>((_, reject) => {
+        deadlineTimer = setTimeout(
+          () => reject(new Error(`listen deadline (${ATTEMPT_DEADLINE_MS} ms)`)),
+          ATTEMPT_DEADLINE_MS,
+        );
+      });
+      try {
+        await Promise.race([listenPromise, deadlinePromise]);
+      } finally {
+        if (deadlineTimer !== null) clearTimeout(deadlineTimer);
+      }
       // `transportManager.listen` resolves even when the circuit
       // listener's inner connect refused — the task catches each
       // error (`transport-manager.ts`'s per-task catch, line 287).

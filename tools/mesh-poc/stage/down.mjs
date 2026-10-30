@@ -38,9 +38,13 @@ function run(name, args, { privileged = false, allowFail = false } = {}) {
   }
 }
 
-// Step 1: read the recorded PIDs and namespaces; a half-started stage with
-// no pids.json falls back to `ip netns list` (read-only, no privilege) so
-// `down` still cleans up what exists.
+// Step 1: read the recorded PIDs and namespaces. When pids.json is
+// missing (a `--keep-on-failure` run, or a crash mid-`up`), fall back
+// to `ip netns list` for the namespace names and
+// `sudo ip netns pids <ns>` for the live PIDs in each. A surviving
+// process in a deleted namespace is the trap `up` writes pids.json
+// after every spawn to avoid; the fallback catches whatever that
+// write missed.
 let recorded = { pids: [], namespaces: [] };
 if (existsSync(PIDS_PATH)) {
   recorded = JSON.parse(readFileSync(PIDS_PATH, 'utf8'));
@@ -60,15 +64,61 @@ if (namespacesToRemove.length === 0) {
   }
 }
 
-// Step 2: SIGTERM every recorded PID. In dry-run we show which PIDs we would
-// signal; a PID whose process ended on its own is logged but not reported.
-// MESH_INTERFACE → Acceptance — "down waits for each signalled PID to exit
-// (a deadline, then SIGKILL, reported) before it deletes any namespace".
-// A sudo-wrapped process whose child ignores SIGTERM survives otherwise;
-// a surviving process in a deleted namespace is the live-stage trap main
-// hit on bec3efbf (ended it by hand with SIGKILL).
+// Step 1b: when pids.json named no PIDs AND stage namespaces exist,
+// pick up the live PIDs with `sudo ip netns pids <ns>` for each
+// namespace. Each entry carries only `pid` + `description`
+// (synthesized "ns:<name>"); the signal flow below is the same.
+const haveRecordedPids = Array.isArray(recorded.pids) && recorded.pids.length > 0;
+if (!haveRecordedPids && namespacesToRemove.length > 0) {
+  const nsFallback = [];
+  for (const ns of namespacesToRemove) {
+    if (dryRun) {
+      logShell(`ip netns pids ${ns}`, { privileged: true });
+      logShell(`# → signal + wait + SIGKILL each pid`);
+      continue;
+    }
+    try {
+      const out = execFileSync('sudo', ['ip', 'netns', 'pids', ns], { encoding: 'utf8' });
+      for (const line of out.split('\n')) {
+        const pid = Number(line.trim());
+        if (Number.isInteger(pid) && pid > 0) {
+          nsFallback.push({ pid, description: `ns:${ns}` });
+        }
+      }
+    } catch (err) {
+      process.stderr.write(`stage:down: could not read PIDs in ${ns}: ${err?.message ?? err}\n`);
+    }
+  }
+  if (nsFallback.length > 0) recorded = { ...recorded, pids: nsFallback };
+}
+
+// Step 2: SIGTERM every recorded PID. In dry-run we show which PIDs we
+// would signal. The ns-pids fallback (step 1b) yields PIDs the current
+// user may not own — the outer sudo wrap of each spawn runs as root
+// and leaves root-owned PIDs in the namespace alongside the user-owned
+// workload. `signalPid` tries `process.kill` first (fast when the pid
+// is user-owned, no privilege); on EPERM it falls back to `sudo kill`.
+// MESH_INTERFACE → Acceptance — "down waits for each signalled PID to
+// exit (a deadline, then SIGKILL, reported) before it deletes any
+// namespace".
 const SIGNALLED_WAIT_MS = 10_000;
 const SIGNALLED_POLL_MS = 200;
+function signalPid(pid, sig) {
+  try {
+    process.kill(pid, sig);
+    return 'sent';
+  } catch (err) {
+    const code = err?.code ?? '';
+    if (code === 'ESRCH') return 'gone';
+    if (code === 'EPERM') {
+      try {
+        execFileSync('sudo', ['kill', `-${sig.replace(/^SIG/, '')}`, String(pid)]);
+        return 'sent';
+      } catch { return 'gone'; }
+    }
+    return 'gone';
+  }
+}
 const signalled = [];
 for (const entry of recorded.pids ?? []) {
   if (typeof entry.pid !== 'number') continue;
@@ -77,16 +127,13 @@ for (const entry of recorded.pids ?? []) {
     logShell(`wait ≤ ${SIGNALLED_WAIT_MS} ms, then kill -KILL ${entry.pid}  # ${entry.description ?? ''}`);
     continue;
   }
-  try {
-    process.kill(entry.pid, 'SIGTERM');
+  if (signalPid(entry.pid, 'SIGTERM') === 'sent') {
     signalled.push(entry);
-  } catch {
-    // Already gone — a half-started stage is clean here.
   }
 }
 
 // Step 2b: wait for each signalled PID to exit; SIGKILL if the deadline
-// passes. `kill(pid, 0)` with EPERM reads as "still alive" (the sudo
+// passes. `kill(pid, 0)` with EPERM reads as "still alive" (a sudo
 // outer runs as root; this process is the user).
 if (!dryRun) {
   for (const entry of signalled) {
@@ -99,7 +146,7 @@ if (!dryRun) {
     }
     if (alive) {
       process.stderr.write(`stage:down: ${entry.description ?? '<unnamed>'} (pid ${entry.pid}) did not exit on SIGTERM within ${SIGNALLED_WAIT_MS}ms; sending SIGKILL\n`);
-      try { process.kill(entry.pid, 'SIGKILL'); } catch { /* already gone */ }
+      signalPid(entry.pid, 'SIGKILL');
     }
   }
 }

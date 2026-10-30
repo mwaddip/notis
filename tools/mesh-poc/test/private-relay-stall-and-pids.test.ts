@@ -53,19 +53,23 @@ async function freePort(): Promise<number> {
 }
 
 describe('mesh-node.ts configures the circuit-relay reservation store for one reservation per named relay', () => {
-  // `@libp2p/circuit-relay-v2@4.2.17/src/index.ts` lines 96-98
-  // `maxReservations` defaults to 15, 199-207 `reservationConcurrency`
-  // defaults to 1. The private role is told of each public relay by
-  // id and holds a reservation on each; the transport's options have
-  // to allow at least that many and allow concurrent reservation
-  // attempts so a stalled attempt on one relay does not hold up the
-  // others' queue slots.
-  it.fails('circuitRelayTransport is called with explicit maxReservations and reservationConcurrency', () => {
+  // `@libp2p/circuit-relay-v2@4.2.17/src/index.ts` names three
+  // configurable options on the TRANSPORT (client) side —
+  // `reservationConcurrency` (default 1, lines 199-207),
+  // `maxReservationQueueLength` (default 100, lines 209-213) and
+  // `reservationCompletionTimeout` (default 5000, lines 215-221).
+  // `maxReservations` is a SERVER-side option (lines 92-98) and does
+  // not apply to the transport the private role runs. The private
+  // role holds a reservation per public relay, so the transport is
+  // set to `reservationConcurrency = <relay count>` — each named
+  // relay runs its reservation in parallel, no queue serialization.
+  it('circuitRelayTransport is called with reservationConcurrency set', () => {
     const src = readFileSync(SRC_MESH_NODE, 'utf8');
-    // The call shape: `circuitRelayTransport({ ... })` with these two
-    // options named.
-    expect(src, 'maxReservations option is set').toMatch(/circuitRelayTransport\s*\(\s*\{[^}]*maxReservations/);
-    expect(src, 'reservationConcurrency option is set').toMatch(/circuitRelayTransport\s*\(\s*\{[^}]*reservationConcurrency/);
+    // Capture the whole options object the private branch passes.
+    const m = /circuitRelayTransport\s*\(\s*\{([\s\S]*?)\}\s*\)/.exec(src);
+    expect(m, 'circuitRelayTransport({ ... }) is called').not.toBeNull();
+    const optsSrc = m![1]!;
+    expect(optsSrc, 'reservationConcurrency option is set').toMatch(/reservationConcurrency\s*:/);
   });
 });
 
@@ -75,7 +79,7 @@ describe('a private mesh node starts on its own addresses alone; circuit listens
   // instance is up as soon as its own TCP/WebRTC-direct listens
   // succeed, and `startRelayRetry` adds each circuit listen through
   // `transportManager.listen([addr])` under its own deadline.
-  it.fails('mesh-node.ts does not pass /p2p-circuit addresses to createLibp2p addresses.listen', () => {
+  it('mesh-node.ts does not pass /p2p-circuit addresses to createLibp2p addresses.listen', () => {
     const src = readFileSync(SRC_MESH_NODE, 'utf8');
     // Grep the block that composes the `listen` array for
     // createLibp2p: it must FILTER OUT circuit entries from
@@ -108,7 +112,7 @@ describe('a private node reserves on a working relay even when another relay nev
     return dir;
   }
 
-  it.fails('starts at once, prints its identity (returns from startMeshNode), and reserves on the working relay', async () => {
+  it('starts at once, prints its identity (returns from startMeshNode), and reserves on the working relay', async () => {
     // Working relay: libp2p + circuitRelayServer, speaks HOP.
     const workingKey = await libp2pGenerate('Ed25519');
     const workingPeer = peerIdFromPrivateKey(workingKey);
@@ -186,7 +190,7 @@ describe('pids.json is written after every spawn (not just at the end of up)', (
   // pids.json has to find processes a different way — the ns-pids
   // fallback below — but incrementally writing cuts that fallback's
   // reach to the stray-process case alone.
-  it.fails('up.mjs wires a pids.json writer that runs after each spawn', () => {
+  it('up.mjs wires a pids.json writer that runs after each spawn', () => {
     const src = readFileSync(SRC_UP, 'utf8');
     // The hook on `log.spawn` writes pids.json beside appending the
     // pid entry; the writer is called inside the overridden spawn
@@ -202,7 +206,7 @@ describe('down falls back to ip netns pids per namespace when pids.json is missi
   // Fallback flow: for each `notismesh-*` namespace, run
   // `sudo ip netns pids <ns>` to list the processes inside it,
   // SIGTERM each, wait, SIGKILL remnants, then delete the namespace.
-  it.fails('down.mjs calls sudo ip netns pids <ns> in the fallback path', () => {
+  it('down.mjs calls sudo ip netns pids <ns> in the fallback path', () => {
     const src = readFileSync(SRC_DOWN, 'utf8');
     expect(src, 'the fallback runs `ip netns pids`').toMatch(/ip['"],\s*['"]netns['"],\s*['"]pids/);
   });
