@@ -131,6 +131,7 @@ fetch to the node in use. The node in use is the first candidate after it.
 | `RETRY_BASE_MS` | `5_000` | 5 s, the first retry's wait |
 | `RETRY_CAP_MS` | `600_000` | 10 min, the longest wait |
 | `CHECK_INTERVAL_MS` | `30_000` | 30 s between checks |
+| `DIAL_TIMEOUT_MS` | `3_000` | 3 s for one dial of one address; past it the address counts as a timeout |
 | `CERT_RETRY_MS` | `3_600_000` | 1 h between attempts at a failed renewal |
 | `STUN_PORT` | `3478` | the STUN port of RFC 8489 |
 
