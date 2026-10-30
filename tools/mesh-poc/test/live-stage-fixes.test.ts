@@ -243,6 +243,31 @@ describe('fix 2 — up writes every mesh host\'s multiaddrs; buildHostileSeeds r
   });
 });
 
+describe('PEER_DIAL_MIN_MS — the dial deadline floor from the contract', () => {
+  it("mesh-client cites PEER_DIAL_MIN_MS, not the literal 20_000, for the whole-peer dial deadline", () => {
+    const src = readFileSync(join(PACKAGE_ROOT, 'src', 'client', 'mesh-client.ts'), 'utf8');
+    // The literal has to be gone: a `20_000` number inside the dial
+    // path is the kind of edit that drifts from the contract.
+    expect(src, 'the mesh-client body does not carry a 20_000 literal').not.toMatch(/Math\.max\([^)]*,\s*20_?000\s*\)/);
+    // PEER_DIAL_MIN_MS is imported and used.
+    expect(src, 'PEER_DIAL_MIN_MS is imported').toMatch(/import\s+\{[^}]*\bPEER_DIAL_MIN_MS\b[^}]*\}\s+from\s+['"]\.\.\/protocols\.js['"]/);
+    expect(src, 'PEER_DIAL_MIN_MS is used in the dial-deadline computation').toMatch(/Math\.max\([^)]*PEER_DIAL_MIN_MS[^)]*\)/);
+  });
+  it("PEER_DIAL_MIN_MS is exported from protocols.ts at 20_000", async () => {
+    const { PEER_DIAL_MIN_MS } = await import('../src/protocols.js');
+    expect(PEER_DIAL_MIN_MS).toBe(20_000);
+  });
+  it('a one-address dial\'s deadline is PEER_DIAL_MIN_MS (not DIAL_TIMEOUT_MS alone)', async () => {
+    const { PEER_DIAL_MIN_MS, DIAL_TIMEOUT_MS } = await import('../src/protocols.js');
+    // The deadline for N addresses is `max(N * DIAL_TIMEOUT_MS, PEER_DIAL_MIN_MS)`.
+    // With N=1, DIAL_TIMEOUT_MS=3_000 is below PEER_DIAL_MIN_MS=20_000, so
+    // the floor binds and the dial gets 20 s. Pure arithmetic — the shape
+    // of the deadline formula is what this case pins.
+    const dialDeadline = Math.max(1 * DIAL_TIMEOUT_MS, PEER_DIAL_MIN_MS);
+    expect(dialDeadline, 'one-address dial deadline').toBe(PEER_DIAL_MIN_MS);
+  });
+});
+
 describe('fix 3 — dialByAddresses passes the whole address list to one libp2p.dial call', () => {
   // libp2p 3.5's dial queue (`libp2p/src/connection-manager/dial-queue.ts`
   // lines 157-188) joins a NEW dial for the same peer to a PENDING dial;

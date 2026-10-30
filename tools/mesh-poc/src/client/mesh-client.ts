@@ -47,6 +47,7 @@ import {
   dhtProtocol,
   CHECK_INTERVAL_MS,
   DIAL_TIMEOUT_MS,
+  PEER_DIAL_MIN_MS,
   type NetworkName,
 } from '../protocols.js';
 
@@ -528,20 +529,16 @@ class MeshClientImpl implements MeshClient {
       return;
     }
 
-    // MESH_INTERFACE → The client's node list / libp2p 3.5 — hand libp2p
-    // the whole multiaddr list in ONE dial. The dial queue
-    // (`libp2p/src/connection-manager/dial-queue.ts` lines 157-188)
-    // joins a new dial for the same peer to a pending one; dialling
-    // address-by-address meant our 3 s abort never reached libp2p's
-    // internal queue, and a hung WebRTC-direct dial (UDP cut) held
-    // the WSS dial behind it until the whole-peer timeout fired.
-    //
-    // libp2p runs its own per-address timeout (`ADDRESS_DIAL_TIMEOUT`,
-    // 6 s) and happy-eyeballs across the list; our whole-peer signal
-    // bounds the operation. The budget scales with the address count
-    // (and leaves slack for the WebRTC upgrade on a relayed path).
+    // MESH_INTERFACE → The client's node list → "A node's addresses are
+    // dialled as one operation". libp2p's dial queue joins every dial to
+    // a peer into the one already in flight, so handing it address-by-
+    // address meant a hung first dial held every later one with it; the
+    // whole address list goes in one `dial(Multiaddr[])` call. The
+    // deadline is `max(addrs.length · DIAL_TIMEOUT_MS, PEER_DIAL_MIN_MS)`
+    // (MESH_INTERFACE → The client's node list, the DIAL_TIMEOUT_MS and
+    // PEER_DIAL_MIN_MS rows).
     const multiaddrs = dialable.map((addr) => withPeerId(addr, id));
-    const wholeDialMs = Math.max(dialable.length * DIAL_TIMEOUT_MS, 20_000);
+    const wholeDialMs = Math.max(dialable.length * DIAL_TIMEOUT_MS, PEER_DIAL_MIN_MS);
     const signal = AbortSignal.timeout(wholeDialMs);
     try {
       await this.libp2p.dial(multiaddrs, { signal });

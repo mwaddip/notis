@@ -12,5 +12,13 @@ export const RETRY_BASE_MS: 5000 = 5000;
 export const RETRY_CAP_MS: 600000 = 600000;
 export const CHECK_INTERVAL_MS: 30000 = 30000;
 export const DIAL_TIMEOUT_MS: 3000 = 3000;
+/**
+ * MESH_INTERFACE → The client's node list — "`PEER_DIAL_MIN_MS` | `20_000` |
+ * 20 s, the shortest deadline one node's dial gets — libp2p gives each
+ * address 6 s of its own, and a relayed address dials the relay first".
+ * The whole-peer dial deadline is `max(addrs.length · DIAL_TIMEOUT_MS,
+ * PEER_DIAL_MIN_MS)`.
+ */
+export const PEER_DIAL_MIN_MS: 20000 = 20000;
 export const CERT_RETRY_MS: 3600000 = 3600000;
 export const STUN_PORT: 3478 = 3478;
