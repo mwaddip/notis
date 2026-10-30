@@ -338,8 +338,21 @@ for (const { name, host } of natRouters(topology)) {
   log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', 'nat'], { privileged: true });
   log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', 'nat', 'POSTROUTING', '{', 'type', 'nat', 'hook', 'postrouting', 'priority', '100', ';', '}'], { privileged: true });
   if (host.nat === 'symmetric') {
-    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', `vp-${host.veth}-o`, 'masquerade', 'random-fully'], { privileged: true });
+    // nft(8) names the flag `fully-random`; the previous commit's
+    // `random-fully` is iptables' spelling and fails nft's parser. The
+    // flag triggers `NF_NAT_RANGE_PROTO_RANDOM_FULLY` in the kernel: a
+    // 32-bit pseudo-random port per (source, destination) tuple, which
+    // STUN reads as "address and port-dependent" (= symmetric) mapping.
+    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', `vp-${host.veth}-o`, 'masquerade', 'fully-random'], { privileged: true });
   } else {
+    // nft(8): plain `masquerade` is Linux netfilter's default behaviour —
+    // the kernel tries to preserve the client's source port, and never
+    // tweaks the external port per destination. A given internal
+    // (source IP, source port) sees the same external (ip, port)
+    // whatever address it is dialling, which STUN reads as "endpoint-
+    // independent" mapping (the `persistent` flag only binds the
+    // external *IP* across connections — irrelevant with one external
+    // IP, which is this NAT's shape).
     log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', `vp-${host.veth}-o`, 'masquerade'], { privileged: true });
   }
 }

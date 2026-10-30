@@ -409,7 +409,7 @@ describe('stage up --dry-run', () => {
   // network namespace, so the check runs without root. On a kernel that
   // disallows unprivileged user namespaces, the case skips with the
   // reason — never silently passes.
-  it.fails('every nft ruleset passes nft -c under unshare -rn', () => {
+  it('every nft ruleset passes nft -c under unshare -rn', () => {
     runDryOnce();
     // Preflight: can we even open an unprivileged user namespace here?
     const preflight = spawnSync('unshare', ['-rn', 'true'], { encoding: 'utf8', timeout: 5_000 });
