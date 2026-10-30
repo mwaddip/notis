@@ -65,7 +65,8 @@ vi.mock('../stage/lib/measure.mjs', async (importOriginal) => {
   };
 });
 
-import { classifyConnectionAddr } from '../src/client/mesh-client.js';
+import { classifyConnectionAddr, pickConnectionForStream } from '../src/client/mesh-client.js';
+import type { Connection } from '@libp2p/interface';
 import { verdictIceServers, verdictS2Priv1, verdictS2Priv2 } from '../stage/lib/verdicts.mjs';
 import { readTopology } from '../stage/lib/topology.mjs';
 import { ICE_RECORD_INSTALL_SRC } from '../stage/cdp.mjs';
@@ -243,6 +244,142 @@ describe('classifyConnectionAddr reads transport/path from the multiaddr\'s comp
   it('an address with no classifiable base transport throws', () => {
     const ma = `/ip4/11.100.0.11/tcp/9999/p2p/${TARGET}`;
     expect(() => classifyConnectionAddr(ma)).toThrow();
+  });
+});
+
+// --- pickConnectionForStream ---------------------------------------------
+
+describe('pickConnectionForStream reads the connection libp2p would run a stream on', () => {
+  // MESH_INTERFACE → NAT → "A relay carries signalling, not data." —
+  // "a client opens no API stream on a limited connection". libp2p runs
+  // a new stream on the connection its own `findExistingConnection`
+  // picks: open connections only, direct ones first, the first with
+  // `limits == null`. The page's transport and path name that same
+  // connection, so the pick must match. Only when every open
+  // connection to the node is limited does the helper fall back to a
+  // limited one, which classifies as `relay`.
+
+  const CERTHASH = 'uEiAVZaUYSQpGvbSz9JTC4e4hT4qg9eDWVvHe4lhPUT_wxg';
+  const RELAY = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
+  const TARGET = '12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4';
+  const OTHER = '12D3KooWKtkGK1u9H1dxGvV2m6V3h7F3BuzuNxEoiGHhvQdGLxui';
+
+  type FakeOpts = {
+    status: 'open' | 'closing' | 'closed' | 'aborted' | 'reset';
+    direct: boolean;
+    limited: boolean;
+    remoteAddr: string;
+    peer?: string;
+  };
+  function fake(o: FakeOpts): Connection {
+    return {
+      status: o.status,
+      direct: o.direct,
+      limits: o.limited ? { bytes: 1024n, seconds: 60 } : undefined,
+      remoteAddr: { toString: () => o.remoteAddr },
+      remotePeer: { toString: () => o.peer ?? TARGET },
+    } as unknown as Connection;
+  }
+
+  it.fails('a limited relayed connection listed before an unlimited WebRTC one reads { webrtc, direct }', () => {
+    const limitedRelayed = fake({
+      status: 'open', direct: false, limited: true,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`,
+    });
+    const unlimitedWebrtc = fake({
+      status: 'open', direct: true, limited: false,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
+    });
+    const picked = pickConnectionForStream([limitedRelayed, unlimitedWebrtc], TARGET);
+    expect(picked, 'the unlimited WebRTC connection is picked over the limited relayed one').toBe(unlimitedWebrtc);
+    expect(classifyConnectionAddr(picked!.remoteAddr.toString()))
+      .toEqual({ transport: 'webrtc', path: 'direct' });
+  });
+
+  it.fails('a closed unlimited connection is passed over for an open limited one', () => {
+    const closedUnlimited = fake({
+      status: 'closed', direct: true, limited: false,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${TARGET}`,
+    });
+    const openLimited = fake({
+      status: 'open', direct: false, limited: true,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`,
+    });
+    const picked = pickConnectionForStream([closedUnlimited, openLimited], TARGET);
+    expect(picked, 'a closed connection is skipped — only open ones are considered').toBe(openLimited);
+    expect(classifyConnectionAddr(picked!.remoteAddr.toString()))
+      .toEqual({ transport: 'webrtc-direct', path: 'relay' });
+  });
+
+  it.fails('only a limited connection open reads { webrtc-direct, relay }', () => {
+    const limitedRelay = fake({
+      status: 'open', direct: false, limited: true,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`,
+    });
+    const picked = pickConnectionForStream([limitedRelay], TARGET);
+    expect(picked, 'the limited connection is the only open one, so it is picked').toBe(limitedRelay);
+    expect(classifyConnectionAddr(picked!.remoteAddr.toString()))
+      .toEqual({ transport: 'webrtc-direct', path: 'relay' });
+  });
+
+  it.fails('no connection to the expected peer reads null', () => {
+    expect(pickConnectionForStream([], TARGET)).toBeNull();
+    const toOther = fake({
+      status: 'open', direct: true, limited: false, peer: OTHER,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${OTHER}`,
+    });
+    expect(pickConnectionForStream([toOther], TARGET),
+      'a connection to a different peer is not picked').toBeNull();
+  });
+
+  // --- mutation round ----------------------------------------------------
+
+  it.fails('MUTATION: direct-first sort — a direct unlimited later in the list still wins over an indirect unlimited first', () => {
+    const indirectUnlimited = fake({
+      status: 'open', direct: false, limited: false,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
+    });
+    const directUnlimited = fake({
+      status: 'open', direct: true, limited: false,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${TARGET}`,
+    });
+    expect(pickConnectionForStream([indirectUnlimited, directUnlimited], TARGET)).toBe(directUnlimited);
+  });
+
+  it.fails('MUTATION: status filter — a closed direct unlimited is skipped for an open indirect unlimited', () => {
+    const closedDirect = fake({
+      status: 'closed', direct: true, limited: false,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${TARGET}`,
+    });
+    const openIndirect = fake({
+      status: 'open', direct: false, limited: false,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
+    });
+    expect(pickConnectionForStream([closedDirect, openIndirect], TARGET)).toBe(openIndirect);
+  });
+
+  it.fails('MUTATION: limits filter — an unlimited indirect is picked over a limited direct', () => {
+    const limitedDirect = fake({
+      status: 'open', direct: true, limited: true,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${TARGET}`,
+    });
+    const unlimitedIndirect = fake({
+      status: 'open', direct: false, limited: false,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
+    });
+    expect(pickConnectionForStream([limitedDirect, unlimitedIndirect], TARGET)).toBe(unlimitedIndirect);
+  });
+
+  it.fails('MUTATION: peer filter — a direct unlimited to a different peer does not win over an indirect unlimited to the target', () => {
+    const directToOther = fake({
+      status: 'open', direct: true, limited: false, peer: OTHER,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${OTHER}`,
+    });
+    const indirectToTarget = fake({
+      status: 'open', direct: false, limited: false,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
+    });
+    expect(pickConnectionForStream([directToOther, indirectToTarget], TARGET)).toBe(indirectToTarget);
   });
 });
 
