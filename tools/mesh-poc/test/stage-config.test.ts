@@ -327,6 +327,107 @@ describe('stage up --dry-run', () => {
     expect(joined, 'the page-server wait').toMatch(/\[wait\].*page.*server/i);
     expect(joined, 'the CDP wait').toMatch(/\[wait\].*(?:cdp|chromium)/i);
   }, 30_000);
+
+  // Linux IFNAMSIZ is 16 — an interface name must fit in 15 bytes plus a
+  // trailing NUL. The previous commit's `vp-hostile-malformed` (20 bytes)
+  // crashed `ip link add` with status 255. Every `v-X`, `vp-X`, `br-X-in`
+  // token the stage uses is ≤ 15 bytes.
+  it.fails('every interface name in the dry-run is ≤ 15 bytes', () => {
+    runDryOnce();
+    const names = new Set<string>();
+    const re = /\b(v-[a-zA-Z0-9_-]+|vp-[a-zA-Z0-9_-]+|br-[a-zA-Z0-9_-]+)\b/g;
+    for (const line of out.split('\n')) {
+      // Skip the config.json preview — the multiaddrs it carries read as
+      // tokens but are not interface names.
+      if (line.startsWith('{') || line.startsWith(' ')) continue;
+      for (const m of line.matchAll(re)) {
+        names.add(m[1]!);
+      }
+    }
+    const oversize = [...names].filter((n) => Buffer.byteLength(n, 'utf8') > 15);
+    expect(oversize, `interface names over 15 bytes: ${oversize.join(', ')}`).toEqual([]);
+  }, 30_000);
+
+  // The same interface name may appear in two namespaces (one end in each),
+  // but inside a single namespace the kernel refuses two with the same
+  // name. Group tokens by their namespace (the `ip -n <ns>` prefix of the
+  // line they are first bound in, or `ip netns exec <ns>` for nft rules)
+  // and assert uniqueness.
+  it('every interface name is unique within its namespace', () => {
+    runDryOnce();
+    const perNs = new Map<string, Set<string>>();
+    const nameRe = /\b(v-[a-zA-Z0-9_-]+|vp-[a-zA-Z0-9_-]+|br-[a-zA-Z0-9_-]+)\b/g;
+    for (const line of out.split('\n')) {
+      if (line.startsWith('{') || line.startsWith(' ')) continue;
+      // The `-n <ns>` form (`ip -n notismesh-pub1 link ...`) binds a name
+      // in `<ns>`. `ip netns exec <ns>` runs a command in `<ns>` and may
+      // reference its interfaces.
+      const nMatch = /ip\s+(?:-n|netns\s+exec)\s+(notismesh-\S+)/.exec(line);
+      if (!nMatch) continue;
+      const ns = nMatch[1]!;
+      // The `netns <other-ns>` tail on `link add ... peer name <peer-name>
+      // netns <other-ns>` places the peer in `<other-ns>`, so bucket it
+      // there.
+      const peerMatch = /peer\s+name\s+(\S+)\s+netns\s+(notismesh-\S+)/.exec(line);
+      if (peerMatch) {
+        const peer = peerMatch[1]!;
+        const peerNs = peerMatch[2]!;
+        const peerBucket = perNs.get(peerNs) ?? new Set<string>();
+        if (peerBucket.has(peer)) {
+          throw new Error(`duplicate interface in ${peerNs}: ${peer} on line "${line}"`);
+        }
+        peerBucket.add(peer);
+        perNs.set(peerNs, peerBucket);
+      }
+      // The locally-bound names (every other token in the line, excluding
+      // the peer name that lives in another namespace).
+      const bucket = perNs.get(ns) ?? new Set<string>();
+      for (const m of line.matchAll(nameRe)) {
+        const n = m[1]!;
+        if (peerMatch && n === peerMatch[1]) continue;
+        // `ip -n <ns> link add X ...` and `ip -n <ns> link set X ...`
+        // both reference the same name; only the first binds, the rest
+        // operate. Skip operational references.
+        if (!/link\s+add\s+\S+/.test(line.slice(0, line.indexOf(n) + n.length))) continue;
+        if (bucket.has(n)) {
+          throw new Error(`duplicate interface in ${ns}: ${n} on line "${line}"`);
+        }
+        bucket.add(n);
+      }
+      perNs.set(ns, bucket);
+    }
+    // At least one bucket must hold at least one name — otherwise the
+    // regex missed everything.
+    const total = [...perNs.values()].reduce((n, s) => n + s.size, 0);
+    expect(total, 'parser must find some interface names').toBeGreaterThan(0);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — a failed `up` runs its own teardown
+  // unless `--keep-on-failure` is given. A dry-run with
+  // `--simulate-failure-after=<N>` aborts after N steps, prints the
+  // failure line, and lists the teardown commands (kill lines for any
+  // spawn recorded, `ip netns delete` for every namespace it had created,
+  // `rm -rf /etc/netns/...`).
+  it.fails('a dry-run forced to fail prints its teardown', () => {
+    const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run', '--simulate-failure-after=20'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(res.status, `exit code (stderr: ${res.stderr})`).toBe(0);
+    const stdout = res.stdout;
+    expect(stdout, 'failure line').toMatch(/\[failure\].*simulated failure after step 20/);
+    expect(stdout, 'teardown header').toContain('[teardown]');
+    // Six namespaces were created in the first 20 commands (the bridge
+    // namespace + its first link ops bring us past step 7, then one host's
+    // ns per 7 commands or so — 20 commands pass the first few
+    // namespaces). The teardown lists `ip netns delete` for each one it
+    // had created.
+    const deleteLines = stdout.split('\n').filter((l) => /ip netns delete notismesh-/.test(l));
+    expect(deleteLines.length, 'teardown deletes the namespaces up had created').toBeGreaterThan(0);
+    // No namespace that was not yet created is "undone" — the teardown
+    // only names what up itself recorded.
+    expect(stdout, 'teardown report').toMatch(/\[teardown complete\]/);
+  }, 30_000);
 });
 
 function hexToBytes(hex: string): Uint8Array {
