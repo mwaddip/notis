@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS1Node, verdictS1Probe, verdictS1DnsSilent } from '../lib/verdicts.mjs';
 import { execIn, readDirect, readLineCount, readNftCounterSum } from '../lib/measure.mjs';
+import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's1';
 
@@ -56,14 +57,12 @@ export function anchorIdSet(config) {
 export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
-  const steps = [];
+  const rec = new StepRecorder();
   applyFaults(log, ctx.topology);
 
   if (ctx.dryRun) {
-    for (const name of describe()) {
-      steps.push({ name, verdict: 'skipped', measurement: null, timeMs: 0 });
-    }
-    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps, faults: log.records };
+    for (const name of describe()) rec.skipped(name);
+    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
 
   // Capture the DNS window boundary BEFORE any CDP call. Chromium's
@@ -80,37 +79,37 @@ export async function run(ctx) {
   const identities = existsSync(identitiesPath) ? JSON.parse(readFileSync(identitiesPath, 'utf8')) : null;
   const anchors = anchorIdSet(config);
 
+  // Each step is wrapped in `rec.step(name, fn)` so a throw records
+  // FAIL for THAT step and the next step still runs (MESH_INTERFACE →
+  // Acceptance). The scenario's one `finally` runs `log.removeAll()`
+  // whatever each step did.
+  let anchorNodeId = null;
   try {
-    // Step 1 — anchor within 60 s.
-    const step1Start = Date.now();
-    const stateJson = await cdpPoll(ctx, browserUrl,
-      "document.getElementById('state')?.textContent ?? null",
-      "if (v === null) return false; try { return JSON.parse(v).nodeId !== null; } catch (_e) { return false; }",
-      60_000, 500,
-    );
-    const step1Time = Date.now() - step1Start;
-    const state = JSON.parse(stateJson);
-    const nodeId = state.nodeId;
-    const step1Measurement = {
-      nodeId,
-      isAnchor: anchors.has(nodeId),
-      timeMs: step1Time,
-    };
-    steps.push({ name: describe()[0], verdict: verdictS1Node(step1Measurement), measurement: step1Measurement, timeMs: step1Time });
+    const step1 = await rec.step(describe()[0], async () => {
+      const step1Start = Date.now();
+      const stateJson = await cdpPoll(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        "if (v === null) return false; try { return JSON.parse(v).nodeId !== null; } catch (_e) { return false; }",
+        60_000, 500,
+      );
+      const state = JSON.parse(stateJson);
+      anchorNodeId = state.nodeId;
+      const m = { nodeId: state.nodeId, isAnchor: anchors.has(state.nodeId), timeMs: Date.now() - step1Start };
+      return { verdict: verdictS1Node(m), measurement: m };
+    });
+    void step1;
 
-    // Resolve the host that owns the nodeId so direct reads land in
-    // the right namespace.
-    const hostName = hostOfNodeId(identities, nodeId);
+    // Probe steps 2 and 3 need an identity row. If step 1 failed or
+    // the id is not in identities.json, those steps read `skipped`.
+    const hostName = anchorNodeId !== null ? hostOfNodeId(identities, anchorNodeId) : null;
     const hostRow = hostName !== null ? identities[hostName] : null;
-    if (hostName === null || hostRow === null) {
-      // No way to read direct — the two probe steps read `skipped`.
-      for (let i = 1; i <= 2; i += 1) {
-        steps.push({ name: describe()[i], verdict: 'skipped', measurement: null, timeMs: 0 });
+    for (const [stepIndex, probePath] of [[1, '/blocks/current'], [2, '/nipopow/proof/24/20']]) {
+      if (hostName === null || hostRow === null) {
+        rec.skipped(describe()[stepIndex]);
+        continue;
       }
-    } else {
-      const nodeNs = `notismesh-${hostName}`;
-      for (const [stepIndex, probePath] of [[1, '/blocks/current'], [2, '/nipopow/proof/24/20']]) {
-        const probeStart = Date.now();
+      await rec.step(describe()[stepIndex], async () => {
+        const nodeNs = `notismesh-${hostName}`;
         const probeUrl = `${browserUrl}?probe=${encodeURIComponent(probePath)}`;
         const probeText = await cdpPoll(ctx, probeUrl,
           "document.getElementById('probe')?.textContent ?? null",
@@ -126,33 +125,21 @@ export async function run(ctx) {
           direct: { sha256: direct.sha256, bytes: direct.bytes },
         };
         if (direct.sha256 !== probe.sha256) {
-          // The tip moved between the probe's read and ours; read once
-          // more and let the verdict decide.
           const retryDirect = readDirect(nodeNs, directUrl);
           measurement.retryDirect = { sha256: retryDirect.sha256, bytes: retryDirect.bytes };
         }
-        const probeTime = Date.now() - probeStart;
-        steps.push({
-          name: describe()[stepIndex],
-          verdict: verdictS1Probe(measurement),
-          measurement,
-          timeMs: probeTime,
-        });
-      }
+        return { verdict: verdictS1Probe(measurement), measurement };
+      });
     }
 
-    // Step 4 (index 3) — DNS silent across the window.
-    const dnsLinesEnd = readLineCount(dnsLogPath);
-    const nftCounterEnd = readNftCounterSum('notismesh-browser', 'dns_witness');
-    const dnsMeasurement = {
-      dnsLines: dnsLinesEnd - dnsLinesStart,
-      nftCounterPackets: nftCounterEnd - nftCounterStart,
-    };
-    steps.push({
-      name: describe()[3],
-      verdict: verdictS1DnsSilent(dnsMeasurement),
-      measurement: dnsMeasurement,
-      timeMs: Date.now() - started,
+    await rec.step(describe()[3], async () => {
+      const dnsLinesEnd = readLineCount(dnsLogPath);
+      const nftCounterEnd = readNftCounterSum('notismesh-browser', 'dns_witness');
+      const m = {
+        dnsLines: dnsLinesEnd - dnsLinesStart,
+        nftCounterPackets: nftCounterEnd - nftCounterStart,
+      };
+      return { verdict: verdictS1DnsSilent(m), measurement: m };
     });
   } finally {
     log.removeAll();
@@ -161,7 +148,7 @@ export async function run(ctx) {
     scenario: NAME,
     startedAt: started,
     endedAt: Date.now(),
-    steps,
+    steps: rec.steps,
     faults: log.records,
   };
 }

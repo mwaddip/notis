@@ -22,6 +22,7 @@ import { execIn, nftApply, pollUntil } from '../lib/measure.mjs';
 import { publicMeshHosts } from '../lib/topology.mjs';
 import { buildWithHostileSeedsVariant, buildHostileSeeds } from '../lib/config-variants.mjs';
 import { peerIdStringOf } from '../lib/config.mjs';
+import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's6';
 const BLOCK_TABLE = 's6_block';
@@ -57,14 +58,12 @@ export function applyFaults(log, topology) {
 export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
-  const steps = [];
+  const rec = new StepRecorder();
   if (ctx.dryRun) {
     applyFaults(log, ctx.topology);
-    for (const name of describe()) {
-      steps.push({ name, verdict: 'skipped', measurement: null, timeMs: 0 });
-    }
+    for (const name of describe()) rec.skipped(name);
     log.removeAll();
-    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps, faults: log.records };
+    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
 
   const configPath = join(ctx.outDir, 'browser', 'config.json');
@@ -95,86 +94,71 @@ export async function run(ctx) {
   };
 
   try {
-    // --- Step (a): block anchors; expect anchorReached=false + banner ---
-    const stepAStart = Date.now();
-    const a = anchorBlockArgs(ctx.topology);
-    runFault(log, 'browser-anchor-block-add-table', a.addTable);
-    applied.push({ ns: 'notismesh-browser', table: BLOCK_TABLE });
-    runFault(log, 'browser-anchor-block-add-chain', a.addChain);
-    for (let i = 0; i < a.drops.length; i += 1) {
-      runFault(log, `browser-anchor-drop-${i}`, a.drops[i]);
-    }
-    // Open page; poll until anchorReached === false AND banner has text.
-    const bannerText = await cdpPoll(ctx, browserUrl,
-      // The banner is `<div data-role="banner">` from render.ts.
-      `(function(){
-         const banner = document.querySelector('[data-role="banner"]');
-         const state = document.getElementById('state');
-         if (banner === null || state === null) return null;
-         return JSON.stringify({ banner: banner.textContent, state: state.textContent });
-       })()`,
-      `if (v === null) return false;
-       try {
-         const obj = JSON.parse(v);
-         const s = JSON.parse(obj.state);
-         return s.anchorReached === false && obj.banner === ${JSON.stringify(NO_ANCHOR_WORDS)};
-       } catch (_e) { return false; }`,
-      120_000, 1000,
-    );
-    const bannerObj = JSON.parse(bannerText);
-    const stateA = JSON.parse(bannerObj.state);
-    const stepAMeasurement = {
-      anchorReached: stateA.anchorReached,
-      bannerText: bannerObj.banner,
-    };
-    steps.push({
-      name: describe()[0],
-      verdict: verdictS6NoAnchor(stepAMeasurement),
-      measurement: stepAMeasurement,
-      timeMs: Date.now() - stepAStart,
+    await rec.step(describe()[0], async () => {
+      const a = anchorBlockArgs(ctx.topology);
+      runFault(log, 'browser-anchor-block-add-table', a.addTable);
+      applied.push({ ns: 'notismesh-browser', table: BLOCK_TABLE });
+      runFault(log, 'browser-anchor-block-add-chain', a.addChain);
+      for (let i = 0; i < a.drops.length; i += 1) {
+        runFault(log, `browser-anchor-drop-${i}`, a.drops[i]);
+      }
+      const bannerText = await cdpPoll(ctx, browserUrl,
+        `(function(){
+           const banner = document.querySelector('[data-role="banner"]');
+           const state = document.getElementById('state');
+           if (banner === null || state === null) return null;
+           return JSON.stringify({ banner: banner.textContent, state: state.textContent });
+         })()`,
+        `if (v === null) return false;
+         try {
+           const obj = JSON.parse(v);
+           const s = JSON.parse(obj.state);
+           return s.anchorReached === false && obj.banner === ${JSON.stringify(NO_ANCHOR_WORDS)};
+         } catch (_e) { return false; }`,
+        120_000, 1000,
+      );
+      const bannerObj = JSON.parse(bannerText);
+      const stateA = JSON.parse(bannerObj.state);
+      const m = { anchorReached: stateA.anchorReached, bannerText: bannerObj.banner };
+      return { verdict: verdictS6NoAnchor(m), measurement: m };
     });
 
-    // --- Step (b): unblock anchors; poll for hostile classifications ---
-    const stepBStart = Date.now();
-    // Remove the s6_block table so anchors reach again.
-    removeTable('notismesh-browser', BLOCK_TABLE);
-    applied.pop();
-    log.records.push(`[fault:remove:${NAME}:browser-anchor-block-add-table] sudo ip netns exec notismesh-browser nft delete table ip ${BLOCK_TABLE}`);
-
-    // Poll until all three hostile entries have reached a classification.
-    const malformedId = seedsByHost['hostile-malformed'];
-    const invalidId = seedsByHost['hostile-invalid'];
-    const laggingId = seedsByHost['hostile-lagging'];
-    const stateB = await cdpPoll(ctx, browserUrl,
-      "document.getElementById('state')?.textContent ?? null",
-      `if (v === null) return false;
-       try {
-         const s = JSON.parse(v);
-         const findEntry = (id) => s.nodes?.find((n) => n.notisId === id);
-         const m = findEntry(${JSON.stringify(malformedId)});
-         const i = findEntry(${JSON.stringify(invalidId)});
-         const l = findEntry(${JSON.stringify(laggingId)});
-         if (!m || !i || !l) return false;
-         // Wait until each has moved past 'new' or 'retry' into a decided state.
-         return (m.status === 'blacklisted') && (i.status === 'blacklisted') && (l.status === 'behind' || l.status === 'blacklisted');
-       } catch (_e) { return false; }`,
-      180_000, 2000,
-    );
-    const state = JSON.parse(stateB);
-    const findEntry = (id) => state.nodes?.find((n) => n.notisId === id) ?? null;
-    const m = findEntry(malformedId);
-    const i = findEntry(invalidId);
-    const l = findEntry(laggingId);
-    const stepBMeasurement = {
-      malformed: m !== null ? { status: m.status, evidenceKind: m.evidence?.kind ?? null } : null,
-      invalid: i !== null ? { status: i.status, evidenceKind: i.evidence?.kind ?? null } : null,
-      lagging: l !== null ? { status: l.status, blacklisted: l.status === 'blacklisted' } : null,
-    };
-    steps.push({
-      name: describe()[1],
-      verdict: verdictS6Hostile(stepBMeasurement),
-      measurement: stepBMeasurement,
-      timeMs: Date.now() - stepBStart,
+    await rec.step(describe()[1], async () => {
+      // Remove the s6_block table so anchors reach again.
+      removeTable('notismesh-browser', BLOCK_TABLE);
+      // Drop the matching entry from `applied` so teardown does not
+      // try again.
+      const idx = applied.findIndex((e) => e.table === BLOCK_TABLE);
+      if (idx >= 0) applied.splice(idx, 1);
+      log.records.push(`[fault:remove:${NAME}:browser-anchor-block-add-table] sudo ip netns exec notismesh-browser nft delete table ip ${BLOCK_TABLE}`);
+      const malformedId = seedsByHost['hostile-malformed'];
+      const invalidId = seedsByHost['hostile-invalid'];
+      const laggingId = seedsByHost['hostile-lagging'];
+      const stateB = await cdpPoll(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           const findEntry = (id) => s.nodes?.find((n) => n.notisId === id);
+           const m = findEntry(${JSON.stringify(malformedId)});
+           const i = findEntry(${JSON.stringify(invalidId)});
+           const l = findEntry(${JSON.stringify(laggingId)});
+           if (!m || !i || !l) return false;
+           return (m.status === 'blacklisted') && (i.status === 'blacklisted') && (l.status === 'behind' || l.status === 'blacklisted');
+         } catch (_e) { return false; }`,
+        180_000, 2000,
+      );
+      const state = JSON.parse(stateB);
+      const findEntry = (id) => state.nodes?.find((n) => n.notisId === id) ?? null;
+      const mN = findEntry(malformedId);
+      const iN = findEntry(invalidId);
+      const lN = findEntry(laggingId);
+      const m = {
+        malformed: mN !== null ? { status: mN.status, evidenceKind: mN.evidence?.kind ?? null } : null,
+        invalid: iN !== null ? { status: iN.status, evidenceKind: iN.evidence?.kind ?? null } : null,
+        lagging: lN !== null ? { status: lN.status, blacklisted: lN.status === 'blacklisted' } : null,
+      };
+      return { verdict: verdictS6Hostile(m), measurement: m };
     });
   } finally {
     // Teardown: remove any applied nft table, restore config.json.
@@ -193,7 +177,7 @@ export async function run(ctx) {
     scenario: NAME,
     startedAt: started,
     endedAt: Date.now(),
-    steps,
+    steps: rec.steps,
     faults: log.records,
   };
 }

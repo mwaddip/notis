@@ -23,6 +23,7 @@ import { verdictS5 } from '../lib/verdicts.mjs';
 import {
   execIn, findPid, pollUntil, restartFromEntry, sigterm,
 } from '../lib/measure.mjs';
+import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's5';
 const TARGET_HOST = 'pub1';
@@ -81,14 +82,12 @@ export function applyFaults(log, topology) {
 export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
-  const steps = [];
+  const rec = new StepRecorder();
   if (ctx.dryRun) {
     applyFaults(log, ctx.topology);
-    for (const name of describe()) {
-      steps.push({ name, verdict: 'skipped', measurement: null, timeMs: 0 });
-    }
+    for (const name of describe()) rec.skipped(name);
     log.removeAll();
-    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps, faults: log.records };
+    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
 
   // Exec-mode flow.
@@ -113,74 +112,67 @@ export async function run(ctx) {
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
   try {
-    // 2. Prepare impostor state dir: copy pub1's state dir, replace
-    //    mesh.key with a fresh one.
-    if (existsSync(impostorStateDir)) {
-      rmSync(impostorStateDir, { recursive: true, force: true });
-    }
-    cpSync(pub1StateDir, impostorStateDir, { recursive: true });
-    const impostorKey = join(impostorStateDir, 'mesh.key');
-    rmSync(impostorKey, { force: true });
-    const randomBytes = (n) => {
-      const buf = Buffer.alloc(n);
-      const nodeCrypto = globalThis.crypto;
-      if (nodeCrypto?.getRandomValues) nodeCrypto.getRandomValues(buf);
-      else throw new Error('no crypto.getRandomValues available');
-      return buf;
-    };
-    const { notisId: impostorNotisId } = writeFreshMeshKey(impostorKey, { randomBytes });
+    await rec.step(describe()[0], async () => {
+      // 2. Prepare impostor state dir: copy pub1's state dir, replace
+      //    mesh.key with a fresh one.
+      if (existsSync(impostorStateDir)) {
+        rmSync(impostorStateDir, { recursive: true, force: true });
+      }
+      cpSync(pub1StateDir, impostorStateDir, { recursive: true });
+      const impostorKey = join(impostorStateDir, 'mesh.key');
+      rmSync(impostorKey, { force: true });
+      const randomBytes = (n) => {
+        const buf = Buffer.alloc(n);
+        const nodeCrypto = globalThis.crypto;
+        if (nodeCrypto?.getRandomValues) nodeCrypto.getRandomValues(buf);
+        else throw new Error('no crypto.getRandomValues available');
+        return buf;
+      };
+      const { notisId: impostorNotisId } = writeFreshMeshKey(impostorKey, { randomBytes });
 
-    // 3. Spawn impostor with pub1's address.
-    const impostorArgv = [
-      'sudo', 'ip', 'netns', 'exec', 'notismesh-pub1',
-      'sudo', '-u', ctx.invokingUser, '--',
-      'env',
-      `MESH_KEY_PATH=${impostorKey}`,
-      `MESH_NETWORK=${ctx.topology.network}`,
-      'MESH_ROLE=public',
-      `MESH_STATE_DIR=${impostorStateDir}`,
-      'MESH_UPSTREAM=http://127.0.0.1:3100',
-      `MESH_LISTEN=/ip4/${pub1Addr}/udp/${pub1Mesh.webrtcPort}/webrtc-direct,/ip4/${pub1Addr}/tcp/${pub1Mesh.tcpPort}`,
-      ctx.nodeBin, ctx.meshMain,
-    ];
-    const spawnEntry = {
-      argv: impostorArgv,
-      env: {},
-      logPath: join(ctx.outDir, 'scenarios', 's5-impostor.log'),
-    };
-    impostorPid = restartFromEntry(spawnEntry);
-    log.records.push(`[fault:${NAME}:impostor-mesh:spawn] ${impostorArgv.join(' ')}`);
+      // 3. Spawn impostor with pub1's address.
+      const impostorArgv = [
+        'sudo', 'ip', 'netns', 'exec', 'notismesh-pub1',
+        'sudo', '-u', ctx.invokingUser, '--',
+        'env',
+        `MESH_KEY_PATH=${impostorKey}`,
+        `MESH_NETWORK=${ctx.topology.network}`,
+        'MESH_ROLE=public',
+        `MESH_STATE_DIR=${impostorStateDir}`,
+        'MESH_UPSTREAM=http://127.0.0.1:3100',
+        `MESH_LISTEN=/ip4/${pub1Addr}/udp/${pub1Mesh.webrtcPort}/webrtc-direct,/ip4/${pub1Addr}/tcp/${pub1Mesh.tcpPort}`,
+        ctx.nodeBin, ctx.meshMain,
+      ];
+      const spawnEntry = {
+        argv: impostorArgv,
+        env: {},
+        logPath: join(ctx.outDir, 'scenarios', 's5-impostor.log'),
+      };
+      impostorPid = restartFromEntry(spawnEntry);
+      log.records.push(`[fault:${NAME}:impostor-mesh:spawn] ${impostorArgv.join(' ')}`);
 
-    // 4. Poll state until pub1's entry has an address in droppedAddrs
-    //    OR anchorReached changes. The impostor's own notisId may
-    //    appear as a new node (status likely 'retry' or 'ok' until
-    //    we spot the key mismatch — but the KEY-mismatch happens on
-    //    pub1's address, so pub1's droppedAddrs grows).
-    const stateText = await cdpPoll(ctx, browserUrl,
-      "document.getElementById('state')?.textContent ?? null",
-      `if (v === null) return false;
-       try {
-         const s = JSON.parse(v);
-         const pub1 = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
-         if (!pub1) return false;
-         return Array.isArray(pub1.droppedAddrs) && pub1.droppedAddrs.length > 0;
-       } catch (_e) { return false; }`,
-      120_000, 1000,
-    );
-    const state = JSON.parse(stateText);
-    const pub1Node = state.nodes?.find((n) => n.notisId === pub1Id);
-    const blockedAddr = pub1Node?.droppedAddrs?.[0] ?? null;
-    const measurement = {
-      impostorNotisId,
-      anchorStatus: pub1Node?.status ?? null,
-      droppedAddrs: pub1Node?.droppedAddrs ?? [],
-      blockedAddr: blockedAddr ?? '<none>',
-    };
-    steps.push({
-      name: describe()[0],
-      verdict: verdictS5(measurement),
-      measurement,
-      timeMs: Date.now() - started,
+      // 4. Poll state until pub1's entry has an address in droppedAddrs.
+      const stateText = await cdpPoll(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           const pub1 = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
+           if (!pub1) return false;
+           return Array.isArray(pub1.droppedAddrs) && pub1.droppedAddrs.length > 0;
+         } catch (_e) { return false; }`,
+        120_000, 1000,
+      );
+      const state = JSON.parse(stateText);
+      const pub1Node = state.nodes?.find((n) => n.notisId === pub1Id);
+      const blockedAddr = pub1Node?.droppedAddrs?.[0] ?? null;
+      const m = {
+        impostorNotisId,
+        anchorStatus: pub1Node?.status ?? null,
+        droppedAddrs: pub1Node?.droppedAddrs ?? [],
+        blockedAddr: blockedAddr ?? '<none>',
+      };
+      return { verdict: verdictS5(m), measurement: m };
     });
   } finally {
     // Stop impostor, restart pub1.
@@ -208,7 +200,7 @@ export async function run(ctx) {
     scenario: NAME,
     startedAt: started,
     endedAt: Date.now(),
-    steps,
+    steps: rec.steps,
     faults: log.records,
   };
 }

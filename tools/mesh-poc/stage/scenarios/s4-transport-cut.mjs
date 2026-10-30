@@ -22,6 +22,7 @@ import { execIn, nftApply, pollUntil } from '../lib/measure.mjs';
 import { publicMeshHosts } from '../lib/topology.mjs';
 import { readTlsIssuer } from '../lib/scenario-tls.mjs';
 import { readFileSize, countMatchesSince } from '../lib/log-watch.mjs';
+import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's4';
 const UDP_TABLE = 's4_udp';
@@ -91,14 +92,12 @@ export function applyFaults(log, topology) {
 export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
-  const steps = [];
+  const rec = new StepRecorder();
   if (ctx.dryRun) {
     applyFaults(log, ctx.topology);
-    for (const name of describe()) {
-      steps.push({ name, verdict: 'skipped', measurement: null, timeMs: 0 });
-    }
+    for (const name of describe()) rec.skipped(name);
     log.removeAll();
-    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps, faults: log.records };
+    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
 
   const identities = JSON.parse(readFileSync(join(ctx.outDir, 'identities.json'), 'utf8'));
@@ -121,134 +120,109 @@ export async function run(ctx) {
 
   try {
     // --- Step 1: drop UDP from browser to pub1 only ---
-    const step1Start = Date.now();
-    runFault(log, 'browser-udp-add-table', udp.addTable);
-    applied.push({ ns: 'notismesh-browser', table: UDP_TABLE });
-    runFault(log, 'browser-udp-add-chain', udp.addChain);
-    const pub1Rule = udp.perHost.find((e) => e.name === 'pub1');
-    if (!pub1Rule) throw new Error('s4: no pub1 UDP drop rule');
-    runFault(log, 'browser-udp-drop-pub1', pub1Rule.argv);
-    const state1 = await cdpPoll(ctx, browserUrl,
-      "document.getElementById('state')?.textContent ?? null",
-      `if (v === null) return false;
-       try { const s = JSON.parse(v); return s.nodeId !== null && s.nodeId !== ${JSON.stringify(pub1Id)}; }
-       catch (_e) { return false; }`,
-      120_000, 1000,
-    );
-    const stateS1 = JSON.parse(state1);
-    const step1Measurement = {
-      connected: stateS1.nodeId !== null,
-      nodeId: stateS1.nodeId,
-      blockedNodeId: pub1Id,
-    };
-    steps.push({
-      name: describe()[0],
-      verdict: verdictS4Pub1UdpDrop(step1Measurement),
-      measurement: step1Measurement,
-      timeMs: Date.now() - step1Start,
+    await rec.step(describe()[0], async () => {
+      runFault(log, 'browser-udp-add-table', udp.addTable);
+      applied.push({ ns: 'notismesh-browser', table: UDP_TABLE });
+      runFault(log, 'browser-udp-add-chain', udp.addChain);
+      const pub1Rule = udp.perHost.find((e) => e.name === 'pub1');
+      if (!pub1Rule) throw new Error('s4: no pub1 UDP drop rule');
+      runFault(log, 'browser-udp-drop-pub1', pub1Rule.argv);
+      const state1 = await cdpPoll(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        `if (v === null) return false;
+         try { const s = JSON.parse(v); return s.nodeId !== null && s.nodeId !== ${JSON.stringify(pub1Id)}; }
+         catch (_e) { return false; }`,
+        120_000, 1000,
+      );
+      const stateS1 = JSON.parse(state1);
+      const m = { connected: stateS1.nodeId !== null, nodeId: stateS1.nodeId, blockedNodeId: pub1Id };
+      return { verdict: verdictS4Pub1UdpDrop(m), measurement: m };
     });
 
     // --- Step 2: drop UDP to every other public mesh node too ---
-    const step2Start = Date.now();
-    for (const rule of udp.perHost) {
-      if (rule.name === 'pub1') continue;
-      runFault(log, `browser-udp-drop-${rule.name}`, rule.argv);
-    }
-    const state2 = await cdpPoll(ctx, browserUrl,
-      "document.getElementById('state')?.textContent ?? null",
-      `if (v === null) return false;
-       try { const s = JSON.parse(v); return s.transport === 'wss' && s.nodeId === ${JSON.stringify(pub1Id)}; }
-       catch (_e) { return false; }`,
-      120_000, 1000,
-    );
-    const stateS2 = JSON.parse(state2);
-    // Read the cert pub1 serves on its WSS port from inside the
-    // browser's namespace (through natC's masquerade).
-    const cert = readTlsIssuer('notismesh-browser', pub1Host.addr, pub1Host.mesh.wss.port, {
-      user: ctx.invokingUser,
-    });
-    const step2Measurement = {
-      transport: stateS2.transport,
-      nodeId: stateS2.nodeId,
-      expectedNodeId: pub1Id,
-      certIssuerName: cert.issuer,
-      expectedIssuerName: cert.issuer !== null && cert.issuer.includes(EXPECTED_ISSUER_SUBSTR) ? cert.issuer : `<any issuer containing ${EXPECTED_ISSUER_SUBSTR}>`,
-    };
-    steps.push({
-      name: describe()[1],
-      verdict: verdictS4AllUdpDrop(step2Measurement),
-      measurement: step2Measurement,
-      timeMs: Date.now() - step2Start,
+    await rec.step(describe()[1], async () => {
+      for (const rule of udp.perHost) {
+        if (rule.name === 'pub1') continue;
+        runFault(log, `browser-udp-drop-${rule.name}`, rule.argv);
+      }
+      const state2 = await cdpPoll(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        `if (v === null) return false;
+         try { const s = JSON.parse(v); return s.transport === 'wss' && s.nodeId === ${JSON.stringify(pub1Id)}; }
+         catch (_e) { return false; }`,
+        120_000, 1000,
+      );
+      const stateS2 = JSON.parse(state2);
+      const cert = readTlsIssuer('notismesh-browser', pub1Host.addr, pub1Host.mesh.wss.port, {
+        user: ctx.invokingUser,
+      });
+      const m = {
+        transport: stateS2.transport,
+        nodeId: stateS2.nodeId,
+        expectedNodeId: pub1Id,
+        certIssuerName: cert.issuer,
+        expectedIssuerName: cert.issuer !== null && cert.issuer.includes(EXPECTED_ISSUER_SUBSTR) ? cert.issuer : `<any issuer containing ${EXPECTED_ISSUER_SUBSTR}>`,
+      };
+      return { verdict: verdictS4AllUdpDrop(m), measurement: m };
     });
 
     // --- Step 3: across one renewal, probes keep succeeding ---
-    const step3Start = Date.now();
-    const pebbleSizeBefore = readFileSize(pebbleLog);
-    // Poll the state over the renewal window; count probe successes
-    // (anything other than a lastLeft that names a failure).
-    let lastLeftFailureSeen = false;
-    const probeDeadline = Date.now() + RENEWAL_WINDOW_MS;
-    while (Date.now() < probeDeadline) {
-      try {
-        const text = await cdpEval(ctx, browserUrl,
-          "document.getElementById('state')?.textContent ?? null");
-        if (typeof text === 'string') {
-          const s = JSON.parse(text);
-          if (s.lastLeft !== null && typeof s.lastLeft?.reason === 'string') {
-            if (/timeout|refused|dropped|transport|lie|malformed|proof-invalid/i.test(s.lastLeft.reason)) {
-              lastLeftFailureSeen = true;
+    await rec.step(describe()[2], async () => {
+      const pebbleSizeBefore = readFileSize(pebbleLog);
+      let lastLeftFailureSeen = false;
+      const probeDeadline = Date.now() + RENEWAL_WINDOW_MS;
+      while (Date.now() < probeDeadline) {
+        try {
+          const text = await cdpEval(ctx, browserUrl,
+            "document.getElementById('state')?.textContent ?? null");
+          if (typeof text === 'string') {
+            const s = JSON.parse(text);
+            if (s.lastLeft !== null && typeof s.lastLeft?.reason === 'string') {
+              if (/timeout|refused|dropped|transport|lie|malformed|proof-invalid/i.test(s.lastLeft.reason)) {
+                lastLeftFailureSeen = true;
+              }
             }
           }
+        } catch {
+          // transient CDP failure; keep probing
         }
-      } catch {
-        // transient CDP failure; keep probing
+        await new Promise((r) => setTimeout(r, 10_000));
       }
-      await new Promise((r) => setTimeout(r, 10_000));
-    }
-    const renewalCount = pebbleSizeBefore !== null
-      ? countMatchesSince(pebbleLog, pebbleSizeBefore, /Issued certificate|Order (?:valid|finalized)/i)
-      : 0;
-    const step3Measurement = {
-      renewalSeen: renewalCount > 0,
-      probeSuccessAcrossRenewal: !lastLeftFailureSeen,
-      lastLeftFailure: lastLeftFailureSeen,
-    };
-    steps.push({
-      name: describe()[2],
-      verdict: verdictS4Renewal(step3Measurement),
-      measurement: step3Measurement,
-      timeMs: Date.now() - step3Start,
+      const renewalCount = pebbleSizeBefore !== null
+        ? countMatchesSince(pebbleLog, pebbleSizeBefore, /Issued certificate|Order (?:valid|finalized)/i)
+        : 0;
+      const m = {
+        renewalSeen: renewalCount > 0,
+        probeSuccessAcrossRenewal: !lastLeftFailureSeen,
+        lastLeftFailure: lastLeftFailureSeen,
+      };
+      return { verdict: verdictS4Renewal(m), measurement: m };
     });
 
     // --- Step 4: drop TCP between the Notis nodes' p2p port ---
-    const step4Start = Date.now();
-    for (let i = 0; i < notisTcp.length; i += 1) {
-      const t = notisTcp[i];
-      runFault(log, `notis-tcp-add-table-${i}`, t.addTable);
-      applied.push({ ns: `notismesh-${t.host}`, table: TCP_TABLE });
-      runFault(log, `notis-tcp-add-chain-${i}`, t.addChain);
-      runFault(log, `notis-tcp-drop-${i}`, t.dropDport);
-    }
-    // Measurement: read state once more; the browser still speaks WSS
-    // to pub1 regardless of inter-node TCP. The chain's internal
-    // state may lag.
-    const text4 = await cdpEval(ctx, browserUrl,
-      "document.getElementById('state')?.textContent ?? null");
-    const state4 = typeof text4 === 'string' ? JSON.parse(text4) : {};
-    const step4Measurement = {
-      transport: state4.transport ?? null,
-      nodeId: state4.nodeId ?? null,
-      tip: state4.tip ?? null,
-      note: 'inter-node TCP cut; browser-to-WSS stays up',
-    };
-    // No verdict function for step 4 (open-ended per the brief); the
-    // measurement is informational, so verdict is PASS when a
-    // measurement was taken, skipped otherwise.
-    steps.push({
-      name: describe()[3],
-      verdict: typeof text4 === 'string' ? 'PASS' : 'skipped',
-      measurement: step4Measurement,
-      timeMs: Date.now() - step4Start,
+    await rec.step(describe()[3], async () => {
+      for (let i = 0; i < notisTcp.length; i += 1) {
+        const t = notisTcp[i];
+        runFault(log, `notis-tcp-add-table-${i}`, t.addTable);
+        applied.push({ ns: `notismesh-${t.host}`, table: TCP_TABLE });
+        runFault(log, `notis-tcp-add-chain-${i}`, t.addChain);
+        runFault(log, `notis-tcp-drop-${i}`, t.dropDport);
+      }
+      // Measurement: read state once more; the browser still speaks WSS
+      // to pub1 regardless of inter-node TCP.
+      const text4 = await cdpEval(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null");
+      const state4 = typeof text4 === 'string' ? JSON.parse(text4) : {};
+      const m = {
+        transport: state4.transport ?? null,
+        nodeId: state4.nodeId ?? null,
+        tip: state4.tip ?? null,
+        note: 'inter-node TCP cut; browser-to-WSS stays up',
+      };
+      // No verdict function for step 4 (open-ended per the brief); the
+      // measurement is informational, so verdict is PASS when a
+      // measurement was taken.
+      return { verdict: typeof text4 === 'string' ? 'PASS' : 'skipped', measurement: m };
     });
   } finally {
     // Teardown — remove every applied nft table.
@@ -261,7 +235,7 @@ export async function run(ctx) {
     scenario: NAME,
     startedAt: started,
     endedAt: Date.now(),
-    steps,
+    steps: rec.steps,
     faults: log.records,
   };
 }

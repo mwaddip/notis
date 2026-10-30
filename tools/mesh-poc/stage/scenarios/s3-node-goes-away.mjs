@@ -25,6 +25,7 @@ import {
   execIn, findPid, nftApply, pollUntil,
   restartFromEntry, sigterm,
 } from '../lib/measure.mjs';
+import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's3';
 const FW_TABLE = 's3_fw';
@@ -77,15 +78,13 @@ export function applyFaults(log, topology) {
 export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
-  const steps = [];
+  const rec = new StepRecorder();
 
   if (ctx.dryRun) {
     applyFaults(log, ctx.topology);
-    for (const name of describe()) {
-      steps.push({ name, verdict: 'skipped', measurement: null, timeMs: 0 });
-    }
+    for (const name of describe()) rec.skipped(name);
     log.removeAll();
-    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps, faults: log.records };
+    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
 
   const identities = readIdentities(ctx);
@@ -118,146 +117,115 @@ export async function run(ctx) {
 
   try {
     // --- Step 1: stop pub1 ---
-    const step1Start = Date.now();
-    const stopResult = sigterm(pub1Entry.pid);
-    pub1Stopped = stopResult.sent;
-    log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM ${pub1Entry.pid}`);
-    // Wait for the client to see pub1 as retry (and move off it if it
-    // was the node in use).
-    let afterStop;
-    try {
-      afterStop = await pollUntil(
+    await rec.step(describe()[0], async () => {
+      const t0 = Date.now();
+      const stopResult = sigterm(pub1Entry.pid);
+      pub1Stopped = stopResult.sent;
+      log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM ${pub1Entry.pid}`);
+      let afterStop;
+      try {
+        afterStop = await pollUntil(
+          checkState,
+          (s) => {
+            if (s === null) return false;
+            const e = findEntry(s, pub1Id);
+            if (e === null) return false;
+            if (e.status === 'blacklisted') return true;
+            const moved = oldNodeId === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
+            return e.status === 'retry' && moved;
+          },
+          { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry + move' },
+        );
+      } catch (err) {
+        afterStop = await checkState();
+        if (afterStop === null) throw err;
+      }
+      const m = {
+        oldNodeId,
+        newNodeId: afterStop.nodeId,
+        oldStatus: findEntry(afterStop, pub1Id)?.status ?? null,
+        movedWithinChecks: Math.ceil((Date.now() - t0) / CHECK_INTERVAL_MS),
+        checkIntervalMs: CHECK_INTERVAL_MS,
+      };
+      return { verdict: verdictS3Moved(m), measurement: m };
+    });
+
+    // --- Step 2: restart pub1, poll for ok ---
+    await rec.step(describe()[1], async () => {
+      const t0 = Date.now();
+      const newPid = restartFromEntry(pub1Entry);
+      pub1Entry.pid = newPid;
+      pub1Stopped = false;
+      const afterRestart = await pollUntil(
+        checkState,
+        (s) => {
+          const e = findEntry(s, pub1Id);
+          return e !== null && e.status === 'ok';
+        },
+        { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after restart' },
+      );
+      const m = {
+        nodeId: pub1Id,
+        status: findEntry(afterRestart, pub1Id)?.status ?? null,
+        recoveryTimeMs: Date.now() - t0,
+      };
+      return { verdict: verdictS3Recovered(m), measurement: m };
+    });
+
+    // --- Step 3: firewall pub1 ---
+    await rec.step(describe()[2], async () => {
+      const t0 = Date.now();
+      log.apply('pub1-fw-add-table', f.addTable, f.deleteTable);
+      firewallApplied = true;
+      log.apply('pub1-fw-add-chain', f.addChain, null);
+      log.apply('pub1-fw-drop-udp', f.dropUdp, null);
+      log.apply('pub1-fw-drop-tcp-mesh', f.dropTcpMesh, null);
+      log.apply('pub1-fw-drop-tcp-wss', f.dropTcpWss, null);
+      const beforeFw = await checkState();
+      const oldNodeId3 = beforeFw?.nodeId ?? oldNodeId;
+      const afterFw = await pollUntil(
         checkState,
         (s) => {
           if (s === null) return false;
           const e = findEntry(s, pub1Id);
           if (e === null) return false;
-          if (e.status === 'blacklisted') return true; // short-circuit a bad state so we report it
-          const moved = oldNodeId === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
+          if (e.status === 'blacklisted') return true;
+          const moved = oldNodeId3 === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
           return e.status === 'retry' && moved;
         },
-        { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry + move' },
+        { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry under firewall' },
       );
-    } catch (err) {
-      afterStop = await checkState();
-      if (afterStop === null) throw err;
-    }
-    const step1Time = Date.now() - step1Start;
-    const pub1EntryAfterStop = findEntry(afterStop, pub1Id);
-    const step1Measurement = {
-      oldNodeId,
-      newNodeId: afterStop.nodeId,
-      oldStatus: pub1EntryAfterStop?.status ?? null,
-      movedWithinChecks: Math.ceil(step1Time / CHECK_INTERVAL_MS),
-      checkIntervalMs: CHECK_INTERVAL_MS,
-    };
-    steps.push({
-      name: describe()[0],
-      verdict: verdictS3Moved(step1Measurement),
-      measurement: step1Measurement,
-      timeMs: step1Time,
-    });
-
-    // --- Step 2: restart pub1, poll for ok ---
-    const step2Start = Date.now();
-    const newPid = restartFromEntry(pub1Entry);
-    // The pids list in-memory is updated so down.mjs's reader (next
-    // run) still has a live pid for mesh:pub1. The on-disk file is
-    // written by up; this scenario does not persist, so a `stage:down`
-    // would still signal the old pid (safe no-op).
-    pub1Entry.pid = newPid;
-    pub1Stopped = false;
-    const afterRestart = await pollUntil(
-      checkState,
-      (s) => {
-        const e = findEntry(s, pub1Id);
-        return e !== null && e.status === 'ok';
-      },
-      { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after restart' },
-    );
-    const step2Time = Date.now() - step2Start;
-    const step2Measurement = {
-      nodeId: pub1Id,
-      status: findEntry(afterRestart, pub1Id)?.status ?? null,
-      recoveryTimeMs: step2Time,
-    };
-    steps.push({
-      name: describe()[1],
-      verdict: verdictS3Recovered(step2Measurement),
-      measurement: step2Measurement,
-      timeMs: step2Time,
-    });
-
-    // --- Step 3: firewall pub1 ---
-    const step3Start = Date.now();
-    // Apply the four rules; `removeAll` on the FaultLog pairs them.
-    log.apply('pub1-fw-add-table', f.addTable, f.deleteTable);
-    firewallApplied = true;
-    log.apply('pub1-fw-add-chain', f.addChain, null);
-    log.apply('pub1-fw-drop-udp', f.dropUdp, null);
-    log.apply('pub1-fw-drop-tcp-mesh', f.dropTcpMesh, null);
-    log.apply('pub1-fw-drop-tcp-wss', f.dropTcpWss, null);
-    // The client reads pub1 as retry when its next check fails.
-    const beforeFw = await checkState();
-    const oldNodeId3 = beforeFw?.nodeId ?? oldNodeId;
-    const afterFw = await pollUntil(
-      checkState,
-      (s) => {
-        if (s === null) return false;
-        const e = findEntry(s, pub1Id);
-        if (e === null) return false;
-        if (e.status === 'blacklisted') return true;
-        const moved = oldNodeId3 === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
-        return e.status === 'retry' && moved;
-      },
-      { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry under firewall' },
-    );
-    const step3Time = Date.now() - step3Start;
-    const step3Measurement = {
-      oldNodeId: oldNodeId3,
-      newNodeId: afterFw.nodeId,
-      oldStatus: findEntry(afterFw, pub1Id)?.status ?? null,
-      movedWithinChecks: Math.ceil(step3Time / CHECK_INTERVAL_MS),
-      checkIntervalMs: CHECK_INTERVAL_MS,
-    };
-    steps.push({
-      name: describe()[2],
-      verdict: verdictS3Moved(step3Measurement),
-      measurement: step3Measurement,
-      timeMs: step3Time,
+      const m = {
+        oldNodeId: oldNodeId3,
+        newNodeId: afterFw.nodeId,
+        oldStatus: findEntry(afterFw, pub1Id)?.status ?? null,
+        movedWithinChecks: Math.ceil((Date.now() - t0) / CHECK_INTERVAL_MS),
+        checkIntervalMs: CHECK_INTERVAL_MS,
+      };
+      return { verdict: verdictS3Moved(m), measurement: m };
     });
 
     // --- Step 4: unfirewall, poll for ok ---
-    const step4Start = Date.now();
-    // Remove the firewall rules; the FaultLog's removeAll pairs the
-    // deletes with their adds, so we drive it here by letting the
-    // scenario fall through to `finally`. For the time measurement
-    // we remove the table first.
-    nftApply('notismesh-pub1', ['delete', 'table', 'ip', FW_TABLE]);
-    firewallApplied = false;
-    // Drop the paired removal from the fault log so `removeAll` in
-    // `finally` does not try to delete a missing table.
-    log.removals.length = 0;
-    log.records.push(`[fault:remove:${NAME}:pub1-fw-add-table] sudo ip netns exec notismesh-pub1 nft delete table ip ${FW_TABLE}`);
-    const afterUnfw = await pollUntil(
-      checkState,
-      (s) => {
-        const e = findEntry(s, pub1Id);
-        return e !== null && e.status === 'ok';
-      },
-      { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after unfirewall' },
-    );
-    const step4Time = Date.now() - step4Start;
-    const step4Measurement = {
-      nodeId: pub1Id,
-      status: findEntry(afterUnfw, pub1Id)?.status ?? null,
-      recoveryTimeMs: step4Time,
-    };
-    steps.push({
-      name: describe()[3],
-      verdict: verdictS3Recovered(step4Measurement),
-      measurement: step4Measurement,
-      timeMs: step4Time,
+    await rec.step(describe()[3], async () => {
+      const t0 = Date.now();
+      nftApply('notismesh-pub1', ['delete', 'table', 'ip', FW_TABLE]);
+      firewallApplied = false;
+      log.removals.length = 0;
+      log.records.push(`[fault:remove:${NAME}:pub1-fw-add-table] sudo ip netns exec notismesh-pub1 nft delete table ip ${FW_TABLE}`);
+      const afterUnfw = await pollUntil(
+        checkState,
+        (s) => {
+          const e = findEntry(s, pub1Id);
+          return e !== null && e.status === 'ok';
+        },
+        { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after unfirewall' },
+      );
+      const m = {
+        nodeId: pub1Id,
+        status: findEntry(afterUnfw, pub1Id)?.status ?? null,
+        recoveryTimeMs: Date.now() - t0,
+      };
+      return { verdict: verdictS3Recovered(m), measurement: m };
     });
   } finally {
     // Teardown: if we stopped pub1 and did not restart it, restart now.
@@ -282,7 +250,7 @@ export async function run(ctx) {
     scenario: NAME,
     startedAt: started,
     endedAt: Date.now(),
-    steps,
+    steps: rec.steps,
     faults: log.records,
   };
 }

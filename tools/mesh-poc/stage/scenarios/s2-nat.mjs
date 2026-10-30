@@ -20,6 +20,7 @@ import { verdictS2Priv1, verdictS2Priv2 } from '../lib/verdicts.mjs';
 import { execIn, pollUntil } from '../lib/measure.mjs';
 import { buildPrivateViaRelayVariant } from '../lib/config-variants.mjs';
 import { peerIdStringOf } from '../lib/config.mjs';
+import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's2';
 const DIRECT_WAIT_MS = 60_000;
@@ -39,13 +40,11 @@ export function applyFaults(_log, _topology) {
 export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
-  const steps = [];
+  const rec = new StepRecorder();
 
   if (ctx.dryRun) {
-    for (const name of describe()) {
-      steps.push({ name, verdict: 'skipped', measurement: null, timeMs: 0 });
-    }
-    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps, faults: log.records };
+    for (const name of describe()) rec.skipped(name);
+    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
 
   const configPath = join(ctx.outDir, 'browser', 'config.json');
@@ -86,66 +85,59 @@ export async function run(ctx) {
       },
     ];
     for (const sub of subSteps) {
-      const stepStart = Date.now();
       const privRow = identities?.[sub.privHost];
       const viaRow = identities?.[sub.viaHost];
       if (!privRow || !viaRow) {
-        steps.push({ name: sub.name, verdict: 'skipped', measurement: null, timeMs: 0 });
+        rec.skipped(sub.name);
         continue;
       }
-      const variant = buildPrivateViaRelayVariant(baseConfig, {
-        privNotisId: privRow.notisId,
-        privPeerIdString: peerIdStringOf(privRow.notisId),
-        viaPublicNotisId: viaRow.notisId,
-      });
-      writeFileSync(configPath, JSON.stringify(variant, null, 2));
-
-      // Open page, poll state via two separate CDP calls.
-      // 1. relay seen.
-      const relayStart = Date.now();
-      const relayJson = await cdpPoll(ctx, browserUrl,
-        "document.getElementById('state')?.textContent ?? null",
-        `if (v === null) return false;
-         try { const s = JSON.parse(v); return s.nodeId === ${JSON.stringify(privRow.notisId)} && s.path === 'relay'; }
-         catch (_e) { return false; }`,
-        RELAY_WAIT_MS, 500,
-      );
-      const relayedTimeMs = Date.now() - relayStart;
-      const relayState = JSON.parse(relayJson);
-      // 2. direct seen (bounded wait); failure is not a scenario fault,
-      // just a measurement result.
-      let directTimeMs = null;
-      let everDirect = false;
-      const directStart = Date.now();
-      try {
-        const directJson = await cdpPoll(ctx, browserUrl,
+      // Wrap each sub-step in `rec.step` so a throw in priv1's does
+      // not skip priv2's.
+      await rec.step(sub.name, async () => {
+        const variant = buildPrivateViaRelayVariant(baseConfig, {
+          privNotisId: privRow.notisId,
+          privPeerIdString: peerIdStringOf(privRow.notisId),
+          viaPublicNotisId: viaRow.notisId,
+        });
+        writeFileSync(configPath, JSON.stringify(variant, null, 2));
+        const relayStart = Date.now();
+        const relayJson = await cdpPoll(ctx, browserUrl,
           "document.getElementById('state')?.textContent ?? null",
           `if (v === null) return false;
-           try { const s = JSON.parse(v); return s.nodeId === ${JSON.stringify(privRow.notisId)} && s.path === 'direct'; }
+           try { const s = JSON.parse(v); return s.nodeId === ${JSON.stringify(privRow.notisId)} && s.path === 'relay'; }
            catch (_e) { return false; }`,
-          DIRECT_WAIT_MS, 500,
+          RELAY_WAIT_MS, 500,
         );
-        void JSON.parse(directJson);
-        directTimeMs = Date.now() - directStart;
-        everDirect = true;
-      } catch {
-        // Direct never arrived within the window. priv2 stays here;
-        // priv1 is a FAIL on verdictS2Priv1 (needs directTimeMs).
-        directTimeMs = null;
-        everDirect = false;
-      }
-      const measurement = sub.buildMeasurement({
-        nodeId: relayState.nodeId,
-        expectedNodeId: privRow.notisId,
-        relayedTimeMs,
-        directTimeMs: directTimeMs ?? -1,
-        everDirect,
-      });
-      steps.push({
-        name: sub.name,
-        verdict: sub.verdict(measurement),
-        measurement,
-        timeMs: Date.now() - stepStart,
+        const relayedTimeMs = Date.now() - relayStart;
+        const relayState = JSON.parse(relayJson);
+        let directTimeMs = null;
+        let everDirect = false;
+        const directStart = Date.now();
+        try {
+          const directJson = await cdpPoll(ctx, browserUrl,
+            "document.getElementById('state')?.textContent ?? null",
+            `if (v === null) return false;
+             try { const s = JSON.parse(v); return s.nodeId === ${JSON.stringify(privRow.notisId)} && s.path === 'direct'; }
+             catch (_e) { return false; }`,
+            DIRECT_WAIT_MS, 500,
+          );
+          void JSON.parse(directJson);
+          directTimeMs = Date.now() - directStart;
+          everDirect = true;
+        } catch {
+          // priv2 stays here (symmetric NAT); priv1 FAILs on
+          // verdictS2Priv1 (needs directTimeMs).
+          directTimeMs = null;
+          everDirect = false;
+        }
+        const measurement = sub.buildMeasurement({
+          nodeId: relayState.nodeId,
+          expectedNodeId: privRow.notisId,
+          relayedTimeMs,
+          directTimeMs: directTimeMs ?? -1,
+          everDirect,
+        });
+        return { verdict: sub.verdict(measurement), measurement };
       });
     }
   } finally {
@@ -163,7 +155,7 @@ export async function run(ctx) {
     scenario: NAME,
     startedAt: started,
     endedAt: Date.now(),
-    steps,
+    steps: rec.steps,
     faults: log.records,
   };
 }
