@@ -31,6 +31,14 @@ export function applyFaults(_log, _topology) {
   // nothing: scenario 1 reads a clean stage.
 }
 
+// STUB — the real exports land in the next commit.
+export function hostOfNodeId(_identities, _nodeId) {
+  throw new Error('s1.hostOfNodeId: not implemented');
+}
+export function anchorIdSet(_config) {
+  throw new Error('s1.anchorIdSet: not implemented');
+}
+
 /**
  * `run(ctx)`: in dry-run, record every step as `skipped` (no
  * measurement). In exec mode (not reached from the dry-run gate), it

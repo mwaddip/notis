@@ -137,5 +137,33 @@ describe('stage/lib/commands.mjs', () => {
         child!.once('exit', () => resolve());
       });
     });
+
+    // MESH_INTERFACE → Acceptance — "up records each process's full
+    // argv and environment in pids.json so a scenario can restart it
+    // as it was". The entry's `argv` carries every element of the
+    // spawn's argvFull; `env` carries only the explicit vars the
+    // spawner passed, so a restart picks up the current process's
+    // PATH and HOME as a fresh `up` would.
+    it.fails('records argv and env on each pid entry so a scenario can restart it', () => {
+      const log = new CommandLog({ dryRun: false });
+      const logPath = join(dir, 'test-argv.log');
+      const argvFull = ['sh', '-c', 'exit 0'];
+      const env = { NOTIS_TEST_VAR: 'yes' };
+      const child = log.spawn(argvFull, {
+        description: 'argv-recorder',
+        env,
+        logPath,
+      });
+      expect(child).not.toBeNull();
+      const entry = log.pids.find((p) => p.description === 'argv-recorder');
+      expect(entry, 'pid entry recorded').toBeDefined();
+      expect((entry as unknown as { argv: unknown }).argv, 'argv carried on the entry').toEqual(argvFull);
+      expect((entry as unknown as { env: unknown }).env, 'env carried on the entry').toEqual(env);
+      // No cwd was passed, so no cwd field is on the entry.
+      expect((entry as unknown as { cwd?: unknown }).cwd).toBeUndefined();
+      return new Promise<void>((resolve) => {
+        child!.once('exit', () => resolve());
+      });
+    });
   });
 });
