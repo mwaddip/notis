@@ -76,6 +76,30 @@ describe('page/render.ts', () => {
     expect(parsed).toEqual(state);
   });
 
+  it.fails('renderNode shows each entry\'s transport and path alongside its other fields', () => {
+    const root = document.createElement('div');
+    const nodes = [
+      makeEntry({
+        notisId: 'aa'.repeat(32), anchor: true, status: 'ok',
+        transport: 'webrtc-direct', path: 'direct',
+      }),
+      makeEntry({
+        notisId: 'bb'.repeat(32), status: 'behind',
+        transport: 'webrtc', path: 'direct',
+      }),
+      makeEntry({ notisId: 'cc'.repeat(32), status: 'retry' }),
+    ];
+    render(emptyState({ anchorReached: true, nodes }), root);
+    const metas = Array.from(root.querySelectorAll('.nodes .meta')).map((n) => n.textContent ?? '');
+    expect(metas[0], 'first entry carries { webrtc-direct, direct }').toContain('transport=webrtc-direct');
+    expect(metas[0]).toContain('path=direct');
+    expect(metas[1], 'second entry carries { webrtc, direct }').toContain('transport=webrtc');
+    expect(metas[1]).toContain('path=direct');
+    expect(metas[2], 'third entry has no open connection — the pair reads none')
+      .toContain('transport=none');
+    expect(metas[2]).toContain('path=none');
+  });
+
   it('a hostile node\'s text is text', () => {
     const root = document.createElement('div');
     const hostile = makeEntry({

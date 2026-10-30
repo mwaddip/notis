@@ -65,8 +65,10 @@ vi.mock('../stage/lib/measure.mjs', async (importOriginal) => {
   };
 });
 
-import { classifyConnectionAddr, pickConnectionForStream } from '../src/client/mesh-client.js';
+import { classifyConnectionAddr, decorateEntries, pickConnectionForStream } from '../src/client/mesh-client.js';
+import { peerIdFromNotisId } from '../src/identity.js';
 import type { Connection } from '@libp2p/interface';
+import type { NodeEntry } from '../src/client/node-list.js';
 import { verdictIceServers, verdictS2Priv1, verdictS2Priv2 } from '../stage/lib/verdicts.mjs';
 import { readTopology } from '../stage/lib/topology.mjs';
 import { ICE_RECORD_INSTALL_SRC } from '../stage/cdp.mjs';
@@ -383,6 +385,144 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
   });
 });
 
+// --- decorateEntries carries transport/path per entry --------------------
+
+describe('decorateEntries carries each entry\'s transport and path', () => {
+  // MESH_INTERFACE → NAT / The client's node list — every `nodes[]` entry
+  // carries the pair `{ transport, path }` of its connection, read with
+  // the same pick + classify the top-level pair uses. An entry with no
+  // open connection reads `null`/`null`; the pair for the node in use
+  // reads the same as the top-level pair.
+  //
+  // The ids live under their Notis spelling (64 lowercase hex). The
+  // helper converts each to the libp2p peer id string before matching
+  // against `connections`.
+
+  const CERTHASH = 'uEiAVZaUYSQpGvbSz9JTC4e4hT4qg9eDWVvHe4lhPUT_wxg';
+  const RELAY = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
+  const AA_NOTIS = 'aa'.repeat(32);
+  const BB_NOTIS = 'bb'.repeat(32);
+
+  // The helper reads the peer id string from the stored notisId through
+  // libp2p's own encoding, so the fake connection's `remotePeer` must
+  // answer that same string. The test rebuilds the peer id string with
+  // the same function the implementation uses, so the fixture tracks a
+  // key-encoding change instead of hard-coding a byte sequence.
+  function peerIdFor(notisId: string): string {
+    return peerIdFromNotisId(notisId).toString();
+  }
+
+  type FakeOpts = {
+    status: 'open' | 'closing' | 'closed' | 'aborted' | 'reset';
+    direct: boolean;
+    limited: boolean;
+    remoteAddr: string;
+    peerIdString: string;
+  };
+  function fakeConn(o: FakeOpts): Connection {
+    return {
+      status: o.status,
+      direct: o.direct,
+      limits: o.limited ? { bytes: 1024n, seconds: 60 } : undefined,
+      remoteAddr: { toString: () => o.remoteAddr },
+      remotePeer: { toString: () => o.peerIdString },
+    } as unknown as Connection;
+  }
+
+  function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
+    return {
+      notisId: over.notisId,
+      anchor: over.anchor ?? false,
+      status: over.status ?? 'new',
+      failures: over.failures ?? 0,
+      retryAtMs: over.retryAtMs ?? 0,
+      addrs: over.addrs ?? [],
+      droppedAddrs: over.droppedAddrs ?? [],
+      evidence: over.evidence ?? null,
+      lastFailure: over.lastFailure ?? null,
+      lastFailures: over.lastFailures ?? {},
+      transport: over.transport ?? null,
+      path: over.path ?? null,
+    };
+  }
+
+  it.fails('an entry with an unlimited WebRTC-over-relay connection reads { webrtc, direct }', () => {
+    const aaPeerString = peerIdFor(AA_NOTIS);
+    const conn = fakeConn({
+      status: 'open', direct: true, limited: false,
+      peerIdString: aaPeerString,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${aaPeerString}`,
+    });
+    const [decorated] = decorateEntries([entry({ notisId: AA_NOTIS })], [conn]);
+    expect(decorated).toMatchObject({ transport: 'webrtc', path: 'direct' });
+  });
+
+  it.fails('an entry with no open connection reads null transport and null path', () => {
+    const [decorated] = decorateEntries([entry({ notisId: AA_NOTIS })], []);
+    expect(decorated).toMatchObject({ transport: null, path: null });
+  });
+
+  it.fails('the pair for the node in use matches the pair top-level refreshTransportPath reads', () => {
+    // Both the top-level pair and the entry pair are derived from the
+    // same `pickConnectionForStream` + `classifyConnectionAddr` for the
+    // same id; they must agree. This case asserts that invariant on a
+    // mixed list (one entry has an open connection, the other does not).
+    const aaPeerString = peerIdFor(AA_NOTIS);
+    const conn = fakeConn({
+      status: 'open', direct: true, limited: false,
+      peerIdString: aaPeerString,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${aaPeerString}`,
+    });
+    const decorated = decorateEntries(
+      [entry({ notisId: AA_NOTIS }), entry({ notisId: BB_NOTIS })],
+      [conn],
+    );
+    const aa = decorated.find((n) => n.notisId === AA_NOTIS);
+    const bb = decorated.find((n) => n.notisId === BB_NOTIS);
+    // Match the top-level reading: the same conn → classify its addr →
+    // `{ webrtc-direct, direct }`.
+    expect(aa).toMatchObject({ transport: 'webrtc-direct', path: 'direct' });
+    expect(bb).toMatchObject({ transport: null, path: null });
+    expect(aa!.transport).toBe(classifyConnectionAddr(conn.remoteAddr.toString()).transport);
+    expect(aa!.path).toBe(classifyConnectionAddr(conn.remoteAddr.toString()).path);
+  });
+
+  // --- mutation round --------------------------------------------------
+
+  it.fails('MUTATION: peer filter — a connection to another peer leaves the entry at null/null', () => {
+    const bbPeerString = peerIdFor(BB_NOTIS);
+    const conn = fakeConn({
+      status: 'open', direct: true, limited: false,
+      peerIdString: bbPeerString,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${bbPeerString}`,
+    });
+    const [decorated] = decorateEntries([entry({ notisId: AA_NOTIS })], [conn]);
+    expect(decorated).toMatchObject({ transport: null, path: null });
+  });
+
+  it.fails('MUTATION: status filter — a closed connection leaves the entry at null/null', () => {
+    const aaPeerString = peerIdFor(AA_NOTIS);
+    const conn = fakeConn({
+      status: 'closed', direct: true, limited: false,
+      peerIdString: aaPeerString,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${aaPeerString}`,
+    });
+    const [decorated] = decorateEntries([entry({ notisId: AA_NOTIS })], [conn]);
+    expect(decorated).toMatchObject({ transport: null, path: null });
+  });
+
+  it.fails('MUTATION: limited-only connection reads { webrtc-direct, relay } for its entry', () => {
+    const aaPeerString = peerIdFor(AA_NOTIS);
+    const conn = fakeConn({
+      status: 'open', direct: false, limited: true,
+      peerIdString: aaPeerString,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${aaPeerString}`,
+    });
+    const [decorated] = decorateEntries([entry({ notisId: AA_NOTIS })], [conn]);
+    expect(decorated).toMatchObject({ transport: 'webrtc-direct', path: 'relay' });
+  });
+});
+
 // --- the installer behaviour of the page's ICE-record wrapper -------------
 
 describe('the page\'s RTCPeerConnection wrapper installer', () => {
@@ -505,12 +645,16 @@ describe('verdictIceServers reads the record per MESH_INTERFACE → NAT', () => 
 
 // --- verdictS2Priv1 --------------------------------------------------------
 
-describe('verdictS2Priv1 reads transport, path, anchorAddrRelayed and iceServers', () => {
-  // MESH_INTERFACE → NAT — "A browser reaches a private node over WebRTC
-  // signalled through the relay". The verdict rests on positive
-  // evidence the browser dialled the relayed WebRTC form and the
-  // connection runs over WebRTC (not just a relayed data stream), and
-  // the ICE-server record passes the IP-only rule.
+describe('verdictS2Priv1 reads reach — priv1Status (ok|behind), transport, path, anchor address and ICE', () => {
+  // MESH_INTERFACE → Acceptance 2 — "The browser reaches the node behind
+  // the endpoint-independent NAT over WebRTC signalled through a relay,
+  // its data direct." Reach is `status ok or behind` on priv1's entry
+  // (both say the client got a checked answer; `behind` is a ranking
+  // outcome, not a reach failure) and a WebRTC-direct link on the
+  // relayed-WebRTC anchor address. `nodeIdInUse` is recorded in the
+  // measurement — a reader can see which node the client stayed on —
+  // but it is not a condition: priv1 may rank below pub1 and still be
+  // reached.
 
   const RELAY = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
   const PRIV = '12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4';
@@ -519,13 +663,15 @@ describe('verdictS2Priv1 reads transport, path, anchorAddrRelayed and iceServers
 
   function base() {
     return {
-      nodeId: 'aa'.repeat(32),
       expectedNodeId: 'aa'.repeat(32),
+      priv1Status: 'ok',
+      priv1Failures: 0,
       transport: 'webrtc',
       path: 'direct',
       anchorAddrRelayed: RELAYED_WEBRTC,
       connectMs: 1200,
       iceServers: [{ urls: ['stun:11.100.0.11:3478'] }],
+      nodeIdInUse: 'aa'.repeat(32),
     };
   }
 
@@ -534,12 +680,24 @@ describe('verdictS2Priv1 reads transport, path, anchorAddrRelayed and iceServers
     expect(verdictS2Priv1(undefined)).toBe('skipped');
   });
 
-  it('PASS on the full green shape', () => {
+  it.fails('PASS on the full green shape (priv1Status ok)', () => {
     expect(verdictS2Priv1(base())).toBe('PASS');
   });
 
-  it('FAIL when nodeId does not match expectedNodeId', () => {
-    expect(verdictS2Priv1({ ...base(), nodeId: 'bb'.repeat(32) })).toBe('FAIL');
+  it.fails('PASS when priv1 is behind — behind is a ranking, not a reach failure', () => {
+    expect(verdictS2Priv1({ ...base(), priv1Status: 'behind' })).toBe('PASS');
+  });
+
+  it('FAIL when priv1 is retry (no answered proof)', () => {
+    expect(verdictS2Priv1({ ...base(), priv1Status: 'retry' })).toBe('FAIL');
+  });
+
+  it('FAIL when priv1 is blacklisted', () => {
+    expect(verdictS2Priv1({ ...base(), priv1Status: 'blacklisted' })).toBe('FAIL');
+  });
+
+  it('FAIL when priv1 is new (never tried)', () => {
+    expect(verdictS2Priv1({ ...base(), priv1Status: 'new' })).toBe('FAIL');
   });
 
   it('FAIL when transport is not webrtc (the direct WebRTC upgrade did not land)', () => {
@@ -560,6 +718,31 @@ describe('verdictS2Priv1 reads transport, path, anchorAddrRelayed and iceServers
 
   it('FAIL when no ICE record was captured (empty array)', () => {
     expect(verdictS2Priv1({ ...base(), iceServers: [] })).toBe('FAIL');
+  });
+
+  // --- mutation round --------------------------------------------------
+  //
+  // Each PASS condition is load-bearing; nodeIdInUse is NOT a condition.
+
+  it.fails('MUTATION: nodeIdInUse is recorded, not a condition — null still PASS', () => {
+    expect(verdictS2Priv1({ ...base(), nodeIdInUse: null })).toBe('PASS');
+  });
+
+  it.fails('MUTATION: nodeIdInUse is recorded, not a condition — a different node still PASS', () => {
+    expect(verdictS2Priv1({ ...base(), nodeIdInUse: 'cc'.repeat(32) })).toBe('PASS');
+  });
+
+  it.fails('MUTATION: priv1Failures is recorded, not a condition — a non-zero count under ok still PASS', () => {
+    // A past failure that recovered to `ok` records a failure count the
+    // reader sees, but it does not FAIL the step on reach.
+    expect(verdictS2Priv1({ ...base(), priv1Failures: 3 })).toBe('PASS');
+  });
+
+  it('MUTATION: expectedNodeId missing is FAIL (shape sanity)', () => {
+    const m = base();
+    // @ts-expect-error — remove a required field
+    delete m.expectedNodeId;
+    expect(verdictS2Priv1(m)).toBe('FAIL');
   });
 });
 
@@ -722,15 +905,16 @@ describe('s1 wires the ICE-record step through cdp.mjs poll-ice', () => {
   });
 });
 
-describe('s2\'s priv1 step', () => {
-  // MESH_INTERFACE → Acceptance 2 — s2's priv1 step writes a variant
-  // (one anchor = priv1 reached through a relay by WebRTC), then
-  // issues `cdp.mjs poll-ice` to read the state and the ICE record in
-  // one held page. Its measurement names
-  // `{ nodeId, expectedNodeId, transport, path, anchorAddrRelayed,
-  //    connectMs, iceServers }`.
+describe('s2\'s priv1 step measures reach, not ranking', () => {
+  // MESH_INTERFACE → Acceptance 2 — the step polls `poll-ice` on one
+  // held page until priv1's entry carries `status` ok or behind AND a
+  // non-null `transport` — reach, not ranking (priv1 may rank below
+  // pub1 at check time, and the browser still reached it). Measurement:
+  // `{ expectedNodeId, priv1Status, priv1Failures, transport, path,
+  //    anchorAddrRelayed, connectMs, iceServers, nodeIdInUse }`.
 
   const priv1NotisId = 'aa'.repeat(32);
+  const pub1NotisId = 'pp'.repeat(32);
 
   function identitiesFixture(): Record<string, unknown> {
     return {
@@ -743,25 +927,41 @@ describe('s2\'s priv1 step', () => {
         ],
       },
       pub1: {
-        notisId: 'pp'.repeat(32),
+        notisId: pub1NotisId,
         httpPort: 3100,
         multiaddrs: [`/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/${RELAY_PEER_FIXTURE}`],
       },
     };
   }
 
-  it('issues one poll-ice call and builds the measurement from the canned answer', async () => {
-    execInMock.reset();
-    const connectedState = {
-      nodeId: priv1NotisId,
-      transport: 'webrtc',
+  function cannedBehindState() {
+    // priv1 answered a valid proof and is a block short of pub1 (the
+    // live-stage case the step must still read as reach). pub1 is `ok`
+    // and the node in use.
+    return {
+      nodeId: pub1NotisId,
+      transport: 'webrtc-direct',
       path: 'direct',
-      nodes: [],
+      nodes: [
+        {
+          notisId: priv1NotisId, status: 'behind', failures: 0,
+          lastFailure: null, transport: 'webrtc', path: 'direct',
+        },
+        {
+          notisId: pub1NotisId, status: 'ok', failures: 0,
+          lastFailure: null, transport: 'webrtc-direct', path: 'direct',
+        },
+      ],
     };
+  }
+
+  it.fails('polls poll-ice until priv1 answers and builds the reach measurement', async () => {
+    execInMock.reset();
+    const state = cannedBehindState();
     const iceRecord = [{ urls: ['stun:11.100.0.11:3478'] }];
     execInMock.setResponder((_ns, argv) => {
       if (argv.includes('poll-ice')) {
-        return JSON.stringify({ value: JSON.stringify(connectedState), iceRecord });
+        return JSON.stringify({ value: JSON.stringify(state), iceRecord });
       }
       return '{}';
     });
@@ -771,19 +971,46 @@ describe('s2\'s priv1 step', () => {
       const pollIceCalls = execInMock.calls.filter((c) => c.argv.includes('poll-ice'));
       expect(pollIceCalls.length, 'priv1 issues exactly one poll-ice').toBe(1);
       const priv1Step = result.steps[0];
-      expect(priv1Step?.measurement, 'priv1 step records the ICE-paired measurement').toMatchObject({
-        nodeId: priv1NotisId,
+      expect(priv1Step?.measurement, 'priv1 step records the reach-shaped measurement').toMatchObject({
         expectedNodeId: priv1NotisId,
+        priv1Status: 'behind',
+        priv1Failures: 0,
         transport: 'webrtc',
         path: 'direct',
         iceServers: iceRecord,
+        nodeIdInUse: pub1NotisId,
       });
       expect(priv1Step?.measurement, 'priv1 step records connectMs as a number')
         .toHaveProperty('connectMs');
       expect(typeof (priv1Step?.measurement as { connectMs?: unknown })?.connectMs).toBe('number');
       expect(priv1Step?.measurement, 'priv1 step records the dialled anchor address')
         .toHaveProperty('anchorAddrRelayed');
-      expect(priv1Step?.verdict, 'priv1 PASSes on the canned WebRTC-direct answer').toBe('PASS');
+      expect(priv1Step?.verdict, 'priv1 PASSes on reach, even though it ranks behind pub1').toBe('PASS');
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not reopen the page per poll — no cdp.mjs eval calls, only poll-ice', async () => {
+    execInMock.reset();
+    const state = cannedBehindState();
+    const iceRecord = [{ urls: ['stun:11.100.0.11:3478'] }];
+    execInMock.setResponder((_ns, argv) => {
+      if (argv.includes('eval')) {
+        return JSON.stringify(JSON.stringify(state));
+      }
+      if (argv.includes('poll-ice')) {
+        return JSON.stringify({ value: JSON.stringify(state), iceRecord });
+      }
+      return '{}';
+    });
+    const outDir = makeOutDir({ anchorNotisId: priv1NotisId, identities: identitiesFixture() });
+    try {
+      await s2Scenario.run(ctxFor(outDir));
+      const evalCalls = execInMock.calls.filter((c) => c.argv.includes('eval'));
+      const pollIceCalls = execInMock.calls.filter((c) => c.argv.includes('poll-ice'));
+      expect(evalCalls.length, 'no cdp.mjs eval calls (that would reopen the page per poll)').toBe(0);
+      expect(pollIceCalls.length, 'at least one held-page poll-ice call for priv1').toBeGreaterThanOrEqual(1);
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
