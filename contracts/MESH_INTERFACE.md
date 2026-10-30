@@ -169,8 +169,11 @@ and one behind a symmetric NAT, a browser behind NAT, an ACME test server, and h
 unmodified devnet `@dagsocial/node`. The proof of concept holds when every step of the six scenarios passes on what it
 measured; a step that did not run reads `skipped`, never a pass.
 
-1. **No name, no hosted page.** The client reads a node's API by key from anchors alone; the mesh's answers equal the
-   node's direct HTTP answers byte for byte; the browser host's resolver logs no query.
+1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, with the browser's own
+   resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte for byte; and
+   the browser host's DNS log holds no query — anything there went around the browser's resolver, as an ICE server
+   named by host would. The browser's own services resolve names whatever page is open, so a resolver that answers
+   nothing is what separates them from the client.
 2. **Behind NAT.** A node behind the endpoint-independent NAT answers through a relay, then directly; one behind the
    symmetric NAT answers through the relay.
 3. **A node goes away.** Killed, then firewalled: the client moves to another node within two checks, the node reads
