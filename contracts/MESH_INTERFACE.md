@@ -80,9 +80,10 @@ node it is told of — by address and id, never by searching — and is reached 
 upgrades a relayed connection to a direct one where the NATs allow it. A browser reaches a private node over WebRTC
 signalled through the relay, gathering ICE candidates against public nodes' STUN servers alone.
 
-**A relay that does not answer never stops a private node.** One that is down when the node starts, or that goes away,
-is tried again on the node list's retry cadence (`RETRY_BASE_MS` doubling to `RETRY_CAP_MS`), and the node reserves
-on it once it answers; meanwhile it serves through whichever relays it holds.
+**A relay that does not answer never stops a private node.** The node starts on its own addresses alone and asks each
+relay for its reservation afterwards, every attempt under `RELAY_LISTEN_TIMEOUT_MS`. A relay that is down, that goes
+away, or that never completes a reservation is tried again on the node list's retry cadence (`RETRY_BASE_MS` doubling
+to `RETRY_CAP_MS`), and the node reserves on it once it answers; meanwhile it serves through whichever relays it holds.
 
 **A public node announces its listen addresses from the start.** libp2p holds back a listen address on a public IP
 until a peer confirms it, but an operator who declares a node `public` has said the address is reachable, and a node
@@ -166,6 +167,7 @@ fetch to the node in use. The node in use is the first candidate after it.
 | `CHECK_INTERVAL_MS` | `30_000` | 30 s between checks |
 | `DIAL_TIMEOUT_MS` | `3_000` | 3 s per address in one node's dial; the dial's deadline is this times its addresses, or `PEER_DIAL_MIN_MS`, whichever is longer |
 | `PEER_DIAL_MIN_MS` | `20_000` | 20 s, the shortest deadline one node's dial gets — libp2p gives each address 6 s of its own, and a relayed address dials the relay first |
+| `RELAY_LISTEN_TIMEOUT_MS` | `10_000` | 10 s for one attempt at a relay reservation; past it the attempt is a failure and the relay is tried again on the retry cadence |
 | `CERT_RETRY_MS` | `3_600_000` | 1 h between attempts at a failed renewal |
 | `STUN_PORT` | `3478` | the STUN port of RFC 8489 |
 
