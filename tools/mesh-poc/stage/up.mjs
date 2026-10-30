@@ -189,13 +189,19 @@ async function waitWithTail(description, check, logPath, options) {
 }
 
 /**
- * Read the first JSON line from `logPath` whose parse carries a `notisId`
- * field. The mesh node writes exactly that line to stdout when it is
- * ready to serve; its stdout goes to this file through an fd `openSync`
- * gave to the spawn. The caller passes the child so this helper can
- * fail fast when the mesh node exits before writing the line.
+ * Read the LATEST JSON identity line from `logPath` that satisfies
+ * `predicate(parsed)`. The mesh node (`src/node/main.ts`) writes one
+ * line to stdout when it starts listening, and reprints the line on
+ * every `self:peer:update` — a public role's listen address verifies,
+ * a private role's circuit-relay reservation lands. The predicate
+ * picks the first line that carries what the stage needs: for a public
+ * role, any identity; for a private role, an identity whose
+ * `multiaddrs` carries a `/p2p-circuit` address.
+ *
+ * The caller passes the child so this helper can fail fast when the
+ * mesh node exits before writing a satisfying line.
  */
-async function readFirstMeshIdentity(child, logPath, { timeoutMs }) {
+async function readMeshIdentityUntil(child, logPath, predicate, { timeoutMs }) {
   let exited = false;
   let exitCode = null;
   if (child !== null) {
@@ -221,7 +227,8 @@ async function readFirstMeshIdentity(child, logPath, { timeoutMs }) {
             if (line === '' || line[0] !== '{') continue;
             try {
               const parsed = JSON.parse(line);
-              if (typeof parsed.notisId === 'string') return parsed;
+              if (typeof parsed.notisId !== 'string') continue;
+              if (predicate(parsed)) return parsed;
             } catch { /* not the JSON identity line, keep reading */ }
           }
         }
@@ -235,6 +242,19 @@ async function readFirstMeshIdentity(child, logPath, { timeoutMs }) {
     await sleep(100);
   }
   throw new Error('timed out');
+}
+
+// MESH_INTERFACE → NAT — "A `private` node announces its relay
+// reservations alone". The latest identity line for a private role has
+// to carry at least one `/p2p-circuit` address so the stage's
+// `identities.json` names an address a browser can dial. A public role
+// passes on the first non-empty identity.
+function identityPredicateForMeshRole(meshRole) {
+  if (meshRole === 'private') {
+    return (parsed) => Array.isArray(parsed.multiaddrs)
+      && parsed.multiaddrs.some((m) => typeof m === 'string' && m.includes('/p2p-circuit'));
+  }
+  return () => true;
 }
 
 /**
@@ -724,11 +744,15 @@ for (const [name, host] of Object.entries(topology.hosts)) {
       MESH_ROLE: host.mesh.role,
       MESH_STATE_DIR: meshStateDir,
       MESH_UPSTREAM: upstream,
-      // Public mesh nodes listen on WebRTC-direct and TCP; the TCP
-      // address is what other mesh nodes bootstrap through.
-      MESH_LISTEN: host.mesh.role === 'public'
-        ? `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct,/ip4/${host.addr}/tcp/${host.mesh.tcpPort}`
-        : '/ip4/127.0.0.1/udp/0/webrtc-direct',
+      // MESH_INTERFACE → NAT — "A public node announces its listen
+      // addresses from the start" with concrete-port WebRTC-direct and
+      // TCP addresses on its own IP; a private node listens on its own
+      // (NAT-inside) IP with concrete ports and lets `startMeshNode`
+      // append `/p2p-circuit` (mesh-node.ts handles the private role).
+      // Neither path ever names 127.0.0.1 or a /tcp/0, /udp/0: a browser
+      // in another namespace cannot reach a loopback-bound mesh node,
+      // and a port-0 bind announces an address nothing can dial.
+      MESH_LISTEN: `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct,/ip4/${host.addr}/tcp/${host.mesh.tcpPort}`,
       MESH_BOOTSTRAP: bootstrapAddrs.join(','),
       ...(host.mesh.stunPort !== undefined ? { MESH_STUN: `${host.addr}:${host.mesh.stunPort}` } : {}),
       ...(host.mesh.wss !== undefined ? {
@@ -747,12 +771,18 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     const meshChild = log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}`, logPath: meshLogPath });
     if (!dryRun) {
       // The mesh node's stdout is a file; tail it until the first JSON
-      // identity line lands. The reader also watches the child's exit
-      // event: a mesh node that dies before printing fails the stage
-      // at once, with the log tail named. Every mesh node (public and
-      // private) is awaited so a crash in any one surfaces here, not
-      // ten minutes later at the height wait.
-      meshIdentityPromises[name] = readFirstMeshIdentity(meshChild, meshLogPath, { timeoutMs: 60_000 })
+      // identity line that satisfies its role's predicate (a public
+      // node: any identity; a private node: an identity whose
+      // multiaddrs carries a /p2p-circuit address — the mesh node
+      // reprints its identity on self:peer:update when the relay
+      // reservation lands). A mesh node that dies before writing one
+      // fails the stage at once, with the log tail named.
+      const predicate = identityPredicateForMeshRole(host.mesh.role);
+      // A private node needs more time: it has to connect to a public
+      // node, request a reservation, and wait for the relay to grant
+      // one. 120 s covers the slowest of these on the stage.
+      const identityTimeoutMs = host.mesh.role === 'private' ? 120_000 : 60_000;
+      meshIdentityPromises[name] = readMeshIdentityUntil(meshChild, meshLogPath, predicate, { timeoutMs: identityTimeoutMs })
         .catch((err) => {
           const tail = tailLog(meshLogPath, 20);
           const body = tail === '' ? '<no output>' : tail;
@@ -767,6 +797,10 @@ for (const [name, host] of Object.entries(topology.hosts)) {
 // 10-minute height wait, so a crash shows up in seconds. Each promise
 // carries the log tail; Promise.all rejects on the first failure.
 recordWait('each public mesh node prints its identity line (notisId, peerId, multiaddrs with /certhash/)');
+// MESH_INTERFACE → NAT — a private node's identity does not satisfy the
+// stage until it announces a /p2p-circuit address: the stage's
+// `identities.json` and s2's config variants dial through the relay.
+recordWait('each private mesh node announces a /p2p-circuit address (relay reservation lands)');
 let meshIdentities = {};
 if (!dryRun) {
   const settled = await Promise.allSettled(

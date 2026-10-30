@@ -16,13 +16,20 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import {
-  verdictS4Pub1UdpDrop, verdictS4AllUdpDrop, verdictS4Renewal,
+  verdictS4Pub1UdpDrop, verdictS4AllUdpDrop, verdictS4Renewal, verdictS4InterNodeTcp,
 } from '../lib/verdicts.mjs';
 import { execIn, nftApply, pollUntil } from '../lib/measure.mjs';
 import { publicMeshHosts } from '../lib/topology.mjs';
 import { readTlsIssuer } from '../lib/scenario-tls.mjs';
 import { readFileSize, countMatchesSince } from '../lib/log-watch.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
+
+// MESH_INTERFACE → The client's node list — "A check — `resolveTip` over
+// the candidates — runs at start, every `CHECK_INTERVAL_MS`". Step 4
+// (inter-node TCP cut) reads the browser's state after a check has
+// fired on the cut, so the record carries the post-cut state rather
+// than a transient null between checks.
+const CHECK_INTERVAL_MS = 30_000;
 
 export const NAME = 's4';
 const UDP_TABLE = 's4_udp';
@@ -171,19 +178,23 @@ export async function run(ctx) {
     // --- Step 3: across one renewal, probes keep succeeding ---
     await rec.step(describe()[2], async () => {
       const pebbleSizeBefore = readFileSize(pebbleLog);
-      // MESH_INTERFACE → "no lastLeft names a failure" is PASS only on
-      // positive evidence of a connection before AND after the window.
-      // Read `state.nodeId` at both boundaries; a page that never
-      // connected has null at both and the verdict refuses PASS.
+      // MESH_INTERFACE → The IP certificate — "a renewal replaces the
+      // certificate with no request dropped": the connected-before and
+      // connected-after reads are PASS evidence (no vacuous pass). The
+      // page's `#state` is rewritten whole on every state change, so a
+      // one-shot read lands between renders empty; `cdpPoll` with the
+      // same predicate step 2 uses waits for a stable state at both
+      // boundaries.
+      const connectedPredicate = `if (v === null) return false;
+         try { const s = JSON.parse(v); return s.nodeId === ${JSON.stringify(pub1Id)} && s.transport === 'wss'; }
+         catch (_e) { return false; }`;
       let connectedBeforeWindow = false;
       try {
-        const text0 = await cdpEval(ctx, browserUrl,
-          "document.getElementById('state')?.textContent ?? null");
-        if (typeof text0 === 'string') {
-          const s0 = JSON.parse(text0);
-          connectedBeforeWindow = s0.nodeId !== null && s0.transport === 'wss';
-        }
-      } catch { /* transient; stays false */ }
+        await cdpPoll(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null",
+          connectedPredicate, 30_000, 500);
+        connectedBeforeWindow = true;
+      } catch { /* no stable connected state inside 30 s; stays false */ }
       let lastLeftFailureSeen = false;
       const probeDeadline = Date.now() + RENEWAL_WINDOW_MS;
       while (Date.now() < probeDeadline) {
@@ -205,13 +216,11 @@ export async function run(ctx) {
       }
       let connectedAfterWindow = false;
       try {
-        const textN = await cdpEval(ctx, browserUrl,
-          "document.getElementById('state')?.textContent ?? null");
-        if (typeof textN === 'string') {
-          const sN = JSON.parse(textN);
-          connectedAfterWindow = sN.nodeId !== null && sN.transport === 'wss';
-        }
-      } catch { /* transient; stays false */ }
+        await cdpPoll(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null",
+          connectedPredicate, 30_000, 500);
+        connectedAfterWindow = true;
+      } catch { /* no stable connected state at window end; stays false */ }
       const renewalCount = pebbleSizeBefore !== null
         ? countMatchesSince(pebbleLog, pebbleSizeBefore, /Issued certificate|Order (?:valid|finalized)/i)
         : 0;
@@ -234,10 +243,25 @@ export async function run(ctx) {
         runFault(log, `notis-tcp-add-chain-${i}`, t.addChain);
         runFault(log, `notis-tcp-drop-${i}`, t.dropDport);
       }
-      // Measurement: read state once more; the browser still speaks WSS
-      // to pub1 regardless of inter-node TCP.
-      const text4 = await cdpEval(ctx, browserUrl,
-        "document.getElementById('state')?.textContent ?? null");
+      // MESH_INTERFACE → The client's node list — "A check — resolveTip
+      // over the candidates — runs at start, every `CHECK_INTERVAL_MS`,
+      // and at once after a failed fetch to the node in use". A read
+      // taken immediately after the fault lands between checks; waiting
+      // one check interval lets the next tick fire on the cut. The
+      // record carries the post-cut state alone — `cdpPoll` with a
+      // predicate that holds for a settled state (nodeId AND transport
+      // present) returns one of them, never a transient frame.
+      await new Promise((r) => setTimeout(r, CHECK_INTERVAL_MS));
+      let text4 = null;
+      try {
+        text4 = await cdpPoll(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null",
+          `if (v === null) return false;
+           try { const s = JSON.parse(v); return s.nodeId !== null && s.transport !== null; }
+           catch (_e) { return false; }`,
+          30_000, 500,
+        );
+      } catch { /* no stable state landed within the deadline */ }
       const state4 = typeof text4 === 'string' ? JSON.parse(text4) : {};
       const m = {
         transport: state4.transport ?? null,
@@ -245,10 +269,7 @@ export async function run(ctx) {
         tip: state4.tip ?? null,
         note: 'inter-node TCP cut; browser-to-WSS stays up',
       };
-      // No verdict function for step 4 (open-ended per the brief); the
-      // measurement is informational, so verdict is PASS when a
-      // measurement was taken.
-      return { verdict: typeof text4 === 'string' ? 'PASS' : 'skipped', measurement: m };
+      return { verdict: verdictS4InterNodeTcp(m), measurement: m };
     });
   } finally {
     // Teardown — remove every applied nft table.

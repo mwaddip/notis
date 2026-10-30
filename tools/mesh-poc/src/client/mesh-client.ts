@@ -23,7 +23,7 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { UnexpectedPeerError } from '@libp2p/interface';
 import type { Connection, PeerId } from '@libp2p/interface';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
-import { peerIdFromString } from '@libp2p/peer-id';
+import { defaultMultiaddrSorter } from '@libp2p/utils';
 import { generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
@@ -545,26 +545,53 @@ class MeshClientImpl implements MeshClient {
       return; // success — connection open
     } catch (e) {
       // libp2p throws `AggregateError('All multiaddr dials failed')`
-      // when every address errors; a single UnexpectedPeerError
-      // across the aggregate names the one wrong-key path.
+      // when every address errors. The inner errors come in the ORDER
+      // the dial-queue applied (defaultMultiaddrSorter) over the
+      // calculated addresses, so attribution rides position when
+      // `errors.length === dialable.length` — libp2p dropped none
+      // through its gater or dedup. `attributeAggregateDialErrors`
+      // sorts our dialable list the same way and returns one row per
+      // sorted address with its wrong-key / failure classification;
+      // `null` means libp2p dropped some address and position-based
+      // attribution is unsound, so the caller records a single
+      // aggregate failure instead.
+      const dialableWithPeer = multiaddrs.map((m) => m.toString());
       const inner = unwrapAggregate(e);
+      const attributed = attributeAggregateDialErrors(dialableWithPeer, inner);
       let anyWrongKey = false;
-      for (const err of inner) {
-        if (isUnexpectedPeer(err)) {
-          anyWrongKey = true;
-          const addr = addrOfUnexpectedPeer(err);
-          if (addr !== null) this.nodeList.wrongKey(id, addr, answeredIdOf(err));
+      if (attributed !== null) {
+        for (const row of attributed) {
+          if (row.wrongKey !== null) {
+            anyWrongKey = true;
+            // The anchor's own list carries the addrs without the
+            // `/p2p/<peer-id>` tail `withPeerId` adds for the dial;
+            // reconcile by matching on the host-port prefix the two
+            // forms share. `wrongKey` drops by exact string, so we
+            // reconstruct the address from the dialable list.
+            const bareAddr = findBareAddrForDialable(dialable, row.addr) ?? row.addr;
+            this.nodeList.wrongKey(id, bareAddr, row.wrongKey.answeredPeerIdString);
+          }
         }
       }
-      // Dial still FAILed overall — if nothing turned into a wrong-key
-      // drop, record a plain failure. If some addresses were dropped
-      // for wrong-key but others failed too, the node still reads retry.
+      // Dial still FAILed overall — bump the retry counter once and set
+      // `lastFailure` to the aggregate's own message. When attribution
+      // landed, each address's own failure also lands in
+      // `lastFailures[addr]` so a reader can see which address failed
+      // how (MESH_INTERFACE → The client's node list — "An entry keeps
+      // its last failure's kind and message").
       const stillHere = this.nodeList.entry(id);
       if (!stillHere || stillHere.status === 'blacklisted') return;
       if (anyWrongKey && stillHere.addrs.length === 0) {
         // Every address was wrong-key dropped; the node has no addrs
         // left. The next check path will take over.
         return;
+      }
+      if (attributed !== null) {
+        for (const row of attributed) {
+          if (row.wrongKey !== null) continue; // dropped by wrongKey already
+          const bareAddr = findBareAddrForDialable(dialable, row.addr) ?? row.addr;
+          this.nodeList.recordAddrFailure(id, bareAddr, row.kind, row.message);
+        }
       }
       const kind = classifyDialError(e);
       const message = messageOf(e);
@@ -723,43 +750,11 @@ function toLibp2pPeerIdString(notisId: string): string {
   return s;
 }
 
-function isUnexpectedPeer(e: unknown): boolean {
-  if (e instanceof UnexpectedPeerError) return true;
-  const named = e as { name?: unknown } | null;
-  if (named !== null && typeof named === 'object' && named.name === 'UnexpectedPeerError') return true;
-  // libp2p wraps the inner error for a multi-address dial — check nested
-  // errors by name.
-  const errors = (e as { errors?: unknown }).errors;
-  if (Array.isArray(errors)) {
-    for (const inner of errors) {
-      if (isUnexpectedPeer(inner)) return true;
-    }
-  }
-  const cause = (e as { cause?: unknown }).cause;
-  if (cause !== undefined && cause !== null) return isUnexpectedPeer(cause);
-  return false;
-}
-
-function answeredIdOf(e: unknown): string | null {
-  const msg = (e as { message?: unknown })?.message;
-  if (typeof msg !== 'string') return null;
-  // The thrown message reads "Expected remote peer X but connected to Y"
-  // (libp2p's upgrader).
-  const m = /connected to\s+([^\s]+)/.exec(msg);
-  if (!m) return null;
-  try {
-    const pid = peerIdFromString(m[1]!);
-    return notisIdFromPeerId(pid);
-  } catch {
-    return null;
-  }
-}
-
 /**
  * `AggregateError` from libp2p's dial queue (one error per address) is
- * flattened here so callers can inspect each cause (UnexpectedPeer,
- * TimeoutError, …) individually. A non-aggregate error reads as a
- * single-element list.
+ * flattened here so callers can inspect each cause (noise encryption
+ * failure, timeout, transport failure, …) individually. A
+ * non-aggregate error reads as a single-element list.
  */
 function unwrapAggregate(e: unknown): unknown[] {
   if (e !== null && typeof e === 'object' && 'errors' in e) {
@@ -770,19 +765,22 @@ function unwrapAggregate(e: unknown): unknown[] {
 }
 
 /**
- * `@libp2p/webrtc` and `@libp2p/websockets` surface the dialled
- * multiaddr on an UnexpectedPeerError in `.multiaddr` or `.addr`;
- * which exact field depends on the transport. A missing addr reads
- * as `null`, and the caller just leaves every address in place.
+ * The dial list the client hands libp2p has a `/p2p/<peer-id>` tail on
+ * every address (`withPeerId`). The anchor's own list carries the bare
+ * address; `NodeList.wrongKey`/`recordAddrFailure` take the bare form.
+ * This helper recovers the bare address matching one dialable address.
  */
-function addrOfUnexpectedPeer(e: unknown): string | null {
-  if (e === null || typeof e !== 'object') return null;
-  const any = e as { multiaddr?: unknown; addr?: unknown };
-  if (typeof any.multiaddr === 'string') return any.multiaddr;
-  if (any.multiaddr && typeof (any.multiaddr as { toString: () => string }).toString === 'function') {
-    return (any.multiaddr as { toString: () => string }).toString();
+function findBareAddrForDialable(bareList: readonly string[], dialableAddr: string): string | null {
+  // The dialable address is `<bare>/p2p/<peer-id>` or `<bare-replaced>`:
+  // `withPeerId` either appends `/p2p/<peer-id>` or rewrites the
+  // existing `/p2p/<X>` tail. Match by prefix up to the final `/p2p/`.
+  const idx = dialableAddr.lastIndexOf('/p2p/');
+  const prefix = idx >= 0 ? dialableAddr.slice(0, idx) : dialableAddr;
+  for (const bare of bareList) {
+    const bareIdx = bare.lastIndexOf('/p2p/');
+    const barePrefix = bareIdx >= 0 ? bare.slice(0, bareIdx) : bare;
+    if (barePrefix === prefix) return bare;
   }
-  if (typeof any.addr === 'string') return any.addr;
   return null;
 }
 
@@ -842,8 +840,53 @@ function pathOf(ma: string): 'direct' | 'relay' | null {
  * reads both and returns the answered peer-id string; it returns `null`
  * for every other error (a timeout, a plain refusal, …).
  */
-export function wrongKeyInfo(_e: unknown): { answeredPeerIdString: string } | null {
-  throw new Error('wrongKeyInfo: not implemented');
+export function wrongKeyInfo(e: unknown): { answeredPeerIdString: string } | null {
+  if (e === null || e === undefined) return null;
+  if (e instanceof UnexpectedPeerError) {
+    return readAnsweredFromUpgraderMessage(messageOfError(e));
+  }
+  const named = e as { name?: unknown; message?: unknown };
+  if (typeof named.name === 'string') {
+    // The upgrader's own refusal reads `Expected remote peer X but
+    // connected to Y`; noise's refusal, wrapped by libp2p's
+    // `EncryptionFailedError` (libp2p/src/errors.ts), reads `Payload
+    // peer id X does not match expected remote peer id Y` and names the
+    // answered id in the "Payload peer id" position.
+    if (named.name === 'UnexpectedPeerError') return readAnsweredFromUpgraderMessage(messageOfError(e));
+    if (named.name === 'EncryptionFailedError') return readAnsweredFromNoiseMessage(messageOfError(e));
+  }
+  // Nested aggregate / cause — fall through so a wrapped wrong-key still
+  // reads.
+  const errors = (e as { errors?: unknown }).errors;
+  if (Array.isArray(errors)) {
+    for (const inner of errors) {
+      const r = wrongKeyInfo(inner);
+      if (r !== null) return r;
+    }
+  }
+  const cause = (e as { cause?: unknown }).cause;
+  if (cause !== undefined && cause !== null) return wrongKeyInfo(cause);
+  return null;
+}
+
+function messageOfError(e: unknown): string {
+  const m = (e as { message?: unknown })?.message;
+  return typeof m === 'string' ? m : '';
+}
+
+function readAnsweredFromUpgraderMessage(msg: string): { answeredPeerIdString: string } | null {
+  // "Expected remote peer X but connected to Y" — Y is the answered id.
+  const m = /connected to\s+([^\s]+)/.exec(msg);
+  if (!m) return null;
+  return { answeredPeerIdString: m[1]! };
+}
+
+function readAnsweredFromNoiseMessage(msg: string): { answeredPeerIdString: string } | null {
+  // "Payload peer id X does not match expected remote peer id Y" — X is
+  // the answered id (what the server sent on its noise payload).
+  const m = /Payload peer id\s+([^\s]+)\s+does not match/.exec(msg);
+  if (!m) return null;
+  return { answeredPeerIdString: m[1]! };
 }
 
 /**
@@ -863,14 +906,34 @@ export function wrongKeyInfo(_e: unknown): { answeredPeerIdString: string } | nu
 export interface AttributedDialError {
   addr: string;
   wrongKey: { answeredPeerIdString: string } | null;
-  kind: 'timeout' | 'transport';
+  kind: FailureKind;
   message: string;
 }
 export function attributeAggregateDialErrors(
-  _dialable: readonly string[],
-  _errors: readonly unknown[],
+  dialable: readonly string[],
+  errors: readonly unknown[],
 ): AttributedDialError[] | null {
-  throw new Error('attributeAggregateDialErrors: not implemented');
+  if (dialable.length !== errors.length) return null;
+  // The dial-queue sorts gated addresses with `defaultAddressSorter`,
+  // which chains four multiaddr-only comparators + `certifiedAddressesFirst`.
+  // The dialable list we hand it carries no isCertified bit, so the
+  // multiaddr-only ordering is what applies — `defaultMultiaddrSorter`
+  // from `@libp2p/utils` is the same chain and part of its public
+  // surface.
+  const sorted = defaultMultiaddrSorter(dialable.map((s) => multiaddr(s))).map((m) => m.toString());
+  const out: AttributedDialError[] = [];
+  for (let i = 0; i < sorted.length; i += 1) {
+    const addr = sorted[i]!;
+    const err = errors[i];
+    const wk = wrongKeyInfo(err);
+    out.push({
+      addr,
+      wrongKey: wk,
+      kind: classifyDialError(err),
+      message: messageOf(err),
+    });
+  }
+  return out;
 }
 
 /**

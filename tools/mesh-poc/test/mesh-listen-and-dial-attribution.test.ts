@@ -1,10 +1,11 @@
 // MESH_INTERFACE → NAT / Transports / The client's node list / Acceptance —
-// the five findings main surfaced on the sixth live-stage run at `70ab0da5`:
-// every mesh node listens on its host's own IP with concrete ports, a
-// private node's identity line is reprinted once its relay reservation
-// lands, the dial's AggregateError is attributed back to each address,
-// s4's renewal step reads the page through `cdpPoll`, and s4's inter-node
-// TCP step waits one `CHECK_INTERVAL_MS` for the page to settle before
+// every mesh node listens on its host's own IP with concrete ports (never
+// 127.0.0.1 or a /tcp/0, /udp/0); a private node's identity line is
+// reprinted once a /p2p-circuit lands on `self:peer:update`; the dial's
+// AggregateError is attributed back to each address by position in
+// libp2p 3.5's own sorted order; s4's renewal step reads the page
+// through `cdpPoll` at both boundaries; s4's inter-node TCP step waits
+// one `CHECK_INTERVAL_MS` for a check to fire on the cut before
 // recording.
 
 import { describe, expect, it } from 'vitest';
@@ -33,7 +34,7 @@ describe('finding 1 — every mesh host listens on its own segment IP with concr
   // browser's gater refused them and nothing in another namespace could
   // reach them.
 
-  it.fails('every host with a mesh entry carries mesh.webrtcPort and mesh.tcpPort as integers', () => {
+  it('every host with a mesh entry carries mesh.webrtcPort and mesh.tcpPort as integers', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const bad: string[] = [];
     for (const [name, host] of Object.entries(topology.hosts) as Array<[string, Record<string, unknown>]>) {
@@ -45,7 +46,7 @@ describe('finding 1 — every mesh host listens on its own segment IP with concr
     expect(bad, `missing or non-integer port on: ${bad.join(', ')}`).toEqual([]);
   });
 
-  it.fails('every hostile host carries mesh.role = "public" (so a browser in another namespace can dial it)', () => {
+  it('every hostile host carries mesh.role = "public" (so a browser in another namespace can dial it)', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     for (const [name, host] of Object.entries(topology.hosts) as Array<[string, Record<string, unknown>]>) {
       if (host['role'] !== 'hostile') continue;
@@ -54,7 +55,7 @@ describe('finding 1 — every mesh host listens on its own segment IP with concr
     }
   });
 
-  it.fails('stage:up --dry-run: every mesh spawn\'s MESH_LISTEN names the host\'s own IP, never 127.0.0.1 or port 0', () => {
+  it('stage:up --dry-run: every mesh spawn\'s MESH_LISTEN names the host\'s own IP, never 127.0.0.1 or port 0', () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
       encoding: 'utf8', timeout: 30_000,
     });
@@ -87,13 +88,23 @@ describe('finding 2 — a private mesh node reprints its identity line when a /p
   // loopback address and s2 failed with "AggregateError: All multiaddr
   // dials failed" on both private hosts.
 
-  it.fails('mesh main.ts registers a listener on self:peer:update to reprint the identity line', () => {
+  it('mesh main.ts registers a listener on self:peer:update that reprints the identity line', () => {
     const src = readFileSync(SRC_MESH_MAIN, 'utf8');
-    expect(src, 'main.ts imports or writes self:peer:update').toMatch(/self:peer:update/);
-    expect(src, 'main.ts calls addEventListener for the event').toMatch(/addEventListener\(['"]self:peer:update/);
+    // The listener registration lives at the top of a line (no leading
+    // `//` or `/*` comment prefix) — a commented-out line reads the
+    // event's name but does nothing on dispatch. Each source line is
+    // checked rather than the whole file so a comment higher up cannot
+    // satisfy the match.
+    const lines = src.split('\n');
+    const idx = lines.findIndex((l) => /^\s*node\.libp2p\.addEventListener\(['"]self:peer:update['"]/.test(l));
+    expect(idx, 'main.ts has an uncommented addEventListener for self:peer:update').toBeGreaterThanOrEqual(0);
+    // The listener body (within ~40 lines of the registration) writes a
+    // fresh identity line through `writeIdentity`.
+    const window = lines.slice(idx, Math.min(lines.length, idx + 40)).join('\n');
+    expect(window, 'the listener body writes a fresh identity line').toContain('writeIdentity(');
   });
 
-  it.fails('stage:up --dry-run names a wait for each private mesh node\'s /p2p-circuit announcement', () => {
+  it('stage:up --dry-run names a wait for each private mesh node\'s /p2p-circuit announcement', () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
       encoding: 'utf8', timeout: 30_000,
     });
@@ -112,7 +123,7 @@ describe('finding 3 — the AggregateError is attributed back to each address', 
   // on the error. Attribution rides position in the sorted dial order
   // (`@libp2p/utils`' `defaultMultiaddrSorter` applied before the dial).
 
-  it.fails('wrongKeyInfo matches EncryptionFailedError + the noise mismatch message, reads the answered id', () => {
+  it('wrongKeyInfo matches EncryptionFailedError + the noise mismatch message, reads the answered id', () => {
     const err = Object.assign(new Error(
       'Payload peer id 12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4 does not match expected remote peer id 12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH',
     ), { name: 'EncryptionFailedError' });
@@ -123,7 +134,7 @@ describe('finding 3 — the AggregateError is attributed back to each address', 
     );
   });
 
-  it.fails('wrongKeyInfo also recognises UnexpectedPeerError and reads "connected to <id>" as the answered id', () => {
+  it('wrongKeyInfo also recognises UnexpectedPeerError and reads "connected to <id>" as the answered id', () => {
     const err = Object.assign(new Error(
       'Expected remote peer 12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH but connected to 12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4',
     ), { name: 'UnexpectedPeerError' });
@@ -132,12 +143,12 @@ describe('finding 3 — the AggregateError is attributed back to each address', 
     expect(info!.answeredPeerIdString).toBe('12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4');
   });
 
-  it.fails('wrongKeyInfo returns null for a plain TimeoutError', () => {
+  it('wrongKeyInfo returns null for a plain TimeoutError', () => {
     const err = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
     expect(wrongKeyInfo(err)).toBeNull();
   });
 
-  it.fails('attributeAggregateDialErrors sorts the dialable addresses and pairs each error with one address', () => {
+  it('attributeAggregateDialErrors sorts the dialable addresses and pairs each error with one address', () => {
     // Three dialable addresses in the client's original order; libp2p's
     // `defaultMultiaddrSorter` reorders them (reliableTransportsFirst
     // puts TCP first, then TLS/WS, then WebRTC-direct). The aggregate's
@@ -169,7 +180,7 @@ describe('finding 3 — the AggregateError is attributed back to each address', 
     expect(attributed![2]!.wrongKey?.answeredPeerIdString).toBe('IMPOSTOR');
   });
 
-  it.fails('attributeAggregateDialErrors returns null when errors.length !== dialable.length (unreliable attribution)', () => {
+  it('attributeAggregateDialErrors returns null when errors.length !== dialable.length (unreliable attribution)', () => {
     const dialable = ['/ip4/1.1.1.1/tcp/443/p2p/P', '/ip4/2.2.2.2/tcp/443/p2p/P'];
     expect(attributeAggregateDialErrors(dialable, [new Error('a')])).toBeNull();
   });
@@ -192,7 +203,7 @@ describe('finding 4 — s4 step 3 reads the page through cdpPoll at both ends of
   // the state WAS connected (step 2's cdpPoll already pinned it), but
   // step 3's cdpEval read a transient null and recorded it as the fact.
 
-  it.fails('s4 step 3 reads connectedBeforeWindow / connectedAfterWindow through cdpPoll, not cdpEval', () => {
+  it('s4 step 3 reads connectedBeforeWindow / connectedAfterWindow through cdpPoll, not cdpEval', () => {
     const src = readFileSync(SRC_S4, 'utf8');
     const stepIdx = src.indexOf("rec.step(describe()[2]");
     expect(stepIdx, 's4 step 3 is in the source').toBeGreaterThan(0);
@@ -218,23 +229,31 @@ describe('finding 5 — s4 step 4 waits one CHECK_INTERVAL_MS and records before
   // s4 step 4 is a record step: PASS when the state was recorded (not an
   // empty read), never on an empty read.
 
-  it.fails('verdictS4InterNodeTcp PASSes when nodeId and transport are present on the record', () => {
+  it('verdictS4InterNodeTcp PASSes when nodeId and transport are present on the record', () => {
     expect(verdictS4InterNodeTcp({
       transport: 'wss', nodeId: 'a'.repeat(64), tip: { height: 100, hash: null },
     })).toBe('PASS');
   });
 
-  it.fails('verdictS4InterNodeTcp FAILs on an empty read (nodeId null)', () => {
+  it('verdictS4InterNodeTcp FAILs on an empty read (nodeId null)', () => {
     expect(verdictS4InterNodeTcp({ transport: null, nodeId: null, tip: null })).toBe('FAIL');
   });
 
-  it.fails('verdictS4InterNodeTcp reads skipped on a missing measurement', () => {
+  it('verdictS4InterNodeTcp FAILs when transport is present but nodeId is null', () => {
+    expect(verdictS4InterNodeTcp({ transport: 'wss', nodeId: null, tip: null })).toBe('FAIL');
+  });
+
+  it('verdictS4InterNodeTcp FAILs when nodeId is present but transport is null', () => {
+    expect(verdictS4InterNodeTcp({ transport: null, nodeId: 'a'.repeat(64), tip: null })).toBe('FAIL');
+  });
+
+  it('verdictS4InterNodeTcp reads skipped on a missing measurement', () => {
     expect(verdictS4InterNodeTcp(null)).toBe('skipped');
     expect(verdictS4InterNodeTcp(undefined)).toBe('skipped');
     expect(verdictS4InterNodeTcp({})).toBe('skipped');
   });
 
-  it.fails('s4 step 4 cites CHECK_INTERVAL_MS and awaits that long before reading', () => {
+  it('s4 step 4 cites CHECK_INTERVAL_MS and awaits that long before reading', () => {
     const src = readFileSync(SRC_S4, 'utf8');
     const stepIdx = src.indexOf("rec.step(describe()[3]");
     expect(stepIdx, 's4 step 4 is in the source').toBeGreaterThan(0);

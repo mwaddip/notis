@@ -43,6 +43,7 @@
     "@libp2p/peer-id": "^6.0.18",
     "@libp2p/ping": "^3.1.17",
     "@libp2p/tcp": "^11.0.0",
+    "@libp2p/utils": "^7.4.5",
     "@libp2p/webrtc": "^7.0.2",
     "@libp2p/websockets": "^10.1.25",
     "@libp2p/yamux": "^8.0.0",

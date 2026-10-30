@@ -235,6 +235,9 @@ export function verdictS6Hostile(m) {
 // verdict is PASS when the record carries a `nodeId` and a `transport`
 // — never on an empty read.
 // Measurement: `{ transport, nodeId, tip }`.
-export function verdictS4InterNodeTcp(_m) {
-  throw new Error('verdictS4InterNodeTcp: not implemented');
+export function verdictS4InterNodeTcp(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.nodeId !== 'string') return 'FAIL';
+  if (typeof m.transport !== 'string') return 'FAIL';
+  return 'PASS';
 }

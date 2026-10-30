@@ -187,13 +187,35 @@ while (addrs.length === 0 && Date.now() < deadline) {
   await new Promise((resolve) => setTimeout(resolve, IDENTITY_POLL_MS));
   addrs = node.multiaddrs();
 }
-process.stdout.write(
-  JSON.stringify({
-    notisId: key.notisId,
-    peerId: node.libp2p.peerId.toString(),
-    multiaddrs: addrs,
-  }) + '\n',
-);
+
+function writeIdentity(current: string[]): void {
+  process.stdout.write(
+    JSON.stringify({
+      notisId: key.notisId,
+      peerId: node.libp2p.peerId.toString(),
+      multiaddrs: current,
+    }) + '\n',
+  );
+}
+
+writeIdentity(addrs);
+
+// MESH_INTERFACE → NAT — "A `private` node announces its relay
+// reservations alone". Relay reservations land AFTER the first
+// identity line — libp2p dials the relay through TCP, holds the
+// reservation, and only then adds `/ip4/<relay>/.../p2p-circuit/p2p/<self>`
+// to `getMultiaddrs()`. `self:peer:update` fires on every address change
+// (new listen, new reservation, retract), so reprinting the identity
+// line here keeps the reader's "latest line" always current — the stage
+// reads the latest to build config.json and s2's variants.
+let lastPrinted = addrs.slice().sort().join(',');
+node.libp2p.addEventListener('self:peer:update', () => {
+  const current = node.multiaddrs();
+  const sortedKey = current.slice().sort().join(',');
+  if (sortedKey === lastPrinted) return;
+  lastPrinted = sortedKey;
+  writeIdentity(current);
+});
 
 let stopped = false;
 async function shutdown(signal: NodeJS.Signals): Promise<void> {

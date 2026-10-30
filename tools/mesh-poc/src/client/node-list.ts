@@ -183,6 +183,24 @@ export class NodeList {
     }
   }
 
+  /**
+   * MESH_INTERFACE → The client's node list — "when every address fails,
+   * each one's failure is recorded against it". Writes
+   * `lastFailures[addr]` alone, with no change to `failures`, `status`
+   * or the retry schedule — those move once per dial through
+   * `failure`, not per-address. The caller (`dialByAddresses`) folds
+   * every attributed address error through this method, then calls
+   * `failure` once for the aggregate.
+   */
+  recordAddrFailure(id: string, addr: string, kind: FailureKind, message = ''): void {
+    assertNotisId(id);
+    const e = this.unknown('recordAddrFailure', id);
+    if (e.status === 'blacklisted') return;
+    if (typeof addr !== 'string' || addr === '') return;
+    const now = this.clock();
+    e.lastFailures[addr] = { kind, message, atMs: now };
+  }
+
   behind(id: string): void {
     assertNotisId(id);
     const e = this.unknown('behind', id);

@@ -69,7 +69,9 @@
       "addr": "11.100.0.31",
       "veth": "hm",
       "mesh": {
-        "role": "private",
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002,
         "upstreamMode": "malformed"
       },
       "node": {
@@ -84,7 +86,9 @@
       "addr": "11.100.0.32",
       "veth": "hi",
       "mesh": {
-        "role": "private",
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002,
         "upstreamMode": "invalid"
       },
       "node": {
@@ -99,7 +103,9 @@
       "addr": "11.100.0.33",
       "veth": "hl",
       "mesh": {
-        "role": "private"
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
       },
       "node": {
         "httpPort": 3100,
@@ -122,7 +128,9 @@
       "addr": "10.101.0.11",
       "veth": "q1",
       "mesh": {
-        "role": "private"
+        "role": "private",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
       },
       "node": {
         "httpPort": 3100,
@@ -145,7 +153,9 @@
       "addr": "10.102.0.11",
       "veth": "q2",
       "mesh": {
-        "role": "private"
+        "role": "private",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
       },
       "node": {
         "httpPort": 3100,

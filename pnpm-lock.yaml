@@ -440,6 +440,9 @@ importers:
       '@libp2p/tcp':
         specifier: ^11.0.0
         version: 11.0.32
+      '@libp2p/utils':
+        specifier: ^7.4.5
+        version: 7.4.5
       '@libp2p/webrtc':
         specifier: ^7.0.2
         version: 7.0.2
