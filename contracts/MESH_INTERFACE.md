@@ -17,8 +17,8 @@ It carries Notis's own traffic and nothing else: no exit to the wider network, n
 
 A member under `tools/`. It depends on `@dagsocial/types`, `@dagsocial/node-reads`, `@dagsocial/nipopow-client` and
 libp2p 3.x, the line `@dagsocial/net` runs. `src/lib.ts` and everything it reaches runs in the browser as written;
-`src/node/` runs on Node.js. No WASM. One native module, `node-datachannel` under `@libp2p/webrtc`, serves the
-WebRTC-direct listener.
+`src/node/` runs on Node.js. No WASM. One native module, `node-datachannel` under `@libp2p/webrtc`, serves WebRTC on
+Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
 
 ## Identity
 
@@ -73,9 +73,9 @@ js-libp2p's WebTransport does not listen on Node.js, and a Notis node is Node.js
 
 ## NAT
 
-**A node's role is its operator's setting**, `public` or `private`. A **public** node runs a circuit relay v2 server,
-AutoNAT v2 — the dial-back that tells other nodes which of their addresses answer — and a STUN server on UDP port
-`STUN_PORT` of its own IP. A **private** node, one run with no public address, takes a relay reservation on each public
+**A node's role is its operator's setting**, `public` or `private`. A **public** node runs a circuit relay v2 server
+and AutoNAT v2 — the dial-back that tells other nodes which of their addresses answer — and, where its operator names
+an IP and UDP port for one, a STUN server there (`STUN_PORT` is RFC 8489's port). A **private** node, one run with no public address, takes a relay reservation on each public
 node it is told of — by address and id, never by searching — and is reached through them; between nodes, DCUtR
 upgrades a relayed connection to a direct one where the NATs allow it. A browser reaches a private node over WebRTC
 signalled through the relay, gathering ICE candidates against public nodes' STUN servers alone.
@@ -207,10 +207,11 @@ unmodified devnet `@dagsocial/node`. The proof of concept holds when every step 
 measured; a step that did not run reads `skipped`, never a pass.
 
 1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, with the browser's own
-   resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte for byte; and
-   the browser host's DNS log holds no query — anything there went around the browser's resolver, as an ICE server
-   named by host would. The browser's own services resolve names whatever page is open, so a resolver that answers
-   nothing is what separates them from the client.
+   resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte for byte; the
+   browser host's DNS log holds no query — anything there went around the browser's resolver; and every ICE server the
+   page's peer connections are built with is named by IP. The browser's own services resolve names whatever page is
+   open, so a resolver that answers nothing is what separates them from the client; and a name the browser's resolver
+   answers never reaches the log, so the page's own ICE configuration is read where it is made.
 2. **Behind NAT.** The browser reaches the node behind the endpoint-independent NAT over WebRTC signalled through a
    relay, its data direct. The node behind the symmetric NAT has no direct path to the browser behind its NAT: it
    reads `retry`, never `blacklisted`, and the client stays on a node it reaches.
