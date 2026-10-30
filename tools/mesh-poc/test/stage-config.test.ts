@@ -5,7 +5,7 @@
 // without the network beyond loopback.
 
 import { describe, expect, it } from 'vitest';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -43,7 +43,7 @@ function fakeIdentities(): Record<string, string> {
 }
 
 describe('stage/topology.json is whole', () => {
-  it.fails('every host has an address, a role and a NAT type; no hostname', () => {
+  it('every host has an address, a role and a NAT type; no hostname', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const errors = assertTopologyWhole(topology);
     expect(errors, errors.join('; ')).toEqual([]);
@@ -51,7 +51,7 @@ describe('stage/topology.json is whole', () => {
 
   it('each NAT router has an inside and an outside', () => {
     const topology = readTopology(TOPOLOGY_PATH);
-    const nats = Object.entries(topology.hosts).filter(([, h]: [string, any]) => h.role === 'nat');
+    const nats = Object.entries(topology.hosts as Record<string, any>).filter(([, h]) => h.role === 'nat');
     expect(nats.length, 'the stage has three NAT routers').toBeGreaterThanOrEqual(3);
     for (const [name, host] of nats) {
       expect(host.outsideAddr, `${name}: outsideAddr`).toBeDefined();
@@ -60,12 +60,12 @@ describe('stage/topology.json is whole', () => {
     }
   });
 
-  it.fails('every anchor the page config names is a public mesh node', () => {
+  it('every anchor the page config names is a public mesh node', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities());
     const publicIds = new Set(
-      Object.entries(topology.hosts)
-        .filter(([, h]: [string, any]) => h.role === 'public' && h.mesh?.role === 'public')
+      Object.entries(topology.hosts as Record<string, any>)
+        .filter(([, h]) => h.role === 'public' && h.mesh?.role === 'public')
         .map(([name]) => fakeIdentities()[name]),
     );
     expect(config.anchors.length).toBeGreaterThan(0);
@@ -76,7 +76,7 @@ describe('stage/topology.json is whole', () => {
 });
 
 describe('the page config holds no DNS and passes the client\'s checks', () => {
-  it.fails('buildPageConfig output has no /dns4/, /dns6/, /dnsaddr/ components', () => {
+  it('buildPageConfig output has no /dns4/, /dns6/, /dnsaddr/ components', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities());
     expect(config.anchors.length, 'the stage has anchors').toBeGreaterThan(0);
@@ -93,7 +93,7 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
     }
   });
 
-  it.fails('assertClientConfig accepts the output', () => {
+  it('assertClientConfig accepts the output', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities());
     expect(config.anchors.length).toBeGreaterThan(0);
@@ -110,7 +110,7 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
 });
 
 describe('the hostile upstream', () => {
-  it.fails('malformed answers with a non-hex proof field', () => {
+  it('malformed answers with a non-hex proof field', () => {
     const body = malformedBody();
     expect(body.proof).toBe('not-hex');
     // The client reads `/nipopow/proof/:m/:k` as hex before decoding; a
@@ -120,7 +120,7 @@ describe('the hostile upstream', () => {
     expect(() => hexToBytes(body.proof)).toThrow();
   });
 
-  it.fails('invalid: decodes but verifyProof refuses', () => {
+  it('invalid: decodes but verifyProof refuses', () => {
     expect(existsSync(PROOF_FIXTURE), `fixture ${PROOF_FIXTURE}`).toBe(true);
     const validHex = readFileSync(PROOF_FIXTURE, 'utf8').trim();
     // Sanity: the fixture itself decodes and verifies, so a failure on the
@@ -147,7 +147,7 @@ describe('the hostile upstream', () => {
 });
 
 describe('stage up --dry-run', () => {
-  it.fails('exits 0, prints at least one privileged command, creates no namespace, file or process', () => {
+  it('exits 0, prints at least one privileged command, creates no namespace, file or process', () => {
     const outBefore = existsSync(OUT_DIR);
     const cacheBefore = existsSync(CACHE_DIR);
 
