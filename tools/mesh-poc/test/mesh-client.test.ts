@@ -184,6 +184,105 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     }
   }, 60_000);
 
+  // MESH_INTERFACE → Discovery → Seeds — a seed address meets the anchor's
+  // refusals; `assertClientConfig` is called with both lists and throws on a
+  // seed's `/dns4/` as it does on an anchor's.
+  it.fails('assertClientConfig refuses a /dns4/ seed without creating a node', () => {
+    const seedKey = nodeKeyFromKeyPair(generateKeyPair());
+    expect(() => assertClientConfig({
+      anchors: [],
+      seeds: [{ notisId: seedKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
+      stunServers: [],
+    })).toThrow(MeshConfigError);
+  });
+
+  // MESH_INTERFACE → Discovery → Seeds — "a seed is a candidate like any node
+  // the DHT finds": a seed added before the first check appears in the URLs
+  // `resolveTip` reads, as a non-anchor entry in `state.nodes`.
+  it.fails('a seed is a candidate', async () => {
+    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+    const seedKey = nodeKeyFromKeyPair(generateKeyPair());
+    const seenUrls: string[][] = [];
+    const client = await startMeshClient({
+      anchors: [{ notisId: anchorKey.notisId, addrs: [] }],
+      seeds: [{ notisId: seedKey.notisId, addrs: [] }],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: async (urls) => {
+        seenUrls.push([...urls]);
+        return winnerFirst(urls);
+      },
+    });
+    clients.push(client);
+    await client.check();
+    const seedEntry = client.state().nodes.find((n) => n.notisId === seedKey.notisId);
+    expect(seedEntry, 'the seed is in the node list').toBeDefined();
+    expect(seedEntry!.anchor).toBe(false);
+    expect(seenUrls[0]).toContain(meshBaseUrl(seedKey.notisId));
+  }, 60_000);
+
+  // MESH_INTERFACE → Discovery → Seeds / No anchor reached — "no answer from
+  // [a seed] makes `anchorReached` true": a check where the anchor is
+  // unreachable and the seed is the winner leaves `anchorReached` false.
+  it.fails('an answering seed does not make anchorReached true', async () => {
+    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+    const seedKey = nodeKeyFromKeyPair(generateKeyPair());
+    const resolve: typeof import('@dagsocial/nipopow-client').resolveTip = async (urls) => {
+      const anchorUrl = meshBaseUrl(anchorKey.notisId);
+      const nodes: NodeTipResult[] = urls.map((url) => {
+        if (url === anchorUrl) {
+          return {
+            url,
+            verified: false,
+            proof: null,
+            verifyResult: null,
+            refuseReason: 'unreachable: dial failed',
+            refuseCode: 'unreachable',
+            behind: null,
+            genesisHash: null,
+          };
+        }
+        return {
+          url,
+          verified: true,
+          proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
+          verifyResult: null,
+          refuseReason: null,
+          refuseCode: null,
+          behind: 0,
+          genesisHash: 'f'.repeat(64),
+        };
+      });
+      const winnerIndex = nodes.findIndex((n) => n.verified);
+      return {
+        winner: winnerIndex >= 0 ? nodes[winnerIndex]! : null,
+        winnerIndex,
+        nodes,
+        tip: null,
+        suffixHead: null,
+        splits: [],
+      };
+    };
+    const client = await startMeshClient({
+      anchors: [{ notisId: anchorKey.notisId, addrs: [] }],
+      seeds: [{ notisId: seedKey.notisId, addrs: [] }],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve,
+    });
+    clients.push(client);
+    await client.check();
+    const s = client.state();
+    expect(s.anchorReached).toBe(false);
+    const seedEntry = s.nodes.find((n) => n.notisId === seedKey.notisId);
+    expect(seedEntry!.status).toBe('ok');
+    const anchorEntry = s.nodes.find((n) => n.notisId === anchorKey.notisId);
+    expect(anchorEntry!.anchor).toBe(true);
+    expect(anchorEntry!.status).toBe('retry');
+  }, 60_000);
+
   it('the client reads a node by key', async () => {
     const stub = await makeStub(0); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
