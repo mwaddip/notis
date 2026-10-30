@@ -73,9 +73,10 @@ export function cappedTimerMs(ms: number): number {
 
 // `readCappedJson`'s body sentinels (`@dagsocial/node-reads`'s `http.ts`):
 // an answer over the route's cap, or one whose body does not parse as JSON,
-// is a body-level failure under a key-authenticated link — a lie, per
-// `MESH_INTERFACE → The client's node list` → "a malformed answer". Every
-// other non-ok NodeResult is HTTP-level and reads as a failure.
+// is a body-level failure under a key-authenticated link, and the lie row
+// of `MESH_INTERFACE → The client's node list` is what the client moves
+// the node by. Every other non-ok NodeResult is HTTP-level and reads as a
+// failure.
 const BODY_OVER_CAP = 'body over ';
 const BODY_UNPARSEABLE = 'unparseable body:';
 
