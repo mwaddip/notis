@@ -70,6 +70,11 @@
       "mesh": {
         "role": "private",
         "upstreamMode": "malformed"
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
       }
     },
     "hostile-invalid": {
@@ -80,6 +85,11 @@
       "mesh": {
         "role": "private",
         "upstreamMode": "invalid"
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
       }
     },
     "hostile-lagging": {

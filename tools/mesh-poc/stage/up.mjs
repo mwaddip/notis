@@ -687,10 +687,17 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     let upstream;
     const hostileListenPort = 7000;
     if (host.mesh.upstreamMode !== undefined) {
+      // The hostile upstream forwards to its OWN Notis node on 127.0.0.1
+      // (the hostile host carries one, bootstrapped from pub1); pub1's
+      // HTTP binds pub1's namespace loopback alone and is not reachable
+      // from a different namespace.
+      if (host.node === undefined) {
+        throw new Error(`hostile host ${name} needs a Notis node of its own for the upstream to forward to`);
+      }
       log.spawn(userWrap(ns, {
         MODE: host.mesh.upstreamMode,
         PORT: String(hostileListenPort),
-        PUB1_BASE: pub1Base,
+        PUB1_BASE: `http://127.0.0.1:${host.node.httpPort}`,
       }).concat([hostileUpstreamScript]), { description: `hostile-upstream:${name}`, logPath: logPathFor(`hostile-upstream:${name}`) });
       upstream = `http://127.0.0.1:${hostileListenPort}`;
     } else if (host.node !== undefined) {
@@ -954,26 +961,47 @@ if (!dryRun) {
 // host's private directory so Chromium reads the NSS db we populated
 // above; no flag, no system store — the root is scoped to this launch.
 //
-// Background-networking flags silence Chromium's housekeeping (sync,
-// safebrowsing, component updates, metrics, translate, media routing,
-// optimization hints) so scenario 1's DNS witness measures the PAGE
-// alone and not the browser. Every flag is listed in Chromium's
-// `--help` on this build (ms-playwright chromium-1228, Chromium ≥
-// 139); `--disable-features` names three features Chromium otherwise
-// resolves names for.
+// The quiet switches are taken from Playwright's
+// `packages/playwright-core/src/server/chromium/chromiumSwitches.ts`
+// (its `chromiumSwitches` function) and Puppeteer's
+// `packages/puppeteer-core/src/node/ChromeLauncher.ts` (its
+// `defaultArgs`). Both tools pass this set by default to silence
+// Chromium's housekeeping (sync, safebrowsing, component updates,
+// metrics, translate, media routing, optimization hints, DNS
+// resolution for first-party-sets, HTTPS upgrades, …) so scenario 1's
+// DNS witness measures the PAGE alone and not the browser.
+const CHROMIUM_QUIET_FLAGS = [
+  '--disable-background-networking',
+  '--disable-background-timer-throttling',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-breakpad',
+  '--disable-client-side-phishing-detection',
+  '--disable-component-extensions-with-background-pages',
+  '--disable-component-update',
+  '--disable-default-apps',
+  '--disable-dev-shm-usage',
+  '--disable-domain-reliability',
+  '--disable-extensions',
+  '--disable-features=AcceptCHFrame,AutoExpandDetailsElement,AvoidUnnecessaryBeforeUnloadCheckSync,CertificateTransparencyComponentUpdater,DialMediaRouteProvider,FirstPartySets,HttpsUpgrades,LazyFrameLoading,LensOverlay,MediaRouter,OptimizationHints,PaintHolding,PlzDedicatedWorker,PrivacySandboxSettings4,Translate',
+  '--disable-hang-monitor',
+  '--disable-ipc-flooding-protection',
+  '--disable-popup-blocking',
+  '--disable-prompt-on-repost',
+  '--disable-renderer-backgrounding',
+  '--disable-search-engine-choice-screen',
+  '--disable-sync',
+  '--force-color-profile=srgb',
+  '--metrics-recording-only',
+  '--no-default-browser-check',
+  '--no-first-run',
+  '--no-service-autorun',
+  '--password-store=basic',
+  '--use-mock-keychain',
+];
 log.spawn(userWrap(nsOf('browser'), { HOME: browserProfileHome, DISPLAY: process.env.DISPLAY ?? ':0' }, chromiumBin).concat([
   '--headless=new',
   `--user-data-dir=${browserProfileDir}`,
-  '--no-first-run',
-  '--no-default-browser-check',
-  '--disable-background-networking',
-  '--disable-component-update',
-  '--disable-sync',
-  '--disable-default-apps',
-  '--disable-client-side-phishing-detection',
-  '--disable-domain-reliability',
-  '--metrics-recording-only',
-  '--disable-features=OptimizationHints,MediaRouter,Translate',
+  ...CHROMIUM_QUIET_FLAGS,
   '--remote-debugging-port=9222',
   `http://localhost:${browserHost.httpPort}/`,
 ]), { description: 'chromium', logPath: logPathFor('chromium') });
@@ -992,6 +1020,49 @@ if (!dryRun) {
     logPathFor('chromium'),
     { timeoutMs: 60_000, pollMs: 1_000 },
   );
+}
+
+// MESH_INTERFACE → Acceptance — live-check before `stage up:` prints.
+// Every long-lived process on `log.pids` is confirmed alive with
+// `process.kill(pid, 0)`; every one that serves something is reached
+// through its namespace with `curl` and must answer. A failed check
+// surfaces here, not seven hours later when a scenario drives it.
+const liveListenerChecks = (() => {
+  const checks = [];
+  for (const [name, host] of Object.entries(topology.hosts)) {
+    if (host.mesh?.upstreamMode !== undefined) {
+      // Hostile upstream listens on 127.0.0.1:7000 inside its own ns.
+      checks.push({
+        description: `hostile-upstream:${name}`,
+        ns: nsOf(name),
+        url: 'http://127.0.0.1:7000/nipopow/proof/24/20',
+        logPath: logPathFor(`hostile-upstream:${name}`),
+      });
+    }
+  }
+  return checks;
+})();
+log.records.push(`[live-check] ${log.pids.length} PID(s) alive; ${liveListenerChecks.length} hostile-upstream listener(s) answer`);
+if (dryRun) {
+  process.stdout.write(`[live-check] ${log.pids.length} PID(s) alive; ${liveListenerChecks.length} hostile-upstream listener(s) answer\n`);
+} else {
+  for (const entry of log.pids) {
+    try { process.kill(entry.pid, 0); }
+    catch (err) {
+      const tail = tailLog(entry.logPath, 20);
+      const body = tail === '' ? '<no output>' : tail;
+      throw new Error(`${entry.description} (pid ${entry.pid}) is not alive: ${(err).message}\n--- last 20 lines of ${entry.logPath} ---\n${body}`);
+    }
+  }
+  for (const chk of liveListenerChecks) {
+    try {
+      execIn(chk.ns, ['curl', '-sf', '--max-time', '5', chk.url], { timeoutMs: 8_000 });
+    } catch (err) {
+      const tail = tailLog(chk.logPath, 20);
+      const body = tail === '' ? '<no output>' : tail;
+      throw new Error(`${chk.description} did not answer ${chk.url}: ${(err).message}\n--- last 20 lines of ${chk.logPath} ---\n${body}`);
+    }
+  }
 }
 
 if (dryRun) {

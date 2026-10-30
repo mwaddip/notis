@@ -90,7 +90,7 @@ describe('acmeSource — authorization reuse', () => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
 
-  it.fails('skips a valid authorization and completes only the pending one', async () => {
+  it('skips a valid authorization and completes only the pending one', async () => {
     acmeCalls.authorizations.push(
       {
         identifier: { type: 'ip', value: '10.100.0.11' },
@@ -117,7 +117,7 @@ describe('acmeSource — authorization reuse', () => {
     expect(acmeCalls.waitForValidStatusTokens, 'waitForValidStatus is called for the pending token alone').toEqual(['tok-pending']);
   });
 
-  it.fails('a solely-valid authorization completes no challenges and still finalizes the order', async () => {
+  it('a solely-valid authorization completes no challenges and still finalizes the order', async () => {
     acmeCalls.authorizations.push({
       identifier: { type: 'ip', value: '10.100.0.11' },
       status: 'valid',

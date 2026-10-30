@@ -201,6 +201,12 @@ export function acmeSource(o: {
 
       try {
         for (const authz of authorizations) {
+          // RFC 8555 §7.1.4 — a `valid` authorization is one Pebble
+          // reuses for an identifier it issued to this account before;
+          // `completeChallenge` on it fails with `Cannot update
+          // challenge with status valid, only status pending`. Skip
+          // it; the pending ones are the ones that need answering.
+          if (authz.status === 'valid') continue;
           const challenge = authz.challenges.find((c) => c.type === 'http-01');
           if (!challenge) {
             throw new Error(`no http-01 challenge for ${authz.identifier.value}`);

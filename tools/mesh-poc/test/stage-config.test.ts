@@ -412,7 +412,7 @@ describe('stage up --dry-run', () => {
   // HTTP (pub1 binds its namespace loopback alone). Scenario 6 reads
   // what the hostile upstreams answer; a hostile upstream pointed at a
   // host that is not reachable would die without printing.
-  it.fails('every hostile host carries its own Notis node and its hostile upstream points at loopback', () => {
+  it('every hostile host carries its own Notis node and its hostile upstream points at loopback', () => {
     runDryOnce();
     for (const host of ['hostile-malformed', 'hostile-invalid']) {
       const notisSpawn = out.split('\n').find((l) => l.startsWith(`[spawn:notis:${host}]`));
@@ -432,7 +432,7 @@ describe('stage up --dry-run', () => {
   // live at `playwright-core/src/server/chromium/chromiumSwitches.ts` and
   // Puppeteer's at `packages/puppeteer-core/src/node/ChromeLauncher.ts`;
   // the stage adopts the quiet set both tools pass by default.
-  it.fails('Chromium carries the quiet switches Playwright and Puppeteer set by default', () => {
+  it('Chromium carries the quiet switches Playwright and Puppeteer set by default', () => {
     runDryOnce();
     const line = out.split('\n').find((l) => l.startsWith('[spawn:chromium]'));
     expect(line, 'chromium spawn is in the dry-run').toBeDefined();
@@ -461,7 +461,7 @@ describe('stage up --dry-run', () => {
   // record names what is checked (every PID alive, every listener
   // reachable), so a reader of the dry-run sees the invariant without
   // waiting for the run to show it.
-  it.fails('up live-checks every pids.json entry before printing stage up', () => {
+  it('up live-checks every pids.json entry before printing stage up', () => {
     runDryOnce();
     const liveCheckIdx = out.split('\n').findIndex((l) => l.startsWith('[live-check]'));
     expect(liveCheckIdx, '[live-check] is in the dry-run').toBeGreaterThanOrEqual(0);

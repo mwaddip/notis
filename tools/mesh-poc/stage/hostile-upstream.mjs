@@ -7,6 +7,7 @@
 // server share one implementation.
 
 import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { decodeNipopowProof, encodeNipopowProof } from '@dagsocial/nipopow';
 
 const PROOF_ROUTE = /^\/nipopow\/proof\/(\d+)\/(\d+)(?:\?.*)?$/;
@@ -113,4 +114,36 @@ async function forward(req, res, pub1Base) {
   res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream' });
   const buf = Buffer.from(await upstream.arrayBuffer());
   res.end(buf);
+}
+
+// MESH_INTERFACE → Acceptance — run as a script. The stage spawns this
+// file by its path; without an entry block the file exports the two
+// pure body builders and exits 0 at once with empty output, which the
+// previous commit's mesh:hostile-* saw in its upstream and crashed
+// with no proof route to forward to.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const mode = process.env.MODE;
+  const portStr = process.env.PORT ?? '0';
+  const pub1Base = process.env.PUB1_BASE;
+  if (mode !== 'malformed' && mode !== 'invalid') {
+    process.stderr.write(`hostile-upstream: MODE must be 'malformed' or 'invalid', not ${JSON.stringify(mode)}\n`);
+    process.exit(2);
+  }
+  if (typeof pub1Base !== 'string' || pub1Base === '') {
+    process.stderr.write('hostile-upstream: PUB1_BASE is required\n');
+    process.exit(2);
+  }
+  const port = Number(portStr);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    process.stderr.write(`hostile-upstream: PORT must be an integer 0..65535, not ${JSON.stringify(portStr)}\n`);
+    process.exit(2);
+  }
+  startHostileUpstream({ port, mode, pub1Base })
+    .then(({ port: actualPort }) => {
+      process.stdout.write(`hostile-upstream listening on 127.0.0.1:${actualPort} (mode=${mode}, upstream=${pub1Base})\n`);
+    })
+    .catch((err) => {
+      process.stderr.write(`hostile-upstream: ${err.message}\n`);
+      process.exit(1);
+    });
 }

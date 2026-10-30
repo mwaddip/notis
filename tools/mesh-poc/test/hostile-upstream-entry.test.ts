@@ -17,7 +17,7 @@ const SCRIPT = join(HERE, '..', 'stage', 'hostile-upstream.mjs');
 async function startStubUpstream(): Promise<{ base: string; close: () => Promise<void> }> {
   // A tiny upstream the hostile process forwards non-proof routes to;
   // the entry test only wants to see the hostile server listening.
-  const server = createServer((req, res) => {
+  const server = createServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end('{}');
   });
@@ -30,7 +30,7 @@ async function startStubUpstream(): Promise<{ base: string; close: () => Promise
 }
 
 describe('stage/hostile-upstream.mjs — entry point', () => {
-  it.fails('started as a script, it prints a listening line and does not exit at once', async () => {
+  it('started as a script, it prints a listening line and does not exit at once', async () => {
     const upstream = await startStubUpstream();
     try {
       const child = spawn(process.execPath, [SCRIPT], {
