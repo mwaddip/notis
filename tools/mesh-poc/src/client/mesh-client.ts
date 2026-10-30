@@ -722,14 +722,25 @@ function isBodyLevelFailure(r: NodeError): boolean {
   return r.body.startsWith(BODY_OVER_CAP) || r.body.startsWith(BODY_UNPARSEABLE);
 }
 
-function withPeerId(addr: string, notisId: string): Multiaddr {
+/**
+ * MESH_INTERFACE → The client's node list — the dial multiaddr libp2p
+ * reads for a given `notisId`. The LAST `/p2p/<id>` component names
+ * the destination (the circuit's target on a relayed address, the
+ * node itself on a plain one); a relayed address has a FIRST
+ * `/p2p/<relay>` that libp2p routes through, which this function must
+ * never touch. Three forms:
+ *   - `.../p2p/<relay>/p2p-circuit/p2p/<X>` → rewrite the last `/p2p/`.
+ *   - `.../p2p/<X>` (no circuit)            → rewrite the last `/p2p/`.
+ *   - `.../p2p-circuit` or no `/p2p/`       → append `/p2p/<target>`.
+ *
+ * Exported so a case can pin the three forms.
+ */
+export function withPeerId(addr: string, notisId: string): Multiaddr {
   const peerIdString = toLibp2pPeerIdString(notisId);
-  // An anchor may list an address with a `/p2p/<id>` tail — the id libp2p
-  // will verify. For a dial on behalf of `notisId`, that tail must name
-  // `notisId`'s peer id, so a server at the address with any other key
-  // fails libp2p's own unexpected-peer check (MESH_INTERFACE → The
-  // client's node list). The tail is rewritten in place when any
-  // `/p2p/<X>` is present; a bare address has one appended.
+  // The old implementation (`addr.replace(/\/p2p\/[^/]+/, …)` with no
+  // `g` flag) rewrites the FIRST `/p2p/`. On a relayed address the
+  // first one is the relay; the destination is the LAST. Rewrite only
+  // the trailing `/p2p/<id>`; when none is present, append.
   if (/\/p2p\/[^/]+/.test(addr)) {
     return multiaddr(addr.replace(/\/p2p\/[^/]+/, `/p2p/${peerIdString}`));
   }
