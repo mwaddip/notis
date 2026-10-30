@@ -858,36 +858,6 @@ export function messageOf(e: unknown): string {
  * not a `null` that hides a bug: the connection reached a state the
  * client did not expect, and the caller must surface it.
  */
-/**
- * MESH_INTERFACE → NAT → "A relay carries signalling, not data." —
- * "a client opens no API stream on a limited connection". libp2p runs
- * a new stream on the connection its own `findExistingConnection`
- * picks (`libp2p/src/connection-manager/utils.ts`): open connections
- * only, direct ones first, the first with `limits == null`. The page's
- * `transport` and `path` name that same connection, so the pick must
- * match. Only when every open connection to the peer is limited does
- * this helper fall back to a limited one — which classifies as
- * `relay`. A peer with no open connection reads `null`.
- */
-export function pickConnectionForStream(
-  connections: readonly Connection[],
-  expectedPeerIdString: string,
-): Connection | null {
-  const open = connections.filter(
-    (c) => c.remotePeer.toString() === expectedPeerIdString && c.status === 'open',
-  );
-  if (open.length === 0) return null;
-  const directFirst = open.slice().sort((a, b) => {
-    if (a.direct) return -1;
-    if (b.direct) return 1;
-    return 0;
-  });
-  const unlimited = directFirst.find((c) => c.limits == null);
-  // `directFirst.length > 0` is guaranteed by the length check above,
-  // but TS cannot narrow a bare index access to `Connection`.
-  return unlimited ?? directFirst[0] ?? null;
-}
-
 export function classifyConnectionAddr(ma: string): {
   transport: 'webrtc-direct' | 'webrtc' | 'wss';
   path: 'direct' | 'relay';
@@ -919,6 +889,34 @@ export function classifyConnectionAddr(ma: string): {
     return { transport: 'webrtc-direct', path: 'direct' };
   }
   return { transport: base, path: 'relay' };
+}
+
+/**
+ * MESH_INTERFACE → NAT → "A relay carries signalling, not data." —
+ * "a client opens no API stream on a limited connection". libp2p runs
+ * a new stream on the connection its own `findExistingConnection`
+ * picks (`libp2p/src/connection-manager/utils.ts`): open connections
+ * only, direct ones first, the first with `limits == null`. The page's
+ * `transport` and `path` name that same connection, so the pick must
+ * match. Only when every open connection to the peer is limited does
+ * this helper fall back to a limited one — which classifies as
+ * `relay`. A peer with no open connection reads `null`.
+ */
+export function pickConnectionForStream(
+  connections: readonly Connection[],
+  expectedPeerIdString: string,
+): Connection | null {
+  const open = connections.filter(
+    (c) => c.remotePeer.toString() === expectedPeerIdString && c.status === 'open',
+  );
+  if (open.length === 0) return null;
+  const directFirst = open.slice().sort((a, b) => {
+    if (a.direct) return -1;
+    if (b.direct) return 1;
+    return 0;
+  });
+  const unlimited = directFirst.find((c) => c.limits == null);
+  return unlimited ?? directFirst[0] ?? null;
 }
 
 /**
