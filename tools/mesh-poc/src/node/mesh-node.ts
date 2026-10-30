@@ -46,6 +46,18 @@ import {
 // from one source (`src/config.ts`).
 export { MeshConfigError };
 
+/**
+ * MESH_INTERFACE → NAT — "A relay that does not answer never stops a
+ * private node ... is tried again on the node list's retry cadence
+ * (`RETRY_BASE_MS` doubling to `RETRY_CAP_MS`)". `failures` counts
+ * failed attempts so far; the schedule is
+ * `min(RETRY_CAP_MS, RETRY_BASE_MS * 2^(failures-1))`. Pure. Zero or
+ * negative count reads 0.
+ */
+export function retryIntervalMs(_failures: number, _base?: number, _cap?: number): number {
+  throw new Error('retryIntervalMs: not implemented');
+}
+
 export interface MeshNodeOptions {
   readonly key: NodeKey;
   readonly network: NetworkName;
@@ -69,6 +81,14 @@ export interface MeshNodeOptions {
    * is refused.
    */
   readonly wss?: WssOptions;
+  /**
+   * MESH_INTERFACE → NAT — "A relay that does not answer never stops a
+   * private node ... is tried again on the node list's retry cadence".
+   * Private-only; defaults to `protocols.ts`' `RETRY_BASE_MS` and
+   * `RETRY_CAP_MS`. Tests inject small values.
+   */
+  readonly relayRetryBaseMs?: number;
+  readonly relayRetryCapMs?: number;
 }
 
 export interface MeshNode {
