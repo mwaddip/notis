@@ -120,7 +120,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // Each prefix below is a shape — "a <setting> is refused" — one case per
   // the three DNS prefixes a multiaddr may carry.
   for (const prefix of ['/dns4/example.com/tcp/1', '/dns6/example.com/tcp/1', '/dnsaddr/example.com/tcp/1']) {
-    it.fails(`a DNS anchor is refused — ${prefix}`, async () => {
+    it(`a DNS anchor is refused — ${prefix}`, async () => {
       const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
       let thrown: unknown;
       try {
@@ -138,7 +138,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     }, 30_000);
   }
 
-  it.fails('a hostname ICE server is refused and an IP ICE server is accepted', async () => {
+  it('a hostname ICE server is refused and an IP ICE server is accepted', async () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     let thrown: unknown;
     try {
@@ -169,7 +169,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     }
   }, 60_000);
 
-  it.fails('the client reads a node by key', async () => {
+  it('the client reads a node by key', async () => {
     const stub = await makeStub(0); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
     const started = await startNode(stub, dir); nodes.push(started.node);
@@ -196,7 +196,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.anchorReached).toBe(true);
   }, 60_000);
 
-  it.fails('the node in use going away moves the client', async () => {
+  it('the node in use going away moves the client', async () => {
     const stubA = await makeStub(0); stubs.push(stubA);
     const stubB = await makeStub(1); stubs.push(stubB);
     const dirA = mkdtempSync(join(tmpdir(), 'mesh-client-a-')); dirs.push(dirA);
@@ -234,7 +234,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(entryA?.status).toBe('retry');
   }, 90_000);
 
-  it.fails('an address that answers with another key is dropped, not the key', async () => {
+  it('an address that answers with another key is dropped, not the key', async () => {
     const stubA = await makeStub(0); stubs.push(stubA);
     const stubB = await makeStub(1); stubs.push(stubB);
     const dirA = mkdtempSync(join(tmpdir(), 'mesh-client-a-')); dirs.push(dirA);
@@ -266,7 +266,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.nodeId).toBe(a.id);
   }, 90_000);
 
-  it.fails('a lying node is blacklisted with its evidence', async () => {
+  it('a lying node is blacklisted with its evidence', async () => {
     const stub = await makeStub(0); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
     const started = await startNode(stub, dir); nodes.push(started.node);
@@ -307,7 +307,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(client.state().nodeId).toBeNull();
   }, 90_000);
 
-  it.fails('no anchor reached', async () => {
+  it('no anchor reached', async () => {
     const stub = await makeStub(0); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
     const started = await startNode(stub, dir); // not pushed: we stop it right away
@@ -335,7 +335,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.nodes[0]!.status).toBe('retry');
   }, 60_000);
 
-  it.fails('a failed fetch to the node in use checks at once', async () => {
+  it('a failed fetch to the node in use checks at once', async () => {
     const stub = await makeStub(0); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
     const started = await startNode(stub, dir); nodes.push(started.node);

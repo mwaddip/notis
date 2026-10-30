@@ -41,13 +41,13 @@ function result(nodes: NodeTipResult[], winnerIndex: number): TipResult {
 }
 
 describe('tipEvents', () => {
-  it.fails('the winner answers success', () => {
+  it('the winner answers success', () => {
     const r = result([node(idA, { verified: true, refuseCode: null })], 0);
     const events = tipEvents(r, 100);
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'success' }]);
   });
 
-  it.fails('a verified non-winner answers behind', () => {
+  it('a verified non-winner answers behind', () => {
     const r = result(
       [
         node(idA, { verified: true, refuseCode: null }),
@@ -62,7 +62,7 @@ describe('tipEvents', () => {
     ]);
   });
 
-  it.fails('a chain too short to prove answers behind', () => {
+  it('a chain too short to prove answers behind', () => {
     const r = result(
       [node(idA, { verified: false, refuseCode: 'too-short', refuseReason: 'chain too short' })],
       -1,
@@ -71,7 +71,7 @@ describe('tipEvents', () => {
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'behind' }]);
   });
 
-  it.fails('an unreachable node answers failure transport', () => {
+  it('an unreachable node answers failure transport', () => {
     const r = result(
       [node(idA, { verified: false, refuseCode: 'unreachable', refuseReason: 'unreachable: xyz' })],
       -1,
@@ -80,7 +80,7 @@ describe('tipEvents', () => {
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'failure', kind: 'transport' }]);
   });
 
-  it.fails('an HTTP refusal answers failure refused', () => {
+  it('an HTTP refusal answers failure refused', () => {
     const r = result(
       [node(idA, { verified: false, refuseCode: 'http', refuseReason: 'HTTP 500: x' })],
       -1,
@@ -89,7 +89,7 @@ describe('tipEvents', () => {
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'failure', kind: 'refused' }]);
   });
 
-  it.fails('an invalid refusal with a proof answers lie proof-invalid', () => {
+  it('an invalid refusal with a proof answers lie proof-invalid', () => {
     const r = result(
       [
         node(idA, {
@@ -113,7 +113,7 @@ describe('tipEvents', () => {
     ]);
   });
 
-  it.fails('an invalid refusal with no proof answers lie malformed', () => {
+  it('an invalid refusal with no proof answers lie malformed', () => {
     const r = result(
       [
         node(idA, {
@@ -135,7 +135,7 @@ describe('tipEvents', () => {
     ]);
   });
 
-  it.fails('the id of each event is the node URL\'s key', () => {
+  it('the id of each event is the node URL\'s key', () => {
     const r = result(
       [
         node(idA, { verified: true, refuseCode: null }),
@@ -148,7 +148,7 @@ describe('tipEvents', () => {
     expect(events.map((e) => e.id)).toEqual([idA, idB, idC]);
   });
 
-  it.fails('an unknown refuseCode throws', () => {
+  it('an unknown refuseCode throws', () => {
     const r = result(
       [
         node(idA, {
