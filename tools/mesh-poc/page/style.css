@@ -1,0 +1,37 @@
+/* MESH_INTERFACE → Acceptance — the page is a tester's view of one
+   client; the stage reads `#state`, the tester reads the rest. A few
+   lines of legibility for both themes, no framework. */
+
+:root {
+  color-scheme: light dark;
+  --fg: #111;
+  --bg: #fff;
+  --muted: #666;
+  --banner-bg: #fee;
+  --banner-fg: #700;
+  --row-border: #ddd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #eee;
+    --bg: #111;
+    --muted: #999;
+    --banner-bg: #400;
+    --banner-fg: #ffd;
+    --row-border: #333;
+  }
+}
+
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; }
+#root { padding: 1rem; max-width: 60rem; margin: 0 auto; }
+[data-role="banner"] { background: var(--banner-bg); color: var(--banner-fg); padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-weight: 600; }
+[data-role="in-use"], [data-role="tip"], [data-role="last-left"] { margin: 0.5rem 0; }
+dl.in-use { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; margin: 0; }
+dl.in-use dt { color: var(--muted); }
+ul.nodes { list-style: none; padding: 0; margin: 1rem 0; }
+ul.nodes li { border: 1px solid var(--row-border); padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; border-radius: 4px; }
+ul.nodes li .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; word-break: break-all; }
+ul.nodes li .evidence { color: var(--muted); margin-top: 0.25rem; font-size: 0.9em; }
+pre#state { background: var(--banner-bg); color: var(--muted); padding: 0.75rem; border-radius: 4px; font-size: 0.8em; overflow-x: auto; margin-top: 1rem; }
+[data-role="error"] { background: var(--banner-bg); color: var(--banner-fg); padding: 0.75rem 1rem; border-radius: 4px; margin: 1rem 0; }

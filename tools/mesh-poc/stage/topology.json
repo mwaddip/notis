@@ -1,0 +1,183 @@
+{
+  "network": "devnet",
+  "_comment_subnet": "The internet segment uses 11.100.0.0/24, outside @libp2p/utils/private-ip's PRIVATE_IP_RANGES. The browser's connection gater refuses every address inside that list (10/8, 100.64/10, 169.254/16, 172.16/12, 192.0.0/24, 192.0.2/24, 192.88.99/24, 192.168/16, 198.18/15, 198.51.100/24, 203.0.113/24, 240/4, ...), so a stage internet segment inside those would make the browser refuse every public anchor it is handed. 11/8 is public (US DoD) and the stage namespaces have no route out, so no real host at 11.100.0.x is ever reached. NAT-inside segments stay inside the private list.",
+  "internet": {
+    "bridgeName": "notismesh-br0",
+    "subnet": "11.100.0.0/24",
+    "gateway": "11.100.0.1"
+  },
+  "hosts": {
+    "pub1": {
+      "role": "public",
+      "nat": "none",
+      "addr": "11.100.0.11",
+      "veth": "p1",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002,
+        "stunPort": 3478,
+        "wss": {
+          "port": 443,
+          "acmeChallengePort": 5002
+        }
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "miner"
+      }
+    },
+    "pub2": {
+      "role": "public",
+      "nat": "none",
+      "addr": "11.100.0.12",
+      "veth": "p2",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002,
+        "stunPort": 3478
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "pebble": {
+      "role": "acme",
+      "nat": "none",
+      "addr": "11.100.0.21",
+      "veth": "pb",
+      "pebble": {
+        "listen": "0.0.0.0:14000",
+        "managementListen": "0.0.0.0:15000",
+        "httpChallengePort": 5002
+      }
+    },
+    "dns-log": {
+      "role": "dns-log",
+      "nat": "none",
+      "addr": "11.100.0.22",
+      "veth": "dl",
+      "dnsPort": 53
+    },
+    "hostile-malformed": {
+      "role": "hostile",
+      "nat": "none",
+      "addr": "11.100.0.31",
+      "veth": "hm",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002,
+        "upstreamMode": "malformed"
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "hostile-invalid": {
+      "role": "hostile",
+      "nat": "none",
+      "addr": "11.100.0.32",
+      "veth": "hi",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002,
+        "upstreamMode": "invalid"
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "hostile-lagging": {
+      "role": "hostile",
+      "nat": "none",
+      "addr": "11.100.0.33",
+      "veth": "hl",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "natA": {
+      "role": "nat",
+      "nat": "endpoint-independent",
+      "outsideAddr": "11.100.0.101",
+      "insideSubnet": "10.101.0.0/24",
+      "insideGateway": "10.101.0.1",
+      "veth": "nA"
+    },
+    "priv1": {
+      "role": "private",
+      "nat": "endpoint-independent",
+      "parent": "natA",
+      "addr": "10.101.0.11",
+      "veth": "q1",
+      "mesh": {
+        "role": "private",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "natB": {
+      "role": "nat",
+      "nat": "symmetric",
+      "outsideAddr": "11.100.0.102",
+      "insideSubnet": "10.102.0.0/24",
+      "insideGateway": "10.102.0.1",
+      "veth": "nB"
+    },
+    "priv2": {
+      "role": "private",
+      "nat": "symmetric",
+      "parent": "natB",
+      "addr": "10.102.0.11",
+      "veth": "q2",
+      "mesh": {
+        "role": "private",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "natC": {
+      "role": "nat",
+      "nat": "endpoint-independent",
+      "outsideAddr": "11.100.0.103",
+      "insideSubnet": "10.103.0.0/24",
+      "insideGateway": "10.103.0.1",
+      "veth": "nC"
+    },
+    "browser": {
+      "role": "browser",
+      "nat": "endpoint-independent",
+      "parent": "natC",
+      "addr": "10.103.0.11",
+      "veth": "br",
+      "httpPort": 80
+    }
+  }
+}

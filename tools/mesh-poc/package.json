@@ -1,0 +1,66 @@
+{
+  "name": "@dagsocial/mesh-poc",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/lib.js",
+  "types": "./dist/lib.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/lib.d.ts",
+      "default": "./dist/lib.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/lib.ts src/node/main.ts src/node/mesh-key-tool.ts --format esm --dts",
+    "page:build": "vite build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc -p tsconfig.browser.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "stage:up": "node stage/up.mjs",
+    "stage:down": "node stage/down.mjs",
+    "stage:run": "node stage/run.mjs",
+    "stage:report": "node stage/report.mjs"
+  },
+  "dependencies": {
+    "@dagsocial/nipopow": "workspace:*",
+    "@dagsocial/nipopow-client": "workspace:*",
+    "@dagsocial/node-reads": "workspace:*",
+    "@dagsocial/types": "workspace:*",
+    "@libp2p/autonat-v2": "^2.1.8",
+    "@libp2p/bootstrap": "^12.0.36",
+    "@libp2p/circuit-relay-v2": "^4.2.17",
+    "@libp2p/crypto": "^5.2.0",
+    "@libp2p/dcutr": "^3.0.32",
+    "@libp2p/http": "^2.0.6",
+    "@libp2p/http-fetch": "^4.0.0",
+    "@libp2p/http-utils": "^2.0.6",
+    "@libp2p/identify": "^4.1.18",
+    "@libp2p/interface": "^3.4.0",
+    "@libp2p/kad-dht": "^16.4.9",
+    "@libp2p/keychain": "^6.1.10",
+    "@libp2p/noise": "^17.0.7",
+    "@libp2p/peer-id": "^6.0.18",
+    "@libp2p/ping": "^3.1.17",
+    "@libp2p/tcp": "^11.0.0",
+    "@libp2p/utils": "^7.4.5",
+    "@libp2p/webrtc": "^7.0.2",
+    "@libp2p/websockets": "^10.1.25",
+    "@libp2p/yamux": "^8.0.0",
+    "@multiformats/multiaddr": "^13.0.0",
+    "@noble/curves": "2.2.0",
+    "acme-client": "^5.4.0",
+    "datastore-fs": "^12.0.1",
+    "libp2p": "^3.5.1"
+  },
+  "devDependencies": {
+    "@peculiar/x509": "^2.2.0",
+    "@types/node": "^22.0.0",
+    "happy-dom": "^20.13.2",
+    "reflect-metadata": "^0.2.2",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
