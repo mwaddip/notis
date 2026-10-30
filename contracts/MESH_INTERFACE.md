@@ -75,11 +75,14 @@ js-libp2p's WebTransport does not listen on Node.js, and a Notis node is Node.js
 
 **A node's role is its operator's setting**, `public` or `private`. A **public** node runs a circuit relay v2 server,
 AutoNAT v2 — the dial-back that tells other nodes which of their addresses answer — and a STUN server on UDP port
-`STUN_PORT` of its own IP. A **private** node, one run with no public address, takes relay reservations on public nodes
-and is reached through them; between nodes, DCUtR upgrades a relayed connection to a direct one where the NATs allow
-it. A browser reaches a
-private node over WebRTC signalled through the relay, gathering ICE candidates against public nodes' STUN servers
-alone.
+`STUN_PORT` of its own IP. A **private** node, one run with no public address, takes a relay reservation on each public
+node it is told of — by address and id, never by searching — and is reached through them; between nodes, DCUtR
+upgrades a relayed connection to a direct one where the NATs allow it. A browser reaches a private node over WebRTC
+signalled through the relay, gathering ICE candidates against public nodes' STUN servers alone.
+
+**A relay that does not answer never stops a private node.** One that is down when the node starts, or that goes away,
+is tried again on the node list's retry cadence (`RETRY_BASE_MS` doubling to `RETRY_CAP_MS`), and the node reserves
+on it once it answers; meanwhile it serves through whichever relays it holds.
 
 **A public node announces its listen addresses from the start.** libp2p holds back a listen address on a public IP
 until a peer confirms it, but an operator who declares a node `public` has said the address is reachable, and a node
