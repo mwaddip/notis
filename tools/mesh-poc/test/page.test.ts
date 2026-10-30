@@ -44,7 +44,7 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
 }
 
 describe('page/render.ts', () => {
-  it.fails('the no-anchor words are the contract\'s', () => {
+  it('the no-anchor words are the contract\'s', () => {
     const root = document.createElement('div');
     render(emptyState({ anchorReached: false }), root);
     const banner = root.querySelector('[data-role="banner"]');
@@ -56,7 +56,7 @@ describe('page/render.ts', () => {
     expect(root2.querySelector('[data-role="banner"]')).toBeNull();
   });
 
-  it.fails('the state element holds the state', () => {
+  it('the state element holds the state', () => {
     const root = document.createElement('div');
     const state = emptyState({
       nodeId: 'aa'.repeat(32),
@@ -73,7 +73,7 @@ describe('page/render.ts', () => {
     expect(parsed).toEqual(state);
   });
 
-  it.fails('a hostile node\'s text is text', () => {
+  it('a hostile node\'s text is text', () => {
     const root = document.createElement('div');
     const hostile = makeEntry({
       notisId: 'cc'.repeat(32),
@@ -90,7 +90,7 @@ describe('page/render.ts', () => {
     expect(root.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 
-  it.fails('a refused config is shown, and no client starts', async () => {
+  it('a refused config is shown, and no client starts', async () => {
     document.body.innerHTML = '<div id="root"></div>';
     const startSpy = vi.fn();
     const fakeFetch = async (): Promise<Response> =>
