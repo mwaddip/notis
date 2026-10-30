@@ -169,6 +169,180 @@ describe('fix — a public mesh node announces its listen addresses at once', ()
   }, 60_000);
 });
 
+describe('fix 1 — isTipShape reads `{height, hash}` the way readBlockCurrent does', () => {
+  it.fails('isTipShape accepts the node\'s own answer `{height, hash}` with a 64-hex hash', async () => {
+    // @ts-expect-error — the exported predicate lands with the fix
+    const { isTipShape } = await import('../src/client/mesh-client.js');
+    // The node's /blocks/current answers `{ height, hash }` where hash is
+    // 64 lowercase hex. The web client's reader is the reference:
+    // packages/web/src/api/readers.ts `readBlockCurrent`.
+    expect(isTipShape({ height: 1192, hash: '4e2eeb1d' + 'ab'.repeat(28) })).toBe(true);
+  });
+  it.fails('isTipShape accepts the genesis marker `{height: 0, hash: null}`', async () => {
+    // @ts-expect-error — exported with the fix
+    const { isTipShape } = await import('../src/client/mesh-client.js');
+    expect(isTipShape({ height: 0, hash: null })).toBe(true);
+  });
+  it.fails('isTipShape rejects `{height, id}` (the old shape that blacklisted every honest node)', async () => {
+    // @ts-expect-error — exported with the fix
+    const { isTipShape } = await import('../src/client/mesh-client.js');
+    expect(isTipShape({ height: 1, id: 'ab'.repeat(32) })).toBe(false);
+  });
+  it.fails('isTipShape rejects a non-hex hash', async () => {
+    // @ts-expect-error — exported with the fix
+    const { isTipShape } = await import('../src/client/mesh-client.js');
+    expect(isTipShape({ height: 1, hash: 'not-hex' })).toBe(false);
+    expect(isTipShape({ height: 1, hash: 'AB'.repeat(32) })).toBe(false);
+  });
+  it.fails('isTipShape rejects a negative or non-integer height', async () => {
+    // @ts-expect-error — exported with the fix
+    const { isTipShape } = await import('../src/client/mesh-client.js');
+    expect(isTipShape({ height: -1, hash: 'ab'.repeat(32) })).toBe(false);
+    expect(isTipShape({ height: 1.5, hash: 'ab'.repeat(32) })).toBe(false);
+  });
+});
+
+describe('fix 2 — up writes every mesh host\'s multiaddrs; buildHostileSeeds reads them', () => {
+  it.fails('buildHostileSeeds uses the printed multiaddrs when identities.json carries them', async () => {
+    const { buildHostileSeeds } = await import('../stage/lib/config-variants.mjs');
+    const identities = {
+      'hostile-malformed': {
+        notisId: 'c'.repeat(64),
+        meshRole: 'private',
+        multiaddrs: ['/ip4/11.100.0.31/tcp/4002/p2p/HMPEER'],
+      },
+    };
+    const topology = {
+      hosts: {
+        'hostile-malformed': {
+          role: 'hostile', addr: '11.100.0.31',
+          mesh: { role: 'private', tcpPort: 4002 },
+          node: { p2pPort: 9100 },
+        },
+      },
+    };
+    const seeds = buildHostileSeeds(identities, topology, { peerIdStringOf: () => 'FALLBACK' });
+    expect(seeds.length).toBe(1);
+    // When identities.multiaddrs is set, the printed address is used (not
+    // the fallback peerIdStringOf path).
+    expect(seeds[0]!.addrs[0]).toBe('/ip4/11.100.0.31/tcp/4002/p2p/HMPEER');
+  });
+  it('buildHostileSeeds falls back to the topology path when a host has no printed multiaddrs', async () => {
+    const { buildHostileSeeds } = await import('../stage/lib/config-variants.mjs');
+    const identities = {
+      'hostile-malformed': { notisId: 'c'.repeat(64), meshRole: 'private' /* no multiaddrs */ },
+    };
+    const topology = {
+      hosts: {
+        'hostile-malformed': { role: 'hostile', addr: '11.100.0.31', mesh: { role: 'private', tcpPort: 4002 } },
+      },
+    };
+    const seeds = buildHostileSeeds(identities, topology, { peerIdStringOf: (id: string) => `peer-${id.slice(0, 4)}` });
+    expect(seeds.length).toBe(1);
+    expect(seeds[0]!.addrs[0]).toBe('/ip4/11.100.0.31/tcp/4002/p2p/peer-cccc');
+  });
+});
+
+describe('fix 3 — dialByAddresses passes the whole address list to one libp2p.dial call', () => {
+  // libp2p 3.5's dial queue (`libp2p/src/connection-manager/dial-queue.ts`
+  // lines 157-188) joins a NEW dial for the same peer to a PENDING dial;
+  // the hung WebRTC-direct dial survives our 3 s abort and the WSS dial
+  // joins it and times out WITH it. The fix: one `libp2p.dial(ma[])`
+  // call with every address — libp2p's own happy-eyeballs runs each,
+  // its ADDRESS_DIAL_TIMEOUT=6 s binds each one internally, and our
+  // whole-peer signal binds the operation.
+  it.fails('dialByAddresses passes an array of multiaddrs to libp2p.dial (one call for all addrs)', () => {
+    const src = readFileSync(join(PACKAGE_ROOT, 'src', 'client', 'mesh-client.ts'), 'utf8');
+    // Source-grep: the function must call `.dial(` with an array of
+    // multiaddrs, NOT inside a `for (const addr of addrs)` loop.
+    const body = /private async dialByAddresses[\s\S]*?\n  \}\n/.exec(src);
+    expect(body, 'dialByAddresses body found').not.toBeNull();
+    const text = body![0];
+    // The old shape (one dial per address inside a loop) is refused.
+    expect(text, 'no per-address dial inside a for-loop').not.toMatch(/for\s*\(const\s+addr\s+of\s+addrs\)[\s\S]*?this\.libp2p\.dial/);
+    // The new shape: one call to `this.libp2p.dial(<something that is
+    // an array of multiaddrs>, ...)`. Any array literal, variable, or
+    // `.map(...)` result satisfies.
+    expect(text, 'libp2p.dial called with an array of multiaddrs').toMatch(/this\.libp2p\.dial\s*\(\s*(?:multiaddrs|\[|[A-Za-z_$][\w$]*\.map\()/);
+  });
+});
+
+describe('fix 5 — s3 reads #state through cdpPoll, the way s1 does', () => {
+  it.fails('s3 does not call pollUntil(checkState) with a cdpEval-based checkState', () => {
+    const src = readFileSync(join(PACKAGE_ROOT, 'stage', 'scenarios', 's3-node-goes-away.mjs'), 'utf8');
+    // The failing pattern: `pollUntil(checkState, ...)` where checkState
+    // calls `cdpEval`. The fix uses `cdpPoll` (one target held open
+    // across polls, same as s1).
+    expect(src, 's3 does not pollUntil(checkState)').not.toMatch(/pollUntil\s*\(\s*checkState/);
+  });
+});
+
+describe('fix 6 — s1 brackets /blocks/current between two direct reads (race, not mismatch)', () => {
+  it.fails('verdictS1Probe passes when probe equals EITHER directBefore or directAfter', async () => {
+    const { verdictS1Probe } = await import('../stage/lib/verdicts.mjs');
+    // Tip moved between probe and the first direct read; the probe
+    // matches the SECOND (post-probe) direct read.
+    expect(verdictS1Probe({
+      probePath: '/blocks/current',
+      probe: { sha256: 'bb'.repeat(32), bytes: 88 },
+      directBefore: { sha256: 'aa'.repeat(32), bytes: 88 },
+      directAfter: { sha256: 'bb'.repeat(32), bytes: 88 },
+    })).toBe('PASS');
+  });
+  it.fails('verdictS1Probe passes when probe equals the pre-probe direct read', async () => {
+    const { verdictS1Probe } = await import('../stage/lib/verdicts.mjs');
+    expect(verdictS1Probe({
+      probePath: '/blocks/current',
+      probe: { sha256: 'aa'.repeat(32), bytes: 88 },
+      directBefore: { sha256: 'aa'.repeat(32), bytes: 88 },
+      directAfter: { sha256: 'bb'.repeat(32), bytes: 88 },
+    })).toBe('PASS');
+  });
+});
+
+describe('fix 7 — lastFailures keeps one entry per address', () => {
+  it.fails('NodeList.failure(id, kind, msg, addr) records lastFailures[addr]', async () => {
+    const { NodeList } = await import('../src/client/node-list.js');
+    const id = 'a'.repeat(64);
+    const other = 'b'.repeat(64);
+    let now = 100;
+    const list = new NodeList(
+      [{ notisId: id, addrs: ['/ip4/1.1.1.1/tcp/1/p2p/P1', '/ip4/2.2.2.2/tcp/2/p2p/P2'] }],
+      other,
+      () => now,
+    );
+    now = 200;
+    (list as unknown as { failure: (id: string, k: string, m: string, a: string) => void }).failure(
+      id, 'timeout', 'TimeoutError: /ip4/1.1.1.1', '/ip4/1.1.1.1/tcp/1/p2p/P1',
+    );
+    now = 300;
+    (list as unknown as { failure: (id: string, k: string, m: string, a: string) => void }).failure(
+      id, 'transport', 'DialDeniedError: /ip4/2.2.2.2', '/ip4/2.2.2.2/tcp/2/p2p/P2',
+    );
+    const e = list.entry(id)! as unknown as { lastFailures?: Record<string, { message: string }>; lastFailure: unknown };
+    expect(e.lastFailures, 'lastFailures is a map by address').toBeDefined();
+    expect(e.lastFailures!['/ip4/1.1.1.1/tcp/1/p2p/P1']!.message).toContain('TimeoutError');
+    expect(e.lastFailures!['/ip4/2.2.2.2/tcp/2/p2p/P2']!.message).toContain('DialDeniedError');
+    expect(e.lastFailure).not.toBeNull();
+  });
+  it.fails('a success clears lastFailures entirely', async () => {
+    const { NodeList } = await import('../src/client/node-list.js');
+    const id = 'a'.repeat(64);
+    const other = 'b'.repeat(64);
+    const list = new NodeList(
+      [{ notisId: id, addrs: ['/ip4/1.1.1.1/tcp/1/p2p/P1'] }],
+      other,
+      () => 100,
+    );
+    (list as unknown as { failure: (id: string, k: string, m: string, a: string) => void }).failure(
+      id, 'timeout', 'TimeoutError', '/ip4/1.1.1.1/tcp/1/p2p/P1',
+    );
+    expect((list.entry(id)! as unknown as { lastFailures?: Record<string, unknown> }).lastFailures?.['/ip4/1.1.1.1/tcp/1/p2p/P1']).toBeDefined();
+    list.success(id);
+    expect((list.entry(id)! as unknown as { lastFailures?: Record<string, unknown> }).lastFailures ?? {}).toEqual({});
+  });
+});
+
 describe('fix cert — certutil trust is C,, (not ,,) and up verifies it', () => {
   it("up --dry-run installs pebble-root with trust 'C,,' (CA for SSL servers)", () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], { encoding: 'utf8', timeout: 30_000 });
