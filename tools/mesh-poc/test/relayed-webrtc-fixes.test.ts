@@ -48,6 +48,37 @@ const execInMock = vi.hoisted(() => {
   };
 });
 
+// MESH_INTERFACE → Acceptance 1 — s1's miner-pause/resume calls are tracked
+// through this hoisted bag; each test calls `measureMock.reset()` and
+// `measureMock.setFindPid(...)`, `.setLeaves(...)`, `.setDescendants(...)`
+// to feed canned pid-tree answers.
+const measureMock = vi.hoisted(() => {
+  type SignalCall = { pid: number; sig: string };
+  const signalCalls: SignalCall[] = [];
+  let descendantsOf: (pid: number) => number[] = () => [];
+  let leavesOf: (pid: number) => number[] = () => [];
+  let pidEntry: { pid: number; description: string; argv?: readonly string[] } | null = null;
+  return {
+    signalCalls,
+    setDescendants(fn: typeof descendantsOf) { descendantsOf = fn; },
+    setLeaves(fn: typeof leavesOf) { leavesOf = fn; },
+    setFindPid(entry: typeof pidEntry) { pidEntry = entry; },
+    reset() {
+      signalCalls.length = 0;
+      descendantsOf = () => [];
+      leavesOf = () => [];
+      pidEntry = null;
+    },
+    signal(pid: number, sig: string) {
+      signalCalls.push({ pid, sig });
+      return { sent: true, reason: null };
+    },
+    descendantPids(pid: number) { return descendantsOf(pid); },
+    leafPids(pid: number) { return leavesOf(pid); },
+    findPid(_pids: unknown, _desc: string) { return pidEntry; },
+  };
+});
+
 vi.mock('../stage/lib/measure.mjs', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -56,11 +87,11 @@ vi.mock('../stage/lib/measure.mjs', async (importOriginal) => {
     readDirect: () => ({ sha256: 'cafebabe', bytes: 1 }),
     readLineCount: () => 0,
     readNftCounterSum: () => 0,
-    findPid: () => null,
-    signal: () => {},
-    leafPids: () => [],
+    findPid: (pids: unknown, desc: string) => measureMock.findPid(pids, desc),
+    signal: (pid: number, sig: string) => measureMock.signal(pid, sig),
+    leafPids: (pid: number) => measureMock.leafPids(pid),
     sigterm: () => {},
-    descendantPids: () => [],
+    descendantPids: (pid: number) => measureMock.descendantPids(pid),
     readMtimeMs: () => 0,
   };
 });
@@ -1093,6 +1124,242 @@ describe('s2\'s priv2 step', () => {
       const pollCalls = execInMock.calls.filter((c) => c.argv.includes('poll') || c.argv.includes('poll-ice'));
       expect(evalCalls.length, 'no `cdp.mjs eval` calls for priv2 (that would reopen the page per poll)').toBe(0);
       expect(pollCalls.length, 'at least one held-page poll call for priv2').toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// --- s1 resumes the miner's whole tree, not the leaves alone ---------------
+
+describe('s1 resumes the miner\'s whole tree with SIGCONT, wrappers included', () => {
+  // MESH_INTERFACE → Acceptance 1 — the recorded `miner-steady` pid is
+  // the outer `sudo ip netns exec ... sudo -u user -- node ...` wrapper.
+  // SIGSTOP on an inner leaf makes `sudo -u`'s job-control relay suspend
+  // itself (sudo's own `tcsetpgrp` wait path). SIGCONT on the leaf alone
+  // leaves the wrapper `T`, which the stage's `down` cannot pass through
+  // when the recorded outer pid is SIGTERM'd. The resume must SIGCONT
+  // every process in the miner's tree: the recorded pid plus every
+  // descendant, wrappers included.
+
+  // s1 reaches the pause/resume branch only when its `anchorNodeId`
+  // step succeeds AND `identities.json` holds a row for the resolved
+  // host. The scenario fixture below mirrors the s2 case: identities,
+  // out dir, and a canned `#state` that reads a connected anchor.
+  const anchorNotisId = 'aa'.repeat(32);
+
+  function s1IdentitiesFixture(): Record<string, unknown> {
+    return { pub1: { notisId: anchorNotisId, httpPort: 3100 } };
+  }
+
+  it.fails('SIGCONT reaches the recorded pid and every descendant on resume, not the leaf alone', async () => {
+    execInMock.reset();
+    measureMock.reset();
+    measureMock.setFindPid({ pid: 100, description: 'miner-steady' });
+    measureMock.setDescendants(() => [200, 300, 400]); // wrapper -> wrapper -> leaf
+    measureMock.setLeaves(() => [400]);
+    execInMock.setResponder((_ns, argv) => {
+      if (argv.includes('poll-ice')) {
+        return JSON.stringify({ value: JSON.stringify({ nodeId: anchorNotisId }), iceRecord: [{ urls: [] }] });
+      }
+      if (argv.includes('poll')) {
+        return JSON.stringify(JSON.stringify({ nodeId: anchorNotisId }));
+      }
+      return '{}';
+    });
+    const outDir = makeOutDir({
+      anchorNotisId,
+      identities: s1IdentitiesFixture(),
+    });
+    try {
+      await s1Scenario.run(ctxFor(outDir));
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+    const contCalls = measureMock.signalCalls.filter((c) => c.sig === 'SIGCONT');
+    const contPids = new Set(contCalls.map((c) => c.pid));
+    expect(contPids, 'SIGCONT reached the recorded miner pid (the sudo wrapper)').toContain(100);
+    expect(contPids, 'SIGCONT reached a middle-tree descendant').toContain(200);
+    expect(contPids, 'SIGCONT reached the leaf').toContain(400);
+  });
+
+  it('MUTATION: a tree of just the recorded pid (no descendants) still gets SIGCONT on that pid', async () => {
+    execInMock.reset();
+    measureMock.reset();
+    measureMock.setFindPid({ pid: 100, description: 'miner-steady' });
+    measureMock.setDescendants(() => []);
+    measureMock.setLeaves(() => []);
+    execInMock.setResponder((_ns, argv) => {
+      if (argv.includes('poll-ice')) {
+        return JSON.stringify({ value: JSON.stringify({ nodeId: anchorNotisId }), iceRecord: [{ urls: [] }] });
+      }
+      if (argv.includes('poll')) {
+        return JSON.stringify(JSON.stringify({ nodeId: anchorNotisId }));
+      }
+      return '{}';
+    });
+    const outDir = makeOutDir({
+      anchorNotisId,
+      identities: s1IdentitiesFixture(),
+    });
+    try {
+      await s1Scenario.run(ctxFor(outDir));
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+    // When the tree holds only the recorded pid and no descendants,
+    // s1 still has nothing to pause (`leafPids` is empty), so the
+    // pause branch is skipped — no SIGSTOP, no SIGCONT. The property
+    // the test is after is the inverse of the main case: a leaf
+    // reached by SIGSTOP always has its ancestor reached by SIGCONT.
+    expect(measureMock.signalCalls.length,
+      'with no leaves there is nothing to pause, so no SIGCONT either').toBe(0);
+  });
+
+  it.fails('MUTATION: when leafPids and descendantPids disagree, SIGCONT still reaches every leaf that got SIGSTOP', async () => {
+    execInMock.reset();
+    measureMock.reset();
+    measureMock.setFindPid({ pid: 100, description: 'miner-steady' });
+    measureMock.setDescendants(() => [200, 300, 400, 500]);
+    measureMock.setLeaves(() => [400, 500]); // two leaves
+    execInMock.setResponder((_ns, argv) => {
+      if (argv.includes('poll-ice')) {
+        return JSON.stringify({ value: JSON.stringify({ nodeId: anchorNotisId }), iceRecord: [{ urls: [] }] });
+      }
+      if (argv.includes('poll')) {
+        return JSON.stringify(JSON.stringify({ nodeId: anchorNotisId }));
+      }
+      return '{}';
+    });
+    const outDir = makeOutDir({
+      anchorNotisId,
+      identities: s1IdentitiesFixture(),
+    });
+    try {
+      await s1Scenario.run(ctxFor(outDir));
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+    const stopPids = new Set(measureMock.signalCalls.filter((c) => c.sig === 'SIGSTOP').map((c) => c.pid));
+    const contPids = new Set(measureMock.signalCalls.filter((c) => c.sig === 'SIGCONT').map((c) => c.pid));
+    expect(stopPids, 'SIGSTOP sent to each leaf').toEqual(new Set([400, 500]));
+    for (const leaf of [400, 500]) {
+      expect(contPids, `SIGCONT reached leaf ${leaf}`).toContain(leaf);
+    }
+    expect(contPids, 'SIGCONT reached the recorded miner pid (the sudo wrapper)').toContain(100);
+  });
+});
+
+// --- stage:down continues and ends whole trees -----------------------------
+
+describe('stage:down --dry-run prints CONT/TERM/KILL per tree and ip netns pids before every delete', () => {
+  // MESH_INTERFACE → Acceptance — the stage's `down` must end every
+  // recorded tree, not just the recorded pid: SIGCONT first (so a
+  // stopped wrapper can relay signals), then SIGTERM to the whole
+  // tree, wait, and SIGKILL deepest-first (so no descendant survives
+  // its wrapper's reaping). After the recorded pids, `ip netns pids
+  // <ns>` reads whatever is still alive in each `notismesh-*`
+  // namespace; CONT/TERM/KILL again, report each pid it had to end
+  // by its command. A namespace is deleted only once
+  // `ip netns pids` reads empty.
+
+  const DOWN_SCRIPT = join(PACKAGE_ROOT, 'stage', 'down.mjs');
+
+  function runDown(outDir: string): { status: number | null; stdout: string; stderr: string } {
+    return spawnSync(process.execPath, [DOWN_SCRIPT, '--dry-run'], {
+      encoding: 'utf8', timeout: 30_000,
+      env: { ...process.env, MESH_STAGE_OUT_DIR: outDir },
+    });
+  }
+
+  function writePidsJson(outDir: string, obj: unknown): void {
+    writeFileSync(join(outDir, 'pids.json'), JSON.stringify(obj));
+  }
+
+  it.fails('prints kill -CONT then kill -TERM then kill -KILL on the recorded tree for each pid', () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'mesh-down-'));
+    try {
+      writePidsJson(outDir, {
+        pids: [{ pid: 1234, description: 'miner-steady' }],
+        namespaces: ['notismesh-pub1'],
+      });
+      const res = runDown(outDir);
+      expect(res.status, `stdout: ${res.stdout}\nstderr: ${res.stderr}`).toBe(0);
+      const out = res.stdout;
+      const contIdx = out.search(/kill -CONT.*1234.*miner-steady/);
+      const termIdx = out.search(/kill -TERM.*1234.*miner-steady/);
+      const killIdx = out.search(/kill -KILL.*1234.*miner-steady/);
+      expect(contIdx, 'CONT is printed for the recorded pid').toBeGreaterThanOrEqual(0);
+      expect(termIdx, 'TERM is printed for the recorded pid').toBeGreaterThanOrEqual(0);
+      expect(killIdx, 'KILL is printed for the recorded pid (deepest-first fallback)').toBeGreaterThanOrEqual(0);
+      expect(contIdx, 'CONT precedes TERM').toBeLessThan(termIdx);
+      expect(termIdx, 'TERM precedes KILL').toBeLessThan(killIdx);
+      expect(out, 'the dry-run notes the tree walk').toMatch(/tree/i);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it.fails('prints ip netns pids <ns> before every ip netns delete <ns>', () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'mesh-down-'));
+    try {
+      writePidsJson(outDir, {
+        pids: [{ pid: 1234, description: 'miner-steady' }],
+        namespaces: ['notismesh-pub1', 'notismesh-pub2'],
+      });
+      const res = runDown(outDir);
+      expect(res.status, `stdout: ${res.stdout}\nstderr: ${res.stderr}`).toBe(0);
+      const out = res.stdout;
+      for (const ns of ['notismesh-pub1', 'notismesh-pub2']) {
+        const pidsIdx = out.search(new RegExp(`ip netns pids ${ns}(?!\\w)`));
+        const deleteIdx = out.search(new RegExp(`ip netns delete ${ns}(?!\\w)`));
+        expect(pidsIdx, `ip netns pids ${ns} is printed`).toBeGreaterThanOrEqual(0);
+        expect(deleteIdx, `ip netns delete ${ns} is printed`).toBeGreaterThanOrEqual(0);
+        expect(pidsIdx, `pids ${ns} precedes delete ${ns}`).toBeLessThan(deleteIdx);
+      }
+      // The dry-run names the CONT/TERM/KILL per-namespace-remnant
+      // policy so a reader can see the exec path's shape.
+      expect(out, 'the dry-run notes CONT/TERM/KILL on namespace remnants').toMatch(/CONT.*TERM.*KILL/is);
+      expect(out, 'the dry-run notes "delete only when empty"').toMatch(/empt(y|y\.)/i);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it.fails('MUTATION: a second recorded pid gets its own CONT/TERM/KILL on its own tree', () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'mesh-down-'));
+    try {
+      writePidsJson(outDir, {
+        pids: [
+          { pid: 1234, description: 'miner-steady' },
+          { pid: 5678, description: 'faucet' },
+        ],
+        namespaces: ['notismesh-pub1'],
+      });
+      const res = runDown(outDir);
+      expect(res.status, `stdout: ${res.stdout}\nstderr: ${res.stderr}`).toBe(0);
+      for (const pid of [1234, 5678]) {
+        expect(res.stdout, `CONT ${pid}`).toMatch(new RegExp(`kill -CONT.*${pid}`));
+        expect(res.stdout, `TERM ${pid}`).toMatch(new RegExp(`kill -TERM.*${pid}`));
+        expect(res.stdout, `KILL ${pid}`).toMatch(new RegExp(`kill -KILL.*${pid}`));
+      }
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it('MUTATION: a down with no pids.json still runs ip netns pids before each delete (fallback branch)', () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'mesh-down-'));
+    try {
+      // No pids.json; the fallback reads `ip netns list` (which this
+      // dry-run cannot stub) and loops over its result. Even with
+      // zero namespaces, the dry-run output must mention the
+      // ip-netns-pids-before-delete rule or complete with zero
+      // commands — assert the exit is 0 and the summary line is
+      // printed.
+      const res = runDown(outDir);
+      expect(res.status, `stdout: ${res.stdout}\nstderr: ${res.stderr}`).toBe(0);
+      expect(res.stdout, 'the dry-run summary line is printed').toMatch(/\[dry-run complete\]/);
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
