@@ -90,7 +90,10 @@ symmetric sub-segments (`stage/topology.json`):
 - **Network access once**, for Pebble `v2.8.0`. `stage/up.mjs` downloads the pinned archive, checks
   `sha256sum --check` against `34595d915bbc2fc827affb3f58593034824df57e95353b031c8d5185724485ce`,
   caches it under `stage/cache/`, and refuses on mismatch. Further runs read the cache.
-- **The X server on `DISPLAY=:0`** for Chromium's `--headless=new` and for Firefox by hand.
+- **The X server on `DISPLAY=:0`** for Firefox by hand. Chromium runs `--headless=new` and needs
+  no X server; `stage/up.mjs` passes `DISPLAY` through to Chromium anyway, so a Firefox launched
+  inside `notismesh-browser` reaches the same X socket at `/tmp/.X11-unix/X0` (the host's
+  `/tmp` is visible inside the namespace).
 - **No stale `notismesh-*` namespace.** `stage/up.mjs` reads `ip netns list` and exits with code 2
   if any `notismesh-*` is already present — `stage:down` first.
 
@@ -175,8 +178,10 @@ stage/out/scenarios/<s>.json      one per scenario stage:run touched
 stage/out/summary.md              stage:report's build
 ```
 
-`stage/cache/` holds the pinned Pebble tarball and the extracted binary; `stage:down` leaves it
-alone — nothing in a scenario reads it. Everything else `stage:down` removes.
+`stage/cache/` holds the pinned Pebble tarball and the extracted binary. **`stage:down` removes
+only `stage/out/pids.json`** — every other file under `stage/out/` stays, for a reader to pick
+over after a run; the next `stage:up` rotates the whole `stage/out/` directory to
+`stage/out.prev/` (replacing any older `.prev`) at its start.
 
 ## The six scenarios
 
@@ -202,11 +207,10 @@ the signal to its child; the pause reaches the inner Node process) and resumes i
 | 4 | `the DNS log holds no line and the nft 53/853 counter did not move` | `dnsLines === 0` and `nftCounterPackets === 0` across the scenario window **and** `connected === true` (a page that never connected is not evidence). | A line appended to `stage/out/dns.log`; a counter that moved. |
 | 5 | `every RTCPeerConnection the page builds names a STUN by IP, or no STUN at all` | Every `urls[]` matches `stun:<IPv4>:<port>` or `stun:[<IPv6>]:<port>`; an empty URL set is also a pass. | A `urls[]` entry that is not of those shapes (a hostname is the test's point). |
 
-**What a tester reports even on PASS:** a `stage/out/dns.log` line whose question name is anything
-the page could have asked for (an anchor's hostname, a STUN name, a relay name) — the browser's own
-housekeeping is on `--disable-background-networking` and friends, so a background Mozilla name
-there is itself a failure of the quiet-flag set. The dns-log server answers REFUSED; a line in
-`stage/out/dns.log` means something queried.
+**What a tester reports even on PASS:** **any** `stage/out/dns.log` line, whatever name it
+carries. Chromium's `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE
+11.100.0.*` answers every name inside the browser, so a packet reaching the dns-log server went
+around Chromium's resolver — a path the proof of concept does not have (`MESH_INTERFACE → Scope`).
 
 ### s2 — Behind NAT (`MESH_INTERFACE → Acceptance 2`)
 
@@ -217,13 +221,17 @@ Two sub-steps, each with its own `config.json` variant written at start.
 | 1 | `priv1 (endpoint-independent NAT) answers over relayed WebRTC` | `state.nodeId === priv1`, `state.transport === 'webrtc'`, `state.path === 'direct'`, the single anchor address names `/p2p-circuit/webrtc`, and every ICE server (if any) is `stun:<ip>:<port>`. | `nodeId` someone else; `transport` not `webrtc`; `path` not `direct`; a STUN URL naming a host. |
 | 2 | `priv2 (symmetric NAT) stays retry with a failure, the client stays on another node` | priv2's entry reads `status === 'retry'` and `failures ≥ 1`; priv2 is never `blacklisted` at any poll; the page's `nodeId` at the end names a node other than priv2 and is not null. | priv2 `blacklisted` at any poll; the page stuck on priv2; priv2 at `ok`. |
 
-A fast path to a node behind a symmetric NAT is what a symmetric NAT does not have. **The property
-is "retry, never blacklisted"** (`MESH_INTERFACE → The client's node list → "A valid proof of a
-lighter chain is not a lie"` names the complement): a timeout is `retry` on growing intervals
-(`RETRY_BASE_MS` 5 000 ms doubling to `RETRY_CAP_MS` 600 000 ms), never permanent.
+**A private node with no direct path to the client reads `retry`, and the client stays on a node
+it reaches** (`MESH_INTERFACE → NAT → "A relay carries signalling, not data."`): the relay carries
+signalling, not data, so a symmetric-NAT node whose WebRTC data path cannot be opened is `retry`
+on growing intervals (`RETRY_BASE_MS` 5 000 ms doubling to `RETRY_CAP_MS` 600 000 ms), never
+permanent and never silently served over the relay.
 
-**What a tester reports even on PASS:** priv2 at `blacklisted` at any poll — the record carries
-`blacklistedAtAnyPoll: true`, which the verdict reads straight to `FAIL`.
+**What a tester reports even on PASS:** `everInUse: true` in the record — the page's `nodeId`
+ever named priv2 inside the window. Over WebRTC it means the symmetric NAT was punched (worth
+knowing, since a different NAT or a kernel update could change that); over a plain relayed
+address it would mean the API stream rode a limited relayed link, which
+`MESH_INTERFACE → NAT → "A relay carries signalling, not data."` forbids.
 
 ### s3 — A node goes away (`MESH_INTERFACE → Acceptance 3`)
 
@@ -237,9 +245,9 @@ the retry cadence by hand.
 | 3 | `pub1 firewalled: client moves to another node within 2 checks, pub1 retry` | Same as step 1, with nft rules dropping UDP/TCP to pub1's mesh listener in pub1's namespace. | As step 1. |
 | 4 | `pub1 unfirewalled: pub1 reads ok at a later check` | Same as step 2. | As step 2. |
 
-**What a tester reports even on PASS:** pub1 reaching `blacklisted` at any point — a timeout is
-not a lie (`MESH_INTERFACE → The client's node list → "A valid proof of a lighter chain is not a
-lie"` holds the rule's complement; a timeout stays `retry`).
+**What a tester reports even on PASS:** pub1 reaching `blacklisted` at any point — a timeout, a
+refused connection, a dropped link or a non-2xx is `retry`, never permanent
+(`MESH_INTERFACE → The client's node list`).
 
 ### s4 — A transport is cut (`MESH_INTERFACE → Acceptance 4`)
 
@@ -252,9 +260,12 @@ Four sub-steps against UDP from the browser namespace, then TCP between the Noti
 | 3 | `across one renewal the probes keep succeeding, no lastLeft names a failure` | Pebble log shows at least one renewal across the 240 000 ms window; the client was connected over WSS at the window boundary and at its end; no `state.lastLeft.reason` named `timeout`/`refused`/`dropped`/`transport`/`lie`/`malformed`/`proof-invalid` in the window. **Positive evidence required**: `connectedBeforeWindow === true` and `connectedAfterWindow === true`. | A dropped request named by `lastLeft.reason`; no renewal in the Pebble log; a window boundary with no connection. |
 | 4 | `TCP between the Notis nodes p2p port cut: record what still answers` | After one `CHECK_INTERVAL_MS` the page's `state.transport` and `state.nodeId` are both non-null. | Neither field settled. |
 
-**What a tester reports even on PASS:** the renewal step's record naming a failure under some
-other name — grep `state/out/<browser>/*.log` for `lastLeft` entries whose `reason` matched any
-substring in the regex above and read what else sits there.
+**What a tester reports even on PASS:** the renewal step's measurement in
+`stage/out/scenarios/s4.json` reads `probeSuccessAcrossRenewal: true` on positive evidence
+(the regex above matched nothing). A measurement whose `lastLeftFailure: false` rests on an
+empty window (`connectedBeforeWindow` or `connectedAfterWindow` not `true`) still FAILs by
+`verdictS4Renewal`, but is worth naming in the report so the next run's renewal window is wide
+enough.
 
 ### s5 — Impersonation (`MESH_INTERFACE → Acceptance 5`)
 
@@ -280,9 +291,9 @@ Two sub-steps.
 | 1 | `anchors unreachable: anchorReached is false, page shows the contract words` | nft rules in the browser namespace drop every anchor address; `state.anchorReached === false`; the page's `[data-role="banner"]` reads `No anchor reached. Nothing shown here is verified.` byte for byte; **at least one hostile seed** reached a terminal status (`ok` / `behind` / `blacklisted`) — positive evidence the page connected to something. | A different banner text; `anchorReached: true`; no seed left `new`. |
 | 2 | `anchors reachable, hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted` | `hostile-malformed` → `blacklisted`, evidence `malformed`; `hostile-invalid` → `blacklisted`, evidence `proof-invalid`; `hostile-lagging` → `behind`, never `blacklisted`. | Any of those three not landing. |
 
-**What a tester reports even on PASS:** the hostile-lagging node at `blacklisted` at any point — a
-lagging node that serves a valid proof of a lighter chain is `behind`, not a lie
-(`MESH_INTERFACE → The client's node list`).
+**What a tester reports even on PASS:** the hostile-lagging node at `blacklisted` at any point —
+a timeout, a refused connection, a dropped link or a non-2xx is `retry`, and a valid proof of a
+lighter chain is `behind`; neither is `blacklisted` (`MESH_INTERFACE → The client's node list`).
 
 ## Firefox by hand
 
@@ -314,20 +325,21 @@ sudo ip netns exec notismesh-browser \
                        http://localhost:80/
 ```
 
-Firefox 157's **Resistance Fingerprinting** and most of its background services are on by default,
-but it still resolves names for its own update, telemetry, captive-portal and Pocket endpoints
-whatever page is open. The browser-namespace resolver answers RCODE 5 (REFUSED) for every query
-and logs it, so Mozilla names landing in `stage/out/dns.log` are **the browser's own**, not the
-page's. A line naming a STUN or relay host, or any name the page could have asked for (an
-anchor's host, a seed's host, a URL in the probe), is a failure.
+Firefox's own services resolve names whatever page is open — update, telemetry, captive-portal
+and the like. The browser-namespace resolver answers RCODE 5 (REFUSED) for every query and logs
+it, so Firefox's own names landing in `stage/out/dns.log` are **the browser's own**, not the
+page's. A line naming a STUN host, a relay host, or any name that is not one of Firefox's own
+services is a failure.
 
 ### What to check, in order
 
 1. **The page connected over WebRTC-direct.** Read `#state` from the DevTools console:
    `document.getElementById('state').textContent`. The parsed JSON holds
-   `{ nodeId, transport: 'webrtc', path: 'direct', ... }` and `nodeId` matches one of
-   `anchors[].notisId` in `stage/out/browser/config.json`. **Fails** if `nodeId` is `null`, if
-   `transport` is not `webrtc`, or if the client lands on a non-anchor.
+   `{ nodeId, transport: 'webrtc-direct', path: 'direct', ... }` and `nodeId` matches one of
+   `anchors[].notisId` in `stage/out/browser/config.json` (a public anchor dialled over
+   WebRTC-direct; `'webrtc'` is the relayed-WebRTC path to a private node, not what either
+   anchor should read). **Fails** if `nodeId` is `null`, if `transport` is not `'webrtc-direct'`,
+   or if the client lands on a non-anchor.
 
 2. **The probe matches the node byte for byte.** Open
    `http://localhost:80/?probe=/blocks/current`, read `#probe` from the console
@@ -344,31 +356,38 @@ anchor's host, a seed's host, a URL in the probe), is a failure.
    (`stage/out/pids.json` → `miner-steady` entry; `SIGSTOP` the leaf PIDs under it, `SIGCONT` to
    resume). **Fails** if the two hashes differ.
 
-3. **A UDP drop moves the page to `wss`.** From a second shell, add the drop rule, read the
-   state, remove the rule:
+3. **Every UDP path cut moves the page to `wss` on pub1.** pub1 is the one node opted in to the
+   WSS fallback (`stage/topology.json` names `mesh.wss` on pub1 alone), so a UDP drop that covers
+   every public anchor forces WSS. Drop every UDP packet from the browser namespace to the
+   internet segment except DNS, read the state, remove the rule:
 
    ```bash
-   # Add — pub1 only; see stage/scenarios/s4-transport-cut.mjs for the full form.
    sudo ip netns exec notismesh-browser nft add table ip s4_fx
    sudo ip netns exec notismesh-browser \
      nft 'add chain ip s4_fx out { type filter hook output priority 0 ; }'
    sudo ip netns exec notismesh-browser \
-     nft add rule ip s4_fx out ip daddr 11.100.0.11 meta l4proto udp drop
+     nft add rule ip s4_fx out ip daddr 11.100.0.0/24 udp dport != 53 drop
 
    # Wait one CHECK_INTERVAL_MS (30 000 ms), then read #state.
-   # Expected: state.transport === 'wss' and state.nodeId identifies pub1,
-   # OR state.nodeId identifies pub2 (the client ranks another path first).
+   # Expected: state.transport === 'wss' and state.nodeId identifies pub1
+   # (the one node with mesh.wss in stage/topology.json).
 
    # Remove.
    sudo ip netns exec notismesh-browser nft delete table ip s4_fx
    ```
 
-   **Fails** if the page stays on `webrtc` to the blocked node, or disconnects (`state.nodeId`
-   `null`) for longer than two checks.
+   **Fails** if `state.transport` is not `'wss'`, if `state.nodeId` is not pub1's, or if
+   `state.nodeId` stays `null` for longer than two checks.
 
-4. **The DNS log is clean of names the page could have asked for.** `tail
-   stage/out/dns.log` through the whole Firefox run. **Fails** on any line whose `name` is an
-   anchor's hostname, a STUN host, a relay host, or any name the probe path could have asked for.
+4. **The DNS log and Firefox's own resolver list hold no names the page could have asked for.**
+   Anchors carry IP multiaddrs only (`MESH_INTERFACE → Discovery → "Anchors."` refuses `/dns4/`,
+   `/dns6/` and `/dnsaddr/`), so the only hostnames the page could have asked for are a STUN
+   host, a relay host, or a name a probe path carried. `tail stage/out/dns.log` through the whole
+   Firefox run. **Fails** on any line whose `name` is a STUN host, a relay host, or any name
+   that is not one of Firefox's own services. Firefox may resolve over DNS-over-HTTPS in the
+   tester's region, in which case its lookups never reach `dns.log` — also open
+   `about:networking#dns` in the same Firefox window and read the DNS entries list. **Fails** if
+   that list carries any STUN or relay host.
 
 ### What to report
 
