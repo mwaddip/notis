@@ -183,7 +183,7 @@ describe('stage up --dry-run', () => {
   // `stage/out.prev/` (replacing any older `.prev`) as the first step,
   // before any key, cert or log is written. `stage/cache/` (the
   // Pebble tarball + binary) is left in place.
-  it.fails("rotates stage/out/ to stage/out.prev/ as its first step", () => {
+  it("rotates stage/out/ to stage/out.prev/ as its first step", () => {
     runDryOnce();
     const lines = out.split('\n').filter((l) => l !== '');
     const firstLine = lines[0];

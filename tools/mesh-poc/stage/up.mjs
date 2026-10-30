@@ -20,7 +20,7 @@
 // creates no namespace, writes nothing under `stage/out/`, and starts no
 // process.
 
-import { mkdirSync, writeFileSync, existsSync, readFileSync, openSync, fstatSync, readSync, closeSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, readFileSync, openSync, fstatSync, readSync, closeSync, renameSync, rmSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -301,7 +301,24 @@ assertNoStageNamespaces(dryRun);
 
 const topology = readTopology(TOPOLOGY_PATH);
 
-if (!dryRun) {
+// MESH_INTERFACE → Acceptance — nothing a scenario reads may come from
+// an earlier run. Rotate `stage/out/` to `stage/out.prev/` (replacing
+// any older `.prev`) before writing a single key, cert or log file.
+// `stage/cache/` (Pebble tarball + binary, SHA-pinned) is left in
+// place — it costs nothing to re-use and nothing in a scenario reads
+// it.
+const OUT_DIR_PREV = `${OUT_DIR}.prev`;
+const rotateLine = `rotate ${OUT_DIR} → ${OUT_DIR_PREV} (replacing any older .prev)`;
+log.records.push(rotateLine);
+if (dryRun) {
+  process.stdout.write(rotateLine + '\n');
+} else {
+  if (existsSync(OUT_DIR_PREV)) {
+    rmSync(OUT_DIR_PREV, { recursive: true, force: true });
+  }
+  if (existsSync(OUT_DIR)) {
+    renameSync(OUT_DIR, OUT_DIR_PREV);
+  }
   mkdirSync(OUT_DIR, { recursive: true });
   mkdirSync(CACHE_DIR, { recursive: true });
 }
