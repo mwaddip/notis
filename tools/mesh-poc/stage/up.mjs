@@ -20,7 +20,7 @@
 // creates no namespace, writes nothing under `stage/out/`, and starts no
 // process.
 
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, readFileSync, openSync, fstatSync, readSync, closeSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { CommandLog } from './lib/commands.mjs';
 import { readTopology, natRouters, publicMeshHosts } from './lib/topology.mjs';
 import { buildPageConfig } from './lib/config.mjs';
+import { generateStageCerts } from './lib/pebble-certs.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -156,6 +157,92 @@ function execIn(ns, argv, { timeoutMs = 10_000 } = {}) {
   return execFileSync('sudo', full, { encoding: 'utf8', timeout: timeoutMs });
 }
 
+/**
+ * Read the last `maxLines` lines of a text file. Returns an empty string
+ * when the file is absent, so a wait that fires before its child wrote
+ * anything prints "<no output>" instead of a stack trace.
+ */
+function tailLog(logPath, maxLines = 20) {
+  if (!logPath || !existsSync(logPath)) return '';
+  const text = readFileSync(logPath, 'utf8');
+  const lines = text.split('\n');
+  const trailing = lines.length > 0 && lines[lines.length - 1] === '' ? 1 : 0;
+  const start = Math.max(0, lines.length - trailing - maxLines);
+  return lines.slice(start, lines.length - trailing).join('\n');
+}
+
+/**
+ * Wait with `pollUntil` and tail the related process's log on failure, so
+ * a timeout points at the cause rather than at the timeout itself.
+ */
+async function waitWithTail(description, check, logPath, options) {
+  try {
+    await pollUntil(description, check, options);
+  } catch (err) {
+    const tail = tailLog(logPath, 20);
+    const header = logPath ? `--- last 20 lines of ${logPath} ---` : '';
+    const body = tail === '' ? '<no output>' : tail;
+    const detail = logPath ? `\n${header}\n${body}` : '';
+    throw new Error(`${err.message}${detail}`);
+  }
+}
+
+/**
+ * Read the first JSON line from `logPath` whose parse carries a `notisId`
+ * field. The mesh node writes exactly that line to stdout when it is
+ * ready to serve; its stdout goes to this file through an fd `openSync`
+ * gave to the spawn. Resolves with the parsed line; rejects on timeout.
+ */
+async function readFirstMeshIdentity(logPath, { timeoutMs }) {
+  const start = Date.now();
+  let offset = 0;
+  let buf = '';
+  while (Date.now() - start < timeoutMs) {
+    if (existsSync(logPath)) {
+      const fd = openSync(logPath, 'r');
+      try {
+        const size = fstatSync(fd).size;
+        if (size > offset) {
+          const chunk = Buffer.alloc(size - offset);
+          readSync(fd, chunk, 0, chunk.length, offset);
+          offset = size;
+          buf += chunk.toString('utf8');
+          let nl;
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (line === '' || line[0] !== '{') continue;
+            try {
+              const parsed = JSON.parse(line);
+              if (typeof parsed.notisId === 'string') return parsed;
+            } catch { /* not the JSON identity line, keep reading */ }
+          }
+        }
+      } finally {
+        closeSync(fd);
+      }
+    }
+    await sleep(100);
+  }
+  throw new Error('timed out');
+}
+
+/**
+ * Per-host, per-description log path: `stage/out/<host>/<description>.log`.
+ * The description tail of a `host:tag` spawn becomes the file name
+ * (`mesh:pub1` → `stage/out/pub1/mesh.log`); a hostless description lands
+ * in `stage/out/logs/<description>.log`.
+ */
+function logPathFor(description) {
+  const colon = description.indexOf(':');
+  if (colon >= 0) {
+    const tag = description.slice(0, colon);
+    const host = description.slice(colon + 1);
+    return join(OUT_DIR, host, `${tag}.log`);
+  }
+  return join(OUT_DIR, 'logs', `${description}.log`);
+}
+
 // -----------------------------------------------------------------------
 // Setup
 // -----------------------------------------------------------------------
@@ -240,7 +327,16 @@ function teardown(cause) {
     log.records.push(l);
     process.stdout.write(l + '\n');
     if (!dryRun) {
-      try { execFileSync('sudo', ['ip', 'netns', 'delete', ns], { stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* already gone */ }
+      try {
+        execFileSync('sudo', ['ip', 'netns', 'delete', ns], { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (teardownErr) {
+        const stderr = decodeTeardownStderr(teardownErr);
+        // `ip netns delete` prints "Cannot remove ... No such file or
+        // directory" when the namespace is already gone. Any other
+        // error is a real problem and is reported.
+        if (/No such file or directory|Cannot remove namespace file/i.test(stderr)) continue;
+        process.stderr.write(`teardown: ip netns delete ${ns} failed: ${stderr || teardownErr.message}\n`);
+      }
     }
   }
   // 3) Remove every /etc/netns/<ns>/ directory up created.
@@ -249,10 +345,24 @@ function teardown(cause) {
     log.records.push(l);
     process.stdout.write(l + '\n');
     if (!dryRun) {
-      try { execFileSync('sudo', ['rm', '-rf', path], { stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* already gone */ }
+      try {
+        // `rm -rf` is quiet on a missing path; any error is a real
+        // problem (permission denied, say) and must be reported.
+        execFileSync('sudo', ['rm', '-rf', path], { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (teardownErr) {
+        const stderr = decodeTeardownStderr(teardownErr);
+        process.stderr.write(`teardown: sudo rm -rf ${path} failed: ${stderr || teardownErr.message}\n`);
+      }
     }
   }
   process.stdout.write(`[teardown complete] ${log.pids.length} PID(s), ${createdNamespaces.length} namespace(s), ${createdEtcNetnsPaths.length} /etc/netns path(s)\n`);
+}
+
+function decodeTeardownStderr(err) {
+  const raw = err?.stderr;
+  if (raw === null || raw === undefined) return '';
+  const s = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
+  return s.replace(/\s+$/, '');
 }
 
 try {
@@ -437,38 +547,56 @@ if (pebbleHost) {
 
 const pebbleConfigPath = join(OUT_DIR, 'pebble-config.json');
 const pebbleRootPath = join(OUT_DIR, 'pebble-root.pem');
+const pebbleTrustBundlePath = join(OUT_DIR, 'pebble-trust-bundle.pem');
+const stageCaPath = join(OUT_DIR, 'stage-ca.pem');
+const stageCaKeyPath = join(OUT_DIR, 'stage-ca-key.pem');
+const pebbleServerCertPath = join(OUT_DIR, 'pebble-server-cert.pem');
+const pebbleServerKeyPath = join(OUT_DIR, 'pebble-server-key.pem');
 const pebbleListenPort = pebbleHost ? Number(pebbleHost.pebble.listen.split(':').pop()) : 0;
 const pebbleManagementPort = pebbleHost ? Number(pebbleHost.pebble.managementListen.split(':').pop()) : 0;
-if (pebbleHost && !dryRun) {
-  // Pebble's own release carries the test certs in `pebble-linux-amd64/test/certs/`.
-  const pebbleTestDir = join(CACHE_DIR, 'pebble-linux-amd64', 'test');
-  writeFileSync(pebbleConfigPath, JSON.stringify({
-    pebble: {
-      listenAddress: `${pebbleHost.addr}:${pebbleListenPort}`,
-      managementListenAddress: `${pebbleHost.addr}:${pebbleManagementPort}`,
-      httpPort: pebbleHost.pebble.httpChallengePort,
-      tlsPort: 5001,
-      ocspResponderURL: '',
-      certificate: join(pebbleTestDir, 'certs', 'localhost', 'cert.pem'),
-      privateKey: join(pebbleTestDir, 'certs', 'localhost', 'key.pem'),
-      profile: 'shortlived',
-    },
-  }, null, 2));
-}
 
 if (pebbleHost) {
-  log.spawn(userWrap(nsOf('pebble'), { PEBBLE_VA_NOSLEEP: '1' }, pebbleBin).concat(['-config', pebbleConfigPath]), { description: 'pebble' });
+  // MESH_INTERFACE → The IP certificate — the v2.8.0 tarball holds the
+  // Pebble binary and nothing else; the stage generates its own CA and a
+  // Pebble server cert whose SAN names Pebble's IP, so pub1's ACME HTTPS
+  // client has something it can verify through `--cacert <stage-ca>`.
+  // Dry-run records the plan; exec mode writes the certs beside the
+  // config.
+  const certPlan = `[cert] stage-ca.pem, pebble-server-cert.pem (SAN=ip:${pebbleHost.addr}), pebble-server-key.pem under ${OUT_DIR}`;
+  log.records.push(certPlan);
+  if (dryRun) process.stdout.write(certPlan + '\n');
+  else {
+    await generateStageCerts({ outDir: OUT_DIR, pebbleIp: pebbleHost.addr });
+  }
+
+  if (!dryRun) {
+    writeFileSync(pebbleConfigPath, JSON.stringify({
+      pebble: {
+        listenAddress: `${pebbleHost.addr}:${pebbleListenPort}`,
+        managementListenAddress: `${pebbleHost.addr}:${pebbleManagementPort}`,
+        httpPort: pebbleHost.pebble.httpChallengePort,
+        tlsPort: 5001,
+        ocspResponderURL: '',
+        certificate: pebbleServerCertPath,
+        privateKey: pebbleServerKeyPath,
+        profile: 'shortlived',
+      },
+    }, null, 2));
+  }
+
+  log.spawn(userWrap(nsOf('pebble'), { PEBBLE_VA_NOSLEEP: '1' }, pebbleBin).concat(['-config', pebbleConfigPath]), { description: 'pebble', logPath: logPathFor('pebble') });
   recordWait(`pebble answers https://${pebbleHost.addr}:${pebbleListenPort}/dir`);
   if (!dryRun) {
-    await pollUntil(
+    await waitWithTail(
       'pebble directory',
       async () => {
         execIn(nsOf('browser'), [
-          'curl', '-sfk', '--max-time', '5',
+          'curl', '-sf', '--cacert', stageCaPath, '--max-time', '5',
           `https://${pebbleHost.addr}:${pebbleListenPort}/dir`,
         ], { timeoutMs: 8_000 });
         return true;
       },
+      logPathFor('pebble'),
       { timeoutMs: 60_000, pollMs: 1_000 },
     );
   }
@@ -484,7 +612,7 @@ if (dnsLogHost) {
     DNS_LOG_PATH: join(OUT_DIR, 'dns.log'),
     DNS_LOG_BIND: dnsLogHost.addr,
     DNS_LOG_PORT: String(dnsLogHost.dnsPort),
-  }).concat([dnsLogScript]), { description: 'dns-log' });
+  }).concat([dnsLogScript]), { description: 'dns-log', logPath: logPathFor('dns-log') });
 }
 
 // -----------------------------------------------------------------------
@@ -521,7 +649,7 @@ for (const [name, host] of Object.entries(topology.hosts)) {
       BOOTSTRAP_PEERS: `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}`,
       MINING_SECRET: 'stage-mining-secret',
     };
-    log.spawn(userWrap(ns, notisEnv).concat([notisNodeEntry]), { description: `notis:${name}` });
+    log.spawn(userWrap(ns, notisEnv).concat([notisNodeEntry]), { description: `notis:${name}`, logPath: logPathFor(`notis:${name}`) });
   }
 
   if (host.mesh !== undefined) {
@@ -534,7 +662,7 @@ for (const [name, host] of Object.entries(topology.hosts)) {
         MODE: host.mesh.upstreamMode,
         PORT: String(hostileListenPort),
         PUB1_BASE: pub1Base,
-      }).concat([hostileUpstreamScript]), { description: `hostile-upstream:${name}` });
+      }).concat([hostileUpstreamScript]), { description: `hostile-upstream:${name}`, logPath: logPathFor(`hostile-upstream:${name}`) });
       upstream = `http://127.0.0.1:${hostileListenPort}`;
     } else if (host.node !== undefined) {
       upstream = `http://127.0.0.1:${host.node.httpPort}`;
@@ -556,55 +684,23 @@ for (const [name, host] of Object.entries(topology.hosts)) {
         MESH_WSS: `${host.addr}:${host.mesh.wss.port}`,
         MESH_ACME_DIRECTORY: `https://${pebbleHost.addr}:${pebbleListenPort}/dir`,
         MESH_ACME_CHALLENGE_PORT: String(host.mesh.wss.acmeChallengePort),
-        NODE_EXTRA_CA_CERTS: pebbleRootPath,
+        NODE_EXTRA_CA_CERTS: pebbleTrustBundlePath,
       } : {}),
     };
-    const meshChild = log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}` });
-    if (!dryRun && meshChild !== null && host.mesh.role === 'public') {
-      meshIdentityPromises[name] = waitFirstJsonLine(meshChild, `mesh:${name}`);
+    const meshLogPath = logPathFor(`mesh:${name}`);
+    log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}`, logPath: meshLogPath });
+    if (!dryRun && host.mesh.role === 'public') {
+      // The mesh node's stdout is a file; tail it until the first JSON
+      // identity line lands. A pipe-based reader would have blocked at
+      // 64 KB once the mesh node started logging in earnest.
+      meshIdentityPromises[name] = readFirstMeshIdentity(meshLogPath, { timeoutMs: 60_000 })
+        .catch((err) => {
+          const tail = tailLog(meshLogPath, 20);
+          const body = tail === '' ? '<no output>' : tail;
+          throw new Error(`mesh:${name} identity line not read: ${err.message}\n--- last 20 lines of ${meshLogPath} ---\n${body}`);
+        });
     }
   }
-}
-
-/**
- * Resolve with the first stdout line of `child` that parses as JSON with
- * a `notisId` field. The mesh node prints exactly that line when it is
- * ready to serve. Rejects on `exit` before the line, so a crashed mesh
- * node fails the stage rather than hanging the wait.
- */
-function waitFirstJsonLine(child, label) {
-  return new Promise((resolve, reject) => {
-    let buf = '';
-    const onData = (chunk) => {
-      buf += chunk.toString('utf8');
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (line === '') continue;
-        if (line.startsWith('{')) {
-          try {
-            const parsed = JSON.parse(line);
-            if (typeof parsed.notisId === 'string') {
-              child.stdout.off('data', onData);
-              child.off('exit', onExit);
-              resolve(parsed);
-              return;
-            }
-          } catch {
-            // The mesh node has written something that is not its JSON
-            // identity line yet — keep reading.
-          }
-        }
-      }
-    };
-    const onExit = (code) => {
-      child.stdout.off('data', onData);
-      reject(new Error(`${label} exited with code ${code} before printing its identity line`));
-    };
-    child.stdout.on('data', onData);
-    child.once('exit', onExit);
-  });
 }
 
 // -----------------------------------------------------------------------
@@ -617,7 +713,7 @@ log.spawn(userWrap(nsOf('pub1'), {
   NODE_URL: `http://127.0.0.1:${pub1Host.node.httpPort}`,
   MINING_SECRET: 'stage-mining-secret',
   MINER_PCT: '100',
-}).concat([minerScript]), { description: 'miner' });
+}).concat([minerScript]), { description: 'miner', logPath: logPathFor('miner') });
 
 const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2'];
 recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
@@ -630,7 +726,7 @@ if (!dryRun) {
     const host = topology.hosts[name];
     const port = host.node.httpPort;
     let lastHeight = null;
-    await pollUntil(
+    await waitWithTail(
       `height on ${name}`,
       async () => {
         const stdout = execIn(nsOf(name), [
@@ -642,6 +738,7 @@ if (!dryRun) {
         lastHeight = data.height;
         return data.height >= HEIGHT_TARGET;
       },
+      logPathFor(`notis:${name}`),
       { timeoutMs: 600_000, pollMs: 2_000 },
     ).catch((err) => {
       throw new Error(`${name}: last height ${lastHeight} — ${err.message}`);
@@ -683,10 +780,17 @@ const browserNssDir = join(browserProfileHome, '.pki', 'nssdb');
 log.shell('sudo', [
   'ip', 'netns', 'exec', nsOf('browser'),
   'sudo', '-u', INVOKING_USER, '--',
-  'curl', '-sfk', '--max-time', '15',
+  'curl', '-sf', '--cacert', stageCaPath, '--max-time', '15',
   `https://${pebbleHost.addr}:${pebbleManagementPort}/roots/0`,
   '-o', pebbleRootPath,
 ]);
+
+// `pub1`'s mesh node trusts two CAs through `NODE_EXTRA_CA_CERTS`: the
+// stage CA, which signs Pebble's TLS cert (so pub1's ACME HTTPS to Pebble
+// verifies); and Pebble's own issuing root, so the certificate Pebble
+// issues to pub1 verifies on the browser's path. Concatenating them into
+// one file is Node's documented way to trust multiple roots.
+log.shell('sh', ['-c', `cat ${stageCaPath} ${pebbleRootPath} > ${pebbleTrustBundlePath}`]);
 
 // `certutil -d sql:<home>/.pki/nssdb -A -n pebble-root -t ",,"` installs the
 // root into the NSS db Chromium reads when `HOME` is set to that profile.
@@ -739,11 +843,11 @@ log.spawn(userWrap(nsOf('browser'), {
   SERVE_DIR: pageServeDir,
   CONFIG_PATH: configPath,
   PAGE_PORT: String(browserHost.httpPort),
-}).concat([pageServerScript]), { description: 'page-server' });
+}).concat([pageServerScript]), { description: 'page-server', logPath: logPathFor('page-server') });
 
 recordWait(`page server answers http://localhost:${browserHost.httpPort}/config.json`);
 if (!dryRun) {
-  await pollUntil(
+  await waitWithTail(
     'page-server /config.json',
     () => {
       execIn(nsOf('browser'), [
@@ -752,6 +856,7 @@ if (!dryRun) {
       ], { timeoutMs: 8_000 });
       return true;
     },
+    logPathFor('page-server'),
     { timeoutMs: 30_000, pollMs: 500 },
   );
 }
@@ -766,11 +871,11 @@ log.spawn(userWrap(nsOf('browser'), { HOME: browserProfileHome, DISPLAY: process
   '--no-default-browser-check',
   '--remote-debugging-port=9222',
   `http://localhost:${browserHost.httpPort}/`,
-]), { description: 'chromium' });
+]), { description: 'chromium', logPath: logPathFor('chromium') });
 
 recordWait('chromium CDP answers http://127.0.0.1:9222/json/version');
 if (!dryRun) {
-  await pollUntil(
+  await waitWithTail(
     'chromium CDP',
     () => {
       execIn(nsOf('browser'), [
@@ -779,6 +884,7 @@ if (!dryRun) {
       ], { timeoutMs: 8_000 });
       return true;
     },
+    logPathFor('chromium'),
     { timeoutMs: 60_000, pollMs: 1_000 },
   );
 }

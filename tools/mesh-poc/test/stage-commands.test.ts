@@ -5,7 +5,7 @@
 // captures stderr through a pipe and the thrown Error names it.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CommandLog } from '../stage/lib/commands.mjs';
@@ -48,7 +48,7 @@ describe('stage/lib/commands.mjs', () => {
     beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mesh-spawn-')); });
     afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-    it.fails('sends stdout to the log file and does not block on 1 MB', async () => {
+    it('sends stdout to the log file and does not block on 1 MB', async () => {
       const log = new CommandLog({ dryRun: false });
       const logPath = join(dir, 'child.log');
       // 1 MiB of 'x' bytes on stdout, then exit 0. This is well past the
@@ -69,7 +69,7 @@ describe('stage/lib/commands.mjs', () => {
       expect(size, 'log file holds the 1 MiB write').toBe(1048576);
     }, 10_000);
 
-    it.fails('records the logPath on log.pids so down can find it', () => {
+    it('records the logPath on log.pids so down can find it', () => {
       const log = new CommandLog({ dryRun: false });
       const logPath = join(dir, 'test-pids.log');
       const child = log.spawn(['sh', '-c', 'exit 0'], {

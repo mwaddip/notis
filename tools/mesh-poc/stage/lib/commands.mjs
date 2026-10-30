@@ -9,12 +9,17 @@
 // both on failure in the thrown Error's message — a lost stderr makes a
 // non-zero exit silent, which is what the previous `stdio: 'inherit'` did.
 //
-// `spawn([name, ...argv], { description, env, cwd })` records a long-lived
-// process. In dry-run it prints the line marked with its description; in
-// exec it spawns the process and records its PID so `down` can end exactly
-// those.
+// `spawn([name, ...argv], { description, env, cwd, logPath })` records a
+// long-lived process. In dry-run it prints the line marked with its
+// description; in exec it opens `logPath` and hands the kernel file
+// descriptor to the child as its stdout and stderr — a pipe fills at the
+// kernel's 64 KB default and blocks the child, so a Notis node logging
+// every block would hang mid-run. `log.pids` carries the `logPath` so
+// `down` and the wait helpers can tail it.
 
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 export class CommandLog {
   constructor({ dryRun }) {
@@ -34,10 +39,6 @@ export class CommandLog {
       return;
     }
     try {
-      // `stdio: ['ignore', 'pipe', 'pipe']` captures stdout and stderr
-      // into the thrown Error on failure (`err.stdout`, `err.stderr`),
-      // so the message can carry what the process said; `'inherit'`
-      // sends them to the parent and leaves `err.stderr === null`.
       execFileSync(name, argv, { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
       const status = typeof err.status === 'number' ? err.status : null;
@@ -57,9 +58,10 @@ export class CommandLog {
   }
 
   // `argvFull` is the complete command — `argvFull[0]` is the binary and
-  // the rest are its arguments. `spawn` keeps the full line in the record
-  // so a reader of the dry-run sees exactly what will run.
-  spawn(argvFull, { description, env = {}, cwd }) {
+  // the rest are its arguments. In exec mode `logPath` is required so the
+  // child's output lands in a file instead of a pipe nothing reads; the
+  // entry on `log.pids` carries it. Dry-run skips the file open.
+  spawn(argvFull, { description, env = {}, cwd, logPath }) {
     if (!Array.isArray(argvFull) || argvFull.length === 0) {
       throw new Error('spawn needs a non-empty argv array');
     }
@@ -71,12 +73,22 @@ export class CommandLog {
       process.stdout.write(marked + '\n');
       return null;
     }
+    if (typeof logPath !== 'string' || logPath === '') {
+      throw new Error(`spawn ${description} requires logPath in exec mode`);
+    }
+    mkdirSync(dirname(logPath), { recursive: true });
+    // `openSync(path, 'w')` truncates on open; the child's stdout and
+    // stderr both write into this one fd (interleaved — ok for a log).
+    // The parent's copy is closed after spawn so a reader that opens the
+    // file for reading sees the child's writes.
+    const fd = openSync(logPath, 'w');
     const child = nodeSpawn(name, argv, {
       env: { ...process.env, ...env },
       ...(cwd !== undefined ? { cwd } : {}),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', fd, fd],
     });
-    this.pids.push({ pid: child.pid, description });
+    closeSync(fd);
+    this.pids.push({ pid: child.pid, description, logPath });
     return child;
   }
 }
@@ -84,9 +96,6 @@ export class CommandLog {
 function decodeOutput(buf) {
   if (buf === null || buf === undefined) return '';
   const s = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf);
-  // Trim trailing newlines; a short stderr like `grep: X: No such file`
-  // is already tidy and a trailing newline just adds noise to the error
-  // message.
   return s.replace(/\s+$/, '');
 }
 

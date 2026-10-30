@@ -24,7 +24,7 @@ describe('stage/lib/pebble-certs.mjs', () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mesh-certs-')); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  it.fails('generates stage-ca.pem, pebble-server-cert.pem and pebble-server-key.pem', async () => {
+  it('generates stage-ca.pem, pebble-server-cert.pem and pebble-server-key.pem', async () => {
     const paths = await generateStageCerts({ outDir: dir, pebbleIp: '10.100.0.21' });
     expect(existsSync(paths.caPath), paths.caPath).toBe(true);
     expect(existsSync(paths.serverCertPath), paths.serverCertPath).toBe(true);
@@ -34,7 +34,7 @@ describe('stage/lib/pebble-certs.mjs', () => {
     expect(readFileSync(paths.serverKeyPath, 'utf8')).toContain('-----BEGIN PRIVATE KEY-----');
   }, 20_000);
 
-  it.fails('the server cert carries the IP in its SubjectAlternativeName', async () => {
+  it('the server cert carries the IP in its SubjectAlternativeName', async () => {
     const paths = await generateStageCerts({ outDir: dir, pebbleIp: '10.100.0.21' });
     const certPem = readFileSync(paths.serverCertPath, 'utf8');
     const cert = new x509.X509Certificate(certPem);
@@ -45,7 +45,7 @@ describe('stage/lib/pebble-certs.mjs', () => {
     expect(ipNames, `IP SANs: ${JSON.stringify(ipNames)}`).toContain('10.100.0.21');
   }, 20_000);
 
-  it.fails('the server cert chains to the stage CA', async () => {
+  it('the server cert chains to the stage CA', async () => {
     const paths = await generateStageCerts({ outDir: dir, pebbleIp: '10.100.0.21' });
     const ca = new x509.X509Certificate(readFileSync(paths.caPath, 'utf8'));
     const server = new x509.X509Certificate(readFileSync(paths.serverCertPath, 'utf8'));
