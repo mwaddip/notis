@@ -110,14 +110,14 @@ describe('fix — a public mesh node announces its listen addresses at once', ()
   // right fix is: for a `public` mesh node, default `announce` to
   // `listen`; the certhash lands onto the announced WebRTC-direct
   // address at once.
-  it.fails('effectiveAnnounce for a public role with no explicit announce reads as the listen list', async () => {
+  it('effectiveAnnounce for a public role with no explicit announce reads as the listen list', async () => {
     const { effectiveAnnounce } = await import('../src/node/mesh-node.js');
     expect(effectiveAnnounce({
       role: 'public',
       listen: ['/ip4/11.100.0.11/udp/4001/webrtc-direct', '/ip4/11.100.0.11/tcp/4002'],
     })).toEqual(['/ip4/11.100.0.11/udp/4001/webrtc-direct', '/ip4/11.100.0.11/tcp/4002']);
   });
-  it.fails('effectiveAnnounce honours an explicit announce (public role)', async () => {
+  it('effectiveAnnounce honours an explicit announce (public role)', async () => {
     const { effectiveAnnounce } = await import('../src/node/mesh-node.js');
     expect(effectiveAnnounce({
       role: 'public',
@@ -125,7 +125,7 @@ describe('fix — a public mesh node announces its listen addresses at once', ()
       announce: ['/ip4/other/udp/0/webrtc-direct'],
     })).toEqual(['/ip4/other/udp/0/webrtc-direct']);
   });
-  it.fails('effectiveAnnounce for a private role defaults to undefined (relay reservations announce themselves)', async () => {
+  it('effectiveAnnounce for a private role defaults to undefined (relay reservations announce themselves)', async () => {
     const { effectiveAnnounce } = await import('../src/node/mesh-node.js');
     expect(effectiveAnnounce({
       role: 'private',

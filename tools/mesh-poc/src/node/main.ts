@@ -173,12 +173,25 @@ const node = await startMeshNode({
 
 // MESH_INTERFACE → Discovery — anchors read `(notisId, addrs)`; print one
 // JSON line on stdout so the caller sees the identity and current
-// reachable multiaddrs without parsing a log stream.
+// reachable multiaddrs without parsing a log stream. A public node's
+// listen addresses lose a race against libp2p's transport-manager
+// `.listen` and the WebRTC-direct listener's cert load: when
+// `startMeshNode` returns, `multiaddrs()` can still be empty. Poll
+// for a non-empty answer under a deadline — not a sleep — so the
+// identity line carries the dialable addresses the browser needs.
+const IDENTITY_DEADLINE_MS = 30_000;
+const IDENTITY_POLL_MS = 100;
+const deadline = Date.now() + IDENTITY_DEADLINE_MS;
+let addrs = node.multiaddrs();
+while (addrs.length === 0 && Date.now() < deadline) {
+  await new Promise((resolve) => setTimeout(resolve, IDENTITY_POLL_MS));
+  addrs = node.multiaddrs();
+}
 process.stdout.write(
   JSON.stringify({
     notisId: key.notisId,
     peerId: node.libp2p.peerId.toString(),
-    multiaddrs: node.multiaddrs(),
+    multiaddrs: addrs,
   }) + '\n',
 );
 

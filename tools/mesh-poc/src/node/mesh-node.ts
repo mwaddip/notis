@@ -85,6 +85,39 @@ function assertBootstrapHasPeer(addrs: readonly string[]): void {
   }
 }
 
+/**
+ * MESH_INTERFACE → Discovery — the libp2p `addresses.announce` list a
+ * mesh node brings up with. A `public` role with no explicit announce
+ * defaults to its CONCRETE-PORT listen addresses: libp2p 3.5's
+ * AddressManager otherwise holds a public listen address out of
+ * `getAddresses()` until AutoNAT or an observed-address path calls
+ * `confirm(ma)` (see `libp2p/src/address-manager/transport-addresses.ts`
+ * — `verified` is `!isPrivate(ma)` on first read). An explicit
+ * `announce` always passes through. A `private` role has no listen
+ * address worth announcing on its own; relay reservations are
+ * announced through the relay transport, not here.
+ *
+ * A listen address with `/udp/0` or `/tcp/0` is excluded from the
+ * auto-default: the kernel picks the port at bind, so announcing
+ * `/udp/0` is a lie. In production, mesh nodes carry concrete ports
+ * (`stage/topology.json` → `pub1.mesh.webrtcPort = 4001`); in tests,
+ * loopback is private per isPrivate so the transport-address path
+ * reads it as verified anyway.
+ *
+ * Pure. Returning `undefined` means "no `addresses.announce` key"
+ * (libp2p's default behaviour).
+ */
+export function effectiveAnnounce(
+  opts: { role: 'public' | 'private'; listen: readonly string[]; announce?: readonly string[] },
+): string[] | undefined {
+  if (opts.announce !== undefined && opts.announce.length > 0) return [...opts.announce];
+  if (opts.role !== 'public') return undefined;
+  // Keep listen addresses with a concrete port; drop `/udp/0`, `/tcp/0`.
+  const concrete = opts.listen.filter((a) => !/\/(tcp|udp)\/0(?:\/|$)/.test(a));
+  if (concrete.length === 0) return undefined;
+  return concrete;
+}
+
 export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   // Address validation is first — these are the start-time refusals of
   // `MESH_INTERFACE → Transports` / `→ Discovery`. A rejection here never
@@ -178,9 +211,17 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
     dht: kadDHT({ protocol: dhtProtocol(opts.network), clientMode }),
   };
 
+  // MESH_INTERFACE → Discovery — a public mesh node without an explicit
+  // announce defaults to its listen list, so libp2p 3.5's address
+  // manager returns the listen addresses as verified from the start
+  // (`libp2p/src/address-manager/transport-addresses.ts` would otherwise
+  // hold a public IP out until AutoNAT confirms). The WebRTC-direct
+  // listener splices the /certhash/ onto every announce entry it
+  // matches, so the browser gets a dialable address at once.
+  const announce = effectiveAnnounce({ role: opts.role, listen, announce: opts.announce });
   const addresses = {
     listen,
-    ...(opts.announce ? { announce: [...opts.announce] } : {}),
+    ...(announce !== undefined ? { announce } : {}),
   };
   const common = {
     privateKey: opts.key.privateKey,
