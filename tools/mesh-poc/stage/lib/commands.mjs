@@ -5,7 +5,9 @@
 //
 // `shell(name, argv, { privileged })` records one short-lived command. In
 // dry-run mode it prints the line with its marking; in exec mode it runs it
-// through `execFileSync` so a non-zero exit stops `up`.
+// through `execFileSync` with stdout/stderr captured by pipes and surfaces
+// both on failure in the thrown Error's message — a lost stderr makes a
+// non-zero exit silent, which is what the previous `stdio: 'inherit'` did.
 //
 // `spawn([name, ...argv], { description, env, cwd })` records a long-lived
 // process. In dry-run it prints the line marked with its description; in
@@ -31,7 +33,27 @@ export class CommandLog {
       process.stdout.write(marked + '\n');
       return;
     }
-    execFileSync(name, argv, { stdio: 'inherit' });
+    try {
+      // `stdio: ['ignore', 'pipe', 'pipe']` captures stdout and stderr
+      // into the thrown Error on failure (`err.stdout`, `err.stderr`),
+      // so the message can carry what the process said; `'inherit'`
+      // sends them to the parent and leaves `err.stderr === null`.
+      execFileSync(name, argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      const status = typeof err.status === 'number' ? err.status : null;
+      const signal = err.signal ?? null;
+      const stderr = decodeOutput(err.stderr);
+      const stdout = decodeOutput(err.stdout);
+      const parts = [`Command failed (status ${status ?? 'n/a'}${signal ? ', signal ' + signal : ''}): ${line}`];
+      if (stderr !== '') parts.push(`stderr: ${stderr}`);
+      if (stdout !== '') parts.push(`stdout: ${stdout}`);
+      const wrapped = new Error(parts.join('\n'));
+      wrapped.cause = err;
+      wrapped.status = status;
+      wrapped.capturedStderr = stderr;
+      wrapped.capturedStdout = stdout;
+      throw wrapped;
+    }
   }
 
   // `argvFull` is the complete command — `argvFull[0]` is the binary and
@@ -57,6 +79,15 @@ export class CommandLog {
     this.pids.push({ pid: child.pid, description });
     return child;
   }
+}
+
+function decodeOutput(buf) {
+  if (buf === null || buf === undefined) return '';
+  const s = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf);
+  // Trim trailing newlines; a short stderr like `grep: X: No such file`
+  // is already tidy and a trailing newline just adds noise to the error
+  // message.
+  return s.replace(/\s+$/, '');
 }
 
 function quoteCommand(argv) {

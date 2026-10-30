@@ -63,6 +63,18 @@ export function assertTopologyWhole(topology) {
     if (typeof host.nat !== 'string') {
       errors.push(`host ${name}: nat must be a string`);
     }
+    // MESH_INTERFACE → Acceptance — Linux IFNAMSIZ is 16 (the kernel's
+    // `include/uapi/linux/if.h`), so an interface name must be at most
+    // 15 bytes plus a trailing NUL. The stage derives interface names as
+    // `v-<veth>`, `vp-<veth>`, `br-<veth>-in` from a short per-host
+    // token, so `veth` is capped so even the longest derivation fits.
+    if (typeof host.veth !== 'string' || host.veth.length === 0) {
+      errors.push(`host ${name}: veth must be a non-empty string`);
+    } else if (!/^[a-zA-Z0-9]+$/.test(host.veth)) {
+      errors.push(`host ${name}: veth ${JSON.stringify(host.veth)} must be [a-zA-Z0-9]+`);
+    } else if (`br-${host.veth}-in`.length > 15) {
+      errors.push(`host ${name}: veth ${JSON.stringify(host.veth)} is too long; br-<veth>-in must be ≤ 15 bytes`);
+    }
     if (host.role === 'nat') {
       if (!isIp(host.outsideAddr)) {
         errors.push(`host ${name}: outsideAddr must be an IP literal, not ${JSON.stringify(host.outsideAddr)}`);

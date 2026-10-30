@@ -58,7 +58,14 @@ const PEBBLE_SHA256 = '34595d915bbc2fc827affb3f58593034824df57e95353b031c8d51857
 const PEBBLE_INNER_PATH = 'pebble-linux-amd64/linux/amd64/pebble';
 
 function parseArgs(argv) {
-  return { dryRun: argv.includes('--dry-run') };
+  const dryRun = argv.includes('--dry-run');
+  const keepOnFailure = argv.includes('--keep-on-failure');
+  let simulateFailureAfter = null;
+  for (const a of argv) {
+    const m = /^--simulate-failure-after=(\d+)$/.exec(a);
+    if (m) simulateFailureAfter = Number(m[1]);
+  }
+  return { dryRun, keepOnFailure, simulateFailureAfter };
 }
 
 function nsOf(host) {
@@ -153,8 +160,45 @@ function execIn(ns, argv, { timeoutMs = 10_000 } = {}) {
 // Setup
 // -----------------------------------------------------------------------
 
-const { dryRun } = parseArgs(process.argv.slice(2));
+const { dryRun, keepOnFailure, simulateFailureAfter } = parseArgs(process.argv.slice(2));
 const log = new CommandLog({ dryRun });
+
+// MESH_INTERFACE → Acceptance — track what `up` has created so a failure
+// can roll back exactly what it did. `createdNamespaces` holds every
+// `notismesh-*` namespace in creation order; `createdEtcNetnsPaths` holds
+// every `/etc/netns/notismesh-*` directory. `log.pids` already tracks
+// spawned processes.
+const createdNamespaces = [];
+const createdEtcNetnsPaths = [];
+
+// Wrap `log.shell` so every `ip netns add` and `mkdir -p /etc/netns/...`
+// is recorded in the state. A `--simulate-failure-after=N` option
+// (dry-run only) raises after the N-th log entry — the catch below runs
+// the same teardown the exec path runs on a real failure.
+const originalShell = log.shell.bind(log);
+const originalSpawn = log.spawn.bind(log);
+let stepsCount = 0;
+function countedStep() {
+  stepsCount += 1;
+  if (dryRun && simulateFailureAfter !== null && stepsCount > simulateFailureAfter) {
+    throw new Error(`simulated failure after step ${simulateFailureAfter}`);
+  }
+}
+log.shell = (name, argv, opts) => {
+  countedStep();
+  originalShell(name, argv, opts);
+  // Track what up has created, in order, so the teardown is exact.
+  if (name === 'sudo' && argv[0] === 'ip' && argv[1] === 'netns' && argv[2] === 'add') {
+    createdNamespaces.push(argv[3]);
+  }
+  if (name === 'sudo' && argv[0] === 'mkdir' && argv[1] === '-p' && typeof argv[2] === 'string' && argv[2].startsWith('/etc/netns/notismesh-')) {
+    createdEtcNetnsPaths.push(argv[2]);
+  }
+};
+log.spawn = (argvFull, opts) => {
+  countedStep();
+  return originalSpawn(argvFull, opts);
+};
 
 assertNoStageNamespaces(dryRun);
 
@@ -164,6 +208,54 @@ if (!dryRun) {
   mkdirSync(OUT_DIR, { recursive: true });
   mkdirSync(CACHE_DIR, { recursive: true });
 }
+
+/**
+ * Roll back what `up` created, in reverse order. In exec mode the kills
+ * and deletes run for real; in dry-run (triggered by
+ * `--simulate-failure-after=<N>`) they print the commands that would run,
+ * so a reader can see the teardown without any state change.
+ */
+function teardown(cause) {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  const line = `[failure] ${reason}`;
+  log.records.push(line);
+  process.stdout.write(line + '\n');
+  if (keepOnFailure) {
+    process.stdout.write('[kept on failure] stage left as-is; run stage:down to clean up\n');
+    return;
+  }
+  process.stdout.write('[teardown] rolling back what up created\n');
+  // 1) Kill every recorded PID (SIGTERM).
+  for (const entry of log.pids) {
+    const killLine = `kill -TERM ${entry.pid}  # ${entry.description}`;
+    log.records.push(killLine);
+    process.stdout.write(killLine + '\n');
+    if (!dryRun) {
+      try { process.kill(entry.pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
+  }
+  // 2) Delete every namespace up created, in reverse order.
+  for (const ns of [...createdNamespaces].reverse()) {
+    const l = `[privileged] sudo ip netns delete ${ns}`;
+    log.records.push(l);
+    process.stdout.write(l + '\n');
+    if (!dryRun) {
+      try { execFileSync('sudo', ['ip', 'netns', 'delete', ns], { stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* already gone */ }
+    }
+  }
+  // 3) Remove every /etc/netns/<ns>/ directory up created.
+  for (const path of createdEtcNetnsPaths) {
+    const l = `[privileged] sudo rm -rf ${path}`;
+    log.records.push(l);
+    process.stdout.write(l + '\n');
+    if (!dryRun) {
+      try { execFileSync('sudo', ['rm', '-rf', path], { stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* already gone */ }
+    }
+  }
+  process.stdout.write(`[teardown complete] ${log.pids.length} PID(s), ${createdNamespaces.length} namespace(s), ${createdEtcNetnsPaths.length} /etc/netns path(s)\n`);
+}
+
+try {
 
 // -----------------------------------------------------------------------
 // Phase 1: namespaces and the internet bridge
@@ -189,10 +281,11 @@ for (const [name, host] of Object.entries(topology.hosts)) {
 
   if (host.role === 'nat') {
     // Outside: veth from the bridge namespace to this NAT router. The add
-    // is run inside `bridgeNs` so `v-<name>-o` lives there; `netns <ns>`
-    // places the peer end inside the NAT namespace at creation.
-    const outVeth = `v-${name}-o`;
-    const outPeer = `vp-${name}-o`;
+    // is run inside `bridgeNs` so `v-<veth>-o` lives there; `netns <ns>`
+    // places the peer end inside the NAT namespace at creation. The names
+    // use `host.veth` (short token) so each one fits IFNAMSIZ − 1 bytes.
+    const outVeth = `v-${host.veth}-o`;
+    const outPeer = `vp-${host.veth}-o`;
     log.shell('sudo', ['ip', '-n', bridgeNs, 'link', 'add', outVeth, 'type', 'veth', 'peer', 'name', outPeer, 'netns', ns], { privileged: true });
     log.shell('sudo', ['ip', '-n', bridgeNs, 'link', 'set', outVeth, 'master', bridgeIf, 'up'], { privileged: true });
     log.shell('sudo', ['ip', '-n', ns, 'addr', 'add', `${host.outsideAddr}/24`, 'dev', outPeer], { privileged: true });
@@ -201,7 +294,7 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     // Inside bridge inside the NAT namespace itself — holds the gateway
     // address, every private host behind this NAT connects to it. The
     // bridge lives entirely inside `<ns>`.
-    const innerBr = `br-${name}-in`;
+    const innerBr = `br-${host.veth}-in`;
     log.shell('sudo', ['ip', '-n', ns, 'link', 'add', innerBr, 'type', 'bridge'], { privileged: true });
     log.shell('sudo', ['ip', '-n', ns, 'addr', 'add', `${host.insideGateway}/24`, 'dev', innerBr], { privileged: true });
     log.shell('sudo', ['ip', '-n', ns, 'link', 'set', innerBr, 'up'], { privileged: true });
@@ -212,8 +305,8 @@ for (const [name, host] of Object.entries(topology.hosts)) {
 
   if (host.parent === undefined) {
     // Plain host on the internet bridge.
-    const veth = `v-${name}`;
-    const peer = `vp-${name}`;
+    const veth = `v-${host.veth}`;
+    const peer = `vp-${host.veth}`;
     log.shell('sudo', ['ip', '-n', bridgeNs, 'link', 'add', veth, 'type', 'veth', 'peer', 'name', peer, 'netns', ns], { privileged: true });
     log.shell('sudo', ['ip', '-n', bridgeNs, 'link', 'set', veth, 'master', bridgeIf, 'up'], { privileged: true });
     log.shell('sudo', ['ip', '-n', ns, 'addr', 'add', `${host.addr}/24`, 'dev', peer], { privileged: true });
@@ -225,9 +318,9 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     // inner end lives inside this host's namespace.
     const parent = topology.hosts[host.parent];
     const parentNs = nsOf(host.parent);
-    const innerBr = `br-${host.parent}-in`;
-    const veth = `v-${name}`;
-    const peer = `vp-${name}`;
+    const innerBr = `br-${parent.veth}-in`;
+    const veth = `v-${host.veth}`;
+    const peer = `vp-${host.veth}`;
     log.shell('sudo', ['ip', '-n', parentNs, 'link', 'add', veth, 'type', 'veth', 'peer', 'name', peer, 'netns', ns], { privileged: true });
     log.shell('sudo', ['ip', '-n', parentNs, 'link', 'set', veth, 'master', innerBr, 'up'], { privileged: true });
     log.shell('sudo', ['ip', '-n', ns, 'addr', 'add', `${host.addr}/24`, 'dev', peer], { privileged: true });
@@ -245,9 +338,9 @@ for (const { name, host } of natRouters(topology)) {
   log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', 'nat'], { privileged: true });
   log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', 'nat', 'POSTROUTING', '{', 'type', 'nat', 'hook', 'postrouting', 'priority', '100', ';', '}'], { privileged: true });
   if (host.nat === 'symmetric') {
-    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', `vp-${name}-o`, 'masquerade', 'random-fully'], { privileged: true });
+    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', `vp-${host.veth}-o`, 'masquerade', 'random-fully'], { privileged: true });
   } else {
-    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', `vp-${name}-o`, 'masquerade'], { privileged: true });
+    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', `vp-${host.veth}-o`, 'masquerade'], { privileged: true });
   }
 }
 
@@ -683,7 +776,12 @@ if (dryRun) {
 } else {
   writeFileSync(pidsPath, JSON.stringify({
     pids: log.pids,
-    namespaces: [bridgeNs, ...Object.keys(topology.hosts).map(nsOf)],
+    namespaces: [...createdNamespaces],
   }, null, 2));
-  process.stdout.write(`stage up: ${log.pids.length} processes, ${Object.keys(topology.hosts).length + 1} namespaces\n`);
+  process.stdout.write(`stage up: ${log.pids.length} processes, ${createdNamespaces.length} namespaces\n`);
+}
+
+} catch (err) {
+  teardown(err);
+  if (!dryRun) process.exit(1);
 }

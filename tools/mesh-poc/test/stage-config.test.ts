@@ -332,7 +332,7 @@ describe('stage up --dry-run', () => {
   // trailing NUL. The previous commit's `vp-hostile-malformed` (20 bytes)
   // crashed `ip link add` with status 255. Every `v-X`, `vp-X`, `br-X-in`
   // token the stage uses is ≤ 15 bytes.
-  it.fails('every interface name in the dry-run is ≤ 15 bytes', () => {
+  it('every interface name in the dry-run is ≤ 15 bytes', () => {
     runDryOnce();
     const names = new Set<string>();
     const re = /\b(v-[a-zA-Z0-9_-]+|vp-[a-zA-Z0-9_-]+|br-[a-zA-Z0-9_-]+)\b/g;
@@ -408,7 +408,7 @@ describe('stage up --dry-run', () => {
   // failure line, and lists the teardown commands (kill lines for any
   // spawn recorded, `ip netns delete` for every namespace it had created,
   // `rm -rf /etc/netns/...`).
-  it.fails('a dry-run forced to fail prints its teardown', () => {
+  it('a dry-run forced to fail prints its teardown', () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run', '--simulate-failure-after=20'], {
       encoding: 'utf8',
       timeout: 30_000,

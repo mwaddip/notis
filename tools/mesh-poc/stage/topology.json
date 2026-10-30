@@ -10,6 +10,7 @@
       "role": "public",
       "nat": "none",
       "addr": "10.100.0.11",
+      "veth": "p1",
       "mesh": {
         "role": "public",
         "webrtcPort": 4001,
@@ -29,6 +30,7 @@
       "role": "public",
       "nat": "none",
       "addr": "10.100.0.12",
+      "veth": "p2",
       "mesh": {
         "role": "public",
         "webrtcPort": 4001,
@@ -44,6 +46,7 @@
       "role": "acme",
       "nat": "none",
       "addr": "10.100.0.21",
+      "veth": "pb",
       "pebble": {
         "listen": "0.0.0.0:14000",
         "managementListen": "0.0.0.0:15000",
@@ -54,12 +57,14 @@
       "role": "dns-log",
       "nat": "none",
       "addr": "10.100.0.22",
+      "veth": "dl",
       "dnsPort": 53
     },
     "hostile-malformed": {
       "role": "hostile",
       "nat": "none",
       "addr": "10.100.0.31",
+      "veth": "hm",
       "mesh": {
         "role": "private",
         "upstreamMode": "malformed"
@@ -69,6 +74,7 @@
       "role": "hostile",
       "nat": "none",
       "addr": "10.100.0.32",
+      "veth": "hi",
       "mesh": {
         "role": "private",
         "upstreamMode": "invalid"
@@ -78,6 +84,7 @@
       "role": "hostile",
       "nat": "none",
       "addr": "10.100.0.33",
+      "veth": "hl",
       "mesh": {
         "role": "private"
       },
@@ -92,13 +99,15 @@
       "nat": "endpoint-independent",
       "outsideAddr": "10.100.0.101",
       "insideSubnet": "10.101.0.0/24",
-      "insideGateway": "10.101.0.1"
+      "insideGateway": "10.101.0.1",
+      "veth": "nA"
     },
     "priv1": {
       "role": "private",
       "nat": "endpoint-independent",
       "parent": "natA",
       "addr": "10.101.0.11",
+      "veth": "q1",
       "mesh": {
         "role": "private"
       },
@@ -113,13 +122,15 @@
       "nat": "symmetric",
       "outsideAddr": "10.100.0.102",
       "insideSubnet": "10.102.0.0/24",
-      "insideGateway": "10.102.0.1"
+      "insideGateway": "10.102.0.1",
+      "veth": "nB"
     },
     "priv2": {
       "role": "private",
       "nat": "symmetric",
       "parent": "natB",
       "addr": "10.102.0.11",
+      "veth": "q2",
       "mesh": {
         "role": "private"
       },
@@ -134,13 +145,15 @@
       "nat": "endpoint-independent",
       "outsideAddr": "10.100.0.103",
       "insideSubnet": "10.103.0.0/24",
-      "insideGateway": "10.103.0.1"
+      "insideGateway": "10.103.0.1",
+      "veth": "nC"
     },
     "browser": {
       "role": "browser",
       "nat": "endpoint-independent",
       "parent": "natC",
       "addr": "10.103.0.11",
+      "veth": "br",
       "httpPort": 80
     }
   }

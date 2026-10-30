@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { CommandLog } from '../stage/lib/commands.mjs';
 
 describe('stage/lib/commands.mjs', () => {
-  it.fails('shell throws an Error that names the failed command and its stderr', () => {
+  it('shell throws an Error that names the failed command and its stderr', () => {
     const log = new CommandLog({ dryRun: false });
     let caught: unknown;
     try {
