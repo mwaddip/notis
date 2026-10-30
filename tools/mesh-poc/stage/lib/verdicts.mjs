@@ -37,23 +37,32 @@ export function verdictS1Node(m) {
 // MESH_INTERFACE → Acceptance 1 — "the mesh's answers equal the node's
 // direct HTTP answers byte for byte". Scenario 1 step 2: for each probed
 // path, the SHA-256 and byte length the page recorded equal the node's
-// own HTTP answer read inside the node's namespace at the same moment.
-// Measurement: `{ probe: { sha256, bytes }, direct: { sha256, bytes } }`;
-// a tip that moved between the two reads is retried, and if the retry
-// still disagrees the retry's own measurement sits beside the first
-// (`{ ..., retryDirect: { sha256, bytes } }`) — this verdict passes if
-// either direct read matches the probe.
+// own HTTP answer. `/blocks/current` moves between reads at mining
+// speed, so the probe is bracketed between a pre-probe direct read
+// and a post-probe direct read; the probe is valid if it equals
+// EITHER (the chain moved after the first read, or the probe caught
+// an older tip the second direct read sees past). Legacy
+// `{ direct, retryDirect }` is accepted for the proof route whose
+// shape stays "direct, then one retry".
 export function verdictS1Probe(m) {
   if (missing(m)) return 'skipped';
   const probe = m.probe;
-  const direct = m.direct;
   if (probe === null || probe === undefined) return 'FAIL';
-  if (direct === null || direct === undefined) return 'FAIL';
   if (typeof probe.sha256 !== 'string' || typeof probe.bytes !== 'number') return 'FAIL';
   const matches = (d) =>
     d !== null && d !== undefined &&
     typeof d.sha256 === 'string' && typeof d.bytes === 'number' &&
     d.sha256 === probe.sha256 && d.bytes === probe.bytes;
+  // Preferred shape: `{ directBefore, directAfter }` — the probe is
+  // valid if it equals either bracket.
+  if (m.directBefore !== undefined || m.directAfter !== undefined) {
+    if (matches(m.directBefore)) return 'PASS';
+    if (matches(m.directAfter)) return 'PASS';
+    return 'FAIL';
+  }
+  // Legacy shape: `{ direct, retryDirect? }`.
+  const direct = m.direct;
+  if (direct === null || direct === undefined) return 'FAIL';
   if (matches(direct)) return 'PASS';
   if (matches(m.retryDirect)) return 'PASS';
   return 'FAIL';

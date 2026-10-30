@@ -28,8 +28,10 @@ import { generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
 import type { TipResult } from '@dagsocial/nipopow-client';
-import { fetchJson, HEIGHT_READ_BYTES } from '@dagsocial/node-reads';
+import { fetchJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
+import { isNonNegSafeInt } from '@dagsocial/node-reads';
+import { isHex64 } from '@dagsocial/types';
 import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
 import { parseMeshUrl, meshBaseUrl, MeshUrlError } from '../mesh-url.js';
 import { meshFetch } from '../http-fetch.js';
@@ -149,7 +151,7 @@ export interface ClientState {
   path: 'direct' | 'relay' | null;
   lastLeft: { nodeId: string; reason: string } | null;
   anchorReached: boolean;
-  tip: { height: number; hash: string } | null;
+  tip: { height: number; hash: string | null } | null;
   nodes: NodeEntry[];
 }
 
@@ -503,50 +505,74 @@ class MeshClientImpl implements MeshClient {
     const entry = this.nodeList.entry(id);
     if (!entry) return;
     const addrs = [...entry.addrs];
-    let lastKind: FailureKind = 'transport';
-    let lastMessage = '';
+    // Plain `/ws` without `/tls/` or `/wss` is a browser's refusal — skip.
+    const dialable: string[] = [];
     for (const addr of addrs) {
-      if (this.stopped) return;
-      // Secure WebSockets alone (`MESH_INTERFACE → Transports`): a plain
-      // `/ws` address with no `/tls/` or `/wss` cover is skipped and
-      // treated as a transport failure for this address. The browser
-      // would refuse it too under its mixed-content policy.
       if (/\/ws(?:\/|$)/.test(addr) && !/\/wss(?:\/|$)/.test(addr) && !/\/tls\//.test(addr)) {
-        lastKind = 'transport';
-        lastMessage = `plain ws refused: ${addr}`;
+        this.nodeList.failure(id, 'transport', `plain ws refused: ${addr}`, addr);
         continue;
       }
-      try {
-        const ma = withPeerId(addr, id);
-        // MESH_INTERFACE → The client's node list — `DIAL_TIMEOUT_MS` is
-        // the longest one dial of one address waits; past it the address
-        // counts as a timeout and the dialler moves to the next.
-        const signal = AbortSignal.timeout(DIAL_TIMEOUT_MS);
-        await this.libp2p.dial(ma, { signal });
-        return; // success — connection open
-      } catch (e) {
-        if (isUnexpectedPeer(e)) {
-          this.nodeList.wrongKey(id, addr, answeredIdOf(e));
-          continue;
-        }
-        lastKind = classifyDialError(e);
-        // MESH_INTERFACE → "An entry keeps its last failure's kind and
-        // message" — the dial's Error.message carries the libp2p
-        // reason (DialDeniedError, DialTimeoutError, …) that put the
-        // node in retry. The message is read into the entry on the
-        // final `failure` below.
-        lastMessage = messageOf(e);
-        // continue to the next address
-      }
+      dialable.push(addr);
     }
-    // Every address refused: the node moves by `failure(id, kind)` on the last
-    // kind seen — `'timeout'` for a dial that hit its deadline, `'transport'`
-    // for any other transport-level failure, both the `retry` row of
-    // `MESH_INTERFACE → The client's node list`.
-    const stillHere = this.nodeList.entry(id);
-    if (stillHere && stillHere.status !== 'blacklisted') {
-      this.nodeList.failure(id, lastKind, lastMessage);
-      this.latestEventReason.set(id, lastMessage ? `failure: ${lastKind}: ${lastMessage}` : `failure: ${lastKind}`);
+    if (this.stopped) return;
+    if (dialable.length === 0) {
+      // Nothing dialable: move the node to `retry` so the candidate
+      // list drops it until the retry window elapses. Without this,
+      // the node stays `new` and the next check hands the resolver
+      // the same unreachable URL on every tick.
+      const stillHere = this.nodeList.entry(id);
+      if (stillHere && stillHere.status !== 'blacklisted') {
+        this.nodeList.failure(id, 'transport', 'no dialable address');
+        this.latestEventReason.set(id, 'failure: transport: no dialable address');
+      }
+      return;
+    }
+
+    // MESH_INTERFACE → The client's node list / libp2p 3.5 — hand libp2p
+    // the whole multiaddr list in ONE dial. The dial queue
+    // (`libp2p/src/connection-manager/dial-queue.ts` lines 157-188)
+    // joins a new dial for the same peer to a pending one; dialling
+    // address-by-address meant our 3 s abort never reached libp2p's
+    // internal queue, and a hung WebRTC-direct dial (UDP cut) held
+    // the WSS dial behind it until the whole-peer timeout fired.
+    //
+    // libp2p runs its own per-address timeout (`ADDRESS_DIAL_TIMEOUT`,
+    // 6 s) and happy-eyeballs across the list; our whole-peer signal
+    // bounds the operation. The budget scales with the address count
+    // (and leaves slack for the WebRTC upgrade on a relayed path).
+    const multiaddrs = dialable.map((addr) => withPeerId(addr, id));
+    const wholeDialMs = Math.max(dialable.length * DIAL_TIMEOUT_MS, 20_000);
+    const signal = AbortSignal.timeout(wholeDialMs);
+    try {
+      await this.libp2p.dial(multiaddrs, { signal });
+      return; // success — connection open
+    } catch (e) {
+      // libp2p throws `AggregateError('All multiaddr dials failed')`
+      // when every address errors; a single UnexpectedPeerError
+      // across the aggregate names the one wrong-key path.
+      const inner = unwrapAggregate(e);
+      let anyWrongKey = false;
+      for (const err of inner) {
+        if (isUnexpectedPeer(err)) {
+          anyWrongKey = true;
+          const addr = addrOfUnexpectedPeer(err);
+          if (addr !== null) this.nodeList.wrongKey(id, addr, answeredIdOf(err));
+        }
+      }
+      // Dial still FAILed overall — if nothing turned into a wrong-key
+      // drop, record a plain failure. If some addresses were dropped
+      // for wrong-key but others failed too, the node still reads retry.
+      const stillHere = this.nodeList.entry(id);
+      if (!stillHere || stillHere.status === 'blacklisted') return;
+      if (anyWrongKey && stillHere.addrs.length === 0) {
+        // Every address was wrong-key dropped; the node has no addrs
+        // left. The next check path will take over.
+        return;
+      }
+      const kind = classifyDialError(e);
+      const message = messageOf(e);
+      this.nodeList.failure(id, kind, message);
+      this.latestEventReason.set(id, message ? `failure: ${kind}: ${message}` : `failure: ${kind}`);
     }
   }
 
@@ -635,7 +661,7 @@ class MeshClientImpl implements MeshClient {
       });
       return;
     }
-    this.state_.tip = { height: r.data.height, hash: r.data.id };
+    this.state_.tip = { height: r.data.height, hash: r.data.hash };
   }
 
   private handleDiscovery(detail: { id: PeerId; multiaddrs: Multiaddr[] }): void {
@@ -732,6 +758,37 @@ function answeredIdOf(e: unknown): string | null {
   }
 }
 
+/**
+ * `AggregateError` from libp2p's dial queue (one error per address) is
+ * flattened here so callers can inspect each cause (UnexpectedPeer,
+ * TimeoutError, …) individually. A non-aggregate error reads as a
+ * single-element list.
+ */
+function unwrapAggregate(e: unknown): unknown[] {
+  if (e !== null && typeof e === 'object' && 'errors' in e) {
+    const errors = (e as { errors: unknown }).errors;
+    if (Array.isArray(errors)) return errors;
+  }
+  return [e];
+}
+
+/**
+ * `@libp2p/webrtc` and `@libp2p/websockets` surface the dialled
+ * multiaddr on an UnexpectedPeerError in `.multiaddr` or `.addr`;
+ * which exact field depends on the transport. A missing addr reads
+ * as `null`, and the caller just leaves every address in place.
+ */
+function addrOfUnexpectedPeer(e: unknown): string | null {
+  if (e === null || typeof e !== 'object') return null;
+  const any = e as { multiaddr?: unknown; addr?: unknown };
+  if (typeof any.multiaddr === 'string') return any.multiaddr;
+  if (any.multiaddr && typeof (any.multiaddr as { toString: () => string }).toString === 'function') {
+    return (any.multiaddr as { toString: () => string }).toString();
+  }
+  if (typeof any.addr === 'string') return any.addr;
+  return null;
+}
+
 function classifyDialError(e: unknown): FailureKind {
   const name = (e as { name?: unknown })?.name;
   if (typeof name === 'string' && /TimeoutError|AbortError/i.test(name)) return 'timeout';
@@ -777,9 +834,21 @@ function pathOf(ma: string): 'direct' | 'relay' | null {
   return 'direct';
 }
 
-function isTipShape(v: unknown): v is { height: number; id: string } {
-  if (v === null || typeof v !== 'object') return false;
-  const h = (v as { height?: unknown }).height;
-  const id = (v as { id?: unknown }).id;
-  return typeof h === 'number' && typeof id === 'string';
+/**
+ * MESH_INTERFACE → The node endpoint — `/blocks/current` answers
+ * `{ height, hash }`: height a non-negative safe integer, hash either
+ * 64 lowercase hex or null (the genesis marker). Mirrors
+ * `packages/web/src/api/readers.ts` `readBlockCurrent` so the web
+ * client and the mesh client refuse the same shapes.
+ *
+ * Exported for the mutation case that pins this against the node's
+ * live answer.
+ */
+export function isTipShape(v: unknown): v is { height: number; hash: string | null } {
+  if (!isRecord(v)) return false;
+  const h = v['height'];
+  const hash = v['hash'];
+  if (!isNonNegSafeInt(h)) return false;
+  if (hash !== null && !isHex64(hash)) return false;
+  return true;
 }

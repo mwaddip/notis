@@ -46,7 +46,15 @@ export interface NodeEntry {
   addrs: string[];
   droppedAddrs: string[];
   evidence: LieEvidence | null;
+  /**
+   * MESH_INTERFACE → The client's node list — "An entry keeps its
+   * last failure's kind and message, for the page to show why a node
+   * is in `retry`". `lastFailure` holds the most recent failure (any
+   * address); `lastFailures` keeps one entry per address, so a reader
+   * can see which address failed how. A success clears both.
+   */
   lastFailure: LastFailure | null;
+  lastFailures: Record<string, LastFailure>;
 }
 
 const NOTIS_ID_RE = /^[0-9a-f]{64}$/;
@@ -75,6 +83,7 @@ interface InternalEntry {
   droppedAddrs: string[];
   evidence: LieEvidence | null;
   lastFailure: LastFailure | null;
+  lastFailures: Record<string, LastFailure>;
 }
 
 export class NodeList {
@@ -105,6 +114,7 @@ export class NodeList {
           droppedAddrs: [],
           evidence: null,
           lastFailure: null,
+          lastFailures: {},
         });
       }
     }
@@ -131,6 +141,7 @@ export class NodeList {
       droppedAddrs: [],
       evidence: null,
       lastFailure: null,
+      lastFailures: {},
     });
   }
 
@@ -144,9 +155,10 @@ export class NodeList {
     // MESH_INTERFACE → The client's node list — "cleared on success":
     // a node that answers again clears the diagnostic that was on it.
     e.lastFailure = null;
+    e.lastFailures = {};
   }
 
-  failure(id: string, kind: FailureKind, message = ''): void {
+  failure(id: string, kind: FailureKind, message = '', addr?: string): void {
     assertNotisId(id);
     const e = this.unknown('failure', id);
     if (e.status === 'blacklisted') return;
@@ -161,8 +173,14 @@ export class NodeList {
     // MESH_INTERFACE → The client's node list — "An entry keeps its
     // last failure's kind and message". Captured here, cleared on
     // success. The clock reading is the monotonic one — same clock
-    // every other `atMs` reads.
-    e.lastFailure = { kind, message, atMs: now };
+    // every other `atMs` reads. When the caller names an `addr`, the
+    // failure also lands in `lastFailures[addr]` so a reader sees
+    // which address failed how (one entry per address).
+    const record: LastFailure = { kind, message, atMs: now };
+    e.lastFailure = record;
+    if (typeof addr === 'string' && addr !== '') {
+      e.lastFailures[addr] = record;
+    }
   }
 
   behind(id: string): void {
@@ -295,6 +313,7 @@ export class NodeList {
       droppedAddrs: [...e.droppedAddrs],
       evidence: e.evidence,
       lastFailure: e.lastFailure,
+      lastFailures: { ...e.lastFailures },
     };
   }
 }

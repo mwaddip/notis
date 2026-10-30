@@ -74,6 +74,15 @@ export async function run(ctx) {
   const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
 
   const seeds = buildHostileSeeds(identities, ctx.topology, { peerIdStringOf });
+  // MESH_INTERFACE → Acceptance 6 — a seed with empty addresses dials
+  // `NoValidAddressesError` and classifies as a transport failure, so
+  // the hostile row never reaches `blacklisted` / `behind`. Fail the
+  // scenario's setup loudly rather than measure a vacuous no-op.
+  for (const seed of seeds) {
+    if (!Array.isArray(seed.addrs) || seed.addrs.length === 0) {
+      throw new Error(`s6 setup: hostile seed ${seed.notisId} has no addresses — up.mjs must record every mesh host's printed multiaddrs in identities.json`);
+    }
+  }
   const variant = buildWithHostileSeedsVariant(baseConfig, seeds);
   const seedsByHost = {};
   for (const [host, row] of Object.entries(identities ?? {})) {

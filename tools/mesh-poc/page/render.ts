@@ -91,7 +91,9 @@ function renderTip(state: ClientState): HTMLElement {
   const dl = document.createElement('dl');
   dl.className = 'in-use';
   appendPair(dl, 'height', String(state.tip.height));
-  appendPair(dl, 'hash', state.tip.hash);
+  // The hash is `null` at the genesis marker (MESH_INTERFACE → The node
+  // endpoint); render it as the word so a reader sees the shape.
+  appendPair(dl, 'hash', state.tip.hash ?? 'null');
   section.appendChild(dl);
   return section;
 }

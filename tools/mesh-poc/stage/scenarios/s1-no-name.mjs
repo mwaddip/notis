@@ -111,23 +111,26 @@ export async function run(ctx) {
       await rec.step(describe()[stepIndex], async () => {
         const nodeNs = `notismesh-${hostName}`;
         const probeUrl = `${browserUrl}?probe=${encodeURIComponent(probePath)}`;
+        const directUrl = `http://127.0.0.1:${hostRow.httpPort}${probePath}`;
+        // MESH_INTERFACE → Acceptance 1 — the chain's tip moves at
+        // mining speed, so `/blocks/current` can differ between the
+        // probe and ONE direct read for reasons that are not a bug.
+        // Bracket the probe between two direct reads; verdict passes
+        // when the probe equals either.
+        const directBefore = readDirect(nodeNs, directUrl);
         const probeText = await cdpPoll(ctx, probeUrl,
           "document.getElementById('probe')?.textContent ?? null",
           "return typeof v === 'string' && v !== '';",
           60_000, 500,
         );
         const probe = JSON.parse(probeText);
-        const directUrl = `http://127.0.0.1:${hostRow.httpPort}${probePath}`;
-        const direct = readDirect(nodeNs, directUrl);
+        const directAfter = readDirect(nodeNs, directUrl);
         const measurement = {
           probePath,
           probe: { sha256: probe.sha256, bytes: probe.bytes },
-          direct: { sha256: direct.sha256, bytes: direct.bytes },
+          directBefore: { sha256: directBefore.sha256, bytes: directBefore.bytes },
+          directAfter: { sha256: directAfter.sha256, bytes: directAfter.bytes },
         };
-        if (direct.sha256 !== probe.sha256) {
-          const retryDirect = readDirect(nodeNs, directUrl);
-          measurement.retryDirect = { sha256: retryDirect.sha256, bytes: retryDirect.bytes };
-        }
         return { verdict: verdictS1Probe(measurement), measurement };
       });
     }

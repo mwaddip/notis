@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS3Moved, verdictS3Recovered } from '../lib/verdicts.mjs';
 import {
-  execIn, findPid, nftApply, pollUntil,
+  execIn, findPid, nftApply,
   restartFromEntry, sigterm,
 } from '../lib/measure.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
@@ -95,12 +95,26 @@ export async function run(ctx) {
   if (!pub1Entry) throw new Error(`s3: pids.json has no ${TARGET_MESH_DESC} entry`);
 
   const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
-  const checkState = async () => {
-    const text = await cdpEval(ctx, browserUrl, "document.getElementById('state')?.textContent ?? null");
-    if (text === null) return null;
-    try { return JSON.parse(text); } catch { return null; }
-  };
   const findEntry = (state, id) => state?.nodes?.find((n) => n.notisId === id) ?? null;
+
+  // MESH_INTERFACE → Acceptance 3 — read `#state` through `cdpPoll` the
+  // same way s1 does: ONE target held open across polls. `cdpEval` from
+  // the earlier version cycled targets, and the target teardown/open
+  // raced with the page's render — every poll read `null`. Each
+  // `pollUntilCdp` call opens a target, polls the expression against
+  // the predicate body JS until it holds, and returns the matching
+  // value.
+  const pollStateUntil = async (predicateBody, { timeoutMs, pollMs = 1000, name }) => {
+    const text = await cdpPoll(ctx, browserUrl,
+      "document.getElementById('state')?.textContent ?? null",
+      predicateBody,
+      timeoutMs, pollMs,
+    );
+    if (text === null) {
+      throw new Error(`pollStateUntil(${name}): read null (expression returned no state element)`);
+    }
+    return JSON.parse(text);
+  };
 
   // Initial state wait: use `cdpPoll` (one target held open across polls)
   // the same way s1 does, so a slow `cdpEval` cycle does not blow the
@@ -126,24 +140,22 @@ export async function run(ctx) {
       const stopResult = sigterm(pub1Entry.pid);
       pub1Stopped = stopResult.sent;
       log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM ${pub1Entry.pid}`);
-      let afterStop;
-      try {
-        afterStop = await pollUntil(
-          checkState,
-          (s) => {
-            if (s === null) return false;
-            const e = findEntry(s, pub1Id);
-            if (e === null) return false;
-            if (e.status === 'blacklisted') return true;
-            const moved = oldNodeId === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
-            return e.status === 'retry' && moved;
-          },
-          { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry + move' },
-        );
-      } catch (err) {
-        afterStop = await checkState();
-        if (afterStop === null) throw err;
-      }
+      const expectMove = oldNodeId === pub1Id ? '!==' : '===';
+      const afterStop = await pollStateUntil(
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
+           if (!e) return false;
+           if (e.status === 'blacklisted') return true;
+           const moved = ${JSON.stringify(oldNodeId)} === ${JSON.stringify(pub1Id)}
+             ? s.nodeId !== ${JSON.stringify(pub1Id)} && s.nodeId !== null
+             : true;
+           return e.status === 'retry' && moved;
+         } catch (_e) { return false; }`,
+        { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry + move' },
+      );
+      void expectMove;
       const m = {
         oldNodeId,
         newNodeId: afterStop.nodeId,
@@ -162,12 +174,13 @@ export async function run(ctx) {
       const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
       pub1Entry.pid = newPid;
       pub1Stopped = false;
-      const afterRestart = await pollUntil(
-        checkState,
-        (s) => {
-          const e = findEntry(s, pub1Id);
-          return e !== null && e.status === 'ok';
-        },
+      const afterRestart = await pollStateUntil(
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
+           return !!e && e.status === 'ok';
+         } catch (_e) { return false; }`,
         { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after restart' },
       );
       const m = {
@@ -187,18 +200,22 @@ export async function run(ctx) {
       log.apply('pub1-fw-drop-udp', f.dropUdp, null);
       log.apply('pub1-fw-drop-tcp-mesh', f.dropTcpMesh, null);
       log.apply('pub1-fw-drop-tcp-wss', f.dropTcpWss, null);
-      const beforeFw = await checkState();
-      const oldNodeId3 = beforeFw?.nodeId ?? oldNodeId;
-      const afterFw = await pollUntil(
-        checkState,
-        (s) => {
-          if (s === null) return false;
-          const e = findEntry(s, pub1Id);
-          if (e === null) return false;
-          if (e.status === 'blacklisted') return true;
-          const moved = oldNodeId3 === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
-          return e.status === 'retry' && moved;
-        },
+      // Read current nodeId from state (not from a stale closure).
+      const beforeText = await cdpEval(ctx, browserUrl, "document.getElementById('state')?.textContent ?? null");
+      const beforeState = typeof beforeText === 'string' ? JSON.parse(beforeText) : null;
+      const oldNodeId3 = beforeState?.nodeId ?? oldNodeId;
+      const afterFw = await pollStateUntil(
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
+           if (!e) return false;
+           if (e.status === 'blacklisted') return true;
+           const oldNodeId3 = ${JSON.stringify(oldNodeId3)};
+           const pub1Id = ${JSON.stringify(pub1Id)};
+           const moved = oldNodeId3 === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
+           return e.status === 'retry' && moved;
+         } catch (_e) { return false; }`,
         { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry under firewall' },
       );
       const m = {
@@ -218,12 +235,13 @@ export async function run(ctx) {
       firewallApplied = false;
       log.removals.length = 0;
       log.records.push(`[fault:remove:${NAME}:pub1-fw-add-table] sudo ip netns exec notismesh-pub1 nft delete table ip ${FW_TABLE}`);
-      const afterUnfw = await pollUntil(
-        checkState,
-        (s) => {
-          const e = findEntry(s, pub1Id);
-          return e !== null && e.status === 'ok';
-        },
+      const afterUnfw = await pollStateUntil(
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
+           return !!e && e.status === 'ok';
+         } catch (_e) { return false; }`,
         { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after unfirewall' },
       );
       const m = {

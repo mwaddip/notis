@@ -67,12 +67,12 @@ export function buildWithHostileSeedsVariant(baseConfig, seeds) {
 }
 
 /**
- * Build the seeds list for s6 from the stage's own identities + topology:
- * one `{ notisId, addrs: ['/ip4/<addr>/tcp/<meshTcp>/p2p/<peerId>'] }` per
- * hostile mesh node. The hostile mesh nodes serve the mesh over TCP (same
- * libp2p 3.x TCP transport the stage uses between nodes), so a seed's
- * `addrs` carries one `/ip4/.../tcp/<port>` — no WebRTC-direct hash for a
- * seed (the browser dials it through the DHT, which walks).
+ * Build the seeds list for s6 from the stage's own identities + topology.
+ * When a host's `identities[host].multiaddrs` is non-empty (the stage
+ * recorded what the mesh node printed on its identity line), those
+ * addresses are used — they are the real addresses the mesh node
+ * listens on, so a dial reaches it. Otherwise the fallback is one
+ * `/ip4/<addr>/tcp/<meshTcp>/p2p/<peerId>` built from the topology.
  */
 export function buildHostileSeeds(identities, topology, { peerIdStringOf }) {
   if (!identities || typeof identities !== 'object') return [];
@@ -80,8 +80,19 @@ export function buildHostileSeeds(identities, topology, { peerIdStringOf }) {
   const seeds = [];
   for (const [host, hostConfig] of Object.entries(topology.hosts)) {
     if (hostConfig?.role !== 'hostile') continue;
-    const id = identities[host]?.notisId;
+    const row = identities[host];
+    const id = row?.notisId;
     if (typeof id !== 'string') continue;
+    // Prefer the printed multiaddrs when the stage recorded them —
+    // those are the addresses the mesh node is actually listening on
+    // (with the right ports, cert hashes, etc).
+    const printed = Array.isArray(row?.multiaddrs) ? row.multiaddrs : [];
+    if (printed.length > 0) {
+      // The identity line's multiaddrs already end in `/p2p/<peerId>`.
+      seeds.push({ notisId: id, addrs: printed });
+      continue;
+    }
+    // Fallback: build one TCP mesh address from the topology.
     const addr = hostConfig?.addr;
     const tcpPort = hostConfig?.mesh?.tcpPort ?? hostConfig?.node?.p2pPort;
     if (typeof addr !== 'string' || typeof tcpPort !== 'number') continue;

@@ -958,6 +958,11 @@ if (!dryRun) {
       meshRole: hostConfig.mesh?.role ?? null,
       addr: hostConfig.addr ?? null,
       httpPort: hostConfig.node?.httpPort ?? null,
+      // MESH_INTERFACE → Acceptance 6 — s6's seeds dial by printed
+      // multiaddr. Every mesh host's identity line (not just the public
+      // anchors) lands here so the scenario can read what the mesh node
+      // actually listens on, including the hostile ones.
+      multiaddrs: meshIdentities[host]?.multiaddrs ?? [],
     };
   }
   writeFileSync(identitiesPath, JSON.stringify(identitiesOut, null, 2));
