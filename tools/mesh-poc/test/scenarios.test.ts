@@ -130,7 +130,7 @@ describe('s4 (transport cut)', () => {
     expect(names[2]).toMatch(/renewal/);
     expect(names[3]).toMatch(/TCP between the Notis nodes/);
   });
-  it.fails('udpDropArgs builds an add-table + add-chain + per-host rule in the browser namespace', () => {
+  it('udpDropArgs builds an add-table + add-chain + per-host rule in the browser namespace', () => {
     const a = s4.udpDropArgs(TOPOLOGY);
     expect(a.addTable.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
     expect(a.addChain.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
@@ -177,7 +177,7 @@ describe('s5 (impersonation)', () => {
     expect(spawnLine!).toContain('MESH_LISTEN=');
     expect(spawnLine!).toContain('MESH_KEY_PATH=');
   });
-  it.fails('writeFreshMeshKey writes 48 bytes (PKCS8 Ed25519) and returns a 64-hex notisId', () => {
+  it('writeFreshMeshKey writes 48 bytes (PKCS8 Ed25519) and returns a 64-hex notisId', () => {
     const { mkdtempSync, rmSync, readFileSync } = require('node:fs');
     const dir = mkdtempSync(require('node:os').tmpdir() + '/mesh-s5-');
     try {

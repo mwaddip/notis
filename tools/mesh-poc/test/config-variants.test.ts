@@ -20,7 +20,7 @@ const BASE_CONFIG = {
 };
 
 describe('buildPrivateViaRelayVariant', () => {
-  it.fails('builds priv1-via-pub1 relay multiaddr from the base config', () => {
+  it('builds priv1-via-pub1 relay multiaddr from the base config', () => {
     const r = buildPrivateViaRelayVariant(BASE_CONFIG, {
       privNotisId: 'ff'.repeat(32),
       privPeerIdString: 'PRIV1PEER',
@@ -34,7 +34,7 @@ describe('buildPrivateViaRelayVariant', () => {
     expect(r.stunServers).toEqual(['stun:10.100.0.11:3478', 'stun:10.100.0.12:3478']);
   });
 
-  it.fails('refuses a base config that does not name the via public anchor', () => {
+  it('refuses a base config that does not name the via public anchor', () => {
     expect(() => buildPrivateViaRelayVariant(BASE_CONFIG, {
       privNotisId: 'ff'.repeat(32),
       privPeerIdString: 'PRIV1PEER',
@@ -42,7 +42,7 @@ describe('buildPrivateViaRelayVariant', () => {
     })).toThrow(/does not name the public anchor/);
   });
 
-  it.fails('refuses a public anchor whose addresses have no webrtc-direct', () => {
+  it('refuses a public anchor whose addresses have no webrtc-direct', () => {
     const noWebrtc = { ...BASE_CONFIG, anchors: [{ notisId: 'aa'.repeat(32), addrs: ['/ip4/10.100.0.11/tcp/443/tls/ws/p2p/PUB1PEER'] }] };
     expect(() => buildPrivateViaRelayVariant(noWebrtc, {
       privNotisId: 'ff'.repeat(32),
@@ -53,7 +53,7 @@ describe('buildPrivateViaRelayVariant', () => {
 });
 
 describe('buildWithHostileSeedsVariant', () => {
-  it.fails('keeps anchors and appends the given seeds', () => {
+  it('keeps anchors and appends the given seeds', () => {
     const seeds = [{ notisId: 'cc'.repeat(32), addrs: ['/ip4/10.100.0.31/tcp/4002/p2p/HM'] }];
     const r = buildWithHostileSeedsVariant(BASE_CONFIG, seeds);
     expect(r.anchors.length).toBe(2);
@@ -82,19 +82,19 @@ describe('buildHostileSeeds', () => {
   };
   const fakePeerIdOf = (notisId: string): string => `peer-${notisId.slice(0, 8)}`;
 
-  it.fails('builds one seed per hostile host, IP + tcp port + peer id', () => {
+  it('builds one seed per hostile host, IP + tcp port + peer id', () => {
     const seeds = buildHostileSeeds(IDENTITIES, TOPOLOGY, { peerIdStringOf: fakePeerIdOf });
     expect(seeds.length).toBe(3);
     const malformed = seeds.find((s) => s.notisId === 'cc'.repeat(32))!;
     expect(malformed.addrs[0]).toBe('/ip4/10.100.0.31/tcp/4002/p2p/peer-cccccccc');
   });
 
-  it.fails('skips a public host', () => {
+  it('skips a public host', () => {
     const seeds = buildHostileSeeds(IDENTITIES, TOPOLOGY, { peerIdStringOf: fakePeerIdOf });
     expect(seeds.find((s) => s.notisId === 'aa'.repeat(32)), 'pub1 is not a seed').toBeUndefined();
   });
 
-  it.fails('empty / null inputs → empty list', () => {
+  it('empty / null inputs → empty list', () => {
     expect(buildHostileSeeds(null, TOPOLOGY, { peerIdStringOf: fakePeerIdOf })).toEqual([]);
     expect(buildHostileSeeds(IDENTITIES, null, { peerIdStringOf: fakePeerIdOf })).toEqual([]);
   });

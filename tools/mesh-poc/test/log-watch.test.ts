@@ -10,10 +10,10 @@ import {
 } from '../stage/lib/log-watch.mjs';
 
 describe('readFileSize', () => {
-  it.fails('a missing file → null', () => {
+  it('a missing file → null', () => {
     expect(readFileSize('/nowhere-under-sun-mesh-poc.log')).toBe(null);
   });
-  it.fails('an empty file → 0', () => {
+  it('an empty file → 0', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-logwatch-'));
     try {
       const p = join(dir, 'x.log');
@@ -21,7 +21,7 @@ describe('readFileSize', () => {
       expect(readFileSize(p)).toBe(0);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
-  it.fails('a 12-byte file → 12', () => {
+  it('a 12-byte file → 12', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-logwatch-'));
     try {
       const p = join(dir, 'x.log');
@@ -32,7 +32,7 @@ describe('readFileSize', () => {
 });
 
 describe('readSince', () => {
-  it.fails('reads the slice after offset', () => {
+  it('reads the slice after offset', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-logwatch-'));
     try {
       const p = join(dir, 'x.log');
@@ -43,13 +43,13 @@ describe('readSince', () => {
       expect(readSince(p, 999)).toBe('');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
-  it.fails('missing file → empty string', () => {
+  it('missing file → empty string', () => {
     expect(readSince('/nowhere-under-sun-mesh-poc.log', 0)).toBe('');
   });
 });
 
 describe('countMatchesSince', () => {
-  it.fails('counts a string pattern after offset', () => {
+  it('counts a string pattern after offset', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-logwatch-'));
     try {
       const p = join(dir, 'x.log');
@@ -59,7 +59,7 @@ describe('countMatchesSince', () => {
       expect(countMatchesSince(p, before, 'AB')).toBe(2);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
-  it.fails('counts a regex pattern after offset', () => {
+  it('counts a regex pattern after offset', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-logwatch-'));
     try {
       const p = join(dir, 'x.log');
@@ -70,7 +70,7 @@ describe('countMatchesSince', () => {
       expect(countMatchesSince(p, before, /Order (?:finalized|valid)/)).toBe(1);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
-  it.fails('a regex without /g still matches globally', () => {
+  it('a regex without /g still matches globally', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-logwatch-'));
     try {
       const p = join(dir, 'x.log');

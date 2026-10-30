@@ -1,21 +1,34 @@
-// MESH_INTERFACE → Acceptance 5 — "A node with its own key and a copy of
-// an anchor's certificate, at the anchor's address: refused at the link,
-// that address dropped, the anchor not blacklisted."
+// MESH_INTERFACE → Acceptance 5 — "A node with its own key and a copy
+// of an anchor's certificate, at the anchor's address: refused at the
+// link, that address dropped, the anchor not blacklisted."
 //
-// Faults applied, in order:
-//   - A1: stop pub1's mesh node (`kill -TERM`)
-//   - A2: spawn an impostor mesh node in pub1's namespace, with its own
-//     key and pub1's copied WebRTC-direct certificate, bound to pub1's
-//     address (brief: "its own key and pub1's copied WebRTC-direct
-//     certificate, on pub1's address")
+// One step with three measurements:
+//   1. Stop pub1's mesh node (`sigterm` the recorded PID).
+//   2. Spawn an impostor mesh node whose state dir is a copy of pub1's
+//      state dir with a freshly generated `mesh.key` — same WebRTC-direct
+//      certificate, different Ed25519 identity. Bind pub1's address.
+//   3. Poll `state.nodes[pub1-id].droppedAddrs` for pub1's own address;
+//      measure `anchorStatus` from `state.nodes[pub1-id].status`.
+//   4. Stop the impostor; restart pub1's mesh from the recorded argv.
 //
-// Removal: stop the impostor, restart pub1's own mesh node from the
-// recorded argv (`pids.json`).
+// Pass condition: pub1's status is not `blacklisted` (an impostor on
+// a key-authenticated link is a key mismatch, not a lie); the dropped
+// address list includes pub1's own.
 
+import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS5 } from '../lib/verdicts.mjs';
+import {
+  execIn, findPid, pollUntil, restartFromEntry, sigterm,
+} from '../lib/measure.mjs';
 
 export const NAME = 's5';
+const TARGET_HOST = 'pub1';
+const TARGET_MESH_DESC = `mesh:${TARGET_HOST}`;
+// RFC 8410 PKCS8 Ed25519 private-key wrapper for a 32-byte seed.
+const PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 
 export function describe() {
   return [
@@ -24,20 +37,34 @@ export function describe() {
 }
 
 /**
- * The impostor's spawn line. The stage already brought pub1's mesh node
- * up through `up.mjs`'s own `userWrap` (`main.ts` for the mesh
- * daemon); this scenario records the equivalent spawn for an impostor
- * key, same WebRTC-direct certificate path, same bind address.
+ * Pure: write a 48-byte PKCS8 Ed25519 private key file for a fresh
+ * random seed. The seed is a cryptographically random 32-byte value;
+ * the returned object carries the derived notisId (64 hex of the
+ * public key) so the scenario can spot the impostor's identity in
+ * the client's node list.
  */
-export function impostorSpawnArgs(topology, { nodeBin, meshMain, invokingUser }) {
+export function writeFreshMeshKey(path, { randomBytes }) {
+  const seed = randomBytes(32);
+  const bytes = Buffer.concat([PKCS8_PREFIX, Buffer.from(seed)]);
+  if (bytes.length !== 48) throw new Error(`PKCS8 Ed25519 private key must be 48 bytes, got ${bytes.length}`);
+  mkdirSync(join(path, '..'), { recursive: true });
+  writeFileSync(path, bytes, { mode: 0o600 });
+  const pub = ed25519.getPublicKey(seed);
+  return { seed, pub, notisId: Buffer.from(pub).toString('hex') };
+}
+
+export function applyFaults(log, topology) {
+  // Dry-run records the stop + spawn so a reader sees the shape.
   const pub1 = topology.hosts.pub1;
-  const ns = `notismesh-pub1`;
-  // The scenario's own key path is beside pub1's but with a different
-  // name, so the stage CA and pub1's config are untouched.
-  const impostorKey = `/home/${invokingUser}/.cache/mesh-poc/s5-impostor.key`;
+  const invokingUser = 'mwaddip';
   const impostorStateDir = `/home/${invokingUser}/.cache/mesh-poc/s5-impostor`;
-  return [
-    'sudo', 'ip', 'netns', 'exec', ns,
+  const impostorKey = `${impostorStateDir}/mesh.key`;
+  const nodeBin = '/home/mwaddip/.nvm/versions/node/v24.22.1/bin/node';
+  const meshMain = '/home/mwaddip/projects/dagsocial/tools/mesh-poc/dist/node/main.js';
+  log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM <${TARGET_MESH_DESC}-pid>`);
+  if (log.dryRun) process.stdout.write(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM <${TARGET_MESH_DESC}-pid>\n`);
+  const argv = [
+    'sudo', 'ip', 'netns', 'exec', 'notismesh-pub1',
     'sudo', '-u', invokingUser, '--',
     'env',
     `MESH_KEY_PATH=${impostorKey}`,
@@ -46,42 +73,135 @@ export function impostorSpawnArgs(topology, { nodeBin, meshMain, invokingUser })
     `MESH_STATE_DIR=${impostorStateDir}`,
     'MESH_UPSTREAM=http://127.0.0.1:3100',
     `MESH_LISTEN=/ip4/${pub1.addr}/udp/${pub1.mesh.webrtcPort}/webrtc-direct,/ip4/${pub1.addr}/tcp/${pub1.mesh.tcpPort}`,
-    // Copy pub1's WebRTC-direct cert into impostor state so the key hash
-    // matches an anchor's address — the stage copies it in exec mode.
-    `MESH_WEBRTC_CERT_COPY_FROM=/home/${invokingUser}/projects/dagsocial/tools/mesh-poc/stage/out/pub1/webrtc-direct.cert.pem`,
-    nodeBin,
-    meshMain,
+    nodeBin, meshMain,
   ];
-}
-
-export function applyFaults(log, topology, { nodeBin, meshMain, invokingUser }) {
-  // The signal to pub1's mesh daemon is recorded via `signal(name, pid)`
-  // on exec; in dry-run we print a `[fault:s5:stop-pub1]` placeholder
-  // line through `log.spawn` so a reader sees the stop step.
-  const pub1Pid = log.dryRun ? '<pub1-mesh-pid>' : '';
-  if (log.dryRun) {
-    const stopLine = `[fault:s5:stop-pub1-mesh] kill -TERM ${pub1Pid}`;
-    log.records.push(stopLine);
-    process.stdout.write(stopLine + '\n');
-  }
-  log.spawn('impostor-mesh', impostorSpawnArgs(topology, { nodeBin, meshMain, invokingUser }));
+  log.spawn('impostor-mesh', argv);
 }
 
 export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
   const steps = [];
-  try {
-    applyFaults(log, ctx.topology, {
-      nodeBin: ctx.nodeBin ?? '/home/user/.nvm/versions/node/v24.22.1/bin/node',
-      meshMain: ctx.meshMain ?? '<meshMain>',
-      invokingUser: ctx.invokingUser ?? 'user',
-    });
+  if (ctx.dryRun) {
+    applyFaults(log, ctx.topology);
     for (const name of describe()) {
       steps.push({ name, verdict: 'skipped', measurement: null, timeMs: 0 });
     }
-    void verdictS5;
+    log.removeAll();
+    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps, faults: log.records };
+  }
+
+  // Exec-mode flow.
+  const identities = JSON.parse(readFileSync(join(ctx.outDir, 'identities.json'), 'utf8'));
+  const pub1Id = identities.pub1?.notisId;
+  const pub1Addr = ctx.topology.hosts.pub1.addr;
+  const pub1Mesh = ctx.topology.hosts.pub1.mesh;
+  const pub1Entry = findPid(ctx.pids?.pids, TARGET_MESH_DESC);
+  if (!pub1Entry) throw new Error(`s5: pids.json has no ${TARGET_MESH_DESC} entry`);
+
+  const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
+  const impostorStateDir = join(ctx.outDir, 'scenarios', 's5-impostor');
+  const pub1StateDir = join(ctx.outDir, 'pub1');
+
+  // 1. Stop pub1's mesh.
+  let pub1Stopped = false;
+  let impostorPid = null;
+  log.records.push(`[fault:${NAME}:stop-pub1-mesh] kill -TERM ${pub1Entry.pid}`);
+  const r = sigterm(pub1Entry.pid);
+  pub1Stopped = r.sent;
+  // Wait a moment for the OS to free the ports.
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  try {
+    // 2. Prepare impostor state dir: copy pub1's state dir, replace
+    //    mesh.key with a fresh one.
+    if (existsSync(impostorStateDir)) {
+      rmSync(impostorStateDir, { recursive: true, force: true });
+    }
+    cpSync(pub1StateDir, impostorStateDir, { recursive: true });
+    const impostorKey = join(impostorStateDir, 'mesh.key');
+    rmSync(impostorKey, { force: true });
+    const randomBytes = (n) => {
+      const buf = Buffer.alloc(n);
+      const nodeCrypto = globalThis.crypto;
+      if (nodeCrypto?.getRandomValues) nodeCrypto.getRandomValues(buf);
+      else throw new Error('no crypto.getRandomValues available');
+      return buf;
+    };
+    const { notisId: impostorNotisId } = writeFreshMeshKey(impostorKey, { randomBytes });
+
+    // 3. Spawn impostor with pub1's address.
+    const impostorArgv = [
+      'sudo', 'ip', 'netns', 'exec', 'notismesh-pub1',
+      'sudo', '-u', ctx.invokingUser, '--',
+      'env',
+      `MESH_KEY_PATH=${impostorKey}`,
+      `MESH_NETWORK=${ctx.topology.network}`,
+      'MESH_ROLE=public',
+      `MESH_STATE_DIR=${impostorStateDir}`,
+      'MESH_UPSTREAM=http://127.0.0.1:3100',
+      `MESH_LISTEN=/ip4/${pub1Addr}/udp/${pub1Mesh.webrtcPort}/webrtc-direct,/ip4/${pub1Addr}/tcp/${pub1Mesh.tcpPort}`,
+      ctx.nodeBin, ctx.meshMain,
+    ];
+    const spawnEntry = {
+      argv: impostorArgv,
+      env: {},
+      logPath: join(ctx.outDir, 'scenarios', 's5-impostor.log'),
+    };
+    impostorPid = restartFromEntry(spawnEntry);
+    log.records.push(`[fault:${NAME}:impostor-mesh:spawn] ${impostorArgv.join(' ')}`);
+
+    // 4. Poll state until pub1's entry has an address in droppedAddrs
+    //    OR anchorReached changes. The impostor's own notisId may
+    //    appear as a new node (status likely 'retry' or 'ok' until
+    //    we spot the key mismatch — but the KEY-mismatch happens on
+    //    pub1's address, so pub1's droppedAddrs grows).
+    const stateText = await cdpPoll(ctx, browserUrl,
+      "document.getElementById('state')?.textContent ?? null",
+      `if (v === null) return false;
+       try {
+         const s = JSON.parse(v);
+         const pub1 = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
+         if (!pub1) return false;
+         return Array.isArray(pub1.droppedAddrs) && pub1.droppedAddrs.length > 0;
+       } catch (_e) { return false; }`,
+      120_000, 1000,
+    );
+    const state = JSON.parse(stateText);
+    const pub1Node = state.nodes?.find((n) => n.notisId === pub1Id);
+    const blockedAddr = pub1Node?.droppedAddrs?.[0] ?? null;
+    const measurement = {
+      impostorNotisId,
+      anchorStatus: pub1Node?.status ?? null,
+      droppedAddrs: pub1Node?.droppedAddrs ?? [],
+      blockedAddr: blockedAddr ?? '<none>',
+    };
+    steps.push({
+      name: describe()[0],
+      verdict: verdictS5(measurement),
+      measurement,
+      timeMs: Date.now() - started,
+    });
   } finally {
+    // Stop impostor, restart pub1.
+    if (impostorPid !== null) {
+      try { sigterm(impostorPid); } catch (err) {
+        process.stderr.write(`[s5 teardown] impostor sigterm: ${err?.message ?? err}\n`);
+      }
+    }
+    if (pub1Stopped) {
+      try {
+        // Give the impostor a moment to release the ports.
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const newPid = restartFromEntry(pub1Entry);
+        pub1Entry.pid = newPid;
+      } catch (err) {
+        process.stderr.write(`[s5 teardown] pub1 restart: ${err?.message ?? err}\n`);
+      }
+    }
+    if (existsSync(impostorStateDir)) {
+      rmSync(impostorStateDir, { recursive: true, force: true });
+    }
     log.removeAll();
   }
   return {
@@ -91,4 +211,16 @@ export async function run(ctx) {
     steps,
     faults: log.records,
   };
+}
+
+async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
+  const argv = [
+    ctx.nodeBin, ctx.cdpScript, 'poll', url, expression, predicateBody,
+    String(timeoutMs), String(pollMs),
+  ];
+  const buf = execIn('notismesh-browser', argv, {
+    user: ctx.invokingUser,
+    timeoutMs: timeoutMs + 10_000,
+  });
+  return JSON.parse(buf.toString('utf8'));
 }

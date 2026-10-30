@@ -1,19 +1,29 @@
 // MESH_INTERFACE → Acceptance 2 — "A node behind the endpoint-independent
 // NAT answers through a relay, then directly; one behind the symmetric
-// NAT answers through the relay". The scenario writes a config variant
-// whose anchor is `priv1` by its relayed address through pub1 (and
-// `priv2` through pub2 for the second step); the stage's natA and natB
-// are already in place.
+// NAT answers through the relay".
 //
-// No faults; the NAT is topology, not a scenario action. The scenario
-// records two measurements: priv1's path transitions (relay → direct)
-// and priv2's (relay, maybe never direct). The verdict for priv2 passes
-// on relay alone.
+// Two sub-steps. For each, the scenario writes a `config.json` variant
+// whose single anchor is the private node reached through a public one:
+//   priv1 via pub1 → `path` reads `relay` first, then `direct` as DCUtR
+//     or the WebRTC upgrade lands. Record both times.
+//   priv2 via pub2 → `path` reads `relay` and stays there. Record
+//     whether it ever reads `direct`.
+//
+// No stage faults; the NAT is topology. The variant is written to
+// `stage/out/browser/config.json` (replacing the stage's own file for
+// the duration), and restored in `finally`.
 
+import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS2Priv1, verdictS2Priv2 } from '../lib/verdicts.mjs';
+import { execIn, pollUntil } from '../lib/measure.mjs';
+import { buildPrivateViaRelayVariant } from '../lib/config-variants.mjs';
+import { peerIdStringOf } from '../lib/config.mjs';
 
 export const NAME = 's2';
+const DIRECT_WAIT_MS = 60_000;
+const RELAY_WAIT_MS = 60_000;
 
 export function describe() {
   return [
@@ -23,21 +33,130 @@ export function describe() {
 }
 
 export function applyFaults(_log, _topology) {
-  // nothing: the NATs are topology, not a scenario fault.
+  // s2 reads a NAT the stage already set up; no faults.
 }
 
 export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
   const steps = [];
-  try {
-    applyFaults(log, ctx.topology);
+
+  if (ctx.dryRun) {
     for (const name of describe()) {
       steps.push({ name, verdict: 'skipped', measurement: null, timeMs: 0 });
     }
-    void verdictS2Priv1;
-    void verdictS2Priv2;
+    return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps, faults: log.records };
+  }
+
+  const configPath = join(ctx.outDir, 'browser', 'config.json');
+  const configBackupPath = `${configPath}.s2.bak`;
+  const identitiesPath = join(ctx.outDir, 'identities.json');
+  const identities = existsSync(identitiesPath) ? JSON.parse(readFileSync(identitiesPath, 'utf8')) : null;
+  const baseConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+  const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
+
+  // Back up the stage's config.json so the scenario's `finally` can
+  // put it back whatever happens.
+  renameSync(configPath, configBackupPath);
+  try {
+    const subSteps = [
+      {
+        name: describe()[0],
+        privHost: 'priv1',
+        viaHost: 'pub1',
+        verdict: verdictS2Priv1,
+        buildMeasurement: ({ relayedTimeMs, directTimeMs, nodeId, expectedNodeId }) => ({
+          nodeId,
+          expectedNodeId,
+          relayedTimeMs,
+          directTimeMs,
+        }),
+      },
+      {
+        name: describe()[1],
+        privHost: 'priv2',
+        viaHost: 'pub2',
+        verdict: verdictS2Priv2,
+        buildMeasurement: ({ relayedTimeMs, everDirect, nodeId, expectedNodeId }) => ({
+          nodeId,
+          expectedNodeId,
+          relayedTimeMs,
+          everDirect,
+        }),
+      },
+    ];
+    for (const sub of subSteps) {
+      const stepStart = Date.now();
+      const privRow = identities?.[sub.privHost];
+      const viaRow = identities?.[sub.viaHost];
+      if (!privRow || !viaRow) {
+        steps.push({ name: sub.name, verdict: 'skipped', measurement: null, timeMs: 0 });
+        continue;
+      }
+      const variant = buildPrivateViaRelayVariant(baseConfig, {
+        privNotisId: privRow.notisId,
+        privPeerIdString: peerIdStringOf(privRow.notisId),
+        viaPublicNotisId: viaRow.notisId,
+      });
+      writeFileSync(configPath, JSON.stringify(variant, null, 2));
+
+      // Open page, poll state via two separate CDP calls.
+      // 1. relay seen.
+      const relayStart = Date.now();
+      const relayJson = await cdpPoll(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        `if (v === null) return false;
+         try { const s = JSON.parse(v); return s.nodeId === ${JSON.stringify(privRow.notisId)} && s.path === 'relay'; }
+         catch (_e) { return false; }`,
+        RELAY_WAIT_MS, 500,
+      );
+      const relayedTimeMs = Date.now() - relayStart;
+      const relayState = JSON.parse(relayJson);
+      // 2. direct seen (bounded wait); failure is not a scenario fault,
+      // just a measurement result.
+      let directTimeMs = null;
+      let everDirect = false;
+      const directStart = Date.now();
+      try {
+        const directJson = await cdpPoll(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null",
+          `if (v === null) return false;
+           try { const s = JSON.parse(v); return s.nodeId === ${JSON.stringify(privRow.notisId)} && s.path === 'direct'; }
+           catch (_e) { return false; }`,
+          DIRECT_WAIT_MS, 500,
+        );
+        void JSON.parse(directJson);
+        directTimeMs = Date.now() - directStart;
+        everDirect = true;
+      } catch {
+        // Direct never arrived within the window. priv2 stays here;
+        // priv1 is a FAIL on verdictS2Priv1 (needs directTimeMs).
+        directTimeMs = null;
+        everDirect = false;
+      }
+      const measurement = sub.buildMeasurement({
+        nodeId: relayState.nodeId,
+        expectedNodeId: privRow.notisId,
+        relayedTimeMs,
+        directTimeMs: directTimeMs ?? -1,
+        everDirect,
+      });
+      steps.push({
+        name: sub.name,
+        verdict: sub.verdict(measurement),
+        measurement,
+        timeMs: Date.now() - stepStart,
+      });
+    }
   } finally {
+    // Restore stage's config.json whatever happened.
+    if (existsSync(configBackupPath)) {
+      if (existsSync(configPath)) {
+        try { renameSync(configPath, `${configPath}.s2.leftover`); }
+        catch (err) { process.stderr.write(`[s2 teardown] could not move leftover: ${err?.message ?? err}\n`); }
+      }
+      renameSync(configBackupPath, configPath);
+    }
     log.removeAll();
   }
   return {
@@ -47,4 +166,16 @@ export async function run(ctx) {
     steps,
     faults: log.records,
   };
+}
+
+async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
+  const argv = [
+    ctx.nodeBin, ctx.cdpScript, 'poll', url, expression, predicateBody,
+    String(timeoutMs), String(pollMs),
+  ];
+  const buf = execIn('notismesh-browser', argv, {
+    user: ctx.invokingUser,
+    timeoutMs: timeoutMs + 10_000,
+  });
+  return JSON.parse(buf.toString('utf8'));
 }
