@@ -18,8 +18,7 @@ import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS2Priv1, verdictS2Priv2 } from '../lib/verdicts.mjs';
 import { execIn, pollUntil } from '../lib/measure.mjs';
-import { buildPrivateViaRelayVariant } from '../lib/config-variants.mjs';
-import { peerIdStringOf } from '../lib/config.mjs';
+import { buildPrivateViaAnnouncedRelayVariant } from '../lib/config-variants.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's2';
@@ -62,7 +61,6 @@ export async function run(ctx) {
       {
         name: describe()[0],
         privHost: 'priv1',
-        viaHost: 'pub1',
         verdict: verdictS2Priv1,
         buildMeasurement: ({ relayedTimeMs, directTimeMs, nodeId, expectedNodeId }) => ({
           nodeId,
@@ -74,7 +72,6 @@ export async function run(ctx) {
       {
         name: describe()[1],
         privHost: 'priv2',
-        viaHost: 'pub2',
         verdict: verdictS2Priv2,
         buildMeasurement: ({ relayedTimeMs, everDirect, nodeId, expectedNodeId }) => ({
           nodeId,
@@ -86,18 +83,22 @@ export async function run(ctx) {
     ];
     for (const sub of subSteps) {
       const privRow = identities?.[sub.privHost];
-      const viaRow = identities?.[sub.viaHost];
-      if (!privRow || !viaRow) {
+      if (!privRow) {
         rec.skipped(sub.name);
         continue;
       }
       // Wrap each sub-step in `rec.step` so a throw in priv1's does
       // not skip priv2's.
       await rec.step(sub.name, async () => {
-        const variant = buildPrivateViaRelayVariant(baseConfig, {
-          privNotisId: privRow.notisId,
-          privPeerIdString: peerIdStringOf(privRow.notisId),
-          viaPublicNotisId: viaRow.notisId,
+        // MESH_INTERFACE → NAT — "A private node accepts circuit-relay
+        // reservations on `/p2p-circuit`"; which public node holds the
+        // reservation is the private node's own run-time choice.
+        // Reading the private node's announced circuit address is the
+        // one way to learn its real relay — the stage cannot hard-code
+        // the via-public id.
+        const variant = buildPrivateViaAnnouncedRelayVariant(baseConfig, {
+          privRow,
+          identities,
         });
         writeFileSync(configPath, JSON.stringify(variant, null, 2));
         const relayStart = Date.now();

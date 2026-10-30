@@ -45,7 +45,12 @@ describe('s1 (no name)', () => {
       expect(step.verdict, step.name).toBe('skipped');
       expect(step.measurement).toBe(null);
     }
-    expect(r.faults).toEqual([]); // s1 applies no faults.
+    // s1 pauses miner-steady with SIGSTOP for the probe window and
+    // resumes with SIGCONT in finally (MESH_INTERFACE → Acceptance 1).
+    expect(r.faults.some((f: string) => f.includes('miner-steady-pause]') && f.includes('STOP')),
+      'STOP record present').toBe(true);
+    expect(r.faults.some((f: string) => f.includes('miner-steady-pause]') && f.includes('CONT')),
+      'CONT record present').toBe(true);
   });
   it('hostOfNodeId maps a notisId to the host that owns it', () => {
     const identities = {

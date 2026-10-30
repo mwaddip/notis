@@ -86,7 +86,7 @@ describe('finding 6 — s2 variant is built from the private node\'s own announc
   // address, extracts its relay's peer id, and composes the browser-
   // dialable form (relay WebRTC-direct + /p2p-circuit).
 
-  it.fails('builds priv1\'s variant through its real relay (pub2 in this run), using the relay\'s WebRTC-direct address', () => {
+  it('builds priv1\'s variant through its announced relay, composing the relay\'s WebRTC-direct address + /p2p-circuit', () => {
     const r = buildPrivateViaAnnouncedRelayVariant(BASE_CONFIG, {
       privRow: IDENTITIES.priv1,
       identities: IDENTITIES,
@@ -102,7 +102,7 @@ describe('finding 6 — s2 variant is built from the private node\'s own announc
     expect(r.stunServers).toEqual(['stun:11.100.0.11:3478', 'stun:11.100.0.12:3478']);
   });
 
-  it.fails('builds priv2\'s variant through its real relay (pub2) too', () => {
+  it('builds priv2\'s variant through its announced relay too', () => {
     const r = buildPrivateViaAnnouncedRelayVariant(BASE_CONFIG, {
       privRow: IDENTITIES.priv2,
       identities: IDENTITIES,
@@ -110,7 +110,7 @@ describe('finding 6 — s2 variant is built from the private node\'s own announc
     expect(r.anchors[0]!.addrs[0]).toBe('/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER/p2p-circuit/p2p/PRIV2PEER');
   });
 
-  it.fails('fails loudly when the private node announces no /p2p-circuit address a browser can reach', () => {
+  it('fails loudly when the private node announces no /p2p-circuit address a browser can reach', () => {
     const privNoCircuit = {
       ...IDENTITIES.priv1,
       multiaddrs: ['/ip4/10.101.0.11/udp/4001/webrtc-direct/certhash/PRIV1HASH/p2p/PRIV1PEER'],
@@ -121,7 +121,7 @@ describe('finding 6 — s2 variant is built from the private node\'s own announc
     })).toThrow(/no .*p2p-circuit/i);
   });
 
-  it.fails('fails loudly when the circuit\'s relay has no WebRTC-direct address a browser can dial', () => {
+  it('fails loudly when the circuit\'s relay has no WebRTC-direct address a browser can dial', () => {
     const identitiesNoRelayWebrtc = {
       ...IDENTITIES,
       pub2: {
@@ -136,7 +136,7 @@ describe('finding 6 — s2 variant is built from the private node\'s own announc
     })).toThrow(/no .*webrtc-direct/i);
   });
 
-  it.fails('fails loudly when the circuit\'s relay is not in identities', () => {
+  it('fails loudly when the circuit\'s relay is not in identities', () => {
     const identitiesNoRelay = {
       pub1: IDENTITIES.pub1,
       priv1: IDENTITIES.priv1, // its circuit names PUB2PEER, but pub2 is missing
@@ -158,7 +158,7 @@ describe('finding 7 — wrongKeyInfo recognises both error names and both messag
   // message pattern — either name with the "Payload peer id" format,
   // or either name with the upgrader's "connected to" format.
 
-  it.fails('reads the browser\'s UnexpectedPeerError + "Payload peer id" message', () => {
+  it('reads the browser\'s UnexpectedPeerError + "Payload peer id" message', () => {
     const err = Object.assign(new Error(
       'Payload peer id 12D3KooWFwYu does not match expected remote peer id 12D3KooWPtGv',
     ), { name: 'UnexpectedPeerError' });
@@ -167,7 +167,7 @@ describe('finding 7 — wrongKeyInfo recognises both error names and both messag
     expect(info!.answeredPeerIdString).toBe('12D3KooWFwYu');
   });
 
-  it.fails('reads an EncryptionFailedError + "connected to" message (defense in depth)', () => {
+  it('reads an EncryptionFailedError + "connected to" message (defense in depth)', () => {
     const err = Object.assign(new Error(
       'Expected remote peer 12D3KooWPtGv but connected to 12D3KooWFwYu',
     ), { name: 'EncryptionFailedError' });
@@ -196,7 +196,7 @@ describe('finding 8 — s1 pauses miner-steady by SIGSTOP for the probe window',
     expect(r, 'ESRCH is reported, not thrown').toEqual({ sent: false, reason: 'ESRCH' });
   });
 
-  it.fails('s1 applies SIGSTOP on miner-steady before the probe steps and SIGCONT in finally', () => {
+  it('s1 applies SIGSTOP on miner-steady before the probe steps and SIGCONT in finally', () => {
     const src = readFileSync(SRC_S1, 'utf8');
     // The scenario finds the miner-steady pid, stops it, runs the
     // probes, and resumes it inside the `finally` block so a thrown

@@ -64,8 +64,66 @@ export function buildPrivateViaRelayVariant(baseConfig, {
  * when the circuit's relay is missing from identities, or when the
  * relay has no WebRTC-direct address a browser can dial.
  */
-export function buildPrivateViaAnnouncedRelayVariant(_baseConfig, { privRow: _privRow, identities: _identities }) {
-  throw new Error('buildPrivateViaAnnouncedRelayVariant: not implemented');
+export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, identities }) {
+  if (!baseConfig || !Array.isArray(baseConfig.anchors)) {
+    throw new Error('base config must carry anchors[]');
+  }
+  if (!privRow || typeof privRow.notisId !== 'string') {
+    throw new Error('privRow must carry a notisId');
+  }
+  if (!identities || typeof identities !== 'object') {
+    throw new Error('identities must be an object');
+  }
+  const announced = Array.isArray(privRow.multiaddrs) ? privRow.multiaddrs : [];
+  // Pick the first announced `/p2p-circuit` address. Its shape is
+  // `<relay-prefix>/p2p/<relay-peer>/p2p-circuit/p2p/<priv-peer>`.
+  const circuit = announced.find((a) => typeof a === 'string' && a.includes('/p2p-circuit'));
+  if (circuit === undefined) {
+    throw new Error(`priv ${privRow.notisId}: announces no /p2p-circuit address a browser can reach`);
+  }
+  const m = /^(.+)\/p2p\/([^/]+)\/p2p-circuit\/p2p\/([^/]+)$/.exec(circuit);
+  if (!m) {
+    throw new Error(`priv ${privRow.notisId}: unexpected /p2p-circuit shape: ${circuit}`);
+  }
+  const relayPeerIdString = m[2];
+  const privPeerIdString = m[3];
+  // Find the identity row whose own listen addresses end in
+  // `/p2p/<relayPeerIdString>` — that is the relay host itself, not a
+  // private node whose /p2p-circuit address happens to reference the
+  // relay in a middle component. The private node here already
+  // references `relayPeerIdString` in its own circuit entry, so a
+  // broader `includes('/p2p/<relay-peer>')` match would pick itself.
+  let relayRow = null;
+  const nonCircuitRe = new RegExp(`/p2p/${relayPeerIdString}$`);
+  for (const row of Object.values(identities)) {
+    const addrs = Array.isArray(row?.multiaddrs) ? row.multiaddrs : [];
+    if (addrs.some((a) => typeof a === 'string' && !a.includes('/p2p-circuit') && nonCircuitRe.test(a))) {
+      relayRow = row;
+      break;
+    }
+  }
+  if (relayRow === null) {
+    throw new Error(`priv ${privRow.notisId}: no identity row for relay peer ${relayPeerIdString}`);
+  }
+  // A browser dials the relay over WebRTC-direct (with certhash), not
+  // TCP. The relay's own identity line carries both; keep only the
+  // first `/webrtc-direct/` with a `/certhash/` component.
+  const relayAddrs = Array.isArray(relayRow.multiaddrs) ? relayRow.multiaddrs : [];
+  const relayWebrtc = relayAddrs.find((a) => typeof a === 'string'
+    && a.includes('/webrtc-direct/')
+    && a.includes('/certhash/'));
+  if (relayWebrtc === undefined) {
+    throw new Error(`relay ${relayPeerIdString}: no /webrtc-direct/certhash/ address a browser can dial`);
+  }
+  // `relayWebrtc` ends in `/p2p/<relay-peer>`. Compose by appending
+  // `/p2p-circuit/p2p/<priv-peer>`.
+  const relayAnchor = `${relayWebrtc}/p2p-circuit/p2p/${privPeerIdString}`;
+  return {
+    network: baseConfig.network,
+    anchors: [{ notisId: privRow.notisId, addrs: [relayAnchor] }],
+    stunServers: Array.isArray(baseConfig.stunServers) ? baseConfig.stunServers : [],
+    seeds: [],
+  };
 }
 
 /**

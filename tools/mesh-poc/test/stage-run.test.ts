@@ -50,7 +50,13 @@ describe('stage:run --dry-run', () => {
       if (!line.startsWith('[fault:')) continue;
       // Marker ends at the first space.
       const rest = line.slice(line.indexOf(' ') + 1).trim();
+      // SIGTERM is s5's stop; SIGSTOP / SIGCONT is s1's miner pause.
+      // Scenario signal faults run on PIDs the host already holds
+      // (recorded in `pids.json`), so they do not go through
+      // `ip netns exec`.
       if (rest.startsWith('kill -TERM ')) continue;
+      if (rest.startsWith('kill -STOP ')) continue;
+      if (rest.startsWith('kill -CONT ')) continue;
       if (!rest.startsWith('sudo ip netns exec notismesh-')) {
         bad.push(line);
       }

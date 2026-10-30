@@ -842,18 +842,24 @@ function pathOf(ma: string): 'direct' | 'relay' | null {
  */
 export function wrongKeyInfo(e: unknown): { answeredPeerIdString: string } | null {
   if (e === null || e === undefined) return null;
-  if (e instanceof UnexpectedPeerError) {
-    return readAnsweredFromUpgraderMessage(messageOfError(e));
-  }
   const named = e as { name?: unknown; message?: unknown };
-  if (typeof named.name === 'string') {
-    // The upgrader's own refusal reads `Expected remote peer X but
-    // connected to Y`; noise's refusal, wrapped by libp2p's
-    // `EncryptionFailedError` (libp2p/src/errors.ts), reads `Payload
-    // peer id X does not match expected remote peer id Y` and names the
-    // answered id in the "Payload peer id" position.
-    if (named.name === 'UnexpectedPeerError') return readAnsweredFromUpgraderMessage(messageOfError(e));
-    if (named.name === 'EncryptionFailedError') return readAnsweredFromNoiseMessage(messageOfError(e));
+  const name = typeof named.name === 'string' ? named.name : '';
+  // Wrong-key arrives under two names, with two message formats:
+  //   - Noise's refusal, both as `EncryptionFailedError` (Node:
+  //     libp2p/src/errors.ts wraps noise's throw) and as
+  //     `UnexpectedPeerError` (browser WebRTC-direct: libp2p 3.5
+  //     surfaces the noise error under this name): `Payload peer id X
+  //     does not match expected remote peer id Y`. X is the answered id.
+  //   - The upgrader's own peer-id check (libp2p/src/upgrader.ts line
+  //     314): `Expected remote peer X but connected to Y`. Y is the
+  //     answered id.
+  // Either name + either message carries; attribution rides the
+  // message pattern.
+  if (e instanceof UnexpectedPeerError
+      || name === 'UnexpectedPeerError'
+      || name === 'EncryptionFailedError') {
+    const msg = typeof named.message === 'string' ? named.message : '';
+    return readAnsweredFromWrongKeyMessage(msg);
   }
   // Nested aggregate / cause — fall through so a wrapped wrong-key still
   // reads.
@@ -869,24 +875,16 @@ export function wrongKeyInfo(e: unknown): { answeredPeerIdString: string } | nul
   return null;
 }
 
-function messageOfError(e: unknown): string {
-  const m = (e as { message?: unknown })?.message;
-  return typeof m === 'string' ? m : '';
-}
-
-function readAnsweredFromUpgraderMessage(msg: string): { answeredPeerIdString: string } | null {
-  // "Expected remote peer X but connected to Y" — Y is the answered id.
-  const m = /connected to\s+([^\s]+)/.exec(msg);
-  if (!m) return null;
-  return { answeredPeerIdString: m[1]! };
-}
-
-function readAnsweredFromNoiseMessage(msg: string): { answeredPeerIdString: string } | null {
-  // "Payload peer id X does not match expected remote peer id Y" — X is
-  // the answered id (what the server sent on its noise payload).
-  const m = /Payload peer id\s+([^\s]+)\s+does not match/.exec(msg);
-  if (!m) return null;
-  return { answeredPeerIdString: m[1]! };
+function readAnsweredFromWrongKeyMessage(msg: string): { answeredPeerIdString: string } | null {
+  // Noise's format first — "Payload peer id X does not match expected
+  // remote peer id Y". X is the answered id.
+  const noise = /Payload peer id\s+([^\s]+)\s+does not match/.exec(msg);
+  if (noise) return { answeredPeerIdString: noise[1]! };
+  // Upgrader's format — "Expected remote peer X but connected to Y".
+  // Y is the answered id.
+  const upgrader = /connected to\s+([^\s]+)/.exec(msg);
+  if (upgrader) return { answeredPeerIdString: upgrader[1]! };
+  return null;
 }
 
 /**

@@ -12,7 +12,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS1Node, verdictS1Probe, verdictS1DnsSilent } from '../lib/verdicts.mjs';
-import { execIn, readDirect, readLineCount, readNftCounterSum } from '../lib/measure.mjs';
+import {
+  execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal,
+} from '../lib/measure.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's1';
@@ -26,8 +28,18 @@ export function describe() {
   ];
 }
 
-export function applyFaults(_log, _topology) {
-  // s1 reads a clean stage; no faults.
+export function applyFaults(log, _topology) {
+  // MESH_INTERFACE → Acceptance 1 — the probe window pauses
+  // `miner-steady` so `/blocks/current` and the proof route do not
+  // move between the bracket and the probe. The dry-run records the
+  // signal pair so a reader sees the fault without running the
+  // stage; exec mode applies them in `run(ctx)` with the live pid.
+  log.records.push(`[fault:${NAME}:miner-steady-pause] kill -STOP <miner-steady-pid>`);
+  log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT <miner-steady-pid>`);
+  if (log.dryRun) {
+    process.stdout.write(`[fault:${NAME}:miner-steady-pause] kill -STOP <miner-steady-pid>\n`);
+    process.stdout.write(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT <miner-steady-pid>\n`);
+  }
 }
 
 /**
@@ -58,9 +70,11 @@ export async function run(ctx) {
   const log = new FaultLog({ dryRun: ctx.dryRun, scenario: NAME });
   const started = Date.now();
   const rec = new StepRecorder();
-  applyFaults(log, ctx.topology);
 
   if (ctx.dryRun) {
+    // Dry-run surfaces the fault pair so a reader sees what the
+    // probe window pauses; exec mode records the live pid alongside.
+    applyFaults(log, ctx.topology);
     for (const name of describe()) rec.skipped(name);
     return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
@@ -82,8 +96,18 @@ export async function run(ctx) {
   // Each step is wrapped in `rec.step(name, fn)` so a throw records
   // FAIL for THAT step and the next step still runs (MESH_INTERFACE →
   // Acceptance). The scenario's one `finally` runs `log.removeAll()`
-  // whatever each step did.
+  // whatever each step did AND releases the paused miner.
   let anchorNodeId = null;
+  // MESH_INTERFACE → Acceptance 1 — "the mesh's answers equal the node's
+  // direct HTTP answers byte for byte". The chain's tip moves at mining
+  // speed; the probe and the direct reads both come off a tip that may
+  // advance between calls, so a stale read looks like a mesh/direct
+  // mismatch. The probe window pauses `miner-steady` by SIGSTOP; the
+  // `finally` resumes it with SIGCONT whether every probe passed, raised
+  // or timed out. The non-probe steps (step 1, step 4) run while the
+  // chain still moves.
+  const minerEntry = findPid(ctx.pids?.pids, 'miner-steady');
+  let minerPaused = false;
   try {
     const step1 = await rec.step(describe()[0], async () => {
       const step1Start = Date.now();
@@ -103,6 +127,11 @@ export async function run(ctx) {
     // the id is not in identities.json, those steps read `skipped`.
     const hostName = anchorNodeId !== null ? hostOfNodeId(identities, anchorNodeId) : null;
     const hostRow = hostName !== null ? identities[hostName] : null;
+    if (hostName !== null && hostRow !== null && minerEntry !== null) {
+      const r = signal(minerEntry.pid, 'SIGSTOP');
+      log.records.push(`[fault:${NAME}:miner-steady-pause] kill -STOP ${minerEntry.pid}`);
+      minerPaused = r.sent;
+    }
     for (const [stepIndex, probePath] of [[1, '/blocks/current'], [2, '/nipopow/proof/24/20']]) {
       if (hostName === null || hostRow === null) {
         rec.skipped(describe()[stepIndex]);
@@ -112,11 +141,11 @@ export async function run(ctx) {
         const nodeNs = `notismesh-${hostName}`;
         const probeUrl = `${browserUrl}?probe=${encodeURIComponent(probePath)}`;
         const directUrl = `http://127.0.0.1:${hostRow.httpPort}${probePath}`;
-        // MESH_INTERFACE → Acceptance 1 — the chain's tip moves at
-        // mining speed, so `/blocks/current` can differ between the
-        // probe and ONE direct read for reasons that are not a bug.
-        // Bracket the probe between two direct reads; verdict passes
-        // when the probe equals either.
+        // MESH_INTERFACE → Acceptance 1 — "the mesh's answers equal the
+        // node's direct HTTP answers byte for byte". The miner is
+        // paused outside the loop, so the chain is still: `directBefore`
+        // and `directAfter` bracket the probe for the same tip, and
+        // the probe equals both.
         const directBefore = readDirect(nodeNs, directUrl);
         const probeText = await cdpPoll(ctx, probeUrl,
           "document.getElementById('probe')?.textContent ?? null",
@@ -150,6 +179,18 @@ export async function run(ctx) {
       return { verdict: verdictS1DnsSilent(m), measurement: m };
     });
   } finally {
+    // Release the miner whether the probes passed, raised or timed
+    // out — a paused miner holds up every other scenario that reads
+    // the chain. The SIGCONT runs even on ESRCH (the miner's own
+    // crash) and the result is logged.
+    if (minerPaused && minerEntry !== null) {
+      try {
+        signal(minerEntry.pid, 'SIGCONT');
+        log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT ${minerEntry.pid}`);
+      } catch (err) {
+        process.stderr.write(`[s1 teardown] SIGCONT ${minerEntry.pid}: ${err?.message ?? err}\n`);
+      }
+    }
     log.removeAll();
   }
   return {
