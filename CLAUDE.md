@@ -76,7 +76,7 @@ Ten packages, in dependency order:
   with the node's word — drawn from that cache at once, the posts it lacks read by id from the seed list's nodes in
   turn (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
 
-Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
+Four tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 
 - `@dagsocial/faucet` — an ordinary-key service that invites and sends credits through the node's HTTP API.
 - `@dagsocial/e2e` — the mesh suite: spawns a mesh of built nodes and asserts the protocol across them over
@@ -85,6 +85,10 @@ Three tools live under `tools/` — in the workspace by the `tools/*` glob, so i
   then proves what a key holds — each ledger's range, read whole — against the verified `stateRoot`, and checks a post
   row against the transaction that created it. A command line, and a library the web client's extension build imports
   for its tip, figures, names and posts verifiers.
+- `@dagsocial/mesh-poc` — the mesh proof of concept: a browser page reaches a node's HTTP API by the node's key over
+  libp2p, with no DNS name. A mesh service beside each unmodified node, the client and its node list, a page, and a
+  stage of network namespaces that runs `MESH_INTERFACE → Acceptance`'s six scenarios — the stage needs root and is
+  run by hand; its unit checks run in `pnpm -r test`.
 
 ## Design by Contract
 
@@ -101,6 +105,8 @@ contract first, then implement against it, never the reverse.
 - `contracts/AVLTREE_INTERFACE.md` — the tree package: neighbor lookups, the strict verifier, lazy nodes
 - `contracts/MEMPOOL_INTERFACE.md` · `contracts/MINING_INTERFACE.md` · `contracts/JOURNAL_EVENTS.md`
 - `contracts/WEB_INTERFACE.md` — web client
+- `contracts/MESH_INTERFACE.md` — the mesh proof of concept: identity, transports, NAT, discovery, the client's node
+  list, the IP certificate, acceptance
 - `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice
 - `contracts/SPECIAL.md` — per-subsystem attention weights
 - `contracts/CONSTANTS.md` — every protocol number in one place, with what argues it and its standing
