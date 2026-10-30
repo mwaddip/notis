@@ -111,42 +111,72 @@ describe('verdictS1DnsSilent — no DNS during the scenario', () => {
   });
 });
 
-describe('verdictS2Priv1 — endpoint-independent NAT: relay, then direct', () => {
+describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through a relay', () => {
+  // MESH_INTERFACE → NAT — "A browser reaches a private node over
+  // WebRTC signalled through the relay"; the connection reads
+  // `transport: 'webrtc'`, `path: 'direct'` once the DCUtR upgrade
+  // completes, with the anchor address naming the circuit's webrtc
+  // form and the ICE-server record passing the IP-only rule.
   const PASS = {
     nodeId: 'f'.repeat(64),
     expectedNodeId: 'f'.repeat(64),
-    relayedTimeMs: 5_000,
-    directTimeMs: 12_000,
+    transport: 'webrtc',
+    path: 'direct',
+    anchorAddrRelayed: '/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/webrtc/p2p/P',
+    connectMs: 1_200,
+    iceServers: [{ urls: ['stun:11.100.0.11:3478'] }],
   };
-  it('relay before direct, right node → PASS', () => {
+  it('relay-signalled WebRTC, right node → PASS', () => {
     expect(verdictS2Priv1(PASS)).toBe('PASS');
   });
   it('wrong node → FAIL', () => {
     expect(verdictS2Priv1({ ...PASS, nodeId: 'a'.repeat(64) })).toBe('FAIL');
   });
-  it('direct before relay (never upgraded) → FAIL', () => {
-    expect(verdictS2Priv1({ ...PASS, directTimeMs: 1_000 })).toBe('FAIL');
+  it('transport other than webrtc → FAIL', () => {
+    expect(verdictS2Priv1({ ...PASS, transport: 'webrtc-direct' })).toBe('FAIL');
   });
-  it('direct missing → FAIL', () => {
-    expect(verdictS2Priv1({ nodeId: PASS.nodeId, expectedNodeId: PASS.expectedNodeId, relayedTimeMs: 5_000 })).toBe('FAIL');
+  it('path still relay → FAIL', () => {
+    expect(verdictS2Priv1({ ...PASS, path: 'relay' })).toBe('FAIL');
+  });
+  it('anchor address does not hold /p2p-circuit/webrtc → FAIL', () => {
+    expect(verdictS2Priv1({ ...PASS, anchorAddrRelayed: '/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/p2p/P' })).toBe('FAIL');
+  });
+  it('ICE record carries a host name → FAIL', () => {
+    expect(verdictS2Priv1({ ...PASS, iceServers: [{ urls: ['stun:stun.example.com:3478'] }] })).toBe('FAIL');
   });
 });
 
-describe('verdictS2Priv2 — symmetric NAT: through the relay', () => {
+describe('verdictS2Priv2 — symmetric NAT: retry, the client on another node', () => {
+  // MESH_INTERFACE → NAT → "A relay carries signalling, not data" /
+  // Acceptance 2 — "The node behind the symmetric NAT has no direct
+  // path to the browser behind its NAT: it reads `retry`, never
+  // `blacklisted`, and the client stays on a node it reaches."
   const PASS = {
-    nodeId: '1'.repeat(64),
     expectedNodeId: '1'.repeat(64),
-    relayedTimeMs: 7_000,
-    everDirect: false,
+    priv2Status: 'retry',
+    priv2Failures: 2,
+    priv2LastFailure: { kind: 'other', message: 'All multiaddr dials failed' },
+    nodeIdInUse: '2'.repeat(64),
+    everInUse: false,
+    blacklistedAtAnyPoll: false,
   };
-  it('relayed, right node → PASS (direct not required)', () => {
+  it('retry with ≥1 failure, page on another node → PASS', () => {
     expect(verdictS2Priv2(PASS)).toBe('PASS');
   });
-  it('wrong node → FAIL', () => {
-    expect(verdictS2Priv2({ ...PASS, nodeId: 'a'.repeat(64) })).toBe('FAIL');
+  it('priv2 status blacklisted → FAIL', () => {
+    expect(verdictS2Priv2({ ...PASS, priv2Status: 'blacklisted' })).toBe('FAIL');
   });
-  it('relay missing → FAIL', () => {
-    expect(verdictS2Priv2({ nodeId: PASS.nodeId, expectedNodeId: PASS.expectedNodeId, everDirect: false })).toBe('FAIL');
+  it('no failure recorded → FAIL', () => {
+    expect(verdictS2Priv2({ ...PASS, priv2Failures: 0 })).toBe('FAIL');
+  });
+  it('priv2 blacklisted at an earlier poll → FAIL', () => {
+    expect(verdictS2Priv2({ ...PASS, blacklistedAtAnyPoll: true })).toBe('FAIL');
+  });
+  it('page reached no other node (nodeIdInUse null) → FAIL', () => {
+    expect(verdictS2Priv2({ ...PASS, nodeIdInUse: null })).toBe('FAIL');
+  });
+  it('page in use is priv2 itself → FAIL', () => {
+    expect(verdictS2Priv2({ ...PASS, nodeIdInUse: PASS.expectedNodeId })).toBe('FAIL');
   });
 });
 

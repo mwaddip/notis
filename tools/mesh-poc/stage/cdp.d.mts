@@ -16,3 +16,8 @@ export interface CdpPage {
   close(): Promise<void>;
 }
 export declare function openPage(url: string, opts?: { cdpUrl?: string; timeoutMs?: number }): Promise<CdpPage>;
+export declare const ICE_RECORD_INSTALL_SRC: string;
+export interface CdpPageWithIceRecord extends CdpPage {
+  readIceRecord(): Promise<Array<{ urls: string[] }>>;
+}
+export declare function openPageWithIceRecord(url: string, opts?: { cdpUrl?: string; timeoutMs?: number }): Promise<CdpPageWithIceRecord>;

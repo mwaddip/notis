@@ -170,6 +170,50 @@ export async function pollEvaluate(url, expression, predicate, {
 }
 
 /**
+ * MESH_INTERFACE → Acceptance 1 — the page's RTCPeerConnection
+ * constructions are recorded by a wrapper the stage installs through
+ * `Page.addScriptToEvaluateOnNewDocument`, because Chromium's own
+ * `--host-resolver-rules` resolver answers host-named ICE servers
+ * before any DNS witness sees them. The wrapper stores each
+ * construction's `iceServers.urls` on `window.__notismeshIceRecord`
+ * and passes everything through unchanged.
+ *
+ * The source runs as a string in the page's main world; the wrapper
+ * swallows no error (a page that cannot construct an RTCPeerConnection
+ * surfaces the real throw) and makes the record readable by every
+ * caller that evaluates `window.__notismeshIceRecord`.
+ */
+export const ICE_RECORD_INSTALL_SRC = `
+(function () {
+  if (window.__notismeshIceRecordInstalled) return;
+  window.__notismeshIceRecordInstalled = true;
+  var record = [];
+  window.__notismeshIceRecord = record;
+  var OrigPC = window.RTCPeerConnection;
+  if (typeof OrigPC !== 'function') return;
+  function Wrapped(cfg) {
+    var urls = [];
+    if (cfg && cfg.iceServers && cfg.iceServers.length) {
+      for (var i = 0; i < cfg.iceServers.length; i++) {
+        var s = cfg.iceServers[i];
+        if (!s) continue;
+        if (Array.isArray(s.urls)) {
+          for (var j = 0; j < s.urls.length; j++) urls.push(s.urls[j]);
+        } else if (typeof s.urls === 'string') {
+          urls.push(s.urls);
+        }
+      }
+    }
+    record.push({ urls: urls });
+    return new OrigPC(cfg);
+  }
+  Wrapped.prototype = OrigPC.prototype;
+  for (var k in OrigPC) { if (Object.prototype.hasOwnProperty.call(OrigPC, k)) Wrapped[k] = OrigPC[k]; }
+  window.RTCPeerConnection = Wrapped;
+})();
+`;
+
+/**
  * Open one Chromium target on `url`, keep its CDP session alive, and
  * return a page handle whose `.eval(expression)` runs a `Runtime.evaluate`
  * on it with `returnByValue: true`. `page.close()` closes the session and
@@ -225,6 +269,70 @@ export async function openPage(url, {
   };
 }
 
+/**
+ * MESH_INTERFACE → Acceptance 1 — open a target to `about:blank`, enable
+ * the Page domain, install the RTCPeerConnection wrapper through
+ * `Page.addScriptToEvaluateOnNewDocument`, then navigate to `url`. The
+ * wrapper runs before any script in the loaded document, so every
+ * `RTCPeerConnection` the page builds is recorded. The returned page
+ * handle has `eval`, `pollEval`, `close` as `openPage`'s handle, plus
+ * `readIceRecord()` which reads `window.__notismeshIceRecord` and
+ * returns `[]` when nothing was recorded yet.
+ */
+export async function openPageWithIceRecord(url, {
+  cdpUrl = DEFAULT_CDP_URL,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
+  const target = await openTarget('about:blank', cdpUrl);
+  const wsUrl = target.webSocketDebuggerUrl;
+  if (typeof wsUrl !== 'string') throw new Error(`target has no webSocketDebuggerUrl: ${JSON.stringify(target)}`);
+  const session = openSession(wsUrl, { timeoutMs });
+  await session.ready;
+  let closed = false;
+  await session.send('Page.enable');
+  await session.send('Page.addScriptToEvaluateOnNewDocument', { source: ICE_RECORD_INSTALL_SRC });
+  await session.send('Page.navigate', { url });
+  return {
+    target,
+    async eval(expression, { awaitPromise = true, perCallTimeoutMs } = {}) {
+      if (closed) throw new Error('page is closed');
+      const r = await session.send('Runtime.evaluate', {
+        expression,
+        returnByValue: true,
+        awaitPromise,
+        ...(perCallTimeoutMs !== undefined ? { timeout: perCallTimeoutMs } : {}),
+      });
+      if (r?.exceptionDetails) {
+        throw new Error(`Runtime.evaluate threw: ${JSON.stringify(r.exceptionDetails)}`);
+      }
+      return r?.result?.value;
+    },
+    async pollEval(expression, predicate, { timeoutMs: pTimeout = timeoutMs, pollMs = 500 } = {}) {
+      const deadline = Date.now() + pTimeout;
+      let last;
+      while (Date.now() < deadline) {
+        last = await this.eval(expression);
+        if (predicate(last)) return last;
+        await sleepP(pollMs);
+      }
+      throw new Error(`pollEval timed out after ${pTimeout}ms; last value: ${JSON.stringify(last)}`);
+    },
+    async readIceRecord() {
+      if (closed) throw new Error('page is closed');
+      // Returns a JSON array `[{ urls: string[] }, ...]`; empty when
+      // the page has not constructed any `RTCPeerConnection` yet.
+      const value = await this.eval('JSON.stringify(window.__notismeshIceRecord || [])');
+      return JSON.parse(typeof value === 'string' ? value : '[]');
+    },
+    async close() {
+      if (closed) return;
+      closed = true;
+      session.close();
+      await closeTarget(target.id, cdpUrl);
+    },
+  };
+}
+
 async function main(argv) {
   const [cmd, ...rest] = argv;
   if (cmd === 'eval') {
@@ -264,6 +372,29 @@ async function main(argv) {
     }
     return;
   }
+  if (cmd === 'poll-ice') {
+    // `cdp.mjs poll-ice <url> <expression> <predicate-body> <timeoutMs> <pollMs>`:
+    // like `poll`, but opens the page through `openPageWithIceRecord` so
+    // the `RTCPeerConnection` wrapper installs before the document's
+    // scripts run. Writes `{ value, iceRecord }` as JSON on stdout.
+    const [url, expression, predicateBody, timeoutStr, pollStr] = rest;
+    if (typeof url !== 'string' || typeof expression !== 'string' || typeof predicateBody !== 'string') {
+      process.stderr.write('usage: cdp.mjs poll-ice <url> <expression> <predicate-body> [<timeoutMs>] [<pollMs>]\n');
+      process.exit(2);
+    }
+    const timeoutMs = timeoutStr !== undefined ? parseInt(timeoutStr, 10) : DEFAULT_TIMEOUT_MS;
+    const pollMs = pollStr !== undefined ? parseInt(pollStr, 10) : 500;
+    const predicate = new Function('v', predicateBody);
+    const page = await openPageWithIceRecord(url, { timeoutMs });
+    try {
+      const value = await page.pollEval(expression, predicate, { timeoutMs, pollMs });
+      const iceRecord = await page.readIceRecord();
+      process.stdout.write(JSON.stringify({ value, iceRecord }) + '\n');
+    } finally {
+      await page.close();
+    }
+    return;
+  }
   if (cmd === 'targets') {
     const list = await listTargets();
     process.stdout.write(JSON.stringify(list, null, 2) + '\n');
@@ -272,6 +403,7 @@ async function main(argv) {
   process.stderr.write(`cdp.mjs: unknown command ${JSON.stringify(cmd)}\n`);
   process.stderr.write('usage: cdp.mjs eval <url> <expression>\n');
   process.stderr.write('       cdp.mjs poll <url> <expression> <predicate-body> [<timeoutMs>] [<pollMs>]\n');
+  process.stderr.write('       cdp.mjs poll-ice <url> <expression> <predicate-body> [<timeoutMs>] [<pollMs>]\n');
   process.exit(2);
 }
 

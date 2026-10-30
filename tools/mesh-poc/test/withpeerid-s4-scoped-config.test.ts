@@ -187,13 +187,17 @@ describe('finding 11 — every scenario writes config.json before opening the pa
   }
 
   for (const scenario of ['s2-nat', 's6-hostile']) {
-    it(`${scenario} writes a variant through writeConfigVariant before its first cdpPoll`, () => {
+    it(`${scenario} writes a variant through writeConfigVariant before its first cdp call`, () => {
       const src = readFileSync(join(SCENARIO_DIR, `${scenario}.mjs`), 'utf8');
       const writeIdx = src.indexOf('writeConfigVariant(');
       expect(writeIdx, `${scenario} calls writeConfigVariant`).toBeGreaterThan(0);
-      const firstPoll = src.indexOf('cdpPoll(');
-      expect(firstPoll, `${scenario} has a cdpPoll call`).toBeGreaterThan(0);
-      expect(writeIdx, `${scenario}: writeConfigVariant runs before cdpPoll`).toBeLessThan(firstPoll);
+      // The first cdp call: `cdpPoll(`, `cdpPollIce(` or `cdpEval(`.
+      // The config variant has to land before any of them opens the
+      // page.
+      const indices = ['cdpPoll(', 'cdpPollIce(', 'cdpEval('].map((n) => src.indexOf(n)).filter((i) => i >= 0);
+      expect(indices.length, `${scenario} has a cdp call`).toBeGreaterThan(0);
+      const firstCdp = Math.min(...indices);
+      expect(writeIdx, `${scenario}: writeConfigVariant runs before the first cdp call`).toBeLessThan(firstCdp);
     });
   }
 

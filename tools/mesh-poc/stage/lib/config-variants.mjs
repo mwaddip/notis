@@ -137,6 +137,72 @@ export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, iden
 }
 
 /**
+ * MESH_INTERFACE → NAT → "A relay carries signalling, not data" — a
+ * variant whose single anchor is a private node reached through the
+ * relay it reserved on, with BOTH its `/p2p-circuit/webrtc` and plain
+ * `/p2p-circuit` addresses. The browser cannot open an API stream over
+ * the plain circuit address (relay limits refuse application streams);
+ * the signalled WebRTC path over the circuit's webrtc form fails too
+ * when the private is behind a symmetric NAT and the browser is behind
+ * one of its own. The expected outcome is that the entry collects
+ * failures and the client stays on another node it reaches.
+ */
+export function buildPrivateViaAnnouncedRelayPairVariant(baseConfig, { privRow, identities }) {
+  if (!baseConfig || !Array.isArray(baseConfig.anchors)) {
+    throw new Error('base config must carry anchors[]');
+  }
+  if (!privRow || typeof privRow.notisId !== 'string') {
+    throw new Error('privRow must carry a notisId');
+  }
+  if (!identities || typeof identities !== 'object') {
+    throw new Error('identities must be an object');
+  }
+  const announced = Array.isArray(privRow.multiaddrs) ? privRow.multiaddrs : [];
+  const circuitWebrtc = announced.find((a) =>
+    typeof a === 'string' && a.includes('/p2p-circuit/webrtc/p2p/'),
+  );
+  if (circuitWebrtc === undefined) {
+    throw new Error(`priv ${privRow.notisId}: announces no /p2p-circuit/webrtc address`);
+  }
+  const m = /^(.+)\/p2p\/([^/]+)\/p2p-circuit\/webrtc\/p2p\/([^/]+)$/.exec(circuitWebrtc);
+  if (!m) {
+    throw new Error(`priv ${privRow.notisId}: unexpected /p2p-circuit/webrtc shape: ${circuitWebrtc}`);
+  }
+  const relayPeerIdString = m[2];
+  const privPeerIdString = m[3];
+  let relayRow = null;
+  const nonCircuitRe = new RegExp(`/p2p/${relayPeerIdString}$`);
+  for (const row of Object.values(identities)) {
+    const addrs = Array.isArray(row?.multiaddrs) ? row.multiaddrs : [];
+    if (addrs.some((a) => typeof a === 'string' && !a.includes('/p2p-circuit') && nonCircuitRe.test(a))) {
+      relayRow = row;
+      break;
+    }
+  }
+  if (relayRow === null) {
+    throw new Error(`priv ${privRow.notisId}: no identity row for relay peer ${relayPeerIdString}`);
+  }
+  const relayAddrs = Array.isArray(relayRow.multiaddrs) ? relayRow.multiaddrs : [];
+  const relayWebrtc = relayAddrs.find((a) => typeof a === 'string'
+    && a.includes('/webrtc-direct/')
+    && a.includes('/certhash/'));
+  if (relayWebrtc === undefined) {
+    throw new Error(`relay ${relayPeerIdString}: no /webrtc-direct/certhash/ address`);
+  }
+  // Both the `/p2p-circuit/webrtc/p2p/<priv>` form (signalling + direct
+  // WebRTC data) and the plain `/p2p-circuit/p2p/<priv>` form (would
+  // carry data on the limited relayed stream — refused by the client).
+  const relayedWebrtc = `${relayWebrtc}/p2p-circuit/webrtc/p2p/${privPeerIdString}`;
+  const relayedPlain = `${relayWebrtc}/p2p-circuit/p2p/${privPeerIdString}`;
+  return {
+    network: baseConfig.network,
+    anchors: [{ notisId: privRow.notisId, addrs: [relayedWebrtc, relayedPlain] }],
+    stunServers: Array.isArray(baseConfig.stunServers) ? baseConfig.stunServers : [],
+    seeds: [],
+  };
+}
+
+/**
  * Build a config variant that keeps the stage's own anchors AND adds a
  * list of hostile seed anchors. The seeds are refused by
  * `assertClientConfig` under the same rules anchors are, so each seed's

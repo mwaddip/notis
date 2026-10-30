@@ -29,18 +29,19 @@ const TOPOLOGY = {
 };
 
 describe('s1 (no name)', () => {
-  it('describe() lists four steps: node + two probes + DNS silent', () => {
+  it('describe() lists five steps: node + two probes + DNS silent + ICE record', () => {
     const names = s1.describe();
-    expect(names.length, 'four steps').toBe(4);
+    expect(names.length, 'five steps').toBe(5);
     expect(names[0]).toMatch(/anchor within/);
     expect(names[1]).toMatch(/\/blocks\/current/);
     expect(names[2]).toMatch(/\/nipopow\/proof\/24\/20/);
     expect(names[3]).toMatch(/DNS log/);
+    expect(names[4]).toMatch(/RTCPeerConnection/);
   });
   it('run({dryRun:true}) returns one result per describe() name, every verdict skipped', async () => {
     const r = await s1.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s1');
-    expect(r.steps.length).toBe(4);
+    expect(r.steps.length).toBe(5);
     for (const step of r.steps) {
       expect(step.verdict, step.name).toBe('skipped');
       expect(step.measurement).toBe(null);

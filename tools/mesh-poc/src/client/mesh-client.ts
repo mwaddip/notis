@@ -213,8 +213,16 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // Place in the workspace` names `generateKeyPair()` + `nodeKeyFromKeyPair`.
   const key = nodeKeyFromKeyPair(generateKeyPair());
 
+  // MESH_INTERFACE → NAT — "Only the relayed WebRTC path uses STUN;
+  // WebRTC-direct to a public address needs none". `webRTCDirect` is
+  // built with an empty iceServers list so js-libp2p does not fall
+  // back to its DEFAULT_ICE_SERVERS (`@libp2p/webrtc@7.0.2`'s
+  // `src/constants.ts:12`, which `src/private-to-public/utils/
+  // get-rtcpeerconnection.ts:147` reads when `rtcConfiguration.
+  // iceServers` is undefined). `webRTC()` keeps the configured
+  // mesh-node STUN by IP for the relayed WebRTC path.
   const transports = [
-    webRTCDirect(),
+    webRTCDirect({ rtcConfiguration: { iceServers: [] } }),
     webRTC({ rtcConfiguration: { iceServers: iceConfigurations(o.stunServers) } }),
     circuitRelayTransport(),
     webSockets(),
@@ -625,8 +633,9 @@ class MeshClientImpl implements MeshClient {
       return;
     }
     const ma = conn.remoteAddr.toString();
-    this.state_.transport = transportOf(ma);
-    this.state_.path = pathOf(ma);
+    const { transport, path } = classifyConnectionAddr(ma);
+    this.state_.transport = transport;
+    this.state_.path = path;
   }
 
   private refreshTransportPathAndEmit(): void {
@@ -827,19 +836,57 @@ export function messageOf(e: unknown): string {
   return String(e);
 }
 
-function transportOf(ma: string): 'webrtc-direct' | 'webrtc' | 'wss' | null {
-  if (ma.includes('/webrtc-direct/')) return 'webrtc-direct';
-  if (ma.includes('/webrtc/') || ma.includes('/webrtc')) {
-    if (ma.includes('/webrtc-direct')) return 'webrtc-direct';
-    if (/\/webrtc(?!-direct)/.test(ma)) return 'webrtc';
-  }
-  if (ma.includes('/wss') || ma.includes('/tls/ws')) return 'wss';
-  return null;
-}
+/**
+ * MESH_INTERFACE → Transports / NAT — `transport` and `path` of a live
+ * connection, read from the multiaddr's protocol components (not
+ * substring tests on the string form). The rows:
+ *   `/.../webrtc-direct/.../p2p/R/p2p-circuit/webrtc/p2p/X` → `{ webrtc, direct }`
+ *   `/.../webrtc-direct/.../p2p/R/p2p-circuit/p2p/X`         → `{ webrtc-direct, relay }`
+ *   `/.../tls/ws/p2p/R/p2p-circuit/p2p/X`                     → `{ wss, relay }`
+ *   `/.../webrtc-direct/.../p2p/X`                            → `{ webrtc-direct, direct }`
+ *   `/.../tls/ws/p2p/X`                                       → `{ wss, direct }`
+ *
+ * The base transport comes from the components before any `p2p-circuit`:
+ * a `webrtc-direct` component names `webrtc-direct`; a `tls` component
+ * followed by `ws` names `wss`. When a `p2p-circuit` is present, a
+ * `webrtc` or `webrtc-direct` component after it names the upgraded
+ * transport with `path: 'direct'`; otherwise the connection is still
+ * relayed through the base transport and the path is `relay`.
+ *
+ * An address this function cannot name is a thrown error at the call,
+ * not a `null` that hides a bug: the connection reached a state the
+ * client did not expect, and the caller must surface it.
+ */
+export function classifyConnectionAddr(ma: string): {
+  transport: 'webrtc-direct' | 'webrtc' | 'wss';
+  path: 'direct' | 'relay';
+} {
+  const names = multiaddr(ma).getComponents().map((c) => c.name);
+  const circuitIdx = names.indexOf('p2p-circuit');
+  const before = circuitIdx === -1 ? names : names.slice(0, circuitIdx);
 
-function pathOf(ma: string): 'direct' | 'relay' | null {
-  if (ma.includes('/p2p-circuit')) return 'relay';
-  return 'direct';
+  let base: 'webrtc-direct' | 'wss' | null = null;
+  if (before.includes('webrtc-direct')) base = 'webrtc-direct';
+  else {
+    const tlsIdx = before.indexOf('tls');
+    if (tlsIdx !== -1 && before[tlsIdx + 1] === 'ws') base = 'wss';
+  }
+  if (base === null) {
+    throw new Error(`cannot classify multiaddr base transport: ${ma}`);
+  }
+
+  if (circuitIdx === -1) {
+    return { transport: base, path: 'direct' };
+  }
+
+  const after = names.slice(circuitIdx + 1);
+  if (after.includes('webrtc')) {
+    return { transport: 'webrtc', path: 'direct' };
+  }
+  if (after.includes('webrtc-direct')) {
+    return { transport: 'webrtc-direct', path: 'direct' };
+  }
+  return { transport: base, path: 'relay' };
 }
 
 /**

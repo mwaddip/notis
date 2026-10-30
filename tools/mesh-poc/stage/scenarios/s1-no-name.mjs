@@ -11,7 +11,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
-import { verdictS1Node, verdictS1Probe, verdictS1DnsSilent } from '../lib/verdicts.mjs';
+import { verdictS1Node, verdictS1Probe, verdictS1DnsSilent, verdictIceServers } from '../lib/verdicts.mjs';
 import {
   execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal, leafPids,
 } from '../lib/measure.mjs';
@@ -26,6 +26,7 @@ export function describe() {
     'probe /blocks/current matches the node direct',
     'probe /nipopow/proof/24/20 matches the node direct',
     'the DNS log holds no line and the nft 53/853 counter did not move',
+    'every RTCPeerConnection the page builds names a STUN by IP, or no STUN at all',
   ];
 }
 
@@ -195,6 +196,23 @@ export async function run(ctx) {
       };
       return { verdict: verdictS1DnsSilent(m), measurement: m };
     });
+
+    // MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
+    // IP ... Only the relayed WebRTC path uses STUN; WebRTC-direct to
+    // a public address needs none." s1's path is WebRTC-direct, so the
+    // record is expected to be either empty-URL buckets or stun:ip:port
+    // URLs — never a host name. Chromium's own `--host-resolver-rules`
+    // hides a host-named ICE server from the DNS witness, so the record
+    // is where the stage sees it.
+    await rec.step(describe()[4], async () => {
+      const { value, iceRecord } = await cdpPollIce(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        "if (v === null) return false; try { return JSON.parse(v).nodeId !== null; } catch (_e) { return false; }",
+        60_000, 500,
+      );
+      void value;
+      return { verdict: verdictIceServers(iceRecord), measurement: { iceServers: iceRecord } };
+    });
   } finally {
     // Release the miner whether the probes passed, raised or timed
     // out — a paused miner holds up every other scenario that reads
@@ -227,6 +245,24 @@ export async function run(ctx) {
 async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
   const argv = [
     ctx.nodeBin, ctx.cdpScript, 'poll', url, expression, predicateBody,
+    String(timeoutMs), String(pollMs),
+  ];
+  const buf = execIn('notismesh-browser', argv, {
+    user: ctx.invokingUser,
+    timeoutMs: timeoutMs + 10_000,
+  });
+  return JSON.parse(buf.toString('utf8'));
+}
+
+/**
+ * MESH_INTERFACE → Acceptance 1 — poll the state through a page the
+ * stage opened with the `RTCPeerConnection` wrapper installed, and
+ * read the record alongside the state. The sub-command writes
+ * `{ value, iceRecord }`.
+ */
+async function cdpPollIce(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
+  const argv = [
+    ctx.nodeBin, ctx.cdpScript, 'poll-ice', url, expression, predicateBody,
     String(timeoutMs), String(pollMs),
   ];
   const buf = execIn('notismesh-browser', argv, {

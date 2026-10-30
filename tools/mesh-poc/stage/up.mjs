@@ -509,26 +509,42 @@ for (const [name, host] of Object.entries(topology.hosts)) {
 
 for (const { name, host } of natRouters(topology)) {
   const ns = nsOf(name);
+  const outsideIf = `vp-${host.veth}-o`;
   log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', 'nat'], { privileged: true });
   log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', 'nat', 'POSTROUTING', '{', 'type', 'nat', 'hook', 'postrouting', 'priority', '100', ';', '}'], { privileged: true });
   if (host.nat === 'symmetric') {
-    // nft(8) names the flag `fully-random`; the previous commit's
-    // `random-fully` is iptables' spelling and fails nft's parser. The
-    // flag triggers `NF_NAT_RANGE_PROTO_RANDOM_FULLY` in the kernel: a
-    // 32-bit pseudo-random port per (source, destination) tuple, which
-    // STUN reads as "address and port-dependent" (= symmetric) mapping.
-    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', `vp-${host.veth}-o`, 'masquerade', 'fully-random'], { privileged: true });
+    // nft(8): the `fully-random` flag triggers
+    // `NF_NAT_RANGE_PROTO_RANDOM_FULLY` in the kernel — a 32-bit
+    // pseudo-random port per (source, destination) tuple, which STUN
+    // reads as "address and port-dependent" (= symmetric) mapping.
+    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', outsideIf, 'masquerade', 'fully-random'], { privileged: true });
   } else {
-    // nft(8): plain `masquerade` is Linux netfilter's default behaviour —
-    // the kernel tries to preserve the client's source port, and never
-    // tweaks the external port per destination. A given internal
-    // (source IP, source port) sees the same external (ip, port)
-    // whatever address it is dialling, which STUN reads as "endpoint-
-    // independent" mapping (the `persistent` flag only binds the
-    // external *IP* across connections — irrelevant with one external
-    // IP, which is this NAT's shape).
-    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', `vp-${host.veth}-o`, 'masquerade'], { privileged: true });
+    // nft(8): plain `masquerade` preserves the client's source port
+    // on the first outbound packet of a flow unless conntrack already
+    // holds the (source IP, source port, destination IP, destination
+    // port) tuple — then it picks another port to avoid the clash.
+    // The input chain below drops every inbound packet to the
+    // outside interface that is not reply traffic, so a probe from
+    // outside never establishes a conntrack entry, and the first
+    // outbound from the inside to the same remote keeps the port.
+    // A given internal (source IP, source port) then sees the same
+    // external (ip, port) whatever address it is dialling, which STUN
+    // reads as "endpoint-independent" mapping.
+    log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'nat', 'POSTROUTING', 'oifname', outsideIf, 'masquerade'], { privileged: true });
   }
+  // MESH_INTERFACE → NAT — "A browser reaches a private node over
+  // WebRTC signalled through the relay". For the ICE check to find a
+  // matching tuple, the outbound masquerade must keep the source
+  // port; it does so under plain `masquerade` only when no conntrack
+  // entry already holds the (src, dst) pair. The input chain enforces
+  // that invariant: policy drop, reply traffic accepted (ct state
+  // established,related), and anything arriving from an interface
+  // other than the outside one accepted (the inside bridge still
+  // reaches the router for its own services).
+  log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', 'filter'], { privileged: true });
+  log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', 'filter', 'input', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', 'policy', 'drop', ';', '}'], { privileged: true });
+  log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'filter', 'input', 'ct', 'state', 'established,related', 'accept'], { privileged: true });
+  log.shell('sudo', ['ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', 'filter', 'input', 'iifname', '!=', outsideIf, 'accept'], { privileged: true });
 }
 
 // -----------------------------------------------------------------------

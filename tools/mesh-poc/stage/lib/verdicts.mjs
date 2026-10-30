@@ -84,29 +84,85 @@ export function verdictS1DnsSilent(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 2 — "A node behind the endpoint-independent
-// NAT answers through a relay, then directly". priv1's anchor becomes
-// the node in use, the client's state reads `path: 'relay'` first, then
-// `path: 'direct'` once DCUtR or the WebRTC upgrade lands.
-// Measurement: `{ nodeId: string, relayedTimeMs: number, directTimeMs: number }`.
-export function verdictS2Priv1(m) {
-  if (missing(m)) return 'skipped';
-  if (typeof m.nodeId !== 'string' || m.nodeId !== m.expectedNodeId) return 'FAIL';
-  if (typeof m.relayedTimeMs !== 'number') return 'FAIL';
-  if (typeof m.directTimeMs !== 'number') return 'FAIL';
-  if (m.directTimeMs < m.relayedTimeMs) return 'FAIL';
+// MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
+// IP"; a client refuses a hostname. The record is a list of
+// `{ urls: string[] }`, one entry per `RTCPeerConnection` the page
+// built. The verdict:
+//   `PASS` when at least one PC was recorded AND every URL matches
+//        `stun:<IPv4>:<port>` or `stun:[<IPv6>]:<port>` (a PC built
+//        with no URL is one empty bucket — still a record, and reads
+//        PASS since every URL of an empty set is vacuously an IP STUN
+//        URL);
+//   `FAIL` on any other URL;
+//   `skipped` when nothing was recorded.
+const STUN_IPV4_RE = /^stun:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5})$/;
+const STUN_IPV6_RE = /^stun:\[([0-9a-fA-F:]+)\]:(\d{1,5})$/;
+
+export function verdictIceServers(record) {
+  if (record === null || record === undefined) return 'skipped';
+  if (!Array.isArray(record)) return 'FAIL';
+  if (record.length === 0) return 'skipped';
+  for (const entry of record) {
+    if (entry === null || typeof entry !== 'object') return 'FAIL';
+    const urls = entry.urls;
+    if (!Array.isArray(urls)) return 'FAIL';
+    for (const u of urls) {
+      if (typeof u !== 'string') return 'FAIL';
+      const ipv4 = STUN_IPV4_RE.exec(u);
+      if (ipv4) {
+        const port = Number(ipv4[2]);
+        if (port >= 0 && port <= 65_535) continue;
+        return 'FAIL';
+      }
+      const ipv6 = STUN_IPV6_RE.exec(u);
+      if (ipv6) {
+        const port = Number(ipv6[2]);
+        if (port >= 0 && port <= 65_535) continue;
+        return 'FAIL';
+      }
+      return 'FAIL';
+    }
+  }
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 2 — "one behind the symmetric NAT answers
-// through the relay". priv2's path reaches `relay` and stays there (the
-// scenario records whether it ever goes direct, but the pass condition
-// is only `relay`).
-// Measurement: `{ nodeId, relayedTimeMs: number, everDirect: boolean }`.
-export function verdictS2Priv2(m) {
+// MESH_INTERFACE → Acceptance 2 / NAT — "A browser reaches a private
+// node over WebRTC signalled through the relay, gathering ICE
+// candidates against public nodes' STUN servers alone". priv1's step
+// writes a variant whose anchor is priv1 reached through a public
+// node's `/p2p-circuit/webrtc` address, polls the page for
+// `nodeId === priv1`, and reads what the page's own state carries.
+// Measurement:
+//   `{ nodeId, expectedNodeId, transport, path, anchorAddrRelayed,
+//      connectMs: number, iceServers: Array<{ urls: string[] }> }`.
+export function verdictS2Priv1(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.nodeId !== 'string' || m.nodeId !== m.expectedNodeId) return 'FAIL';
-  if (typeof m.relayedTimeMs !== 'number') return 'FAIL';
+  if (m.transport !== 'webrtc') return 'FAIL';
+  if (m.path !== 'direct') return 'FAIL';
+  if (typeof m.anchorAddrRelayed !== 'string') return 'FAIL';
+  if (!m.anchorAddrRelayed.includes('/p2p-circuit/webrtc')) return 'FAIL';
+  if (typeof m.connectMs !== 'number') return 'FAIL';
+  if (verdictIceServers(m.iceServers) !== 'PASS') return 'FAIL';
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance 2 / NAT → "A relay carries signalling,
+// not data" — "The node behind the symmetric NAT has no direct path
+// to the browser behind its NAT: it reads `retry`, never
+// `blacklisted`, and the client stays on a node it reaches."
+// Measurement:
+//   `{ expectedNodeId, priv2Status, priv2Failures: number,
+//      priv2LastFailure: {kind,message}|null, nodeIdInUse: string|null,
+//      everInUse: boolean, blacklistedAtAnyPoll: boolean }`.
+export function verdictS2Priv2(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.expectedNodeId !== 'string') return 'FAIL';
+  if (m.priv2Status !== 'retry') return 'FAIL';
+  if (typeof m.priv2Failures !== 'number' || m.priv2Failures < 1) return 'FAIL';
+  if (m.blacklistedAtAnyPoll !== false) return 'FAIL';
+  if (typeof m.nodeIdInUse !== 'string') return 'FAIL';
+  if (m.nodeIdInUse === m.expectedNodeId) return 'FAIL';
   return 'PASS';
 }
 

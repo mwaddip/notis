@@ -237,9 +237,14 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   // each reservation lands.
   const relayCount = opts.bootstrap.length;
   const stunServers = opts.stunServers ?? [];
+  // MESH_INTERFACE → NAT — "Only the relayed WebRTC path uses STUN;
+  // WebRTC-direct to a public address needs none". The empty
+  // iceServers list disables libp2p's `DEFAULT_ICE_SERVERS` fallback
+  // (`@libp2p/webrtc@7.0.2/src/constants.ts:12`); the private role's
+  // `webRTC()` keeps the configured mesh-node STUN by IP.
   const transports = [
     tcp(),
-    webRTCDirect(),
+    webRTCDirect({ rtcConfiguration: { iceServers: [] } }),
     ...(opts.role === 'private' ? [
       webRTC({
         rtcConfiguration: {

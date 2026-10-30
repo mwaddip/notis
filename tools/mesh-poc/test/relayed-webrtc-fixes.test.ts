@@ -55,7 +55,7 @@ describe('fix A — each NAT router has an input chain that drops unsolicited in
     });
   }
 
-  it.fails('every NAT router adds `table ip filter` and a drop-policy `input` chain', () => {
+  it('every NAT router adds `table ip filter` and a drop-policy `input` chain', () => {
     const res = runDry();
     expect(res.status, `exit (stderr: ${res.stderr})`).toBe(0);
     const topology = readTopology(TOPOLOGY_PATH);
@@ -76,7 +76,7 @@ describe('fix A — each NAT router has an input chain that drops unsolicited in
     expect(missing, missing.join('\n')).toEqual([]);
   }, 30_000);
 
-  it.fails('every NAT router accepts established,related and non-outside-interface traffic in the input chain', () => {
+  it('every NAT router accepts established,related and non-outside-interface traffic in the input chain', () => {
     const res = runDry();
     expect(res.status, `exit (stderr: ${res.stderr})`).toBe(0);
     const topology = readTopology(TOPOLOGY_PATH);
@@ -97,7 +97,7 @@ describe('fix A — each NAT router has an input chain that drops unsolicited in
     expect(missing, missing.join('\n')).toEqual([]);
   }, 30_000);
 
-  it.fails('up.mjs holds no narration of a previous commit\'s nft spelling', () => {
+  it('up.mjs holds no narration of a previous commit\'s nft spelling', () => {
     // CLAUDE.md → "Describe reality as it is" — the comment on the
     // symmetric NAT rule said what the previous commit got wrong; a
     // reader of the current tree has no need for that history.
@@ -118,7 +118,7 @@ describe('fix B — WebRTC-direct names no ICE server, the relayed WebRTC path k
   // `test/mesh-listen-and-dial-attribution.test.ts` uses on the
   // transport-list construction.)
 
-  it.fails('src/client/mesh-client.ts builds webRTCDirect with an empty iceServers list', () => {
+  it('src/client/mesh-client.ts builds webRTCDirect with an empty iceServers list', () => {
     const src = readFileSync(SRC_MESH_CLIENT, 'utf8');
     expect(
       src,
@@ -135,7 +135,7 @@ describe('fix B — WebRTC-direct names no ICE server, the relayed WebRTC path k
     );
   });
 
-  it.fails('src/node/mesh-node.ts builds webRTCDirect with an empty iceServers list', () => {
+  it('src/node/mesh-node.ts builds webRTCDirect with an empty iceServers list', () => {
     const src = readFileSync(SRC_MESH_NODE, 'utf8');
     expect(
       src,
@@ -164,27 +164,27 @@ describe('fix C — classifyConnectionAddr reads transport/path from the multiad
   const RELAY = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
   const TARGET = '12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4';
 
-  it.fails('a webrtc-direct address with /p2p-circuit/webrtc classifies as { webrtc, direct }', () => {
+  it('a webrtc-direct address with /p2p-circuit/webrtc classifies as { webrtc, direct }', () => {
     const ma = `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`;
     expect(classifyConnectionAddr(ma)).toEqual({ transport: 'webrtc', path: 'direct' });
   });
 
-  it.fails('a webrtc-direct address with /p2p-circuit and no /webrtc classifies as { webrtc-direct, relay }', () => {
+  it('a webrtc-direct address with /p2p-circuit and no /webrtc classifies as { webrtc-direct, relay }', () => {
     const ma = `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`;
     expect(classifyConnectionAddr(ma)).toEqual({ transport: 'webrtc-direct', path: 'relay' });
   });
 
-  it.fails('a tls/ws address with /p2p-circuit classifies as { wss, relay }', () => {
+  it('a tls/ws address with /p2p-circuit classifies as { wss, relay }', () => {
     const ma = `/ip4/11.100.0.11/tcp/443/tls/ws/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`;
     expect(classifyConnectionAddr(ma)).toEqual({ transport: 'wss', path: 'relay' });
   });
 
-  it.fails('a plain webrtc-direct address classifies as { webrtc-direct, direct }', () => {
+  it('a plain webrtc-direct address classifies as { webrtc-direct, direct }', () => {
     const ma = `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${TARGET}`;
     expect(classifyConnectionAddr(ma)).toEqual({ transport: 'webrtc-direct', path: 'direct' });
   });
 
-  it.fails('a plain tls/ws address classifies as { wss, direct }', () => {
+  it('a plain tls/ws address classifies as { wss, direct }', () => {
     const ma = `/ip4/11.100.0.11/tcp/443/tls/ws/p2p/${TARGET}`;
     expect(classifyConnectionAddr(ma)).toEqual({ transport: 'wss', path: 'direct' });
   });
@@ -207,17 +207,21 @@ describe('fix D — cdp.mjs installs an RTCPeerConnection wrapper via Page.addSc
   // --host-resolver-rules). The wrapper lives in the page; cdp.mjs
   // enables Page and installs the script before navigating.
 
-  it.fails('cdp.mjs references Page.addScriptToEvaluateOnNewDocument', () => {
+  it('cdp.mjs calls Page.addScriptToEvaluateOnNewDocument through session.send', () => {
     const src = readFileSync(SRC_CDP, 'utf8');
-    expect(src, 'cdp.mjs installs a script before document creation').toContain('Page.addScriptToEvaluateOnNewDocument');
+    // The call shape — a `send(...)` taking the CDP method name as a
+    // string literal — rejects a renamed identifier that happens to
+    // contain the substring.
+    expect(src, 'cdp.mjs installs a script before document creation')
+      .toMatch(/send\s*\(\s*['"]Page\.addScriptToEvaluateOnNewDocument['"]/);
   });
 
-  it.fails('cdp.mjs wraps RTCPeerConnection in the installed script', () => {
+  it('cdp.mjs wraps RTCPeerConnection in the installed script', () => {
     const src = readFileSync(SRC_CDP, 'utf8');
     expect(src, 'script wraps window.RTCPeerConnection').toMatch(/window\.RTCPeerConnection\s*=/);
   });
 
-  it.fails('cdp.mjs exposes a sub-command that returns both the state and the ICE record', () => {
+  it('cdp.mjs exposes a sub-command that returns both the state and the ICE record', () => {
     const src = readFileSync(SRC_CDP, 'utf8');
     // The sub-command is named `poll-ice` and surfaces `{ value, iceRecord }`.
     expect(src, 'poll-ice sub-command').toContain('poll-ice');
@@ -233,13 +237,13 @@ describe('fix D — verdictIceServers reads the record per MESH_INTERFACE → NA
   //   FAIL on any other URL
   //   skipped when nothing was recorded
 
-  it.fails('skipped when the record is missing or empty', () => {
+  it('skipped when the record is missing or empty', () => {
     expect(verdictIceServers(null)).toBe('skipped');
     expect(verdictIceServers(undefined)).toBe('skipped');
     expect(verdictIceServers([])).toBe('skipped');
   });
 
-  it.fails('PASS when every URL is stun:<IPv4>:<port>', () => {
+  it('PASS when every URL is stun:<IPv4>:<port>', () => {
     expect(verdictIceServers([{ urls: ['stun:11.100.0.11:3478'] }])).toBe('PASS');
     expect(verdictIceServers([
       { urls: ['stun:11.100.0.11:3478'] },
@@ -247,27 +251,27 @@ describe('fix D — verdictIceServers reads the record per MESH_INTERFACE → NA
     ])).toBe('PASS');
   });
 
-  it.fails('PASS when a PC was recorded with no URLs (WebRTC-direct, no STUN)', () => {
+  it('PASS when a PC was recorded with no URLs (WebRTC-direct, no STUN)', () => {
     // A PC built with iceServers: [] still counts as a recording: the
     // page constructed a peer connection and named no server, which
     // is the fix B check from the browser's angle.
     expect(verdictIceServers([{ urls: [] }])).toBe('PASS');
   });
 
-  it.fails('PASS when a URL is stun:[<IPv6>]:<port>', () => {
+  it('PASS when a URL is stun:[<IPv6>]:<port>', () => {
     expect(verdictIceServers([{ urls: ['stun:[2001:db8::1]:3478'] }])).toBe('PASS');
   });
 
-  it.fails('FAIL when a URL names a hostname', () => {
+  it('FAIL when a URL names a hostname', () => {
     expect(verdictIceServers([{ urls: ['stun:stun.example.com:3478'] }])).toBe('FAIL');
     expect(verdictIceServers([{ urls: ['stun:global.stun.twilio.com:3478'] }])).toBe('FAIL');
   });
 
-  it.fails('FAIL when a URL is not a stun: URL', () => {
+  it('FAIL when a URL is not a stun: URL', () => {
     expect(verdictIceServers([{ urls: ['turn:11.100.0.11:3478'] }])).toBe('FAIL');
   });
 
-  it.fails('FAIL when a URL has no port', () => {
+  it('FAIL when a URL has no port', () => {
     expect(verdictIceServers([{ urls: ['stun:11.100.0.11'] }])).toBe('FAIL');
   });
 });
@@ -322,23 +326,27 @@ describe('fix E — verdictS2Priv1 reads transport, path, anchorAddrRelayed and 
     expect(verdictS2Priv1({ ...base(), nodeId: 'bb'.repeat(32) })).toBe('FAIL');
   });
 
-  it.fails('FAIL when transport is not webrtc (webrtc-direct over a plain relayed address)', () => {
-    expect(verdictS2Priv1({ ...base(), transport: 'webrtc-direct', anchorAddrRelayed: RELAYED_PLAIN })).toBe('FAIL');
+  it('FAIL when transport is not webrtc (the direct WebRTC upgrade did not land)', () => {
+    // The anchor address stays `/p2p-circuit/webrtc` so only the
+    // transport check fires; a mutation that removes the transport
+    // check otherwise lets the base-anchor + ICE assertions carry the
+    // verdict.
+    expect(verdictS2Priv1({ ...base(), transport: 'webrtc-direct' })).toBe('FAIL');
   });
 
-  it.fails('FAIL when path is not direct (still relay-only)', () => {
+  it('FAIL when path is not direct (still relay-only)', () => {
     expect(verdictS2Priv1({ ...base(), path: 'relay' })).toBe('FAIL');
   });
 
-  it.fails('FAIL when anchorAddrRelayed does not hold /p2p-circuit/webrtc', () => {
+  it('FAIL when anchorAddrRelayed does not hold /p2p-circuit/webrtc', () => {
     expect(verdictS2Priv1({ ...base(), anchorAddrRelayed: RELAYED_PLAIN })).toBe('FAIL');
   });
 
-  it.fails('FAIL when the ICE-server record fails D\'s rule (hostname)', () => {
+  it('FAIL when the ICE-server record fails D\'s rule (hostname)', () => {
     expect(verdictS2Priv1({ ...base(), iceServers: [{ urls: ['stun:stun.example.com:3478'] }] })).toBe('FAIL');
   });
 
-  it.fails('FAIL when no ICE record was captured (empty array)', () => {
+  it('FAIL when no ICE record was captured (empty array)', () => {
     // D says "skipped when nothing was recorded"; s2's priv1 step then
     // FAILs — the whole step cannot PASS on an unmeasured ICE path.
     expect(verdictS2Priv1({ ...base(), iceServers: [] })).toBe('FAIL');
@@ -390,27 +398,27 @@ describe('part F — verdictS2Priv2 reads a retried entry with ≥1 failure, the
     expect(verdictS2Priv2(base())).toBe('PASS');
   });
 
-  it.fails('FAIL when priv2\'s status is blacklisted at the end', () => {
+  it('FAIL when priv2\'s status is blacklisted at the end', () => {
     expect(verdictS2Priv2({ ...base(), priv2Status: 'blacklisted' })).toBe('FAIL');
   });
 
-  it.fails('FAIL when priv2\'s status is ok (never retried)', () => {
+  it('FAIL when priv2\'s status is ok (never retried)', () => {
     expect(verdictS2Priv2({ ...base(), priv2Status: 'ok' })).toBe('FAIL');
   });
 
-  it.fails('FAIL when priv2 has no recorded failure', () => {
+  it('FAIL when priv2 has no recorded failure', () => {
     expect(verdictS2Priv2({ ...base(), priv2Failures: 0 })).toBe('FAIL');
   });
 
-  it.fails('FAIL when priv2 was blacklisted at any poll', () => {
+  it('FAIL when priv2 was blacklisted at any poll', () => {
     expect(verdictS2Priv2({ ...base(), blacklistedAtAnyPoll: true })).toBe('FAIL');
   });
 
-  it.fails('FAIL when the page reached no other node (nodeIdInUse null)', () => {
+  it('FAIL when the page reached no other node (nodeIdInUse null)', () => {
     expect(verdictS2Priv2({ ...base(), nodeIdInUse: null })).toBe('FAIL');
   });
 
-  it.fails('FAIL when the page\'s node in use is priv2 itself', () => {
+  it('FAIL when the page\'s node in use is priv2 itself', () => {
     expect(verdictS2Priv2({ ...base(), nodeIdInUse: PRIV2 })).toBe('FAIL');
   });
 
@@ -433,12 +441,12 @@ describe('part F — s2\'s priv2 step walks priv2\'s entry and the page\'s nodeI
   // its /p2p-circuit/webrtc and plain /p2p-circuit addresses, polls
   // the state, and records what each poll holds.
 
-  it.fails('s2 imports buildPrivateViaAnnouncedRelayPairVariant', () => {
+  it('s2 imports buildPrivateViaAnnouncedRelayPairVariant', () => {
     const src = readFileSync(SRC_S2, 'utf8');
     expect(src, 's2 imports the pair variant').toContain('buildPrivateViaAnnouncedRelayPairVariant');
   });
 
-  it.fails('s2 records blacklistedAtAnyPoll and the final nodeIdInUse', () => {
+  it('s2 records blacklistedAtAnyPoll and the final nodeIdInUse', () => {
     const src = readFileSync(SRC_S2, 'utf8');
     expect(src, 'blacklistedAtAnyPoll tracked').toContain('blacklistedAtAnyPoll');
     expect(src, 'nodeIdInUse tracked').toContain('nodeIdInUse');
@@ -446,7 +454,7 @@ describe('part F — s2\'s priv2 step walks priv2\'s entry and the page\'s nodeI
     expect(src, 'priv2Failures tracked').toContain('priv2Failures');
   });
 
-  it.fails('s2\'s priv2 step has no catch{} that swallows a poll error', () => {
+  it('s2\'s priv2 step has no catch{} that swallows a poll error', () => {
     const src = readFileSync(SRC_S2, 'utf8');
     // The scenario's one acceptable catch is in the teardown
     // (`writeStageDefault`, which already carries an explicit stderr
@@ -467,29 +475,31 @@ describe('fix E / D — s1 and s2 scenarios wire the ICE-record step', () => {
   // or the PC was built with no URL); s2's priv1 step carries the
   // record inline.
 
-  it.fails('s1 scenario names the ICE-record step and calls poll-ice', () => {
+  it('s1 scenario names the ICE-record step and calls poll-ice', () => {
     const src = readFileSync(SRC_S1, 'utf8');
     expect(src, 's1 uses the poll-ice cdp command').toContain('poll-ice');
     expect(src, 's1 reads verdictIceServers').toContain('verdictIceServers');
   });
 
-  it.fails('s2 scenario reads iceServers through the poll-ice cdp command', () => {
+  it('s2 scenario reads iceServers through the poll-ice cdp command', () => {
     const src = readFileSync(SRC_S2, 'utf8');
     expect(src, 's2 uses the poll-ice cdp command').toContain('poll-ice');
     expect(src, 's2 records anchorAddrRelayed in priv1\'s measurement').toMatch(/anchorAddrRelayed/);
     expect(src, 's2 passes iceServers').toMatch(/iceServers\s*:/);
   });
 
-  it.fails('s2\'s priv1 step records connectMs, not the pre-fix directTimeMs/everDirect pair', () => {
+  it('s2\'s priv1 step records connectMs, not the pre-fix directTimeMs/everDirect pair', () => {
     const src = readFileSync(SRC_S2, 'utf8');
-    expect(src, 's2 priv1 names connectMs').toMatch(/connectMs\s*:/);
+    // `connectMs,` as a shorthand or `connectMs:` as a key — the
+    // measurement must name it.
+    expect(src, 's2 priv1 names connectMs').toMatch(/\bconnectMs\b\s*[,:}]/);
     // The old shared body declared `let directTimeMs = null;` and
     // `let everDirect = false;` in priv1's path and set them in a
     // catch{} that swallowed the direct-wait timeout. The new priv1
     // code has neither declaration (priv2 keeps its own, in its own
     // sub-step).
-    const priv1End = src.indexOf("sub.privHost === 'priv2'");
-    const priv1Slice = priv1End > 0 ? src.slice(0, priv1End) : src;
+    const priv2Start = src.indexOf('priv2Row');
+    const priv1Slice = priv2Start > 0 ? src.slice(0, priv2Start) : src;
     expect(priv1Slice, 's2 priv1 does not declare directTimeMs').not.toMatch(/\blet\s+directTimeMs\b/);
   });
 });
