@@ -223,6 +223,15 @@ export function acmeSource(o: {
         const [keyPem, csr] = await acme.crypto.createCsr({
           altNames: [o.ip],
         });
+        // MESH_INTERFACE → The IP certificate — `acme-client`'s
+        // `getCertificate` returns the whole PEM chain (RFC 8555 §7.4.2
+        // "application/pem-certificate-chain" — leaf, then every
+        // intermediate the ACME server offers). `startWssRenewal`
+        // hands this `certPem` to `@libp2p/websockets`'s `https`
+        // option, which Node's `https.createServer` reads as the
+        // server's served chain — Chromium gets leaf + Pebble's
+        // intermediate and validates against the root installed in
+        // the browser profile's NSS db.
         const certPem = await client.finalizeOrder(order, csr).then((o2) =>
           client.getCertificate(o2),
         );

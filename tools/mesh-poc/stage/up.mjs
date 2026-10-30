@@ -894,18 +894,26 @@ log.shell('sudo', [
 // certificate Pebble issues to pub1 verifies on the browser's path
 // through the NSS db certutil populates below.
 
-// `certutil -d sql:<home>/.pki/nssdb -A -n pebble-root -t ",,"` installs the
-// root into the NSS db Chromium reads when `HOME` is set to that profile.
-// `libnss3-tools` provides it — a missing certutil is a stop-condition for
-// `up`, since the browser host cannot trust the IP certificate without it.
+// `certutil -d sql:<home>/.pki/nssdb -A -n pebble-root -t "C,,"` installs
+// the root into the NSS db Chromium reads when `HOME` is set to that
+// profile. The three trust-attribute fields are TLS, email, object
+// signing; `C,,` is "trusted CA for SSL servers" (no trust for email,
+// no trust for object signing). `,,` means NO trust at all, which
+// Chromium reads as `net::ERR_CERT_AUTHORITY_INVALID` on the first WSS
+// dial. `libnss3-tools` provides certutil.
 log.shell('sh', ['-c', `which certutil >/dev/null || { echo "certutil (libnss3-tools) not installed on this machine — install it before stage:up" >&2; exit 1; }`]);
 log.shell('mkdir', ['-p', browserNssDir]);
 // Create the NSS database only when it is absent (`cert9.db` is the SQL
 // backend's file). An unconditional `certutil -N` plus `|| true` would
 // swallow a real failure; this test lets one fail.
 log.shell('sh', ['-c', `test -f ${join(browserNssDir, 'cert9.db')} || certutil -N -d sql:${browserNssDir} --empty-password`]);
-log.shell('certutil', ['-A', '-d', `sql:${browserNssDir}`, '-n', 'pebble-root', '-t', ',,', '-i', pebbleRootPath]);
-log.shell('sh', ['-c', `certutil -L -d sql:${browserNssDir} | grep -q pebble-root || { echo "pebble-root not in profile NSS db" >&2; exit 1; }`]);
+log.shell('certutil', ['-A', '-d', `sql:${browserNssDir}`, '-n', 'pebble-root', '-t', 'C,,', '-i', pebbleRootPath]);
+// Read back the installed trust. `certutil -L -n <nickname>` prints
+// `Certificate Trust Flags:\n  SSL Flags: Valid CA\n ...` AND a line of
+// the form `CT,,` or `C,,` in the summary table. A quick grep for
+// `C,,` suffices to tell "trusted for SSL servers" from "no trust at
+// all"; before Chromium starts, fail unless the stored trust reads it.
+log.shell('sh', ['-c', `certutil -L -d sql:${browserNssDir} -n pebble-root | grep -q 'C,,' || { echo "pebble-root in NSS db but trust is not C,, — Chromium will refuse the IP cert as ERR_CERT_AUTHORITY_INVALID" >&2; exit 1; }`]);
 
 // MESH_INTERFACE → Discovery — `config.json` is written from the keys'
 // real notisIds and the mesh nodes' printed multiaddrs (which carry
@@ -924,7 +932,11 @@ if (!dryRun) {
     if (identity !== undefined) realMultiaddrs[name] = identity.multiaddrs ?? [];
   }
 }
-const pageConfig = buildPageConfig(topology, notisIds, realMultiaddrs);
+// MESH_INTERFACE → Acceptance — exec-mode `buildPageConfig` demands real
+// mesh identities; dry-run opts into a /certhash/ placeholder. A
+// placeholder in a REAL config.json leaks to the browser as a
+// SyntaxError on dial — the opt-in guards against that.
+const pageConfig = buildPageConfig(topology, notisIds, realMultiaddrs, { dryRun });
 
 if (!dryRun) {
   mkdirSync(dirname(configPath), { recursive: true });

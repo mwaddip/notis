@@ -15,7 +15,8 @@ import { publicKeyFromRaw } from '@libp2p/crypto/keys';
 import { peerIdFromPublicKey } from '@libp2p/peer-id';
 import { publicMeshHosts } from './topology.mjs';
 
-export function buildPageConfig(topology, nodeIdentities, realMultiaddrs) {
+export function buildPageConfig(topology, nodeIdentities, realMultiaddrs, opts) {
+  const dryRun = opts !== undefined && opts !== null && opts.dryRun === true;
   const anchors = [];
   const stunServers = [];
   for (const { name, host } of publicMeshHosts(topology)) {
@@ -48,16 +49,23 @@ export function buildPageConfig(topology, nodeIdentities, realMultiaddrs) {
       if (!hasWebrtcWithCerthash) {
         throw new Error(`${name}: realMultiaddrs carries no /webrtc-direct/certhash/ multiaddr`);
       }
-    } else {
-      // Dry-run — the mesh node's cert does not exist yet, so the
-      // WebRTC-direct address carries a /certhash/ PLACEHOLDER. The
-      // written config.json still has the shape a browser accepts
-      // (gater reads the /certhash/ component but a placeholder dial
-      // will refuse at the TLS stage, which is a dry-run concern only).
+    } else if (dryRun) {
+      // Dry-run opt-in only — the mesh node's cert does not exist yet,
+      // so the WebRTC-direct address carries a /certhash/ PLACEHOLDER.
+      // A placeholder in a REAL `config.json` leaks into the browser as
+      // `SyntaxError: Unexpected end of data` on dial; the caller MUST
+      // pass `{ dryRun: true }` to opt in.
       addrs.push(`/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct/certhash/uEiA_DRYRUN_PLACEHOLDER_CERTHASH_______________/p2p/${peerIdStr}`);
       if (host.mesh.wss !== undefined) {
         addrs.push(`/ip4/${host.addr}/tcp/${host.mesh.wss.port}/tls/ws/p2p/${peerIdStr}`);
       }
+    } else {
+      // Exec mode without a mesh node's identity line for this host is
+      // a bug — the stage brings the mesh nodes up before writing
+      // config.json, so a missing identity means an earlier step
+      // silently failed. Fail loudly here instead of writing a
+      // placeholder that the browser cannot dial.
+      throw new Error(`${name}: no realMultiaddrs supplied in exec mode (pass { dryRun: true } to opt into the placeholder)`);
     }
     anchors.push({ notisId: id, addrs });
     stunServers.push(`stun:${host.addr}:${host.mesh.stunPort}`);

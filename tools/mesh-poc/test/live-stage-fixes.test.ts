@@ -54,7 +54,7 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
       }
     }
   });
-  it.fails('exec-mode without realMultiaddrs throws (no placeholder fallback)', () => {
+  it('exec-mode without realMultiaddrs throws (no placeholder fallback)', () => {
     // Live-stage failure main caught: the dry-run placeholder leaked
     // into real config.json. The builder must never fall back to a
     // placeholder when `dryRun` is not passed.
@@ -92,21 +92,21 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
 });
 
 describe('fix cert — certutil trust is C,, (not ,,) and up verifies it', () => {
-  it.fails("up --dry-run installs pebble-root with trust 'C,,' (CA for SSL servers)", () => {
+  it("up --dry-run installs pebble-root with trust 'C,,' (CA for SSL servers)", () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], { encoding: 'utf8', timeout: 30_000 });
     expect(res.status).toBe(0);
-    const addLine = res.stdout.split('\n').find((l) => / certutil /.test(l) && l.includes(' -A ') && l.includes('pebble-root'));
+    const addLine = res.stdout.split('\n').find((l) => /\bcertutil\b/.test(l) && / -A /.test(l) && l.includes('pebble-root'));
     expect(addLine, 'certutil -A line is in the dry-run').toBeDefined();
     // `,,` means no trust; a CA trusted for TLS servers is `C,,`.
     expect(addLine, 'certutil -A uses -t C,,').toMatch(/-t\s+C,,/);
-    expect(addLine, "certutil -A does not use -t ',,' (no trust)").not.toMatch(/-t\s+,,/);
+    expect(addLine, "certutil -A does not use -t ',,' (no trust)").not.toMatch(/-t\s+'?,,'?(?:\s|$)/);
   }, 30_000);
-  it.fails("up --dry-run reads back pebble-root trust after install, fails unless 'C,,'", () => {
+  it("up --dry-run reads back pebble-root trust after install, fails unless 'C,,'", () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], { encoding: 'utf8', timeout: 30_000 });
     expect(res.status).toBe(0);
     // The verify step runs `certutil -L -d <nssdb> -n pebble-root` and
     // greps for `C,,`.
-    const verifyLines = res.stdout.split('\n').filter((l) => / certutil / .test(l) && / -L / .test(l) && / -n pebble-root/.test(l));
+    const verifyLines = res.stdout.split('\n').filter((l) => /\bcertutil\b/.test(l) && / -L /.test(l) && / -n pebble-root/.test(l));
     expect(verifyLines.length, 'certutil -L -n pebble-root line is in the dry-run').toBeGreaterThan(0);
     const anyChecksForC = verifyLines.some((l) => /C,,/.test(l));
     expect(anyChecksForC, 'at least one -L -n pebble-root line checks for C,,').toBe(true);

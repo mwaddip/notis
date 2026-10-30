@@ -63,7 +63,7 @@ describe('stage/topology.json is whole', () => {
 
   it('every anchor the page config names is a public mesh node', () => {
     const topology = readTopology(TOPOLOGY_PATH);
-    const config = buildPageConfig(topology, fakeIdentities());
+    const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
     const publicIds = new Set(
       Object.entries(topology.hosts as Record<string, any>)
         .filter(([, h]) => h.role === 'public' && h.mesh?.role === 'public')
@@ -79,7 +79,7 @@ describe('stage/topology.json is whole', () => {
 describe('the page config holds no DNS and passes the client\'s checks', () => {
   it('buildPageConfig output has no /dns4/, /dns6/, /dnsaddr/ components', () => {
     const topology = readTopology(TOPOLOGY_PATH);
-    const config = buildPageConfig(topology, fakeIdentities());
+    const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
     expect(config.anchors.length, 'the stage has anchors').toBeGreaterThan(0);
     for (const a of config.anchors) {
       expect(a.addrs.length, `anchor ${a.notisId} has addresses`).toBeGreaterThan(0);
@@ -96,7 +96,7 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
 
   it('assertClientConfig accepts the output', () => {
     const topology = readTopology(TOPOLOGY_PATH);
-    const config = buildPageConfig(topology, fakeIdentities());
+    const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
     expect(config.anchors.length).toBeGreaterThan(0);
     expect(config.stunServers.length, 'the public mesh nodes contribute their STUN').toBeGreaterThan(0);
     // profileFor is read here as the page's `runMain` reads it, so a shape
