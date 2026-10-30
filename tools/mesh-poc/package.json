@@ -16,9 +16,12 @@
     "page:build": "vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc -p tsconfig.browser.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "stage:up": "node stage/up.mjs",
+    "stage:down": "node stage/down.mjs"
   },
   "dependencies": {
+    "@dagsocial/nipopow": "workspace:*",
     "@dagsocial/nipopow-client": "workspace:*",
     "@dagsocial/node-reads": "workspace:*",
     "@dagsocial/types": "workspace:*",

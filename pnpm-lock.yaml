@@ -380,6 +380,9 @@ importers:
 
   tools/mesh-poc:
     dependencies:
+      '@dagsocial/nipopow':
+        specifier: workspace:*
+        version: link:../../packages/nipopow
       '@dagsocial/nipopow-client':
         specifier: workspace:*
         version: link:../nipopow-client

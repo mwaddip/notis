@@ -1,0 +1,147 @@
+{
+  "network": "devnet",
+  "internet": {
+    "bridgeName": "notismesh-br0",
+    "subnet": "10.100.0.0/24",
+    "gateway": "10.100.0.1"
+  },
+  "hosts": {
+    "pub1": {
+      "role": "public",
+      "nat": "none",
+      "addr": "10.100.0.11",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "stunPort": 3478,
+        "wss": {
+          "port": 443,
+          "acmeChallengePort": 5002
+        }
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "miner"
+      }
+    },
+    "pub2": {
+      "role": "public",
+      "nat": "none",
+      "addr": "10.100.0.12",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "stunPort": 3478
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "pebble": {
+      "role": "acme",
+      "nat": "none",
+      "addr": "10.100.0.21",
+      "pebble": {
+        "listen": "0.0.0.0:14000",
+        "managementListen": "0.0.0.0:15000",
+        "httpChallengePort": 5002
+      }
+    },
+    "dns-log": {
+      "role": "dns-log",
+      "nat": "none",
+      "addr": "10.100.0.22",
+      "dnsPort": 53
+    },
+    "hostile-malformed": {
+      "role": "hostile",
+      "nat": "none",
+      "addr": "10.100.0.31",
+      "mesh": {
+        "role": "private",
+        "upstreamMode": "malformed"
+      }
+    },
+    "hostile-invalid": {
+      "role": "hostile",
+      "nat": "none",
+      "addr": "10.100.0.32",
+      "mesh": {
+        "role": "private",
+        "upstreamMode": "invalid"
+      }
+    },
+    "hostile-lagging": {
+      "role": "hostile",
+      "nat": "none",
+      "addr": "10.100.0.33",
+      "mesh": {
+        "role": "private"
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "natA": {
+      "role": "nat",
+      "nat": "endpoint-independent",
+      "outsideAddr": "10.100.0.101",
+      "insideSubnet": "10.101.0.0/24",
+      "insideGateway": "10.101.0.1"
+    },
+    "priv1": {
+      "role": "private",
+      "nat": "endpoint-independent",
+      "parent": "natA",
+      "addr": "10.101.0.11",
+      "mesh": {
+        "role": "private"
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "natB": {
+      "role": "nat",
+      "nat": "symmetric",
+      "outsideAddr": "10.100.0.102",
+      "insideSubnet": "10.102.0.0/24",
+      "insideGateway": "10.102.0.1"
+    },
+    "priv2": {
+      "role": "private",
+      "nat": "symmetric",
+      "parent": "natB",
+      "addr": "10.102.0.11",
+      "mesh": {
+        "role": "private"
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
+    "natC": {
+      "role": "nat",
+      "nat": "endpoint-independent",
+      "outsideAddr": "10.100.0.103",
+      "insideSubnet": "10.103.0.0/24",
+      "insideGateway": "10.103.0.1"
+    },
+    "browser": {
+      "role": "browser",
+      "nat": "endpoint-independent",
+      "parent": "natC",
+      "addr": "10.103.0.11",
+      "httpPort": 80
+    }
+  }
+}

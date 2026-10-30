@@ -6,6 +6,11 @@ dist-page/
 *.db-shm
 SESSION_CONTEXT.md
 
+# mesh-poc stage output and binary cache — written by `pnpm --filter
+# @dagsocial/mesh-poc stage:up`, kept local
+tools/mesh-poc/stage/out/
+tools/mesh-poc/stage/cache/
+
 # Remediation working files — held from this PUBLIC repo while audit fixes are in progress
 # (they describe live-exploitable issues on a running node). Un-ignore + commit once fixes ship.
 AUDIT-*.md
