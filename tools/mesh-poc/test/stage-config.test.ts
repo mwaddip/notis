@@ -281,6 +281,43 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance — the lag cut only after the height wait, so
   // `hostile-lagging` is behind from a synced start, not from a slow sync
   // that may still be running.
+  // MESH_INTERFACE → Discovery / Transports — a mesh node bootstraps from
+  // other MESH nodes' addresses, not the Notis p2p port. The TCP mesh
+  // port is in the topology; the `/p2p/<peer id>` tail is derived from
+  // the public mesh node's notisId. The previous commit's mesh nodes all
+  // died with `bootstrap address refused: /ip4/10.100.0.11/tcp/9100 has
+  // no /p2p/ component`.
+  it.fails('every mesh spawn\'s MESH_BOOTSTRAP names a mesh port with a /p2p/ id, not the Notis p2p port', () => {
+    runDryOnce();
+    const meshSpawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
+    expect(meshSpawnLines.length, 'at least one mesh spawn').toBeGreaterThan(0);
+    for (const line of meshSpawnLines) {
+      const m = /MESH_BOOTSTRAP=([^\s]+)/.exec(line);
+      expect(m, `MESH_BOOTSTRAP is set on ${line.slice(0, 80)}...`).not.toBeNull();
+      const value = m![1]!;
+      // Each comma-separated address must carry /p2p/<id>.
+      const addrs = value.split(',');
+      expect(addrs.length, `at least one bootstrap address: ${value}`).toBeGreaterThan(0);
+      for (const addr of addrs) {
+        expect(addr, `each bootstrap carries /p2p/: ${addr}`).toMatch(/\/p2p\/[A-Za-z0-9]+$/);
+        expect(addr, `no Notis p2p port in bootstrap: ${addr}`).not.toMatch(/\/tcp\/9100\b/);
+      }
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — identity waits run before the height
+  // wait so a mesh crash fails `up` at once; the previous commit waited
+  // for identities only in Phase 9, after the 10-minute height wait.
+  it.fails('each public mesh node\'s identity wait appears before the height wait', () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const identityIdx = lines.findIndex((l) => l.startsWith('[wait] each public mesh node prints its identity line'));
+    const heightIdx = lines.findIndex((l) => l.startsWith('[wait] every honest node reads /blocks/current.height'));
+    expect(identityIdx, 'identity wait present').toBeGreaterThanOrEqual(0);
+    expect(heightIdx, 'height wait present').toBeGreaterThanOrEqual(0);
+    expect(identityIdx, 'identity wait precedes height wait').toBeLessThan(heightIdx);
+  }, 30_000);
+
   // MESH_INTERFACE → Acceptance — the Pebble v2.8.0 tarball records the
   // binary as mode 0644 (no execute bit). The release's own `tar tvzf`
   // shows `-rw-r--r--`; extracting it leaves `env` unable to run it, so

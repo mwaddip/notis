@@ -55,7 +55,7 @@ export function buildPageConfig(topology, nodeIdentities, realMultiaddrs) {
   };
 }
 
-function peerIdStringOf(notisId) {
+export function peerIdStringOf(notisId) {
   const pub = publicKeyFromRaw(hexToBytes(notisId));
   return peerIdFromPublicKey(pub).toString();
 }

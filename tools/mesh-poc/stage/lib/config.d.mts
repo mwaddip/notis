@@ -8,3 +8,5 @@ export function buildPageConfig(
   seeds: Array<{ notisId: string; addrs: string[] }>;
   stunServers: string[];
 };
+
+export function peerIdStringOf(notisId: string): string;
