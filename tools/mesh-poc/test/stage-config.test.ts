@@ -322,9 +322,9 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Discovery / Transports — a mesh node bootstraps from
   // other MESH nodes' addresses, not the Notis p2p port. The TCP mesh
   // port is in the topology; the `/p2p/<peer id>` tail is derived from
-  // the public mesh node's notisId. The previous commit's mesh nodes all
-  // died with `bootstrap address refused: /ip4/10.100.0.11/tcp/9100 has
-  // no /p2p/ component`.
+  // the public mesh node's notisId. A bootstrap address with no `/p2p/`
+  // component is refused at the door (`bootstrap address refused:
+  // /ip4/10.100.0.11/tcp/9100 has no /p2p/ component`).
   it('every mesh spawn\'s MESH_BOOTSTRAP names a mesh port with a /p2p/ id, not the Notis p2p port', () => {
     runDryOnce();
     const meshSpawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
@@ -344,8 +344,8 @@ describe('stage up --dry-run', () => {
   }, 30_000);
 
   // MESH_INTERFACE → Acceptance — identity waits run before the height
-  // wait so a mesh crash fails `up` at once; the previous commit waited
-  // for identities only in Phase 9, after the 10-minute height wait.
+  // wait so a mesh crash fails `up` at once rather than after the
+  // 10-minute height wait.
   it('each public mesh node\'s identity wait appears before the height wait', () => {
     runDryOnce();
     const lines = out.split('\n');
@@ -549,9 +549,9 @@ describe('stage up --dry-run', () => {
   }, 30_000);
 
   // Linux IFNAMSIZ is 16 — an interface name must fit in 15 bytes plus a
-  // trailing NUL. The previous commit's `vp-hostile-malformed` (20 bytes)
-  // crashed `ip link add` with status 255. Every `v-X`, `vp-X`, `br-X-in`
-  // token the stage uses is ≤ 15 bytes.
+  // trailing NUL. A name over 15 bytes (such as `vp-hostile-malformed`
+  // at 20) crashes `ip link add` with status 255. Every `v-X`, `vp-X`,
+  // `br-X-in` token the stage uses is ≤ 15 bytes.
   it('every interface name in the dry-run is ≤ 15 bytes', () => {
     runDryOnce();
     const names = new Set<string>();

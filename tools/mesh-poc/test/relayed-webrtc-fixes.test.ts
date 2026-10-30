@@ -1,46 +1,90 @@
-// MESH_INTERFACE → NAT / Acceptance 1 / Acceptance 2 — five guards
-// around the relayed WebRTC path:
-//   A. a NAT router drops unsolicited inbound on its outside interface
-//      so plain `masquerade` keeps the source port on the first check,
-//   B. a WebRTC-direct transport names no ICE server
-//      ("Only the relayed WebRTC path uses STUN"),
-//   C. `transport` and `path` come from the multiaddr's own components
-//      (not substring tests): the one function covers every row in the
-//      brief's table,
-//   D. the page's `RTCPeerConnection` constructions are recorded by a
-//      wrapper the stage installs through
-//      `Page.addScriptToEvaluateOnNewDocument`; the verdict reads the
-//      record,
-//   E. s2's priv1 step records `{ transport, path, anchorAddrRelayed,
-//      iceServers, … }` and the verdict reads D's rule.
-//
-// Case shape: a case that depends on a new guard is `it.fails` while
-// the guard is missing (and flipped to `it` once the guard lands);
-// cases of invariants the fix keeps (`skipped` on missing, `FAIL` on a
-// nodeId mismatch) stay as plain `it`.
+// MESH_INTERFACE → NAT / Acceptance 1 / Acceptance 2 — guards around the
+// relayed WebRTC path:
+//   NAT routers drop unsolicited inbound on their outside interface so
+//     plain `masquerade` keeps the source port on the first check,
+//   WebRTC-direct names no ICE server
+//     ("Only the relayed WebRTC path uses STUN"),
+//   `classifyConnectionAddr` reads the multiaddr's own components (not
+//     substring tests) and names every row MESH_INTERFACE lists,
+//   the page's `RTCPeerConnection` constructions are recorded by the
+//     wrapper the stage installs through
+//     `Page.addScriptToEvaluateOnNewDocument`; a verdict reads the record,
+//   s2's priv1 step records
+//     `{ transport, path, anchorAddrRelayed, iceServers, … }` and the
+//     verdict reads the ICE-record rule,
+//   s2's priv2 step walks the state across one held page until priv2's
+//     entry carries at least one failure and the client is on another
+//     node.
 
-import { describe, expect, it } from 'vitest';
+import { vi, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import vm from 'node:vm';
+
+// --- Mocked `execIn` + measure helpers used by s1 and s2 ------------------
+//
+// `vi.hoisted` lets the mock factory and the test bodies share one state
+// bag; `vi.mock` is hoisted to the top of the module, so the bag must live
+// outside the lexical imports. Each test calls `execInMock.reset()` and
+// `execInMock.setResponder(fn)` to feed canned answers to `cdp.mjs poll`,
+// `poll-ice` and `eval` invocations the scenarios issue.
+
+const execInMock = vi.hoisted(() => {
+  type Call = { ns: string; argv: readonly string[]; opts: unknown };
+  const calls: Call[] = [];
+  let responder: (ns: string, argv: readonly string[]) => Buffer | string = () => Buffer.from('{}');
+  return {
+    calls,
+    setResponder(r: typeof responder) { responder = r; },
+    reset() { calls.length = 0; responder = () => Buffer.from('{}'); },
+    invoke(ns: string, argv: readonly string[], opts: unknown): Buffer {
+      calls.push({ ns, argv, opts });
+      const r = responder(ns, argv);
+      return typeof r === 'string' ? Buffer.from(r) : r;
+    },
+  };
+});
+
+vi.mock('../stage/lib/measure.mjs', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    execIn: (ns: string, argv: readonly string[], opts: unknown) => execInMock.invoke(ns, argv, opts),
+    readDirect: () => ({ sha256: 'cafebabe', bytes: 1 }),
+    readLineCount: () => 0,
+    readNftCounterSum: () => 0,
+    findPid: () => null,
+    signal: () => {},
+    leafPids: () => [],
+    sigterm: () => {},
+    descendantPids: () => [],
+    readMtimeMs: () => 0,
+  };
+});
+
 import { classifyConnectionAddr } from '../src/client/mesh-client.js';
 import { verdictIceServers, verdictS2Priv1, verdictS2Priv2 } from '../stage/lib/verdicts.mjs';
 import { readTopology } from '../stage/lib/topology.mjs';
+import { ICE_RECORD_INSTALL_SRC } from '../stage/cdp.mjs';
+
+// Static import of the scenarios so vi.mock applies — a dynamic import
+// after a test runs would race the module cache.
+import * as s1Scenario from '../stage/scenarios/s1-no-name.mjs';
+import * as s2Scenario from '../stage/scenarios/s2-nat.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
 const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
 const SRC_MESH_CLIENT = join(PACKAGE_ROOT, 'src', 'client', 'mesh-client.ts');
 const SRC_MESH_NODE = join(PACKAGE_ROOT, 'src', 'node', 'mesh-node.ts');
-const SRC_CDP = join(PACKAGE_ROOT, 'stage', 'cdp.mjs');
-const SRC_S1 = join(PACKAGE_ROOT, 'stage', 'scenarios', 's1-no-name.mjs');
-const SRC_S2 = join(PACKAGE_ROOT, 'stage', 'scenarios', 's2-nat.mjs');
 const TOPOLOGY_PATH = join(PACKAGE_ROOT, 'stage', 'topology.json');
 
-// --- A — NAT routers drop unsolicited inbound ------------------------------
+// --- NAT routers drop unsolicited inbound ----------------------------------
 
-describe('fix A — each NAT router has an input chain that drops unsolicited inbound', () => {
+describe('NAT routers drop unsolicited inbound on the outside interface', () => {
   // MESH_INTERFACE → NAT — "a browser reaches a private node over WebRTC
   // signalled through the relay". Plain `masquerade` preserves the
   // source port only when conntrack has not already recorded a tuple for
@@ -76,7 +120,7 @@ describe('fix A — each NAT router has an input chain that drops unsolicited in
     expect(missing, missing.join('\n')).toEqual([]);
   }, 30_000);
 
-  it('every NAT router accepts established,related and non-outside-interface traffic in the input chain', () => {
+  it('every NAT router accepts established,related and non-outside-interface traffic', () => {
     const res = runDry();
     expect(res.status, `exit (stderr: ${res.stderr})`).toBe(0);
     const topology = readTopology(TOPOLOGY_PATH);
@@ -96,29 +140,26 @@ describe('fix A — each NAT router has an input chain that drops unsolicited in
     }
     expect(missing, missing.join('\n')).toEqual([]);
   }, 30_000);
-
-  it('up.mjs holds no narration of a previous commit\'s nft spelling', () => {
-    // CLAUDE.md → "Describe reality as it is" — the comment on the
-    // symmetric NAT rule said what the previous commit got wrong; a
-    // reader of the current tree has no need for that history.
-    const src = readFileSync(UP_SCRIPT, 'utf8');
-    expect(src, 'no mention of "previous commit"').not.toMatch(/previous commit/);
-    expect(src, 'no "iptables\' spelling" narration').not.toMatch(/iptables'\s*spelling/);
-  });
 });
 
-// --- B — WebRTC-direct carries an empty iceServers list ---------------------
+// --- WebRTC-direct names no ICE server ------------------------------------
 
-describe('fix B — WebRTC-direct names no ICE server, the relayed WebRTC path keeps STUN', () => {
+describe('WebRTC-direct names no ICE server; the relayed WebRTC path keeps STUN', () => {
   // MESH_INTERFACE → NAT — "Only the relayed WebRTC path uses STUN;
   // WebRTC-direct to a public address needs none." The client and the
   // mesh node both build `webRTCDirect({ rtcConfiguration: { iceServers:
-  // [] } })`; `webRTC(...)` keeps the configured servers. (Chosen
-  // check: source regex, same pattern as
-  // `test/mesh-listen-and-dial-attribution.test.ts` uses on the
-  // transport-list construction.)
+  // [] } })`; `webRTC(...)` keeps the configured servers.
+  //
+  // Choice: a source regex rather than a `vi.mock('@libp2p/webrtc', ...)`
+  // + startMeshClient / startMeshNode, because that would spin up three
+  // libp2p nodes (one client, one public and one private mesh node) for
+  // one assertion per node and the existing scenario suites already
+  // exercise end-to-end startup. The regex matches the whole call
+  // shape — `webRTCDirect({ rtcConfiguration: { iceServers: [] } })` —
+  // so a wrapper that reads the string in a comment but builds the
+  // transport differently fails it.
 
-  it('src/client/mesh-client.ts builds webRTCDirect with an empty iceServers list', () => {
+  it('the client calls webRTCDirect with an empty iceServers list', () => {
     const src = readFileSync(SRC_MESH_CLIENT, 'utf8');
     expect(
       src,
@@ -126,16 +167,14 @@ describe('fix B — WebRTC-direct names no ICE server, the relayed WebRTC path k
     ).toMatch(/\bwebRTCDirect\s*\(\s*\{\s*rtcConfiguration\s*:\s*\{\s*iceServers\s*:\s*\[\s*\]\s*\}\s*\}\s*\)/);
   });
 
-  it('src/client/mesh-client.ts keeps the configured STUN list on webRTC()', () => {
+  it('the client passes the configured STUN list to webRTC()', () => {
     const src = readFileSync(SRC_MESH_CLIENT, 'utf8');
-    // The webRTC(...) call still passes the configured servers; the
-    // fixture holds the existing `iceConfigurations(o.stunServers)` shape.
     expect(src, 'webRTC(...) carries non-empty iceServers from stunServers').toMatch(
       /\bwebRTC\s*\(\s*\{\s*rtcConfiguration\s*:\s*\{\s*iceServers\s*:\s*iceConfigurations\(/,
     );
   });
 
-  it('src/node/mesh-node.ts builds webRTCDirect with an empty iceServers list', () => {
+  it('the mesh node calls webRTCDirect with an empty iceServers list', () => {
     const src = readFileSync(SRC_MESH_NODE, 'utf8');
     expect(
       src,
@@ -143,20 +182,18 @@ describe('fix B — WebRTC-direct names no ICE server, the relayed WebRTC path k
     ).toMatch(/\bwebRTCDirect\s*\(\s*\{\s*rtcConfiguration\s*:\s*\{\s*iceServers\s*:\s*\[\s*\]\s*\}\s*\}\s*\)/);
   });
 
-  it('src/node/mesh-node.ts keeps webRTC() with the stunServers mapping on a private role', () => {
+  it('a private mesh node passes the configured STUN list to webRTC()', () => {
     const src = readFileSync(SRC_MESH_NODE, 'utf8');
-    // The webRTC call for a private node still carries the stunServers
-    // list (urls per server) as before fix B.
     expect(src, 'webRTC() passes stunServers.map(...)').toMatch(
       /\bwebRTC\s*\(\s*\{\s*rtcConfiguration\s*:\s*\{\s*iceServers\s*:\s*stunServers\.map/,
     );
   });
 });
 
-// --- C — classifyConnectionAddr is a pure function over components ----------
+// --- classifyConnectionAddr ------------------------------------------------
 
-describe('fix C — classifyConnectionAddr reads transport/path from the multiaddr\'s components', () => {
-  // MESH_INTERFACE → Transports / NAT — the brief's table, each row
+describe('classifyConnectionAddr reads transport/path from the multiaddr\'s components', () => {
+  // MESH_INTERFACE → Transports / NAT — every row MESH_INTERFACE names,
   // asserted; an address the function cannot classify is a thrown error
   // (not `null`, which hides the bug).
 
@@ -189,47 +226,103 @@ describe('fix C — classifyConnectionAddr reads transport/path from the multiad
     expect(classifyConnectionAddr(ma)).toEqual({ transport: 'wss', path: 'direct' });
   });
 
+  // The client dials `/wss/` addresses (secure WebSocket, a single
+  // multiaddr component) alongside the two-component `/tls/ws/` form:
+  // `src/client/mesh-client.ts`'s `isWSSAddr` reader skips only plain
+  // `/ws/`. A `wss` component before any `p2p-circuit` names `wss`.
+  it.fails('a plain wss address classifies as { wss, direct }', () => {
+    const ma = `/ip4/11.100.0.11/tcp/443/wss/p2p/${TARGET}`;
+    expect(classifyConnectionAddr(ma)).toEqual({ transport: 'wss', path: 'direct' });
+  });
+
+  it.fails('a wss address with /p2p-circuit classifies as { wss, relay }', () => {
+    const ma = `/ip4/11.100.0.11/tcp/443/wss/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`;
+    expect(classifyConnectionAddr(ma)).toEqual({ transport: 'wss', path: 'relay' });
+  });
+
   it('an address with no classifiable base transport throws', () => {
-    // Invariant under both current and new: the pre-fix `transportOf`
-    // returns `null` and `pathOf` returns `direct`, but the imported
-    // symbol does not exist, so calling it throws. After the fix the
-    // function exists and throws explicitly on an unclassifiable address.
     const ma = `/ip4/11.100.0.11/tcp/9999/p2p/${TARGET}`;
     expect(() => classifyConnectionAddr(ma)).toThrow();
   });
 });
 
-// --- D — the page's RTCPeerConnection constructions are recorded ------------
+// --- the installer behaviour of the page's ICE-record wrapper -------------
 
-describe('fix D — cdp.mjs installs an RTCPeerConnection wrapper via Page.addScriptToEvaluateOnNewDocument', () => {
+describe('the page\'s RTCPeerConnection wrapper installer', () => {
   // MESH_INTERFACE → Acceptance 1 — the record is what the stage reads
   // instead of the DNS witness (which Chromium bypasses with its own
-  // --host-resolver-rules). The wrapper lives in the page; cdp.mjs
-  // enables Page and installs the script before navigating.
+  // --host-resolver-rules). The installer source is exported from
+  // `stage/cdp.mjs`; each case runs it in a `node:vm` context with a
+  // fake `window.RTCPeerConnection` and asserts behaviour.
 
-  it('cdp.mjs calls Page.addScriptToEvaluateOnNewDocument through session.send', () => {
-    const src = readFileSync(SRC_CDP, 'utf8');
-    // The call shape — a `send(...)` taking the CDP method name as a
-    // string literal — rejects a renamed identifier that happens to
-    // contain the substring.
-    expect(src, 'cdp.mjs installs a script before document creation')
-      .toMatch(/send\s*\(\s*['"]Page\.addScriptToEvaluateOnNewDocument['"]/);
+  function makeContext() {
+    const calls: Array<{ cfg: unknown }> = [];
+    function OrigPC(this: Record<string, unknown>, cfg: unknown): void {
+      calls.push({ cfg });
+      this.cfg = cfg;
+    }
+    (OrigPC as unknown as { staticK: string }).staticK = 'static-value';
+    const win: Record<string, unknown> = { RTCPeerConnection: OrigPC };
+    const ctx = { window: win };
+    vm.createContext(ctx);
+    return { ctx, win, OrigPC, calls };
+  }
+
+  it('records a construction with its URLs and passes the config to the original', () => {
+    const { ctx, win, calls } = makeContext();
+    vm.runInContext(ICE_RECORD_INSTALL_SRC, ctx);
+    const cfg = { iceServers: [{ urls: ['stun:11.100.0.11:3478', 'stun:11.100.0.12:3478'] }] };
+    const Wrapped = win.RTCPeerConnection as new (c: unknown) => unknown;
+    const pc = new Wrapped(cfg) as { cfg: unknown };
+    expect(win.__notismeshIceRecord).toEqual([{ urls: ['stun:11.100.0.11:3478', 'stun:11.100.0.12:3478'] }]);
+    expect(pc.cfg, 'the config reaches the original constructor').toBe(cfg);
+    expect(calls.length, 'the original was called exactly once').toBe(1);
   });
 
-  it('cdp.mjs wraps RTCPeerConnection in the installed script', () => {
-    const src = readFileSync(SRC_CDP, 'utf8');
-    expect(src, 'script wraps window.RTCPeerConnection').toMatch(/window\.RTCPeerConnection\s*=/);
+  it('records a construction built with iceServers whose urls is a string', () => {
+    const { ctx, win } = makeContext();
+    vm.runInContext(ICE_RECORD_INSTALL_SRC, ctx);
+    const Wrapped = win.RTCPeerConnection as new (c: unknown) => unknown;
+    new Wrapped({ iceServers: [{ urls: 'stun:11.100.0.11:3478' }] });
+    expect(win.__notismeshIceRecord).toEqual([{ urls: ['stun:11.100.0.11:3478'] }]);
   });
 
-  it('cdp.mjs exposes a sub-command that returns both the state and the ICE record', () => {
-    const src = readFileSync(SRC_CDP, 'utf8');
-    // The sub-command is named `poll-ice` and surfaces `{ value, iceRecord }`.
-    expect(src, 'poll-ice sub-command').toContain('poll-ice');
-    expect(src, 'result carries iceRecord').toMatch(/iceRecord/);
+  it('records an iceServers: [] construction as one empty-URL bucket', () => {
+    const { ctx, win } = makeContext();
+    vm.runInContext(ICE_RECORD_INSTALL_SRC, ctx);
+    const Wrapped = win.RTCPeerConnection as new (c: unknown) => unknown;
+    new Wrapped({ iceServers: [] });
+    expect(win.__notismeshIceRecord).toEqual([{ urls: [] }]);
+  });
+
+  it('a second install is a no-op', () => {
+    const { ctx, win } = makeContext();
+    vm.runInContext(ICE_RECORD_INSTALL_SRC, ctx);
+    vm.runInContext(ICE_RECORD_INSTALL_SRC, ctx);
+    const Wrapped = win.RTCPeerConnection as new (c: unknown) => unknown;
+    new Wrapped({ iceServers: [{ urls: ['stun:11.100.0.11:3478'] }] });
+    expect((win.__notismeshIceRecord as unknown[]).length, 'exactly one record').toBe(1);
+  });
+
+  it('instanceof holds through the wrapper', () => {
+    const { ctx, win, OrigPC } = makeContext();
+    vm.runInContext(ICE_RECORD_INSTALL_SRC, ctx);
+    const Wrapped = win.RTCPeerConnection as new (c: unknown) => unknown;
+    const pc = new Wrapped({ iceServers: [] });
+    expect(pc instanceof OrigPC, 'pc instanceof OrigPC through the wrapper').toBe(true);
+  });
+
+  it('static properties on the original are copied to the wrapper', () => {
+    const { ctx, win } = makeContext();
+    vm.runInContext(ICE_RECORD_INSTALL_SRC, ctx);
+    const Wrapped = win.RTCPeerConnection as unknown as { staticK: string };
+    expect(Wrapped.staticK, 'static-value copied').toBe('static-value');
   });
 });
 
-describe('fix D — verdictIceServers reads the record per MESH_INTERFACE → NAT', () => {
+// --- verdictIceServers reads the record per MESH_INTERFACE → NAT ----------
+
+describe('verdictIceServers reads the record per MESH_INTERFACE → NAT', () => {
   // MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
   // IP"; a client refuses a hostname. The verdict:
   //   PASS when at least one PC was recorded AND every URL matches
@@ -251,10 +344,7 @@ describe('fix D — verdictIceServers reads the record per MESH_INTERFACE → NA
     ])).toBe('PASS');
   });
 
-  it('PASS when a PC was recorded with no URLs (WebRTC-direct, no STUN)', () => {
-    // A PC built with iceServers: [] still counts as a recording: the
-    // page constructed a peer connection and named no server, which
-    // is the fix B check from the browser's angle.
+  it('PASS when a PC was recorded with no URLs (the WebRTC-direct, no-STUN path)', () => {
     expect(verdictIceServers([{ urls: [] }])).toBe('PASS');
   });
 
@@ -276,19 +366,14 @@ describe('fix D — verdictIceServers reads the record per MESH_INTERFACE → NA
   });
 });
 
-// --- E — s2's priv1 step records transport/path/anchor/iceServers ----------
+// --- verdictS2Priv1 --------------------------------------------------------
 
-describe('fix E — verdictS2Priv1 reads transport, path, anchorAddrRelayed and iceServers', () => {
+describe('verdictS2Priv1 reads transport, path, anchorAddrRelayed and iceServers', () => {
   // MESH_INTERFACE → NAT — "A browser reaches a private node over WebRTC
   // signalled through the relay". The verdict rests on positive
   // evidence the browser dialled the relayed WebRTC form and the
   // connection runs over WebRTC (not just a relayed data stream), and
-  // the ICE-server record passes D's rule.
-  //
-  // Base holds BOTH the new fields and the fields the pre-fix verdict
-  // reads, so the current implementation returns `PASS` on it: FAIL
-  // cases below break one new field alone, giving a case that is red
-  // under the current rule (PASS) and green under the new one (FAIL).
+  // the ICE-server record passes the IP-only rule.
 
   const RELAY = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
   const PRIV = '12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4';
@@ -297,7 +382,6 @@ describe('fix E — verdictS2Priv1 reads transport, path, anchorAddrRelayed and 
 
   function base() {
     return {
-      // New fields
       nodeId: 'aa'.repeat(32),
       expectedNodeId: 'aa'.repeat(32),
       transport: 'webrtc',
@@ -305,9 +389,6 @@ describe('fix E — verdictS2Priv1 reads transport, path, anchorAddrRelayed and 
       anchorAddrRelayed: RELAYED_WEBRTC,
       connectMs: 1200,
       iceServers: [{ urls: ['stun:11.100.0.11:3478'] }],
-      // Pre-fix fields — present so the current verdict reads PASS.
-      relayedTimeMs: 1200,
-      directTimeMs: 2400,
     };
   }
 
@@ -317,8 +398,6 @@ describe('fix E — verdictS2Priv1 reads transport, path, anchorAddrRelayed and 
   });
 
   it('PASS on the full green shape', () => {
-    // Green under both pre-fix (reads old fields) and post-fix (reads
-    // new fields). Stays plain `it`.
     expect(verdictS2Priv1(base())).toBe('PASS');
   });
 
@@ -327,10 +406,6 @@ describe('fix E — verdictS2Priv1 reads transport, path, anchorAddrRelayed and 
   });
 
   it('FAIL when transport is not webrtc (the direct WebRTC upgrade did not land)', () => {
-    // The anchor address stays `/p2p-circuit/webrtc` so only the
-    // transport check fires; a mutation that removes the transport
-    // check otherwise lets the base-anchor + ICE assertions carry the
-    // verdict.
     expect(verdictS2Priv1({ ...base(), transport: 'webrtc-direct' })).toBe('FAIL');
   });
 
@@ -342,20 +417,18 @@ describe('fix E — verdictS2Priv1 reads transport, path, anchorAddrRelayed and 
     expect(verdictS2Priv1({ ...base(), anchorAddrRelayed: RELAYED_PLAIN })).toBe('FAIL');
   });
 
-  it('FAIL when the ICE-server record fails D\'s rule (hostname)', () => {
+  it('FAIL when the ICE-server record carries a host name', () => {
     expect(verdictS2Priv1({ ...base(), iceServers: [{ urls: ['stun:stun.example.com:3478'] }] })).toBe('FAIL');
   });
 
   it('FAIL when no ICE record was captured (empty array)', () => {
-    // D says "skipped when nothing was recorded"; s2's priv1 step then
-    // FAILs — the whole step cannot PASS on an unmeasured ICE path.
     expect(verdictS2Priv1({ ...base(), iceServers: [] })).toBe('FAIL');
   });
 });
 
-// --- Part F — priv2 stays retry, the client stays on another node ----------
+// --- verdictS2Priv2 --------------------------------------------------------
 
-describe('part F — verdictS2Priv2 reads a retried entry with ≥1 failure, the page on another node', () => {
+describe('verdictS2Priv2 reads a retried entry with ≥1 failure, the page on another node', () => {
   // MESH_INTERFACE → NAT → "A relay carries signalling, not data" /
   // Acceptance 2 — "The node behind the symmetric NAT has no direct
   // path to the browser behind its NAT: it reads `retry`, never
@@ -369,7 +442,6 @@ describe('part F — verdictS2Priv2 reads a retried entry with ≥1 failure, the
 
   function base() {
     return {
-      // New fields
       expectedNodeId: PRIV2,
       priv2Status: 'retry',
       priv2Failures: 2,
@@ -377,12 +449,6 @@ describe('part F — verdictS2Priv2 reads a retried entry with ≥1 failure, the
       nodeIdInUse: OTHER,
       everInUse: false,
       blacklistedAtAnyPoll: false,
-      // Pre-fix fields so the current verdict reads PASS on `base()`:
-      // FAIL cases below break ONE new field alone, giving a case that
-      // is red under the current rule (which does not read the new
-      // fields) and green under the new one.
-      nodeId: PRIV2,
-      relayedTimeMs: 7_000,
     };
   }
 
@@ -393,8 +459,6 @@ describe('part F — verdictS2Priv2 reads a retried entry with ≥1 failure, the
   });
 
   it('PASS on the full green shape', () => {
-    // Invariant: green under both pre-fix (reads nodeId + relayedTimeMs)
-    // and post-fix (reads the new fields). Stays plain `it`.
     expect(verdictS2Priv2(base())).toBe('PASS');
   });
 
@@ -423,9 +487,6 @@ describe('part F — verdictS2Priv2 reads a retried entry with ≥1 failure, the
   });
 
   it('FAIL when expectedNodeId is missing', () => {
-    // Invariant: both pre-fix (reads nodeId !== expectedNodeId with
-    // undefined expected) and post-fix (typeof expectedNodeId check)
-    // return FAIL.
     const m = base();
     // @ts-expect-error — remove a required field
     delete m.expectedNodeId;
@@ -433,73 +494,243 @@ describe('part F — verdictS2Priv2 reads a retried entry with ≥1 failure, the
   });
 });
 
-describe('part F — s2\'s priv2 step walks priv2\'s entry and the page\'s nodeId', () => {
-  // MESH_INTERFACE → Acceptance 2 — "The node behind the symmetric NAT
-  // ... reads `retry`, never `blacklisted`, and the client stays on a
-  // node it reaches." The scenario body uses
-  // `buildPrivateViaAnnouncedRelayPairVariant` to list priv2 by both
-  // its /p2p-circuit/webrtc and plain /p2p-circuit addresses, polls
-  // the state, and records what each poll holds.
+// --- s1 and s2 scenario wiring, through mocked execIn ---------------------
 
-  it('s2 imports buildPrivateViaAnnouncedRelayPairVariant', () => {
-    const src = readFileSync(SRC_S2, 'utf8');
-    expect(src, 's2 imports the pair variant').toContain('buildPrivateViaAnnouncedRelayPairVariant');
-  });
+const TOPOLOGY_FIXTURE = {
+  network: 'devnet',
+  hosts: {
+    browser: { role: 'browser', nat: 'endpoint-independent', parent: 'natC', addr: '10.103.0.11', veth: 'br', httpPort: 80 },
+    pub1: {
+      role: 'public', nat: 'none', addr: '10.100.0.11', veth: 'p1',
+      mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002, stunPort: 3478 },
+      node: { httpPort: 3100, p2pPort: 9100, role: 'miner' },
+    },
+    pub2: {
+      role: 'public', nat: 'none', addr: '10.100.0.12', veth: 'p2',
+      mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002, stunPort: 3478 },
+      node: { httpPort: 3100, p2pPort: 9100, role: 'server' },
+    },
+  },
+};
 
-  it('s2 records blacklistedAtAnyPoll and the final nodeIdInUse', () => {
-    const src = readFileSync(SRC_S2, 'utf8');
-    expect(src, 'blacklistedAtAnyPoll tracked').toContain('blacklistedAtAnyPoll');
-    expect(src, 'nodeIdInUse tracked').toContain('nodeIdInUse');
-    expect(src, 'priv2Status tracked').toContain('priv2Status');
-    expect(src, 'priv2Failures tracked').toContain('priv2Failures');
-  });
+const RELAY_PEER_FIXTURE = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
+const PRIV_PEER_FIXTURE = '12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4';
 
-  it('s2\'s priv2 step has no catch{} that swallows a poll error', () => {
-    const src = readFileSync(SRC_S2, 'utf8');
-    // The scenario's one acceptable catch is in the teardown
-    // (`writeStageDefault`, which already carries an explicit stderr
-    // write). The body of either sub-step has none.
-    const priv2Start = src.indexOf('priv2');
-    const teardownStart = src.indexOf('} finally {');
-    const priv2Body = (priv2Start >= 0 && teardownStart > priv2Start)
-      ? src.slice(priv2Start, teardownStart) : '';
-    expect(priv2Body, 's2 priv2 body has no `catch {}`').not.toMatch(/catch\s*\(\s*(?:_|[a-z])\s*\)\s*\{/);
-    expect(priv2Body, 's2 priv2 body has no `catch {`').not.toMatch(/\}\s*catch\s*\{/);
+function makeOutDir(opts: { anchorNotisId: string; identities: Record<string, unknown> }): string {
+  const outDir = mkdtempSync(join(tmpdir(), 'mesh-scenario-'));
+  mkdirSync(join(outDir, 'browser'), { recursive: true });
+  const config = {
+    network: 'devnet',
+    anchors: [{
+      notisId: opts.anchorNotisId,
+      addrs: [`/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/${RELAY_PEER_FIXTURE}`],
+    }],
+    stunServers: [],
+    seeds: [],
+  };
+  writeFileSync(join(outDir, 'browser', 'config.json'), JSON.stringify(config));
+  writeFileSync(join(outDir, 'browser', 'config.default.json'), JSON.stringify(config));
+  writeFileSync(join(outDir, 'dns.log'), '');
+  writeFileSync(join(outDir, 'identities.json'), JSON.stringify(opts.identities));
+  return outDir;
+}
+
+function ctxFor(outDir: string): Record<string, unknown> {
+  return {
+    dryRun: false,
+    topology: TOPOLOGY_FIXTURE,
+    outDir,
+    pids: { pids: [] },
+    nodeBin: '/usr/bin/node',
+    cdpScript: '/tmp/cdp.mjs',
+    invokingUser: 'tester',
+  };
+}
+
+describe('s1 wires the ICE-record step through cdp.mjs poll-ice', () => {
+  // MESH_INTERFACE → Acceptance 1 — the ICE-record step is reached by
+  // running the scenario with mocked `execIn`. Each `cdp.mjs` subcommand
+  // is answered with a canned stdout, and the step's recorded verdict
+  // reads the record from the `poll-ice` answer.
+
+  const anchorNotisId = 'aa'.repeat(32);
+
+  it('s1 issues one poll-ice call with the stage-canned ICE record and PASSes the step', async () => {
+    execInMock.reset();
+    const canned = { value: JSON.stringify({ nodeId: anchorNotisId }), iceRecord: [{ urls: [] }] };
+    execInMock.setResponder((_ns, argv) => {
+      if (argv.includes('poll-ice')) {
+        return JSON.stringify(canned);
+      }
+      if (argv.includes('poll')) {
+        return JSON.stringify({ nodeId: anchorNotisId });
+      }
+      return '{}';
+    });
+    const outDir = makeOutDir({
+      anchorNotisId,
+      identities: { pub1: { notisId: anchorNotisId, httpPort: 3100 } },
+    });
+    try {
+      const result = await s1Scenario.run(ctxFor(outDir));
+      const pollIceCalls = execInMock.calls.filter((c) => c.argv.includes('poll-ice'));
+      expect(pollIceCalls.length, 's1 issues exactly one poll-ice call').toBe(1);
+      const iceStep = result.steps.find((s: { name: string }) => s.name.includes('RTCPeerConnection'));
+      expect(iceStep?.verdict, 'ICE step reads the canned record and PASSes').toBe('PASS');
+      expect(iceStep?.measurement, 'measurement carries the iceServers from the record')
+        .toMatchObject({ iceServers: [{ urls: [] }] });
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });
 
-// --- E — s1 and s2 scenarios reach the ICE-record step --------------------
+describe('s2\'s priv1 step', () => {
+  // MESH_INTERFACE → Acceptance 2 — s2's priv1 step writes a variant
+  // (one anchor = priv1 reached through a relay by WebRTC), then
+  // issues `cdp.mjs poll-ice` to read the state and the ICE record in
+  // one held page. Its measurement names
+  // `{ nodeId, expectedNodeId, transport, path, anchorAddrRelayed,
+  //    connectMs, iceServers }`.
 
-describe('fix E / D — s1 and s2 scenarios wire the ICE-record step', () => {
-  // s1 gains a step reading the record (every PC's URL is stun:ip:port
-  // or the PC was built with no URL); s2's priv1 step carries the
-  // record inline.
+  const priv1NotisId = 'aa'.repeat(32);
 
-  it('s1 scenario names the ICE-record step and calls poll-ice', () => {
-    const src = readFileSync(SRC_S1, 'utf8');
-    expect(src, 's1 uses the poll-ice cdp command').toContain('poll-ice');
-    expect(src, 's1 reads verdictIceServers').toContain('verdictIceServers');
+  function identitiesFixture(): Record<string, unknown> {
+    return {
+      priv1: {
+        notisId: priv1NotisId,
+        httpPort: 3100,
+        multiaddrs: [
+          `/ip4/10.101.0.11/udp/4001/webrtc-direct`,
+          `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/${RELAY_PEER_FIXTURE}/p2p-circuit/webrtc/p2p/${PRIV_PEER_FIXTURE}`,
+        ],
+      },
+      pub1: {
+        notisId: 'pp'.repeat(32),
+        httpPort: 3100,
+        multiaddrs: [`/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/${RELAY_PEER_FIXTURE}`],
+      },
+    };
+  }
+
+  it('issues one poll-ice call and builds the measurement from the canned answer', async () => {
+    execInMock.reset();
+    const connectedState = {
+      nodeId: priv1NotisId,
+      transport: 'webrtc',
+      path: 'direct',
+      nodes: [],
+    };
+    const iceRecord = [{ urls: ['stun:11.100.0.11:3478'] }];
+    execInMock.setResponder((_ns, argv) => {
+      if (argv.includes('poll-ice')) {
+        return JSON.stringify({ value: JSON.stringify(connectedState), iceRecord });
+      }
+      return '{}';
+    });
+    const outDir = makeOutDir({ anchorNotisId: priv1NotisId, identities: identitiesFixture() });
+    try {
+      const result = await s2Scenario.run(ctxFor(outDir));
+      const pollIceCalls = execInMock.calls.filter((c) => c.argv.includes('poll-ice'));
+      expect(pollIceCalls.length, 'priv1 issues exactly one poll-ice').toBe(1);
+      const priv1Step = result.steps[0];
+      expect(priv1Step?.measurement, 'priv1 step records the ICE-paired measurement').toMatchObject({
+        nodeId: priv1NotisId,
+        expectedNodeId: priv1NotisId,
+        transport: 'webrtc',
+        path: 'direct',
+        iceServers: iceRecord,
+      });
+      expect(priv1Step?.measurement, 'priv1 step records connectMs as a number')
+        .toHaveProperty('connectMs');
+      expect(typeof (priv1Step?.measurement as { connectMs?: unknown })?.connectMs).toBe('number');
+      expect(priv1Step?.measurement, 'priv1 step records the dialled anchor address')
+        .toHaveProperty('anchorAddrRelayed');
+      expect(priv1Step?.verdict, 'priv1 PASSes on the canned WebRTC-direct answer').toBe('PASS');
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
+});
 
-  it('s2 scenario reads iceServers through the poll-ice cdp command', () => {
-    const src = readFileSync(SRC_S2, 'utf8');
-    expect(src, 's2 uses the poll-ice cdp command').toContain('poll-ice');
-    expect(src, 's2 records anchorAddrRelayed in priv1\'s measurement').toMatch(/anchorAddrRelayed/);
-    expect(src, 's2 passes iceServers').toMatch(/iceServers\s*:/);
-  });
+describe('s2\'s priv2 step', () => {
+  // MESH_INTERFACE → NAT → "A relay carries signalling, not data" /
+  // Acceptance 2 — priv2 is behind a symmetric NAT. The variant lists
+  // priv2 by both its /p2p-circuit/webrtc and plain /p2p-circuit
+  // addresses; the step polls one held page across the window, tracks
+  // `everInUse` and `blacklistedAtAnyPoll` as an in-page accumulator,
+  // and finishes when priv2's entry has ≥1 failure and the client's
+  // nodeId is a non-null node other than priv2.
 
-  it('s2\'s priv1 step records connectMs, not the pre-fix directTimeMs/everDirect pair', () => {
-    const src = readFileSync(SRC_S2, 'utf8');
-    // `connectMs,` as a shorthand or `connectMs:` as a key — the
-    // measurement must name it.
-    expect(src, 's2 priv1 names connectMs').toMatch(/\bconnectMs\b\s*[,:}]/);
-    // The old shared body declared `let directTimeMs = null;` and
-    // `let everDirect = false;` in priv1's path and set them in a
-    // catch{} that swallowed the direct-wait timeout. The new priv1
-    // code has neither declaration (priv2 keeps its own, in its own
-    // sub-step).
-    const priv2Start = src.indexOf('priv2Row');
-    const priv1Slice = priv2Start > 0 ? src.slice(0, priv2Start) : src;
-    expect(priv1Slice, 's2 priv1 does not declare directTimeMs').not.toMatch(/\blet\s+directTimeMs\b/);
+  const priv2NotisId = 'bb'.repeat(32);
+  const otherNotisId = 'cc'.repeat(32);
+
+  function identitiesFixture(): Record<string, unknown> {
+    return {
+      priv2: {
+        notisId: priv2NotisId,
+        httpPort: 3100,
+        multiaddrs: [
+          `/ip4/10.102.0.11/udp/4001/webrtc-direct`,
+          `/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/uEiA/p2p/${RELAY_PEER_FIXTURE}/p2p-circuit/webrtc/p2p/${PRIV_PEER_FIXTURE}`,
+        ],
+      },
+      pub2: {
+        notisId: otherNotisId,
+        httpPort: 3100,
+        multiaddrs: [`/ip4/10.100.0.12/udp/4001/webrtc-direct/certhash/uEiA/p2p/${RELAY_PEER_FIXTURE}`],
+      },
+    };
+  }
+
+  function cannedPriv2State() {
+    return {
+      nodeId: otherNotisId,
+      transport: 'webrtc-direct',
+      path: 'direct',
+      nodes: [
+        { notisId: priv2NotisId, status: 'retry', failures: 2, lastFailure: { kind: 'other', message: 'All multiaddr dials failed' } },
+      ],
+    };
+  }
+
+  // MESH_INTERFACE → Acceptance 2 — the step holds ONE page open and
+  // polls it; it never opens a fresh target per poll. `cdp.mjs eval`
+  // opens a fresh target each call (through `evaluate()` →
+  // `openTarget` + `closeTarget`), so the step must use `poll` or
+  // `poll-ice` (which both keep one page open across polls). Red
+  // first: the current step issues `eval` calls in a loop.
+  //
+  // The mock satisfies BOTH `eval` and `poll` responders so the
+  // current (eval) loop exits on the first iteration too — then the
+  // test's own assertion is the one that FAILs the test under
+  // current, not a scenario timeout.
+  it.fails('issues one poll or poll-ice call for its whole window, never eval', async () => {
+    execInMock.reset();
+    const state = cannedPriv2State();
+    const acc = { everInUse: false, blacklistedAtAnyPoll: false };
+    execInMock.setResponder((_ns, argv) => {
+      if (argv.includes('eval')) {
+        // Current `cdpEval` reads a stringified JSON state from the
+        // page's #state: `JSON.stringify(stateString)` as stdout.
+        return JSON.stringify(JSON.stringify(state));
+      }
+      if (argv.includes('poll-ice') || argv.includes('poll')) {
+        // New `cdp.mjs poll` writes `JSON.stringify(matchingValue)`;
+        // the matching value is `JSON.stringify({ state, acc })`.
+        return JSON.stringify(JSON.stringify({ state, acc }));
+      }
+      return '{}';
+    });
+    const outDir = makeOutDir({ anchorNotisId: priv2NotisId, identities: identitiesFixture() });
+    try {
+      await s2Scenario.run(ctxFor(outDir));
+      const evalCalls = execInMock.calls.filter((c) => c.argv.includes('eval'));
+      const pollCalls = execInMock.calls.filter((c) => c.argv.includes('poll') || c.argv.includes('poll-ice'));
+      expect(evalCalls.length, 'no `cdp.mjs eval` calls for priv2 (that would reopen the page per poll)').toBe(0);
+      expect(pollCalls.length, 'at least one held-page poll call for priv2').toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });

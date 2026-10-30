@@ -117,10 +117,11 @@ async function forward(req, res, pub1Base) {
 }
 
 // MESH_INTERFACE → Acceptance — run as a script. The stage spawns this
-// file by its path; without an entry block the file exports the two
-// pure body builders and exits 0 at once with empty output, which the
-// previous commit's mesh:hostile-* saw in its upstream and crashed
-// with no proof route to forward to.
+// file by its path; the entry block below reads the environment,
+// starts a listener, and keeps the process alive. Without it, the
+// file would export the two pure body builders and exit 0 at once —
+// the mesh:hostile-* nodes would then crash with no proof route to
+// forward to.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const mode = process.env.MODE;
   const portStr = process.env.PORT ?? '0';

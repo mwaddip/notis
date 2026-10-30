@@ -1,6 +1,7 @@
-// MESH_INTERFACE → Discovery / Acceptance — the seven defects main
-// surfaced on the live stage at `bec3efbf`. Each case is red against
-// the pre-fix code and green under the fix.
+// MESH_INTERFACE → Discovery / Acceptance — guards around seven
+// correctness properties of the live stage: config.json shape,
+// bootstrap listing, scenario predicates, deterministic hostile seeds,
+// and the mesh node's own listen behaviour.
 
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
