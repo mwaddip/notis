@@ -80,6 +80,12 @@ node it is told of — by address and id, never by searching — and is reached 
 upgrades a relayed connection to a direct one where the NATs allow it. A browser reaches a private node over WebRTC
 signalled through the relay, gathering ICE candidates against public nodes' STUN servers alone.
 
+**A relay carries signalling, not data.** Public nodes keep libp2p's circuit relay limits, and a client opens no API
+stream on a limited connection. Any relay a client reaches is itself a node it can read from, so data relayed on to a
+private node would add no reach, and a relay without limits would carry any traffic at all for whoever holds a
+reservation on it. A private node with no direct path to a client — the usual case for a node behind a symmetric NAT
+and a client behind a NAT of its own — reads `retry` for that client, and the client stays on a node it does reach.
+
 **A relay that does not answer never stops a private node.** The node starts on its own addresses alone and asks each
 relay for its reservation afterwards, every attempt under `RELAY_LISTEN_TIMEOUT_MS`. A relay that is down, that goes
 away, or that never completes a reservation is tried again on the node list's retry cadence (`RETRY_BASE_MS` doubling
@@ -205,8 +211,9 @@ measured; a step that did not run reads `skipped`, never a pass.
    the browser host's DNS log holds no query — anything there went around the browser's resolver, as an ICE server
    named by host would. The browser's own services resolve names whatever page is open, so a resolver that answers
    nothing is what separates them from the client.
-2. **Behind NAT.** A node behind the endpoint-independent NAT answers through a relay, then directly; one behind the
-   symmetric NAT answers through the relay.
+2. **Behind NAT.** The browser reaches the node behind the endpoint-independent NAT over WebRTC signalled through a
+   relay, its data direct. The node behind the symmetric NAT has no direct path to the browser behind its NAT: it
+   reads `retry`, never `blacklisted`, and the client stays on a node it reaches.
 3. **A node goes away.** Killed, then firewalled: the client moves to another node within two checks, the node reads
    `retry`, never `blacklisted`, and reads `ok` again once it is back.
 4. **A transport is cut.** UDP to one public node: the client stays connected, through another node or over that
