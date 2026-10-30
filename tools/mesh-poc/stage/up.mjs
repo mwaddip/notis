@@ -683,167 +683,183 @@ const pub1Base = `http://${pub1Host.addr}:${pub1Host.node.httpPort}`;
 // the topology alone.
 const meshIdentityPromises = {};
 
+// Notis nodes come first — their p2p port is what the mesh nodes'
+// upstream URL points at (through 127.0.0.1 inside each namespace).
 for (const [name, host] of Object.entries(topology.hosts)) {
+  if (host.node === undefined) continue;
   const ns = nsOf(name);
   const dbPath = join(OUT_DIR, name, 'notis.db');
+  const notisEnv = {
+    NETWORK_TYPE: 'devnet',
+    NODE_ROLE: host.node.role,
+    PORT: String(host.node.httpPort),
+    ADMIN_PORT: String(host.node.httpPort + 1),
+    DB_PATH: dbPath,
+    LISTEN_ADDRS: `/ip4/${host.addr}/tcp/${host.node.p2pPort}`,
+    BOOTSTRAP_PEERS: `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}`,
+    MINING_SECRET: 'stage-mining-secret',
+  };
+  log.spawn(userWrap(ns, notisEnv).concat([notisNodeEntry]), { description: `notis:${name}`, logPath: logPathFor(`notis:${name}`) });
+}
 
-  if (host.node !== undefined) {
-    const notisEnv = {
-      NETWORK_TYPE: 'devnet',
-      NODE_ROLE: host.node.role,
-      PORT: String(host.node.httpPort),
-      ADMIN_PORT: String(host.node.httpPort + 1),
-      DB_PATH: dbPath,
-      LISTEN_ADDRS: `/ip4/${host.addr}/tcp/${host.node.p2pPort}`,
-      BOOTSTRAP_PEERS: `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}`,
-      MINING_SECRET: 'stage-mining-secret',
-    };
-    log.spawn(userWrap(ns, notisEnv).concat([notisNodeEntry]), { description: `notis:${name}`, logPath: logPathFor(`notis:${name}`) });
-  }
-
-  if (host.mesh !== undefined) {
-    const meshStateDir = join(OUT_DIR, name);
-    const meshKeyPath = join(meshStateDir, 'mesh.key');
-    let upstream;
-    const hostileListenPort = 7000;
-    if (host.mesh.upstreamMode !== undefined) {
-      // The hostile upstream forwards to its OWN Notis node on 127.0.0.1
-      // (the hostile host carries one, bootstrapped from pub1); pub1's
-      // HTTP binds pub1's namespace loopback alone and is not reachable
-      // from a different namespace.
-      if (host.node === undefined) {
-        throw new Error(`hostile host ${name} needs a Notis node of its own for the upstream to forward to`);
-      }
-      log.spawn(userWrap(ns, {
-        MODE: host.mesh.upstreamMode,
-        PORT: String(hostileListenPort),
-        PUB1_BASE: `http://127.0.0.1:${host.node.httpPort}`,
-      }).concat([hostileUpstreamScript]), { description: `hostile-upstream:${name}`, logPath: logPathFor(`hostile-upstream:${name}`) });
-      upstream = `http://127.0.0.1:${hostileListenPort}`;
-    } else if (host.node !== undefined) {
-      upstream = `http://127.0.0.1:${host.node.httpPort}`;
-    } else {
-      continue;
+// MESH_INTERFACE → NAT — "A relay that does not answer never stops a
+// private node ... is tried again on the node list's retry cadence".
+// Private mesh nodes tolerate a relay that is down at start. The
+// stage still orders startup so a run measures the scenarios, not a
+// startup race: every public mesh node is spawned first (its own
+// `/ip4/<own>/tcp/<port>` listening is in place by its identity
+// line), then the private mesh nodes — their `/p2p-circuit` listens
+// reserve on the first attempt.
+function startMeshNodeForHost(name, host) {
+  const ns = nsOf(name);
+  const meshStateDir = join(OUT_DIR, name);
+  const meshKeyPath = join(meshStateDir, 'mesh.key');
+  let upstream;
+  const hostileListenPort = 7000;
+  if (host.mesh.upstreamMode !== undefined) {
+    // The hostile upstream forwards to its OWN Notis node on 127.0.0.1
+    // (the hostile host carries one, bootstrapped from pub1); pub1's
+    // HTTP binds pub1's namespace loopback alone and is not reachable
+    // from a different namespace.
+    if (host.node === undefined) {
+      throw new Error(`hostile host ${name} needs a Notis node of its own for the upstream to forward to`);
     }
-    // MESH_INTERFACE → Discovery / Transports — a mesh node bootstraps
-    // from OTHER public mesh nodes' TCP addresses, each named with its
-    // `/p2p/<peer id>` derived from the key file created in Phase 4. A
-    // public mesh node skips itself in its own bootstrap list; the
-    // previous commit's `MESH_BOOTSTRAP` named the Notis p2p port and
-    // every mesh node died at start with `bootstrap address refused:
-    // ... has no /p2p/ component`.
-    const bootstrapAddrs = [];
+    log.spawn(userWrap(ns, {
+      MODE: host.mesh.upstreamMode,
+      PORT: String(hostileListenPort),
+      PUB1_BASE: `http://127.0.0.1:${host.node.httpPort}`,
+    }).concat([hostileUpstreamScript]), { description: `hostile-upstream:${name}`, logPath: logPathFor(`hostile-upstream:${name}`) });
+    upstream = `http://127.0.0.1:${hostileListenPort}`;
+  } else if (host.node !== undefined) {
+    upstream = `http://127.0.0.1:${host.node.httpPort}`;
+  } else {
+    return;
+  }
+  // MESH_INTERFACE → Discovery / Transports — a mesh node bootstraps
+  // from OTHER public mesh nodes' TCP addresses, each named with its
+  // `/p2p/<peer id>` derived from the key file created in Phase 4. A
+  // public mesh node skips itself in its own bootstrap list.
+  const bootstrapAddrs = [];
+  for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {
+    if (pubName === name) continue;
+    const pubPeerId = peerIdStringOf(notisIds[pubName]);
+    bootstrapAddrs.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}`);
+  }
+  // MESH_INTERFACE → NAT — "A private node ... takes relay
+  // reservations on public nodes". libp2p 3.5's circuit-relay
+  // listener (`@libp2p/circuit-relay-v2/src/transport/listener.ts`)
+  // reserves on a named relay when the listen address names it, and
+  // does a non-deterministic RelayDiscovery walk when the listen
+  // address is bare `/p2p-circuit`. One specific listen address per
+  // public relay bootstraps gives the browser a relay-path through
+  // each public node deterministically.
+  const circuitListens = [];
+  if (host.mesh.role === 'private') {
     for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {
       if (pubName === name) continue;
       const pubPeerId = peerIdStringOf(notisIds[pubName]);
-      bootstrapAddrs.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}`);
+      circuitListens.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}/p2p-circuit`);
     }
-    // MESH_INTERFACE → NAT — "A private node ... takes relay
-    // reservations on public nodes". libp2p 3.5's circuit-relay
-    // listener (`@libp2p/circuit-relay-v2/src/transport/listener.ts`)
-    // reserves on a named relay when the listen address names it,
-    // and does a non-deterministic RelayDiscovery walk when the
-    // listen address is bare `/p2p-circuit`. One specific listen
-    // address per public relay bootstraps gives the browser a
-    // relay-path through each public node deterministically. A
-    // public role has no circuit listens.
-    const circuitListens = [];
-    if (host.mesh.role === 'private') {
-      for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {
-        if (pubName === name) continue;
-        const pubPeerId = peerIdStringOf(notisIds[pubName]);
-        circuitListens.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}/p2p-circuit`);
-      }
-    }
-    const meshEnv = {
-      MESH_KEY_PATH: meshKeyPath,
-      MESH_NETWORK: 'devnet',
-      MESH_ROLE: host.mesh.role,
-      MESH_STATE_DIR: meshStateDir,
-      MESH_UPSTREAM: upstream,
-      // MESH_INTERFACE → NAT — "A public node announces its listen
-      // addresses from the start" with concrete-port WebRTC-direct and
-      // TCP addresses on its own IP; a private node listens on its
-      // own (NAT-inside) IP with concrete ports AND on one
-      // /ip4/<pub>/tcp/<port>/p2p/<pub-peer>/p2p-circuit per public
-      // relay it bootstraps from. Neither path ever names 127.0.0.1
-      // or a /tcp/0, /udp/0: a browser in another namespace cannot
-      // reach a loopback-bound mesh node, and a port-0 bind announces
-      // an address nothing can dial.
-      MESH_LISTEN: [
-        `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct`,
-        `/ip4/${host.addr}/tcp/${host.mesh.tcpPort}`,
-        ...circuitListens,
-      ].join(','),
-      MESH_BOOTSTRAP: bootstrapAddrs.join(','),
-      ...(host.mesh.stunPort !== undefined ? { MESH_STUN: `${host.addr}:${host.mesh.stunPort}` } : {}),
-      ...(host.mesh.wss !== undefined ? {
-        MESH_WSS: `${host.addr}:${host.mesh.wss.port}`,
-        MESH_ACME_DIRECTORY: `https://${pebbleHost.addr}:${pebbleListenPort}/dir`,
-        MESH_ACME_CHALLENGE_PORT: String(host.mesh.wss.acmeChallengePort),
-        // MESH_INTERFACE → The IP certificate — pub1 trusts the stage
-        // CA alone through its node TLS store: pub1's ACME HTTPS to
-        // Pebble verifies against the CA that signed Pebble's TLS. The
-        // Pebble issuing root is the browser's business (installed in
-        // its NSS db), not pub1's.
-        NODE_EXTRA_CA_CERTS: stageCaPath,
-      } : {}),
-    };
-    const meshLogPath = logPathFor(`mesh:${name}`);
-    const meshChild = log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}`, logPath: meshLogPath });
-    if (!dryRun) {
-      // The mesh node's stdout is a file; tail it until the first JSON
-      // identity line that satisfies its role's predicate (a public
-      // node: any identity; a private node: an identity whose
-      // multiaddrs carries a /p2p-circuit address — the mesh node
-      // reprints its identity on self:peer:update when the relay
-      // reservation lands). A mesh node that dies before writing one
-      // fails the stage at once, with the log tail named.
-      const predicate = identityPredicateForMeshRole(host.mesh.role);
-      // A private node needs more time: it has to connect to a public
-      // node, request a reservation, and wait for the relay to grant
-      // one. 120 s covers the slowest of these on the stage.
-      const identityTimeoutMs = host.mesh.role === 'private' ? 120_000 : 60_000;
-      // MESH_INTERFACE → NAT — the private node reserves on each
-      // circuit listen address. A timeout here is "none of these
-      // reserved in time"; the error message names the relays the
-      // node was told to try so a reader sees what the attempt was.
-      const circuitListensSnapshot = [...circuitListens];
-      meshIdentityPromises[name] = readMeshIdentityUntil(meshChild, meshLogPath, predicate, { timeoutMs: identityTimeoutMs })
-        .catch((err) => {
-          const tail = tailLog(meshLogPath, 20);
-          const body = tail === '' ? '<no output>' : tail;
-          const relaysDetail = circuitListensSnapshot.length > 0
-            ? `\n--- circuit listens the node was told to reserve on ---\n${circuitListensSnapshot.join('\n')}`
-            : '';
-          throw new Error(`mesh:${name} identity line not read: ${err.message}${relaysDetail}\n--- last 20 lines of ${meshLogPath} ---\n${body}`);
-        });
-    }
+  }
+  const meshEnv = {
+    MESH_KEY_PATH: meshKeyPath,
+    MESH_NETWORK: 'devnet',
+    MESH_ROLE: host.mesh.role,
+    MESH_STATE_DIR: meshStateDir,
+    MESH_UPSTREAM: upstream,
+    // MESH_INTERFACE → NAT — "A public node announces its listen
+    // addresses from the start" with concrete-port WebRTC-direct and
+    // TCP addresses on its own IP; a private node listens on its own
+    // (NAT-inside) IP with concrete ports AND on one
+    // /ip4/<pub>/tcp/<port>/p2p/<pub-peer>/p2p-circuit per public
+    // relay it bootstraps from.
+    MESH_LISTEN: [
+      `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct`,
+      `/ip4/${host.addr}/tcp/${host.mesh.tcpPort}`,
+      ...circuitListens,
+    ].join(','),
+    MESH_BOOTSTRAP: bootstrapAddrs.join(','),
+    ...(host.mesh.stunPort !== undefined ? { MESH_STUN: `${host.addr}:${host.mesh.stunPort}` } : {}),
+    ...(host.mesh.wss !== undefined ? {
+      MESH_WSS: `${host.addr}:${host.mesh.wss.port}`,
+      MESH_ACME_DIRECTORY: `https://${pebbleHost.addr}:${pebbleListenPort}/dir`,
+      MESH_ACME_CHALLENGE_PORT: String(host.mesh.wss.acmeChallengePort),
+      // MESH_INTERFACE → The IP certificate — pub1 trusts the stage
+      // CA alone through its node TLS store: pub1's ACME HTTPS to
+      // Pebble verifies against the CA that signed Pebble's TLS. The
+      // Pebble issuing root is the browser's business (installed in
+      // its NSS db), not pub1's.
+      NODE_EXTRA_CA_CERTS: stageCaPath,
+    } : {}),
+  };
+  const meshLogPath = logPathFor(`mesh:${name}`);
+  const meshChild = log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}`, logPath: meshLogPath });
+  if (!dryRun) {
+    // The mesh node's stdout is a file; tail it until the first JSON
+    // identity line that satisfies its role's predicate (a public
+    // node: any identity; a private node: an identity whose multiaddrs
+    // carries a /p2p-circuit address — the mesh node reprints its
+    // identity on self:peer:update when the relay reservation lands).
+    // A mesh node that dies before writing one fails the stage at
+    // once, with the log tail named.
+    const predicate = identityPredicateForMeshRole(host.mesh.role);
+    // A private node needs more time: it has to connect to a public
+    // node, request a reservation, and wait for the relay to grant
+    // one. 120 s covers the slowest of these on the stage.
+    const identityTimeoutMs = host.mesh.role === 'private' ? 120_000 : 60_000;
+    // MESH_INTERFACE → NAT — the private node reserves on each
+    // circuit listen address. A timeout here is "none of these
+    // reserved in time"; the error message names the relays the node
+    // was told to try so a reader sees what the attempt was.
+    const circuitListensSnapshot = [...circuitListens];
+    meshIdentityPromises[name] = readMeshIdentityUntil(meshChild, meshLogPath, predicate, { timeoutMs: identityTimeoutMs })
+      .catch((err) => {
+        const tail = tailLog(meshLogPath, 20);
+        const body = tail === '' ? '<no output>' : tail;
+        const relaysDetail = circuitListensSnapshot.length > 0
+          ? `\n--- circuit listens the node was told to reserve on ---\n${circuitListensSnapshot.join('\n')}`
+          : '';
+        throw new Error(`mesh:${name} identity line not read: ${err.message}${relaysDetail}\n--- last 20 lines of ${meshLogPath} ---\n${body}`);
+      });
   }
 }
 
-// MESH_INTERFACE → Acceptance — fail fast on a dead mesh node. The
-// identity promises are awaited HERE, before the miner and the
-// 10-minute height wait, so a crash shows up in seconds. Each promise
-// carries the log tail; Promise.all rejects on the first failure.
-recordWait('each public mesh node prints its identity line (notisId, peerId, multiaddrs with /certhash/)');
-// MESH_INTERFACE → NAT — a private node's identity does not satisfy the
-// stage until it announces a /p2p-circuit address: the stage's
-// `identities.json` and s2's config variants dial through the relay.
-recordWait('each private mesh node announces a /p2p-circuit address (relay reservation lands)');
-let meshIdentities = {};
-if (!dryRun) {
+async function awaitMeshIdentities(whichRole) {
+  if (dryRun) return {};
+  const entries = Object.entries(meshIdentityPromises).filter(([name]) => {
+    const host = topology.hosts[name];
+    return host?.mesh?.role === whichRole;
+  });
   const settled = await Promise.allSettled(
-    Object.entries(meshIdentityPromises).map(async ([name, p]) => {
-      const identity = await p;
-      return [name, identity];
-    }),
+    entries.map(async ([name, p]) => [name, await p]),
   );
   const failures = settled.filter((s) => s.status === 'rejected');
   if (failures.length > 0) {
     throw new Error(failures.map((f) => f.reason?.message ?? String(f.reason)).join('\n\n'));
   }
-  meshIdentities = Object.fromEntries(settled.map((s) => s.value));
+  return Object.fromEntries(settled.map((s) => s.value));
+}
+
+// Public mesh nodes first: start every public one (hostile-* hosts
+// have mesh.role === 'public' per the dial-ability requirement — see
+// `topology.json`), then wait for their identity lines.
+for (const [name, host] of Object.entries(topology.hosts)) {
+  if (host.mesh?.role === 'public') startMeshNodeForHost(name, host);
+}
+recordWait('each public mesh node prints its identity line (notisId, peerId, multiaddrs with /certhash/)');
+let meshIdentities = {};
+if (!dryRun) {
+  Object.assign(meshIdentities, await awaitMeshIdentities('public'));
+}
+
+// Private mesh nodes next: start every private one; their /p2p-circuit
+// listens reserve on the publics that are now up.
+for (const [name, host] of Object.entries(topology.hosts)) {
+  if (host.mesh?.role === 'private') startMeshNodeForHost(name, host);
+}
+recordWait('each private mesh node announces a /p2p-circuit address (relay reservation lands)');
+if (!dryRun) {
+  Object.assign(meshIdentities, await awaitMeshIdentities('private'));
 }
 
 // -----------------------------------------------------------------------

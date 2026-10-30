@@ -48,22 +48,22 @@ describe('retryIntervalMs — the private node\'s relay retry cadence (pure)', (
   // where `n` is the failure count (1 for the first retry, 2 for the
   // second, …). The function is pure; a test with a fake clock would
   // add nothing here.
-  it.fails('the first retry waits RETRY_BASE_MS', () => {
+  it('the first retry waits RETRY_BASE_MS', () => {
     expect(retryIntervalMs(1)).toBe(RETRY_BASE_MS);
   });
-  it.fails('the second retry waits 2 × RETRY_BASE_MS', () => {
+  it('the second retry waits 2 × RETRY_BASE_MS', () => {
     expect(retryIntervalMs(2)).toBe(RETRY_BASE_MS * 2);
   });
-  it.fails('the third retry waits 4 × RETRY_BASE_MS', () => {
+  it('the third retry waits 4 × RETRY_BASE_MS', () => {
     expect(retryIntervalMs(3)).toBe(RETRY_BASE_MS * 4);
   });
-  it.fails('the retry caps at RETRY_CAP_MS', () => {
+  it('the retry caps at RETRY_CAP_MS', () => {
     // RETRY_BASE_MS = 5_000, RETRY_CAP_MS = 600_000 → cap at the 8th
     // failure (5_000 * 128 = 640_000 > 600_000).
     expect(retryIntervalMs(8)).toBe(RETRY_CAP_MS);
     expect(retryIntervalMs(20)).toBe(RETRY_CAP_MS);
   });
-  it.fails('a non-positive failure count reads 0', () => {
+  it('a non-positive failure count reads 0', () => {
     expect(retryIntervalMs(0)).toBe(0);
     expect(retryIntervalMs(-1)).toBe(0);
   });
@@ -87,7 +87,7 @@ describe('a private mesh node starts with an unreachable relay and reserves once
     return dir;
   }
 
-  it.fails('starts with ECONNREFUSED on the relay listen, then reserves once the relay comes up', async () => {
+  it('starts with ECONNREFUSED on the relay listen, then reserves once the relay comes up', async () => {
     // Pick a port the relay will later bind. The private node's
     // circuit listen points at it before the relay starts, so the
     // first listen attempt reads ECONNREFUSED.
