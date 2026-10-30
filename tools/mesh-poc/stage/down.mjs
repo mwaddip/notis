@@ -4,9 +4,13 @@
 // `up` created and the `/etc/netns/notismesh-*` directories beside them. A
 // `down` on a half-started stage cleans up what exists; nothing in the stage
 // kills by name.
+//
+// `--dry-run` prints every command `down` would run, marks the privileged
+// ones, and reads `ip netns list` for a half-started stage (read-only) so
+// the preview shows the real namespaces.
 
 import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,16 +18,17 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(HERE, 'out');
 const PIDS_PATH = join(OUT_DIR, 'pids.json');
 
-function parseArgs(argv) {
-  return { dryRun: argv.includes('--dry-run') };
+const dryRun = process.argv.slice(2).includes('--dry-run');
+
+function logShell(line, { privileged = false } = {}) {
+  const marked = `${privileged ? '[privileged] ' : ''}${line}`;
+  process.stdout.write(marked + '\n');
 }
 
-const { dryRun } = parseArgs(process.argv.slice(2));
-
 function run(name, args, { privileged = false, allowFail = false } = {}) {
-  const marked = `${privileged ? '[privileged] ' : ''}${name} ${args.join(' ')}`;
+  const line = `${name} ${args.join(' ')}`;
   if (dryRun) {
-    process.stdout.write(marked + '\n');
+    logShell(line, { privileged });
     return;
   }
   try {
@@ -33,30 +38,17 @@ function run(name, args, { privileged = false, allowFail = false } = {}) {
   }
 }
 
-// Step 1: end exactly the recorded PIDs. A PID whose process ended on its own
-// (SIGTERM delivered earlier, say) is still looked up but not reported.
+// Step 1: read the recorded PIDs and namespaces; a half-started stage with
+// no pids.json falls back to `ip netns list` (read-only, no privilege) so
+// `down` still cleans up what exists.
 let recorded = { pids: [], namespaces: [] };
 if (existsSync(PIDS_PATH)) {
   recorded = JSON.parse(readFileSync(PIDS_PATH, 'utf8'));
 }
 
-for (const entry of recorded.pids ?? []) {
-  if (typeof entry.pid !== 'number') continue;
-  try {
-    process.kill(entry.pid, 'SIGTERM');
-  } catch {
-    // The process was already gone; a half-started stage is clean here.
-  }
-}
-
-// Step 2: remove exactly the recorded namespaces. The list is `up`'s own
-// output: if a namespace is absent the kernel refuses the `delete` with a
-// non-fatal error, which we tolerate for the half-started case.
 const explicitNamespaces = Array.isArray(recorded.namespaces) ? recorded.namespaces : [];
-// Fall back to a listing when no pids.json exists — `down` on a half-started
-// stage before pids.json was written.
 let namespacesToRemove = explicitNamespaces;
-if (namespacesToRemove.length === 0 && !dryRun) {
+if (namespacesToRemove.length === 0) {
   try {
     const out = execFileSync('ip', ['netns', 'list'], { encoding: 'utf8' });
     namespacesToRemove = out.split('\n')
@@ -68,6 +60,23 @@ if (namespacesToRemove.length === 0 && !dryRun) {
   }
 }
 
+// Step 2: SIGTERM every recorded PID. In dry-run we show which PIDs we would
+// signal; a PID whose process ended on its own is logged but not reported.
+for (const entry of recorded.pids ?? []) {
+  if (typeof entry.pid !== 'number') continue;
+  if (dryRun) {
+    logShell(`kill -TERM ${entry.pid}  # ${entry.description ?? ''}`);
+    continue;
+  }
+  try {
+    process.kill(entry.pid, 'SIGTERM');
+  } catch {
+    // Already gone — a half-started stage is clean here.
+  }
+}
+
+// Step 3: remove exactly the namespaces `up` recorded (or the ones `ip netns
+// list` showed on fallback); `/etc/netns/<ns>` beside each.
 for (const ns of namespacesToRemove) {
   run('sudo', ['ip', 'netns', 'delete', ns], { privileged: true, allowFail: true });
   run('sudo', ['rm', '-rf', `/etc/netns/${ns}`], { privileged: true, allowFail: true });
@@ -79,5 +88,6 @@ if (!dryRun) {
   }
   process.stdout.write(`stage down: ${recorded.pids?.length ?? 0} processes signalled, ${namespacesToRemove.length} namespaces removed\n`);
 } else {
-  process.stdout.write(`[dry-run complete]\n`);
+  const privilegedCount = namespacesToRemove.length * 2;
+  process.stdout.write(`[dry-run complete] ${recorded.pids?.length ?? 0} PID(s) would be signalled; ${privilegedCount} privileged command(s) would remove ${namespacesToRemove.length} namespace(s) and /etc/netns/notismesh-*.\n`);
 }
