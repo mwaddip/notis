@@ -184,7 +184,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     }
   }, 60_000);
 
-  // MESH_INTERFACE → Discovery → Seeds — a seed address meets the anchor's
+  // MESH_INTERFACE → Discovery → "Seeds" — a seed address meets the anchor's
   // refusals; `assertClientConfig` is called with both lists and throws on a
   // seed's `/dns4/` as it does on an anchor's.
   it('assertClientConfig refuses a /dns4/ seed without creating a node', () => {
@@ -196,7 +196,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     })).toThrow(MeshConfigError);
   });
 
-  // MESH_INTERFACE → Discovery → Seeds — "a seed is a candidate like any node
+  // MESH_INTERFACE → Discovery → "Seeds" — "a seed is a candidate like any node
   // the DHT finds": a seed is in the client's node list as a non-anchor entry
   // in `new` status, which `NodeList.candidates()` lists.
   it('a seed is a candidate', async () => {
@@ -211,7 +211,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       // No check runs here: the state is read before the scheduled first
       // check fires, so the seed is still in its initial `new` status —
       // `new` is one of the four candidate rows (MESH_INTERFACE → The
-      // client's node list → Candidates).
+      // client's node list → "Candidates").
       resolve: fakeResolveWith([]),
     });
     clients.push(client);
@@ -221,7 +221,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(seedEntry!.status).toBe('new');
   }, 30_000);
 
-  // MESH_INTERFACE → Discovery → Seeds / No anchor reached — "no answer from
+  // MESH_INTERFACE → Discovery → "Seeds" / No anchor reached — "no answer from
   // [a seed] makes `anchorReached` true": a check where the anchor is
   // unreachable and the seed answers as the winner leaves `anchorReached`
   // false. A real mesh node stands behind the seed so the pre-dial reaches

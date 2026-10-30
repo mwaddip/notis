@@ -171,7 +171,7 @@ export interface MeshClient {
 export interface StartMeshClientOptions {
   anchors: Anchor[];
   /**
-   * MESH_INTERFACE → Discovery → Seeds — contacts the client holds without
+   * MESH_INTERFACE → Discovery → "Seeds" — contacts the client holds without
    * trusting them. A seed is a candidate like any node the DHT finds; no answer
    * from one makes `anchorReached` true. Addresses meet the same refusals as
    * an anchor's.
@@ -262,7 +262,7 @@ class MeshClientImpl implements MeshClient {
     this.resolveFn = resolveFn;
     this.profile = o.profile;
     this.nodeList = new NodeList(o.anchors, ownId, clock);
-    // MESH_INTERFACE → Discovery → Seeds — "a seed is a candidate like any
+    // MESH_INTERFACE → Discovery → "Seeds" — "a seed is a candidate like any
     // node the DHT finds". Added before the first check, so a seed is in
     // the candidates `resolveTip` reads from the start; `NodeList.add`
     // records them as non-anchor entries, so a seed's success leaves

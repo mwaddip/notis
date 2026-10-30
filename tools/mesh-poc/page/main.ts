@@ -23,7 +23,7 @@ export interface PageConfig {
   network: NetworkName;
   anchors: Anchor[];
   /**
-   * MESH_INTERFACE → Discovery → Seeds — contacts without trust. Optional;
+   * MESH_INTERFACE → Discovery → "Seeds" — contacts without trust. Optional;
    * default none. A seed's addresses meet the same refusals as an anchor's,
    * and no answer from a seed makes `anchorReached` true.
    */
@@ -100,7 +100,7 @@ function validateConfig(raw: unknown): PageConfig {
   if (!Array.isArray(stunServers)) {
     throw new Error('config.stunServers must be an array');
   }
-  // MESH_INTERFACE → Discovery → Seeds — optional, default none; when present
+  // MESH_INTERFACE → Discovery → "Seeds" — optional, default none; when present
   // it must be an array (its addresses are refused by `assertClientConfig`,
   // not here).
   const seedsRaw = o['seeds'];
