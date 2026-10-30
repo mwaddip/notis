@@ -18,6 +18,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@dagsocial/nipopow-client": "workspace:*",
     "@dagsocial/node-reads": "workspace:*",
     "@dagsocial/types": "workspace:*",
     "@libp2p/autonat-v2": "^2.1.8",
