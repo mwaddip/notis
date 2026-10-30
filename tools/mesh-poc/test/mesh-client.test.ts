@@ -12,15 +12,17 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateKeyPair } from '@dagsocial/types';
+import { generateKeyPair, bytesToHex } from '@dagsocial/types';
 import { profileFor } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
-import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
+import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../src/identity.js';
 import { meshBaseUrl } from '../src/mesh-url.js';
 import { MeshConfigError } from '../src/config.js';
+import { cappedTimerMs, MAX_TIMER_MS } from '../src/client/mesh-client.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import { multiaddr } from '@multiformats/multiaddr';
 
 // MESH_INTERFACE → The node endpoint — a tiny upstream the mesh node
 // forwards to; the dial-by-key case reads /blocks/current back.
@@ -376,6 +378,172 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       await new Promise((r) => setTimeout(r, 50));
     }
     expect(resolveCalls).toBeGreaterThan(callsBefore);
+  }, 60_000);
+
+  it('a discovered node is added before any event names it', async () => {
+    // MESH_INTERFACE → Discovery — the DHT's `peer:discovery` reports a
+    // Notis peer; the client's handler calls `nodeList.add(id, addrs)` so
+    // every entry exists before any later success/failure/lie names it.
+    // The seam dispatches the event on the client's libp2p so the case
+    // holds its guard without a three-node DHT walk.
+    const client = await startMeshClient({
+      anchors: [],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([
+        () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
+      ]),
+    });
+    clients.push(client);
+    await client.check();
+
+    // Fresh Notis id — the client itself has a different one.
+    const discoveredId = bytesToHex(generateKeyPair().publicKey);
+    const pid = peerIdFromNotisId(discoveredId);
+    const ma = multiaddr(`/ip4/127.0.0.1/tcp/9999/p2p/${pid.toString()}`);
+    client.libp2p.dispatchEvent(new CustomEvent('peer:discovery', {
+      detail: { id: pid, multiaddrs: [ma] },
+    }));
+
+    const entry = client.state().nodes.find((n) => n.notisId === discoveredId);
+    expect(entry, 'discovered id must be a NodeList entry before any event').toBeDefined();
+    expect(entry!.addrs).toContain(ma.toString());
+    expect(entry!.anchor).toBe(false);
+  }, 30_000);
+
+  it('one check at a time: a trigger during a check joins the in-flight one', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" —
+    // "one check at a time: a trigger during a check is that check."
+    // Three concurrent `check()` calls during an in-flight check must not
+    // start three runs — they all join the same promise and the resolve
+    // seam records a single call. The anchor list is empty so phase 1's
+    // dial has no address to wait on; `resolveFn` is reached in the same
+    // microtask run and suspends on `gate`.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    let resolveCalls = 0;
+    const EMPTY: TipResult = { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
+    const client = await startMeshClient({
+      anchors: [],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: async () => {
+        resolveCalls += 1;
+        if (resolveCalls === 1) await gate;
+        return EMPTY;
+      },
+    });
+    clients.push(client);
+
+    // The scheduled start check is the first one in flight; the three
+    // `check()` calls below join that same promise.
+    const [p1, p2, p3] = [client.check(), client.check(), client.check()];
+    // Give the first resolve enough microtask + 0 ms turns to run and
+    // suspend on `gate`.
+    for (let i = 0; i < 20 && resolveCalls === 0; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(resolveCalls).toBe(1);
+    release();
+    await Promise.all([p1, p2, p3]);
+    // Even after every awaiter resumes, only one resolve call happened.
+    expect(resolveCalls).toBe(1);
+  }, 60_000);
+
+  // MESH_INTERFACE → Place in the workspace — "every timer capped at
+  // 2^31 − 1 ms". A unit case over the cap: a value past the ceiling
+  // folds down, a negative or `NaN` folds to zero, a legitimate value
+  // passes through. The whole-client timer path reaches `setTimeout`
+  // only after `cappedTimerMs` runs.
+  it('every timer is capped at 2^31 − 1 ms', () => {
+    expect(MAX_TIMER_MS).toBe(0x7fff_ffff);
+    expect(cappedTimerMs(0)).toBe(0);
+    expect(cappedTimerMs(5_000)).toBe(5_000);
+    expect(cappedTimerMs(MAX_TIMER_MS)).toBe(MAX_TIMER_MS);
+    expect(cappedTimerMs(MAX_TIMER_MS + 1)).toBe(MAX_TIMER_MS);
+    expect(cappedTimerMs(Number.MAX_SAFE_INTEGER)).toBe(MAX_TIMER_MS);
+    expect(cappedTimerMs(-5)).toBe(0);
+    expect(cappedTimerMs(Number.NaN)).toBe(0);
+    expect(cappedTimerMs(Number.POSITIVE_INFINITY)).toBe(MAX_TIMER_MS);
+  });
+
+  // MESH_INTERFACE → The client's node list — the node in use's own tip
+  // is read through `fetchJson` under `HEIGHT_READ_BYTES`. A transport
+  // or HTTP non-ok result moves the node by `failure`; a body-level
+  // failure (overflow, unparseable) or an answer that is not a tip
+  // moves it by `lie` of kind `malformed` — a malformed answer over the
+  // key-authenticated link is the contract's lie row.
+  async function startWithHostileTip(bodyFactory: (req: unknown) => { status: number; body: string }): Promise<{ client: MeshClient; stub: Stub; nodeStarted: { id: string; node: MeshNode; webrtcAddr: string } }> {
+    const srv = createServer((req, res) => {
+      if (req.url === '/blocks/current') {
+        const r = bodyFactory(req);
+        res.writeHead(r.status, { 'content-type': 'application/json' });
+        res.end(r.body);
+      } else if (req.url === '/nipopow/proof/24/20') {
+        // Any proof route is served honestly through the fake resolve, so
+        // leave this a 404; the tip test only exercises /blocks/current.
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      } else {
+        res.writeHead(404); res.end();
+      }
+    });
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
+    const port = (srv.address() as AddressInfo).port;
+    const stub: Stub = { srv, base: `http://127.0.0.1:${port}` };
+    stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-client-tip-')); dirs.push(dir);
+    const started = await startNode(stub, dir); nodes.push(started.node);
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([(u) => winnerFirst(u), (u) => winnerFirst(u)]),
+    });
+    clients.push(client);
+    return { client, stub, nodeStarted: started };
+  }
+
+  it('refreshTip: an HTTP non-ok answer moves the node by failure', async () => {
+    const { client, nodeStarted } = await startWithHostileTip(() => ({ status: 500, body: 'kaboom' }));
+    await client.check();
+    const entry = client.state().nodes.find((n) => n.notisId === nodeStarted.id);
+    expect(entry!.status).toBe('retry');
+    expect(entry!.evidence).toBeNull();
+  }, 60_000);
+
+  it('refreshTip: a body that does not parse as JSON moves the node by lie', async () => {
+    const { client, nodeStarted } = await startWithHostileTip(() => ({ status: 200, body: 'not json at all' }));
+    await client.check();
+    const entry = client.state().nodes.find((n) => n.notisId === nodeStarted.id);
+    expect(entry!.status).toBe('blacklisted');
+    expect(entry!.evidence?.kind).toBe('malformed');
+  }, 60_000);
+
+  it('refreshTip: a body that parses but is not a tip moves the node by lie', async () => {
+    const { client, nodeStarted } = await startWithHostileTip(() => ({
+      status: 200,
+      body: JSON.stringify({ not: 'a tip' }),
+    }));
+    await client.check();
+    const entry = client.state().nodes.find((n) => n.notisId === nodeStarted.id);
+    expect(entry!.status).toBe('blacklisted');
+    expect(entry!.evidence?.kind).toBe('malformed');
+  }, 60_000);
+
+  it('refreshTip: a body over the route cap moves the node by lie', async () => {
+    // HEIGHT_READ_BYTES is 1_024; a valid-looking tip body wrapped in
+    // enough filler to overflow the cap is cut off at the reader and
+    // read as a malformed answer over the authenticated link.
+    const bulk = JSON.stringify({ height: 1, id: 'ab'.repeat(32), filler: 'x'.repeat(2_000) });
+    const { client, nodeStarted } = await startWithHostileTip(() => ({ status: 200, body: bulk }));
+    await client.check();
+    const entry = client.state().nodes.find((n) => n.notisId === nodeStarted.id);
+    expect(entry!.status).toBe('blacklisted');
+    expect(entry!.evidence?.kind).toBe('malformed');
   }, 60_000);
 
   it('the client imports nothing from node:', async () => {

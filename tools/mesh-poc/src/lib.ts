@@ -31,6 +31,7 @@ export {
   RETRY_BASE_MS,
   RETRY_CAP_MS,
   CHECK_INTERVAL_MS,
+  DIAL_TIMEOUT_MS,
   CERT_RETRY_MS,
   STUN_PORT,
 } from './protocols.js';

@@ -29,7 +29,8 @@ import { generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
 import type { TipResult } from '@dagsocial/nipopow-client';
-import type { HttpFetch } from '@dagsocial/node-reads';
+import { fetchJson, HEIGHT_READ_BYTES } from '@dagsocial/node-reads';
+import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
 import { parseMeshUrl, meshBaseUrl, MeshUrlError } from '../mesh-url.js';
 import { meshFetch } from '../http-fetch.js';
@@ -41,7 +42,12 @@ import {
   type NodeEntry,
 } from './node-list.js';
 import { tipEvents, type TipEvent } from './tip-events.js';
-import { dhtProtocol, CHECK_INTERVAL_MS, type NetworkName } from '../protocols.js';
+import {
+  dhtProtocol,
+  CHECK_INTERVAL_MS,
+  DIAL_TIMEOUT_MS,
+  type NetworkName,
+} from '../protocols.js';
 
 /**
  * MESH_INTERFACE → NAT — the client refuses an ICE server named by anything
@@ -53,18 +59,25 @@ const STUN_IPV6_RE = /^stun:\[([0-9a-fA-F:]+)\]:(\d{1,5})$/;
 // A 32-bit signed timer deadline — `MESH_INTERFACE → Place in the
 // workspace`: a cap in both runtimes, since a browser's `setTimeout` reads
 // its ms as a signed int.
-const MAX_TIMER_MS = 0x7fff_ffff;
+export const MAX_TIMER_MS = 0x7fff_ffff;
 
-// A pre-dial deadline — the longest the client waits for a dial to
-// finish before giving up on an address. Local-network WebRTC-direct
-// handshakes land in well under a second; the ceiling is here only to
-// keep a UDP endpoint that no one answers from stalling a check (no
-// equivalent of TCP's "connection refused" for UDP).
-const DIAL_TIMEOUT_MS = 3_000;
-
-function cappedTimerMs(ms: number): number {
-  return Math.max(0, Math.min(MAX_TIMER_MS, ms | 0));
+// Clamp a `setTimeout` interval into the 32-bit signed range: a value past
+// `MAX_TIMER_MS` makes `setTimeout` fire at once in a browser and warns in
+// Node, and a negative one does the same. `NaN` folds to 0; `+Infinity`
+// to the cap; a fraction floors.
+export function cappedTimerMs(ms: number): number {
+  if (Number.isNaN(ms) || ms < 0) return 0;
+  if (ms > MAX_TIMER_MS) return MAX_TIMER_MS;
+  return Math.floor(ms);
 }
+
+// `readCappedJson`'s body sentinels (`@dagsocial/node-reads`'s `http.ts`):
+// an answer over the route's cap, or one whose body does not parse as JSON,
+// is a body-level failure under a key-authenticated link — a lie, per
+// `MESH_INTERFACE → The client's node list` → "a malformed answer". Every
+// other non-ok NodeResult is HTTP-level and reads as a failure.
+const BODY_OVER_CAP = 'body over ';
+const BODY_UNPARSEABLE = 'unparseable body:';
 
 function assertIceServers(stunServers: readonly string[]): void {
   for (const s of stunServers) {
@@ -126,6 +139,13 @@ export interface MeshClient {
   state(): ClientState;
   onState(cb: (s: ClientState) => void): () => void;
   stop(): Promise<void>;
+  /**
+   * Test seam: the libp2p node under the client. The suite dispatches a
+   * `peer:discovery` event here so the "a discovered node is added before
+   * any event names it" case can hold its guard without a three-node DHT
+   * walk (MESH_INTERFACE → Discovery). Not meant for ordinary callers.
+   */
+  readonly libp2p: Libp2p<{ http: HTTP }>;
 }
 
 export interface StartMeshClientOptions {
@@ -189,7 +209,7 @@ function iceConfigurations(stunServers: readonly string[]): RTCIceServer[] {
 }
 
 class MeshClientImpl implements MeshClient {
-  private readonly node: Libp2p<{ http: HTTP }>;
+  readonly libp2p: Libp2p<{ http: HTTP }>;
   private readonly clock: () => number;
   private readonly resolveFn: typeof resolveTip;
   private readonly profile: NetworkProfile;
@@ -212,7 +232,7 @@ class MeshClientImpl implements MeshClient {
     clock: () => number,
     resolveFn: typeof resolveTip,
   ) {
-    this.node = node;
+    this.libp2p = node;
     this.clock = clock;
     this.resolveFn = resolveFn;
     this.profile = o.profile;
@@ -236,13 +256,13 @@ class MeshClientImpl implements MeshClient {
     // The DHT reports a peer the first time it hears of one; every one
     // becomes a `NodeList` entry before any later event can name it
     // (MESH_INTERFACE → Discovery).
-    this.node.addEventListener('peer:discovery', this.onDiscovery);
-    this.node.addEventListener('connection:open', this.onConnectionOpen);
-    this.node.addEventListener('connection:close', this.onConnectionClose);
+    this.libp2p.addEventListener('peer:discovery', this.onDiscovery);
+    this.libp2p.addEventListener('connection:open', this.onConnectionOpen);
+    this.libp2p.addEventListener('connection:close', this.onConnectionClose);
     // The first check runs at start (MESH_INTERFACE → The client's node
-    // list → "A check runs at start"); a failure here does not take the
-    // client down, it is reflected in the state and the next check comes
-    // on the ordinary cadence.
+    // list → "A check"); a failure here does not take the client down, it
+    // is reflected in the state and the next check comes on the ordinary
+    // cadence.
     this.scheduleNextCheck(0);
   }
 
@@ -301,14 +321,18 @@ class MeshClientImpl implements MeshClient {
     if (this.checkInProgress) {
       try { await this.checkInProgress; } catch { /* already surfaced to its caller */ }
     }
-    this.node.removeEventListener('peer:discovery', this.onDiscovery);
-    this.node.removeEventListener('connection:open', this.onConnectionOpen);
-    this.node.removeEventListener('connection:close', this.onConnectionClose);
-    await this.node.stop();
+    this.libp2p.removeEventListener('peer:discovery', this.onDiscovery);
+    this.libp2p.removeEventListener('connection:open', this.onConnectionOpen);
+    this.libp2p.removeEventListener('connection:close', this.onConnectionClose);
+    await this.libp2p.stop();
   }
 
   private triggerImmediateCheck(): void {
     if (this.stopped) return;
+    // MESH_INTERFACE → The client's node list → "A check" — "one check at
+    // a time: a trigger during a check is that check." The ongoing check
+    // is the response; a trigger during it adds no second check.
+    if (this.checkInProgress !== null) return;
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -322,7 +346,13 @@ class MeshClientImpl implements MeshClient {
     this.timer = setTimeout(() => {
       this.timer = null;
       this.check()
-        .catch(() => undefined)
+        .catch((e) => {
+          // A check that threw is a bug — `runCheck` catches each phase's
+          // own failures. Log it and carry on: the periodic cadence keeps
+          // the client alive, and the next check sees the current state.
+          // eslint-disable-next-line no-console
+          console.error('[mesh-client] check threw', e);
+        })
         .finally(() => this.scheduleNextCheck(CHECK_INTERVAL_MS));
     }, ms);
   }
@@ -427,13 +457,11 @@ class MeshClientImpl implements MeshClient {
       }
       try {
         const ma = withPeerId(addr, id);
-        // CONSTANTS → Client reads — a per-dial deadline keeps a stopped
-        // peer from stalling the pre-dial pass: a WebRTC-direct dial that
-        // never answers would otherwise wait for libp2p's own longer
-        // ceiling. REQUEST_TIMEOUT_MS matches the reader's deadline the
-        // client holds every HTTP answer to.
+        // MESH_INTERFACE → The client's node list — `DIAL_TIMEOUT_MS` is
+        // the longest one dial of one address waits; past it the address
+        // counts as a timeout and the dialler moves to the next.
         const signal = AbortSignal.timeout(DIAL_TIMEOUT_MS);
-        await this.node.dial(ma, { signal });
+        await this.libp2p.dial(ma, { signal });
         return; // success — connection open
       } catch (e) {
         if (isUnexpectedPeer(e)) {
@@ -455,13 +483,12 @@ class MeshClientImpl implements MeshClient {
   }
 
   private hasOpenConnection(notisId: string): boolean {
-    try {
-      const expected = toLibp2pPeerIdString(notisId);
-      for (const c of this.node.getConnections()) {
-        if (c.remotePeer.toString() === expected) return true;
-      }
-    } catch {
-      return false;
+    // `toLibp2pPeerIdString` throws only on a bad notisId; the ids here
+    // come from `NodeList`, which refuses one at the door — so a throw
+    // means a bug upstream and must not be swallowed.
+    const expected = toLibp2pPeerIdString(notisId);
+    for (const c of this.libp2p.getConnections()) {
+      if (c.remotePeer.toString() === expected) return true;
     }
     return false;
   }
@@ -493,30 +520,54 @@ class MeshClientImpl implements MeshClient {
   }
 
   private firstConnectionFor(notisId: string): Connection | null {
-    let expected: string;
-    try {
-      expected = toLibp2pPeerIdString(notisId);
-    } catch {
-      return null;
-    }
-    for (const c of this.node.getConnections()) {
+    // Same as `hasOpenConnection`: a bad notisId past `NodeList`'s door
+    // is a bug upstream, not a signal to silently return null.
+    const expected = toLibp2pPeerIdString(notisId);
+    for (const c of this.libp2p.getConnections()) {
       if (c.remotePeer.toString() === expected) return c;
     }
     return null;
   }
 
   private async refreshTip(inUseId: string): Promise<void> {
-    try {
-      const res = await this.meshFetchFn(meshBaseUrl(inUseId) + '/blocks/current');
-      if (!res.ok) return;
-      const body = (await res.json()) as unknown;
-      if (isTipShape(body)) {
-        this.state_.tip = { height: body.height, hash: body.id };
+    // MESH_INTERFACE → The node endpoint — the mesh carries no new reader:
+    // `/blocks/current` reads through `fetchJson` under the route's own cap
+    // (`HEIGHT_READ_BYTES`, `CONSTANTS → Client reads`). A hostile node that
+    // sends more than the cap is cut off at the reader. The result is
+    // classified per `MESH_INTERFACE → The client's node list`: a transport
+    // or HTTP non-ok result moves the node by `failure`; an answer whose
+    // body does not parse, overflows the cap, or parses but is not a tip
+    // moves it by `lie` of kind `malformed` — a malformed answer over a
+    // link authenticated to the key is the contract's lie row.
+    const url = meshBaseUrl(inUseId) + '/blocks/current';
+    const r = await fetchJson<unknown>(this.fetch, url, HEIGHT_READ_BYTES);
+    const nowMs = this.clock();
+    if (!r.ok) {
+      if (isBodyLevelFailure(r)) {
+        this.applyEvent({
+          id: inUseId,
+          ev: 'lie',
+          evidence: { kind: 'malformed', atMs: nowMs, detail: r.body },
+        });
+        return;
       }
-    } catch {
-      // The read's own failure is recorded through the fetch wrapper, if
-      // the caller used it; here we just leave the previous tip in place.
+      if (r.status === 0) {
+        const kind: FailureKind = r.timedOut === true ? 'timeout' : 'transport';
+        this.applyEvent({ id: inUseId, ev: 'failure', kind });
+        return;
+      }
+      this.applyEvent({ id: inUseId, ev: 'failure', kind: 'refused' });
+      return;
     }
+    if (!isTipShape(r.data)) {
+      this.applyEvent({
+        id: inUseId,
+        ev: 'lie',
+        evidence: { kind: 'malformed', atMs: nowMs, detail: 'tip shape invalid' },
+      });
+      return;
+    }
+    this.state_.tip = { height: r.data.height, hash: r.data.id };
   }
 
   private handleDiscovery(detail: { id: PeerId; multiaddrs: Multiaddr[] }): void {
@@ -538,13 +589,19 @@ class MeshClientImpl implements MeshClient {
     for (const cb of [...this.listeners]) {
       try {
         cb(snapshot);
-      } catch {
-        // A listener's own throw must not take the client down: the state
-        // write already happened and the other listeners still deserve to
-        // hear.
+      } catch (e) {
+        // A listener's own throw must not take the client down nor silence
+        // the next one — log it (a listener that throws is a bug) and
+        // carry on. The state write already happened.
+        // eslint-disable-next-line no-console
+        console.error('[mesh-client] onState listener threw', e);
       }
     }
   }
+}
+
+function isBodyLevelFailure(r: NodeError): boolean {
+  return r.body.startsWith(BODY_OVER_CAP) || r.body.startsWith(BODY_UNPARSEABLE);
 }
 
 function withPeerId(addr: string, notisId: string): Multiaddr {

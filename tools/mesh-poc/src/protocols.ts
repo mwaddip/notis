@@ -11,5 +11,6 @@ export function dhtProtocol(network: NetworkName): string {
 export const RETRY_BASE_MS: 5000 = 5000;
 export const RETRY_CAP_MS: 600000 = 600000;
 export const CHECK_INTERVAL_MS: 30000 = 30000;
+export const DIAL_TIMEOUT_MS: 3000 = 3000;
 export const CERT_RETRY_MS: 3600000 = 3600000;
 export const STUN_PORT: 3478 = 3478;
