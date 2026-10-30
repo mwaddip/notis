@@ -283,7 +283,7 @@ describe('verdictS6NoAnchor — all anchors unreachable, page says the contract 
   it('banner text differs by one byte → FAIL', () => {
     expect(verdictS6NoAnchor({ ...PASS, bannerText: 'No anchor reached. Nothing shown here is verified' })).toBe('FAIL');
   });
-  it.fails('page reached nothing (no seed answered) → FAIL (no vacuous PASS)', () => {
+  it('page reached nothing (no seed answered) → FAIL (no vacuous PASS)', () => {
     expect(verdictS6NoAnchor({
       anchorReached: false,
       bannerText: 'No anchor reached. Nothing shown here is verified.',
@@ -292,7 +292,7 @@ describe('verdictS6NoAnchor — all anchors unreachable, page says the contract 
       seedStatus: null,
     })).toBe('FAIL');
   });
-  it.fails("a seed in 'new' (never contacted) does not count as answered", () => {
+  it("a seed in 'new' (never contacted) does not count as answered", () => {
     expect(verdictS6NoAnchor({
       ...PASS,
       seedAnswered: false,

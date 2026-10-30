@@ -102,6 +102,14 @@ export async function run(ctx) {
       for (let i = 0; i < a.drops.length; i += 1) {
         runFault(log, `browser-anchor-drop-${i}`, a.drops[i]);
       }
+      // MESH_INTERFACE → Acceptance 6 — "a client talking to hostile
+      // nodes alone says no anchor was reached". Positive evidence: at
+      // least one seed left `new` for `ok`, `behind` or `blacklisted`
+      // inside the window. The predicate below holds for the banner +
+      // anchorReached=false AND at least one seed classified past
+      // `new`.
+      const hostileIds = Object.values(seedsByHost).filter((v) => typeof v === 'string');
+      const hostileIdsJson = JSON.stringify(hostileIds);
       const bannerText = await cdpPoll(ctx, browserUrl,
         `(function(){
            const banner = document.querySelector('[data-role="banner"]');
@@ -113,13 +121,36 @@ export async function run(ctx) {
          try {
            const obj = JSON.parse(v);
            const s = JSON.parse(obj.state);
-           return s.anchorReached === false && obj.banner === ${JSON.stringify(NO_ANCHOR_WORDS)};
+           if (s.anchorReached !== false || obj.banner !== ${JSON.stringify(NO_ANCHOR_WORDS)}) return false;
+           const hostileIds = ${hostileIdsJson};
+           const terminal = ['ok', 'behind', 'blacklisted'];
+           return hostileIds.some((id) => {
+             const e = s.nodes?.find((n) => n.notisId === id);
+             return e !== undefined && terminal.includes(e.status);
+           });
          } catch (_e) { return false; }`,
         120_000, 1000,
       );
       const bannerObj = JSON.parse(bannerText);
       const stateA = JSON.parse(bannerObj.state);
-      const m = { anchorReached: stateA.anchorReached, bannerText: bannerObj.banner };
+      // Find the first seed that answered — positive evidence the page
+      // reached nodes, so the "no anchor" verdict is not vacuous.
+      const terminal = new Set(['ok', 'behind', 'blacklisted']);
+      let answeredSeed = null;
+      for (const id of hostileIds) {
+        const e = stateA.nodes?.find((n) => n.notisId === id);
+        if (e !== undefined && terminal.has(e.status)) {
+          answeredSeed = { id, status: e.status };
+          break;
+        }
+      }
+      const m = {
+        anchorReached: stateA.anchorReached,
+        bannerText: bannerObj.banner,
+        seedAnswered: answeredSeed !== null,
+        seedId: answeredSeed?.id ?? null,
+        seedStatus: answeredSeed?.status ?? null,
+      };
       return { verdict: verdictS6NoAnchor(m), measurement: m };
     });
 

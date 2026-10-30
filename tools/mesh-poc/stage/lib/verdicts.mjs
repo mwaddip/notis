@@ -185,14 +185,21 @@ export function verdictS5(m) {
 }
 
 // MESH_INTERFACE → Acceptance 6 — "With every anchor out of reach,
-// `anchorReached` is false and the page says so". The banner words
-// are the contract's byte for byte (MESH_INTERFACE → No anchor
-// reached).
-// Measurement: `{ anchorReached: boolean, bannerText: string|null }`.
+// `anchorReached` is false and the page says so". The property is "a
+// client talking to hostile nodes alone says no anchor was reached", so
+// PASS requires positive evidence that at least one seed answered
+// inside the window (its entry left `new` for `ok`, `behind` or
+// `blacklisted`). A page that reached NOTHING — anchors blocked and
+// seeds never dialled, which the stage's broken page would also show —
+// would otherwise read PASS vacuously.
+// Measurement:
+//   `{ anchorReached: boolean, bannerText: string|null,
+//      seedAnswered: boolean, seedId: string|null, seedStatus: string|null }`.
 export function verdictS6NoAnchor(m) {
   if (missing(m)) return 'skipped';
   if (m.anchorReached !== false) return 'FAIL';
   if (m.bannerText !== 'No anchor reached. Nothing shown here is verified.') return 'FAIL';
+  if (m.seedAnswered !== true) return 'FAIL';
   return 'PASS';
 }
 
