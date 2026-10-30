@@ -9,10 +9,11 @@ import { execSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { ClientState } from '../src/client/mesh-client.js';
+import type { ClientState, MeshClient } from '../src/client/mesh-client.js';
 import type { NodeEntry } from '../src/client/node-list.js';
 import { render } from '../page/render.js';
 import { runMain } from '../page/main.js';
+import { runProbe } from '../page/probe.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -117,6 +118,121 @@ describe('page/render.ts', () => {
     const errText = root.textContent ?? '';
     expect(errText.toLowerCase()).toContain('refused');
     expect(errText).toContain('DNS');
+  });
+});
+
+describe('page/probe.ts', () => {
+  // MESH_INTERFACE → Acceptance — the one query parameter the page honours:
+  // `?probe=<path>`. After the first state with a non-null `nodeId`, the
+  // page reads the path through its own client's fetch (a mesh URL
+  // `notis-mesh://<nodeId><path>`), and writes `<pre id="probe">` with
+  // `{ path, nodeId, status, bytes, sha256 }`. The SHA-256 is lowercase
+  // hex over the response body.
+  type FakeClient = Pick<MeshClient, 'fetch' | 'state' | 'onState'>;
+  function buildFake(opts: {
+    nodeId: string;
+    body: Uint8Array;
+    status?: number;
+    expectUrl?: string;
+  }): { client: FakeClient; emit: (nodeId: string | null) => void; fetched: string[] } {
+    const listeners = new Set<(s: ClientState) => void>();
+    let state: ClientState = {
+      nodeId: null, transport: null, path: null, lastLeft: null,
+      anchorReached: false, tip: null, nodes: [],
+    };
+    const fetched: string[] = [];
+    const client: FakeClient = {
+      fetch: async (url: string) => {
+        fetched.push(url);
+        if (opts.expectUrl !== undefined && url !== opts.expectUrl) {
+          throw new Error(`unexpected mesh URL: ${url}`);
+        }
+        const body = opts.body;
+        return new Response(body as unknown as BodyInit, { status: opts.status ?? 200 });
+      },
+      state: () => state,
+      onState: (cb) => {
+        listeners.add(cb);
+        return () => { listeners.delete(cb); };
+      },
+    };
+    const emit = (nodeId: string | null) => {
+      state = { ...state, nodeId };
+      for (const l of listeners) l(state);
+    };
+    return { client, emit, fetched };
+  }
+
+  it.fails('writes <pre id="probe"> with { path, nodeId, status, bytes, sha256 } after the first state with a nodeId', async () => {
+    const root = document.createElement('div');
+    const nodeId = 'a'.repeat(64);
+    const path = '/blocks/current';
+    const body = new TextEncoder().encode('{"height":42,"hash":"ab"}');
+    const expectedSha = '5aeebf56f0f896ce1fd8e4bccb182c047c91d71692408a418ef8aecca022d90c';
+    const { client, emit, fetched } = buildFake({
+      nodeId,
+      body,
+      expectUrl: `notis-mesh://${nodeId}${path}`,
+    });
+    const promise = runProbe({ client, path, root });
+    emit(nodeId);
+    const result = await promise;
+    expect(result.path).toBe(path);
+    expect(result.nodeId).toBe(nodeId);
+    expect(result.status).toBe(200);
+    expect(result.bytes).toBe(body.length);
+    expect(result.sha256).toBe(expectedSha);
+    expect(fetched).toEqual([`notis-mesh://${nodeId}${path}`]);
+    const pre = root.querySelector('pre#probe');
+    expect(pre, '<pre id="probe"> under root').not.toBeNull();
+    const parsed = JSON.parse(pre!.textContent ?? '');
+    expect(parsed).toEqual({ path, nodeId, status: 200, bytes: body.length, sha256: expectedSha });
+  });
+
+  it.fails('reads the first non-null state when the client already has a nodeId', async () => {
+    const root = document.createElement('div');
+    const nodeId = 'b'.repeat(64);
+    const body = new Uint8Array([1, 2, 3, 4]);
+    // sha256 of 0x01020203... — compute via the real digest to avoid duplicating
+    // the function in the test.
+    const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', body));
+    let expectedSha = '';
+    for (const b of digest) expectedSha += b.toString(16).padStart(2, '0');
+
+    const listeners = new Set<(s: ClientState) => void>();
+    let state: ClientState = {
+      nodeId, transport: 'webrtc-direct', path: 'direct', lastLeft: null,
+      anchorReached: true, tip: null, nodes: [],
+    };
+    const client: FakeClient = {
+      fetch: async () => new Response(body as unknown as BodyInit, { status: 200 }),
+      state: () => state,
+      onState: (cb) => { listeners.add(cb); return () => { listeners.delete(cb); }; },
+    };
+    const result = await runProbe({ client, path: '/nipopow/proof/24/20', root });
+    expect(result.nodeId).toBe(nodeId);
+    expect(result.bytes).toBe(4);
+    expect(result.sha256).toBe(expectedSha);
+  });
+});
+
+describe('page/main.ts probe wiring', () => {
+  // MESH_INTERFACE → Acceptance — `main.ts` reads `?probe=<path>` from
+  // `globalThis.location.search`. A URL without `?probe=` does not run the
+  // probe (no `<pre id="probe">` ever appears); a URL with it runs the
+  // probe after the client's first state with a nodeId.
+  it('absent ?probe= query parameter leaves no <pre id="probe">', async () => {
+    const root = document.createElement('div');
+    const fakeFetch = async (): Promise<Response> => new Response(
+      JSON.stringify({
+        network: 'devnet',
+        anchors: [{ notisId: 'aa'.repeat(32), addrs: ['/dns4/example.com/tcp/4001/p2p/12D3KooWBad'] }],
+        stunServers: [],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+    await runMain({ root, fetch: fakeFetch as unknown as typeof globalThis.fetch });
+    expect(root.querySelector('pre#probe')).toBeNull();
   });
 });
 

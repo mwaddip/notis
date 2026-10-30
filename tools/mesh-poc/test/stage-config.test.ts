@@ -427,6 +427,23 @@ describe('stage up --dry-run', () => {
     }
   }, 30_000);
 
+  // MESH_INTERFACE → Acceptance — scenario 1 runs with the browser's own
+  // resolver answering nothing. Chromium's `--host-resolver-rules` reads
+  // one rule, and `MAP * ~NOTFOUND , EXCLUDE localhost` tells Chromium
+  // to refuse every host but `localhost` (the page itself is at
+  // `http://localhost:80/`); every ICE server, every bootstrap address
+  // and every background query of the browser's own that goes by name
+  // fails before touching DNS, so the DNS log holds only what went
+  // around Chromium's resolver.
+  it.fails("Chromium carries --host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost", () => {
+    runDryOnce();
+    const line = out.split('\n').find((l) => l.startsWith('[spawn:chromium]'));
+    expect(line, 'chromium spawn is in the dry-run').toBeDefined();
+    expect(line, 'the resolver rule is on the Chromium line').toContain(
+      '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost',
+    );
+  }, 30_000);
+
   // MESH_INTERFACE → Acceptance — Chromium's quiet set from Playwright and
   // Puppeteer, not Chromium's own `--help` listing. Playwright's switches
   // live at `playwright-core/src/server/chromium/chromiumSwitches.ts` and
