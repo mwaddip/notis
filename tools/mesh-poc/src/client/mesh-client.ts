@@ -843,15 +843,19 @@ export function messageOf(e: unknown): string {
  *   `/.../webrtc-direct/.../p2p/R/p2p-circuit/webrtc/p2p/X` → `{ webrtc, direct }`
  *   `/.../webrtc-direct/.../p2p/R/p2p-circuit/p2p/X`         → `{ webrtc-direct, relay }`
  *   `/.../tls/ws/p2p/R/p2p-circuit/p2p/X`                     → `{ wss, relay }`
+ *   `/.../wss/p2p/R/p2p-circuit/p2p/X`                        → `{ wss, relay }`
  *   `/.../webrtc-direct/.../p2p/X`                            → `{ webrtc-direct, direct }`
  *   `/.../tls/ws/p2p/X`                                       → `{ wss, direct }`
+ *   `/.../wss/p2p/X`                                          → `{ wss, direct }`
  *
  * The base transport comes from the components before any `p2p-circuit`:
  * a `webrtc-direct` component names `webrtc-direct`; a `tls` component
- * followed by `ws` names `wss`. When a `p2p-circuit` is present, a
- * `webrtc` or `webrtc-direct` component after it names the upgraded
- * transport with `path: 'direct'`; otherwise the connection is still
- * relayed through the base transport and the path is `relay`.
+ * followed by `ws`, or a single `wss` component, names `wss` (the
+ * client dials both forms — `isWSSAddr` reads either). When a
+ * `p2p-circuit` is present, a `webrtc` or `webrtc-direct` component
+ * after it names the upgraded transport with `path: 'direct'`;
+ * otherwise the connection is still relayed through the base transport
+ * and the path is `relay`.
  *
  * An address this function cannot name is a thrown error at the call,
  * not a `null` that hides a bug: the connection reached a state the
@@ -867,6 +871,7 @@ export function classifyConnectionAddr(ma: string): {
 
   let base: 'webrtc-direct' | 'wss' | null = null;
   if (before.includes('webrtc-direct')) base = 'webrtc-direct';
+  else if (before.includes('wss')) base = 'wss';
   else {
     const tlsIdx = before.indexOf('tls');
     if (tlsIdx !== -1 && before[tlsIdx + 1] === 'ws') base = 'wss';

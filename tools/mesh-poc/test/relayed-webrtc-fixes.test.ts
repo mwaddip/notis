@@ -230,12 +230,12 @@ describe('classifyConnectionAddr reads transport/path from the multiaddr\'s comp
   // multiaddr component) alongside the two-component `/tls/ws/` form:
   // `src/client/mesh-client.ts`'s `isWSSAddr` reader skips only plain
   // `/ws/`. A `wss` component before any `p2p-circuit` names `wss`.
-  it.fails('a plain wss address classifies as { wss, direct }', () => {
+  it('a plain wss address classifies as { wss, direct }', () => {
     const ma = `/ip4/11.100.0.11/tcp/443/wss/p2p/${TARGET}`;
     expect(classifyConnectionAddr(ma)).toEqual({ transport: 'wss', path: 'direct' });
   });
 
-  it.fails('a wss address with /p2p-circuit classifies as { wss, relay }', () => {
+  it('a wss address with /p2p-circuit classifies as { wss, relay }', () => {
     const ma = `/ip4/11.100.0.11/tcp/443/wss/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`;
     expect(classifyConnectionAddr(ma)).toEqual({ transport: 'wss', path: 'relay' });
   });
@@ -535,7 +535,7 @@ function makeOutDir(opts: { anchorNotisId: string; identities: Record<string, un
   return outDir;
 }
 
-function ctxFor(outDir: string): Record<string, unknown> {
+function ctxFor(outDir: string): { dryRun: false; topology: unknown; outDir: string; pids: { pids: unknown[] }; nodeBin: string; cdpScript: string; invokingUser: string } {
   return {
     dryRun: false,
     topology: TOPOLOGY_FIXTURE,
@@ -705,7 +705,7 @@ describe('s2\'s priv2 step', () => {
   // current (eval) loop exits on the first iteration too — then the
   // test's own assertion is the one that FAILs the test under
   // current, not a scenario timeout.
-  it.fails('issues one poll or poll-ice call for its whole window, never eval', async () => {
+  it('issues one poll or poll-ice call for its whole window, never eval', async () => {
     execInMock.reset();
     const state = cannedPriv2State();
     const acc = { everInUse: false, blacklistedAtAnyPoll: false };

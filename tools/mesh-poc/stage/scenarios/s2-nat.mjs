@@ -119,55 +119,66 @@ export async function run(ctx) {
         });
         writeConfigVariant(ctx.outDir, variant);
         const expectedNodeId = priv2Row.notisId;
-        // Walk the page's state while priv2's entry collects failures.
-        // The predicate stops the poll when priv2 has ≥1 failure AND
-        // the page's `nodeId` names a node other than priv2 that is
-        // not null (the client reached something else). The record
-        // tracks `blacklistedAtAnyPoll` and `everInUse` across the
-        // window.
-        let priv2Status = 'new';
-        let priv2Failures = 0;
-        let priv2LastFailure = null;
-        let nodeIdInUse = null;
-        let everInUse = false;
-        let blacklistedAtAnyPoll = false;
-        let anyPoll = false;
-        const stop = Date.now() + PRIV2_WAIT_MS;
-        while (Date.now() < stop) {
-          const text = await cdpEval(ctx, browserUrl,
-            "document.getElementById('state')?.textContent ?? null");
-          if (typeof text !== 'string') {
-            await delay(POLL_MS);
-            continue;
-          }
-          const state = JSON.parse(text);
-          anyPoll = true;
-          nodeIdInUse = state.nodeId ?? null;
-          if (nodeIdInUse === expectedNodeId) everInUse = true;
-          const entry = Array.isArray(state.nodes)
-            ? state.nodes.find((n) => n?.notisId === expectedNodeId)
+        // MESH_INTERFACE → Acceptance 2 — the step holds ONE page open
+        // across the whole window: `cdp.mjs eval` would open a fresh
+        // target per call and reset the client to nothing, so priv2's
+        // entry could never accumulate a failure on a working stage.
+        // The expression runs in the page, parses `#state`, updates an
+        // in-page accumulator `window.__s2priv2` (so `everInUse` and
+        // `blacklistedAtAnyPoll` ride across polls), and returns
+        // `JSON.stringify({ state, acc })` for the driver. The
+        // predicate stops polling when priv2 has >= 1 failure, the
+        // page's `nodeId` names a non-null node other than priv2, and
+        // priv2 is not blacklisted at this poll. A poll timeout
+        // propagates to the step recorder as the error it is.
+        const expression = `(function () {
+          const el = document.getElementById('state');
+          const text = el ? el.textContent : null;
+          if (typeof text !== 'string' || text === '') return null;
+          let state;
+          try { state = JSON.parse(text); } catch (_e) { return null; }
+          var acc = window.__s2priv2 || { everInUse: false, blacklistedAtAnyPoll: false };
+          var expected = ${JSON.stringify(expectedNodeId)};
+          if (state && state.nodeId === expected) acc.everInUse = true;
+          var entry = (state && Array.isArray(state.nodes))
+            ? state.nodes.find(function (n) { return n && n.notisId === expected; })
             : null;
-          if (entry) {
-            priv2Status = typeof entry.status === 'string' ? entry.status : priv2Status;
-            if (typeof entry.failures === 'number') priv2Failures = entry.failures;
-            priv2LastFailure = entry.lastFailure ?? null;
-            if (priv2Status === 'blacklisted') blacklistedAtAnyPoll = true;
-          }
-          const satisfied = priv2Failures >= 1
-            && nodeIdInUse !== null
-            && nodeIdInUse !== expectedNodeId;
-          if (satisfied) break;
-          await delay(POLL_MS);
-        }
-        const measurement = anyPoll ? {
+          if (entry && entry.status === 'blacklisted') acc.blacklistedAtAnyPoll = true;
+          window.__s2priv2 = acc;
+          return JSON.stringify({ state: state, acc: acc });
+        })()`;
+        const predicateBody = `if (typeof v !== 'string') return false;
+          try {
+            var o = JSON.parse(v);
+            var expected = ${JSON.stringify(expectedNodeId)};
+            if (!o || !o.state || !Array.isArray(o.state.nodes)) return false;
+            var entry = o.state.nodes.find(function (n) { return n && n.notisId === expected; });
+            if (!entry || typeof entry.failures !== 'number' || entry.failures < 1) return false;
+            if (entry.status === 'blacklisted') return false;
+            if (o.state.nodeId === null || o.state.nodeId === undefined) return false;
+            if (o.state.nodeId === expected) return false;
+            return true;
+          } catch (_e) { return false; }`;
+        const matched = await cdpPoll(ctx, browserUrl, expression, predicateBody,
+          PRIV2_WAIT_MS, POLL_MS);
+        // `matched` is the matching value — a string
+        // `JSON.stringify({ state, acc })`. The driver has already
+        // JSON.parse-d the stdout once.
+        const parsed = JSON.parse(matched);
+        const state = parsed.state;
+        const acc = parsed.acc;
+        const entry = Array.isArray(state.nodes)
+          ? state.nodes.find((n) => n?.notisId === expectedNodeId)
+          : null;
+        const measurement = {
           expectedNodeId,
-          priv2Status,
-          priv2Failures,
-          priv2LastFailure,
-          nodeIdInUse,
-          everInUse,
-          blacklistedAtAnyPoll,
-        } : null;
+          priv2Status: typeof entry?.status === 'string' ? entry.status : 'new',
+          priv2Failures: typeof entry?.failures === 'number' ? entry.failures : 0,
+          priv2LastFailure: entry?.lastFailure ?? null,
+          nodeIdInUse: state.nodeId ?? null,
+          everInUse: acc?.everInUse === true,
+          blacklistedAtAnyPoll: acc?.blacklistedAtAnyPoll === true,
+        };
         return { verdict: verdictS2Priv2(measurement), measurement };
       });
     }
@@ -185,19 +196,16 @@ export async function run(ctx) {
   };
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function cdpEval(ctx, url, expression) {
-  const argv = [ctx.nodeBin, ctx.cdpScript, 'eval', url, expression];
+async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
+  const argv = [
+    ctx.nodeBin, ctx.cdpScript, 'poll', url, expression, predicateBody,
+    String(timeoutMs), String(pollMs),
+  ];
   const buf = execIn('notismesh-browser', argv, {
     user: ctx.invokingUser,
-    timeoutMs: 20_000,
+    timeoutMs: timeoutMs + 10_000,
   });
-  const text = buf.toString('utf8').trim();
-  if (text === '') return null;
-  return JSON.parse(text);
+  return JSON.parse(buf.toString('utf8'));
 }
 
 async function cdpPollIce(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
