@@ -63,6 +63,11 @@ refused, whatever certificate it holds.
 **The WebRTC-direct certificate persists** in the node's state directory. Its hash is part of the address an anchor
 lists, so a new certificate at a restart would leave every anchor naming the node unreachable.
 
+**A browser client dials public addresses only.** libp2p's default connection gater in a browser refuses every address
+in a private or reserved range (`10.0.0.0/8`, `192.168.0.0/16`, the documentation ranges and the rest of its list),
+so a page cannot be made to probe its own network. A node a browser reaches therefore has a public address, or is
+reached through a relay that has one; a mesh node on the reader's LAN is out of a browser's reach.
+
 **Plain `ws://` is no browser path**: a browser client's home is a secure context. **WebTransport is not used**:
 js-libp2p's WebTransport does not listen on Node.js, and a Notis node is Node.js.
 
@@ -116,11 +121,20 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 | What happened | Evidence of | The entry |
 |---|---|---|
 | a timeout, a refused connection, a dropped link, another transport failure, a non-2xx answer | nothing | `retry`, at growing intervals, never permanent |
+| a proof refused by the client's clock check alone — a header stamped later than the client's own clock allows | the client's clock, which may be behind | `retry`, as above; never a lie |
 | a valid proof that is not the winner's, or a chain too short to prove | being behind | `behind`, ranked below `ok` |
 | an address answers with a key other than the one dialled | the address | that address dropped for that key; the entry otherwise unchanged |
 | a malformed answer, or a proof that fails verification, over a link authenticated to the key | a lie | `blacklisted` for good, the evidence kept |
 
-**A valid proof of a lighter chain is not a lie**: an honest node that was itself cut off serves one.
+**A valid proof of a lighter chain is not a lie**: an honest node that was itself cut off serves one. **Nor is a header
+stamped ahead of the client's clock**: the verifier holds a header to the client's own time, and a client whose clock
+runs behind would otherwise blacklist every honest node for good.
+
+**Two clocks.** The verifier reads the wall clock — a header's stamp is wall-clock time. The list's retry timers read a
+monotonic clock, so a clock that steps never holds a node out or retries it at once. Neither stands in for the other.
+
+**An entry keeps its last failure's kind and message**, for the page to show why a node is in `retry`; the message is
+shown, never acted on.
 
 **Retry.** After the `n`th failure in a row, a node is next tried `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))` later,
 on a monotonic clock. A success ends the run.
