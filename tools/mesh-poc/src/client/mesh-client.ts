@@ -20,7 +20,6 @@ import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { kadDHT } from '@libp2p/kad-dht';
-import { http as httpService, type HTTP } from '@libp2p/http';
 import { UnexpectedPeerError } from '@libp2p/interface';
 import type { Connection, PeerId } from '@libp2p/interface';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
@@ -79,6 +78,22 @@ export function cappedTimerMs(ms: number): number {
 // failure.
 const BODY_OVER_CAP = 'body over ';
 const BODY_UNPARSEABLE = 'unparseable body:';
+
+/**
+ * MESH_INTERFACE → Discovery / NAT — the client's config refusals as a pure,
+ * synchronous function. One check, called from `startMeshClient` as its first
+ * statement and reused by any caller (such as the page) that wants to refuse
+ * a config before starting a libp2p node. A `MeshConfigError` is thrown for
+ * a `/dns4/`, `/dns6/`, `/dnsaddr/` anchor address or an ICE server that is
+ * not `stun:<IPv4>:<port>` / `stun:[<IPv6>]:<port>`.
+ */
+export function assertClientConfig(o: {
+  anchors: readonly Anchor[];
+  stunServers: readonly string[];
+}): void {
+  for (const a of o.anchors) assertNoDns('anchor', a.addrs);
+  assertIceServers(o.stunServers);
+}
 
 function assertIceServers(stunServers: readonly string[]): void {
   for (const s of stunServers) {
@@ -146,7 +161,7 @@ export interface MeshClient {
    * any event names it" case can hold its guard without a three-node DHT
    * walk (MESH_INTERFACE → Discovery). Not meant for ordinary callers.
    */
-  readonly libp2p: Libp2p<{ http: HTTP }>;
+  readonly libp2p: Libp2p;
 }
 
 export interface StartMeshClientOptions {
@@ -159,9 +174,9 @@ export interface StartMeshClientOptions {
 }
 
 export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshClient> {
-  // Phase 1: pure refusals, no socket or libp2p state touched.
-  for (const a of o.anchors) assertNoDns('anchor', a.addrs);
-  assertIceServers(o.stunServers);
+  // The one check, held by `assertClientConfig`. Runs before any libp2p
+  // state exists, so a refused config creates no node.
+  assertClientConfig(o);
 
   const clock = o.clock ?? defaultClock;
   const resolveFn = o.resolve ?? resolveTip;
@@ -188,13 +203,11 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
     services: {
       identify: identify(),
       ping: ping(),
-      http: httpService(),
       dht: kadDHT({ protocol: dhtProtocol(o.network), clientMode: true }),
     },
   });
-  const typed = node as unknown as Libp2p<{ http: HTTP }>;
 
-  const client = new MeshClientImpl(typed, key.notisId, o, clock, resolveFn);
+  const client = new MeshClientImpl(node, key.notisId, o, clock, resolveFn);
   client.start();
   return client;
 }
@@ -210,7 +223,7 @@ function iceConfigurations(stunServers: readonly string[]): RTCIceServer[] {
 }
 
 class MeshClientImpl implements MeshClient {
-  readonly libp2p: Libp2p<{ http: HTTP }>;
+  readonly libp2p: Libp2p;
   private readonly clock: () => number;
   private readonly resolveFn: typeof resolveTip;
   private readonly profile: NetworkProfile;
@@ -227,7 +240,7 @@ class MeshClientImpl implements MeshClient {
   private readonly onConnectionClose: () => void;
 
   constructor(
-    node: Libp2p<{ http: HTTP }>,
+    node: Libp2p,
     ownId: string,
     o: StartMeshClientOptions,
     clock: () => number,

@@ -1,21 +1,22 @@
 // MESH_INTERFACE → Place in the workspace / Discovery — the page's wiring:
 // fetch `config.json` beside the page (the stage writes it), take the
 // profile from `NETWORK_PROFILES[network]`, start the client, and call
-// `render` on every `onState`. `fetch` and `startMeshClient` are
-// parameters so the cases can inject fakes; `entry.ts` passes the real
-// ones.
+// `render` on every `onState`. The one injectable is `fetch` (config
+// read); `startMeshClient` is the real one — its first statement runs
+// `assertClientConfig`, which throws `MeshConfigError` for a `/dns4/`,
+// `/dns6/` or `/dnsaddr/` anchor and for a non-IP STUN server before
+// any libp2p node is created.
 //
 // A configuration that fails to load (network error, non-ok status,
-// unparseable JSON, missing field) and a `MeshConfigError` thrown by
-// `startMeshClient` (a `/dns4/` anchor address, a hostname ICE server)
-// are shown on the page in words, and no client is started.
+// unparseable JSON, missing field) and a `MeshConfigError` from
+// `startMeshClient` are shown on the page in words.
 
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
-import type { startMeshClient as realStartMeshClient } from '../src/client/mesh-client.js';
+import { startMeshClient } from '../src/client/mesh-client.js';
 import type { Anchor } from '../src/client/node-list.js';
 import type { NetworkName } from '../src/protocols.js';
-import { MeshConfigError, assertNoDns } from '../src/config.js';
+import { MeshConfigError } from '../src/config.js';
 import { render } from './render.js';
 
 export interface PageConfig {
@@ -27,7 +28,6 @@ export interface PageConfig {
 export interface RunMainOptions {
   root: HTMLElement;
   fetch: typeof globalThis.fetch;
-  startMeshClient: typeof realStartMeshClient;
 }
 
 export async function runMain(opts: RunMainOptions): Promise<void> {
@@ -37,22 +37,6 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
   } catch (e) {
     showError(opts.root, `config refused: ${messageOf(e)}`);
     return;
-  }
-
-  // MESH_INTERFACE → Discovery / NAT — refuse a /dns4/, /dns6/ or /dnsaddr/
-  // anchor and a hostname ICE server before calling the client. The client
-  // runs the same checks, but the page cannot start a libp2p host for a
-  // config it already knows is refused (the brief: "the injected
-  // startMeshClient is never called").
-  try {
-    for (const a of config.anchors) assertNoDns('anchor', a.addrs);
-    assertIceLiterals(config.stunServers);
-  } catch (e) {
-    if (e instanceof MeshConfigError) {
-      showError(opts.root, `config refused: ${messageOf(e)}`);
-      return;
-    }
-    throw e;
   }
 
   let profile;
@@ -65,7 +49,7 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
 
   let client;
   try {
-    client = await opts.startMeshClient({
+    client = await startMeshClient({
       anchors: config.anchors,
       network: config.network,
       profile,
@@ -127,18 +111,4 @@ function showError(root: HTMLElement, text: string): void {
 function messageOf(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
-}
-
-// MESH_INTERFACE → NAT — a stun server named by anything but an IP literal
-// is refused. A full check lives in `src/client/mesh-client.ts`; the page
-// catches the gross cases up front so the "injected startMeshClient is
-// never called" rule holds for every refusal the config can carry.
-const STUN_IP_RE = /^stun:(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]):\d{1,5}$/;
-
-function assertIceLiterals(servers: readonly string[]): void {
-  for (const s of servers) {
-    if (!STUN_IP_RE.test(s)) {
-      throw new MeshConfigError(`ICE server refused: ${JSON.stringify(s)} is not stun:<IP>:<port>`);
-    }
-  }
 }

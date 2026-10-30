@@ -14,7 +14,7 @@ export { MeshConfigError, assertNoDns } from './config.js';
 export { tipEvents } from './client/tip-events.js';
 export type { TipEvent } from './client/tip-events.js';
 
-export { startMeshClient } from './client/mesh-client.js';
+export { startMeshClient, assertClientConfig } from './client/mesh-client.js';
 export type { MeshClient, ClientState } from './client/mesh-client.js';
 
 export { NodeList } from './client/node-list.js';

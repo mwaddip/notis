@@ -8,12 +8,19 @@
 // workspace`).
 
 import type { Libp2p, Stream } from '@libp2p/interface';
-import { HTTP_PROTOCOL, type HTTP } from '@libp2p/http';
 import { fetch as httpFetch } from '@libp2p/http-fetch';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import { REQUEST_TIMEOUT_MS } from '@dagsocial/node-reads';
 import { peerIdFromNotisId, MeshKeyError } from './identity.js';
 import { parseMeshUrl, MeshUrlError } from './mesh-url.js';
+
+// MESH_INTERFACE → The node endpoint — libp2p's HTTP/1.1 protocol id, the
+// one `@libp2p/http`'s server and `@libp2p/http-fetch`'s client both dial
+// (@libp2p/http/dist/src/constants.js). Carried locally so the mesh
+// client's browser bundle does not reach `@libp2p/http` for a constant
+// (its server half pulls `@libp2p/http-utils`'s `stream-to-socket.js`
+// through the barrel, and the browser never serves HTTP over the mesh).
+const HTTP_PROTOCOL = '/http/1.1';
 
 /**
  * MESH_INTERFACE → The node endpoint — a mesh fetch's failure, by what the
@@ -47,7 +54,7 @@ export class MeshFetchError extends Error {
  * the signal's reason.
  */
 export function meshFetch(
-  node: Libp2p<{ http: HTTP }>,
+  node: Libp2p,
   opts?: { timeoutMs?: number },
 ): HttpFetch {
   const timeoutMs = opts?.timeoutMs ?? REQUEST_TIMEOUT_MS;
@@ -55,7 +62,7 @@ export function meshFetch(
 }
 
 async function meshFetchOne(
-  node: Libp2p<{ http: HTTP }>,
+  node: Libp2p,
   url: string,
   init: RequestInit | undefined,
   timeoutMs: number,

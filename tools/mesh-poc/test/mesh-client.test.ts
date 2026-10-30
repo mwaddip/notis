@@ -19,7 +19,7 @@ import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../src/identity.js';
 import { meshBaseUrl } from '../src/mesh-url.js';
 import { MeshConfigError } from '../src/config.js';
-import { cappedTimerMs, MAX_TIMER_MS } from '../src/client/mesh-client.js';
+import { assertClientConfig, cappedTimerMs, MAX_TIMER_MS } from '../src/client/mesh-client.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { multiaddr } from '@multiformats/multiaddr';
@@ -117,6 +117,19 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     for (const n of nodes.splice(0)) { try { await n.stop(); } catch { /* already stopped */ } }
     for (const s of stubs.splice(0)) { s.srv.close(); }
     for (const d of dirs.splice(0)) { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  // `assertClientConfig` is the one check `startMeshClient` runs first.
+  // The function itself is pure — a direct call throws before any libp2p
+  // state could be created, which is the property the page relies on
+  // when the real `startMeshClient` reaches it with a DNS anchor
+  // (MESH_INTERFACE → Discovery / NAT).
+  it('assertClientConfig refuses a /dns4/ anchor without creating a node', () => {
+    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+    expect(() => assertClientConfig({
+      anchors: [{ notisId: anchorKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
+      stunServers: [],
+    })).toThrow(MeshConfigError);
   });
 
   // Each prefix below is a shape — "a <setting> is refused" — one case per

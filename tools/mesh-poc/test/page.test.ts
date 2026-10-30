@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 // MESH_INTERFACE → No anchor reached / The client's node list / Discovery —
 // the page's banner words, the state element, the hostile-text rule, the
-// config refusal path, and the bundle scan (no DNS multiaddr, no Node
-// built-in). Each case holds one guard the page keeps.
+// config refusal path, and the bundle scan (no Node built-in). Each case
+// holds one guard the page keeps.
 
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -90,9 +90,12 @@ describe('page/render.ts', () => {
     expect(root.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 
-  it('a refused config is shown, and no client starts', async () => {
-    document.body.innerHTML = '<div id="root"></div>';
-    const startSpy = vi.fn();
+  it('a refused config is shown', async () => {
+    // Real `startMeshClient` through `runMain`: a /dns4/ anchor runs through
+    // `assertClientConfig` (`startMeshClient`'s first statement) and throws
+    // `MeshConfigError` before any libp2p node is created. The "no node is
+    // created" property is held by `mesh-client.test.ts`'s own case.
+    const root = document.createElement('div');
     const fakeFetch = async (): Promise<Response> =>
       new Response(
         JSON.stringify({
@@ -108,12 +111,10 @@ describe('page/render.ts', () => {
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
     await runMain({
-      root: document.getElementById('root')!,
+      root,
       fetch: fakeFetch as unknown as typeof globalThis.fetch,
-      startMeshClient: startSpy as unknown as typeof import('../src/client/mesh-client.js').startMeshClient,
     });
-    expect(startSpy).not.toHaveBeenCalled();
-    const errText = document.getElementById('root')!.textContent ?? '';
+    const errText = root.textContent ?? '';
     expect(errText.toLowerCase()).toContain('refused');
     expect(errText).toContain('DNS');
   });
@@ -121,8 +122,14 @@ describe('page/render.ts', () => {
 
 describe('page/build output', () => {
   // The build step runs once for the describe: `page:build` is a few seconds,
-  // and both bundle guards (no DNS multiaddr, no Node built-in) read from the
-  // same `dist-page/` directory.
+  // and the bundle scan reads from `dist-page/`. The scan does NOT look for
+  // `/dns4/`, `/dns6/`, `/dnsaddr/` string literals — `NETWORK_PROFILES`
+  // legitimately carries testnet's `/dns4/notis.fun/tcp/9733` for the node's
+  // own gossip net (TYPES_INTERFACE → "bootstrapPeers is the network's known
+  // nodes, per network"), and a string in the bundle is not a DNS lookup.
+  // The browser never dials a DNS anchor — that is held at runtime by
+  // `assertClientConfig` on every anchor, and `src/config.ts`'s DNS guard
+  // names the three prefixes in the source itself.
   beforeAll(() => {
     execSync('pnpm --filter @dagsocial/mesh-poc page:build', {
       cwd: join(PACKAGE_ROOT, '..', '..'),
@@ -142,26 +149,21 @@ describe('page/build output', () => {
     return out;
   }
 
-  it('the bundle holds no DNS multiaddr and no Node built-in', async () => {
+  it('the bundle holds no Node built-in', async () => {
     const files = walkFiles(DIST_PAGE);
     expect(files.length, 'dist-page/ must hold at least one file').toBeGreaterThan(0);
     const { builtinModules } = await import('node:module');
     const importRe = /(?:from\s*['"]|require\s*\(\s*['"]|import\s*\(\s*['"])([^'"\s)]+)['"]/g;
-    const dnsHits: string[] = [];
     const builtinHits: string[] = [];
     for (const f of files) {
       if (!/\.(?:js|mjs|html|css|map)$/.test(f)) continue;
       const code = readFileSync(f, 'utf8');
-      for (const needle of ['/dns4/', '/dns6/', '/dnsaddr/']) {
-        if (code.includes(needle)) dnsHits.push(`${f}: ${needle}`);
-      }
       for (const match of code.matchAll(importRe)) {
         const spec = match[1]!;
         if (spec.startsWith('node:')) builtinHits.push(`${f}: ${spec}`);
         else if (builtinModules.includes(spec)) builtinHits.push(`${f}: ${spec}`);
       }
     }
-    expect(dnsHits, `DNS multiaddrs in the bundle: ${dnsHits.join(', ')}`).toEqual([]);
     expect(builtinHits, `Node built-in imports in the bundle: ${builtinHits.join(', ')}`).toEqual([]);
   }, 180_000);
 
