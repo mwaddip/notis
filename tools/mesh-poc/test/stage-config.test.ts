@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -154,11 +154,19 @@ describe('stage up --dry-run', () => {
   let status: number | null = null;
   let outBefore = false;
   let cacheBefore = false;
+  let pidsBefore: number | null = null;
+  let configBefore: number | null = null;
+
+  function mtimeOf(path: string): number | null {
+    try { return statSync(path).mtimeMs; } catch { return null; }
+  }
 
   function runDryOnce(): void {
     if (out !== '') return;
     outBefore = existsSync(OUT_DIR);
     cacheBefore = existsSync(CACHE_DIR);
+    pidsBefore = mtimeOf(join(OUT_DIR, 'pids.json'));
+    configBefore = mtimeOf(join(OUT_DIR, 'browser', 'config.json'));
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
       encoding: 'utf8',
       timeout: 30_000,
@@ -182,8 +190,11 @@ describe('stage up --dry-run', () => {
     if (!cacheBefore) {
       expect(existsSync(CACHE_DIR), 'stage/cache/ was not created').toBe(false);
     }
-    expect(existsSync(join(OUT_DIR, 'pids.json')), 'pids.json must not be written').toBe(false);
-    expect(existsSync(join(OUT_DIR, 'browser', 'config.json')), 'config.json must not be written').toBe(false);
+    // A previous real `stage:up` run may leave pids.json or config.json
+    // under `stage/out/`; the dry-run must not WRITE either, so compare
+    // mtimes rather than existence.
+    expect(mtimeOf(join(OUT_DIR, 'pids.json')), 'pids.json unchanged by dry-run').toBe(pidsBefore);
+    expect(mtimeOf(join(OUT_DIR, 'browser', 'config.json')), 'config.json unchanged by dry-run').toBe(configBefore);
   }, 30_000);
 
   // MESH_INTERFACE → Acceptance — "The host is never touched outside
@@ -316,6 +327,56 @@ describe('stage up --dry-run', () => {
     expect(identityIdx, 'identity wait present').toBeGreaterThanOrEqual(0);
     expect(heightIdx, 'height wait present').toBeGreaterThanOrEqual(0);
     expect(identityIdx, 'identity wait precedes height wait').toBeLessThan(heightIdx);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — Chromium's housekeeping (safebrowsing,
+  // sync, component updates) resolves names and the DNS log catches them;
+  // scenario 1 measures the PAGE's DNS traffic, so the browser's own
+  // background networking is off. The flags are listed in Chromium's
+  // `--help` on this build (ms-playwright chromium-1228, Chromium ≥ 139).
+  it.fails('Chromium is launched with background networking disabled', () => {
+    runDryOnce();
+    const line = out.split('\n').find((l) => l.startsWith('[spawn:chromium]'));
+    expect(line, 'chromium spawn is in the dry-run').toBeDefined();
+    for (const flag of [
+      '--disable-background-networking',
+      '--disable-component-update',
+      '--disable-sync',
+      '--disable-default-apps',
+      '--disable-client-side-phishing-detection',
+      '--disable-domain-reliability',
+      '--metrics-recording-only',
+      '--no-first-run',
+      '--no-default-browser-check',
+    ]) {
+      expect(line, `chromium carries ${flag}`).toContain(flag);
+    }
+    // The feature-disable flag names three features in one. The entire
+    // argument is a single switch; test with its full value.
+    expect(line, 'chromium disables OptimizationHints, MediaRouter and Translate').toMatch(/--disable-features=[A-Za-z0-9,]*OptimizationHints/);
+    expect(line).toMatch(/--disable-features=[A-Za-z0-9,]*MediaRouter/);
+    expect(line).toMatch(/--disable-features=[A-Za-z0-9,]*Translate/);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — a sustained 100 % duty on `pub1`'s
+  // miner burns a core for every minute the stage is up. After the
+  // height wait, the miner is restarted at a gentle duty so the chain
+  // keeps growing for `hostile-lagging` to fall behind of but does not
+  // starve the host.
+  it.fails('the miner is restarted at a gentle duty after the height wait', () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const bootIdx = lines.findIndex((l) => l.startsWith('[spawn:miner') && /MINER_PCT=100\b/.test(l));
+    const waitIdx = lines.findIndex((l) => l.startsWith('[wait] every honest node reads /blocks/current.height'));
+    const steadyIdx = lines.findIndex((l, i) =>
+      i > waitIdx &&
+      l.startsWith('[spawn:miner') &&
+      /MINER_PCT=(?:[1-9]|1\d|2\d)\b/.test(l) &&
+      !/MINER_PCT=100\b/.test(l),
+    );
+    expect(bootIdx, 'boot miner at 100 % is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(waitIdx, 'height wait is in the dry-run').toBeGreaterThan(bootIdx);
+    expect(steadyIdx, 'steady miner at a lower duty follows the height wait').toBeGreaterThan(waitIdx);
   }, 30_000);
 
   // MESH_INTERFACE → Acceptance — the Pebble v2.8.0 tarball records the

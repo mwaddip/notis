@@ -5,6 +5,7 @@
 // captures stderr through a pipe and the thrown Error names it.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -68,6 +69,34 @@ describe('stage/lib/commands.mjs', () => {
       const size = statSync(logPath).size;
       expect(size, 'log file holds the 1 MiB write').toBe(1048576);
     }, 10_000);
+
+    // MESH_INTERFACE → Acceptance — a spawned child does not keep `up`'s
+    // event loop alive. `detached: true` starts a new process group;
+    // `child.unref()` drops the child from the parent's reference count,
+    // so `up` returns 0 right after its last line and `down` reads
+    // `pids.json` to find the children. The process-group check — pgid
+    // equals the child's pid — is the direct evidence `detached: true`
+    // took effect.
+    it.fails('starts the child in its own process group (detached: true + unref)', async () => {
+      const log = new CommandLog({ dryRun: false });
+      const logPath = join(dir, 'detached.log');
+      const child = log.spawn(['sh', '-c', 'sleep 10'], {
+        description: 'detached-child',
+        logPath,
+      });
+      expect(child, 'spawn returned a child').not.toBeNull();
+      try {
+        const out = execFileSync('ps', ['-o', 'pgid=', '-p', String(child!.pid)], { encoding: 'utf8' });
+        const pgid = Number(out.trim());
+        expect(pgid, 'pgid is a positive integer').toBeGreaterThan(0);
+        expect(pgid, 'pgid === pid: the child is its own process group leader').toBe(child!.pid);
+      } finally {
+        // SIGTERM the whole process group so the child sh and its sleep
+        // both exit; a lingering sleep would print as a zombie in `ps`
+        // after the test.
+        try { process.kill(-child!.pid!, 'SIGTERM'); } catch { /* already gone */ }
+      }
+    });
 
     it('records the logPath on log.pids so down can find it', () => {
       const log = new CommandLog({ dryRun: false });
