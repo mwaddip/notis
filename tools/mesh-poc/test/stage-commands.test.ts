@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CommandLog } from '../stage/lib/commands.mjs';
+import { CommandLog, isProcessAlive } from '../stage/lib/commands.mjs';
 
 describe('stage/lib/commands.mjs', () => {
   it('shell throws an Error that names the failed command and its stderr', () => {
@@ -96,6 +96,29 @@ describe('stage/lib/commands.mjs', () => {
         // after the test.
         try { process.kill(-child!.pid!, 'SIGTERM'); } catch { /* already gone */ }
       }
+    });
+
+    // MESH_INTERFACE → Acceptance — up's live-check reads the outer
+    // `sudo` process by its pid; sudo runs as root, up runs as the
+    // user, and `process.kill(pid, 0)` on a running process the user
+    // does not own throws `EPERM`, not success. The live-check must
+    // treat `EPERM` as alive (the process exists; signalling is just
+    // forbidden) and only `ESRCH` as dead. PID 1 is init, root-owned,
+    // always alive, and never ours.
+    it.fails('isProcessAlive reads PID 1 as alive (EPERM, not ESRCH)', () => {
+      const r = isProcessAlive(1);
+      expect(r.alive, 'PID 1 is alive: EPERM is alive, not dead').toBe(true);
+      expect(r.reason, 'reason names EPERM so a reader sees why').toContain('EPERM');
+    });
+
+    it.fails('isProcessAlive reads an unused pid as dead (ESRCH)', () => {
+      // POSIX pid_max defaults to 32768 on this kernel; a very high
+      // unused value is reliably absent. Pick one above 2^22 (far
+      // above pid_max on any default-configured Linux) and expect
+      // ESRCH.
+      const r = isProcessAlive(0x7fff_ffff);
+      expect(r.alive).toBe(false);
+      expect(r.reason).toContain('ESRCH');
     });
 
     it('records the logPath on log.pids so down can find it', () => {
