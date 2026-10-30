@@ -218,7 +218,7 @@ Two sub-steps, each with its own `config.json` variant written at start.
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
-| 1 | `priv1 (endpoint-independent NAT) answers over relayed WebRTC` | `state.nodeId === priv1`, `state.transport === 'webrtc'`, `state.path === 'direct'`, the single anchor address names `/p2p-circuit/webrtc`, and every ICE server (if any) is `stun:<ip>:<port>`. | `nodeId` someone else; `transport` not `webrtc`; `path` not `direct`; a STUN URL naming a host. |
+| 1 | `priv1 (endpoint-independent NAT) answers over relayed WebRTC` | priv1's `nodes[]` entry reads `status` ok or behind (both say a checked answer came back; `behind` is ranking, not reach), its entry `transport === 'webrtc'` and `path === 'direct'`, the single anchor address names `/p2p-circuit/webrtc`, and every ICE server (if any) is `stun:<ip>:<port>`. `nodeIdInUse` is recorded alongside, not a condition. | priv1 at `retry`, `blacklisted` or `new`; entry `transport` not `webrtc`; entry `path` not `direct`; a STUN URL naming a host. |
 | 2 | `priv2 (symmetric NAT) stays retry with a failure, the client stays on another node` | priv2's entry reads `status === 'retry'` and `failures ≥ 1`; priv2 is never `blacklisted` at any poll; the page's `nodeId` at the end names a node other than priv2 and is not null. | priv2 `blacklisted` at any poll; the page stuck on priv2; priv2 at `ok`. |
 
 **A private node with no direct path to the client reads `retry`, and the client stays on a node
