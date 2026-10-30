@@ -177,6 +177,26 @@ export function sigterm(pid) {
 }
 
 /**
+ * Walk `/proc/<pid>/task/{tid}/children` recursively and return every
+ * descendant pid of `pid` (not including `pid` itself). A dead
+ * process or missing /proc entry is silently skipped. Pure read of
+ * `/proc`; no privilege.
+ */
+export function descendantPids(_pid) {
+  throw new Error('descendantPids: not implemented');
+}
+
+/**
+ * Return the leaves of `pid`'s descendant tree — processes that have
+ * no further children. Scenarios signal these when SIGSTOP must
+ * reach the innermost process (sudo does not relay SIGSTOP to its
+ * children, so signalling the recorded outer pid does nothing).
+ */
+export function leafPids(_pid) {
+  throw new Error('leafPids: not implemented');
+}
+
+/**
  * Send an arbitrary signal to `pid` — e.g. `'SIGSTOP'` to pause and
  * `'SIGCONT'` to resume. A missing process reads
  * `{ sent: false, reason: 'ESRCH' }`; every other error is re-raised.

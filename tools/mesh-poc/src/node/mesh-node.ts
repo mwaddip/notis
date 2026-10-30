@@ -94,6 +94,15 @@ export interface MeshNodeOptions {
    */
   readonly relayRetryBaseMs?: number;
   readonly relayRetryCapMs?: number;
+  /**
+   * MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
+   * IP". A private node's WebRTC transport gathers ICE candidates
+   * against the public nodes' STUN by IP; `stunServers` holds the
+   * `stun:<ip>:<port>` URLs the stage builds from `MESH_STUN_SERVERS`
+   * on its own publics. A hostname is refused (same rule as the
+   * client's `assertClientConfig`).
+   */
+  readonly stunServers?: readonly string[];
 }
 
 export interface MeshNode {

@@ -16,6 +16,8 @@ export declare function readNftCounterSum(ns: string, table: string, opts?: { ti
 export declare function findPid(pids: PidEntry[] | undefined, description: string): PidEntry | null;
 export declare function sigterm(pid: number): { sent: boolean; reason: string | null };
 export declare function signal(pid: number, sig: NodeJS.Signals): { sent: boolean; reason: string | null };
+export declare function descendantPids(pid: number): number[];
+export declare function leafPids(pid: number): number[];
 export declare function restartFromEntry(entry: PidEntry, opts?: { pidsPath?: string | null }): number;
 export declare function pollUntil<T>(read: () => Promise<T> | T, predicate: (v: T) => boolean, opts?: { timeoutMs?: number; pollMs?: number; name?: string }): Promise<T>;
 export declare function nftApply(ns: string, nftArgs: string[], opts?: { timeoutMs?: number }): void;
