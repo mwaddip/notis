@@ -14,7 +14,7 @@
 //       - hostile-invalid → `blacklisted` with evidence `proof-invalid`
 //       - hostile-lagging → `behind`, never blacklisted
 
-import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS6NoAnchor, verdictS6Hostile } from '../lib/verdicts.mjs';
@@ -22,6 +22,7 @@ import { execIn, nftApply, pollUntil } from '../lib/measure.mjs';
 import { publicMeshHosts } from '../lib/topology.mjs';
 import { buildWithHostileSeedsVariant, buildHostileSeeds } from '../lib/config-variants.mjs';
 import { peerIdStringOf } from '../lib/config.mjs';
+import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's6';
@@ -66,11 +67,14 @@ export async function run(ctx) {
     return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
 
-  const configPath = join(ctx.outDir, 'browser', 'config.json');
-  const configBackupPath = `${configPath}.s6.bak`;
+  // MESH_INTERFACE → Acceptance — s6 reads its base from the stage
+  // default so a previous scenario's variant does not seep into the
+  // seeds list. The variant lands via `writeConfigVariant`; the
+  // scenario's `finally` restores the stage default.
+  const defaultPath = join(ctx.outDir, 'browser', 'config.default.json');
   const identitiesPath = join(ctx.outDir, 'identities.json');
   const identities = existsSync(identitiesPath) ? JSON.parse(readFileSync(identitiesPath, 'utf8')) : null;
-  const baseConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+  const baseConfig = JSON.parse(readFileSync(defaultPath, 'utf8'));
   const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
 
   const seeds = buildHostileSeeds(identities, ctx.topology, { peerIdStringOf });
@@ -91,9 +95,8 @@ export async function run(ctx) {
     }
   }
 
-  // Back up + write variant.
-  renameSync(configPath, configBackupPath);
-  writeFileSync(configPath, JSON.stringify(variant, null, 2));
+  // Write the variant fresh — no backup, no rename.
+  writeConfigVariant(ctx.outDir, variant);
 
   // Track applied nft tables for teardown.
   const applied = [];
@@ -201,16 +204,13 @@ export async function run(ctx) {
       return { verdict: verdictS6Hostile(m), measurement: m };
     });
   } finally {
-    // Teardown: remove any applied nft table, restore config.json.
+    // Teardown: remove any applied nft table, restore the stage
+    // default config.json so a later scenario starts clean.
     for (const { ns, table } of applied.slice().reverse()) {
       removeTable(ns, table);
     }
-    if (existsSync(configBackupPath)) {
-      if (existsSync(configPath)) {
-        try { renameSync(configPath, `${configPath}.s6.leftover`); } catch { /* ignore */ }
-      }
-      renameSync(configBackupPath, configPath);
-    }
+    try { writeStageDefault(ctx.outDir); }
+    catch (err) { process.stderr.write(`[s6 teardown] writeStageDefault: ${err?.message ?? err}\n`); }
     log.removeAll();
   }
   return {

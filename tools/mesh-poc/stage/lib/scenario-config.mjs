@@ -16,8 +16,14 @@ import { join } from 'node:path';
  * is missing (`up.mjs` writes it in exec mode — a missing file means
  * `up.mjs` did not run against this `outDir`).
  */
-export function writeStageDefault(_outDir) {
-  throw new Error('writeStageDefault: not implemented');
+export function writeStageDefault(outDir) {
+  const defaultPath = join(outDir, 'browser', 'config.default.json');
+  const activePath = join(outDir, 'browser', 'config.json');
+  if (!existsSync(defaultPath)) {
+    throw new Error(`writeStageDefault: config.default.json missing at ${defaultPath}; stage:up did not run`);
+  }
+  mkdirSync(join(outDir, 'browser'), { recursive: true });
+  copyFileSync(defaultPath, activePath);
 }
 
 /**
@@ -26,6 +32,8 @@ export function writeStageDefault(_outDir) {
  * (`JSON.stringify(variant, null, 2)` — same shape as `up.mjs`'s own
  * writes).
  */
-export function writeConfigVariant(_outDir, _variant) {
-  throw new Error('writeConfigVariant: not implemented');
+export function writeConfigVariant(outDir, variant) {
+  const activePath = join(outDir, 'browser', 'config.json');
+  mkdirSync(join(outDir, 'browser'), { recursive: true });
+  writeFileSync(activePath, JSON.stringify(variant, null, 2));
 }

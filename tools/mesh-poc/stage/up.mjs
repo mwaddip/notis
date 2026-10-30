@@ -975,7 +975,15 @@ const pageConfig = buildPageConfig(topology, notisIds, realMultiaddrs, { dryRun 
 
 if (!dryRun) {
   mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, JSON.stringify(pageConfig, null, 2));
+  const configBody = JSON.stringify(pageConfig, null, 2);
+  writeFileSync(configPath, configBody);
+  // MESH_INTERFACE → Acceptance — "Every scenario writes the config
+  // it needs at its start — the stage's default when it needs no
+  // variant — and never reads a previous scenario's". The canonical
+  // default is kept alongside `config.json` so a no-variant scenario
+  // can copy it before opening a page; a variant scenario builds its
+  // variant from this same bytes-for-bytes copy.
+  writeFileSync(join(dirname(configPath), 'config.default.json'), configBody);
   // MESH_INTERFACE → Acceptance — a scenario reads a node's HTTP
   // directly from its own namespace and compares the probe byte for
   // byte. It needs the host↔notisId mapping to find the right ns.
@@ -1149,6 +1157,11 @@ if (dryRun) {
 
 if (dryRun) {
   process.stdout.write(`\n[would write] ${configPath}:\n${JSON.stringify(pageConfig, null, 2)}\n`);
+  // MESH_INTERFACE → Acceptance — the canonical default is written
+  // alongside the active config; scenarios copy it when they need no
+  // variant. Showing the write in the dry-run lets a reader see that
+  // the stage keeps both.
+  process.stdout.write(`\n[would write] ${join(dirname(configPath), 'config.default.json')}: (bytes-for-bytes copy of config.json)\n`);
   process.stdout.write(`\n[dry-run complete] ${log.privilegedCount} privileged command(s) listed; no namespace, file or process was created.\n`);
 } else {
   writeFileSync(pidsPath, JSON.stringify({

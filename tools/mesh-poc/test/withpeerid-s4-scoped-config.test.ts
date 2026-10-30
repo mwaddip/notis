@@ -39,7 +39,7 @@ describe('finding 9 — withPeerId rewrites the LAST /p2p/ component, never a re
   // flag), which rewrites the relay's id and breaks every circuit
   // dial.
 
-  it.fails('a /p2p-circuit address keeps the relay id and names the target in the last /p2p/', () => {
+  it('a /p2p-circuit address keeps the relay id and names the target in the last /p2p/', () => {
     const addr = `/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/HASH2/p2p/${RELAY_PEER}/p2p-circuit/p2p/${PRIV_PEER}`;
     const rewritten = withPeerId(addr, PRIV_NOTIS).toString();
     // The relay's id must still be there, in the position before `/p2p-circuit`.
@@ -62,7 +62,7 @@ describe('finding 9 — withPeerId rewrites the LAST /p2p/ component, never a re
     expect(rewritten).toMatch(new RegExp(`^/ip4/11\\.100\\.0\\.11/tcp/4002/p2p/${PRIV_PEER}$`));
   });
 
-  it.fails('a /p2p-circuit WITHOUT a trailing /p2p/ gets the target appended', () => {
+  it('a /p2p-circuit WITHOUT a trailing /p2p/ gets the target appended', () => {
     const addr = `/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/HASH2/p2p/${RELAY_PEER}/p2p-circuit`;
     const rewritten = withPeerId(addr, PRIV_NOTIS).toString();
     expect(rewritten, 'relay id still there').toContain(`/p2p/${RELAY_PEER}/p2p-circuit`);
@@ -85,7 +85,7 @@ describe('finding 10 — s4 step 1 verdict PASSes when the client stays connecte
     })).toBe('PASS');
   });
 
-  it.fails('PASS when the client stayed on the blocked node over WSS', () => {
+  it('PASS when the client stayed on the blocked node over WSS', () => {
     expect(verdictS4Pub1UdpDrop({
       connected: true,
       nodeId: 'aa'.repeat(32),
@@ -129,7 +129,7 @@ describe('finding 11 — every scenario writes config.json before opening the pa
   // setup writes config.json fresh (default or variant) before any
   // `cdpPoll`. No rename / backup / restore pattern.
 
-  it.fails('writeStageDefault copies config.default.json to config.json byte-for-byte', async () => {
+  it('writeStageDefault copies config.default.json to config.json byte-for-byte', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'mesh-scenario-config-'));
     try {
       const defaultPath = join(tmp, 'browser', 'config.default.json');
@@ -148,7 +148,7 @@ describe('finding 11 — every scenario writes config.json before opening the pa
     }
   });
 
-  it.fails('writeStageDefault throws when config.default.json is missing', () => {
+  it('writeStageDefault throws when config.default.json is missing', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'mesh-scenario-config-'));
     try {
       expect(() => writeStageDefault(tmp)).toThrow(/config\.default\.json/);
@@ -157,7 +157,7 @@ describe('finding 11 — every scenario writes config.json before opening the pa
     }
   });
 
-  it.fails('writeConfigVariant writes the variant JSON to config.json', () => {
+  it('writeConfigVariant writes the variant JSON to config.json', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'mesh-scenario-config-'));
     try {
       require('node:fs').mkdirSync(join(tmp, 'browser'), { recursive: true });
@@ -170,13 +170,13 @@ describe('finding 11 — every scenario writes config.json before opening the pa
     }
   });
 
-  it.fails('up.mjs writes config.default.json alongside config.json', () => {
+  it('up.mjs writes config.default.json alongside config.json', () => {
     const src = readFileSync(SRC_UP, 'utf8');
     expect(src, 'up.mjs writes config.default.json').toContain('config.default.json');
   });
 
   for (const scenario of ['s1-no-name', 's3-node-goes-away', 's4-transport-cut', 's5-impersonation']) {
-    it.fails(`${scenario} writes the stage default before its first cdpPoll`, () => {
+    it(`${scenario} writes the stage default before its first cdpPoll`, () => {
       const src = readFileSync(join(SCENARIO_DIR, `${scenario}.mjs`), 'utf8');
       const writeIdx = src.indexOf('writeStageDefault(');
       expect(writeIdx, `${scenario} calls writeStageDefault`).toBeGreaterThan(0);
@@ -187,7 +187,7 @@ describe('finding 11 — every scenario writes config.json before opening the pa
   }
 
   for (const scenario of ['s2-nat', 's6-hostile']) {
-    it.fails(`${scenario} writes a variant through writeConfigVariant before its first cdpPoll`, () => {
+    it(`${scenario} writes a variant through writeConfigVariant before its first cdpPoll`, () => {
       const src = readFileSync(join(SCENARIO_DIR, `${scenario}.mjs`), 'utf8');
       const writeIdx = src.indexOf('writeConfigVariant(');
       expect(writeIdx, `${scenario} calls writeConfigVariant`).toBeGreaterThan(0);
@@ -197,7 +197,7 @@ describe('finding 11 — every scenario writes config.json before opening the pa
     });
   }
 
-  it.fails('no scenario uses the renameSync / backup pattern on config.json', () => {
+  it('no scenario uses the renameSync / backup pattern on config.json', () => {
     for (const scenario of ['s1-no-name', 's2-nat', 's3-node-goes-away', 's4-transport-cut', 's5-impersonation', 's6-hostile']) {
       const src = readFileSync(join(SCENARIO_DIR, `${scenario}.mjs`), 'utf8');
       // A rename-based swap of config.json leaks a previous scenario's

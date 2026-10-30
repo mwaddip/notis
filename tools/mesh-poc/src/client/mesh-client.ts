@@ -737,12 +737,14 @@ function isBodyLevelFailure(r: NodeError): boolean {
  */
 export function withPeerId(addr: string, notisId: string): Multiaddr {
   const peerIdString = toLibp2pPeerIdString(notisId);
-  // The old implementation (`addr.replace(/\/p2p\/[^/]+/, …)` with no
-  // `g` flag) rewrites the FIRST `/p2p/`. On a relayed address the
-  // first one is the relay; the destination is the LAST. Rewrite only
-  // the trailing `/p2p/<id>`; when none is present, append.
-  if (/\/p2p\/[^/]+/.test(addr)) {
-    return multiaddr(addr.replace(/\/p2p\/[^/]+/, `/p2p/${peerIdString}`));
+  // Rewrite only the trailing `/p2p/<id>` — on a relayed address the
+  // FIRST `/p2p/<relay>` is a routing component (libp2p dials the
+  // relay through it), and only the LAST one names the destination.
+  // When no trailing `/p2p/<id>` is present (either no `/p2p/` at all,
+  // or a `/p2p-circuit` with nothing after it), append `/p2p/<target>`.
+  const trailing = /\/p2p\/[^/]+$/;
+  if (trailing.test(addr)) {
+    return multiaddr(addr.replace(trailing, `/p2p/${peerIdString}`));
   }
   return multiaddr(`${addr}/p2p/${peerIdString}`);
 }

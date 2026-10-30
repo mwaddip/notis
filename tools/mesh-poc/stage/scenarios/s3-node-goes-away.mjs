@@ -21,6 +21,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS3Moved, verdictS3Recovered } from '../lib/verdicts.mjs';
+import { writeStageDefault } from '../lib/scenario-config.mjs';
 import {
   execIn, findPid, nftApply,
   restartFromEntry, sigterm,
@@ -86,6 +87,11 @@ export async function run(ctx) {
     log.removeAll();
     return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
+
+  // MESH_INTERFACE → Acceptance — s3 reads the stage default; it
+  // writes it fresh so the previous scenario's variant (if any) does
+  // not leak into the page's state.
+  writeStageDefault(ctx.outDir);
 
   const identities = readIdentities(ctx);
   const pub1Row = identities?.[TARGET_HOST];

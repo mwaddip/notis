@@ -136,14 +136,20 @@ export function verdictS3Recovered(m) {
 }
 
 // MESH_INTERFACE → Acceptance 4 — "UDP to one public node: the client
-// gets in through another node". Measurement:
-//   `{ connected: boolean, nodeId: string, blockedNodeId: string }`.
+// stays connected, through another node or over that node's secure
+// WebSocket — whichever ranks first". PASS when the client is
+// connected AND the connection to the blocked node (if any) is not
+// over UDP. Measurement:
+//   `{ connected: boolean, nodeId: string, blockedNodeId: string, transport: string }`.
 export function verdictS4Pub1UdpDrop(m) {
   if (missing(m)) return 'skipped';
   if (m.connected !== true) return 'FAIL';
   if (typeof m.nodeId !== 'string' || typeof m.blockedNodeId !== 'string') return 'FAIL';
-  if (m.nodeId === m.blockedNodeId) return 'FAIL';
-  return 'PASS';
+  if (m.nodeId !== m.blockedNodeId) return 'PASS';
+  // The client stayed on the blocked node — PASS only if the link is
+  // the WSS one (TCP), FAIL if it is still webrtc-direct / webrtc.
+  if (m.transport === 'wss') return 'PASS';
+  return 'FAIL';
 }
 
 // MESH_INTERFACE → Acceptance 4 — "UDP to all: through the secure

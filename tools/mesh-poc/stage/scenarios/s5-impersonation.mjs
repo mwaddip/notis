@@ -23,6 +23,7 @@ import { verdictS5 } from '../lib/verdicts.mjs';
 import {
   execIn, findPid, pollUntil, restartFromEntry, sigterm,
 } from '../lib/measure.mjs';
+import { writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's5';
@@ -91,6 +92,10 @@ export async function run(ctx) {
   }
 
   // Exec-mode flow.
+  // MESH_INTERFACE → Acceptance — s5 reads the stage default; it
+  // writes it fresh so a previous scenario's variant does not leak.
+  writeStageDefault(ctx.outDir);
+
   const identities = JSON.parse(readFileSync(join(ctx.outDir, 'identities.json'), 'utf8'));
   const pub1Id = identities.pub1?.notisId;
   const pub1Addr = ctx.topology.hosts.pub1.addr;

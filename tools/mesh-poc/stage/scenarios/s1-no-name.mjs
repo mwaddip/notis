@@ -15,6 +15,7 @@ import { verdictS1Node, verdictS1Probe, verdictS1DnsSilent } from '../lib/verdic
 import {
   execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal,
 } from '../lib/measure.mjs';
+import { writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's1';
@@ -83,6 +84,11 @@ export async function run(ctx) {
   // resolver answers `~NOTFOUND` on every host but `localhost`, so a
   // clean run leaves `stage/out/dns.log` unchanged and the browser
   // namespace's nft 53/853 counter at the value it was.
+  // MESH_INTERFACE → Acceptance — every scenario writes config.json
+  // fresh at its start so none inherits a previous scenario's variant.
+  // s1 needs no variant — the stage default is what it reads.
+  writeStageDefault(ctx.outDir);
+
   const dnsLogPath = join(ctx.outDir, 'dns.log');
   const dnsLinesStart = readLineCount(dnsLogPath);
   const nftCounterStart = readNftCounterSum('notismesh-browser', 'dns_witness');

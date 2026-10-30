@@ -13,12 +13,13 @@
 // `stage/out/browser/config.json` (replacing the stage's own file for
 // the duration), and restored in `finally`.
 
-import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS2Priv1, verdictS2Priv2 } from '../lib/verdicts.mjs';
 import { execIn, pollUntil } from '../lib/measure.mjs';
 import { buildPrivateViaAnnouncedRelayVariant } from '../lib/config-variants.mjs';
+import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's2';
@@ -46,16 +47,17 @@ export async function run(ctx) {
     return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
 
-  const configPath = join(ctx.outDir, 'browser', 'config.json');
-  const configBackupPath = `${configPath}.s2.bak`;
+  // MESH_INTERFACE → Acceptance — s2 reads its base from the stage
+  // default (`config.default.json`), not from `config.json` which a
+  // previous scenario may have mutated. Each sub-step writes its own
+  // variant through `writeConfigVariant`. The scenario's `finally`
+  // restores the stage default so the next scenario starts clean.
+  const defaultPath = join(ctx.outDir, 'browser', 'config.default.json');
   const identitiesPath = join(ctx.outDir, 'identities.json');
   const identities = existsSync(identitiesPath) ? JSON.parse(readFileSync(identitiesPath, 'utf8')) : null;
-  const baseConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+  const baseConfig = JSON.parse(readFileSync(defaultPath, 'utf8'));
   const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
 
-  // Back up the stage's config.json so the scenario's `finally` can
-  // put it back whatever happens.
-  renameSync(configPath, configBackupPath);
   try {
     const subSteps = [
       {
@@ -100,7 +102,7 @@ export async function run(ctx) {
           privRow,
           identities,
         });
-        writeFileSync(configPath, JSON.stringify(variant, null, 2));
+        writeConfigVariant(ctx.outDir, variant);
         const relayStart = Date.now();
         const relayJson = await cdpPoll(ctx, browserUrl,
           "document.getElementById('state')?.textContent ?? null",
@@ -142,14 +144,10 @@ export async function run(ctx) {
       });
     }
   } finally {
-    // Restore stage's config.json whatever happened.
-    if (existsSync(configBackupPath)) {
-      if (existsSync(configPath)) {
-        try { renameSync(configPath, `${configPath}.s2.leftover`); }
-        catch (err) { process.stderr.write(`[s2 teardown] could not move leftover: ${err?.message ?? err}\n`); }
-      }
-      renameSync(configBackupPath, configPath);
-    }
+    // Restore the stage default so a later scenario reads clean
+    // config.json whether this scenario passed, raised or timed out.
+    try { writeStageDefault(ctx.outDir); }
+    catch (err) { process.stderr.write(`[s2 teardown] writeStageDefault: ${err?.message ?? err}\n`); }
     log.removeAll();
   }
   return {

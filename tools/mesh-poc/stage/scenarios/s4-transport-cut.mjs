@@ -22,6 +22,7 @@ import { execIn, nftApply, pollUntil } from '../lib/measure.mjs';
 import { publicMeshHosts } from '../lib/topology.mjs';
 import { readTlsIssuer } from '../lib/scenario-tls.mjs';
 import { readFileSize, countMatchesSince } from '../lib/log-watch.mjs';
+import { writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
 // MESH_INTERFACE → The client's node list — "A check — `resolveTip` over
@@ -107,6 +108,10 @@ export async function run(ctx) {
     return { scenario: NAME, startedAt: started, endedAt: Date.now(), steps: rec.steps, faults: log.records };
   }
 
+  // MESH_INTERFACE → Acceptance — s4 reads the stage default; it
+  // writes it fresh so a previous scenario's variant does not leak.
+  writeStageDefault(ctx.outDir);
+
   const identities = JSON.parse(readFileSync(join(ctx.outDir, 'identities.json'), 'utf8'));
   const pub1Id = identities.pub1?.notisId;
   const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
@@ -136,15 +141,29 @@ export async function run(ctx) {
       const pub1Rule = udp.perHost.find((e) => e.name === 'pub1');
       if (!pub1Rule) throw new Error('s4: no pub1 UDP drop rule');
       runFault(log, 'browser-udp-drop-pub1', pub1Rule.argv);
+      // MESH_INTERFACE → Acceptance 4 — "the client stays connected,
+      // through another node or over that node's secure WebSocket —
+      // whichever ranks first". The predicate holds for either path:
+      // nodeId is another public, OR nodeId is the blocked node with
+      // transport === 'wss'.
       const state1 = await cdpPoll(ctx, browserUrl,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
-         try { const s = JSON.parse(v); return s.nodeId !== null && s.nodeId !== ${JSON.stringify(pub1Id)}; }
-         catch (_e) { return false; }`,
+         try {
+           const s = JSON.parse(v);
+           if (s.nodeId === null) return false;
+           if (s.nodeId !== ${JSON.stringify(pub1Id)}) return true;
+           return s.transport === 'wss';
+         } catch (_e) { return false; }`,
         120_000, 1000,
       );
       const stateS1 = JSON.parse(state1);
-      const m = { connected: stateS1.nodeId !== null, nodeId: stateS1.nodeId, blockedNodeId: pub1Id };
+      const m = {
+        connected: stateS1.nodeId !== null,
+        nodeId: stateS1.nodeId,
+        blockedNodeId: pub1Id,
+        transport: stateS1.transport ?? null,
+      };
       return { verdict: verdictS4Pub1UdpDrop(m), measurement: m };
     });
 
