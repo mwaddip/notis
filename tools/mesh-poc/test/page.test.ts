@@ -263,7 +263,7 @@ describe('page/probe.ts survives a render', () => {
     };
   }
 
-  it.fails('a state render after the probe keeps <pre id="probe"> with the same text', async () => {
+  it('a state render after the probe keeps <pre id="probe"> with the same text', async () => {
     const root = document.createElement('div');
     const nodeId = 'a'.repeat(64);
     const body = new TextEncoder().encode('{"height":42,"hash":"ab"}');
@@ -281,7 +281,7 @@ describe('page/probe.ts survives a render', () => {
     expect(after!.textContent, 'with the same text').toBe(probeText);
   });
 
-  it.fails('two state renders after the probe keep <pre id="probe"> with the same text', async () => {
+  it('two state renders after the probe keep <pre id="probe"> with the same text', async () => {
     const root = document.createElement('div');
     const nodeId = 'a'.repeat(64);
     const body = new TextEncoder().encode('{"height":42,"hash":"ab"}');

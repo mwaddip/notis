@@ -64,10 +64,10 @@ function firstNodeId(
 }
 
 function writeProbe(root: HTMLElement, r: ProbeResult): void {
-  // The probe lives beside `<pre id="state">` under the same root. The
-  // state element is rewritten on every `render`; this element is
-  // written once and never touched by the state renderer, so a reader
-  // (the stage's CDP driver) sees a stable payload.
+  // The probe owns `<pre id="probe">` as a sibling of the state
+  // renderer's `[data-role="state-root"]` container; a render replaces
+  // only its container's children, so this element is never touched by
+  // the state renderer and the stage's CDP driver sees a stable payload.
   const existing = root.querySelector('pre#probe');
   if (existing !== null) existing.remove();
   const pre = document.createElement('pre');
