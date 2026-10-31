@@ -116,12 +116,15 @@ describe('a private mesh node reprints its identity line when a /p2p-circuit lan
 });
 
 describe('the AggregateError is attributed back to each address', () => {
-  // MESH_INTERFACE → The client's node list — "When every address fails,
-  // each one's failure is recorded against it". libp2p 3.5's noise throws
+  // MESH_INTERFACE → The client's node list → "A node's addresses are
+  // dialled as one operation" — "When every address fails, each address
+  // libp2p reports it dialled has its failure recorded against it,
+  // matched in the order libp2p dialled them". libp2p 3.5's noise throws
   // an `EncryptionFailedError` whose message reads `Payload peer id X
   // does not match expected remote peer id Y`; no `.multiaddr` or `.addr`
-  // on the error. Attribution rides position in the sorted dial order
-  // (`notisAddressSorter`, the one definition the dial used).
+  // on the error. The reported list libp2p hands the caller through its
+  // `dial-queue:calculated-addresses` progress event is what attribution
+  // pairs the errors with, by position.
 
   it('wrongKeyInfo matches EncryptionFailedError + the noise mismatch message, reads the answered id', () => {
     const err = Object.assign(new Error(
@@ -148,56 +151,15 @@ describe('the AggregateError is attributed back to each address', () => {
     expect(wrongKeyInfo(err)).toBeNull();
   });
 
-  it('attributeAggregateDialErrors orders rows as webrtc-direct, relayed webrtc, wss, other', () => {
-    // MESH_INTERFACE → The client's node list → "The secure WebSocket is
-    // the fallback" — the client's one order is WebRTC-direct, then
-    // WebRTC signalled over a relay, then the secure WebSocket, then any
-    // other address; one definition in `mesh-client.ts`, read by both
-    // the dial queue and attribution. The aggregate's inner errors come
-    // in that sorted order.
-    const dialable = [
-      // Caller order — a mesh node's `multiaddrs()` may list in any order.
+  it.fails('output row order equals the reported list order, errors pair by position', () => {
+    // The reported list is libp2p's own `addrsToDial` from the dial
+    // queue's `dial-queue:calculated-addresses` progress event — the
+    // sorted dial order libp2p applied. The caller does not re-sort it:
+    // one row per reported position, with the error at that position.
+    const reported = [
+      // A non-sort order on purpose — the caller must not re-derive the
+      // dial-queue's choices.
       '/ip4/11.100.0.11/tcp/4002/p2p/P',
-      '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/P',
-      '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/P',
-      '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/webrtc/p2p/P',
-    ];
-    const encFail = (payload: string) => Object.assign(
-      new Error(`Payload peer id ${payload} does not match expected remote peer id Q`),
-      { name: 'EncryptionFailedError' },
-    );
-    const refused = Object.assign(new Error('ECONNREFUSED 11.100.0.11:443'), { name: 'Error' });
-    const timed = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
-    // Order matches the client's one sort: webrtc-direct, relayed webrtc, wss, other.
-    const errors: unknown[] = [encFail('IMPOSTOR'), timed, refused, encFail('OTHER')];
-    const attributed = attributeAggregateDialErrors(dialable, errors);
-    expect(attributed, 'attribution landed').not.toBeNull();
-    expect(attributed!.length, 'one row per error').toBe(4);
-    // Row 0: WebRTC-direct is first.
-    expect(attributed![0]!.addr).toBe('/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/P');
-    expect(attributed![0]!.wrongKey?.answeredPeerIdString).toBe('IMPOSTOR');
-    // Row 1: Relayed WebRTC follows.
-    expect(attributed![1]!.addr).toBe('/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/webrtc/p2p/P');
-    expect(attributed![1]!.wrongKey).toBeNull();
-    expect(attributed![1]!.kind).toBe('timeout');
-    // Row 2: Secure WebSocket is the fallback.
-    expect(attributed![2]!.addr).toBe('/ip4/11.100.0.11/tcp/443/tls/ws/p2p/P');
-    expect(attributed![2]!.wrongKey).toBeNull();
-    expect(attributed![2]!.message).toMatch(/ECONNREFUSED/);
-    // Row 3: Any other address last.
-    expect(attributed![3]!.addr).toBe('/ip4/11.100.0.11/tcp/4002/p2p/P');
-    expect(attributed![3]!.wrongKey?.answeredPeerIdString).toBe('OTHER');
-  });
-
-  it('a wrong-key on the webrtc-direct address of a node that also lists wss lands on webrtc-direct', () => {
-    // MESH_INTERFACE → The client's node list → "The secure WebSocket
-    // is the fallback" — when a node lists both a WebRTC-direct and a
-    // secure WebSocket address and the dial's AggregateError's first
-    // error is wrong-key, that failure is attributed to the
-    // WebRTC-direct address because the sort put it first. A
-    // wrong-key error on the wrong address would blacklist the wrong
-    // address in the entry.
-    const dialable = [
       '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/P',
       '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/P',
     ];
@@ -206,9 +168,35 @@ describe('the AggregateError is attributed back to each address', () => {
       { name: 'EncryptionFailedError' },
     );
     const refused = Object.assign(new Error('ECONNREFUSED 11.100.0.11:443'), { name: 'Error' });
-    // Errors come in sort order (webrtc-direct first, wss second).
-    const errors: unknown[] = [encFail, refused];
-    const attributed = attributeAggregateDialErrors(dialable, errors);
+    const timed = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+    const errors: unknown[] = [timed, refused, encFail];
+    const attributed = attributeAggregateDialErrors(reported, errors);
+    expect(attributed, 'attribution landed').not.toBeNull();
+    expect(attributed!.length, 'one row per reported address').toBe(3);
+    expect(attributed![0]!.addr, 'row 0 is the reported list\'s first entry').toBe(reported[0]);
+    expect(attributed![0]!.kind).toBe('timeout');
+    expect(attributed![1]!.addr).toBe(reported[1]);
+    expect(attributed![1]!.message).toMatch(/ECONNREFUSED/);
+    expect(attributed![2]!.addr).toBe(reported[2]);
+    expect(attributed![2]!.wrongKey?.answeredPeerIdString).toBe('IMPOSTOR');
+  });
+
+  it.fails('a wrong-key at the webrtc-direct position of the reported list lands on webrtc-direct', () => {
+    // The dial queue's reported list arrives in its own order. Here it
+    // puts wss first and webrtc-direct second; the error at each position
+    // is attributed to the address at that position without re-sorting.
+    const reported = [
+      '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/P',
+      '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/P',
+    ];
+    const refused = Object.assign(new Error('ECONNREFUSED 11.100.0.11:443'), { name: 'Error' });
+    const encFail = Object.assign(
+      new Error('Payload peer id IMPOSTOR does not match expected remote peer id Q'),
+      { name: 'EncryptionFailedError' },
+    );
+    // Errors pair by position: refused at position 0 (wss), wrong-key at position 1 (webrtc).
+    const errors: unknown[] = [refused, encFail];
+    const attributed = attributeAggregateDialErrors(reported, errors);
     expect(attributed).not.toBeNull();
     expect(attributed!.length).toBe(2);
     const webrtcRow = attributed!.find(
@@ -221,9 +209,35 @@ describe('the AggregateError is attributed back to each address', () => {
     expect(wssRow?.wrongKey, 'wss did not answer with the wrong key').toBeNull();
   });
 
-  it('attributeAggregateDialErrors returns null when errors.length !== dialable.length (unreliable attribution)', () => {
-    const dialable = ['/ip4/1.1.1.1/tcp/443/p2p/P', '/ip4/2.2.2.2/tcp/443/p2p/P'];
-    expect(attributeAggregateDialErrors(dialable, [new Error('a')])).toBeNull();
+  it('attributeAggregateDialErrors returns null when the reported list is shorter than the errors (the joined case)', () => {
+    // MESH_INTERFACE → The client's node list → "A node's addresses are
+    // dialled as one operation" — "When the addresses libp2p reports do
+    // not account for every failure — a dial joined to one already in
+    // flight hears only what is dialled after it joins — the failure is
+    // recorded against the node alone." Attribution returns null; the
+    // caller writes a single aggregate failure against the node.
+    const reported = ['/ip4/1.1.1.1/udp/4001/webrtc-direct/certhash/uEiA/p2p/P'];
+    const errors = [new Error('a'), new Error('b')];
+    expect(attributeAggregateDialErrors(reported, errors)).toBeNull();
+  });
+
+  it('attributeAggregateDialErrors returns null when the reported list is empty (every address passed over)', () => {
+    // Every address libp2p was handed had no transport in the client, so
+    // the dial queue filtered them all out and reports an empty list. A
+    // single error (`NoValidAddressesError` under the hood) does not
+    // match the empty list — attribution returns null and the caller
+    // records a single failure against the node alone.
+    const reported: string[] = [];
+    const errors = [new Error('no valid addresses')];
+    expect(attributeAggregateDialErrors(reported, errors)).toBeNull();
+  });
+
+  it('attributeAggregateDialErrors returns null when the reported list is longer than the errors', () => {
+    // The counts-must-match guard holds in either direction: more
+    // reported than errors (an iteration added an address that was never
+    // reached, say) is also unsound to position-match.
+    const reported = ['/ip4/1.1.1.1/tcp/443/p2p/P', '/ip4/2.2.2.2/tcp/443/p2p/P'];
+    expect(attributeAggregateDialErrors(reported, [new Error('a')])).toBeNull();
   });
 
   it('NodeList.failure writes lastFailures[addr] when an addr is passed', async () => {

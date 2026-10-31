@@ -325,6 +325,41 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(entryA?.status).toBe('retry');
   }, 90_000);
 
+  it.fails('a TCP address and a WebRTC-direct address that answers with another key: the WebRTC-direct address drops; the TCP address is not recorded', async () => {
+    // MESH_INTERFACE → The client's node list → "A node's addresses are
+    // dialled as one operation" — "an address no browser transport
+    // carries is passed over by libp2p and takes none". The mesh client
+    // runs no TCP transport, so a TCP address libp2p is handed is
+    // filtered before any dial; a wrong-key answer on the WebRTC-direct
+    // address drops that address alone.
+    const stubK1 = await makeStub(0); stubs.push(stubK1);
+    const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1-')); dirs.push(dirK1);
+    const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
+
+    // A fresh notis id — the anchor names K2 at K1's WebRTC-direct
+    // address (which answers with K1's key, not K2's), plus a loopback
+    // TCP address (which the mesh client has no transport for).
+    const k2 = nodeKeyFromKeyPair(generateKeyPair());
+    const tcpAddr = '/ip4/127.0.0.1/tcp/4002';
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: k2.notisId, addrs: [tcpAddr, k1.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([(u) => winnerFirst(u)]),
+    });
+    clients.push(client);
+
+    await client.check();
+    const entry = client.state().nodes.find((n) => n.notisId === k2.notisId);
+    expect(entry, 'the anchor is in the node list').toBeDefined();
+    expect(entry!.droppedAddrs, 'the WebRTC-direct address is dropped for K2')
+      .toContain(k1.webrtcAddr);
+    expect(entry!.lastFailures[tcpAddr], 'the TCP address has no failure recorded')
+      .toBeUndefined();
+  }, 90_000);
+
   it('an address that answers with another key does not blacklist the key', async () => {
     const stubA = await makeStub(0); stubs.push(stubA);
     const stubB = await makeStub(1); stubs.push(stubB);
