@@ -23,7 +23,12 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { UnexpectedPeerError } from '@libp2p/interface';
 import type { Connection, PeerId } from '@libp2p/interface';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
-import { defaultMultiaddrSorter } from '@libp2p/utils';
+import type { Address } from '@libp2p/interface';
+import {
+  loopbackAddressLast,
+  publicAddressesFirst,
+  circuitRelayAddressesLast,
+} from '@libp2p/utils';
 import { generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
@@ -34,7 +39,7 @@ import { isNonNegSafeInt } from '@dagsocial/node-reads';
 import { isHex64 } from '@dagsocial/types';
 import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
 import { parseMeshUrl, meshBaseUrl, MeshUrlError } from '../mesh-url.js';
-import { meshFetch } from '../http-fetch.js';
+import { meshFetchOverConnection } from '../http-fetch.js';
 import { MeshConfigError, assertNoDns } from '../config.js';
 import {
   NodeList,
@@ -231,11 +236,16 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // `MESH_INTERFACE → Discovery` — the client runs the DHT as a client on
   // `/notis/<network>/kad/1.0.0`. `clientMode: true` keeps it off the
   // server side of the handler registration.
+  // `MESH_INTERFACE → The client's node list → "The secure WebSocket is
+  // the fallback"` — the client gives libp2p its one address order
+  // through the dial queue's `addressSorter`; attribution reads the
+  // list libp2p reports it dialled, never a re-derivation.
   const node = await createLibp2p({
     privateKey: key.privateKey,
     transports,
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
+    connectionManager: { addressSorter: notisAddressSorter },
     services: {
       identify: identify(),
       ping: ping(),
@@ -311,7 +321,15 @@ class MeshClientImpl implements MeshClient {
       tip: null,
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
     };
-    this.meshFetchFn = meshFetch(node);
+    // MESH_INTERFACE → The client's node list → "A read opens no
+    // connection" — the client's reads open their stream on a
+    // connection the client already holds for the key, picked by
+    // `pickConnectionForRead` (strict: open, direct first, never
+    // limited). A read with no suitable connection rejects as a
+    // transport failure.
+    this.meshFetchFn = meshFetchOverConnection((notisId) =>
+      pickConnectionForRead(this.libp2p.getConnections(), toLibp2pPeerIdString(notisId)),
+    );
     this.onDiscovery = (evt): void => this.handleDiscovery(evt.detail);
     this.onConnectionOpen = (): void => this.refreshTransportPathAndEmit();
     this.onConnectionClose = (): void => this.refreshTransportPathAndEmit();
@@ -548,29 +566,44 @@ class MeshClientImpl implements MeshClient {
     const multiaddrs = dialable.map((addr) => withPeerId(addr, id));
     const wholeDialMs = Math.max(dialable.length * DIAL_TIMEOUT_MS, PEER_DIAL_MIN_MS);
     const signal = AbortSignal.timeout(wholeDialMs);
+    // Capture every `dial-queue:calculated-addresses` event libp2p's
+    // dial queue fires — one `Address[]` per round of its dial, in the
+    // sort order its `addressSorter` applied. The one
+    // AggregateError.errors array holds one entry per address the
+    // queue actually dialed, in the same positional order as these
+    // events; a joined dial (`join()` recipient) only sees events
+    // after it joins, so a mismatched count there falls to the
+    // node-level failure path.
+    const reportedMultiaddrs: string[] = [];
+    const onProgress = (ev: { type: string; detail: unknown }): void => {
+      if (ev.type !== 'dial-queue:calculated-addresses') return;
+      const detail = ev.detail;
+      if (!Array.isArray(detail)) return;
+      for (const a of detail as Address[]) {
+        reportedMultiaddrs.push(a.multiaddr.toString());
+      }
+    };
     try {
-      await this.libp2p.dial(multiaddrs, { signal });
+      await this.libp2p.dial(multiaddrs, { signal, onProgress });
       return; // success — connection open
     } catch (e) {
       // libp2p throws `AggregateError('All multiaddr dials failed')`
-      // when every address errors. The inner errors come in the ORDER
-      // the dial-queue applied (defaultMultiaddrSorter) over the
-      // calculated addresses, so attribution rides position when
-      // `errors.length === dialable.length` — libp2p dropped none
-      // through its gater or dedup. `attributeAggregateDialErrors`
-      // sorts our dialable list the same way and returns one row per
-      // sorted address with its wrong-key / failure classification;
-      // `null` means libp2p dropped some address and position-based
-      // attribution is unsound, so the caller records a single
+      // when more than one address was dialed and every one errored;
+      // when only one address was dialed it throws that single error
+      // directly, with no AggregateError wrapper. `unwrapAggregate`
+      // reads either shape as a flat list.
+      // `attributeAggregateDialErrors` pairs each error with the
+      // address libp2p reported at the matching position, so an address
+      // libp2p never dialed (no transport, denied by its gater, or
+      // deduped) never takes a failure attributed to it. `null` means
+      // the reported list and the errors do not account for one
+      // another — a joined dial, say — and the caller records a single
       // aggregate failure instead.
-      const dialableWithPeer = multiaddrs.map((m) => m.toString());
       const inner = unwrapAggregate(e);
-      const attributed = attributeAggregateDialErrors(dialableWithPeer, inner);
-      let anyWrongKey = false;
+      const attributed = attributeAggregateDialErrors(reportedMultiaddrs, inner);
       if (attributed !== null) {
         for (const row of attributed) {
           if (row.wrongKey !== null) {
-            anyWrongKey = true;
             // The anchor's own list carries the addrs without the
             // `/p2p/<peer-id>` tail `withPeerId` adds for the dial;
             // reconcile by matching on the host-port prefix the two
@@ -581,19 +614,26 @@ class MeshClientImpl implements MeshClient {
           }
         }
       }
-      // Dial still FAILed overall — bump the retry counter once and set
-      // `lastFailure` to the aggregate's own message. When attribution
-      // landed, each address's own failure also lands in
-      // `lastFailures[addr]` so a reader can see which address failed
-      // how (MESH_INTERFACE → The client's node list — "An entry keeps
-      // its last failure's kind and message").
       const stillHere = this.nodeList.entry(id);
       if (!stillHere || stillHere.status === 'blacklisted') return;
-      if (anyWrongKey && stillHere.addrs.length === 0) {
-        // Every address was wrong-key dropped; the node has no addrs
-        // left. The next check path will take over.
+      // MESH_INTERFACE → The client's node list — the wrong-key row:
+      // "that address dropped for that key when the dial's failure
+      // names it; the entry otherwise unchanged". When attribution
+      // landed and every dialled address answered with the wrong key,
+      // the dropped addresses carry the diagnostic alone — nothing
+      // else moves. An address libp2p passed over (no transport, gated,
+      // deduped) never reaches the reported list, so a passed-over
+      // address still listed does not block this branch.
+      if (attributed !== null && attributed.every((row) => row.wrongKey !== null)) {
         return;
       }
+      // The dial failed on a kind that is not just wrong-key — bump the
+      // retry counter once and set `lastFailure` to the aggregate's own
+      // message. When attribution landed, each non-wrong-key row's
+      // own failure also lands in `lastFailures[addr]` so a reader can
+      // see which address failed how (MESH_INTERFACE → The client's
+      // node list — "An entry keeps its last failure's kind and
+      // message").
       if (attributed !== null) {
         for (const row of attributed) {
           if (row.wrongKey !== null) continue; // dropped by wrongKey already
@@ -653,7 +693,7 @@ class MeshClientImpl implements MeshClient {
     // Same as `hasOpenConnection`: a bad notisId past `NodeList`'s door
     // is a bug upstream, not a signal to silently return null.
     const expected = toLibp2pPeerIdString(notisId);
-    return pickConnectionForStream(this.libp2p.getConnections(), expected);
+    return pickConnectionForLabel(this.libp2p.getConnections(), expected);
   }
 
   private async refreshTip(inUseId: string): Promise<void> {
@@ -898,7 +938,7 @@ export function classifyConnectionAddr(ma: string): {
  * MESH_INTERFACE → NAT / The client's node list — every `nodes[]`
  * entry carries the pair `{ transport, path }` of its connection, read
  * with the same pick + classify the top-level pair uses
- * (`pickConnectionForStream` + `classifyConnectionAddr`). An entry
+ * (`pickConnectionForLabel` + `classifyConnectionAddr`). An entry
  * with no open connection reads `null` / `null`; the pair for the
  * node in use agrees with `ClientState.transport` / `ClientState.path`.
  * Pure: the caller passes `getConnections()` in. Called from `state()`
@@ -912,7 +952,7 @@ export function decorateEntries(
 ): NodeEntry[] {
   return entries.map((e) => {
     const expected = toLibp2pPeerIdString(e.notisId);
-    const conn = pickConnectionForStream(connections, expected);
+    const conn = pickConnectionForLabel(connections, expected);
     if (conn === null) return { ...e, transport: null, path: null };
     const { transport, path } = classifyConnectionAddr(conn.remoteAddr.toString());
     return { ...e, transport, path };
@@ -921,16 +961,16 @@ export function decorateEntries(
 
 /**
  * MESH_INTERFACE → NAT → "A relay carries signalling, not data." —
- * "a client opens no API stream on a limited connection". libp2p runs
- * a new stream on the connection its own `findExistingConnection`
- * picks (`libp2p/src/connection-manager/utils.ts`): open connections
- * only, direct ones first, the first with `limits == null`. The page's
- * `transport` and `path` name that same connection, so the pick must
- * match. Only when every open connection to the peer is limited does
- * this helper fall back to a limited one — which classifies as
- * `relay`. A peer with no open connection reads `null`.
+ * "a client opens no API stream on a limited connection". The page's
+ * `transport` and `path` name the connection a read would open its
+ * stream on when one is available: open connections only, direct
+ * first, unlimited preferred. Only when every open connection to the
+ * peer is limited does this helper fall back to a limited one — the
+ * display shows the one link the client holds, with no read running
+ * on it. The read's own pick (`pickConnectionForRead`) refuses that
+ * fallback.
  */
-export function pickConnectionForStream(
+export function pickConnectionForLabel(
   connections: readonly Connection[],
   expectedPeerIdString: string,
 ): Connection | null {
@@ -948,8 +988,24 @@ export function pickConnectionForStream(
 }
 
 /**
- * MESH_INTERFACE → The client's node list — "when every address fails,
- * each one's failure is recorded against it". A wrong-key answer under a
+ * MESH_INTERFACE → The client's node list → "A read opens no
+ * connection" — "an open one, a direct one first, never a limited
+ * one". The strict read pick: `pickConnectionForLabel`'s result,
+ * refused when it is limited. The shared part — open, right peer,
+ * direct first, unlimited preferred — lives in the label pick.
+ */
+export function pickConnectionForRead(
+  connections: readonly Connection[],
+  expectedPeerIdString: string,
+): Connection | null {
+  const c = pickConnectionForLabel(connections, expectedPeerIdString);
+  return c !== null && c.limits == null ? c : null;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "A node's addresses are
+ * dialled as one operation" — "each address libp2p reports it dialled
+ * has its failure recorded against it". A wrong-key answer under a
  * key-authenticated link shows up through two libp2p error types in
  * practice: `UnexpectedPeerError` from the upgrader's own identity check
  * (upgrader.ts), and `EncryptionFailedError` from the noise handshake
@@ -1006,18 +1062,63 @@ function readAnsweredFromWrongKeyMessage(msg: string): { answeredPeerIdString: s
 }
 
 /**
- * MESH_INTERFACE → The client's node list — "A node's addresses are
- * dialled as one operation ... When every address fails, each one's
- * failure is recorded against it". libp2p 3.5's `AggregateError` carries
- * one inner error per address in the ORDER its own
- * `defaultMultiaddrSorter` applies. This helper sorts the dialable list
- * the same way and returns one row per sorted address, with the inner
- * error's attribution: wrong-key (through `wrongKeyInfo`) carries the
- * answered id; every other error carries its message and kind. Returns
- * `null` when `errors.length !== dialable.length` — libp2p dropped one
- * before dialling (gater, no transport, dedup), so a one-to-one match is
- * no longer sound and the caller falls back to a single aggregate
- * failure.
+ * MESH_INTERFACE → The client's node list → "The secure WebSocket is the
+ * fallback" — the client's one address order: WebRTC-direct, then WebRTC
+ * signalled over a relay, then the secure WebSocket, then any other
+ * address. Addresses of one transport keep libp2p's order among them
+ * (loopback last, public first, circuit-relay last). The dial order
+ * alone: `createLibp2p`'s `connectionManager.addressSorter` passes
+ * this; attribution reads what libp2p reports it dialled, not a
+ * client-side re-derivation.
+ */
+export function notisAddressSorter(a: Address, b: Address): -1 | 0 | 1 {
+  const ra = transportRank(a.multiaddr);
+  const rb = transportRank(b.multiaddr);
+  if (ra < rb) return -1;
+  if (ra > rb) return 1;
+  return (
+    loopbackAddressLast(a.multiaddr, b.multiaddr)
+    || publicAddressesFirst(a.multiaddr, b.multiaddr)
+    || circuitRelayAddressesLast(a.multiaddr, b.multiaddr)
+    || 0
+  );
+}
+
+function transportRank(ma: Multiaddr): number {
+  // The multiaddr's string form carries every protocol in order. A
+  // relayed path holds `/p2p-circuit/...` midway; a direct path does
+  // not.
+  const s = ma.toString();
+  if (s.includes('/p2p-circuit/')) {
+    if (/\/p2p-circuit\/webrtc(?:\/|$)/.test(s)) return 1;
+    return 3;
+  }
+  if (/\/webrtc-direct(?:\/|$)/.test(s)) return 0;
+  if (/\/webrtc(?:\/|$)/.test(s)) return 1;
+  if (/\/wss(?:\/|$)/.test(s) || /\/tls\/ws(?:\/|$)/.test(s)) return 2;
+  return 3;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "A node's addresses are
+ * dialled as one operation" — "When every address fails, each address
+ * libp2p reports it dialled has its failure recorded against it,
+ * matched in the order libp2p dialled them". The reported list arrives
+ * through libp2p's `dial-queue:calculated-addresses` progress event —
+ * one address list per round of its dial, in the order its
+ * `addressSorter` applied; the errors arrive as either a flat throw
+ * (one address dialed) or an `AggregateError.errors` (more than one),
+ * one entry per dialed address in that same positional order. This
+ * helper returns one row per reported address, position-paired with
+ * the error at that position: wrong-key (through `wrongKeyInfo`)
+ * carries the answered id; every other error carries its message and
+ * kind.
+ *
+ * Returns `null` when `reported.length !== errors.length` — the
+ * joined-dial case (a caller joined an in-flight dial and only hears
+ * the events after it joined) or an empty report with a single
+ * aggregate failure. The caller records a single node-level failure
+ * instead.
  */
 export interface AttributedDialError {
   addr: string;
@@ -1026,20 +1127,13 @@ export interface AttributedDialError {
   message: string;
 }
 export function attributeAggregateDialErrors(
-  dialable: readonly string[],
+  reported: readonly string[],
   errors: readonly unknown[],
 ): AttributedDialError[] | null {
-  if (dialable.length !== errors.length) return null;
-  // The dial-queue sorts gated addresses with `defaultAddressSorter`,
-  // which chains four multiaddr-only comparators + `certifiedAddressesFirst`.
-  // The dialable list we hand it carries no isCertified bit, so the
-  // multiaddr-only ordering is what applies — `defaultMultiaddrSorter`
-  // from `@libp2p/utils` is the same chain and part of its public
-  // surface.
-  const sorted = defaultMultiaddrSorter(dialable.map((s) => multiaddr(s))).map((m) => m.toString());
+  if (reported.length !== errors.length) return null;
   const out: AttributedDialError[] = [];
-  for (let i = 0; i < sorted.length; i += 1) {
-    const addr = sorted[i]!;
+  for (let i = 0; i < reported.length; i += 1) {
+    const addr = reported[i]!;
     const err = errors[i];
     const wk = wrongKeyInfo(err);
     out.push({

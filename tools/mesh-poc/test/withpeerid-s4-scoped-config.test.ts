@@ -31,7 +31,7 @@ const PUB_PEER = '12D3KooWFBopVk5LjSUPnHXB71RuWvEjmaDrQbWCyXH3iBtXzqaE';
 // the stage's real priv1 fixtures.
 const PRIV_NOTIS = '481c7ccaf5f11f17dbafc6e04177eb290c54a5e09aa9625159af002b2c9985a2';
 
-describe('finding 9 — withPeerId rewrites the LAST /p2p/ component, never a relay\'s', () => {
+describe('withPeerId rewrites the LAST /p2p/ component, never a relay\'s', () => {
   // libp2p's dial reads the LAST `/p2p/<id>` on a multiaddr as the
   // destination (the circuit's target); the FIRST one on a relayed
   // address is the relay. The current implementation replaces the
@@ -70,7 +70,7 @@ describe('finding 9 — withPeerId rewrites the LAST /p2p/ component, never a re
   });
 });
 
-describe('finding 10 — s4 step 1 verdict PASSes when the client stays connected by either path', () => {
+describe('s4 step 1 verdict PASSes when the client stays connected by either path', () => {
   // MESH_INTERFACE → Acceptance 4: "UDP to one public node: the client
   // stays connected, through another node or over that node's secure
   // WebSocket — whichever ranks first". Verdict PASSes when the client
@@ -122,7 +122,7 @@ describe('finding 10 — s4 step 1 verdict PASSes when the client stays connecte
   });
 });
 
-describe('finding 11 — every scenario writes config.json before opening the page', () => {
+describe('every scenario writes config.json before opening the page', () => {
   // The sixth scenario leaked its hostile seeds into the seventh's
   // page state. `up.mjs` writes a canonical default to
   // `config.default.json` alongside `config.json`; each scenario's

@@ -55,7 +55,8 @@ describe('a private mesh node listens on a /p2p-circuit per public relay it boot
       expect(m, `MESH_LISTEN set on ${priv.name}`).not.toBeNull();
       const value = m![1]!;
       const parts = value.split(',');
-      // Private's own IP + concrete ports stay (previous finding).
+      // A private node's own IP + concrete ports stay in MESH_LISTEN
+      // alongside its circuit addresses (MESH_INTERFACE → NAT).
       const addr = priv.host['addr'] as string;
       expect(parts.some((p) => p === `/ip4/${addr}/udp/4001/webrtc-direct`),
         `${priv.name}: webrtc-direct listen on own IP`).toBe(true);

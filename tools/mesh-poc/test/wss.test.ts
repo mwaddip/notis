@@ -21,6 +21,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as x509 from '@peculiar/x509';
 import { webcrypto } from 'node:crypto';
+// `@libp2p/webrtc` sets @peculiar/x509's crypto provider to its own
+// `@peculiar/webcrypto` instance at module load. Setting it again here
+// (as a global override to Node's webcrypto) breaks WebRTC transport
+// cert generation: a keyPair made by @peculiar/webcrypto is then handed
+// to `exportKey` on Node's webcrypto, which refuses it as "not a
+// CryptoKey". The helpers below pass `webcrypto` to @peculiar/x509
+// explicitly instead; the global provider stays @libp2p/webrtc's.
 import { createLibp2p, type Libp2p } from 'libp2p';
 import { webSockets } from '@libp2p/websockets';
 import { noise } from '@libp2p/noise';
@@ -41,10 +48,14 @@ import {
   type MeshNode,
 } from '../src/node/mesh-node.js';
 import type { CertificateSource, IpCertificate } from '../src/node/acme.js';
+import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import { profileFor } from '@dagsocial/types';
+import type { NetworkProfile, NetworkType } from '@dagsocial/types';
+import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
-// Node 20+ exposes WebCrypto on `node:crypto.webcrypto`; @peculiar/x509 wants
-// a Crypto-shaped object set with its CryptoProvider.
-x509.cryptoProvider.set(webcrypto as unknown as Crypto);
+// Node 20+ exposes WebCrypto on `node:crypto.webcrypto` and
+// @peculiar/x509 takes a `Crypto` as its optional second argument.
+const TEST_X509_CRYPTO = webcrypto as unknown as Crypto;
 
 interface Stub {
   srv: Server;
@@ -78,7 +89,7 @@ async function makeSelfSigned(
   notBefore: number,
   notAfter: number,
 ): Promise<IpCertificate> {
-  const keys = await x509.cryptoProvider.get().subtle.generateKey(
+  const keys = await TEST_X509_CRYPTO.subtle.generateKey(
     {
       name: 'ECDSA',
       namedCurve: 'P-256',
@@ -86,20 +97,23 @@ async function makeSelfSigned(
     true,
     ['sign', 'verify'],
   );
-  const cert = await x509.X509CertificateGenerator.createSelfSigned({
-    serialNumber: Math.floor(Math.random() * 1e12).toString(16),
-    name: 'CN=127.0.0.1',
-    notBefore: new Date(notBefore),
-    notAfter: new Date(notAfter),
-    signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
-    keys,
-    extensions: [
-      new x509.SubjectAlternativeNameExtension([
-        { type: 'ip', value: '127.0.0.1' },
-      ]),
-    ],
-  });
-  const pkcs8 = await x509.cryptoProvider.get().subtle.exportKey(
+  const cert = await x509.X509CertificateGenerator.createSelfSigned(
+    {
+      serialNumber: Math.floor(Math.random() * 1e12).toString(16),
+      name: 'CN=127.0.0.1',
+      notBefore: new Date(notBefore),
+      notAfter: new Date(notAfter),
+      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
+      keys,
+      extensions: [
+        new x509.SubjectAlternativeNameExtension([
+          { type: 'ip', value: '127.0.0.1' },
+        ]),
+      ],
+    },
+    TEST_X509_CRYPTO,
+  );
+  const pkcs8 = await TEST_X509_CRYPTO.subtle.exportKey(
     'pkcs8',
     keys.privateKey,
   );
@@ -521,4 +535,89 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     );
     expect(res.status).toBe(200);
   }, 30_000);
+
+  it('a client reaches a dual-listen node (webrtc-direct + wss) over webrtc-direct', async () => {
+    // MESH_INTERFACE → The client's node list → "The secure WebSocket is
+    // the fallback" — the client gives libp2p its own address order:
+    // WebRTC-direct, then WebRTC signalled over a relay, then the secure
+    // WebSocket, then any other address. A node listing both a
+    // WebRTC-direct and a secure WebSocket address is reached over
+    // WebRTC-direct; libp2p's dial queue dials the sorted list one
+    // address at a time, so the first that connects wins.
+    const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
+    const meshClients: MeshClient[] = [];
+    try {
+      const stub = await makeStub();
+      stubs.push(stub);
+      const dir = mkdtempSync(join(tmpdir(), 'mesh-wss-dual-'));
+      dirs.push(dir);
+      const cert = await makeSelfSigned(Date.now(), Date.now() + 60_000);
+      const source: CertificateSource = {
+        async current() { return cert; },
+        async obtain() { return cert; },
+      };
+      const key = nodeKeyFromKeyPair(generateKeyPair());
+      const server = await startMeshNode({
+        key,
+        network: 'devnet',
+        role: 'public',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct', '/ip4/127.0.0.1/tcp/0'],
+        bootstrap: [],
+        stateDir: dir,
+        upstream: stub.base,
+        wss: { ip: '127.0.0.1', port: 0, source },
+      });
+      nodes.push(server);
+
+      const addrs = server.multiaddrs();
+      const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
+      const wsAddr = addrs.find((a) => a.includes('/tls/ws'));
+      expect(webrtcAddr, 'the node has a /webrtc-direct/ listen address').toBeTruthy();
+      expect(wsAddr, 'the node has a /tls/ws listen address').toBeTruthy();
+
+      const notisId = notisIdFromPeerId(server.libp2p.peerId);
+      // Anchor lists wss first, webrtc-direct second — the client's own
+      // sorter puts webrtc-direct first whatever the input order is.
+      // libp2p's default sorter would have put wss ahead.
+      const fakeResolve: typeof import('@dagsocial/nipopow-client').resolveTip
+        = async (urls) => {
+          const resultNodes: NodeTipResult[] = urls.map((url, i) => ({
+            url,
+            verified: true,
+            proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
+            verifyResult: null,
+            refuseReason: null,
+            refuseCode: null,
+            behind: i === 0 ? 0 : 1,
+            genesisHash: 'f'.repeat(64),
+          }));
+          const out: TipResult = {
+            winner: resultNodes[0] ?? null,
+            winnerIndex: resultNodes.length > 0 ? 0 : -1,
+            nodes: resultNodes,
+            tip: null,
+            suffixHead: null,
+            splits: [],
+          };
+          return out;
+        };
+      const client = await startMeshClient({
+        anchors: [{ notisId, addrs: [wsAddr!, webrtcAddr!] }],
+        network: 'devnet',
+        profile: PROFILE,
+        stunServers: [],
+        resolve: fakeResolve,
+      });
+      meshClients.push(client);
+      await client.check();
+      const s = client.state();
+      expect(s.nodeId).toBe(notisId);
+      expect(s.transport, 'webrtc-direct was first in the one sort order').toBe('webrtc-direct');
+      expect(s.path).toBe('direct');
+    } finally {
+      // Each client is stopped once here; a throw from `stop()` fails
+      // the case.
+      for (const c of meshClients) await c.stop();
+    }
+  }, 60_000);
 });

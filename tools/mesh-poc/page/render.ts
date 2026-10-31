@@ -17,28 +17,40 @@ import type { NodeEntry } from '../src/client/node-list.js';
 const NO_ANCHOR_WORDS = 'No anchor reached. Nothing shown here is verified.';
 
 export function render(state: ClientState, root: HTMLElement): void {
-  // Replace the whole subtree every call — the state is small, and a diff
-  // between the stage's reads and the tester's view would widen the
-  // surface the page's correctness rests on.
-  while (root.firstChild !== null) root.removeChild(root.firstChild);
+  // MESH_INTERFACE → Acceptance → "No name, no hosted page" — the
+  // stage's CDP reads `<pre id="probe">` for its byte-for-byte check.
+  // The state renderer owns one subtree under `#root` (a `<div
+  // data-role="state-root">`) and the probe owns `<pre id="probe">` as
+  // a sibling; a render replaces its own container's children, leaving
+  // the probe in place.
+  let container = root.querySelector(':scope > [data-role="state-root"]') as HTMLElement | null;
+  if (container === null) {
+    container = document.createElement('div');
+    container.setAttribute('data-role', 'state-root');
+    // Insert at the top so a later `<pre id="probe">` stays after the
+    // state's own subtree in the DOM.
+    root.insertBefore(container, root.firstChild);
+  } else {
+    while (container.firstChild !== null) container.removeChild(container.firstChild);
+  }
 
   if (!state.anchorReached) {
     const banner = document.createElement('div');
     banner.setAttribute('data-role', 'banner');
     banner.textContent = NO_ANCHOR_WORDS;
-    root.appendChild(banner);
+    container.appendChild(banner);
   }
 
-  root.appendChild(renderInUse(state));
-  root.appendChild(renderLastLeft(state));
-  root.appendChild(renderTip(state));
-  root.appendChild(renderNodes(state));
+  container.appendChild(renderInUse(state));
+  container.appendChild(renderLastLeft(state));
+  container.appendChild(renderTip(state));
+  container.appendChild(renderNodes(state));
 
   // MESH_INTERFACE → Acceptance — the stage reads `#state`, no global.
   const pre = document.createElement('pre');
   pre.id = 'state';
   pre.textContent = JSON.stringify(state);
-  root.appendChild(pre);
+  container.appendChild(pre);
 }
 
 function renderInUse(state: ClientState): HTMLElement {

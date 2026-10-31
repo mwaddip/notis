@@ -145,7 +145,22 @@ runs behind would otherwise blacklist every honest node for good.
 **A node's addresses are dialled as one operation.** libp2p joins every dial to a peer into the one already in flight, so
 the client hands it all of a node's addresses at once, under one deadline. When another address connects first, an
 address that answered with another key is not reported and stays listed; its next dial is refused again, at no cost to
-the key. When every address fails, each one's failure is recorded against it.
+the key. When every address fails, each address libp2p reports it dialled has its failure recorded against it, matched
+in the order libp2p dialled them; an address no browser transport carries is passed over by libp2p and takes none. When
+the addresses libp2p reports do not account for every failure — a dial joined to one already in flight hears only what
+is dialled after it joins — the failure is recorded against the node alone.
+
+**The secure WebSocket is the fallback.** The client gives libp2p its own order for a node's addresses: WebRTC-direct,
+then WebRTC signalled over a relay, then the secure WebSocket, then any other address — the one transport that leans on
+a certificate authority (→ The IP certificate) is dialled only after every WebRTC path has failed. Addresses of one
+transport keep libp2p's order among them.
+
+**A read opens no connection.** Every read the client makes over a mesh URL — a check's proofs, the node in use's
+`/blocks/current`, each `fetch` the page makes — opens its stream on a connection the client already holds to that key:
+an open one, a direct one first, never a limited one (→ NAT). With none, the read fails as a transport failure, and a
+failed read to the node in use runs a check at once, which dials from the list. So the client dials only what the list
+holds for a key — in its order, without the addresses it dropped — never an address libp2p keeps for the key from
+elsewhere.
 
 **Two clocks.** The verifier reads the wall clock — a header's stamp is wall-clock time. The list's retry timers read a
 monotonic clock, so a clock that steps never holds a node out or retries it at once. Neither stands in for the other.
@@ -202,12 +217,12 @@ and one behind a symmetric NAT, a browser behind NAT, an ACME test server, and h
 unmodified devnet `@dagsocial/node`. The proof of concept holds when every step of the six scenarios passes on what it
 measured; a step that did not run reads `skipped`, never a pass.
 
-1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, with the browser's own
-   resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte for byte; the
-   browser host's DNS log holds no query — anything there went around the browser's resolver; and every ICE server the
-   page's peer connections are built with is named by IP. The browser's own services resolve names whatever page is
-   open, so a resolver that answers nothing is what separates them from the client; and a name the browser's resolver
-   answers never reaches the log, so the page's own ICE configuration is read where it is made.
+1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, over WebRTC-direct, with the
+   browser's own resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte
+   for byte; the browser host's DNS log holds no query — anything there went around the browser's resolver; and every
+   ICE server the page's peer connections are built with is named by IP. The browser's own services resolve names
+   whatever page is open, so a resolver that answers nothing is what separates them from the client; and a name the
+   browser's resolver answers never reaches the log, so the page's own ICE configuration is read where it is made.
 2. **Behind NAT.** The browser reaches the node behind the endpoint-independent NAT over WebRTC signalled through a
    relay, its data direct. The node behind the symmetric NAT has no direct path to the browser behind its NAT: it
    reads `retry`, never `blacklisted`, and the client stays on a node it reaches.

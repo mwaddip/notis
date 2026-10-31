@@ -53,8 +53,14 @@ describe('skipped — missing measurement', () => {
   }
 });
 
-describe('verdictS1Node — the node is an anchor within 60 s', () => {
-  const PASS = { nodeId: 'a'.repeat(64), isAnchor: true, timeMs: 10_000 };
+describe('verdictS1Node — the node is an anchor within 60 s, reached over WebRTC-direct', () => {
+  const PASS = {
+    nodeId: 'a'.repeat(64),
+    isAnchor: true,
+    timeMs: 10_000,
+    transport: 'webrtc-direct',
+    path: 'direct',
+  };
   it('every pass condition holds → PASS', () => {
     expect(verdictS1Node(PASS)).toBe('PASS');
   });
@@ -66,6 +72,25 @@ describe('verdictS1Node — the node is an anchor within 60 s', () => {
   });
   it('timeMs past 60 s → FAIL', () => {
     expect(verdictS1Node({ ...PASS, timeMs: 60_001 })).toBe('FAIL');
+  });
+  it('transport wss (reached over the fallback instead of webrtc-direct) → FAIL', () => {
+    expect(verdictS1Node({ ...PASS, transport: 'wss' })).toBe('FAIL');
+  });
+  it('transport webrtc (relayed) → FAIL', () => {
+    expect(verdictS1Node({ ...PASS, transport: 'webrtc' })).toBe('FAIL');
+  });
+  it('transport missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['transport'];
+    expect(verdictS1Node(m)).toBe('FAIL');
+  });
+  it('path relay (webrtc-direct over the limited link) → FAIL', () => {
+    expect(verdictS1Node({ ...PASS, path: 'relay' })).toBe('FAIL');
+  });
+  it('path missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['path'];
+    expect(verdictS1Node(m)).toBe('FAIL');
   });
 });
 

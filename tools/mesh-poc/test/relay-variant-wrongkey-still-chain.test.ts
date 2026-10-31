@@ -79,7 +79,7 @@ const IDENTITIES = {
   },
 };
 
-describe('finding 6 — s2 variant is built from the private node\'s own announced /p2p-circuit', () => {
+describe('s2 variant is built from the private node\'s own announced /p2p-circuit', () => {
   // A private node picks its relay at run time; the stage cannot
   // know a priori that priv1 reserved on pub2 instead of pub1. The
   // variant builder reads the private node's announced circuit
@@ -148,7 +148,7 @@ describe('finding 6 — s2 variant is built from the private node\'s own announc
   });
 });
 
-describe('finding 7 — wrongKeyInfo recognises both error names and both message formats', () => {
+describe('wrongKeyInfo recognises both error names and both message formats', () => {
   // In the browser, libp2p 3.5 throws `UnexpectedPeerError` from the
   // WebRTC-direct dial path even for noise's own refusal, so the
   // thrown error carries the "Payload peer id X does not match
@@ -177,7 +177,7 @@ describe('finding 7 — wrongKeyInfo recognises both error names and both messag
   });
 });
 
-describe('finding 8 — s1 pauses miner-steady by SIGSTOP for the probe window', () => {
+describe('s1 pauses miner-steady by SIGSTOP for the probe window', () => {
   // The chain's tip moves at mining speed, so `/blocks/current` and the
   // proof route may differ between the pre-probe direct read, the probe
   // itself, and the post-probe direct read. s1's probe steps halt

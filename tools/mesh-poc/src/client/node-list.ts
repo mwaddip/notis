@@ -57,9 +57,9 @@ export interface NodeEntry {
   lastFailures: Record<string, LastFailure>;
   /**
    * MESH_INTERFACE → NAT / The client's node list — the transport and
-   * path of the connection libp2p would run a stream on for this
-   * entry's key, read with the same pick + classify the top-level pair
-   * uses (`pickConnectionForStream` + `classifyConnectionAddr`). `null`
+   * path of the connection the display reads for this entry's key,
+   * read with the same pick + classify the top-level pair uses
+   * (`pickConnectionForLabel` + `classifyConnectionAddr`). `null`
    * when the client holds no open connection to this key. The pair for
    * the node in use agrees with `ClientState.transport` /
    * `ClientState.path`. Written by `mesh-client`'s decoration pass; the
@@ -196,13 +196,14 @@ export class NodeList {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list — "when every address fails,
-   * each one's failure is recorded against it". Writes
-   * `lastFailures[addr]` alone, with no change to `failures`, `status`
-   * or the retry schedule — those move once per dial through
-   * `failure`, not per-address. The caller (`dialByAddresses`) folds
-   * every attributed address error through this method, then calls
-   * `failure` once for the aggregate.
+   * MESH_INTERFACE → The client's node list → "A node's addresses are
+   * dialled as one operation" — "each address libp2p reports it dialled
+   * has its failure recorded against it". Writes `lastFailures[addr]`
+   * alone, with no change to `failures`, `status` or the retry
+   * schedule — those move once per dial through `failure`, not
+   * per-address. The caller (`dialByAddresses`) folds every attributed
+   * address error through this method, then calls `failure` once for
+   * the aggregate.
    */
   recordAddrFailure(id: string, addr: string, kind: FailureKind, message = ''): void {
     assertNotisId(id);

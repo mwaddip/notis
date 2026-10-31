@@ -201,7 +201,7 @@ the signal to its child; the pause reaches the inner Node process) and resumes i
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
-| 1 | `nodeId is an anchor within 60 s` | `state.nodeId` is a key the page's `config.json` lists in `anchors`, read within 60 s. | A `nodeId` that is not an anchor; a `nodeId` of `null` past 60 s. |
+| 1 | `nodeId is an anchor within 60 s, reached over WebRTC-direct` | `state.nodeId` is a key the page's `config.json` lists in `anchors`, read within 60 s, and the same `#state` reads `transport === 'webrtc-direct'` with `path === 'direct'`. | A `nodeId` that is not an anchor; a `nodeId` of `null` past 60 s; `transport` is `wss` or `webrtc`; `path` is `relay`. |
 | 2 | `probe /blocks/current matches the node direct` | `?probe=/blocks/current` writes `{ sha256, bytes }` equal to one of the brackets `curl -s http://127.0.0.1:3100/blocks/current` read from the anchor's own namespace before and after. | Different `sha256`, different `bytes`, no probe element. |
 | 3 | `probe /nipopow/proof/24/20 matches the node direct` | Same, over `/nipopow/proof/24/20`. | As above. |
 | 4 | `the DNS log holds no line and the nft 53/853 counter did not move` | `dnsLines === 0` and `nftCounterPackets === 0` across the scenario window **and** `connected === true` (a page that never connected is not evidence). | A line appended to `stage/out/dns.log`; a counter that moved. |
