@@ -468,15 +468,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 90_000);
 
   it('every dialled address answers with the wrong key: phase 1\'s dial drops both, the entry is otherwise unchanged', async () => {
-    // MESH_INTERFACE → The client's node list — the wrong-key row's
-    // "every address wrong-key dropped" branch: when every dialled
-    // row is a wrong-key answer, the dropped addresses carry the
-    // diagnostic alone and the entry's `status` and `failures` are
-    // unchanged. Two real nodes K1 and K3 listen on WebRTC-direct;
-    // the anchor names K2 at both of their addresses, so each
-    // answers with its own key, not K2's. The `onlyRealGoodResolve`
-    // resolver keeps K2 out of the read, so this case holds phase
-    // 1's dial alone.
+    // MESH_INTERFACE → The client's node list — the wrong-key row,
+    // the branch where every dialled address answered with another
+    // key: the dropped addresses carry the diagnostic alone and the
+    // entry's `status` and `failures` are unchanged. Two real nodes
+    // K1 and K3 listen on WebRTC-direct; the anchor names K2 at both
+    // of their addresses, so each answers with its own key, not
+    // K2's. The `onlyRealGoodResolve` resolver keeps K2 out of the
+    // read, so this case holds phase 1's dial alone.
     const stubK1 = await makeStub(0); stubs.push(stubK1);
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1c-')); dirs.push(dirK1);
     const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
@@ -934,8 +933,8 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // node K1 answers at its WebRTC-direct address; K2 is a fresh key
     // the anchor list points at K1's address. The DHT would also put
     // K1's address into libp2p's peer store under K2's peer id; we
-    // merge it by hand so a dial by key would, under the old path,
-    // reach K1 again. Under the rule, phase 1 drops K1's address for
+    // merge it by hand so a read that dialled by key would reach K1
+    // again. Under the rule, phase 1 drops K1's address for
     // K2 and phase 2's read calls `httpFetch` without a connection to
     // K2 — the read fails as transport, and K2's `lastFailure`
     // message is the no-connection failure, not noise's wrong-key

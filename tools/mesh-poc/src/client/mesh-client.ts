@@ -991,10 +991,8 @@ export function pickConnectionForLabel(
  * MESH_INTERFACE → The client's node list → "A read opens no
  * connection" — "an open one, a direct one first, never a limited
  * one". The strict read pick: `pickConnectionForLabel`'s result,
- * refused when it is limited. One definition of the shared part —
- * open, right peer, direct first, unlimited preferred — lives in
- * the label pick, so a mutation of either half is caught by every
- * case that calls either side.
+ * refused when it is limited. The shared part — open, right peer,
+ * direct first, unlimited preferred — lives in the label pick.
  */
 export function pickConnectionForRead(
   connections: readonly Connection[],
