@@ -142,10 +142,6 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 stamped ahead of the client's clock**: the verifier holds a header to the client's own time, and a client whose clock
 runs behind would otherwise blacklist every honest node for good.
 
-> ⚠ **AHEAD OF CODE (2026-10-31).** The attribution below — `tools/mesh-poc/src/client/mesh-client.ts`
-> `attributeAggregateDialErrors` re-sorts the list the client handed libp2p and attributes nothing when the counts
-> differ, so a node listing an address libp2p passes over (a TCP one) has no failure attributed to any address.
-
 **A node's addresses are dialled as one operation.** libp2p joins every dial to a peer into the one already in flight, so
 the client hands it all of a node's addresses at once, under one deadline. When another address connects first, an
 address that answered with another key is not reported and stays listed; its next dial is refused again, at no cost to
@@ -158,10 +154,6 @@ is dialled after it joins — the failure is recorded against the node alone.
 then WebRTC signalled over a relay, then the secure WebSocket, then any other address — the one transport that leans on
 a certificate authority (→ The IP certificate) is dialled only after every WebRTC path has failed. Addresses of one
 transport keep libp2p's order among them.
-
-> ⚠ **AHEAD OF CODE (2026-10-31).** The read rule below — `tools/mesh-poc/src/http-fetch.ts` opens a read's stream with
-> `dialProtocol` by key, so a read with no open connection dials whatever libp2p's peer store holds for the key, an
-> address the list dropped included.
 
 **A read opens no connection.** Every read the client makes over a mesh URL — a check's proofs, the node in use's
 `/blocks/current`, each `fetch` the page makes — opens its stream on a connection the client already holds to that key:
@@ -224,9 +216,6 @@ A stage on one machine runs the proof of concept end to end: public nodes, a nod
 and one behind a symmetric NAT, a browser behind NAT, an ACME test server, and hostile nodes — each mesh node beside an
 unmodified devnet `@dagsocial/node`. The proof of concept holds when every step of the six scenarios passes on what it
 measured; a step that did not run reads `skipped`, never a pass.
-
-> ⚠ **AHEAD OF CODE (2026-10-31).** Acceptance 1's transport — `tools/mesh-poc/stage/scenarios/s1-no-name.mjs`'s first
-> step measures which node is in use and whether it is an anchor, not the transport it was reached over.
 
 1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, over WebRTC-direct, with the
    browser's own resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte
