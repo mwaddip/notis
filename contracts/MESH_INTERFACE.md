@@ -142,19 +142,22 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 stamped ahead of the client's clock**: the verifier holds a header to the client's own time, and a client whose clock
 runs behind would otherwise blacklist every honest node for good.
 
+> ⚠ **AHEAD OF CODE (2026-10-31).** The attribution below — `tools/mesh-poc/src/client/mesh-client.ts`
+> `attributeAggregateDialErrors` re-sorts the list the client handed libp2p and attributes nothing when the counts
+> differ, so a node listing an address libp2p passes over (a TCP one) has no failure attributed to any address.
+
 **A node's addresses are dialled as one operation.** libp2p joins every dial to a peer into the one already in flight, so
 the client hands it all of a node's addresses at once, under one deadline. When another address connects first, an
 address that answered with another key is not reported and stays listed; its next dial is refused again, at no cost to
-the key. When every address fails, each one's failure is recorded against it.
-
-> ⚠ **AHEAD OF CODE (2026-10-31).** The order below — `tools/mesh-poc/src/client/mesh-client.ts` hands libp2p no
-> sorter of its own, so a node's secure WebSocket is dialled before its WebRTC-direct address.
+the key. When every address fails, each address libp2p reports it dialled has its failure recorded against it, matched
+in the order libp2p dialled them; an address no browser transport carries is passed over by libp2p and takes none. When
+the addresses libp2p reports do not account for every failure — a dial joined to one already in flight hears only what
+is dialled after it joins — the failure is recorded against the node alone.
 
 **The secure WebSocket is the fallback.** The client gives libp2p its own order for a node's addresses: WebRTC-direct,
 then WebRTC signalled over a relay, then the secure WebSocket, then any other address — the one transport that leans on
 a certificate authority (→ The IP certificate) is dialled only after every WebRTC path has failed. Addresses of one
-transport keep libp2p's order among them. A dial's failures are attributed to its addresses in that same order, read
-from the one definition the dial used.
+transport keep libp2p's order among them.
 
 **Two clocks.** The verifier reads the wall clock — a header's stamp is wall-clock time. The list's retry timers read a
 monotonic clock, so a clock that steps never holds a node out or retries it at once. Neither stands in for the other.
