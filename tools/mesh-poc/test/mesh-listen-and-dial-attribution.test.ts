@@ -25,7 +25,7 @@ const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
 const SRC_MESH_MAIN = join(PACKAGE_ROOT, 'src', 'node', 'main.ts');
 const SRC_S4 = join(PACKAGE_ROOT, 'stage', 'scenarios', 's4-transport-cut.mjs');
 
-describe('finding 1 — every mesh host listens on its own segment IP with concrete ports', () => {
+describe('every mesh host listens on its own segment IP with concrete ports', () => {
   // MESH_INTERFACE → NAT — "A public node announces its listen addresses
   // from the start" with concrete-port WebRTC-direct and TCP addresses on
   // its own IP; a private node listens on its NAT-inside IP with concrete
@@ -81,7 +81,7 @@ describe('finding 1 — every mesh host listens on its own segment IP with concr
   }, 30_000);
 });
 
-describe('finding 2 — a private mesh node reprints its identity line when a /p2p-circuit lands', () => {
+describe('a private mesh node reprints its identity line when a /p2p-circuit lands', () => {
   // MESH_INTERFACE → Discovery / NAT — "a `private` node announces its
   // relay reservations alone". These land AFTER the first identity line
   // the mesh node prints: the client's config.json carried only the
@@ -115,7 +115,7 @@ describe('finding 2 — a private mesh node reprints its identity line when a /p
   }, 30_000);
 });
 
-describe('finding 3 — the AggregateError is attributed back to each address', () => {
+describe('the AggregateError is attributed back to each address', () => {
   // MESH_INTERFACE → The client's node list — "When every address fails,
   // each one's failure is recorded against it". libp2p 3.5's noise throws
   // an `EncryptionFailedError` whose message reads `Payload peer id X
@@ -238,7 +238,7 @@ describe('finding 3 — the AggregateError is attributed back to each address', 
   });
 });
 
-describe('finding 4 — s4 step 3 reads the page through cdpPoll at both ends of the renewal window', () => {
+describe('s4 step 3 reads the page through cdpPoll at both ends of the renewal window', () => {
   // The sixth run recorded `probeSuccessAcrossRenewal: true` AND
   // `connectedBeforeWindow: false` AND `connectedAfterWindow: false` —
   // the state WAS connected (step 2's cdpPoll already pinned it), but
@@ -264,7 +264,7 @@ describe('finding 4 — s4 step 3 reads the page through cdpPoll at both ends of
   });
 });
 
-describe('finding 5 — s4 step 4 waits one CHECK_INTERVAL_MS and records before verdict', () => {
+describe('s4 step 4 waits one CHECK_INTERVAL_MS and records before verdict', () => {
   // The sixth run recorded `transport: null, nodeId: null, tip: null` on
   // step 4 — the state is reread BEFORE a check cycle fires on the cut.
   // s4 step 4 is a record step: PASS when the state was recorded (not an

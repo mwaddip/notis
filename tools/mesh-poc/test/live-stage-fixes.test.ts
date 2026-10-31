@@ -502,10 +502,10 @@ describe('fix 4 — faults are single `nft`, not doubled, and pass unshare -rn n
 
 describe('fix 5 — vacuous PASS: a verdict is PASS only on positive evidence', () => {
   it("verdictS1DnsSilent: no DNS and no counter movement is NOT PASS unless the page connected", () => {
-    // The brief: "s1's DNS step: only when the page reached a node inside
-    // the window, else `skipped`". But a verdict given a measurement
-    // without a `connected` field must not read PASS — require positive
-    // evidence that the page connected during the window.
+    // MESH_INTERFACE → Acceptance → "No name, no hosted page" — s1's
+    // DNS step reads PASS only when the page reached a node inside the
+    // window; a verdict given a measurement without a `connected` field
+    // must not read PASS.
     const vacuous = { dnsLines: 0, nftCounterPackets: 0 }; // no `connected`
     expect(verdictS1DnsSilent(vacuous), 'no connected evidence → not PASS').not.toBe('PASS');
     const positive = { dnsLines: 0, nftCounterPackets: 0, connected: true };
