@@ -1,17 +1,19 @@
-// MESH_INTERFACE → The node endpoint — `meshFetch` is the client's HTTP over
-// libp2p: an `HttpFetch` (CONSTANTS → Client reads) that reads a mesh URL
-// `notis-mesh://<notisId><path>` by opening a libp2p stream to the node whose
-// key is `notisId` and running `@libp2p/http-fetch` over it. The stream is
-// opened by this module so a signal fire can close it directly; `@libp2p/
-// http.fetch` hides its stream and leaves it open against a never-ending
-// server. Browser-safe: no `node:` imports (`MESH_INTERFACE → Place in the
-// workspace`).
+// MESH_INTERFACE → The node endpoint — `meshFetch` and
+// `meshFetchOverConnection` are the two `HttpFetch` building blocks over
+// libp2p: both open their stream themselves (so a signal fire can close it
+// directly, past `@libp2p/http.fetch`'s hidden handle) and share the HTTP
+// exchange — signal composition, body wrap, abort. `meshFetch` dials by
+// key for callers without a client-side connection list; the client's
+// reads use `meshFetchOverConnection` under the rule
+// MESH_INTERFACE → The client's node list → "A read opens no connection".
+// Browser-safe: no `node:` imports
+// (`MESH_INTERFACE → Place in the workspace`).
 
-import type { Libp2p, Stream } from '@libp2p/interface';
+import type { Connection, Libp2p, PeerId, Stream } from '@libp2p/interface';
 import { fetch as httpFetch } from '@libp2p/http-fetch';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import { REQUEST_TIMEOUT_MS } from '@dagsocial/node-reads';
-import { peerIdFromNotisId, MeshKeyError } from './identity.js';
+import { notisIdFromPeerId, peerIdFromNotisId, MeshKeyError } from './identity.js';
 import { parseMeshUrl, MeshUrlError } from './mesh-url.js';
 
 // MESH_INTERFACE → The node endpoint — libp2p's HTTP/1.1 protocol id, the
@@ -28,7 +30,10 @@ const HTTP_PROTOCOL = '/http/1.1';
  * - `method` — the request's method is not `GET`, refused before any dial.
  * - `url` — the mesh URL did not parse (any scheme but `notis-mesh`, a key
  *   that is not 64 lowercase hex, an empty path).
- * - `transport` — the peer could not be reached or the stream broke.
+ * - `transport` — the peer could not be reached or the stream broke; for
+ *   the client's connection-only form (MESH_INTERFACE → The client's node
+ *   list → "A read opens no connection"), this also carries the
+ *   no-connection case.
  *
  * A timeout is the caller's signal, not a `MeshFetchError`: when the init
  * signal fires or the fetch's own `timeoutMs` elapses, the request rejects
@@ -46,10 +51,13 @@ export class MeshFetchError extends Error {
 }
 
 /**
- * `MESH_INTERFACE → The node endpoint` — build an `HttpFetch` over a given
- * libp2p node. The returned function takes a mesh URL `notis-mesh://<notisId>
- * <path>`, opens a libp2p stream to the peer whose key is `notisId`, and
- * runs `@libp2p/http-fetch` over it. `init.signal` and `timeoutMs` compose:
+ * MESH_INTERFACE → The node endpoint — build an `HttpFetch` over a given
+ * libp2p node, dialling by key. For callers without a client-side
+ * connection list (the plain mesh fetch, as `@dagsocial/mesh-poc`'s
+ * entry point). The returned function takes a mesh URL
+ * `notis-mesh://<notisId><path>`, opens a libp2p stream to the peer whose
+ * key is `notisId` through `node.dialProtocol`, and runs
+ * `@libp2p/http-fetch` over it. `init.signal` and `timeoutMs` compose:
  * whichever fires first closes the stream and ends the body reader with
  * the signal's reason.
  */
@@ -58,11 +66,45 @@ export function meshFetch(
   opts?: { timeoutMs?: number },
 ): HttpFetch {
   const timeoutMs = opts?.timeoutMs ?? REQUEST_TIMEOUT_MS;
-  return (url, init) => meshFetchOne(node, url, init, timeoutMs);
+  return (url, init) => meshFetchOne(
+    (peerId, signal) => node.dialProtocol(peerId, HTTP_PROTOCOL, { signal }),
+    url, init, timeoutMs,
+  );
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "A read opens no connection"
+ * — "Every read the client makes over a mesh URL ... opens its stream on
+ * a connection the client already holds to that key: an open one, a
+ * direct one first, never a limited one. With none, the read fails as a
+ * transport failure." The `pick` names which connection to open the
+ * stream on for a given `notisId`; a `null` return rejects as
+ * `MeshFetchError` of kind `transport` without any dial.
+ */
+export function meshFetchOverConnection(
+  pick: (notisId: string) => Connection | null,
+  opts?: { timeoutMs?: number },
+): HttpFetch {
+  const timeoutMs = opts?.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  return (url, init) => meshFetchOne(
+    (peerId, signal) => {
+      // The URL has already been parsed inside `meshFetchOne` by the
+      // time the opener runs; `notisId` reaches us through `peerId`'s
+      // mapping. The pick is given the `notisId` string the list keys
+      // on, not the libp2p peer id.
+      const notisId = notisIdFromPeerId(peerId);
+      const conn = pick(notisId);
+      if (conn === null) {
+        return Promise.reject(new MeshFetchError('transport', `no open connection for ${notisId}`));
+      }
+      return conn.newStream(HTTP_PROTOCOL, { signal });
+    },
+    url, init, timeoutMs,
+  );
 }
 
 async function meshFetchOne(
-  node: Libp2p,
+  openStream: (peerId: PeerId, signal: AbortSignal) => Promise<Stream>,
   url: string,
   init: RequestInit | undefined,
   timeoutMs: number,
@@ -109,15 +151,18 @@ async function meshFetchOne(
   if (timeoutSignal.aborted) abortWith(timeoutSignal.reason);
   else timeoutSignal.addEventListener('abort', () => abortWith(timeoutSignal.reason), { once: true });
 
-  // Open the libp2p stream ourselves. @libp2p/http.fetch hides its stream
-  // and never closes it from the outside, so a server that keeps writing
-  // after the client gives up leaves the stream open on both ends; owning
-  // the handle here lets a signal fire call stream.abort directly.
+  // The opener runs the one step `meshFetch` and `meshFetchOverConnection`
+  // differ on: dialProtocol by key, or a new stream on a connection the
+  // client already picked. `@libp2p/http.fetch` hides its stream and never
+  // closes it from the outside, so a server that keeps writing after the
+  // client gives up leaves the stream open on both ends; owning the
+  // handle here lets a signal fire call stream.abort directly.
   let stream: Stream;
   try {
-    stream = await node.dialProtocol(peerId, HTTP_PROTOCOL, { signal: ctrl.signal });
+    stream = await openStream(peerId, ctrl.signal);
   } catch (e) {
     if (ctrl.signal.aborted) throw ctrl.signal.reason;
+    if (e instanceof MeshFetchError) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     throw new MeshFetchError('transport', msg);
   }

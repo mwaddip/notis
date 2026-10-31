@@ -89,7 +89,7 @@ export async function run(ctx) {
         // ranking. Poll `#state` until priv1's own entry carries a
         // `status` of ok or behind AND a non-null `transport`
         // (`decorateEntries` writes the entry pair from
-        // `pickConnectionForStream` + `classifyConnectionAddr` for each
+        // `pickConnectionForLabel` + `classifyConnectionAddr` for each
         // id). The ICE record is captured alongside through
         // `cdp.mjs poll-ice`.
         const expectedNotisId = priv1Row.notisId;

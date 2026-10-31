@@ -878,7 +878,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     };
   }
 
-  it.fails('a key the client holds no connection to reads as transport and dials nothing', async () => {
+  it('a key the client holds no connection to reads as transport and dials nothing', async () => {
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — "With none, the read fails as a transport
     // failure". A stranger key is one the client holds no connection
@@ -916,7 +916,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(dialProtocolSpy, 'libp2p.dialProtocol is not called by the read').not.toHaveBeenCalled();
   }, 60_000);
 
-  it.fails('a listed address answering with another key: the address drops, a later read fails as transport, no further dial', async () => {
+  it('a listed address answering with another key: the address drops, a later read fails as transport, no further dial', async () => {
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — "So the client dials only what the list holds for
     // a key — in its order, without the addresses it dropped — never
@@ -972,7 +972,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       .not.toHaveBeenCalled();
   }, 90_000);
 
-  it.fails('a key whose only open connection is limited is not read on', async () => {
+  it('a key whose only open connection is limited is not read on', async () => {
     // MESH_INTERFACE → NAT → "A relay carries signalling, not data."
     // — "a client opens no API stream on a limited connection". The
     // only way a browser reaches a limited connection in this suite

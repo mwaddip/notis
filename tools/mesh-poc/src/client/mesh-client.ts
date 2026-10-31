@@ -39,7 +39,7 @@ import { isNonNegSafeInt } from '@dagsocial/node-reads';
 import { isHex64 } from '@dagsocial/types';
 import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
 import { parseMeshUrl, meshBaseUrl, MeshUrlError } from '../mesh-url.js';
-import { meshFetch } from '../http-fetch.js';
+import { meshFetchOverConnection } from '../http-fetch.js';
 import { MeshConfigError, assertNoDns } from '../config.js';
 import {
   NodeList,
@@ -321,7 +321,15 @@ class MeshClientImpl implements MeshClient {
       tip: null,
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
     };
-    this.meshFetchFn = meshFetch(node);
+    // MESH_INTERFACE → The client's node list → "A read opens no
+    // connection" — the client's reads open their stream on a
+    // connection the client already holds for the key, picked by
+    // `pickConnectionForRead` (strict: open, direct first, never
+    // limited). A read with no suitable connection rejects as a
+    // transport failure.
+    this.meshFetchFn = meshFetchOverConnection((notisId) =>
+      pickConnectionForRead(this.libp2p.getConnections(), toLibp2pPeerIdString(notisId)),
+    );
     this.onDiscovery = (evt): void => this.handleDiscovery(evt.detail);
     this.onConnectionOpen = (): void => this.refreshTransportPathAndEmit();
     this.onConnectionClose = (): void => this.refreshTransportPathAndEmit();
@@ -685,7 +693,7 @@ class MeshClientImpl implements MeshClient {
     // Same as `hasOpenConnection`: a bad notisId past `NodeList`'s door
     // is a bug upstream, not a signal to silently return null.
     const expected = toLibp2pPeerIdString(notisId);
-    return pickConnectionForStream(this.libp2p.getConnections(), expected);
+    return pickConnectionForLabel(this.libp2p.getConnections(), expected);
   }
 
   private async refreshTip(inUseId: string): Promise<void> {
@@ -930,7 +938,7 @@ export function classifyConnectionAddr(ma: string): {
  * MESH_INTERFACE → NAT / The client's node list — every `nodes[]`
  * entry carries the pair `{ transport, path }` of its connection, read
  * with the same pick + classify the top-level pair uses
- * (`pickConnectionForStream` + `classifyConnectionAddr`). An entry
+ * (`pickConnectionForLabel` + `classifyConnectionAddr`). An entry
  * with no open connection reads `null` / `null`; the pair for the
  * node in use agrees with `ClientState.transport` / `ClientState.path`.
  * Pure: the caller passes `getConnections()` in. Called from `state()`
@@ -944,7 +952,7 @@ export function decorateEntries(
 ): NodeEntry[] {
   return entries.map((e) => {
     const expected = toLibp2pPeerIdString(e.notisId);
-    const conn = pickConnectionForStream(connections, expected);
+    const conn = pickConnectionForLabel(connections, expected);
     if (conn === null) return { ...e, transport: null, path: null };
     const { transport, path } = classifyConnectionAddr(conn.remoteAddr.toString());
     return { ...e, transport, path };
@@ -953,16 +961,16 @@ export function decorateEntries(
 
 /**
  * MESH_INTERFACE → NAT → "A relay carries signalling, not data." —
- * "a client opens no API stream on a limited connection". libp2p runs
- * a new stream on the connection its own `findExistingConnection`
- * picks (`libp2p/src/connection-manager/utils.ts`): open connections
- * only, direct ones first, the first with `limits == null`. The page's
- * `transport` and `path` name that same connection, so the pick must
- * match. Only when every open connection to the peer is limited does
- * this helper fall back to a limited one — which classifies as
- * `relay`. A peer with no open connection reads `null`.
+ * "a client opens no API stream on a limited connection". The page's
+ * `transport` and `path` name the connection a read would open its
+ * stream on when one is available: open connections only, direct
+ * first, unlimited preferred. Only when every open connection to the
+ * peer is limited does this helper fall back to a limited one — the
+ * display shows the one link the client holds, with no read running
+ * on it. The read's own pick (`pickConnectionForRead`) refuses that
+ * fallback.
  */
-export function pickConnectionForStream(
+export function pickConnectionForLabel(
   connections: readonly Connection[],
   expectedPeerIdString: string,
 ): Connection | null {
@@ -977,6 +985,31 @@ export function pickConnectionForStream(
   });
   const unlimited = directFirst.find((c) => c.limits == null);
   return unlimited ?? directFirst[0] ?? null;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "A read opens no
+ * connection" — "an open one, a direct one first, never a limited
+ * one". The strict read pick: it narrows `pickConnectionForLabel`'s
+ * result by refusing the limited fallback, so a peer whose only open
+ * connection is limited reads `null` here (the read fails as
+ * transport). A peer with no open connection reads `null` too.
+ */
+export function pickConnectionForRead(
+  connections: readonly Connection[],
+  expectedPeerIdString: string,
+): Connection | null {
+  const open = connections.filter(
+    (c) => c.remotePeer.toString() === expectedPeerIdString && c.status === 'open',
+  );
+  if (open.length === 0) return null;
+  const directFirst = open.slice().sort((a, b) => {
+    if (a.direct) return -1;
+    if (b.direct) return 1;
+    return 0;
+  });
+  const unlimited = directFirst.find((c) => c.limits == null);
+  return unlimited ?? null;
 }
 
 /**

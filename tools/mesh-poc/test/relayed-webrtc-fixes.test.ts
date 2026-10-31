@@ -96,7 +96,7 @@ vi.mock('../stage/lib/measure.mjs', async (importOriginal) => {
   };
 });
 
-import { classifyConnectionAddr, decorateEntries, pickConnectionForStream } from '../src/client/mesh-client.js';
+import { classifyConnectionAddr, decorateEntries, pickConnectionForLabel } from '../src/client/mesh-client.js';
 import { peerIdFromNotisId } from '../src/identity.js';
 import type { Connection } from '@libp2p/interface';
 import type { NodeEntry } from '../src/client/node-list.js';
@@ -280,17 +280,17 @@ describe('classifyConnectionAddr reads transport/path from the multiaddr\'s comp
   });
 });
 
-// --- pickConnectionForStream ---------------------------------------------
+// --- pickConnectionForLabel ---------------------------------------------
 
-describe('pickConnectionForStream reads the connection libp2p would run a stream on', () => {
+describe('pickConnectionForLabel reads the connection the display names for a key', () => {
   // MESH_INTERFACE → NAT → "A relay carries signalling, not data." —
-  // "a client opens no API stream on a limited connection". libp2p runs
-  // a new stream on the connection its own `findExistingConnection`
-  // picks: open connections only, direct ones first, the first with
-  // `limits == null`. The page's transport and path name that same
-  // connection, so the pick must match. Only when every open
-  // connection to the node is limited does the helper fall back to a
-  // limited one, which classifies as `relay`.
+  // "a client opens no API stream on a limited connection". The
+  // label pick names open connections only, direct first, unlimited
+  // preferred, and falls back to a limited one when it is the only
+  // open link — the display shows that one connection the client
+  // holds, with no read running on it. The read's own pick
+  // (`pickConnectionForRead`) refuses the limited fallback and
+  // returns null there.
 
   const CERTHASH = 'uEiAVZaUYSQpGvbSz9JTC4e4hT4qg9eDWVvHe4lhPUT_wxg';
   const RELAY = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
@@ -323,7 +323,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       status: 'open', direct: true, limited: false,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
     });
-    const picked = pickConnectionForStream([limitedRelayed, unlimitedWebrtc], TARGET);
+    const picked = pickConnectionForLabel([limitedRelayed, unlimitedWebrtc], TARGET);
     expect(picked, 'the unlimited WebRTC connection is picked over the limited relayed one').toBe(unlimitedWebrtc);
     expect(classifyConnectionAddr(picked!.remoteAddr.toString()))
       .toEqual({ transport: 'webrtc', path: 'direct' });
@@ -338,7 +338,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       status: 'open', direct: false, limited: true,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`,
     });
-    const picked = pickConnectionForStream([closedUnlimited, openLimited], TARGET);
+    const picked = pickConnectionForLabel([closedUnlimited, openLimited], TARGET);
     expect(picked, 'a closed connection is skipped — only open ones are considered').toBe(openLimited);
     expect(classifyConnectionAddr(picked!.remoteAddr.toString()))
       .toEqual({ transport: 'webrtc-direct', path: 'relay' });
@@ -349,19 +349,19 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       status: 'open', direct: false, limited: true,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`,
     });
-    const picked = pickConnectionForStream([limitedRelay], TARGET);
+    const picked = pickConnectionForLabel([limitedRelay], TARGET);
     expect(picked, 'the limited connection is the only open one, so it is picked').toBe(limitedRelay);
     expect(classifyConnectionAddr(picked!.remoteAddr.toString()))
       .toEqual({ transport: 'webrtc-direct', path: 'relay' });
   });
 
   it('no connection to the expected peer reads null', () => {
-    expect(pickConnectionForStream([], TARGET)).toBeNull();
+    expect(pickConnectionForLabel([], TARGET)).toBeNull();
     const toOther = fake({
       status: 'open', direct: true, limited: false, peer: OTHER,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${OTHER}`,
     });
-    expect(pickConnectionForStream([toOther], TARGET),
+    expect(pickConnectionForLabel([toOther], TARGET),
       'a connection to a different peer is not picked').toBeNull();
   });
 
@@ -376,7 +376,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       status: 'open', direct: true, limited: false,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${TARGET}`,
     });
-    expect(pickConnectionForStream([indirectUnlimited, directUnlimited], TARGET)).toBe(directUnlimited);
+    expect(pickConnectionForLabel([indirectUnlimited, directUnlimited], TARGET)).toBe(directUnlimited);
   });
 
   it('MUTATION: status filter — a closed direct unlimited is skipped for an open indirect unlimited', () => {
@@ -388,7 +388,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       status: 'open', direct: false, limited: false,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
     });
-    expect(pickConnectionForStream([closedDirect, openIndirect], TARGET)).toBe(openIndirect);
+    expect(pickConnectionForLabel([closedDirect, openIndirect], TARGET)).toBe(openIndirect);
   });
 
   it('MUTATION: limits filter — an unlimited indirect is picked over a limited direct', () => {
@@ -400,7 +400,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       status: 'open', direct: false, limited: false,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
     });
-    expect(pickConnectionForStream([limitedDirect, unlimitedIndirect], TARGET)).toBe(unlimitedIndirect);
+    expect(pickConnectionForLabel([limitedDirect, unlimitedIndirect], TARGET)).toBe(unlimitedIndirect);
   });
 
   it('MUTATION: peer filter — a direct unlimited to a different peer does not win over an indirect unlimited to the target', () => {
@@ -412,7 +412,7 @@ describe('pickConnectionForStream reads the connection libp2p would run a stream
       status: 'open', direct: false, limited: false,
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`,
     });
-    expect(pickConnectionForStream([directToOther, indirectToTarget], TARGET)).toBe(indirectToTarget);
+    expect(pickConnectionForLabel([directToOther, indirectToTarget], TARGET)).toBe(indirectToTarget);
   });
 });
 
@@ -495,7 +495,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
 
   it('the pair for the node in use matches the pair top-level refreshTransportPath reads', () => {
     // Both the top-level pair and the entry pair are derived from the
-    // same `pickConnectionForStream` + `classifyConnectionAddr` for the
+    // same `pickConnectionForLabel` + `classifyConnectionAddr` for the
     // same id; they must agree. This case asserts that invariant on a
     // mixed list (one entry has an open connection, the other does not).
     const aaPeerString = peerIdFor(AA_NOTIS);
