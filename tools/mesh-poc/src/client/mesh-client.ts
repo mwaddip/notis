@@ -559,13 +559,13 @@ class MeshClientImpl implements MeshClient {
     const wholeDialMs = Math.max(dialable.length * DIAL_TIMEOUT_MS, PEER_DIAL_MIN_MS);
     const signal = AbortSignal.timeout(wholeDialMs);
     // Capture every `dial-queue:calculated-addresses` event libp2p's
-    // dial queue fires — one Address[] per iteration of its `dialPeer`
-    // loop (`libp2p@3.5.1/dist/src/connection-manager/dial-queue.js`,
-    // line 194). The one AggregateError.errors array holds one entry
-    // per address the queue actually dialed, in the same positional
-    // order as these events; a joined dial (`join()` recipient) only
-    // sees events after it joins, so a mismatched count there falls to
-    // the node-level failure path.
+    // dial queue fires — one `Address[]` per round of its dial, in the
+    // sort order its `addressSorter` applied. The one
+    // AggregateError.errors array holds one entry per address the
+    // queue actually dialed, in the same positional order as these
+    // events; a joined dial (`join()` recipient) only sees events
+    // after it joins, so a mismatched count there falls to the
+    // node-level failure path.
     const reportedMultiaddrs: string[] = [];
     const onProgress = (ev: { type: string; detail: unknown }): void => {
       if (ev.type !== 'dial-queue:calculated-addresses') return;
@@ -580,10 +580,11 @@ class MeshClientImpl implements MeshClient {
       return; // success — connection open
     } catch (e) {
       // libp2p throws `AggregateError('All multiaddr dials failed')`
-      // when every address errors — unless only one address was dialed,
-      // in which case it throws that single error directly (dial-queue.js
-      // line 260-263). `unwrapAggregate` reads either shape as a flat
-      // list. `attributeAggregateDialErrors` pairs each error with the
+      // when more than one address was dialed and every one errored;
+      // when only one address was dialed it throws that single error
+      // directly, with no AggregateError wrapper. `unwrapAggregate`
+      // reads either shape as a flat list.
+      // `attributeAggregateDialErrors` pairs each error with the
       // address libp2p reported at the matching position, so an address
       // libp2p never dialed (no transport, denied by its gater, or
       // deduped) never takes a failure attributed to it. `null` means
@@ -1075,14 +1076,15 @@ function transportRank(ma: Multiaddr): number {
  * dialled as one operation" — "When every address fails, each address
  * libp2p reports it dialled has its failure recorded against it,
  * matched in the order libp2p dialled them". The reported list arrives
- * through libp2p's `dial-queue:calculated-addresses` progress event
- * (one `addrsToDial` list per iteration of `dialPeer`'s loop,
- * `libp2p@3.5.1/dist/src/connection-manager/dial-queue.js:194`); the
- * errors arrive as `AggregateError.errors`, one entry per dialed
- * address in the same positional order. This helper returns one row
- * per reported address, position-paired with the error at that
- * position: wrong-key (through `wrongKeyInfo`) carries the answered
- * id; every other error carries its message and kind.
+ * through libp2p's `dial-queue:calculated-addresses` progress event —
+ * one address list per round of its dial, in the order its
+ * `addressSorter` applied; the errors arrive as either a flat throw
+ * (one address dialed) or an `AggregateError.errors` (more than one),
+ * one entry per dialed address in that same positional order. This
+ * helper returns one row per reported address, position-paired with
+ * the error at that position: wrong-key (through `wrongKeyInfo`)
+ * carries the answered id; every other error carries its message and
+ * kind.
  *
  * Returns `null` when `reported.length !== errors.length` — the
  * joined-dial case (a caller joined an in-flight dial and only hears
