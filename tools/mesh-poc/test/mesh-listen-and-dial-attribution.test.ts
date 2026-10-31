@@ -248,15 +248,15 @@ describe('the AggregateError is attributed back to each address', () => {
     // queue. The catalogue below holds every transport shape the mesh
     // sees: a WebRTC-direct address, a WebRTC signalled through a
     // WebRTC-direct relay, a WebRTC signalled through a secure-
-    // WebSocket relay, a secure WebSocket in each of its two forms
-    // (`/tls/ws`, the newer; `/wss`, the older), a plain TCP address,
-    // and a bare `/p2p-circuit` tail with no WebRTC after it. The
-    // sorter sees them in scrambled input order and returns the
-    // contract's order.
+    // WebSocket relay, a secure WebSocket in each of its two
+    // spellings (`/tls/ws` and `/wss`), a plain TCP address, and a
+    // bare `/p2p-circuit` tail with no WebRTC after it. The sorter
+    // sees them in scrambled input order and returns the contract's
+    // order.
     const inputs = [
       '/ip4/11.100.0.11/tcp/4002/p2p/P', // any other
-      '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/P', // secure WebSocket (newer form)
-      '/ip4/11.100.0.11/tcp/443/wss/p2p/P', // secure WebSocket (older form)
+      '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/P', // secure WebSocket (`/tls/ws`)
+      '/ip4/11.100.0.11/tcp/443/wss/p2p/P', // secure WebSocket (`/wss`)
       '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/P', // WebRTC-direct
       '/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/uEiB/p2p/R/p2p-circuit/webrtc/p2p/P', // relayed WebRTC through WebRTC-direct
       '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/R/p2p-circuit/webrtc/p2p/P', // relayed WebRTC through secure WebSocket

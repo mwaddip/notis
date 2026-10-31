@@ -329,8 +329,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // A resolve that answers only the real node and omits every other
   // url the client offered — so phase 3's `tipEvents` fires nothing
   // for the fake entries under test and the check's phases 4-5 run
-  // against the real connection alone. The ids under scrutiny stay in
-  // whatever state phase 1's dial left them in.
+  // against the real connection alone. The ids under scrutiny stay
+  // in whatever state phase 1's dial left them in, and every case
+  // the resolver skips is a case about phase 1's dial alone — the
+  // whole-check behavior under the real read path is in a separate
+  // case ("a listed address answering with another key").
   function onlyRealGoodResolve(realId: string): typeof import('@dagsocial/nipopow-client').resolveTip {
     return async (urls) => {
       const realUrl = urls.find((u) => u.includes(realId));
@@ -351,7 +354,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     };
   }
 
-  it('a TCP address and a WebRTC-direct address that answers with another key: the address drops; the entry is otherwise unchanged', async () => {
+  it('a TCP address and a WebRTC-direct address that answers with another key: phase 1\'s dial drops the address; the entry is otherwise unchanged', async () => {
     // MESH_INTERFACE → The client's node list → "A node's addresses are
     // dialled as one operation" — "an address no browser transport
     // carries is passed over by libp2p and takes none". The mesh client
@@ -361,7 +364,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // node list — the table row "an address answers with a key other
     // than the one dialled": "that address dropped for that key when
     // the dial's failure names it; the entry otherwise unchanged" — so
-    // `status` and `failures` carry over the check.
+    // `status` and `failures` carry over phase 1's dial. The
+    // `onlyRealGoodResolve` resolver keeps K2 out of the read, so this
+    // case holds phase 1's dial alone.
     const stubK1 = await makeStub(0); stubs.push(stubK1);
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1-')); dirs.push(dirK1);
     const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
@@ -417,7 +422,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // the node moves to `retry` and `failures` grows by one. Here the
     // first dialled address is a real node whose node was stopped,
     // which libp2p times out on; the second is a real node that
-    // answers with the wrong key under K2's expected id.
+    // answers with the wrong key under K2's expected id. The
+    // `onlyRealGoodResolve` resolver keeps K2 out of the read, so this
+    // case holds phase 1's dial alone.
     const stubK1 = await makeStub(0); stubs.push(stubK1);
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1b-')); dirs.push(dirK1);
     const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
@@ -459,14 +466,16 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(entry!.failures, 'K2\'s failures grew by one').toBe(1);
   }, 90_000);
 
-  it('every dialled address answers with the wrong key: both drop, the entry is otherwise unchanged', async () => {
-    // MESH_INTERFACE → The client's node list — "every address wrong-
-    // key dropped" is the pre-existing branch of the same rule: when
-    // every dialled row is a wrong-key answer, the dropped addresses
-    // carry the diagnostic alone and the entry's `status` and
-    // `failures` are unchanged. Two real nodes K1 and K3 listen on
-    // WebRTC-direct; the anchor names K2 at both of their addresses,
-    // so each answers with its own key, not K2's.
+  it('every dialled address answers with the wrong key: phase 1\'s dial drops both, the entry is otherwise unchanged', async () => {
+    // MESH_INTERFACE → The client's node list — the wrong-key row's
+    // "every address wrong-key dropped" branch: when every dialled
+    // row is a wrong-key answer, the dropped addresses carry the
+    // diagnostic alone and the entry's `status` and `failures` are
+    // unchanged. Two real nodes K1 and K3 listen on WebRTC-direct;
+    // the anchor names K2 at both of their addresses, so each
+    // answers with its own key, not K2's. The `onlyRealGoodResolve`
+    // resolver keeps K2 out of the read, so this case holds phase
+    // 1's dial alone.
     const stubK1 = await makeStub(0); stubs.push(stubK1);
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1c-')); dirs.push(dirK1);
     const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
