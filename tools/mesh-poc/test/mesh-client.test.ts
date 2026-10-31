@@ -16,6 +16,7 @@ import { generateKeyPair, bytesToHex } from '@dagsocial/types';
 import { profileFor } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
+import type { Connection } from '@libp2p/interface';
 import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../src/identity.js';
 import { meshBaseUrl } from '../src/mesh-url.js';
 import { MeshConfigError } from '../src/config.js';
@@ -983,45 +984,32 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       .not.toHaveBeenCalled();
   }, 90_000);
 
-  it('a key whose only open connection is limited is not read on', async () => {
-    // MESH_INTERFACE → NAT → "A relay carries signalling, not data."
-    // — "a client opens no API stream on a limited connection". The
-    // only way a browser reaches a limited connection in this suite
-    // is through its fake-connection fixtures (see
-    // `test/relayed-webrtc-fixes.test.ts` for the full matrix); here
-    // we exercise the whole fetch wrapper by setting the client's
-    // read pick to one that reports no suitable connection. The
-    // `fetch` then rejects as transport, matching the no-connection
-    // path a real limited-only client would take.
-    const stub = await makeStub(0); stubs.push(stub);
-    const dir = mkdtempSync(join(tmpdir(), 'mesh-client-limited-')); dirs.push(dir);
-    const anchor = await startNode(stub, dir); nodes.push(anchor.node);
-
-    const client = await startMeshClient({
-      anchors: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
-      network: 'devnet',
-      profile: PROFILE,
-      stunServers: [],
-      resolve: fakeResolveWith([(u) => winnerFirst(u)]),
-    });
-    clients.push(client);
-    await client.check();
-
-    // Confirm the connection is open and unlimited; the pick finds
-    // it, so a plain fetch would succeed under the default pick.
-    const conns = client.libp2p.getConnections();
-    const openUnlimited = conns.find((c) => c.status === 'open' && c.limits == null);
-    expect(openUnlimited, 'the client holds an open unlimited connection to the anchor').toBeDefined();
-
-    // The strict read pick (reads refuse to fall back to a limited
-    // connection) returns null for a connections list of only
-    // limited open ones.
-    const pseudoLimited = { ...openUnlimited!, limits: { bytes: 1024n, seconds: 60 } } as unknown as typeof openUnlimited;
+  it('a key whose only open connection is limited is not read on', () => {
+    // MESH_INTERFACE → The client's node list → "A read opens no
+    // connection" — "an open one, a direct one first, never a
+    // limited one". The strict read pick refuses the limited
+    // fallback: a connections list of only limited open ones reads
+    // null, even when `direct` and the right peer. The display pick
+    // (`pickConnectionForLabel`) answers the limited connection in
+    // the same shape (its full matrix is in
+    // `test/relayed-webrtc-fixes.test.ts`); the read pick refuses
+    // it.
+    const TARGET = '12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4';
+    const limitedDirect: Connection = {
+      status: 'open',
+      direct: true,
+      limits: { bytes: 1024n, seconds: 60 },
+      remoteAddr: {
+        toString: () =>
+          '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAVZaUYSQpGvbSz9JTC4e4hT4qg9eDWVvHe4lhPUT_wxg/p2p/' + TARGET,
+      },
+      remotePeer: { toString: () => TARGET },
+    } as unknown as Connection;
     expect(
-      pickConnectionForRead([pseudoLimited!], openUnlimited!.remotePeer.toString()),
+      pickConnectionForRead([limitedDirect], TARGET),
       'reading on a limited-only connection returns null',
     ).toBeNull();
-  }, 60_000);
+  });
 
   it('the client imports nothing from node:', async () => {
     const distLib = fileURLToPath(new URL('../dist/lib.js', import.meta.url));
