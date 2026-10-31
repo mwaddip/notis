@@ -159,6 +159,17 @@ then WebRTC signalled over a relay, then the secure WebSocket, then any other ad
 a certificate authority (→ The IP certificate) is dialled only after every WebRTC path has failed. Addresses of one
 transport keep libp2p's order among them.
 
+> ⚠ **AHEAD OF CODE (2026-10-31).** The read rule below — `tools/mesh-poc/src/http-fetch.ts` opens a read's stream with
+> `dialProtocol` by key, so a read with no open connection dials whatever libp2p's peer store holds for the key, an
+> address the list dropped included.
+
+**A read opens no connection.** Every read the client makes over a mesh URL — a check's proofs, the node in use's
+`/blocks/current`, each `fetch` the page makes — opens its stream on a connection the client already holds to that key:
+an open one, a direct one first, never a limited one (→ NAT). With none, the read fails as a transport failure, and a
+failed read to the node in use runs a check at once, which dials from the list. So the client dials only what the list
+holds for a key — in its order, without the addresses it dropped — never an address libp2p keeps for the key from
+elsewhere.
+
 **Two clocks.** The verifier reads the wall clock — a header's stamp is wall-clock time. The list's retry timers read a
 monotonic clock, so a clock that steps never holds a node out or retries it at once. Neither stands in for the other.
 
