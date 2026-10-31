@@ -23,7 +23,12 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { UnexpectedPeerError } from '@libp2p/interface';
 import type { Connection, PeerId } from '@libp2p/interface';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
-import { defaultMultiaddrSorter } from '@libp2p/utils';
+import type { Address } from '@libp2p/interface';
+import {
+  loopbackAddressLast,
+  publicAddressesFirst,
+  circuitRelayAddressesLast,
+} from '@libp2p/utils';
 import { generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
@@ -231,11 +236,15 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // `MESH_INTERFACE → Discovery` — the client runs the DHT as a client on
   // `/notis/<network>/kad/1.0.0`. `clientMode: true` keeps it off the
   // server side of the handler registration.
+  // `MESH_INTERFACE → The client's node list → "The secure WebSocket is
+  // the fallback"` — the client gives libp2p its one address order,
+  // read by both the dial queue and `attributeAggregateDialErrors`.
   const node = await createLibp2p({
     privateKey: key.privateKey,
     transports,
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
+    connectionManager: { addressSorter: notisAddressSorter },
     services: {
       identify: identify(),
       ping: ping(),
@@ -554,12 +563,13 @@ class MeshClientImpl implements MeshClient {
     } catch (e) {
       // libp2p throws `AggregateError('All multiaddr dials failed')`
       // when every address errors. The inner errors come in the ORDER
-      // the dial-queue applied (defaultMultiaddrSorter) over the
-      // calculated addresses, so attribution rides position when
-      // `errors.length === dialable.length` — libp2p dropped none
-      // through its gater or dedup. `attributeAggregateDialErrors`
-      // sorts our dialable list the same way and returns one row per
-      // sorted address with its wrong-key / failure classification;
+      // the dial-queue applied (`notisAddressSorter`, the one
+      // definition the dial used) over the calculated addresses, so
+      // attribution rides position when `errors.length ===
+      // dialable.length` — libp2p dropped none through its gater or
+      // dedup. `attributeAggregateDialErrors` sorts our dialable list
+      // the same way and returns one row per sorted address with its
+      // wrong-key / failure classification;
       // `null` means libp2p dropped some address and position-based
       // attribution is unsound, so the caller records a single
       // aggregate failure instead.
@@ -1006,18 +1016,56 @@ function readAnsweredFromWrongKeyMessage(msg: string): { answeredPeerIdString: s
 }
 
 /**
+ * MESH_INTERFACE → The client's node list → "The secure WebSocket is the
+ * fallback" — the client's one address order: WebRTC-direct, then WebRTC
+ * signalled over a relay, then the secure WebSocket, then any other
+ * address. Addresses of one transport keep libp2p's order among them
+ * (loopback last, public first, circuit-relay last). One definition,
+ * read by both `createLibp2p`'s `connectionManager.addressSorter` and
+ * `attributeAggregateDialErrors` — a second copy would attribute a
+ * failure to the wrong address on a wrong-key answer.
+ */
+export function notisAddressSorter(a: Address, b: Address): -1 | 0 | 1 {
+  const ra = transportRank(a.multiaddr);
+  const rb = transportRank(b.multiaddr);
+  if (ra < rb) return -1;
+  if (ra > rb) return 1;
+  return (
+    loopbackAddressLast(a.multiaddr, b.multiaddr)
+    || publicAddressesFirst(a.multiaddr, b.multiaddr)
+    || circuitRelayAddressesLast(a.multiaddr, b.multiaddr)
+    || 0
+  );
+}
+
+function transportRank(ma: Multiaddr): number {
+  // The multiaddr's string form carries every protocol in order. A
+  // relayed path holds `/p2p-circuit/...` midway; a direct path does
+  // not.
+  const s = ma.toString();
+  if (s.includes('/p2p-circuit/')) {
+    if (/\/p2p-circuit\/webrtc(?:\/|$)/.test(s)) return 1;
+    return 3;
+  }
+  if (/\/webrtc-direct(?:\/|$)/.test(s)) return 0;
+  if (/\/webrtc(?:\/|$)/.test(s)) return 1;
+  if (/\/wss(?:\/|$)/.test(s) || /\/tls\/ws(?:\/|$)/.test(s)) return 2;
+  return 3;
+}
+
+/**
  * MESH_INTERFACE → The client's node list — "A node's addresses are
  * dialled as one operation ... When every address fails, each one's
  * failure is recorded against it". libp2p 3.5's `AggregateError` carries
- * one inner error per address in the ORDER its own
- * `defaultMultiaddrSorter` applies. This helper sorts the dialable list
- * the same way and returns one row per sorted address, with the inner
- * error's attribution: wrong-key (through `wrongKeyInfo`) carries the
- * answered id; every other error carries its message and kind. Returns
- * `null` when `errors.length !== dialable.length` — libp2p dropped one
- * before dialling (gater, no transport, dedup), so a one-to-one match is
- * no longer sound and the caller falls back to a single aggregate
- * failure.
+ * one inner error per address in the ORDER its own sorter applies —
+ * `notisAddressSorter`, the one definition the dial used. This helper
+ * sorts the dialable list the same way and returns one row per sorted
+ * address, with the inner error's attribution: wrong-key (through
+ * `wrongKeyInfo`) carries the answered id; every other error carries
+ * its message and kind. Returns `null` when `errors.length !==
+ * dialable.length` — libp2p dropped one before dialling (gater, no
+ * transport, dedup), so a one-to-one match is no longer sound and the
+ * caller falls back to a single aggregate failure.
  */
 export interface AttributedDialError {
   addr: string;
@@ -1030,13 +1078,11 @@ export function attributeAggregateDialErrors(
   errors: readonly unknown[],
 ): AttributedDialError[] | null {
   if (dialable.length !== errors.length) return null;
-  // The dial-queue sorts gated addresses with `defaultAddressSorter`,
-  // which chains four multiaddr-only comparators + `certifiedAddressesFirst`.
-  // The dialable list we hand it carries no isCertified bit, so the
-  // multiaddr-only ordering is what applies — `defaultMultiaddrSorter`
-  // from `@libp2p/utils` is the same chain and part of its public
-  // surface.
-  const sorted = defaultMultiaddrSorter(dialable.map((s) => multiaddr(s))).map((m) => m.toString());
+  const addresses: Address[] = dialable.map((s) => ({
+    multiaddr: multiaddr(s),
+    isCertified: false,
+  }));
+  const sorted = addresses.sort(notisAddressSorter).map((a) => a.multiaddr.toString());
   const out: AttributedDialError[] = [];
   for (let i = 0; i < sorted.length; i += 1) {
     const addr = sorted[i]!;

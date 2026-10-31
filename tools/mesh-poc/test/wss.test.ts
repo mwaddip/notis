@@ -21,6 +21,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as x509 from '@peculiar/x509';
 import { webcrypto } from 'node:crypto';
+// `@libp2p/webrtc` sets @peculiar/x509's crypto provider to its own
+// `@peculiar/webcrypto` instance at module load. Setting it again here
+// (as a global override to Node's webcrypto) breaks WebRTC transport
+// cert generation: a keyPair made by @peculiar/webcrypto is then handed
+// to `exportKey` on Node's webcrypto, which refuses it as "not a
+// CryptoKey". The helpers below pass `webcrypto` to @peculiar/x509
+// explicitly instead; the global provider stays @libp2p/webrtc's.
 import { createLibp2p, type Libp2p } from 'libp2p';
 import { webSockets } from '@libp2p/websockets';
 import { noise } from '@libp2p/noise';
@@ -46,9 +53,9 @@ import { profileFor } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
-// Node 20+ exposes WebCrypto on `node:crypto.webcrypto`; @peculiar/x509 wants
-// a Crypto-shaped object set with its CryptoProvider.
-x509.cryptoProvider.set(webcrypto as unknown as Crypto);
+// Node 20+ exposes WebCrypto on `node:crypto.webcrypto` and
+// @peculiar/x509 takes a `Crypto` as its optional second argument.
+const TEST_X509_CRYPTO = webcrypto as unknown as Crypto;
 
 interface Stub {
   srv: Server;
@@ -82,7 +89,7 @@ async function makeSelfSigned(
   notBefore: number,
   notAfter: number,
 ): Promise<IpCertificate> {
-  const keys = await x509.cryptoProvider.get().subtle.generateKey(
+  const keys = await TEST_X509_CRYPTO.subtle.generateKey(
     {
       name: 'ECDSA',
       namedCurve: 'P-256',
@@ -90,20 +97,23 @@ async function makeSelfSigned(
     true,
     ['sign', 'verify'],
   );
-  const cert = await x509.X509CertificateGenerator.createSelfSigned({
-    serialNumber: Math.floor(Math.random() * 1e12).toString(16),
-    name: 'CN=127.0.0.1',
-    notBefore: new Date(notBefore),
-    notAfter: new Date(notAfter),
-    signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
-    keys,
-    extensions: [
-      new x509.SubjectAlternativeNameExtension([
-        { type: 'ip', value: '127.0.0.1' },
-      ]),
-    ],
-  });
-  const pkcs8 = await x509.cryptoProvider.get().subtle.exportKey(
+  const cert = await x509.X509CertificateGenerator.createSelfSigned(
+    {
+      serialNumber: Math.floor(Math.random() * 1e12).toString(16),
+      name: 'CN=127.0.0.1',
+      notBefore: new Date(notBefore),
+      notAfter: new Date(notAfter),
+      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
+      keys,
+      extensions: [
+        new x509.SubjectAlternativeNameExtension([
+          { type: 'ip', value: '127.0.0.1' },
+        ]),
+      ],
+    },
+    TEST_X509_CRYPTO,
+  );
+  const pkcs8 = await TEST_X509_CRYPTO.subtle.exportKey(
     'pkcs8',
     keys.privateKey,
   );
@@ -526,7 +536,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(res.status).toBe(200);
   }, 30_000);
 
-  it.fails('a client reaches a dual-listen node (webrtc-direct + wss) over webrtc-direct', async () => {
+  it('a client reaches a dual-listen node (webrtc-direct + wss) over webrtc-direct', async () => {
     // MESH_INTERFACE → The client's node list → "The secure WebSocket is
     // the fallback" — the client gives libp2p its own address order:
     // WebRTC-direct, then WebRTC signalled over a relay, then the secure

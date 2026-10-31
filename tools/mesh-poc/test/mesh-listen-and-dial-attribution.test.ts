@@ -121,7 +121,7 @@ describe('finding 3 — the AggregateError is attributed back to each address', 
   // an `EncryptionFailedError` whose message reads `Payload peer id X
   // does not match expected remote peer id Y`; no `.multiaddr` or `.addr`
   // on the error. Attribution rides position in the sorted dial order
-  // (`@libp2p/utils`' `defaultMultiaddrSorter` applied before the dial).
+  // (`notisAddressSorter`, the one definition the dial used).
 
   it('wrongKeyInfo matches EncryptionFailedError + the noise mismatch message, reads the answered id', () => {
     const err = Object.assign(new Error(
@@ -148,7 +148,7 @@ describe('finding 3 — the AggregateError is attributed back to each address', 
     expect(wrongKeyInfo(err)).toBeNull();
   });
 
-  it.fails('attributeAggregateDialErrors orders rows as webrtc-direct, relayed webrtc, wss, other', () => {
+  it('attributeAggregateDialErrors orders rows as webrtc-direct, relayed webrtc, wss, other', () => {
     // MESH_INTERFACE → The client's node list → "The secure WebSocket is
     // the fallback" — the client's one order is WebRTC-direct, then
     // WebRTC signalled over a relay, then the secure WebSocket, then any
@@ -189,7 +189,7 @@ describe('finding 3 — the AggregateError is attributed back to each address', 
     expect(attributed![3]!.wrongKey?.answeredPeerIdString).toBe('OTHER');
   });
 
-  it.fails('a wrong-key on the webrtc-direct address of a node that also lists wss lands on webrtc-direct', () => {
+  it('a wrong-key on the webrtc-direct address of a node that also lists wss lands on webrtc-direct', () => {
     // MESH_INTERFACE → The client's node list → "The secure WebSocket is
     // the fallback" / "A dial's failures are attributed in that same
     // order, read from the one definition the dial used" — when a node
