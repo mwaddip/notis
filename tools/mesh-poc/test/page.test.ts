@@ -244,6 +244,62 @@ describe('page/probe.ts', () => {
   });
 });
 
+describe('page/probe.ts survives a render', () => {
+  // MESH_INTERFACE → Acceptance 1 — "the one query parameter the page
+  // honours: `?probe=<path>` ... writes `<pre id="probe">`" and that
+  // element is what the stage's CDP reader reads. The state renderer
+  // and the probe each own their own subtree under `#root`; a render
+  // leaves `<pre id="probe">` in place.
+  type FakeClient = Pick<MeshClient, 'fetch' | 'state' | 'onState'>;
+  function buildFake(opts: { nodeId: string; body: Uint8Array }): FakeClient {
+    const state: ClientState = {
+      nodeId: opts.nodeId, transport: 'webrtc-direct', path: 'direct',
+      lastLeft: null, anchorReached: true, tip: null, nodes: [],
+    };
+    return {
+      fetch: async () => new Response(opts.body as unknown as BodyInit, { status: 200 }),
+      state: () => state,
+      onState: () => () => { /* no listener */ },
+    };
+  }
+
+  it.fails('a state render after the probe keeps <pre id="probe"> with the same text', async () => {
+    const root = document.createElement('div');
+    const nodeId = 'a'.repeat(64);
+    const body = new TextEncoder().encode('{"height":42,"hash":"ab"}');
+    await runProbe({ client: buildFake({ nodeId, body }), path: '/blocks/current', root });
+    const before = root.querySelector('pre#probe');
+    expect(before, 'the probe is written before the render').not.toBeNull();
+    const probeText = before!.textContent;
+    const state: ClientState = {
+      nodeId, transport: 'webrtc-direct', path: 'direct',
+      lastLeft: null, anchorReached: true, tip: null, nodes: [],
+    };
+    render(state, root);
+    const after = root.querySelector('pre#probe');
+    expect(after, 'the probe survives the state render').not.toBeNull();
+    expect(after!.textContent, 'with the same text').toBe(probeText);
+  });
+
+  it.fails('two state renders after the probe keep <pre id="probe"> with the same text', async () => {
+    const root = document.createElement('div');
+    const nodeId = 'a'.repeat(64);
+    const body = new TextEncoder().encode('{"height":42,"hash":"ab"}');
+    await runProbe({ client: buildFake({ nodeId, body }), path: '/blocks/current', root });
+    const probeText = root.querySelector('pre#probe')!.textContent;
+    const state1: ClientState = {
+      nodeId, transport: 'webrtc-direct', path: 'direct',
+      lastLeft: null, anchorReached: true, tip: null, nodes: [],
+    };
+    render(state1, root);
+    const state2: ClientState = { ...state1, tip: { height: 7, hash: 'c'.repeat(64) } };
+    render(state2, root);
+    const after = root.querySelector('pre#probe');
+    expect(after, 'the probe survives two renders').not.toBeNull();
+    expect(after!.textContent, 'with the same text').toBe(probeText);
+  });
+});
+
 describe('page/main.ts probe wiring', () => {
   // MESH_INTERFACE → Acceptance — `main.ts` reads `?probe=<path>` from
   // `globalThis.location.search`. A URL without `?probe=` does not run the
