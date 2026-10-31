@@ -615,9 +615,9 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
       expect(s.transport, 'webrtc-direct was first in the one sort order').toBe('webrtc-direct');
       expect(s.path).toBe('direct');
     } finally {
-      for (const c of meshClients) {
-        try { await c.stop(); } catch { /* already stopped */ }
-      }
+      // Each client is stopped once here; a throw from `stop()` fails
+      // the case.
+      for (const c of meshClients) await c.stop();
     }
   }, 60_000);
 });
