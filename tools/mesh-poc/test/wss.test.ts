@@ -41,6 +41,10 @@ import {
   type MeshNode,
 } from '../src/node/mesh-node.js';
 import type { CertificateSource, IpCertificate } from '../src/node/acme.js';
+import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import { profileFor } from '@dagsocial/types';
+import type { NetworkProfile, NetworkType } from '@dagsocial/types';
+import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
 // Node 20+ exposes WebCrypto on `node:crypto.webcrypto`; @peculiar/x509 wants
 // a Crypto-shaped object set with its CryptoProvider.
@@ -521,4 +525,89 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     );
     expect(res.status).toBe(200);
   }, 30_000);
+
+  it.fails('a client reaches a dual-listen node (webrtc-direct + wss) over webrtc-direct', async () => {
+    // MESH_INTERFACE → The client's node list → "The secure WebSocket is
+    // the fallback" — the client gives libp2p its own address order:
+    // WebRTC-direct, then WebRTC signalled over a relay, then the secure
+    // WebSocket, then any other address. A node listing both a
+    // WebRTC-direct and a secure WebSocket address is reached over
+    // WebRTC-direct; libp2p's dial queue dials the sorted list one
+    // address at a time, so the first that connects wins.
+    const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
+    const meshClients: MeshClient[] = [];
+    try {
+      const stub = await makeStub();
+      stubs.push(stub);
+      const dir = mkdtempSync(join(tmpdir(), 'mesh-wss-dual-'));
+      dirs.push(dir);
+      const cert = await makeSelfSigned(Date.now(), Date.now() + 60_000);
+      const source: CertificateSource = {
+        async current() { return cert; },
+        async obtain() { return cert; },
+      };
+      const key = nodeKeyFromKeyPair(generateKeyPair());
+      const server = await startMeshNode({
+        key,
+        network: 'devnet',
+        role: 'public',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct', '/ip4/127.0.0.1/tcp/0'],
+        bootstrap: [],
+        stateDir: dir,
+        upstream: stub.base,
+        wss: { ip: '127.0.0.1', port: 0, source },
+      });
+      nodes.push(server);
+
+      const addrs = server.multiaddrs();
+      const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
+      const wsAddr = addrs.find((a) => a.includes('/tls/ws'));
+      expect(webrtcAddr, 'the node has a /webrtc-direct/ listen address').toBeTruthy();
+      expect(wsAddr, 'the node has a /tls/ws listen address').toBeTruthy();
+
+      const notisId = notisIdFromPeerId(server.libp2p.peerId);
+      // Anchor lists wss first, webrtc-direct second — the client's own
+      // sorter puts webrtc-direct first whatever the input order is.
+      // libp2p's default sorter would have put wss ahead.
+      const fakeResolve: typeof import('@dagsocial/nipopow-client').resolveTip
+        = async (urls) => {
+          const resultNodes: NodeTipResult[] = urls.map((url, i) => ({
+            url,
+            verified: true,
+            proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
+            verifyResult: null,
+            refuseReason: null,
+            refuseCode: null,
+            behind: i === 0 ? 0 : 1,
+            genesisHash: 'f'.repeat(64),
+          }));
+          const out: TipResult = {
+            winner: resultNodes[0] ?? null,
+            winnerIndex: resultNodes.length > 0 ? 0 : -1,
+            nodes: resultNodes,
+            tip: null,
+            suffixHead: null,
+            splits: [],
+          };
+          return out;
+        };
+      const client = await startMeshClient({
+        anchors: [{ notisId, addrs: [wsAddr!, webrtcAddr!] }],
+        network: 'devnet',
+        profile: PROFILE,
+        stunServers: [],
+        resolve: fakeResolve,
+      });
+      meshClients.push(client);
+      await client.check();
+      const s = client.state();
+      expect(s.nodeId).toBe(notisId);
+      expect(s.transport, 'webrtc-direct was first in the one sort order').toBe('webrtc-direct');
+      expect(s.path).toBe('direct');
+    } finally {
+      for (const c of meshClients) {
+        try { await c.stop(); } catch { /* already stopped */ }
+      }
+    }
+  }, 60_000);
 });
