@@ -593,11 +593,9 @@ class MeshClientImpl implements MeshClient {
       // aggregate failure instead.
       const inner = unwrapAggregate(e);
       const attributed = attributeAggregateDialErrors(reportedMultiaddrs, inner);
-      let anyWrongKey = false;
       if (attributed !== null) {
         for (const row of attributed) {
           if (row.wrongKey !== null) {
-            anyWrongKey = true;
             // The anchor's own list carries the addrs without the
             // `/p2p/<peer-id>` tail `withPeerId` adds for the dial;
             // reconcile by matching on the host-port prefix the two
@@ -608,19 +606,26 @@ class MeshClientImpl implements MeshClient {
           }
         }
       }
-      // Dial still FAILed overall — bump the retry counter once and set
-      // `lastFailure` to the aggregate's own message. When attribution
-      // landed, each address's own failure also lands in
-      // `lastFailures[addr]` so a reader can see which address failed
-      // how (MESH_INTERFACE → The client's node list — "An entry keeps
-      // its last failure's kind and message").
       const stillHere = this.nodeList.entry(id);
       if (!stillHere || stillHere.status === 'blacklisted') return;
-      if (anyWrongKey && stillHere.addrs.length === 0) {
-        // Every address was wrong-key dropped; the node has no addrs
-        // left. The next check path will take over.
+      // MESH_INTERFACE → The client's node list — the wrong-key row:
+      // "that address dropped for that key when the dial's failure
+      // names it; the entry otherwise unchanged". When attribution
+      // landed and every dialled address answered with the wrong key,
+      // the dropped addresses carry the diagnostic alone — nothing
+      // else moves. An address libp2p passed over (no transport, gated,
+      // deduped) never reaches the reported list, so a passed-over
+      // address still listed does not block this branch.
+      if (attributed !== null && attributed.every((row) => row.wrongKey !== null)) {
         return;
       }
+      // The dial failed on a kind that is not just wrong-key — bump the
+      // retry counter once and set `lastFailure` to the aggregate's own
+      // message. When attribution landed, each non-wrong-key row's
+      // own failure also lands in `lastFailures[addr]` so a reader can
+      // see which address failed how (MESH_INTERFACE → The client's
+      // node list — "An entry keeps its last failure's kind and
+      // message").
       if (attributed !== null) {
         for (const row of attributed) {
           if (row.wrongKey !== null) continue; // dropped by wrongKey already
