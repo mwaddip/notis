@@ -15,7 +15,9 @@ import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { readTopology } from '../stage/lib/topology.mjs';
 import { verdictS4InterNodeTcp } from '../stage/lib/verdicts.mjs';
-import { attributeAggregateDialErrors, wrongKeyInfo } from '../src/client/mesh-client.js';
+import { attributeAggregateDialErrors, notisAddressSorter, wrongKeyInfo } from '../src/client/mesh-client.js';
+import { multiaddr } from '@multiformats/multiaddr';
+import type { Address } from '@libp2p/interface';
 import { NodeList } from '../src/client/node-list.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -238,6 +240,69 @@ describe('the AggregateError is attributed back to each address', () => {
     // reached, say) is also unsound to position-match.
     const reported = ['/ip4/1.1.1.1/tcp/443/p2p/P', '/ip4/2.2.2.2/tcp/443/p2p/P'];
     expect(attributeAggregateDialErrors(reported, [new Error('a')])).toBeNull();
+  });
+
+  it('notisAddressSorter orders the full address catalogue by MESH_INTERFACE: WebRTC-direct, relayed WebRTC, secure WebSocket, any other', () => {
+    // MESH_INTERFACE → The client's node list → "The secure WebSocket is
+    // the fallback" — the one order the client gives libp2p's dial
+    // queue. The catalogue below holds every transport shape the mesh
+    // sees: a WebRTC-direct address, a WebRTC signalled through a
+    // WebRTC-direct relay, a WebRTC signalled through a secure-
+    // WebSocket relay, a secure WebSocket in each of its two forms
+    // (`/tls/ws`, the newer; `/wss`, the older), a plain TCP address,
+    // and a bare `/p2p-circuit` tail with no WebRTC after it. The
+    // sorter sees them in scrambled input order and returns the
+    // contract's order.
+    const inputs = [
+      '/ip4/11.100.0.11/tcp/4002/p2p/P', // any other
+      '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/P', // secure WebSocket (newer form)
+      '/ip4/11.100.0.11/tcp/443/wss/p2p/P', // secure WebSocket (older form)
+      '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/P', // WebRTC-direct
+      '/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/uEiB/p2p/R/p2p-circuit/webrtc/p2p/P', // relayed WebRTC through WebRTC-direct
+      '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/R/p2p-circuit/webrtc/p2p/P', // relayed WebRTC through secure WebSocket
+      '/ip4/11.100.0.11/tcp/4002/p2p/R/p2p-circuit/p2p/P', // bare /p2p-circuit (no WebRTC)
+    ];
+    const addrs: Address[] = inputs.map((s) => ({ multiaddr: multiaddr(s), isCertified: false }));
+    const sorted = addrs.sort(notisAddressSorter).map((a) => a.multiaddr.toString());
+    // Rank 0 — WebRTC-direct — is the first row.
+    expect(sorted[0]).toBe('/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/P');
+    // Rank 1 — WebRTC signalled over a relay — holds the two circuits
+    // that end in /webrtc. Among themselves libp2p's comparators keep
+    // their input order (both are public, neither is loopback, both
+    // are circuit); the rank bound is what the contract fixes.
+    const r1 = new Set(sorted.slice(1, 3));
+    expect(r1).toEqual(new Set([
+      '/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/uEiB/p2p/R/p2p-circuit/webrtc/p2p/P',
+      '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/R/p2p-circuit/webrtc/p2p/P',
+    ]));
+    // Rank 2 — the secure WebSocket in either of its two spellings.
+    const r2 = new Set(sorted.slice(3, 5));
+    expect(r2).toEqual(new Set([
+      '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/P',
+      '/ip4/11.100.0.11/tcp/443/wss/p2p/P',
+    ]));
+    // Rank 3 — any other address. The plain TCP comes first; the bare
+    // /p2p-circuit comes last, since libp2p's `circuitRelayAddressesLast`
+    // comparator moves it there within the same rank.
+    expect(sorted[5]).toBe('/ip4/11.100.0.11/tcp/4002/p2p/P');
+    expect(sorted[6]).toBe('/ip4/11.100.0.11/tcp/4002/p2p/R/p2p-circuit/p2p/P');
+  });
+
+  it('notisAddressSorter: within one rank, libp2p\'s circuitRelayAddressesLast moves a bare /p2p-circuit after a plain address', () => {
+    // Two addresses at rank 3 — one plain TCP, one a bare circuit
+    // tail — on the same public IP, neither loopback. `loopbackLast`
+    // and `publicAddressesFirst` return 0; `circuitRelayAddressesLast`
+    // places the circuit after.
+    const plain: Address = {
+      multiaddr: multiaddr('/ip4/11.100.0.11/tcp/4002/p2p/P'),
+      isCertified: false,
+    };
+    const circuit: Address = {
+      multiaddr: multiaddr('/ip4/11.100.0.11/tcp/4002/p2p/R/p2p-circuit/p2p/P'),
+      isCertified: false,
+    };
+    expect(notisAddressSorter(plain, circuit)).toBe(-1);
+    expect(notisAddressSorter(circuit, plain)).toBe(1);
   });
 
   it('NodeList.failure writes lastFailures[addr] when an addr is passed', async () => {
