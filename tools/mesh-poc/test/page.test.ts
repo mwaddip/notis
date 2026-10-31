@@ -245,11 +245,11 @@ describe('page/probe.ts', () => {
 });
 
 describe('page/probe.ts survives a render', () => {
-  // MESH_INTERFACE → Acceptance 1 — "the one query parameter the page
-  // honours: `?probe=<path>` ... writes `<pre id="probe">`" and that
-  // element is what the stage's CDP reader reads. The state renderer
-  // and the probe each own their own subtree under `#root`; a render
-  // leaves `<pre id="probe">` in place.
+  // MESH_INTERFACE → Acceptance → "No name, no hosted page" — the
+  // stage's CDP reads `<pre id="probe">` for its byte-for-byte check,
+  // which the page writes once per `?probe=<path>` run. The state
+  // renderer and the probe each own their own subtree under `#root`,
+  // so a render leaves `<pre id="probe">` in place.
   type FakeClient = Pick<MeshClient, 'fetch' | 'state' | 'onState'>;
   function buildFake(opts: { nodeId: string; body: Uint8Array }): FakeClient {
     const state: ClientState = {

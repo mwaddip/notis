@@ -190,14 +190,13 @@ describe('finding 3 — the AggregateError is attributed back to each address', 
   });
 
   it('a wrong-key on the webrtc-direct address of a node that also lists wss lands on webrtc-direct', () => {
-    // MESH_INTERFACE → The client's node list → "The secure WebSocket is
-    // the fallback" / "A dial's failures are attributed in that same
-    // order, read from the one definition the dial used" — when a node
-    // lists both a WebRTC-direct and a secure WebSocket address and the
-    // dial's AggregateError's first error is wrong-key, that failure is
-    // attributed to the WebRTC-direct address because the sort put it
-    // first. A wrong-key error on the wrong address would blacklist the
-    // wrong address in the entry.
+    // MESH_INTERFACE → The client's node list → "The secure WebSocket
+    // is the fallback" — when a node lists both a WebRTC-direct and a
+    // secure WebSocket address and the dial's AggregateError's first
+    // error is wrong-key, that failure is attributed to the
+    // WebRTC-direct address because the sort put it first. A
+    // wrong-key error on the wrong address would blacklist the wrong
+    // address in the entry.
     const dialable = [
       '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/P',
       '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/P',

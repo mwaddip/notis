@@ -17,11 +17,12 @@ import type { NodeEntry } from '../src/client/node-list.js';
 const NO_ANCHOR_WORDS = 'No anchor reached. Nothing shown here is verified.';
 
 export function render(state: ClientState, root: HTMLElement): void {
-  // MESH_INTERFACE → Acceptance 1 — "`<pre id="probe">` ... the stage's
-  // CDP reads it". The state renderer owns one subtree under `#root`
-  // (a `<div data-role="state-root">`) and the probe owns `<pre
-  // id="probe">` as a sibling; a render replaces its own container's
-  // children, leaving the probe in place.
+  // MESH_INTERFACE → Acceptance → "No name, no hosted page" — the
+  // stage's CDP reads `<pre id="probe">` for its byte-for-byte check.
+  // The state renderer owns one subtree under `#root` (a `<div
+  // data-role="state-root">`) and the probe owns `<pre id="probe">` as
+  // a sibling; a render replaces its own container's children, leaving
+  // the probe in place.
   let container = root.querySelector(':scope > [data-role="state-root"]') as HTMLElement | null;
   if (container === null) {
     container = document.createElement('div');
