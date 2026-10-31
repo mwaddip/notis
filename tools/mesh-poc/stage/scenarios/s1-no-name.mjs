@@ -22,7 +22,7 @@ export const NAME = 's1';
 
 export function describe() {
   return [
-    'nodeId is an anchor within 60 s',
+    'nodeId is an anchor within 60 s, reached over WebRTC-direct',
     'probe /blocks/current matches the node direct',
     'probe /nipopow/proof/24/20 matches the node direct',
     'the DNS log holds no line and the nft 53/853 counter did not move',
