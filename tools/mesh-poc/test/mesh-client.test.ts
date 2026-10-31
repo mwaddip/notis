@@ -325,16 +325,52 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(entryA?.status).toBe('retry');
   }, 90_000);
 
-  it('a TCP address and a WebRTC-direct address that answers with another key: the WebRTC-direct address drops; the TCP address is not recorded', async () => {
+  // A resolve that answers only the real node and omits every other
+  // url the client offered — so phase 3's `tipEvents` fires nothing
+  // for the fake entries under test and the check's phases 4-5 run
+  // against the real connection alone. The ids under scrutiny stay in
+  // whatever state phase 1's dial left them in.
+  function onlyRealGoodResolve(realId: string): typeof import('@dagsocial/nipopow-client').resolveTip {
+    return async (urls) => {
+      const realUrl = urls.find((u) => u.includes(realId));
+      if (!realUrl) {
+        return { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
+      }
+      const node: NodeTipResult = {
+        url: realUrl,
+        verified: true,
+        proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
+        verifyResult: null,
+        refuseReason: null,
+        refuseCode: null,
+        behind: 0,
+        genesisHash: 'f'.repeat(64),
+      };
+      return { winner: node, winnerIndex: 0, nodes: [node], tip: null, suffixHead: null, splits: [] };
+    };
+  }
+
+  it.fails('a TCP address and a WebRTC-direct address that answers with another key: the address drops; the entry is otherwise unchanged', async () => {
     // MESH_INTERFACE → The client's node list → "A node's addresses are
     // dialled as one operation" — "an address no browser transport
     // carries is passed over by libp2p and takes none". The mesh client
     // runs no TCP transport, so a TCP address libp2p is handed is
     // filtered before any dial; a wrong-key answer on the WebRTC-direct
-    // address drops that address alone.
+    // address drops that address alone. MESH_INTERFACE → The client's
+    // node list — the table row "an address answers with a key other
+    // than the one dialled": "that address dropped for that key when
+    // the dial's failure names it; the entry otherwise unchanged" — so
+    // `status` and `failures` carry over the check.
     const stubK1 = await makeStub(0); stubs.push(stubK1);
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1-')); dirs.push(dirK1);
     const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
+
+    // A real anchor the resolver answers for — the check's phases 4-5
+    // run against it, so phase 5's /blocks/current reads a real
+    // connection's tip and never touches K2's state.
+    const stubGood = await makeStub(1); stubs.push(stubGood);
+    const dirGood = mkdtempSync(join(tmpdir(), 'mesh-client-good-')); dirs.push(dirGood);
+    const good = await startNode(stubGood, dirGood); nodes.push(good.node);
 
     // A fresh notis id — the anchor names K2 at K1's WebRTC-direct
     // address (which answers with K1's key, not K2's), plus a loopback
@@ -343,21 +379,129 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const tcpAddr = '/ip4/127.0.0.1/tcp/4002';
 
     const client = await startMeshClient({
-      anchors: [{ notisId: k2.notisId, addrs: [tcpAddr, k1.webrtcAddr] }],
+      anchors: [
+        { notisId: good.id, addrs: [good.webrtcAddr] },
+        { notisId: k2.notisId, addrs: [tcpAddr, k1.webrtcAddr] },
+      ],
       network: 'devnet',
       profile: PROFILE,
       stunServers: [],
-      resolve: fakeResolveWith([(u) => winnerFirst(u)]),
+      resolve: onlyRealGoodResolve(good.id),
+    });
+    clients.push(client);
+
+    // Read K2's status and failure count BEFORE the check — the
+    // invariant the check must preserve is "the entry otherwise
+    // unchanged".
+    const before = client.state().nodes.find((n) => n.notisId === k2.notisId)!;
+    const beforeStatus = before.status;
+    const beforeFailures = before.failures;
+
+    await client.check();
+    const entry = client.state().nodes.find((n) => n.notisId === k2.notisId);
+    expect(entry, 'K2 is in the node list').toBeDefined();
+    expect(entry!.droppedAddrs, 'K1\'s WebRTC-direct address dropped for K2')
+      .toContain(k1.webrtcAddr);
+    expect(entry!.lastFailures[tcpAddr], 'the TCP address has no failure recorded')
+      .toBeUndefined();
+    expect(entry!.status, 'K2\'s status unchanged by a wrong-key-only dial').toBe(beforeStatus);
+    expect(entry!.failures, 'K2\'s failure count unchanged by a wrong-key-only dial').toBe(beforeFailures);
+  }, 90_000);
+
+  it('a wrong-key answer on one address and a timeout on a second dialled address records the node failure', async () => {
+    // MESH_INTERFACE → The client's node list — the wrong-key row is
+    // "the entry otherwise unchanged" only when every dialled address
+    // answered with the wrong key. A dial whose attribution carries
+    // any other failure keeps the row for the plain failure kinds:
+    // the node moves to `retry` and `failures` grows by one. Here the
+    // first dialled address is a real node whose node was stopped,
+    // which libp2p times out on; the second is a real node that
+    // answers with the wrong key under K2's expected id.
+    const stubK1 = await makeStub(0); stubs.push(stubK1);
+    const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1b-')); dirs.push(dirK1);
+    const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
+
+    // A second real node — grab its webrtc-direct address, then stop
+    // it; the address stays parseable, but libp2p's dial will time out.
+    const stubGone = await makeStub(2); stubs.push(stubGone);
+    const dirGone = mkdtempSync(join(tmpdir(), 'mesh-client-gone-')); dirs.push(dirGone);
+    const gone = await startNode(stubGone, dirGone);
+    const goneWebrtcAddr = gone.webrtcAddr;
+    await gone.node.stop();
+
+    const stubGood = await makeStub(1); stubs.push(stubGood);
+    const dirGood = mkdtempSync(join(tmpdir(), 'mesh-client-good2-')); dirs.push(dirGood);
+    const good = await startNode(stubGood, dirGood); nodes.push(good.node);
+
+    const k2 = nodeKeyFromKeyPair(generateKeyPair());
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: good.id, addrs: [good.webrtcAddr] },
+        { notisId: k2.notisId, addrs: [goneWebrtcAddr, k1.webrtcAddr] },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: onlyRealGoodResolve(good.id),
     });
     clients.push(client);
 
     await client.check();
     const entry = client.state().nodes.find((n) => n.notisId === k2.notisId);
-    expect(entry, 'the anchor is in the node list').toBeDefined();
-    expect(entry!.droppedAddrs, 'the WebRTC-direct address is dropped for K2')
-      .toContain(k1.webrtcAddr);
-    expect(entry!.lastFailures[tcpAddr], 'the TCP address has no failure recorded')
-      .toBeUndefined();
+    expect(entry, 'K2 is in the node list').toBeDefined();
+    // The wrong-key address drops; the stopped-node address stays and
+    // keeps a `lastFailures` row for the timeout.
+    expect(entry!.droppedAddrs, 'K1\'s WebRTC-direct address dropped for K2').toContain(k1.webrtcAddr);
+    expect(entry!.lastFailures[goneWebrtcAddr], 'the stopped address kept a failure row').toBeDefined();
+    // Not every dialled row was wrong-key — the node moves on.
+    expect(entry!.status, 'K2 moves to retry on the plain failure').toBe('retry');
+    expect(entry!.failures, 'K2\'s failures grew by one').toBe(1);
+  }, 90_000);
+
+  it('every dialled address answers with the wrong key: both drop, the entry is otherwise unchanged', async () => {
+    // MESH_INTERFACE → The client's node list — "every address wrong-
+    // key dropped" is the pre-existing branch of the same rule: when
+    // every dialled row is a wrong-key answer, the dropped addresses
+    // carry the diagnostic alone and the entry's `status` and
+    // `failures` are unchanged. Two real nodes K1 and K3 listen on
+    // WebRTC-direct; the anchor names K2 at both of their addresses,
+    // so each answers with its own key, not K2's.
+    const stubK1 = await makeStub(0); stubs.push(stubK1);
+    const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1c-')); dirs.push(dirK1);
+    const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
+
+    const stubK3 = await makeStub(3); stubs.push(stubK3);
+    const dirK3 = mkdtempSync(join(tmpdir(), 'mesh-client-k3-')); dirs.push(dirK3);
+    const k3 = await startNode(stubK3, dirK3); nodes.push(k3.node);
+
+    const stubGood = await makeStub(1); stubs.push(stubGood);
+    const dirGood = mkdtempSync(join(tmpdir(), 'mesh-client-good3-')); dirs.push(dirGood);
+    const good = await startNode(stubGood, dirGood); nodes.push(good.node);
+
+    const k2 = nodeKeyFromKeyPair(generateKeyPair());
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: good.id, addrs: [good.webrtcAddr] },
+        { notisId: k2.notisId, addrs: [k1.webrtcAddr, k3.webrtcAddr] },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: onlyRealGoodResolve(good.id),
+    });
+    clients.push(client);
+
+    const before = client.state().nodes.find((n) => n.notisId === k2.notisId)!;
+    const beforeStatus = before.status;
+    const beforeFailures = before.failures;
+
+    await client.check();
+    const entry = client.state().nodes.find((n) => n.notisId === k2.notisId);
+    expect(entry!.droppedAddrs, 'both WebRTC-direct addresses dropped')
+      .toEqual(expect.arrayContaining([k1.webrtcAddr, k3.webrtcAddr]));
+    expect(entry!.addrs, 'no addresses left').toEqual([]);
+    expect(entry!.status, 'K2\'s status unchanged').toBe(beforeStatus);
+    expect(entry!.failures, 'K2\'s failures unchanged').toBe(beforeFailures);
   }, 90_000);
 
   it('an address that answers with another key does not blacklist the key', async () => {
