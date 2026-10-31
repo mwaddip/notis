@@ -73,21 +73,21 @@ describe('verdictS1Node — the node is an anchor within 60 s, reached over WebR
   it('timeMs past 60 s → FAIL', () => {
     expect(verdictS1Node({ ...PASS, timeMs: 60_001 })).toBe('FAIL');
   });
-  it.fails('transport wss (reached over the fallback instead of webrtc-direct) → FAIL', () => {
+  it('transport wss (reached over the fallback instead of webrtc-direct) → FAIL', () => {
     expect(verdictS1Node({ ...PASS, transport: 'wss' })).toBe('FAIL');
   });
-  it.fails('transport webrtc (relayed) → FAIL', () => {
+  it('transport webrtc (relayed) → FAIL', () => {
     expect(verdictS1Node({ ...PASS, transport: 'webrtc' })).toBe('FAIL');
   });
-  it.fails('transport missing → FAIL', () => {
+  it('transport missing → FAIL', () => {
     const m: Record<string, unknown> = { ...PASS };
     delete m['transport'];
     expect(verdictS1Node(m)).toBe('FAIL');
   });
-  it.fails('path relay (webrtc-direct over the limited link) → FAIL', () => {
+  it('path relay (webrtc-direct over the limited link) → FAIL', () => {
     expect(verdictS1Node({ ...PASS, path: 'relay' })).toBe('FAIL');
   });
-  it.fails('path missing → FAIL', () => {
+  it('path missing → FAIL', () => {
     const m: Record<string, unknown> = { ...PASS };
     delete m['path'];
     expect(verdictS1Node(m)).toBe('FAIL');

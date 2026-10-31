@@ -23,14 +23,20 @@ function missing(m) {
   return true;
 }
 
-// MESH_INTERFACE → Acceptance 1 — "No name, no hosted page". Scenario 1
-// step 1: within 60 s the client's state has an `anchor` node in use.
-// Measurement: `{ nodeId: string|null, isAnchor: boolean, timeMs: number }`.
+// MESH_INTERFACE → Acceptance 1 — "the client reads a node's API by key
+// from anchors alone, over WebRTC-direct". Scenario 1 step 1: within
+// 60 s the client's state has an `anchor` node in use, reached over
+// WebRTC-direct with a direct path.
+// Measurement:
+//   `{ nodeId: string|null, isAnchor: boolean, timeMs: number,
+//      transport: string, path: string }`.
 export function verdictS1Node(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.nodeId !== 'string') return 'FAIL';
   if (m.isAnchor !== true) return 'FAIL';
   if (typeof m.timeMs !== 'number' || m.timeMs > 60_000) return 'FAIL';
+  if (m.transport !== 'webrtc-direct') return 'FAIL';
+  if (m.path !== 'direct') return 'FAIL';
   return 'PASS';
 }
 

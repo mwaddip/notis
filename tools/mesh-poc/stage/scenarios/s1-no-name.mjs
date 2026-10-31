@@ -132,9 +132,19 @@ export async function run(ctx) {
         "if (v === null) return false; try { return JSON.parse(v).nodeId !== null; } catch (_e) { return false; }",
         60_000, 500,
       );
+      // MESH_INTERFACE → Acceptance 1 — "the client reads a node's API
+      // by key from anchors alone, over WebRTC-direct". `transport`
+      // and `path` are read from the same `#state` payload so the
+      // measurement names the link reached inside the 60 s window.
       const state = JSON.parse(stateJson);
       anchorNodeId = state.nodeId;
-      const m = { nodeId: state.nodeId, isAnchor: anchors.has(state.nodeId), timeMs: Date.now() - step1Start };
+      const m = {
+        nodeId: state.nodeId,
+        isAnchor: anchors.has(state.nodeId),
+        timeMs: Date.now() - step1Start,
+        transport: state.transport,
+        path: state.path,
+      };
       return { verdict: verdictS1Node(m), measurement: m };
     });
     void step1;
