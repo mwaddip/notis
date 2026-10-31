@@ -1011,6 +1011,32 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     ).toBeNull();
   });
 
+  it('a key whose only connection is closed is not read on', () => {
+    // MESH_INTERFACE → The client's node list → "A read opens no
+    // connection" — "an open one, a direct one first". The read pick
+    // narrows the label pick's result, so the open filter the label
+    // enforces reaches the read: a closed connection, even direct and
+    // unlimited, reads null here. The property is pinned through the
+    // read path on purpose: a mutation that lets the label pick a
+    // closed connection would otherwise show up only in a label-only
+    // case.
+    const TARGET = '12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4';
+    const closedDirect: Connection = {
+      status: 'closed',
+      direct: true,
+      limits: undefined,
+      remoteAddr: {
+        toString: () =>
+          '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAVZaUYSQpGvbSz9JTC4e4hT4qg9eDWVvHe4lhPUT_wxg/p2p/' + TARGET,
+      },
+      remotePeer: { toString: () => TARGET },
+    } as unknown as Connection;
+    expect(
+      pickConnectionForRead([closedDirect], TARGET),
+      'reading on a closed-only connection returns null',
+    ).toBeNull();
+  });
+
   it('the client imports nothing from node:', async () => {
     const distLib = fileURLToPath(new URL('../dist/lib.js', import.meta.url));
     expect(existsSync(distLib), `dist/lib.js must exist — run pnpm build first (${distLib})`).toBe(true);

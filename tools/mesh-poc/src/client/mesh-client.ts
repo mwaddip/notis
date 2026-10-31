@@ -990,26 +990,18 @@ export function pickConnectionForLabel(
 /**
  * MESH_INTERFACE → The client's node list → "A read opens no
  * connection" — "an open one, a direct one first, never a limited
- * one". The strict read pick: it narrows `pickConnectionForLabel`'s
- * result by refusing the limited fallback, so a peer whose only open
- * connection is limited reads `null` here (the read fails as
- * transport). A peer with no open connection reads `null` too.
+ * one". The strict read pick: `pickConnectionForLabel`'s result,
+ * refused when it is limited. One definition of the shared part —
+ * open, right peer, direct first, unlimited preferred — lives in
+ * the label pick, so a mutation of either half is caught by every
+ * case that calls either side.
  */
 export function pickConnectionForRead(
   connections: readonly Connection[],
   expectedPeerIdString: string,
 ): Connection | null {
-  const open = connections.filter(
-    (c) => c.remotePeer.toString() === expectedPeerIdString && c.status === 'open',
-  );
-  if (open.length === 0) return null;
-  const directFirst = open.slice().sort((a, b) => {
-    if (a.direct) return -1;
-    if (b.direct) return 1;
-    return 0;
-  });
-  const unlimited = directFirst.find((c) => c.limits == null);
-  return unlimited ?? null;
+  const c = pickConnectionForLabel(connections, expectedPeerIdString);
+  return c !== null && c.limits == null ? c : null;
 }
 
 /**
