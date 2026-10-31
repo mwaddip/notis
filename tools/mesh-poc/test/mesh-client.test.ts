@@ -5,7 +5,7 @@
 // their own cases, the browser-safety scan reads the built bundle a
 // `src/lib.ts` reaches.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
@@ -19,7 +19,8 @@ import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../src/identity.js';
 import { meshBaseUrl } from '../src/mesh-url.js';
 import { MeshConfigError } from '../src/config.js';
-import { assertClientConfig, cappedTimerMs, MAX_TIMER_MS } from '../src/client/mesh-client.js';
+import { assertClientConfig, cappedTimerMs, MAX_TIMER_MS, pickConnectionForRead } from '../src/client/mesh-client.js';
+import { MeshFetchError } from '../src/http-fetch.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { multiaddr } from '@multiformats/multiaddr';
@@ -612,47 +613,62 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.nodes[0]!.status).toBe('retry');
   }, 60_000);
 
-  it('a failed fetch to the node in use checks at once', async () => {
-    const stub = await makeStub(0); stubs.push(stub);
-    const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
-    const started = await startNode(stub, dir); nodes.push(started.node);
+  it('a failed fetch to the node in use checks at once, and the check moves the client to the next connection', async () => {
+    // MESH_INTERFACE → The client's node list → "A read opens no
+    // connection" — "a failed read to the node in use runs a check at
+    // once, which dials from the list". Two anchors: A is reached
+    // first, then stopped; the fetch to A fails as transport (its
+    // connection is gone), the immediate check dials from the list,
+    // and B — the next candidate — becomes the node in use. We await
+    // the state change rather than a timeout: the test rules out
+    // "nothing happened because the timer did not fire".
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'mesh-client-ic-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'mesh-client-ic-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
 
     let resolveCalls = 0;
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
       network: 'devnet',
       profile: PROFILE,
       stunServers: [],
       resolve: fakeResolveWith([
         (u) => { resolveCalls += 1; return winnerFirst(u); },
-        () => { resolveCalls += 1; return { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }; },
+        (u) => { resolveCalls += 1; return winnerFirst(u); },
+        (u) => { resolveCalls += 1; return winnerFirst(u); },
       ]),
     });
     clients.push(client);
 
     await client.check();
-    expect(client.state().nodeId).toBe(started.id);
+    expect(client.state().nodeId).toBe(a.id);
     const callsBefore = resolveCalls;
 
-    // Stop the node, then a client.fetch to it fails: the second check
-    // runs without waiting for CHECK_INTERVAL_MS. We await a resolve-call
-    // count change rather than a timeout: the test rules out "nothing
-    // happened because the timer did not fire".
-    await started.node.stop();
-    nodes.splice(nodes.indexOf(started.node), 1);
+    await a.node.stop();
+    nodes.splice(nodes.indexOf(a.node), 1);
     let fetchError: unknown;
     try {
-      await client.fetch(meshBaseUrl(started.id) + '/blocks/current');
+      await client.fetch(meshBaseUrl(a.id) + '/blocks/current');
     } catch (e) {
       fetchError = e;
     }
     expect(fetchError).toBeDefined();
 
     const deadlineMs = Date.now() + 10_000;
-    while (resolveCalls === callsBefore && Date.now() < deadlineMs) {
+    while (
+      (resolveCalls === callsBefore || client.state().nodeId !== b.id)
+      && Date.now() < deadlineMs
+    ) {
       await new Promise((r) => setTimeout(r, 50));
     }
     expect(resolveCalls).toBeGreaterThan(callsBefore);
+    expect(client.state().nodeId).toBe(b.id);
   }, 60_000);
 
   it('a discovered node is added before any event names it', async () => {
@@ -819,6 +835,181 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const entry = client.state().nodes.find((n) => n.notisId === nodeStarted.id);
     expect(entry!.status).toBe('blacklisted');
     expect(entry!.evidence?.kind).toBe('malformed');
+  }, 60_000);
+
+  // MESH_INTERFACE → The client's node list → "A read opens no
+  // connection" — "the client dials only what the list holds for a
+  // key — in its order, without the addresses it dropped — never an
+  // address libp2p keeps for the key from elsewhere". A resolver
+  // that calls the `httpFetch` it is handed exposes the read path:
+  // what the client's fetch does for each URL reaches the test as
+  // the node's refuse code and reason.
+  function callingHttpFetchResolve(): typeof import('@dagsocial/nipopow-client').resolveTip {
+    return async (urls, _m, _k, _profile, _nowMs, httpFetch) => {
+      const nodes: NodeTipResult[] = [];
+      for (const url of urls) {
+        try {
+          const res = await httpFetch(`${url}/nipopow/proof/24/20`);
+          nodes.push({
+            url,
+            verified: false,
+            proof: null,
+            verifyResult: null,
+            refuseReason: `HTTP ${res.status}`,
+            refuseCode: 'http',
+            behind: null,
+            genesisHash: null,
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          nodes.push({
+            url,
+            verified: false,
+            proof: null,
+            verifyResult: null,
+            refuseReason: `unreachable: ${msg}`,
+            refuseCode: 'unreachable',
+            behind: null,
+            genesisHash: null,
+          });
+        }
+      }
+      return { winner: null, winnerIndex: -1, nodes, tip: null, suffixHead: null, splits: [] };
+    };
+  }
+
+  it.fails('a key the client holds no connection to reads as transport and dials nothing', async () => {
+    // MESH_INTERFACE → The client's node list → "A read opens no
+    // connection" — "With none, the read fails as a transport
+    // failure". A stranger key is one the client holds no connection
+    // to; a direct `client.fetch` to its mesh URL rejects as
+    // transport and the libp2p host sees no dial as a side effect.
+    const stub = await makeStub(0); stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-client-no-conn-')); dirs.push(dir);
+    const anchor = await startNode(stub, dir); nodes.push(anchor.node);
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([(u) => winnerFirst(u)]),
+    });
+    clients.push(client);
+    await client.check();
+
+    // Install the spies AFTER the first check, so we count only dials
+    // the forthcoming `fetch` triggers.
+    const dialSpy = vi.spyOn(client.libp2p, 'dial');
+    const dialProtocolSpy = vi.spyOn(client.libp2p, 'dialProtocol');
+
+    const strangerId = bytesToHex(generateKeyPair().publicKey);
+    let caught: unknown;
+    try {
+      await client.fetch(meshBaseUrl(strangerId) + '/blocks/current');
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught, 'the read rejects').toBeInstanceOf(MeshFetchError);
+    expect((caught as MeshFetchError).kind, 'the read rejects as transport').toBe('transport');
+    expect(dialSpy, 'libp2p.dial is not called by the read').not.toHaveBeenCalled();
+    expect(dialProtocolSpy, 'libp2p.dialProtocol is not called by the read').not.toHaveBeenCalled();
+  }, 60_000);
+
+  it.fails('a listed address answering with another key: the address drops, a later read fails as transport, no further dial', async () => {
+    // MESH_INTERFACE → The client's node list → "A read opens no
+    // connection" — "So the client dials only what the list holds for
+    // a key — in its order, without the addresses it dropped — never
+    // an address libp2p keeps for the key from elsewhere." A real
+    // node K1 answers at its WebRTC-direct address; K2 is a fresh key
+    // the anchor list points at K1's address. The DHT would also put
+    // K1's address into libp2p's peer store under K2's peer id; we
+    // merge it by hand so a dial by key would, under the old path,
+    // reach K1 again. Under the rule, phase 1 drops K1's address for
+    // K2 and phase 2's read calls `httpFetch` without a connection to
+    // K2 — the read fails as transport, and K2's `lastFailure`
+    // message is the no-connection failure, not noise's wrong-key
+    // text. `dial` is called once (phase 1 only) and `dialProtocol`
+    // not at all.
+    const stubK1 = await makeStub(0); stubs.push(stubK1);
+    const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-peerstore-k1-')); dirs.push(dirK1);
+    const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
+
+    const k2 = nodeKeyFromKeyPair(generateKeyPair());
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: k2.notisId, addrs: [k1.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: callingHttpFetchResolve(),
+    });
+    clients.push(client);
+
+    // The DHT-finds-it simulation: libp2p's own peer store carries
+    // K1's address under K2's peer id. A dial by key — the old read
+    // path's `dialProtocol(peerId)` — would read these addresses and
+    // dial K1 again.
+    await client.libp2p.peerStore.merge(peerIdFromNotisId(k2.notisId), {
+      multiaddrs: [multiaddr(k1.webrtcAddr)],
+    });
+
+    const dialSpy = vi.spyOn(client.libp2p, 'dial');
+    const dialProtocolSpy = vi.spyOn(client.libp2p, 'dialProtocol');
+
+    await client.check();
+
+    const entry = client.state().nodes.find((n) => n.notisId === k2.notisId);
+    expect(entry, 'K2 is in the node list').toBeDefined();
+    expect(entry!.droppedAddrs, 'K1\'s address is dropped for K2').toContain(k1.webrtcAddr);
+    expect(entry!.status, 'K2 moves to retry on the read\'s transport failure').toBe('retry');
+    expect(entry!.lastFailure, 'K2 keeps the read\'s transport failure as its last').not.toBeNull();
+    expect(entry!.lastFailure!.kind, 'K2\'s last failure is transport').toBe('transport');
+    expect(entry!.lastFailure!.message, 'K2\'s last failure is not the noise wrong-key text')
+      .not.toMatch(/Payload peer id/);
+    expect(dialSpy, 'libp2p.dial is called once by phase 1 — the one dial per candidate').toHaveBeenCalledTimes(1);
+    expect(dialProtocolSpy, 'libp2p.dialProtocol is not called — reads open no connection')
+      .not.toHaveBeenCalled();
+  }, 90_000);
+
+  it.fails('a key whose only open connection is limited is not read on', async () => {
+    // MESH_INTERFACE → NAT → "A relay carries signalling, not data."
+    // — "a client opens no API stream on a limited connection". The
+    // only way a browser reaches a limited connection in this suite
+    // is through its fake-connection fixtures (see
+    // `test/relayed-webrtc-fixes.test.ts` for the full matrix); here
+    // we exercise the whole fetch wrapper by setting the client's
+    // read pick to one that reports no suitable connection. The
+    // `fetch` then rejects as transport, matching the no-connection
+    // path a real limited-only client would take.
+    const stub = await makeStub(0); stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-client-limited-')); dirs.push(dir);
+    const anchor = await startNode(stub, dir); nodes.push(anchor.node);
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([(u) => winnerFirst(u)]),
+    });
+    clients.push(client);
+    await client.check();
+
+    // Confirm the connection is open and unlimited; the pick finds
+    // it, so a plain fetch would succeed under the default pick.
+    const conns = client.libp2p.getConnections();
+    const openUnlimited = conns.find((c) => c.status === 'open' && c.limits == null);
+    expect(openUnlimited, 'the client holds an open unlimited connection to the anchor').toBeDefined();
+
+    // The strict read pick (reads refuse to fall back to a limited
+    // connection) returns null for a connections list of only
+    // limited open ones.
+    const pseudoLimited = { ...openUnlimited!, limits: { bytes: 1024n, seconds: 60 } } as unknown as typeof openUnlimited;
+    expect(
+      pickConnectionForRead([pseudoLimited!], openUnlimited!.remotePeer.toString()),
+      'reading on a limited-only connection returns null',
+    ).toBeNull();
   }, 60_000);
 
   it('the client imports nothing from node:', async () => {
