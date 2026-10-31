@@ -237,8 +237,9 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // `/notis/<network>/kad/1.0.0`. `clientMode: true` keeps it off the
   // server side of the handler registration.
   // `MESH_INTERFACE → The client's node list → "The secure WebSocket is
-  // the fallback"` — the client gives libp2p its one address order,
-  // read by both the dial queue and `attributeAggregateDialErrors`.
+  // the fallback"` — the client gives libp2p its one address order
+  // through the dial queue's `addressSorter`; attribution reads the
+  // list libp2p reports it dialled, never a re-derivation.
   const node = await createLibp2p({
     privateKey: key.privateKey,
     transports,
@@ -557,25 +558,40 @@ class MeshClientImpl implements MeshClient {
     const multiaddrs = dialable.map((addr) => withPeerId(addr, id));
     const wholeDialMs = Math.max(dialable.length * DIAL_TIMEOUT_MS, PEER_DIAL_MIN_MS);
     const signal = AbortSignal.timeout(wholeDialMs);
+    // Capture every `dial-queue:calculated-addresses` event libp2p's
+    // dial queue fires — one Address[] per iteration of its `dialPeer`
+    // loop (`libp2p@3.5.1/dist/src/connection-manager/dial-queue.js`,
+    // line 194). The one AggregateError.errors array holds one entry
+    // per address the queue actually dialed, in the same positional
+    // order as these events; a joined dial (`join()` recipient) only
+    // sees events after it joins, so a mismatched count there falls to
+    // the node-level failure path.
+    const reportedMultiaddrs: string[] = [];
+    const onProgress = (ev: { type: string; detail: unknown }): void => {
+      if (ev.type !== 'dial-queue:calculated-addresses') return;
+      const detail = ev.detail;
+      if (!Array.isArray(detail)) return;
+      for (const a of detail as Address[]) {
+        reportedMultiaddrs.push(a.multiaddr.toString());
+      }
+    };
     try {
-      await this.libp2p.dial(multiaddrs, { signal });
+      await this.libp2p.dial(multiaddrs, { signal, onProgress });
       return; // success — connection open
     } catch (e) {
       // libp2p throws `AggregateError('All multiaddr dials failed')`
-      // when every address errors. The inner errors come in the ORDER
-      // the dial-queue applied (`notisAddressSorter`, the one
-      // definition the dial used) over the calculated addresses, so
-      // attribution rides position when `errors.length ===
-      // dialable.length` — libp2p dropped none through its gater or
-      // dedup. `attributeAggregateDialErrors` sorts our dialable list
-      // the same way and returns one row per sorted address with its
-      // wrong-key / failure classification;
-      // `null` means libp2p dropped some address and position-based
-      // attribution is unsound, so the caller records a single
+      // when every address errors — unless only one address was dialed,
+      // in which case it throws that single error directly (dial-queue.js
+      // line 260-263). `unwrapAggregate` reads either shape as a flat
+      // list. `attributeAggregateDialErrors` pairs each error with the
+      // address libp2p reported at the matching position, so an address
+      // libp2p never dialed (no transport, denied by its gater, or
+      // deduped) never takes a failure attributed to it. `null` means
+      // the reported list and the errors do not account for one
+      // another — a joined dial, say — and the caller records a single
       // aggregate failure instead.
-      const dialableWithPeer = multiaddrs.map((m) => m.toString());
       const inner = unwrapAggregate(e);
-      const attributed = attributeAggregateDialErrors(dialableWithPeer, inner);
+      const attributed = attributeAggregateDialErrors(reportedMultiaddrs, inner);
       let anyWrongKey = false;
       if (attributed !== null) {
         for (const row of attributed) {
@@ -958,8 +974,9 @@ export function pickConnectionForStream(
 }
 
 /**
- * MESH_INTERFACE → The client's node list — "when every address fails,
- * each one's failure is recorded against it". A wrong-key answer under a
+ * MESH_INTERFACE → The client's node list → "A node's addresses are
+ * dialled as one operation" — "each address libp2p reports it dialled
+ * has its failure recorded against it". A wrong-key answer under a
  * key-authenticated link shows up through two libp2p error types in
  * practice: `UnexpectedPeerError` from the upgrader's own identity check
  * (upgrader.ts), and `EncryptionFailedError` from the noise handshake
@@ -1020,10 +1037,10 @@ function readAnsweredFromWrongKeyMessage(msg: string): { answeredPeerIdString: s
  * fallback" — the client's one address order: WebRTC-direct, then WebRTC
  * signalled over a relay, then the secure WebSocket, then any other
  * address. Addresses of one transport keep libp2p's order among them
- * (loopback last, public first, circuit-relay last). One definition,
- * read by both `createLibp2p`'s `connectionManager.addressSorter` and
- * `attributeAggregateDialErrors` — a second copy would attribute a
- * failure to the wrong address on a wrong-key answer.
+ * (loopback last, public first, circuit-relay last). The dial order
+ * alone: `createLibp2p`'s `connectionManager.addressSorter` passes
+ * this; attribution reads what libp2p reports it dialled, not a
+ * client-side re-derivation.
  */
 export function notisAddressSorter(a: Address, b: Address): -1 | 0 | 1 {
   const ra = transportRank(a.multiaddr);
@@ -1054,18 +1071,24 @@ function transportRank(ma: Multiaddr): number {
 }
 
 /**
- * MESH_INTERFACE → The client's node list — "A node's addresses are
- * dialled as one operation ... When every address fails, each one's
- * failure is recorded against it". libp2p 3.5's `AggregateError` carries
- * one inner error per address in the ORDER its own sorter applies —
- * `notisAddressSorter`, the one definition the dial used. This helper
- * sorts the dialable list the same way and returns one row per sorted
- * address, with the inner error's attribution: wrong-key (through
- * `wrongKeyInfo`) carries the answered id; every other error carries
- * its message and kind. Returns `null` when `errors.length !==
- * dialable.length` — libp2p dropped one before dialling (gater, no
- * transport, dedup), so a one-to-one match is no longer sound and the
- * caller falls back to a single aggregate failure.
+ * MESH_INTERFACE → The client's node list → "A node's addresses are
+ * dialled as one operation" — "When every address fails, each address
+ * libp2p reports it dialled has its failure recorded against it,
+ * matched in the order libp2p dialled them". The reported list arrives
+ * through libp2p's `dial-queue:calculated-addresses` progress event
+ * (one `addrsToDial` list per iteration of `dialPeer`'s loop,
+ * `libp2p@3.5.1/dist/src/connection-manager/dial-queue.js:194`); the
+ * errors arrive as `AggregateError.errors`, one entry per dialed
+ * address in the same positional order. This helper returns one row
+ * per reported address, position-paired with the error at that
+ * position: wrong-key (through `wrongKeyInfo`) carries the answered
+ * id; every other error carries its message and kind.
+ *
+ * Returns `null` when `reported.length !== errors.length` — the
+ * joined-dial case (a caller joined an in-flight dial and only hears
+ * the events after it joined) or an empty report with a single
+ * aggregate failure. The caller records a single node-level failure
+ * instead.
  */
 export interface AttributedDialError {
   addr: string;
@@ -1074,18 +1097,13 @@ export interface AttributedDialError {
   message: string;
 }
 export function attributeAggregateDialErrors(
-  dialable: readonly string[],
+  reported: readonly string[],
   errors: readonly unknown[],
 ): AttributedDialError[] | null {
-  if (dialable.length !== errors.length) return null;
-  const addresses: Address[] = dialable.map((s) => ({
-    multiaddr: multiaddr(s),
-    isCertified: false,
-  }));
-  const sorted = addresses.sort(notisAddressSorter).map((a) => a.multiaddr.toString());
+  if (reported.length !== errors.length) return null;
   const out: AttributedDialError[] = [];
-  for (let i = 0; i < sorted.length; i += 1) {
-    const addr = sorted[i]!;
+  for (let i = 0; i < reported.length; i += 1) {
+    const addr = reported[i]!;
     const err = errors[i];
     const wk = wrongKeyInfo(err);
     out.push({

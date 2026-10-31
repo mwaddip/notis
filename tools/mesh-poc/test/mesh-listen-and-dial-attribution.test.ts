@@ -151,7 +151,7 @@ describe('the AggregateError is attributed back to each address', () => {
     expect(wrongKeyInfo(err)).toBeNull();
   });
 
-  it.fails('output row order equals the reported list order, errors pair by position', () => {
+  it('output row order equals the reported list order, errors pair by position', () => {
     // The reported list is libp2p's own `addrsToDial` from the dial
     // queue's `dial-queue:calculated-addresses` progress event — the
     // sorted dial order libp2p applied. The caller does not re-sort it:
@@ -181,7 +181,7 @@ describe('the AggregateError is attributed back to each address', () => {
     expect(attributed![2]!.wrongKey?.answeredPeerIdString).toBe('IMPOSTOR');
   });
 
-  it.fails('a wrong-key at the webrtc-direct position of the reported list lands on webrtc-direct', () => {
+  it('a wrong-key at the webrtc-direct position of the reported list lands on webrtc-direct', () => {
     // The dial queue's reported list arrives in its own order. Here it
     // puts wss first and webrtc-direct second; the error at each position
     // is attributed to the address at that position without re-sorting.

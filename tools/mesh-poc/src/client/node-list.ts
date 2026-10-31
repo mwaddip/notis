@@ -196,13 +196,14 @@ export class NodeList {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list — "when every address fails,
-   * each one's failure is recorded against it". Writes
-   * `lastFailures[addr]` alone, with no change to `failures`, `status`
-   * or the retry schedule — those move once per dial through
-   * `failure`, not per-address. The caller (`dialByAddresses`) folds
-   * every attributed address error through this method, then calls
-   * `failure` once for the aggregate.
+   * MESH_INTERFACE → The client's node list → "A node's addresses are
+   * dialled as one operation" — "each address libp2p reports it dialled
+   * has its failure recorded against it". Writes `lastFailures[addr]`
+   * alone, with no change to `failures`, `status` or the retry
+   * schedule — those move once per dial through `failure`, not
+   * per-address. The caller (`dialByAddresses`) folds every attributed
+   * address error through this method, then calls `failure` once for
+   * the aggregate.
    */
   recordAddrFailure(id: string, addr: string, kind: FailureKind, message = ''): void {
     assertNotisId(id);

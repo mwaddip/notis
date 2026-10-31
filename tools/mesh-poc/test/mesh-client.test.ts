@@ -325,7 +325,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(entryA?.status).toBe('retry');
   }, 90_000);
 
-  it.fails('a TCP address and a WebRTC-direct address that answers with another key: the WebRTC-direct address drops; the TCP address is not recorded', async () => {
+  it('a TCP address and a WebRTC-direct address that answers with another key: the WebRTC-direct address drops; the TCP address is not recorded', async () => {
     // MESH_INTERFACE → The client's node list → "A node's addresses are
     // dialled as one operation" — "an address no browser transport
     // carries is passed over by libp2p and takes none". The mesh client
