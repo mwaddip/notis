@@ -147,6 +147,15 @@ the client hands it all of a node's addresses at once, under one deadline. When 
 address that answered with another key is not reported and stays listed; its next dial is refused again, at no cost to
 the key. When every address fails, each one's failure is recorded against it.
 
+> ⚠ **AHEAD OF CODE (2026-10-31).** The order below — `tools/mesh-poc/src/client/mesh-client.ts` hands libp2p no
+> sorter of its own, so a node's secure WebSocket is dialled before its WebRTC-direct address.
+
+**The secure WebSocket is the fallback.** The client gives libp2p its own order for a node's addresses: WebRTC-direct,
+then WebRTC signalled over a relay, then the secure WebSocket, then any other address — the one transport that leans on
+a certificate authority (→ The IP certificate) is dialled only after every WebRTC path has failed. Addresses of one
+transport keep libp2p's order among them. A dial's failures are attributed to its addresses in that same order, read
+from the one definition the dial used.
+
 **Two clocks.** The verifier reads the wall clock — a header's stamp is wall-clock time. The list's retry timers read a
 monotonic clock, so a clock that steps never holds a node out or retries it at once. Neither stands in for the other.
 
@@ -202,12 +211,15 @@ and one behind a symmetric NAT, a browser behind NAT, an ACME test server, and h
 unmodified devnet `@dagsocial/node`. The proof of concept holds when every step of the six scenarios passes on what it
 measured; a step that did not run reads `skipped`, never a pass.
 
-1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, with the browser's own
-   resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte for byte; the
-   browser host's DNS log holds no query — anything there went around the browser's resolver; and every ICE server the
-   page's peer connections are built with is named by IP. The browser's own services resolve names whatever page is
-   open, so a resolver that answers nothing is what separates them from the client; and a name the browser's resolver
-   answers never reaches the log, so the page's own ICE configuration is read where it is made.
+> ⚠ **AHEAD OF CODE (2026-10-31).** Acceptance 1's transport — `tools/mesh-poc/stage/scenarios/s1-no-name.mjs`'s first
+> step measures which node is in use and whether it is an anchor, not the transport it was reached over.
+
+1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, over WebRTC-direct, with the
+   browser's own resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte
+   for byte; the browser host's DNS log holds no query — anything there went around the browser's resolver; and every
+   ICE server the page's peer connections are built with is named by IP. The browser's own services resolve names
+   whatever page is open, so a resolver that answers nothing is what separates them from the client; and a name the
+   browser's resolver answers never reaches the log, so the page's own ICE configuration is read where it is made.
 2. **Behind NAT.** The browser reaches the node behind the endpoint-independent NAT over WebRTC signalled through a
    relay, its data direct. The node behind the symmetric NAT has no direct path to the browser behind its NAT: it
    reads `retry`, never `blacklisted`, and the client stays on a node it reaches.
