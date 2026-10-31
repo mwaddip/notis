@@ -956,9 +956,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     clients.push(client);
 
     // The DHT-finds-it simulation: libp2p's own peer store carries
-    // K1's address under K2's peer id. A dial by key — the old read
-    // path's `dialProtocol(peerId)` — would read these addresses and
-    // dial K1 again.
+    // K1's address under K2's peer id, as a DHT walk would have put
+    // it there. A `dialProtocol(peerId)` call would read these
+    // addresses and dial K1 again; the rule the case holds
+    // (MESH_INTERFACE → The client's node list → "A read opens no
+    // connection") refuses that dial.
     await client.libp2p.peerStore.merge(peerIdFromNotisId(k2.notisId), {
       multiaddrs: [multiaddr(k1.webrtcAddr)],
     });
