@@ -27,6 +27,9 @@ import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
 import { dhtProtocol } from '../src/protocols.js';
 import type { NodeKey } from '../src/identity.js';
 import { startMeshNode, MeshConfigError, type MeshNode } from '../src/node/mesh-node.js';
+import { stunSettingFor } from '../src/node/stun-setting.js';
+import { localAddrsFor, buildIdentityLine } from '../src/node/identity-line.js';
+import { STUN_PORT } from '../src/protocols.js';
 
 // MESH_INTERFACE → The node endpoint — a tiny upstream the mesh node
 // forwards to; the dial-by-key case reads /blocks/current back.
@@ -312,5 +315,138 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
       }
     }
   }, 60_000);
+
+  // MESH_INTERFACE → NAT → "A public node ... runs ... a STUN server on
+  // STUN_PORT (RFC 8489's port) at the IP of its first WebRTC-direct
+  // listen address, unless its operator names another or turns it off".
+  // Pure cases over `stunSettingFor`: no socket, no filesystem reach.
+  it.fails('a public node with no MESH_STUN serves STUN at its first webrtc-direct listen IP on 3478', () => {
+    const got = stunSettingFor('public', [
+      '/ip4/127.0.0.1/tcp/4002',
+      '/ip4/11.100.0.11/udp/4001/webrtc-direct',
+    ], undefined);
+    expect(got).toEqual({ host: '11.100.0.11', port: STUN_PORT });
+  });
+
+  it('MESH_STUN=off serves none', () => {
+    const got = stunSettingFor('public', [
+      '/ip4/11.100.0.11/udp/4001/webrtc-direct',
+    ], 'off');
+    expect(got).toBeUndefined();
+  });
+
+  it.fails('an explicit MESH_STUN is kept', () => {
+    const got = stunSettingFor('public', [
+      '/ip4/11.100.0.11/udp/4001/webrtc-direct',
+    ], '198.51.100.7:3480');
+    expect(got).toEqual({ host: '198.51.100.7', port: 3480 });
+  });
+
+  it.fails('a hostname MESH_STUN is refused', () => {
+    expect(() => stunSettingFor('public', [
+      '/ip4/11.100.0.11/udp/4001/webrtc-direct',
+    ], 'stun.example.com:3478')).toThrow(MeshConfigError);
+  });
+
+  it.fails('a private node with MESH_STUN set is refused', () => {
+    expect(() => stunSettingFor('private', [
+      '/ip4/10.101.0.11/udp/4001/webrtc-direct',
+    ], '198.51.100.7:3478')).toThrow(MeshConfigError);
+  });
+
+  // MESH_INTERFACE → NAT — "A `private` node announces its relay
+  // reservations alone". The in-process setup mirrors
+  // `test/relay-carries-data.test.ts`: a public mesh node (relay) on
+  // TCP; a private mesh node reserved on it. `getMultiaddrs()` holds
+  // circuit addresses alone — every entry carries `/p2p-circuit`.
+  it.fails('a private node announces its circuit addresses alone', async () => {
+    const stubRelay = await makeStub(); stubs.push(stubRelay);
+    const stubPriv = await makeStub(); stubs.push(stubPriv);
+    const relayDir = mkdtempSync(join(tmpdir(), 'mesh-node-priv-announce-relay-')); dirs.push(relayDir);
+    const privDir = mkdtempSync(join(tmpdir(), 'mesh-node-priv-announce-priv-')); dirs.push(privDir);
+    const relay = await startMeshNode({
+      key: freshKey(), network: 'devnet', role: 'public',
+      listen: ['/ip4/127.0.0.1/tcp/0'],
+      bootstrap: [], stateDir: relayDir, upstream: stubRelay.base,
+    });
+    nodes.push(relay);
+    const deadline = Date.now() + 5_000;
+    let relayAddr: string | undefined;
+    while (Date.now() < deadline) {
+      relayAddr = relay.multiaddrs().find((a) => /\/tcp\/\d+\/p2p\//.test(a));
+      if (relayAddr !== undefined) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(relayAddr).toBeDefined();
+    const priv = await startMeshNode({
+      key: freshKey(), network: 'devnet', role: 'private',
+      listen: [
+        '/ip4/127.0.0.1/udp/0/webrtc-direct',
+        '/ip4/127.0.0.1/tcp/0',
+        `${relayAddr}/p2p-circuit`,
+      ],
+      bootstrap: [], stateDir: privDir, upstream: stubPriv.base,
+      relayRetryBaseMs: 50, relayRetryCapMs: 500,
+    });
+    nodes.push(priv);
+    const relayPeer = relay.libp2p.peerId.toString();
+    const d2 = Date.now() + 15_000;
+    while (Date.now() < d2) {
+      const mas = priv.multiaddrs();
+      if (mas.some((m) => m.includes('/p2p-circuit') && m.includes(relayPeer))) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const addrs = priv.libp2p.getMultiaddrs().map((a) => a.toString());
+    expect(addrs.length, `addrs = ${addrs.join(', ')}`).toBeGreaterThan(0);
+    for (const a of addrs) {
+      expect(a, `addrs = ${addrs.join(', ')}`).toContain('/p2p-circuit');
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Discovery → "A node added by hand" — "A private
+  // node prints its local WebRTC-direct address with its key, for its
+  // operator to hand over, and announces it to no one". The identity
+  // line's `localAddrs` carries the WebRTC-direct listen with
+  // `/certhash/` and `/p2p/<peerId>` the browser dials.
+  it.fails("a private node's identity line lists its local webrtc-direct address with certhash and peer id", async () => {
+    const stub = await makeStub(); stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-node-priv-ident-')); dirs.push(dir);
+    // The private node here has a WebRTC-direct listen on loopback. No
+    // relay — `relay-carries-data.test.ts` holds the circuit path; this
+    // case holds the local-address line.
+    const priv = await startMeshNode({
+      key: freshKey(), network: 'devnet', role: 'private',
+      listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct', '/ip4/127.0.0.1/tcp/0'],
+      bootstrap: [], stateDir: dir, upstream: stub.base,
+    });
+    nodes.push(priv);
+    const peerId = priv.libp2p.peerId.toString();
+    // Wait for the WebRTC-direct listener's certificate to arrive — the
+    // listener's `getAddrs()` returns [] until the cert loads, and the
+    // identity line's `localAddrs` would miss the certhash.
+    const deadline = Date.now() + 15_000;
+    let listenerAddrs: string[] = [];
+    while (Date.now() < deadline) {
+      listenerAddrs = priv.listenerAddrs();
+      if (listenerAddrs.some((a) => a.includes('/webrtc-direct/certhash/'))) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const notisId = notisIdFromPeerId(priv.libp2p.peerId);
+    const line = buildIdentityLine({
+      notisId, peerId, role: 'private',
+      multiaddrs: priv.multiaddrs(),
+      listenerAddrs,
+    });
+    expect(line.localAddrs.length, `listenerAddrs = ${listenerAddrs.join(', ')}`).toBeGreaterThan(0);
+    for (const a of line.localAddrs) {
+      expect(a).toMatch(/\/webrtc-direct\/certhash\/[^/]+/);
+      expect(a.endsWith(`/p2p/${peerId}`)).toBe(true);
+    }
+    // Spot-check `localAddrsFor` directly: a public node's identity line
+    // carries no local address, since every WebRTC-direct listen is
+    // already announced (`MESH_INTERFACE → NAT → "A public node
+    // announces its listen addresses from the start"`).
+    expect(localAddrsFor('public', listenerAddrs, peerId)).toEqual([]);
+  }, 30_000);
 });
 

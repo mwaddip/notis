@@ -108,6 +108,13 @@ export interface MeshNodeOptions {
 export interface MeshNode {
   readonly libp2p: Libp2p<{ http: HTTP }>;
   multiaddrs(): string[];
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — the mesh
+   * node's own transport listeners' listen addresses, flat (not
+   * announce-filtered). The private role's `localAddrs` on the
+   * identity line is derived from this list through `localAddrsFor`.
+   */
+  listenerAddrs(): string[];
   stop(): Promise<void>;
 }
 
@@ -419,6 +426,30 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   return {
     libp2p: typed,
     multiaddrs: () => typed.getMultiaddrs().map((a) => a.toString()),
+    // MESH_INTERFACE → Discovery → "A node added by hand" — the
+    // listener-level addresses, not announce-filtered. The
+    // WebRTC-direct listener's `getAddrs()` splices `/certhash/` onto
+    // its listen address at read time (`@libp2p/webrtc`
+    // `private-to-public/listener.ts` `getAddrs()`), so a private
+    // node's local WebRTC-direct address lands here with its hash.
+    // The reach is the public `components.transportManager` field
+    // libp2p 3.5 publishes on the host (`libp2p/src/libp2p.ts` line
+    // 40, "public components"), the same seam `startRelayRetry` and
+    // `wss.ts` use.
+    listenerAddrs: () => {
+      const components = (typed as unknown as {
+        components: {
+          transportManager: {
+            getListeners(): Array<{ getAddrs(): Array<{ toString(): string }> }>;
+          };
+        };
+      }).components;
+      const out: string[] = [];
+      for (const l of components.transportManager.getListeners()) {
+        for (const a of l.getAddrs()) out.push(a.toString());
+      }
+      return out;
+    },
     async stop() {
       for (const r of retries) r.stop();
       retries.length = 0;
