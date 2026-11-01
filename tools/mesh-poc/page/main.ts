@@ -35,6 +35,11 @@ export interface PageConfig {
 export interface RunMainOptions {
   root: HTMLElement;
   fetch: typeof globalThis.fetch;
+  /**
+   * Test seam: swap the client factory. Defaults to the real
+   * `startMeshClient`. Not meant for ordinary callers.
+   */
+  startMeshClient?: typeof startMeshClient;
 }
 
 export async function runMain(opts: RunMainOptions): Promise<void> {
