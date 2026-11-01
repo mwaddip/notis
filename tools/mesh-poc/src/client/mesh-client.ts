@@ -832,8 +832,10 @@ export function unwrapAggregate(e: unknown): unknown[] {
  * the mismatched count there falls to the node-level failure path.
  *
  * The event name is the one libp2p emits; a release that renames it
- * breaks the pairing silently, so the libp2p-reaches test holds the
- * name against the real dial queue.
+ * breaks the pairing silently. MESH_INTERFACE → Place in the workspace
+ * → "libp2p is pinned." — every reach into libp2p's internals is held
+ * by a case against the real libp2p, so an upgrade that moves this
+ * event name fails its case before it reaches here.
  */
 export function createDialProgressRecorder(): {
   readonly reported: readonly string[];
