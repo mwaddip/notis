@@ -302,6 +302,37 @@ describe('s7 (reach and load)', () => {
     expect(fn(win, stateNoChecks)).toBe(false);
     expect(fn(win, stateNoChecks)).toBe(false);
   });
+  // MESH_INTERFACE → Discovery → "A node added by hand" / "Seeds" —
+  // step 3 of s7 measures lan1 at its private address. A lan1 row
+  // without `localAddrs` can only be named at its announced
+  // (relayed) addresses, which measures the relay path, not the
+  // private one; the variant fails with that reason instead of
+  // falling back.
+  it('buildSeedOnlyLanVariant refuses a lan1 row without localAddrs', () => {
+    const baseConfig = { network: 'devnet', anchors: [] };
+    const lan1Row = { notisId: 'b'.repeat(64), multiaddrs: ['/relay/addr'], localAddrs: [] };
+    expect(() => s7.buildSeedOnlyLanVariant(baseConfig, lan1Row)).toThrow(/localAddrs/);
+  });
+  it('buildSeedOnlyLanVariant uses the row\'s localAddrs exactly, never multiaddrs', () => {
+    const baseConfig = { network: 'devnet', anchors: ['A'] };
+    const local = '/ip4/10.103.0.21/udp/4001/webrtc-direct/certhash/uEiA/p2p/PLan';
+    const row = { notisId: 'b'.repeat(64), multiaddrs: ['/relay/addr'], localAddrs: [local] };
+    const out = s7.buildSeedOnlyLanVariant(baseConfig, row);
+    expect(out.seeds).toEqual([{ notisId: 'b'.repeat(64), addrs: [local] }]);
+  });
+  it('buildByHandLanVariant refuses a lan1 row without localAddrs', () => {
+    const baseConfig = { network: 'devnet' };
+    const lan1Row = { notisId: 'b'.repeat(64), multiaddrs: ['/relay/addr'], localAddrs: [] };
+    expect(() => s7.buildByHandLanVariant(baseConfig, lan1Row, true)).toThrow(/localAddrs/);
+    expect(() => s7.buildByHandLanVariant(baseConfig, lan1Row, false)).toThrow(/localAddrs/);
+  });
+  it('buildByHandLanVariant uses the row\'s localAddrs exactly, never multiaddrs', () => {
+    const baseConfig = { network: 'devnet' };
+    const local = '/ip4/10.103.0.21/udp/4001/webrtc-direct/certhash/uEiA/p2p/PLan';
+    const row = { notisId: 'b'.repeat(64), multiaddrs: ['/relay/addr'], localAddrs: [local] };
+    const out = s7.buildByHandLanVariant(baseConfig, row, true);
+    expect(out.byHand).toEqual([{ notisId: 'b'.repeat(64), addrs: [local], trusted: true }]);
+  });
   it('pub2NetemArgs builds a tc qdisc add + del inside notismesh-pub2 on the outside veth', () => {
     const n = s7.pub2NetemArgs(TOPOLOGY);
     expect(n.add[4]).toBe('notismesh-pub2');

@@ -47,7 +47,6 @@ import {
 import { execIn, nftApply } from '../lib/measure.mjs';
 import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
-import { peerIdStringOf } from '../lib/config.mjs';
 
 export const NAME = 's7';
 const POLL_MS = 1_000;
@@ -299,36 +298,40 @@ async function waitLan1Reached(ctx, url, lan1NotisId) {
 // MESH_INTERFACE → Discovery → "Seeds" — a seed is a contact without
 // trust; no answer from it makes `anchorReached` true. The variant
 // keeps the stage's own anchors AND names lan1 at its localAddrs as a
-// seed.
-function buildSeedOnlyLanVariant(baseConfig, lan1Row) {
+// seed. A lan1 row without `localAddrs` fails the step: the fallback
+// to the announced relay addresses would measure the relay path, not
+// the private one.
+export function buildSeedOnlyLanVariant(baseConfig, lan1Row) {
   if (!lan1Row || typeof lan1Row.notisId !== 'string') {
     throw new Error('buildSeedOnlyLanVariant: lan1 identity row is missing');
   }
-  const addrs = Array.isArray(lan1Row.localAddrs) && lan1Row.localAddrs.length > 0
-    ? lan1Row.localAddrs
-    : (Array.isArray(lan1Row.multiaddrs) ? lan1Row.multiaddrs : []);
+  if (!Array.isArray(lan1Row.localAddrs) || lan1Row.localAddrs.length === 0) {
+    throw new Error('buildSeedOnlyLanVariant: lan1 identity row has no localAddrs');
+  }
   return {
     network: baseConfig.network,
     anchors: baseConfig.anchors,
-    seeds: [{ notisId: lan1Row.notisId, addrs }],
+    seeds: [{ notisId: lan1Row.notisId, addrs: lan1Row.localAddrs }],
   };
 }
 
 // MESH_INTERFACE → Discovery → "A node added by hand" — a variant
 // with no anchors and lan1 added by hand at its localAddrs. `trusted`
-// decides whether `anchorReached` reads true from lan1's answer alone.
-function buildByHandLanVariant(baseConfig, lan1Row, trusted) {
+// decides whether `anchorReached` reads true from lan1's answer
+// alone. A lan1 row without `localAddrs` fails the step: the step
+// measures the private address.
+export function buildByHandLanVariant(baseConfig, lan1Row, trusted) {
   if (!lan1Row || typeof lan1Row.notisId !== 'string') {
     throw new Error('buildByHandLanVariant: lan1 identity row is missing');
   }
-  const addrs = Array.isArray(lan1Row.localAddrs) && lan1Row.localAddrs.length > 0
-    ? lan1Row.localAddrs
-    : (Array.isArray(lan1Row.multiaddrs) ? lan1Row.multiaddrs : []);
+  if (!Array.isArray(lan1Row.localAddrs) || lan1Row.localAddrs.length === 0) {
+    throw new Error('buildByHandLanVariant: lan1 identity row has no localAddrs');
+  }
   return {
     network: baseConfig.network,
     anchors: [],
     seeds: [],
-    byHand: [{ notisId: lan1Row.notisId, addrs, trusted }],
+    byHand: [{ notisId: lan1Row.notisId, addrs: lan1Row.localAddrs, trusted }],
   };
 }
 
@@ -344,7 +347,3 @@ async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
   return JSON.parse(buf.toString('utf8'));
 }
 
-// Keep peerIdStringOf imported so a reader sees the helper the
-// scenario-list case trusts; the variant does not need it today
-// because lan1's localAddrs come with `/p2p/<peer-id>` already.
-void peerIdStringOf;
