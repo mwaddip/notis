@@ -7,7 +7,7 @@
 
 import { createLibp2p, type Libp2p } from 'libp2p';
 import { FaultTolerance } from '@libp2p/interface';
-import { multiaddr } from '@multiformats/multiaddr';
+import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@libp2p/noise';
 import { yamux } from '@libp2p/yamux';
@@ -307,9 +307,25 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   // listener splices the /certhash/ onto every announce entry it
   // matches, so the browser gets a dialable address at once.
   const announce = effectiveAnnounce({ role: opts.role, listen, announce: opts.announce });
+  // MESH_INTERFACE → NAT — "A `private` node announces its relay
+  // reservations alone". libp2p 3.5's `AddressManager` runs its
+  // `announceFilter` over every address it would otherwise announce
+  // (`libp2p/src/address-manager/index.js` `getAddresses()`:
+  // `return this.announceFilter(multiaddrs.map(...))` on the full
+  // post-`/p2p/<self>` list). A private node has no listen address
+  // worth announcing — only the circuit reservations it holds — so
+  // the filter keeps the `/p2p-circuit`-bearing addresses and drops
+  // the rest. A public node runs with libp2p's default
+  // (identity-passing) filter.
   const addresses = {
     listen,
     ...(announce !== undefined ? { announce } : {}),
+    ...(opts.role === 'private'
+      ? {
+          announceFilter: (mas: Multiaddr[]) =>
+            mas.filter((ma) => ma.toString().includes('/p2p-circuit')),
+        }
+      : {}),
   };
   // MESH_INTERFACE → NAT — "A relay that does not answer never stops
   // a private node ... is tried again on the node list's retry cadence

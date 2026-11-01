@@ -359,7 +359,7 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
   // `test/relay-carries-data.test.ts`: a public mesh node (relay) on
   // TCP; a private mesh node reserved on it. `getMultiaddrs()` holds
   // circuit addresses alone — every entry carries `/p2p-circuit`.
-  it.fails('a private node announces its circuit addresses alone', async () => {
+  it('a private node announces its circuit addresses alone', async () => {
     const stubRelay = await makeStub(); stubs.push(stubRelay);
     const stubPriv = await makeStub(); stubs.push(stubPriv);
     const relayDir = mkdtempSync(join(tmpdir(), 'mesh-node-priv-announce-relay-')); dirs.push(relayDir);
