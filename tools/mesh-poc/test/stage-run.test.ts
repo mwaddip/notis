@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { assertStagePrivileged } from '../stage/lib/fault-log.mjs';
+import { assertStagePrivileged, FaultLog } from '../stage/lib/fault-log.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -173,5 +173,38 @@ describe('fault-log.assertStagePrivileged', () => {
   });
   it('refuses a short argv (no namespace)', () => {
     expect(() => assertStagePrivileged(['sudo', 'ip', 'netns', 'exec'])).toThrow();
+  });
+});
+
+describe('FaultLog.remove runs one recorded removal early, through its stored argv', () => {
+  it('removes the named apply and runs its argv', () => {
+    const log = new FaultLog({ dryRun: true, scenario: 's7' });
+    const add = ['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2', 'tc', 'qdisc', 'add', 'dev', 'vp-p2', 'root', 'netem', 'delay', '200ms'];
+    const del = ['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2', 'tc', 'qdisc', 'del', 'dev', 'vp-p2', 'root'];
+    log.apply('pub2-netem-add', add, del);
+    expect(log.removals.length).toBe(1);
+    const ran = log.remove('pub2-netem-add');
+    expect(ran).toBe(true);
+    expect(log.removals.length, 'the removal is dropped after it ran').toBe(0);
+    // The record carries the removal line in `[fault:remove:...]` form.
+    expect(log.records.some((r) => r.includes('[fault:remove:s7:pub2-netem-add]'))).toBe(true);
+    // Running again finds nothing to do.
+    expect(log.remove('pub2-netem-add')).toBe(false);
+  });
+
+  // MESH_INTERFACE → Acceptance 7 — the removal argv `pub2NetemArgs`
+  // builds carries no `-u <user>` (the invoking user has no
+  // `CAP_NET_ADMIN`); `log.remove` runs the stored argv as-is, so
+  // the final argv the step runs has no `-u` either.
+  it('the removal argv the step runs carries no `-u`', () => {
+    const log = new FaultLog({ dryRun: true, scenario: 's7' });
+    const add = ['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2', 'tc', 'qdisc', 'add', 'dev', 'vp-p2', 'root', 'netem', 'delay', '200ms'];
+    const del = ['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2', 'tc', 'qdisc', 'del', 'dev', 'vp-p2', 'root'];
+    log.apply('pub2-netem-add', add, del);
+    log.remove('pub2-netem-add');
+    const removeRecord = log.records.find((r) => r.includes('[fault:remove:s7:pub2-netem-add]'));
+    expect(removeRecord).toBeDefined();
+    expect(removeRecord!).not.toContain(' -u ');
+    expect(removeRecord!).toContain('tc qdisc del dev vp-p2 root');
   });
 });

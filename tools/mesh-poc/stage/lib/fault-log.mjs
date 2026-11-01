@@ -82,6 +82,33 @@ export class FaultLog {
   }
 
   /**
+   * Run the recorded removal for a single named apply, early, and
+   * drop it from the pending list so `removeAll()` does not run it
+   * again. Returns true when a removal ran; false when no apply of
+   * that name was recorded (or its removal was already run). The
+   * step uses this to put a fault back before step's end, through
+   * the `sudo` argv `apply` stored — never a `sudo -u <user>` one,
+   * which has no `CAP_NET_ADMIN`.
+   */
+  remove(name) {
+    const idx = this.removals.findIndex((r) => r.name === name);
+    if (idx === -1) return false;
+    const [r] = this.removals.splice(idx, 1);
+    const marker = `[fault:remove:${this.scenario}:${r.name}]`;
+    const line = `${marker} ${quoteCommand(r.argv)}`;
+    this.records.push(line);
+    if (this.dryRun) process.stdout.write(line + '\n');
+    else {
+      try {
+        execFileSync(r.argv[0], r.argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (err) {
+        process.stderr.write(`[fault:remove failed] ${r.name}: ${err?.message ?? err}\n`);
+      }
+    }
+    return true;
+  }
+
+  /**
    * Run every recorded removal in reverse order. A scenario's `finally`
    * block calls this; the stage is handed back to the next scenario in
    * the same state it was before `apply(...)` ran.

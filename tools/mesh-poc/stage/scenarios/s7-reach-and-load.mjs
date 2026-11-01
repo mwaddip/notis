@@ -44,7 +44,7 @@ import {
   verdictS7Lan,
   verdictS7Counts,
 } from '../lib/verdicts.mjs';
-import { execIn, nftApply } from '../lib/measure.mjs';
+import { execIn } from '../lib/measure.mjs';
 import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
@@ -145,11 +145,12 @@ export async function run(ctx) {
         throw new Error('s7 step 3: identities.json has no lan1 row');
       }
       // Remove the netem delay so pub2 is a fast peer again for the
-      // seed phase and the hand-added phases.
+      // seed phase and the hand-added phases. `tc qdisc del` needs
+      // `CAP_NET_ADMIN`; the fault log's recorded removal argv runs
+      // as root (bare `sudo ip netns exec …`), never under
+      // `sudo -u <user>` (the invoking user has no capability).
       if (netemApplied) {
-        try { nftApply('notismesh-pub2', ['delete', 'table', 'ip', 'nat']); } catch {}
-        try { execIn('notismesh-pub2', ['tc', 'qdisc', 'del', 'dev', netem.iface, 'root'], { user: ctx.invokingUser, timeoutMs: 10_000 }); }
-        catch { /* best effort */ }
+        log.remove('pub2-netem-add');
         netemApplied = false;
       }
 
@@ -206,9 +207,11 @@ export async function run(ctx) {
     });
   } finally {
     if (netemApplied) {
-      try { execIn('notismesh-pub2', ['tc', 'qdisc', 'del', 'dev', netem.iface, 'root'], { user: ctx.invokingUser, timeoutMs: 10_000 }); }
-      catch (err) { process.stderr.write(`[s7 teardown] remove netem: ${err?.message ?? err}\n`); }
-      log.records.push(`[fault:remove:${NAME}:pub2-netem-add] ${netem.del.join(' ')}`);
+      // Same reason as step 3's early removal: `tc qdisc del` is
+      // privileged, so the fault log's recorded removal argv runs,
+      // not an `execIn` under `sudo -u <user>`.
+      log.remove('pub2-netem-add');
+      netemApplied = false;
     }
     try { writeStageDefault(ctx.outDir); }
     catch (err) { process.stderr.write(`[s7 teardown] writeStageDefault: ${err?.message ?? err}\n`); }

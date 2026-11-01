@@ -7,6 +7,7 @@ export declare class FaultLog {
   apply(name: string, argv: string[], removalArgv: string[] | null): void;
   signal(name: string, pid: number, opts?: { restartArgv?: string[] | null }): void;
   spawn(name: string, argv: string[]): void;
+  remove(name: string): boolean;
   removeAll(): void;
 }
 export declare function assertStagePrivileged(argv: unknown): void;
