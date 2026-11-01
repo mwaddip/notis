@@ -262,7 +262,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(anchorEntry!.status).toBe('retry');
   }, 90_000);
 
-  it('the client reads a node by key', async () => {
+  it.fails('a routed read reaches the one anchor and nodeId names it', async () => {
+    // MESH_INTERFACE → The client's node list → "A routed read goes to
+    // a node its need allows" — a `tip` read picks an `ok` node, opens
+    // the stream on the connection the client holds, and `state.nodeId`
+    // names the serving node after it.
     const stub = await makeStub(0); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
     const started = await startNode(stub, dir); nodes.push(started.node);
@@ -276,9 +280,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     clients.push(client);
     await client.check();
 
-    const res = await client.fetch(meshBaseUrl(started.id) + '/blocks/current');
-    expect(res.status).toBe(200);
-    const text = await res.text();
+    const { response, nodeId } = await client.read('/blocks/current', 'tip');
+    expect(nodeId).toBe(started.id);
+    expect(response.status).toBe(200);
+    const text = await response.text();
     const direct = await (await globalThis.fetch(`${stub.base}/blocks/current`)).text();
     expect(text).toBe(direct);
 
@@ -289,7 +294,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.anchorReached).toBe(true);
   }, 60_000);
 
-  it('the node in use going away moves the client', async () => {
+  it('a node that leaves ok/trailing is named by lastLeft, with its reason', async () => {
+    // MESH_INTERFACE → The client's node list — "set after a check when
+    // a node that was `ok` or `trailing` before it is neither after it".
+    // Two anchors ok after check 1; A stops; after check 2 A moves to
+    // retry and `lastLeft` names A with its failure reason.
     const stubA = await makeStub(0); stubs.push(stubA);
     const stubB = await makeStub(1); stubs.push(stubB);
     const dirA = mkdtempSync(join(tmpdir(), 'mesh-client-a-')); dirs.push(dirA);
@@ -305,13 +314,15 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       network: 'devnet',
       profile: PROFILE,
       stunServers: [],
-      // First check keeps A as winner; a second one, once A is gone, keeps B.
+      // Both checks keep A as winner, B as trailing; after A stops it
+      // falls out of candidates and B stands alone.
       resolve: fakeResolveWith([(u) => winnerFirst(u), (u) => winnerFirst(u)]),
     });
     clients.push(client);
 
     await client.check();
-    expect(client.state().nodeId).toBe(a.id);
+    // No node left ok/trailing — both just arrived there.
+    expect(client.state().lastLeft).toBeNull();
 
     // Stop node A — the next check cannot reach it.
     await a.node.stop();
@@ -319,7 +330,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
     await client.check();
     const s = client.state();
-    expect(s.nodeId).toBe(b.id);
     expect(s.lastLeft).not.toBeNull();
     expect(s.lastLeft!.nodeId).toBe(a.id);
     expect(s.lastLeft!.reason).toMatch(/^failure:/);
@@ -622,15 +632,13 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.nodes[0]!.status).toBe('retry');
   }, 60_000);
 
-  it('a failed fetch to the node in use checks at once, and the check moves the client to the next connection', async () => {
-    // MESH_INTERFACE → The client's node list → "A read opens no
-    // connection" — "a failed read to the node in use runs a check at
-    // once, which dials from the list". Two anchors: A is reached
-    // first, then stopped; the fetch to A fails as transport (its
-    // connection is gone), the immediate check dials from the list,
-    // and B — the next candidate — becomes the node in use. We await
-    // the state change rather than a timeout: the test rules out
-    // "nothing happened because the timer did not fire".
+  it.fails('a failed read triggers a check, and the next read reaches another ok node', async () => {
+    // MESH_INTERFACE → The client's node list → "A routed read goes to
+    // a node its need allows" + "A read opens no connection" — "a
+    // failed routed read runs a check at once, which dials from the
+    // list". Two anchors: both ok after check 1; A is stopped so a
+    // read to the serving node fails as transport, the immediate
+    // check moves A to retry, and the next read picks B.
     const stubA = await makeStub(0); stubs.push(stubA);
     const stubB = await makeStub(1); stubs.push(stubB);
     const dirA = mkdtempSync(join(tmpdir(), 'mesh-client-ic-a-')); dirs.push(dirA);
@@ -647,6 +655,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       network: 'devnet',
       profile: PROFILE,
       stunServers: [],
+      // Pin the fast-set pick to the first candidate so the first read
+      // reliably reaches A.
+      random: () => 0,
       resolve: fakeResolveWith([
         (u) => { resolveCalls += 1; return winnerFirst(u); },
         (u) => { resolveCalls += 1; return winnerFirst(u); },
@@ -656,27 +667,31 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     clients.push(client);
 
     await client.check();
-    expect(client.state().nodeId).toBe(a.id);
+    const first = await client.read('/blocks/current', 'tip');
+    expect(first.nodeId).toBe(a.id);
     const callsBefore = resolveCalls;
 
     await a.node.stop();
     nodes.splice(nodes.indexOf(a.node), 1);
-    let fetchError: unknown;
+    let readError: unknown;
     try {
-      await client.fetch(meshBaseUrl(a.id) + '/blocks/current');
+      await client.read('/blocks/current', 'tip');
     } catch (e) {
-      fetchError = e;
+      readError = e;
     }
-    expect(fetchError).toBeDefined();
+    expect(readError).toBeDefined();
 
     const deadlineMs = Date.now() + 10_000;
     while (
-      (resolveCalls === callsBefore || client.state().nodeId !== b.id)
+      resolveCalls === callsBefore
       && Date.now() < deadlineMs
     ) {
       await new Promise((r) => setTimeout(r, 50));
     }
     expect(resolveCalls).toBeGreaterThan(callsBefore);
+
+    const next = await client.read('/blocks/current', 'tip');
+    expect(next.nodeId).toBe(b.id);
     expect(client.state().nodeId).toBe(b.id);
   }, 60_000);
 
@@ -1052,4 +1067,360 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     }
     expect(banned, `banned Node imports in dist/lib.js: ${banned.join(', ')}`).toEqual([]);
   }, 30_000);
+
+  // MESH_INTERFACE → The client's node list → "A routed read goes to a
+  // node its need allows" — build a `TipResult` whose `nodes[i]` is
+  // verified with `behind = behinds[i]`; a `null` means not verified at
+  // all. Winner is the first `behind === 0` entry.
+  function makeResult(urls: readonly string[], behinds: readonly (number | null)[]): TipResult {
+    const n: NodeTipResult[] = urls.map((url, i) => {
+      const b = behinds[i] ?? null;
+      if (b === null) {
+        return {
+          url, verified: false,
+          proof: null, verifyResult: null,
+          refuseReason: 'nope', refuseCode: 'unreachable',
+          behind: null, genesisHash: null,
+        };
+      }
+      return {
+        url, verified: true,
+        proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
+        verifyResult: null,
+        refuseReason: null, refuseCode: null,
+        behind: b, genesisHash: 'f'.repeat(64),
+      };
+    });
+    const winnerIndex = n.findIndex((x) => x.verified && x.behind === 0);
+    return {
+      winner: winnerIndex >= 0 ? n[winnerIndex]! : null,
+      winnerIndex,
+      nodes: n,
+      tip: null, suffixHead: null, splits: [],
+    };
+  }
+
+  it('a node tied with the winner reads ok after a check', async () => {
+    // MESH_INTERFACE → The client's node list — "A valid proof whose
+    // tip is the tip — the best verified proof's, a tie included"
+    // reads `ok`. Both anchors verified `behind === 0`, both read ok.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'tie-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'tie-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([(u) => makeResult(u, [0, 0])]),
+    });
+    clients.push(client);
+    await client.check();
+    const s = client.state();
+    expect(s.nodes.find((n) => n.notisId === a.id)!.status).toBe('ok');
+    expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('ok');
+  }, 90_000);
+
+  it.fails('a tip read never goes to a trailing node', async () => {
+    // MESH_INTERFACE → The client's node list → "A routed read goes to
+    // a node its need allows" — "One that needs the tip goes to an
+    // `ok` node". A is ok (behind 0), B is trailing (behind 1); every
+    // tip read goes to A, regardless of the random source.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'tr-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'tr-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+
+    let randIdx = 0;
+    const randValues = Array.from({ length: 10 }, (_, i) => i / 10);
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      stunServers: [],
+      random: () => randValues[randIdx++ % randValues.length]!,
+      resolve: fakeResolveWith([(u) => makeResult(u, [0, 1])]),
+    });
+    clients.push(client);
+    await client.check();
+    for (let i = 0; i < 10; i += 1) {
+      const { nodeId } = await client.read('/blocks/current', 'tip');
+      expect(nodeId).toBe(a.id);
+    }
+  }, 120_000);
+
+  it.fails('a tip read with no usable ok node rejects as transport and triggers a check', async () => {
+    // MESH_INTERFACE → The client's node list → "A routed read goes to
+    // a node its need allows" — "With none, the read fails as a
+    // transport failure." + "a failed routed read runs a check at
+    // once". A single anchor comes up `trailing` (behind 1); a `tip`
+    // read refuses that one and triggers a check.
+    const stub = await makeStub(0); stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'notip-')); dirs.push(dir);
+    const started = await startNode(stub, dir); nodes.push(started.node);
+
+    let resolveCalls = 0;
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([
+        (u) => { resolveCalls += 1; return makeResult(u, [1]); },
+        (u) => { resolveCalls += 1; return makeResult(u, [1]); },
+      ]),
+    });
+    clients.push(client);
+    await client.check();
+    expect(client.state().nodes.find((n) => n.notisId === started.id)!.status).toBe('trailing');
+    const callsBefore = resolveCalls;
+
+    let caught: unknown;
+    try {
+      await client.read('/blocks/current', 'tip');
+    } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(MeshFetchError);
+    expect((caught as MeshFetchError).kind).toBe('transport');
+    expect((caught as MeshFetchError).message).toMatch(/no node allowed/i);
+
+    const deadlineMs = Date.now() + 10_000;
+    while (resolveCalls === callsBefore && Date.now() < deadlineMs) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(resolveCalls).toBeGreaterThan(callsBefore);
+  }, 60_000);
+
+  it.fails('older reads spread over ok and trailing nodes in the fast set', async () => {
+    // MESH_INTERFACE → The client's node list — "a read of content
+    // older than the newest block goes to an `ok` or a `trailing`
+    // node". A is ok, B is trailing; a sweep of random values over
+    // [0, 1) picks both ids across 50 reads.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'ol-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'ol-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+
+    let randIdx = 0;
+    const seen = new Set<string>();
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      stunServers: [],
+      random: () => {
+        const v = randIdx / 50;
+        randIdx = (randIdx + 1) % 50;
+        return v;
+      },
+      resolve: fakeResolveWith([(u) => makeResult(u, [0, 1])]),
+    });
+    clients.push(client);
+    await client.check();
+    for (let i = 0; i < 50; i += 1) {
+      const { nodeId } = await client.read('/blocks/current', 'older');
+      seen.add(nodeId);
+    }
+    expect(seen.size, 'the spread touches both ids').toBe(2);
+  }, 120_000);
+
+  it.fails('nodeId names the node the latest read went to', async () => {
+    // MESH_INTERFACE → The client's node list — "The client's state
+    // names the node and path the latest routed read went to". After
+    // a successful `read`, `state.nodeId` equals the serving node.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'nid-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'nid-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+
+    let randIdx = 0;
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      stunServers: [],
+      // 0 picks the first fast-set entry, 0.99 picks the last — so we
+      // can force both nodes in turn.
+      random: () => [0, 0.99][randIdx++ % 2]!,
+      resolve: fakeResolveWith([(u) => makeResult(u, [0, 0])]),
+    });
+    clients.push(client);
+    await client.check();
+    const r1 = await client.read('/blocks/current', 'tip');
+    expect(client.state().nodeId).toBe(r1.nodeId);
+    const r2 = await client.read('/blocks/current', 'tip');
+    expect(client.state().nodeId).toBe(r2.nodeId);
+    // Across two reads with (0, 0.99) sweep, the two anchors are both
+    // picked at least once each.
+    expect(new Set([r1.nodeId, r2.nodeId]).size).toBe(2);
+  }, 120_000);
+
+  it.fails('lastLeft names any node that left ok/trailing, not just the first candidate', async () => {
+    // MESH_INTERFACE → The client's node list — the rule is "a node
+    // that was `ok` or `trailing` before [the check] is neither after
+    // it", not "the first candidate moved". Three anchors ok after
+    // check 1; the second stops; after check 2 the second is in retry
+    // while the first stays `ok`, and `lastLeft` still names the one
+    // that left.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const stubC = await makeStub(2); stubs.push(stubC);
+    const dirA = mkdtempSync(join(tmpdir(), 'll3-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'll3-b-')); dirs.push(dirB);
+    const dirC = mkdtempSync(join(tmpdir(), 'll3-c-')); dirs.push(dirC);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const c = await startNode(stubC, dirC); nodes.push(c.node);
+
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+        { notisId: c.id, addrs: [c.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([
+        (u) => makeResult(u, [0, 0, 0]),
+        (u) => makeResult(u, [0, 0, 0]),
+      ]),
+    });
+    clients.push(client);
+    await client.check();
+    expect(client.state().lastLeft).toBeNull();
+
+    // Stop B — A stays the first candidate and remains ok, so the old
+    // "node in use is the first candidate after the check" rule would
+    // see no change and leave `lastLeft` untouched; under the current
+    // rule, the check records B's departure.
+    await b.node.stop();
+    nodes.splice(nodes.indexOf(b.node), 1);
+    await client.check();
+
+    const s = client.state();
+    expect(s.nodes.find((n) => n.notisId === a.id)!.status).toBe('ok');
+    expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('retry');
+    expect(s.lastLeft).not.toBeNull();
+    expect(s.lastLeft!.nodeId).toBe(b.id);
+    expect(s.lastLeft!.reason).toMatch(/^failure:/);
+  }, 120_000);
+
+  it.fails('readMs is the proof read time of the latest check', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — "it times
+    // each node's proof read; that time is the node's speed until the
+    // next check." The wrap times from fetch call to end of body.
+    const stub = await makeStub(0); stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'rms-')); dirs.push(dir);
+    const started = await startNode(stub, dir); nodes.push(started.node);
+
+    // Resolver that calls httpFetch and drains the body, so the
+    // timing wrap captures the full read.
+    const probingResolve: typeof import('@dagsocial/nipopow-client').resolveTip =
+      async (urls, _m, _k, _profile, _nowMs, httpFetch) => {
+        const n: NodeTipResult[] = [];
+        for (const url of urls) {
+          try {
+            const res = await httpFetch(`${url}/nipopow/proof/24/20`);
+            await res.text();
+          } catch { /* ignore — the node answers 404 for this path */ }
+          n.push({
+            url, verified: true,
+            proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
+            verifyResult: null, refuseReason: null, refuseCode: null,
+            behind: 0, genesisHash: 'f'.repeat(64),
+          });
+        }
+        return { winner: n[0] ?? null, winnerIndex: 0, nodes: n, tip: null, suffixHead: null, splits: [] };
+      };
+
+    // Clock as a counter: each call returns a strictly greater value,
+    // so `end - start` is positive even when the real transfer is
+    // instant.
+    let t = 0;
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      stunServers: [],
+      clock: () => ++t,
+      resolve: probingResolve,
+    });
+    clients.push(client);
+    await client.check();
+    const entry = client.state().nodes.find((n) => n.notisId === started.id)!;
+    expect(entry.readMs).not.toBeNull();
+    expect(entry.readMs!).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it.fails('behindBy is the latest check\'s behind count per node', async () => {
+    // MESH_INTERFACE → The client's node list — `TipResult.nodes[i].behind`
+    // per node is written to the entry's `behindBy` from each check.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'bb-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'bb-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([(u) => makeResult(u, [0, 2])]),
+    });
+    clients.push(client);
+    await client.check();
+    const s = client.state();
+    expect(s.nodes.find((n) => n.notisId === a.id)!.behindBy).toBe(0);
+    expect(s.nodes.find((n) => n.notisId === b.id)!.behindBy).toBe(2);
+  }, 90_000);
+
+  it.fails('agreement counts come from the latest check', async () => {
+    // MESH_INTERFACE → No anchor reached → "The agreement counts" —
+    // after each check `state.agreement` holds `{ agreeing,
+    // agreeingAnchors, notAgreeing }` from the latest `TipResult`.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'ag-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'ag-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      stunServers: [],
+      resolve: fakeResolveWith([(u) => makeResult(u, [0, 1])]),
+    });
+    clients.push(client);
+    // Before the first check, agreement is null.
+    expect(client.state().agreement).toBeNull();
+    await client.check();
+    const s = client.state();
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.agreeing).toBe(2);
+    expect(s.agreement!.agreeingAnchors).toBe(2);
+    expect(s.agreement!.notAgreeing).toBe(0);
+  }, 90_000);
 });

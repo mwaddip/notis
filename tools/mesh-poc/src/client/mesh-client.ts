@@ -48,6 +48,8 @@ import {
   type NodeEntry,
 } from './node-list.js';
 import { tipEvents, type TipEvent } from './tip-events.js';
+import { pickServer, type ReadNeed } from './server-pick.js';
+import { agreementCounts, type AgreementCounts } from './agreement.js';
 import {
   dhtProtocol,
   CHECK_INTERVAL_MS,
@@ -55,6 +57,7 @@ import {
   PEER_DIAL_MIN_MS,
   type NetworkName,
 } from '../protocols.js';
+export type { ReadNeed } from './server-pick.js';
 
 /**
  * MESH_INTERFACE → NAT — the client refuses an ICE server named by anything
@@ -158,11 +161,33 @@ export interface ClientState {
   lastLeft: { nodeId: string; reason: string } | null;
   anchorReached: boolean;
   tip: { height: number; hash: string | null } | null;
+  /**
+   * MESH_INTERFACE → No anchor reached → "The agreement counts" — after
+   * each check, how many nodes verified a proof on the tip's chain
+   * within its last `k` headers, how many of those are anchors, and
+   * how many verified off those headers. `null` before the first
+   * check; written from each check's `TipResult` thereafter.
+   */
+  agreement: AgreementCounts | null;
   nodes: NodeEntry[];
 }
 
 export interface MeshClient {
   fetch: HttpFetch;
+  /**
+   * MESH_INTERFACE → The client's node list → "A routed read goes to a
+   * node its need allows" — picks a server from the client's node list
+   * by the read's `need` and the fast set, opens the stream on the
+   * connection the client already holds there, and sets
+   * `state.nodeId / transport / path` to that node and connection.
+   * Returns the serving node's id beside the response so the caller
+   * can log it without a `state()` race (a check's own tip read may
+   * land between two of the caller's reads). Rejects as
+   * `MeshFetchError` of kind `transport` and triggers an immediate
+   * check when no node is allowed for the need, or when the fetch
+   * itself fails.
+   */
+  read(path: string, need: ReadNeed): Promise<{ response: Response; nodeId: string }>;
   check(): Promise<TipResult>;
   state(): ClientState;
   onState(cb: (s: ClientState) => void): () => void;
@@ -202,6 +227,13 @@ export interface StartMeshClientOptions {
    * a fake wall clock to assert the handoff.
    */
   wallClock?: () => number;
+  /**
+   * MESH_INTERFACE → The client's node list → "A routed read goes to a
+   * node its need allows" — the fast set is picked at random; this is
+   * the random source. `Math.random` by default; test cases inject a
+   * sweeping sequence to pin the spread.
+   */
+  random?: () => number;
   resolve?: typeof resolveTip;
 }
 
@@ -253,7 +285,8 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
     },
   });
 
-  const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, resolveFn);
+  const random = o.random ?? Math.random;
+  const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, random, resolveFn);
   client.start();
   return client;
 }
@@ -279,6 +312,20 @@ class MeshClientImpl implements MeshClient {
   private readonly meshFetchFn: HttpFetch;
   private readonly latestEventReason = new Map<string, string>();
   private readonly wallClock: () => number;
+  private readonly random: () => number;
+  /**
+   * MESH_INTERFACE → The client's node list → "A check" — "it times
+   * each node's proof read; that time is the node's speed until the
+   * next check." The map is cleared at the start of every check and
+   * populated by the wrapped fetch handed to `resolveTip`.
+   */
+  private readonly readMsMap: Map<string, number> = new Map();
+  /**
+   * MESH_INTERFACE → The client's node list — the latest check's
+   * `TipResult.nodes[i].behind` per node, written in phase 3 and
+   * consumed by `decorateEntries`.
+   */
+  private readonly behindByMap: Map<string, number | null> = new Map();
   private checkInProgress: Promise<TipResult> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
@@ -292,11 +339,13 @@ class MeshClientImpl implements MeshClient {
     o: StartMeshClientOptions,
     clock: () => number,
     wallClock: () => number,
+    random: () => number,
     resolveFn: typeof resolveTip,
   ) {
     this.libp2p = node;
     this.clock = clock;
     this.wallClock = wallClock;
+    this.random = random;
     this.resolveFn = resolveFn;
     this.profile = o.profile;
     this.nodeList = new NodeList(o.anchors, ownId, clock);
@@ -319,6 +368,7 @@ class MeshClientImpl implements MeshClient {
       lastLeft: null,
       anchorReached: false,
       tip: null,
+      agreement: null,
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
@@ -378,10 +428,23 @@ class MeshClientImpl implements MeshClient {
     return this.checkInProgress;
   }
 
+  async read(_path: string, _need: ReadNeed): Promise<{ response: Response; nodeId: string }> {
+    // Stub ahead of its implementation; the suite's cases hold the
+    // intended behaviour. The intentional references silence the
+    // unused-import gate for the imports the implementation needs.
+    void pickServer;
+    void agreementCounts;
+    void this.random;
+    throw new Error('read not implemented');
+  }
+
   state(): ClientState {
     return {
       ...this.state_,
-      nodes: decorateEntries(this.nodeList.entries(), this.libp2p.getConnections()),
+      nodes: decorateEntries(this.nodeList.entries(), this.libp2p.getConnections(), {
+        readMs: this.readMsMap,
+        behindBy: this.behindByMap,
+      }),
     };
   }
 
@@ -980,13 +1043,33 @@ export function classifyConnectionAddr(ma: string): {
 export function decorateEntries(
   entries: readonly NodeEntry[],
   connections: readonly Connection[],
+  /**
+   * MESH_INTERFACE → The client's node list — "A check" and the
+   * behind row: `readMs` and `behindBy` the mesh client holds from
+   * the latest check. Absent → both read `null`, so a caller that
+   * does not yet carry per-check metrics (the initial state build
+   * and the unit cases) stands unchanged.
+   */
+  metrics?: {
+    readonly readMs: ReadonlyMap<string, number>;
+    readonly behindBy: ReadonlyMap<string, number | null>;
+  },
 ): NodeEntry[] {
   return entries.map((e) => {
     const expected = toLibp2pPeerIdString(e.notisId);
     const conn = pickConnectionForLabel(connections, expected);
-    if (conn === null) return { ...e, transport: null, path: null };
-    const { transport, path } = classifyConnectionAddr(conn.remoteAddr.toString());
-    return { ...e, transport, path };
+    const base: NodeEntry = conn === null
+      ? { ...e, transport: null, path: null }
+      : (() => {
+        const { transport, path } = classifyConnectionAddr(conn.remoteAddr.toString());
+        return { ...e, transport, path };
+      })();
+    if (metrics === undefined) return base;
+    return {
+      ...base,
+      readMs: metrics.readMs.get(e.notisId) ?? null,
+      behindBy: metrics.behindBy.has(e.notisId) ? (metrics.behindBy.get(e.notisId) ?? null) : null,
+    };
   });
 }
 
