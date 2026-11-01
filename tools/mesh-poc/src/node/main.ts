@@ -140,11 +140,11 @@ const announce = list('MESH_ANNOUNCE');
 const bootstrap = list('MESH_BOOTSTRAP');
 const stateDir = need('MESH_STATE_DIR');
 const upstream = need('MESH_UPSTREAM');
-// MESH_INTERFACE → NAT — "A public node ... runs ... a STUN server on
-// `STUN_PORT` (RFC 8489's port) at the IP of its first WebRTC-direct
-// listen address, unless its operator names another or turns it off".
-// A `MeshConfigError` here reads as a start-time refusal, same as
-// `startMeshNode`'s own guards.
+// MESH_INTERFACE → NAT → "A node's role is its operator's setting" —
+// a public node runs a STUN server at the IP of its first
+// WebRTC-direct listen address on `STUN_PORT`, unless its operator
+// names another or turns it off. A `MeshConfigError` here reads as a
+// start-time refusal, same as `startMeshNode`'s own guards.
 let stun: { host: string; port: number } | undefined;
 try {
   stun = stunSettingFor(role, listen, process.env.MESH_STUN);

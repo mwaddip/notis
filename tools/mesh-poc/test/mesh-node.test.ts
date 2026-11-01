@@ -316,10 +316,11 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     }
   }, 60_000);
 
-  // MESH_INTERFACE → NAT → "A public node ... runs ... a STUN server on
-  // STUN_PORT (RFC 8489's port) at the IP of its first WebRTC-direct
-  // listen address, unless its operator names another or turns it off".
-  // Pure cases over `stunSettingFor`: no socket, no filesystem reach.
+  // MESH_INTERFACE → NAT → "A node's role is its operator's setting" —
+  // a public node runs a STUN server at the IP of its first
+  // WebRTC-direct listen address on STUN_PORT, unless its operator
+  // names another or turns it off. Pure cases over `stunSettingFor`:
+  // no socket, no filesystem reach.
   it('a public node with no MESH_STUN serves STUN at its first webrtc-direct listen IP on 3478', () => {
     const got = stunSettingFor('public', [
       '/ip4/127.0.0.1/tcp/4002',

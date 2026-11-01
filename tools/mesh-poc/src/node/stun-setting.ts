@@ -1,11 +1,11 @@
-// MESH_INTERFACE → NAT — "A public node ... runs ... a STUN server on
-// `STUN_PORT` (RFC 8489's port) at the IP of its first WebRTC-direct
-// listen address, unless its operator names another or turns it off".
-// Pure: it decides a public node's STUN setting from the environment
-// alone, with no socket or filesystem reach. `env` is `MESH_STUN`'s
-// value — `undefined` or empty, `'off'`, `<ip>:<port>`, or
-// `[<ipv6>]:<port>`. A private node is refused for any set value, as
-// `MESH_INTERFACE → NAT` has STUN serving from a public address.
+// MESH_INTERFACE → NAT → "A node's role is its operator's setting" —
+// a public node runs a STUN server at the IP of its first
+// WebRTC-direct listen address on `STUN_PORT`, unless its operator
+// names another or turns it off. Pure: it decides the setting from
+// the environment alone, with no socket or filesystem reach. `env`
+// is `MESH_STUN`'s value — `undefined` or empty, `'off'`,
+// `<ip>:<port>`, or `[<ipv6>]:<port>`. A private node is refused for
+// any set value, as STUN serves from a public address.
 
 import { isIPv4, isIPv6 } from 'node:net';
 import { MeshConfigError } from '../config.js';
