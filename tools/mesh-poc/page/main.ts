@@ -100,7 +100,9 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
 
   // MESH_INTERFACE → Discovery → "A node added by hand" — the
   // config's `byHand` entries are applied in given order; a
-  // malformed one refuses the whole config in words.
+  // malformed one refuses the whole config in words AND stops the
+  // client, so a refused config leaves no libp2p node running on
+  // the entries that landed before the bad one.
   if (config.byHand !== undefined) {
     try {
       for (const entry of config.byHand) {
@@ -108,6 +110,7 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
       }
     } catch (e) {
       if (e instanceof MeshConfigError) {
+        await client.stop();
         showError(opts.root, `config refused: byHand ${messageOf(e)}`);
         return;
       }

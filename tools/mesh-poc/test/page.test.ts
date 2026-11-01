@@ -340,11 +340,12 @@ interface FakeClientInit {
 }
 
 interface FakeClient {
-  client: Pick<MeshClient, 'read' | 'state' | 'onState' | 'addByHand' | 'fetch'>;
+  client: Pick<MeshClient, 'read' | 'state' | 'onState' | 'addByHand' | 'fetch' | 'stop'>;
   emit: (over: Partial<ClientState>) => void;
   calls: {
     addByHand: Array<{ notisId: string; addrs: string[]; trusted: boolean }>;
     read: Array<{ path: string; need: ReadNeed }>;
+    stop: number;
   };
 }
 
@@ -360,7 +361,7 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
     agreement: init.agreement ?? null,
     nodes: init.nodes ?? [],
   };
-  const calls: FakeClient['calls'] = { addByHand: [], read: [] };
+  const calls: FakeClient['calls'] = { addByHand: [], read: [], stop: 0 };
   const readQueue: Array<{ nodeId: string } | { error: string }> = (init.readAnswers ?? []).slice();
   const client: FakeClient['client'] = {
     fetch: async () => new Response('', { status: 200 }),
@@ -383,6 +384,9 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
       if (init.addByHandBehavior !== undefined) {
         init.addByHandBehavior(notisId, addrs, trusted);
       }
+    },
+    stop: async () => {
+      calls.stop += 1;
     },
   };
   const emit = (over: Partial<ClientState>) => {
@@ -636,6 +640,42 @@ describe('page/main.ts config refusals', () => {
     const err = root.querySelector('[data-role="error"]');
     expect(err, 'the config refusal is required').not.toBeNull();
     expect(err!.textContent?.toLowerCase()).toContain('refused');
+    expect(err!.textContent).toContain('byHand');
+  });
+
+  // MESH_INTERFACE → Discovery → "A node added by hand" — a malformed
+  // byHand entry stops the client before showing the words, so a
+  // refused config leaves no libp2p node running on the entries that
+  // landed before the bad one.
+  it('a malformed byHand entry stops the client before showing the words', async () => {
+    const root = document.createElement('div');
+    const fakeFetch = async (): Promise<Response> =>
+      new Response(
+        JSON.stringify({
+          network: 'devnet',
+          anchors: [],
+          byHand: [
+            { notisId: VALID_KEY_A, addrs: [VALID_ADDR_A], trusted: true },
+            { notisId: 'bad-key', addrs: [VALID_ADDR_A], trusted: true },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const fake = buildFakeClient({
+      addByHandBehavior: (notisId) => {
+        if (notisId === 'bad-key') {
+          throw new MeshConfigError('addByHand key refused: bad-key is not 64 lowercase hex characters');
+        }
+      },
+    });
+    await runMain({
+      root,
+      fetch: fakeFetch as unknown as typeof globalThis.fetch,
+      startMeshClient: (async () => fake.client as unknown as MeshClient) as never,
+    });
+    expect(fake.calls.stop, 'client.stop() was called before the words').toBe(1);
+    const err = root.querySelector('[data-role="error"]');
+    expect(err, 'the config refusal is required').not.toBeNull();
     expect(err!.textContent).toContain('byHand');
   });
 });
