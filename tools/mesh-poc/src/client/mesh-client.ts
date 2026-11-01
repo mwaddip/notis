@@ -1042,14 +1042,16 @@ class MeshClientImpl implements MeshClient {
       this.state_.path = null;
       return;
     }
-    const conn = this.firstConnectionFor(inUse);
+    const connections = this.libp2p.getConnections();
+    const expected = toLibp2pPeerIdString(inUse);
+    const conn = pickConnectionForLabel(connections, expected);
     if (!conn) {
       this.state_.transport = null;
       this.state_.path = null;
       return;
     }
     const ma = conn.remoteAddr.toString();
-    const { transport, path } = classifyConnectionAddr(ma);
+    const { transport, path } = classifyConnectionAddr(ma, connections);
     this.state_.transport = transport;
     this.state_.path = path;
   }
@@ -1064,13 +1066,6 @@ class MeshClientImpl implements MeshClient {
     // waiting for the next check.
     this.refreshTransportPath();
     this.emitStateChange();
-  }
-
-  private firstConnectionFor(notisId: string): Connection | null {
-    // Same as `hasOpenConnection`: a bad notisId past `NodeList`'s door
-    // is a bug upstream, not a signal to silently return null.
-    const expected = toLibp2pPeerIdString(notisId);
-    return pickConnectionForLabel(this.libp2p.getConnections(), expected);
   }
 
   /**
@@ -1295,49 +1290,63 @@ export function messageOf(e: unknown): string {
  * connection, read from the multiaddr's protocol components (not
  * substring tests on the string form). The rows:
  *   `/.../webrtc-direct/.../p2p/R/p2p-circuit/webrtc/p2p/X` → `{ webrtc, direct }`
+ *   `/.../tcp/.../p2p/R/p2p-circuit/webrtc/p2p/X`           → `{ webrtc, direct }`
  *   `/.../webrtc-direct/.../p2p/R/p2p-circuit/p2p/X`         → `{ webrtc-direct, relay }`
  *   `/.../tls/ws/p2p/R/p2p-circuit/p2p/X`                     → `{ wss, relay }`
  *   `/.../wss/p2p/R/p2p-circuit/p2p/X`                        → `{ wss, relay }`
+ *   `/.../tcp/.../p2p/R/p2p-circuit/p2p/X`                    → the relay-peer connection's transport, `relay`
  *   `/.../webrtc-direct/.../p2p/X`                            → `{ webrtc-direct, direct }`
  *   `/.../tls/ws/p2p/X`                                       → `{ wss, direct }`
  *   `/.../wss/p2p/X`                                          → `{ wss, direct }`
  *
- * The base transport comes from the components before any `p2p-circuit`:
- * a `webrtc-direct` component names `webrtc-direct`; a `tls` component
- * followed by `ws`, or a single `wss` component, names `wss` (the
- * client dials both forms — `isWSSAddr` reads either). When a
- * `p2p-circuit` is present, a `webrtc` or `webrtc-direct` component
- * after it names the upgraded transport with `path: 'direct'`;
- * otherwise the connection is still relayed through the base transport
- * and the path is `relay`.
+ * A circuit connection is named by what follows `p2p-circuit` first: a
+ * `webrtc` or `webrtc-direct` component names an upgraded transport
+ * with `path: 'direct'` and needs no base read. For a plain circuit
+ * (no component after `p2p-circuit`) the base transport comes from
+ * the relay hop's own components when that is a browser transport
+ * (webrtc-direct, wss); otherwise libp2p reuses the browser's open
+ * connection to the relay — whatever transport the relay hop names —
+ * so the caller passes the client's connection list and the relay
+ * peer's open connection's own transport names the base.
+ *
+ * No circuit: the base transport comes from the hop's own components
+ * (a `webrtc-direct` component names `webrtc-direct`; a `tls`
+ * component followed by `ws`, or a single `wss` component, names
+ * `wss` — the client dials both forms, `isWSSAddr` reads either).
  *
  * An address this function cannot name is a thrown error at the call,
  * not a `null` that hides a bug: the connection reached a state the
  * client did not expect, and the caller must surface it.
  */
-export function classifyConnectionAddr(ma: string): {
+export function classifyConnectionAddr(
+  ma: string,
+  connections?: readonly Connection[],
+): {
   transport: 'webrtc-direct' | 'webrtc' | 'wss';
   path: 'direct' | 'relay';
 } {
-  const names = multiaddr(ma).getComponents().map((c) => c.name);
+  const components = multiaddr(ma).getComponents();
+  const names = components.map((c) => c.name);
   const circuitIdx = names.indexOf('p2p-circuit');
   const before = circuitIdx === -1 ? names : names.slice(0, circuitIdx);
 
-  let base: 'webrtc-direct' | 'wss' | null = null;
-  if (before.includes('webrtc-direct')) base = 'webrtc-direct';
-  else if (before.includes('wss')) base = 'wss';
-  else {
-    const tlsIdx = before.indexOf('tls');
-    if (tlsIdx !== -1 && before[tlsIdx + 1] === 'ws') base = 'wss';
-  }
-  if (base === null) {
-    throw new Error(`cannot classify multiaddr base transport: ${ma}`);
-  }
+  const readBaseTransport = (slice: readonly string[]): 'webrtc-direct' | 'wss' | null => {
+    if (slice.includes('webrtc-direct')) return 'webrtc-direct';
+    if (slice.includes('wss')) return 'wss';
+    const tlsIdx = slice.indexOf('tls');
+    if (tlsIdx !== -1 && slice[tlsIdx + 1] === 'ws') return 'wss';
+    return null;
+  };
 
   if (circuitIdx === -1) {
+    const base = readBaseTransport(before);
+    if (base === null) {
+      throw new Error(`cannot classify multiaddr base transport: ${ma}`);
+    }
     return { transport: base, path: 'direct' };
   }
 
+  // Circuit present. What follows `p2p-circuit` decides first.
   const after = names.slice(circuitIdx + 1);
   if (after.includes('webrtc')) {
     return { transport: 'webrtc', path: 'direct' };
@@ -1345,7 +1354,33 @@ export function classifyConnectionAddr(ma: string): {
   if (after.includes('webrtc-direct')) {
     return { transport: 'webrtc-direct', path: 'direct' };
   }
-  return { transport: base, path: 'relay' };
+
+  // Plain circuit. The relay hop's own components when that is a
+  // browser transport; otherwise the client's open connection to the
+  // relay peer names the actual base transport.
+  const relayHopBase = readBaseTransport(before);
+  if (relayHopBase !== null) {
+    return { transport: relayHopBase, path: 'relay' };
+  }
+  if (connections !== undefined) {
+    const relayComp = components[circuitIdx - 1];
+    if (relayComp !== undefined && relayComp.name === 'p2p') {
+      const relayPeerIdStr = typeof relayComp.value === 'string'
+        ? relayComp.value
+        : String(relayComp.value ?? '');
+      if (relayPeerIdStr !== '') {
+        const relayConn = pickConnectionForLabel(connections, relayPeerIdStr);
+        if (relayConn !== null) {
+          const classifiedRelay = classifyConnectionAddr(
+            relayConn.remoteAddr.toString(),
+            connections,
+          );
+          return { transport: classifiedRelay.transport, path: 'relay' };
+        }
+      }
+    }
+  }
+  throw new Error(`cannot classify multiaddr base transport: ${ma}`);
 }
 
 /**
@@ -1382,7 +1417,7 @@ export function decorateEntries(
     const base: NodeEntry = conn === null
       ? { ...e, transport: null, path: null }
       : (() => {
-        const { transport, path } = classifyConnectionAddr(conn.remoteAddr.toString());
+        const { transport, path } = classifyConnectionAddr(conn.remoteAddr.toString(), connections);
         return { ...e, transport, path };
       })();
     if (metrics === undefined) return base;

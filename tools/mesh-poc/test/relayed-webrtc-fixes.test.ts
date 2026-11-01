@@ -283,6 +283,46 @@ describe('classifyConnectionAddr reads transport/path from the multiaddr\'s comp
     const ma = `/ip4/11.100.0.11/tcp/9999/p2p/${TARGET}`;
     expect(() => classifyConnectionAddr(ma)).toThrow();
   });
+
+  // MESH_INTERFACE → NAT → "A relay carries data" / Transports — libp2p
+  // reuses the browser's open connection to the relay, whatever
+  // transport the relay hop names: a private node's addresses from the
+  // DHT list the relay's TCP listen among its hops, so a relayed
+  // connection to the private node may carry `/tcp/` before
+  // `/p2p-circuit/`. The classifier reads what follows `p2p-circuit`
+  // first (`webrtc` → `{ webrtc, direct }`), so the base transport need
+  // not be classifiable here.
+  it('a relayed WebRTC connection over a TCP hop classifies as { webrtc, direct }', () => {
+    const ma = `/ip4/11.100.0.11/tcp/4002/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`;
+    expect(classifyConnectionAddr(ma)).toEqual({ transport: 'webrtc', path: 'direct' });
+  });
+
+  // MESH_INTERFACE → NAT / Transports — a plain circuit whose relay
+  // hop is TCP has no browser-transport components in its own slice;
+  // the actual transport is whatever connection the client holds to
+  // the relay peer. The caller passes the client's connection list;
+  // the classifier reads the relay peer's open connection's
+  // transport and keeps `path: 'relay'`.
+  it('a plain circuit over a TCP hop takes the relay-peer connection\'s transport with path: relay', () => {
+    const ma = `/ip4/11.100.0.11/tcp/4002/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`;
+    const relayConn = {
+      status: 'open', direct: true, limits: undefined,
+      remoteAddr: { toString: () => `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}` },
+      remotePeer: { toString: () => RELAY },
+    } as unknown as Connection;
+    expect(classifyConnectionAddr(ma, [relayConn])).toEqual({ transport: 'webrtc-direct', path: 'relay' });
+  });
+
+  it('a plain circuit over a TCP hop with no connections list throws', () => {
+    const ma = `/ip4/11.100.0.11/tcp/4002/p2p/${RELAY}/p2p-circuit/p2p/${TARGET}`;
+    expect(() => classifyConnectionAddr(ma)).toThrow();
+  });
+
+  it('a relayed WebRTC over a TCP hop does not need the connections list', () => {
+    // What follows p2p-circuit decides first — no connection list read.
+    const ma = `/ip4/11.100.0.11/tcp/4002/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${TARGET}`;
+    expect(classifyConnectionAddr(ma, [])).toEqual({ transport: 'webrtc', path: 'direct' });
+  });
 });
 
 // --- pickConnectionForLabel ---------------------------------------------
@@ -559,6 +599,47 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
       remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}/p2p-circuit/p2p/${aaPeerString}`,
     });
     const [decorated] = decorateEntries([entry({ notisId: AA_NOTIS })], [conn]);
+    expect(decorated).toMatchObject({ transport: 'webrtc-direct', path: 'relay' });
+  });
+
+  // MESH_INTERFACE → NAT / Transports — a private node from the DHT
+  // may list TCP relay hops among its addresses: libp2p reuses the
+  // browser's open connection to the relay (whatever transport the
+  // hop names), so a relayed WebRTC to the private node may carry a
+  // `/tcp/` before `/p2p-circuit/webrtc/`. The classifier reads what
+  // follows `p2p-circuit` first and never looks at the base, so
+  // `decorateEntries` does not throw for this shape.
+  it('a relayed WebRTC connection whose relay hop is TCP decorates as { webrtc, direct } without throwing', () => {
+    const aaPeerString = peerIdFor(AA_NOTIS);
+    const conn = fakeConn({
+      status: 'open', direct: true, limited: false,
+      peerIdString: aaPeerString,
+      remoteAddr: `/ip4/11.100.0.11/tcp/4002/p2p/${RELAY}/p2p-circuit/webrtc/p2p/${aaPeerString}`,
+    });
+    expect(() => decorateEntries([entry({ notisId: AA_NOTIS })], [conn])).not.toThrow();
+    const [decorated] = decorateEntries([entry({ notisId: AA_NOTIS })], [conn]);
+    expect(decorated).toMatchObject({ transport: 'webrtc', path: 'direct' });
+  });
+
+  // MESH_INTERFACE → NAT / Transports — a plain circuit over a TCP
+  // hop: the connection the client holds to the relay peer names
+  // the actual transport. `decorateEntries` passes its connections
+  // list through, so the classifier reads the relay's open
+  // connection and keeps `path: 'relay'`.
+  it('a plain circuit over a TCP hop decorates with the relay connection\'s transport, path: relay', () => {
+    const aaPeerString = peerIdFor(AA_NOTIS);
+    const circuitConn = fakeConn({
+      status: 'open', direct: false, limited: false,
+      peerIdString: aaPeerString,
+      remoteAddr: `/ip4/11.100.0.11/tcp/4002/p2p/${RELAY}/p2p-circuit/p2p/${aaPeerString}`,
+    });
+    const relayConn = fakeConn({
+      status: 'open', direct: true, limited: false,
+      peerIdString: RELAY,
+      remoteAddr: `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${RELAY}`,
+    });
+    expect(() => decorateEntries([entry({ notisId: AA_NOTIS })], [circuitConn, relayConn])).not.toThrow();
+    const [decorated] = decorateEntries([entry({ notisId: AA_NOTIS })], [circuitConn, relayConn]);
     expect(decorated).toMatchObject({ transport: 'webrtc-direct', path: 'relay' });
   });
 });
