@@ -42,7 +42,7 @@ function result(nodes: NodeTipResult[], splits: TipResult['splits'] = []): TipRe
 }
 
 describe('agreementCounts', () => {
-  it.fails('counts agreeing, agreeing anchors, and verified nodes off the tip suffix', () => {
+  it('counts agreeing, agreeing anchors, and verified nodes off the tip suffix', () => {
     // Five nodes:
     // - idA (anchor): winner, behind = 0 → agreeing (anchor)
     // - idB (anchor): tied at behind = 0 → agreeing (anchor)

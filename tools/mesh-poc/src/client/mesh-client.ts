@@ -513,6 +513,10 @@ class MeshClientImpl implements MeshClient {
         this.nodeList.success(ev.id);
         this.latestEventReason.set(ev.id, 'success');
         break;
+      case 'trailing':
+        this.nodeList.trailing(ev.id);
+        this.latestEventReason.set(ev.id, 'trailing');
+        break;
       case 'behind':
         this.nodeList.behind(ev.id);
         this.latestEventReason.set(ev.id, 'behind');
@@ -524,9 +528,6 @@ class MeshClientImpl implements MeshClient {
       case 'lie':
         this.nodeList.lie(ev.id, ev.evidence);
         this.latestEventReason.set(ev.id, `lie: ${ev.evidence.kind}`);
-        break;
-      case 'trailing':
-        // The trailing event is handled with its test cases.
         break;
     }
   }

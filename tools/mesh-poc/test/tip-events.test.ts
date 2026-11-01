@@ -48,7 +48,7 @@ describe('tipEvents', () => {
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'success' }]);
   });
 
-  it.fails('a tie with the winner is success, not behind', () => {
+  it('a tie with the winner is success, not behind', () => {
     // MESH_INTERFACE → The client's node list — "A valid proof whose
     // tip is the tip — the best verified proof's, a tie included"
     // reads `ok`. `resolveTip` writes `behind === 0` for every
@@ -68,7 +68,7 @@ describe('tipEvents', () => {
     ]);
   });
 
-  it.fails('one block behind on the tip chain is trailing', () => {
+  it('one block behind on the tip chain is trailing', () => {
     const r = result(
       [
         node(idA, { verified: true, refuseCode: null, behind: 0 }),

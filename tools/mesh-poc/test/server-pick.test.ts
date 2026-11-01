@@ -23,7 +23,7 @@ const idB = 'b'.repeat(64);
 const idC = 'c'.repeat(64);
 
 describe('pickServer', () => {
-  it.fails('a tip read picks only ok nodes', () => {
+  it('a tip read picks only ok nodes', () => {
     // trailing is fast (10ms), ok is slow (100ms); a tip read still
     // picks the ok one — trailing is not allowed under 'tip'.
     const nodes: PickCandidate[] = [
@@ -36,7 +36,7 @@ describe('pickServer', () => {
     }
   });
 
-  it.fails('an older read may pick a trailing node', () => {
+  it('an older read may pick a trailing node', () => {
     const nodes: PickCandidate[] = [
       cand(idA, { status: 'ok', readMs: 10 }),
       cand(idB, { status: 'trailing', readMs: 15 }),
@@ -64,7 +64,7 @@ describe('pickServer', () => {
     }
   });
 
-  it.fails('picks spread across the fast set', () => {
+  it('picks spread across the fast set', () => {
     // All three within the fast bound (readMs 10, 15, 20; min = 10,
     // bound = 70). A rand sweep over [0, 1) must hit all three ids.
     const nodes: PickCandidate[] = [
@@ -80,7 +80,7 @@ describe('pickServer', () => {
     expect(seen).toEqual(new Set([idA, idB, idC]));
   });
 
-  it.fails('unknown readMs everywhere spreads uniformly over the allowed', () => {
+  it('unknown readMs everywhere spreads uniformly over the allowed', () => {
     // Review Focus 4 — first check, or every proof read failed: no
     // allowed node has a `readMs`. The fast set is every allowed; the
     // pick never answers `null` while one is allowed.
@@ -102,7 +102,7 @@ describe('pickServer', () => {
     expect(seenOlder).toEqual(new Set([idA, idB, idC]));
   });
 
-  it.fails('an unusable node is never picked; none usable answers null', () => {
+  it('an unusable node is never picked; none usable answers null', () => {
     const nodes: PickCandidate[] = [
       cand(idA, { status: 'ok', readMs: 10, usable: false }),
       cand(idB, { status: 'ok', readMs: 20, usable: true }),

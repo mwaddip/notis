@@ -202,19 +202,56 @@ export class NodeList {
 
   /**
    * MESH_INTERFACE → The client's node list → "A node added by hand" —
-   * stub: the real rule lands with the test cases that pin it.
+   * the reader may add a node by its key and an address. A new entry
+   * gets `anchor = trusted`, `byHand = true`; an existing one merges
+   * the addresses, sets `byHand = true`, and `anchor ||= trusted`; a
+   * `blacklisted` one is unchanged. The addresses are added to
+   * `configured` for the gater (→ Transports → "A client dials a
+   * private address only when its own configuration names it"). The
+   * key check is `add`'s (64 lowercase hex); the address checks (DNS,
+   * `/webrtc-direct/`) are the client's, not the list's.
    */
-  addByHand(_id: string, _addrs: string[], _trusted: boolean): void {
-    throw new Error('addByHand: not implemented');
+  addByHand(id: string, addrs: string[], trusted: boolean): void {
+    assertNotisId(id);
+    const existing = this.entries_.get(id);
+    if (existing) {
+      if (existing.status === 'blacklisted') return;
+      this.mergeAddrs(existing, addrs);
+      this.mergeConfigured(existing, addrs);
+      existing.byHand = true;
+      existing.anchor = existing.anchor || trusted;
+      return;
+    }
+    this.entries_.set(id, {
+      notisId: id,
+      anchor: trusted,
+      byHand: true,
+      status: 'new',
+      failures: 0,
+      clockAtFailure: 0,
+      storedRetryAtMs: 0,
+      addrs: [...addrs],
+      configured: [...addrs],
+      droppedAddrs: [],
+      evidence: null,
+      lastFailure: null,
+      lastFailures: {},
+    });
   }
 
   /**
    * MESH_INTERFACE → The client's node list → "A node added by hand"
-   * — stub answering the empty list; the real reader lands with the
-   * test cases that pin it.
+   * — the addresses the client's own configuration names for the key:
+   * an anchor's given addresses and those entered by hand, never one
+   * merged from the DHT or a seed. An id the list does not hold reads
+   * as the empty list — the gater is a hot path where every dial asks
+   * about addresses the list may never have seen.
    */
-  configuredAddrs(_id: string): string[] {
-    return [];
+  configuredAddrs(id: string): string[] {
+    assertNotisId(id);
+    const e = this.entries_.get(id);
+    if (!e) return [];
+    return [...e.configured];
   }
 
   success(id: string): void {
@@ -284,15 +321,18 @@ export class NodeList {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list — stub for the "one block
-   * behind on the tip's chain" row; the real rule lands with the test
-   * cases that pin it. The unknown-id guard runs first so a wrong-id
-   * caller sees the same error shape every other event method has.
+   * MESH_INTERFACE → The client's node list — the "one block behind on
+   * the tip's chain" row. Mirrors `behind`: resets the retry schedule
+   * and the failure count, leaves evidence and dropped addresses
+   * alone, and a `blacklisted` entry is unchanged.
    */
   trailing(id: string): void {
     assertNotisId(id);
-    this.unknown('trailing', id);
-    throw new Error('trailing: not implemented');
+    const e = this.unknown('trailing', id);
+    if (e.status === 'blacklisted') return;
+    e.failures = 0;
+    e.storedRetryAtMs = 0;
+    e.status = 'trailing';
   }
 
   wrongKey(id: string, addr: string, _answeredId: string | null): void {
@@ -335,32 +375,36 @@ export class NodeList {
 
   /**
    * `anchorReached` is true while some anchor's latest event is an answer it
-   * could check — a success, or a valid proof that is behind
-   * (MESH_INTERFACE → No anchor reached). The status captures the latest
-   * event; `ok` or `behind` means the anchor was reached. The `trailing`
-   * row lands with the test cases that pin it.
+   * could check — a success, a valid proof one block behind, or a valid
+   * proof further behind (MESH_INTERFACE → No anchor reached). The status
+   * captures the latest event; `ok`, `trailing` or `behind` means the
+   * anchor was reached.
    */
   anchorReached(): boolean {
     for (const e of this.entries_.values()) {
-      if (e.anchor && (e.status === 'ok' || e.status === 'behind')) return true;
+      if (e.anchor && (e.status === 'ok' || e.status === 'trailing' || e.status === 'behind')) return true;
     }
     return false;
   }
 
   /**
-   * Ordering: `ok`, then `behind`, then nodes not yet tried, then `retry`
-   * nodes whose time has come; never a `blacklisted` node
-   * (MESH_INTERFACE → The client's node list, Candidates). The `trailing`
-   * row lands with the test cases that pin it.
+   * Ordering: `ok`, `trailing`, `behind`, nodes not yet tried, then
+   * `retry` nodes whose time has come; never a `blacklisted` node
+   * (MESH_INTERFACE → The client's node list → "Candidates"). Inside a
+   * group the Map's insertion order answers "first known", with anchors
+   * in their given order first because the constructor inserts them
+   * before any `add`.
    */
   candidates(): string[] {
     const ok: string[] = [];
+    const trailing: string[] = [];
     const behind: string[] = [];
     const fresh: string[] = [];
     const retry: string[] = [];
     const now = this.clock();
     for (const e of this.entries_.values()) {
       if (e.status === 'ok') ok.push(e.notisId);
+      else if (e.status === 'trailing') trailing.push(e.notisId);
       else if (e.status === 'behind') behind.push(e.notisId);
       else if (e.status === 'new') fresh.push(e.notisId);
       else if (e.status === 'retry') {
@@ -368,7 +412,7 @@ export class NodeList {
       }
       // `blacklisted` is dropped: never a candidate.
     }
-    return [...ok, ...behind, ...fresh, ...retry];
+    return [...ok, ...trailing, ...behind, ...fresh, ...retry];
   }
 
   /**

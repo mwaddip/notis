@@ -103,7 +103,7 @@ describe('node-list', () => {
     expect(after.droppedAddrs).toContain(a1);
   });
 
-  it.fails('candidates order ok, trailing, behind, new, retry-due', () => {
+  it('candidates order ok, trailing, behind, new, retry-due', () => {
     // MESH_INTERFACE → The client's node list → "Candidates" — the
     // one order every pick walks: `ok`, `trailing`, `behind`, nodes
     // not yet tried, then `retry` nodes whose time has come.
@@ -131,14 +131,14 @@ describe('node-list', () => {
     expect(list.candidates()).toEqual([idA, idB, idC, idD, idE]);
   });
 
-  it.fails('a trailing anchor counts as reached', () => {
+  it('a trailing anchor counts as reached', () => {
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => 0);
     expect(list.anchorReached()).toBe(false);
     list.trailing(idA);
     expect(list.anchorReached()).toBe(true);
   });
 
-  it.fails('a hand-added trusted node is an anchor; untrusted is not', () => {
+  it('a hand-added trusted node is an anchor; untrusted is not', () => {
     // MESH_INTERFACE → The client's node list → "A node added by hand"
     // — "It is an anchor unless the reader adds it as an ordinary
     // candidate".
@@ -169,7 +169,7 @@ describe('node-list', () => {
     expect(list2.anchorReached()).toBe(false);
   });
 
-  it.fails('a hand-added node caught lying is blacklisted and stops counting as reached', () => {
+  it('a hand-added node caught lying is blacklisted and stops counting as reached', () => {
     const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
     const list = new NodeList([], own, () => 0);
     list.addByHand(idA, [addr], true);

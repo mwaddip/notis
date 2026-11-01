@@ -29,9 +29,8 @@ export type TipEvent =
 
 export function tipEvents(r: TipResult, nowMs: number): TipEvent[] {
   const out: TipEvent[] = [];
-  for (let i = 0; i < r.nodes.length; i += 1) {
-    const node = r.nodes[i]!;
-    out.push(eventFor(idOfMeshUrl(node.url), node, i === r.winnerIndex, nowMs));
+  for (const node of r.nodes) {
+    out.push(eventFor(idOfMeshUrl(node.url), node, nowMs));
   }
   return out;
 }
@@ -57,9 +56,19 @@ function idOfMeshUrl(url: string): string {
   return id;
 }
 
-function eventFor(id: string, node: NodeTipResult, isWinner: boolean, nowMs: number): TipEvent {
+function eventFor(id: string, node: NodeTipResult, nowMs: number): TipEvent {
   if (node.verified) {
-    return isWinner ? { id, ev: 'success' } : { id, ev: 'behind' };
+    // MESH_INTERFACE → The client's node list — "A valid proof whose
+    // tip is the tip — the best verified proof's, a tie included" is
+    // `ok`; `behind === 0` is that condition over `TipResult`'s
+    // `behind` (the winner itself and every verified node whose tip
+    // the winner's suffix carries at distance 0). "One block short of
+    // the tip, on the tip's chain" is trailing. Any other verified
+    // node — further behind, or off the winner's suffix (`behind` is
+    // `null`) — is `behind`.
+    if (node.behind === 0) return { id, ev: 'success' };
+    if (node.behind === 1) return { id, ev: 'trailing' };
+    return { id, ev: 'behind' };
   }
   const detail = node.refuseReason ?? '';
   switch (node.refuseCode) {
