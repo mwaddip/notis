@@ -68,15 +68,16 @@ refused, whatever certificate it holds.
 **The WebRTC-direct certificate persists** in the node's state directory. Its hash is part of the address an anchor
 lists, so a new certificate at a restart would leave every anchor naming the node unreachable.
 
-**A browser client dials a private address only when the reader entered it.** libp2p's default connection gater in a
+**A client dials a private address only when its own configuration names it.** libp2p's default connection gater in a
 browser refuses every address in a private or reserved range (`10.0.0.0/8`, `100.64.0.0/10`, `192.168.0.0/16`, the
-documentation ranges and the rest of its list). The client keeps that refusal for every private address but one the
-reader entered by hand, and that one for the key it was entered with alone (→ Discovery → "A node added by hand"). A
-remote node cannot know what is on the reader's network, so a private address it offers — through the DHT, a peer list
-or a seed — is never dialled, and a page cannot be made to probe its own network.
+documentation ranges and the rest of its list). The client runs its own gater, the same in every runtime: it refuses
+every private address but those its own configuration names for a key — an anchor's, or one the reader entered by hand
+(→ Discovery → "A node added by hand") — each for that key alone. A remote node cannot know what is on the reader's
+network, so a private address it offers — through the DHT, a peer list or a seed — is never dialled, and a page cannot
+be made to probe its own network.
 
 > ⚠ **AHEAD OF CODE (2026-11-01).** the client builds libp2p with its default gater, which refuses every private
-> address.
+> address in a browser and none on Node.js.
 
 **Plain `ws://` is no browser path**: a browser client's home is a secure context. **WebTransport is not used**:
 js-libp2p's WebTransport does not listen on Node.js, and a Notis node is Node.js.
@@ -137,10 +138,11 @@ anchor, and no answer from it makes `anchorReached` true. The same refusals hold
 anchor's.
 
 **A node added by hand.** The reader may add a node by its key and an address, a private one included. It is an anchor
-unless the reader adds it as an ordinary candidate; its address passes the client's gater for that key alone
-(→ Transports). A key that is not 64 lowercase hex, an address with a `/dns4/`, `/dns6/` or `/dnsaddr/` component, or
-one without `/webrtc-direct/` is refused. A private node prints its local WebRTC-direct address with its key, for its
-operator to hand over, and announces it to no one (→ NAT).
+unless the reader adds it as an ordinary candidate; its address passes the client's gater for that key alone (→
+Transports → "A client dials a private address only when its own configuration names it"). A key that is not 64
+lowercase hex, an address with a `/dns4/`, `/dns6/` or `/dnsaddr/` component, or one without `/webrtc-direct/` is
+refused. A private node prints its local WebRTC-direct address with its key, for its operator to hand over, and
+announces it to no one (→ NAT).
 
 > ⚠ **AHEAD OF CODE (2026-11-01).** the client takes anchors and seeds at start alone; a private node prints its key
 > alone.
