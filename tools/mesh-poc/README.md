@@ -3,7 +3,7 @@
 A browser page reaches a Notis node's HTTP API **by the node's Ed25519 key**, over libp2p, from a
 handful of anchors and **no DNS name**, with mesh nodes sitting beside unmodified devnet
 `@dagsocial/node`s — the client's answer is the node's own, byte for byte. The stage runs the whole
-machinery inside Linux network namespaces on one host and the six scenarios in
+machinery inside Linux network namespaces on one host and the seven scenarios in
 `MESH_INTERFACE → Acceptance` drive it from the browser's side.
 
 ## Threat model
@@ -26,12 +26,13 @@ reaching the inviter by key — are later work; they are not here.
 | 2 | A client refuses an anchor address with a `/dns4/`, `/dns6/` or `/dnsaddr/` component. | `MESH_INTERFACE → Discovery → "Anchors."` |
 | 3 | A browser dials a public node over WebRTC-direct; the address carries the certificate's hash. | `MESH_INTERFACE → Transports` |
 | 4 | A browser reaches a private node over WebRTC signalled through a circuit relay. | `MESH_INTERFACE → NAT` |
-| 5 | A relay carries signalling, not data — the API stream never rides a relayed link. | `MESH_INTERFACE → NAT → "A relay carries signalling, not data."` |
+| 5 | A relay carries data — a node a client has no direct path to is reached through the relay, data relayed, with no limit. | `MESH_INTERFACE → NAT → "A relay carries data"` |
 | 6 | Every link is authenticated by the key it was dialled for; a key mismatch is refused at the link. | `MESH_INTERFACE → Transports → "Every link is authenticated by the key it was dialled for."` |
 | 7 | A page under UDP-blocked conditions moves to secure WebSocket on an opted-in node's bare-IP certificate. | `MESH_INTERFACE → The IP certificate` |
-| 8 | Every STUN server is a mesh node named by IP, never a hostname. | `MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by IP"` |
+| 8 | Every STUN server is a mesh node named by IP, drawn from the public nodes the client holds. | `MESH_INTERFACE → NAT → "A client's STUN list comes from the public nodes it holds"` |
 | 9 | With no anchor reached, the page says, in these words: `No anchor reached. Nothing shown here is verified.` | `MESH_INTERFACE → No anchor reached` |
 | 10 | Malformed and invalid proofs blacklist with their evidence; a valid proof of a lighter chain reads `behind`. | `MESH_INTERFACE → The client's node list` |
+| 11 | A node added by the reader by hand is dialled at its private address; a remote node offering a private address is refused. | `MESH_INTERFACE → Discovery → "A node added by hand"` |
 
 **Non-goals** — these are out of scope: multi-hop routing, DMs, node identities on chain and
 vouches, ranking by vouches, a remembered tip, any change to the node, the extension or the
@@ -72,6 +73,7 @@ symmetric sub-segments (`stage/topology.json`):
 | priv2 | private mesh node + Notis node behind natB | `10.102.0.11` |
 | natC | endpoint-independent NAT router (public `11.100.0.103`, inside `10.103.0.0/24`) | — |
 | browser | Chromium under `--host-resolver-rules=MAP * ~NOTFOUND` behind natC | `10.103.0.11` |
+| lan1 | private mesh node + Notis node beside the browser, on natC's inside bridge | `10.103.0.21` |
 
 ### What the stage needs
 
@@ -108,7 +110,7 @@ timeout 10m  pnpm -r build
 timeout  5m  pnpm --filter @dagsocial/mesh-poc page:build
 
 timeout 20m  pnpm --filter @dagsocial/mesh-poc stage:up
-timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # or stage:run s1 s2 ... s6
+timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # or stage:run s1 s2 ... s7
 timeout  1m  pnpm --filter @dagsocial/mesh-poc stage:report
 timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
 ```
@@ -136,7 +138,7 @@ timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
   `stage up: <N> processes, <M> namespaces`. On failure it rolls back exactly what it created
   (SIGTERMs each recorded PID, deletes each namespace in reverse order, removes
   `/etc/netns/notismesh-*`).
-- **`stage:run [s1 ... s6]`** runs the named scenarios in the order given (default: all six).
+- **`stage:run [s1 ... s7]`** runs the named scenarios in the order given (default: all seven).
   Writes `stage/out/scenarios/<name>.json` per scenario: `{ scenario, startedAt, endedAt, steps,
   faults }`, each step `{ name, verdict, measurement, timeMs }`. **A step that times out or throws
   is `FAIL`; the scenario's faults are removed and the run goes on. A step that did not run reads
@@ -183,7 +185,7 @@ only `stage/out/pids.json`** — every other file under `stage/out/` stays, for 
 over after a run; the next `stage:up` rotates the whole `stage/out/` directory to
 `stage/out.prev/` (replacing any older `.prev`) at its start.
 
-## The six scenarios
+## The seven scenarios
 
 Each scenario's step list is `verdicts.mjs`'s rules in order. A `PASS` requires **positive
 evidence**: a vacuous read (no connection, no measurement) is never a pass. A step reads `skipped`
@@ -218,20 +220,19 @@ Two sub-steps, each with its own `config.json` variant written at start.
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
-| 1 | `priv1 (endpoint-independent NAT) answers over relayed WebRTC` | priv1's `nodes[]` entry reads `status` ok or behind (both say a checked answer came back; `behind` is ranking, not reach), its entry `transport === 'webrtc'` and `path === 'direct'`, the single anchor address names `/p2p-circuit/webrtc`, and every ICE server (if any) is `stun:<ip>:<port>`. `nodeIdInUse` is recorded alongside, not a condition. | priv1 at `retry`, `blacklisted` or `new`; entry `transport` not `webrtc`; entry `path` not `direct`; a STUN URL naming a host. |
-| 2 | `priv2 (symmetric NAT) stays retry with a failure, the client stays on another node` | priv2's entry reads `status === 'retry'` and `failures ≥ 1`; priv2 is never `blacklisted` at any poll; the page's `nodeId` at the end names a node other than priv2 and is not null. | priv2 `blacklisted` at any poll; the page stuck on priv2; priv2 at `ok`. |
+| 1 | `priv1 (endpoint-independent NAT) answers over relayed WebRTC` | priv1's `nodes[]` entry reads `status` ok, trailing or behind (all three say a checked answer came back; `trailing` and `behind` are ranking, not reach), its entry `transport === 'webrtc'` and `path === 'direct'`, the single anchor address names `/p2p-circuit/webrtc`, and every ICE server is `stun:<ip>:<port>` drawn from the public nodes the client holds (the relay hop among them, since the config carries no `stunServers` key). `nodeIdInUse` is recorded alongside, not a condition. | priv1 at `retry`, `blacklisted` or `new`; entry `transport` not `webrtc`; entry `path` not `direct`; a STUN URL naming a host. |
+| 2 | `priv2 (symmetric NAT) is reached through a relay that carries its data` | priv2's entry reads `status` ok or trailing, its entry `path === 'relay'`, and the latest routed read landed on priv2 (`latestReadNodeId === expectedNodeId`); priv2 is never `blacklisted` at any poll. | priv2 at `retry`, `blacklisted` or `behind`; path `direct`; the latest routed read landed on another node. |
 
-**A private node with no direct path to the client reads `retry`, and the client stays on a node
-it reaches** (`MESH_INTERFACE → NAT → "A relay carries signalling, not data."`): the relay carries
-signalling, not data, so a symmetric-NAT node whose WebRTC data path cannot be opened is `retry`
-on growing intervals (`RETRY_BASE_MS` 5 000 ms doubling to `RETRY_CAP_MS` 600 000 ms), never
-permanent and never silently served over the relay.
+**A relay carries data** (`MESH_INTERFACE → NAT → "A relay carries data"`): a node with no direct
+path to a client — a node behind a symmetric NAT, for a client behind a NAT of its own — is
+reached through a relay, data relayed, with no byte or duration limit on the circuit. A relayed
+link is authenticated end to end by the key it was dialled for (`MESH_INTERFACE → Transports →
+"Every link is authenticated by the key it was dialled for."`), so the relay can block what it
+carries, never read or forge it.
 
-**What a tester reports even on PASS:** `everInUse: true` in the record — the page's `nodeId`
-ever named priv2 inside the window. Over WebRTC it means the symmetric NAT was punched (worth
-knowing, since a different NAT or a kernel update could change that); over a plain relayed
-address it would mean the API stream rode a limited relayed link, which
-`MESH_INTERFACE → NAT → "A relay carries signalling, not data."` forbids.
+**What a tester reports even on PASS:** the entry's `path` on priv2 — a `direct` reading there
+means the symmetric NAT happened to be punched (worth knowing, since a different NAT or a kernel
+update could change that), but the acceptance line names a relayed path.
 
 ### s3 — A node goes away (`MESH_INTERFACE → Acceptance 3`)
 
@@ -240,10 +241,10 @@ the retry cadence by hand.
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
-| 1 | `pub1 stopped: client moves to another node within 2 checks, pub1 retry` | pub1's entry reads `retry`; the page's `nodeId` is not pub1 (if the page was on pub1) and not null; movement within `2 · CHECK_INTERVAL_MS`. | pub1 `blacklisted`; the page stuck on pub1; no movement past two checks. |
-| 2 | `pub1 restarted: pub1 reads ok at a later check` | pub1 at `ok` with the restarted PID; measurement carries `recoveryTimeMs`. | pub1 stays `retry` past 180 s; pub1 never comes back. |
+| 1 | `pub1 stopped: client moves to another node within 2 checks, pub1 retry` | pub1's entry reads `retry`; the latest routed read (`state.nodeId`) is not pub1 and not null; movement within `2 · CHECK_INTERVAL_MS`. | pub1 `blacklisted`; routed reads stuck on pub1; no movement past two checks. |
+| 2 | `pub1 restarted: pub1 reads at or one block short of the tip at the next completed check` | After waiting until pub1's own `/blocks/current` is within one block of pub2's, the next completed check reads pub1 as `ok` with `behindBy === 0`, or `trailing` with `behindBy === 1`; `recoveryTimeMs` is recorded. | pub1 `retry` or `blacklisted` at the check; `ok` with a non-zero `behindBy`; `trailing` with any other distance. |
 | 3 | `pub1 firewalled: client moves to another node within 2 checks, pub1 retry` | Same as step 1, with nft rules dropping UDP/TCP to pub1's mesh listener in pub1's namespace. | As step 1. |
-| 4 | `pub1 unfirewalled: pub1 reads ok at a later check` | Same as step 2. | As step 2. |
+| 4 | `pub1 unfirewalled: pub1 reads at or one block short of the tip at the next completed check` | Same as step 2. | As step 2. |
 
 **What a tester reports even on PASS:** pub1 reaching `blacklisted` at any point — a timeout, a
 refused connection, a dropped link or a non-2xx is `retry`, never permanent
@@ -292,6 +293,28 @@ Two sub-steps.
 **What a tester reports even on PASS:** the hostile-lagging node at `blacklisted` at any point —
 a timeout, a refused connection, a dropped link or a non-2xx is `retry`, and a valid proof of a
 lighter chain is `behind`; neither is `blacklisted` (`MESH_INTERFACE → The client's node list`).
+
+### s7 — Reach and load (`MESH_INTERFACE → Acceptance 7`)
+
+Four sub-steps that drive routed reads, a slowed node, a node on the browser's own network and
+the agreement counts.
+
+| # | Step | Pass condition | What breaks it |
+|---|---|---|---|
+| 1 | `older reads spread across ≥ 2 nodes; tip reads only on ok nodes` | `?reads=20&need=older` names at least two distinct serving nodes; every tip read from `?reads=10&need=tip` was served by a node reading `ok` at that read. | Older reads all on one node; a tip read served by a node not `ok` at that read. |
+| 2 | `pub2 delayed 200ms serves no read` | A `tc qdisc add dev <pub2 outside peer> root netem delay 200ms` is applied inside `notismesh-pub2`; after one completed check `?reads=20&need=older` names no read served by pub2. | Any read served by pub2 after the delay lands. |
+| 3 | `lan1 is never dialled from a seed; by hand it is reached, anchorReached follows the trusted flag` | Three phases: (a) with lan1 named only as a seed, over two completed checks lan1 never holds a connection AND lan1's mesh log holds no inbound from `10.103.0.11`; (b) with no anchors and `byHand: [lan1, trusted:true]`, lan1 reads `ok` or `trailing` over `webrtc-direct`, `path: direct`, `anchorReached: true`; (c) the same with `trusted: false` → `anchorReached: false`. | A connection to lan1 in the seed phase; a dial from the browser logged on lan1's mesh node; a hand-added `anchorReached` reading other than the trusted flag's value. |
+| 4 | `the agreement counts hold agreeing ≥ 2 and agreeingAnchors ≥ 1` | After a completed check on the stage default: `state.agreement.agreeing ≥ 2` AND `state.agreement.agreeingAnchors ≥ 1`. | A count below either threshold; a check that never completed (`agreement: null`). |
+
+**A node on the browser's own network comes in by the reader's hand**
+(`MESH_INTERFACE → Discovery → "A node added by hand"`): the client dials a private address only
+when the reader entered it; a private address a remote node offers through the DHT, a peer list
+or a seed is refused.
+
+**STUN by default** (`MESH_INTERFACE → NAT → "A node's role is its operator's setting"`): a
+public node runs a STUN server on `STUN_PORT` at the IP of its first WebRTC-direct listen
+address unless its operator names another or turns it off; the client's ICE list is derived
+from the public nodes it holds.
 
 ## Firefox by hand
 
