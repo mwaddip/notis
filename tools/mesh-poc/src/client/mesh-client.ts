@@ -562,11 +562,11 @@ class MeshClientImpl implements MeshClient {
     // Phase 3: each node in the result earns an event through `tipEvents`;
     // apply them and record their reasons. Record `behind` per node into
     // the pending map, then swap both maps in at once — the live maps
-    // move only when the check's new values are complete.
+    // move only when the check's new values are complete. Every URL
+    // here is a `meshBaseUrl(id)` from phase 2, so `idOfMeshUrl`
+    // throwing would be a bug upstream and the throw propagates.
     for (const node of result.nodes) {
-      try {
-        pendingBehindBy.set(idOfMeshUrl(node.url), node.behind);
-      } catch { /* an unparseable URL is a bug upstream; skip */ }
+      pendingBehindBy.set(idOfMeshUrl(node.url), node.behind);
     }
     this.readMsMap = pendingReadMs;
     this.behindByMap = pendingBehindBy;
@@ -634,11 +634,13 @@ class MeshClientImpl implements MeshClient {
   private makeTimedFetch(target: Map<string, number>): HttpFetch {
     return async (url, init) => {
       const startMs = this.clock();
-      let id: string | null = null;
-      try { id = idOfMeshUrl(url); } catch { /* non-mesh URL — never from resolveTip */ }
+      // The URL is a `meshBaseUrl(id)` + path from `resolveTip`'s
+      // candidates — `idOfMeshUrl` throwing here is a bug upstream, so
+      // the throw propagates.
+      const id = idOfMeshUrl(url);
       const response = await this.fetch(url, init);
-      if (id === null || !response.body) {
-        if (id !== null) target.set(id, this.clock() - startMs);
+      if (!response.body) {
+        target.set(id, this.clock() - startMs);
         return response;
       }
       const original = response.body;

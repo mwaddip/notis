@@ -1441,6 +1441,34 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.agreement!.notAgreeing).toBe(0);
   }, 90_000);
 
+  it('a non-mesh URL in the resolve httpFetch surfaces as MeshUrlError', async () => {
+    // MESH_INTERFACE → The node endpoint — every URL `resolveTip` reads
+    // through `timedFetch` is `meshBaseUrl(id)`, so `idOfMeshUrl`
+    // throwing on it would be a bug upstream. The current catch
+    // swallows the throw and lets `this.fetch` throw a `MeshFetchError`
+    // further down, hiding the original bug; with the catch dropped,
+    // the `MeshUrlError` from `idOfMeshUrl` surfaces to the caller
+    // intact.
+    let caught: unknown;
+    const probingResolve: typeof import('@dagsocial/nipopow-client').resolveTip =
+      async (_urls, _m, _k, _profile, _wall, httpFetch) => {
+        try {
+          await httpFetch('http://not-a-mesh-url/', undefined);
+        } catch (e) { caught = e; }
+        return { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
+      };
+    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+    const client = await startMeshClient({
+      anchors: [{ notisId: anchorKey.notisId, addrs: [] }],
+      network: 'devnet', profile: PROFILE, stunServers: [],
+      resolve: probingResolve,
+    });
+    clients.push(client);
+    await client.check();
+    expect(caught, 'the non-mesh URL caused a throw').toBeDefined();
+    expect(caught, 'the throw is a MeshUrlError, not a swallow-then-MeshFetchError').toBeInstanceOf(MeshUrlError);
+  }, 30_000);
+
   it('a routed read during a check still picks by the previous check\'s speeds', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "it times
     // each node's proof read; that time is the node's speed until the
