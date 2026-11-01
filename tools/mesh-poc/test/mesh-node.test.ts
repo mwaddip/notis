@@ -449,5 +449,23 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     // announces its listen addresses from the start"`).
     expect(localAddrsFor('public', listenerAddrs, peerId)).toEqual([]);
   }, 30_000);
+
+  // MESH_INTERFACE → Discovery → "A node added by hand" — "A private
+  // node prints its local WebRTC-direct address with its key, for its
+  // operator to hand over, and announces it to no one". A circuit
+  // address whose relay hop is WebRTC-direct carries a /webrtc-direct/
+  // substring but names the relay, not a local listener; it is not a
+  // local address a reader can dial the private node at.
+  it('localAddrsFor drops a listener address whose /webrtc-direct/ is a relay hop before /p2p-circuit/', () => {
+    const peerId = '12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4';
+    const relay = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
+    const CERTHASH = 'uEiAVZaUYSQpGvbSz9JTC4e4hT4qg9eDWVvHe4lhPUT_wxg';
+    const ownLocal = `/ip4/10.103.0.21/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${peerId}`;
+    const circuitOverWebrtcDirect = `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/${CERTHASH}/p2p/${relay}/p2p-circuit/p2p/${peerId}`;
+    const circuitOverTcp = `/ip4/11.100.0.11/tcp/4002/p2p/${relay}/p2p-circuit/p2p/${peerId}`;
+    const listenerAddrs = [ownLocal, circuitOverWebrtcDirect, circuitOverTcp];
+    const out = localAddrsFor('private', listenerAddrs, peerId);
+    expect(out).toEqual([ownLocal]);
+  });
 });
 

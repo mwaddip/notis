@@ -14,11 +14,20 @@
 // "A public node announces its listen addresses from the start"`).
 
 const WEBRTC_DIRECT_WITH_CERTHASH_RE = /\/webrtc-direct\/certhash\//;
+const CIRCUIT_RE = /\/p2p-circuit(?:\/|$)/;
 
 /**
  * Build the identity line's `localAddrs` from a node's listener
  * addresses: WebRTC-direct ones with a `/certhash/` component, each
  * ending in `/p2p/<peerId>`. Pure.
+ *
+ * MESH_INTERFACE → Discovery → "A node added by hand" — "A private
+ * node prints its local WebRTC-direct address with its key, for its
+ * operator to hand over, and announces it to no one". `localAddrs`
+ * is the node's own WebRTC-direct listen addresses alone, so an
+ * address whose first `/webrtc-direct/certhash/` is a relay hop
+ * before `/p2p-circuit/` (a listener a browser cannot reach the
+ * private node at) is dropped.
  */
 export function localAddrsFor(
   role: 'public' | 'private',
@@ -30,6 +39,7 @@ export function localAddrsFor(
   const seen = new Set<string>();
   for (const a of listenerAddrs) {
     if (!WEBRTC_DIRECT_WITH_CERTHASH_RE.test(a)) continue;
+    if (CIRCUIT_RE.test(a)) continue;
     const withPeer = a.endsWith(`/p2p/${peerId}`) ? a : `${a}/p2p/${peerId}`;
     if (seen.has(withPeer)) continue;
     seen.add(withPeer);
