@@ -574,17 +574,9 @@ class MeshClientImpl implements MeshClient {
     // events; a joined dial (`join()` recipient) only sees events
     // after it joins, so a mismatched count there falls to the
     // node-level failure path.
-    const reportedMultiaddrs: string[] = [];
-    const onProgress = (ev: { type: string; detail: unknown }): void => {
-      if (ev.type !== 'dial-queue:calculated-addresses') return;
-      const detail = ev.detail;
-      if (!Array.isArray(detail)) return;
-      for (const a of detail as Address[]) {
-        reportedMultiaddrs.push(a.multiaddr.toString());
-      }
-    };
+    const recorder = createDialProgressRecorder();
     try {
-      await this.libp2p.dial(multiaddrs, { signal, onProgress });
+      await this.libp2p.dial(multiaddrs, { signal, onProgress: recorder.onProgress });
       return; // success — connection open
     } catch (e) {
       // libp2p throws `AggregateError('All multiaddr dials failed')`
@@ -600,7 +592,7 @@ class MeshClientImpl implements MeshClient {
       // another — a joined dial, say — and the caller records a single
       // aggregate failure instead.
       const inner = unwrapAggregate(e);
-      const attributed = attributeAggregateDialErrors(reportedMultiaddrs, inner);
+      const attributed = attributeAggregateDialErrors(recorder.reported, inner);
       if (attributed !== null) {
         for (const row of attributed) {
           if (row.wrongKey !== null) {
@@ -818,12 +810,45 @@ function toLibp2pPeerIdString(notisId: string): string {
  * failure, timeout, transport failure, …) individually. A
  * non-aggregate error reads as a single-element list.
  */
-function unwrapAggregate(e: unknown): unknown[] {
+export function unwrapAggregate(e: unknown): unknown[] {
   if (e !== null && typeof e === 'object' && 'errors' in e) {
     const errors = (e as { errors: unknown }).errors;
     if (Array.isArray(errors)) return errors;
   }
   return [e];
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "A node's addresses are
+ * dialled as one operation" — "When every address fails, each address
+ * libp2p reports it dialled has its failure recorded against it,
+ * matched in the order libp2p dialled them". Captures every address
+ * libp2p's dial queue reports through its
+ * `dial-queue:calculated-addresses` progress event — one `Address[]`
+ * per round of its dial, in the sort order its `addressSorter`
+ * applied — so `attributeAggregateDialErrors` can pair each report
+ * with the error at the matching position. A joined dial (a caller
+ * that joined an in-flight dial) only hears events after it joined;
+ * the mismatched count there falls to the node-level failure path.
+ *
+ * The event name is the one libp2p emits; a release that renames it
+ * breaks the pairing silently, so the libp2p-reaches test holds the
+ * name against the real dial queue.
+ */
+export function createDialProgressRecorder(): {
+  readonly reported: readonly string[];
+  readonly onProgress: (ev: { type: string; detail: unknown }) => void;
+} {
+  const reportedMultiaddrs: string[] = [];
+  const onProgress = (ev: { type: string; detail: unknown }): void => {
+    if (ev.type !== 'dial-queue:calculated-addresses') return;
+    const detail = ev.detail;
+    if (!Array.isArray(detail)) return;
+    for (const a of detail as Address[]) {
+      reportedMultiaddrs.push(a.multiaddr.toString());
+    }
+  };
+  return { reported: reportedMultiaddrs, onProgress };
 }
 
 /**
