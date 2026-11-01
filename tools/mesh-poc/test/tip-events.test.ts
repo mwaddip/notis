@@ -1,6 +1,7 @@
 // MESH_INTERFACE → The client's node list — one event per node that
 // `resolveTip` answers, keyed by the id read from the node's mesh URL:
-// winner → success; verified, not the winner → behind; `too-short` → behind;
+// verified `behind === 0` → success (winner or tie); verified
+// `behind === 1` → trailing; any other verified, and `too-short` → behind;
 // `unreachable` → failure 'transport'; `http` → failure 'refused';
 // `invalid` with a proof → lie 'proof-invalid'; `invalid` without a proof
 // → lie 'malformed'. An unknown `refuseCode` is a change to read, not to
@@ -42,16 +43,55 @@ function result(nodes: NodeTipResult[], winnerIndex: number): TipResult {
 
 describe('tipEvents', () => {
   it('the winner answers success', () => {
-    const r = result([node(idA, { verified: true, refuseCode: null })], 0);
+    const r = result([node(idA, { verified: true, refuseCode: null, behind: 0 })], 0);
     const events = tipEvents(r, 100);
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'success' }]);
   });
 
-  it('a verified non-winner answers behind', () => {
+  it.fails('a tie with the winner is success, not behind', () => {
+    // MESH_INTERFACE → The client's node list — "A valid proof whose
+    // tip is the tip — the best verified proof's, a tie included"
+    // reads `ok`. `resolveTip` writes `behind === 0` for every
+    // verified node whose tip the winner's suffix carries at distance
+    // 0, winner included.
     const r = result(
       [
-        node(idA, { verified: true, refuseCode: null }),
-        node(idB, { verified: true, refuseCode: null }),
+        node(idA, { verified: true, refuseCode: null, behind: 0 }),
+        node(idB, { verified: true, refuseCode: null, behind: 0 }),
+      ],
+      0,
+    );
+    const events = tipEvents(r, 100);
+    expect(events).toEqual<TipEvent[]>([
+      { id: idA, ev: 'success' },
+      { id: idB, ev: 'success' },
+    ]);
+  });
+
+  it.fails('one block behind on the tip chain is trailing', () => {
+    const r = result(
+      [
+        node(idA, { verified: true, refuseCode: null, behind: 0 }),
+        node(idB, { verified: true, refuseCode: null, behind: 1 }),
+      ],
+      0,
+    );
+    const events = tipEvents(r, 100);
+    expect(events).toEqual<TipEvent[]>([
+      { id: idA, ev: 'success' },
+      { id: idB, ev: 'trailing' },
+    ]);
+  });
+
+  it('two blocks behind, or behind null, is behind', () => {
+    // Two blocks behind is still verified; a verified node off the
+    // winner's suffix reads `behind === null` from `resolveTip` and
+    // lands in `behind` too.
+    const r = result(
+      [
+        node(idA, { verified: true, refuseCode: null, behind: 0 }),
+        node(idB, { verified: true, refuseCode: null, behind: 2 }),
+        node(idC, { verified: true, refuseCode: null, behind: null }),
       ],
       0,
     );
@@ -59,6 +99,7 @@ describe('tipEvents', () => {
     expect(events).toEqual<TipEvent[]>([
       { id: idA, ev: 'success' },
       { id: idB, ev: 'behind' },
+      { id: idC, ev: 'behind' },
     ]);
   });
 

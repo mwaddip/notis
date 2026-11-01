@@ -23,9 +23,12 @@ function makeEntry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
   return {
     notisId: over.notisId,
     anchor: over.anchor ?? false,
+    byHand: over.byHand ?? false,
     status: over.status ?? 'new',
     failures: over.failures ?? 0,
     retryAtMs: over.retryAtMs ?? 0,
+    readMs: over.readMs ?? null,
+    behindBy: over.behindBy ?? null,
     addrs: over.addrs ?? [],
     droppedAddrs: over.droppedAddrs ?? [],
     evidence: over.evidence ?? null,

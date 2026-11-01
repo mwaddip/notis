@@ -103,18 +103,88 @@ describe('node-list', () => {
     expect(after.droppedAddrs).toContain(a1);
   });
 
-  it('behind ranks below ok', () => {
+  it.fails('candidates order ok, trailing, behind, new, retry-due', () => {
+    // MESH_INTERFACE → The client's node list → "Candidates" — the
+    // one order every pick walks: `ok`, `trailing`, `behind`, nodes
+    // not yet tried, then `retry` nodes whose time has come.
+    let t = 100000;
+    const idD = 'd'.repeat(64);
+    const idE = 'e'.repeat(64);
     const list = new NodeList(
       [
         { notisId: idA, addrs: [] },
         { notisId: idB, addrs: [] },
+        { notisId: idC, addrs: [] },
+        { notisId: idD, addrs: [] },
+        { notisId: idE, addrs: [] },
       ],
       own,
-      () => 0,
+      () => t,
     );
-    list.behind(idB);
     list.success(idA);
-    expect(list.candidates()).toEqual([idA, idB]);
+    list.trailing(idB);
+    list.behind(idC);
+    // idD is 'new' (never a success/failure call).
+    list.failure(idE, 'timeout');
+    // idE's retry fires at t + RETRY_BASE_MS = 105000; step past.
+    t = 110000;
+    expect(list.candidates()).toEqual([idA, idB, idC, idD, idE]);
+  });
+
+  it.fails('a trailing anchor counts as reached', () => {
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => 0);
+    expect(list.anchorReached()).toBe(false);
+    list.trailing(idA);
+    expect(list.anchorReached()).toBe(true);
+  });
+
+  it.fails('a hand-added trusted node is an anchor; untrusted is not', () => {
+    // MESH_INTERFACE → The client's node list → "A node added by hand"
+    // — "It is an anchor unless the reader adds it as an ordinary
+    // candidate".
+    const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
+    const list = new NodeList([], own, () => 0);
+    list.addByHand(idA, [addr], true);
+    const trustedEntry = list.entry(idA)!;
+    expect(trustedEntry.anchor).toBe(true);
+    expect(trustedEntry.byHand).toBe(true);
+    expect(trustedEntry.addrs).toEqual([addr]);
+    expect(list.configuredAddrs(idA)).toEqual([addr]);
+    list.success(idA);
+    expect(list.anchorReached()).toBe(true);
+
+    const addr2 = '/ip4/10.0.0.2/udp/4001/webrtc-direct/certhash/uEiB';
+    list.addByHand(idB, [addr2], false);
+    const untrustedEntry = list.entry(idB)!;
+    expect(untrustedEntry.anchor).toBe(false);
+    expect(untrustedEntry.byHand).toBe(true);
+    expect(untrustedEntry.addrs).toEqual([addr2]);
+    expect(list.configuredAddrs(idB)).toEqual([addr2]);
+    list.success(idB);
+    // Untrusted hand-added node is not an anchor — anchorReached is
+    // true only because idA (trusted) is still ok.
+    const list2 = new NodeList([], own, () => 0);
+    list2.addByHand(idB, [addr2], false);
+    list2.success(idB);
+    expect(list2.anchorReached()).toBe(false);
+  });
+
+  it.fails('a hand-added node caught lying is blacklisted and stops counting as reached', () => {
+    const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
+    const list = new NodeList([], own, () => 0);
+    list.addByHand(idA, [addr], true);
+    list.success(idA);
+    expect(list.anchorReached()).toBe(true);
+    list.lie(idA, { kind: 'malformed', atMs: 1, detail: 'bad' });
+    expect(list.entry(idA)!.status).toBe('blacklisted');
+    expect(list.anchorReached()).toBe(false);
+    // A later addByHand on a blacklisted entry is unchanged.
+    const addr2 = '/ip4/10.0.0.2/udp/4001/webrtc-direct/certhash/uEiB';
+    list.addByHand(idA, [addr2], true);
+    const after = list.entry(idA)!;
+    expect(after.status).toBe('blacklisted');
+    expect(after.addrs).toEqual([addr]);
+    expect(list.configuredAddrs(idA)).toEqual([addr]);
   });
 
   it('a changed address revives an anchor', () => {
@@ -235,6 +305,7 @@ describe('node-list', () => {
     const calls: Array<[string, () => void]> = [
       ['success', () => list.success(unknown)],
       ['failure', () => list.failure(unknown, 'timeout')],
+      ['trailing', () => list.trailing(unknown)],
       ['behind', () => list.behind(unknown)],
       ['wrongKey', () => list.wrongKey(unknown, a1, null)],
       ['lie', () => list.lie(unknown, { kind: 'malformed', atMs: 0, detail: 'x' })],

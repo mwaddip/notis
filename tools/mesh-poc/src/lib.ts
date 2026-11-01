@@ -14,6 +14,12 @@ export { MeshConfigError, assertNoDns } from './config.js';
 export { tipEvents } from './client/tip-events.js';
 export type { TipEvent } from './client/tip-events.js';
 
+export { agreementCounts } from './client/agreement.js';
+export type { AgreementCounts } from './client/agreement.js';
+
+export { pickServer } from './client/server-pick.js';
+export type { ReadNeed, PickCandidate } from './client/server-pick.js';
+
 export { startMeshClient, assertClientConfig } from './client/mesh-client.js';
 export type { MeshClient, ClientState } from './client/mesh-client.js';
 
@@ -34,5 +40,8 @@ export {
   DIAL_TIMEOUT_MS,
   CERT_RETRY_MS,
   STUN_PORT,
+  FAST_SET_FACTOR,
+  FAST_SET_SLACK_MS,
+  STUN_SERVERS_MAX,
 } from './protocols.js';
 export type { NetworkName } from './protocols.js';

@@ -35,14 +35,38 @@ export interface LastFailure {
   atMs: number;
 }
 
-export type NodeStatus = 'ok' | 'retry' | 'behind' | 'blacklisted' | 'new';
+export type NodeStatus = 'ok' | 'trailing' | 'retry' | 'behind' | 'blacklisted' | 'new';
 
 export interface NodeEntry {
   notisId: string;
   anchor: boolean;
+  /**
+   * MESH_INTERFACE → The client's node list → "A node added by hand" —
+   * true for an entry a reader has added through `addByHand`, carrying
+   * forward across later events; the gater reads it through
+   * `configuredAddrs` (MESH_INTERFACE → Transports → "A client dials a
+   * private address only when its own configuration names it").
+   */
+  byHand: boolean;
   status: NodeStatus;
   failures: number;
   retryAtMs: number;
+  /**
+   * MESH_INTERFACE → The client's node list → "A check" — "it times
+   * each node's proof read; that time is the node's speed until the
+   * next check." Written by the client's decoration pass from the
+   * latest check's measurement; `null` from the list, and `null` until
+   * a check has timed a proof read for this key, or after a failed
+   * read.
+   */
+  readMs: number | null;
+  /**
+   * MESH_INTERFACE → The client's node list — this node's
+   * `TipResult.nodes[i].behind` in the latest check; `null` when it
+   * did not verify. Written by the client's decoration pass; `null`
+   * from the list.
+   */
+  behindBy: number | null;
   addrs: string[];
   droppedAddrs: string[];
   evidence: LieEvidence | null;
@@ -87,11 +111,20 @@ function assertNotisId(id: string): void {
 interface InternalEntry {
   notisId: string;
   anchor: boolean;
+  byHand: boolean;
   status: NodeStatus;
   failures: number;
   clockAtFailure: number;
   storedRetryAtMs: number;
   addrs: string[];
+  /**
+   * MESH_INTERFACE → The client's node list → "A node added by hand" —
+   * the addresses the client's own configuration names for the key: an
+   * anchor's given addresses and those entered by hand, never one
+   * merged from the DHT or a seed. `configuredAddrs(id)` reads this
+   * list; `add(id, addrs)` leaves it unchanged.
+   */
+  configured: string[];
   droppedAddrs: string[];
   evidence: LieEvidence | null;
   lastFailure: LastFailure | null;
@@ -112,17 +145,21 @@ export class NodeList {
       const existing = this.entries_.get(a.notisId);
       if (existing) {
         // "Two anchors with one key are one anchor" (MESH_INTERFACE → Discovery):
-        // the first entry stands; the rest's addresses merge into it.
+        // the first entry stands; the rest's addresses merge into it. Both
+        // sets are anchor-given, so the merged addresses count as configured.
         this.mergeAddrs(existing, a.addrs);
+        this.mergeConfigured(existing, a.addrs);
       } else {
         this.entries_.set(a.notisId, {
           notisId: a.notisId,
           anchor: true,
+          byHand: false,
           status: 'new',
           failures: 0,
           clockAtFailure: 0,
           storedRetryAtMs: 0,
           addrs: [...a.addrs],
+          configured: [...a.addrs],
           droppedAddrs: [],
           evidence: null,
           lastFailure: null,
@@ -145,16 +182,39 @@ export class NodeList {
     this.entries_.set(id, {
       notisId: id,
       anchor: false,
+      byHand: false,
       status: 'new',
       failures: 0,
       clockAtFailure: 0,
       storedRetryAtMs: 0,
       addrs: [...addrs],
+      // MESH_INTERFACE → The client's node list → "A node added by hand":
+      // `add` is a seed- or DHT-sourced add; its addresses are not
+      // configured. `addByHand` is the one entry point that writes
+      // `configured`.
+      configured: [],
       droppedAddrs: [],
       evidence: null,
       lastFailure: null,
       lastFailures: {},
     });
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "A node added by hand" —
+   * stub: the real rule lands with the test cases that pin it.
+   */
+  addByHand(_id: string, _addrs: string[], _trusted: boolean): void {
+    throw new Error('addByHand: not implemented');
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "A node added by hand"
+   * — stub answering the empty list; the real reader lands with the
+   * test cases that pin it.
+   */
+  configuredAddrs(_id: string): string[] {
+    return [];
   }
 
   success(id: string): void {
@@ -223,14 +283,30 @@ export class NodeList {
     e.status = 'behind';
   }
 
+  /**
+   * MESH_INTERFACE → The client's node list — stub for the "one block
+   * behind on the tip's chain" row; the real rule lands with the test
+   * cases that pin it. The unknown-id guard runs first so a wrong-id
+   * caller sees the same error shape every other event method has.
+   */
+  trailing(id: string): void {
+    assertNotisId(id);
+    this.unknown('trailing', id);
+    throw new Error('trailing: not implemented');
+  }
+
   wrongKey(id: string, addr: string, _answeredId: string | null): void {
     assertNotisId(id);
     const e = this.unknown('wrongKey', id);
     if (e.status === 'blacklisted') return;
     // "the address lied, not the key" (MESH_INTERFACE → The client's node
     // list): the address drops; status and failure count are unchanged.
+    // A hand-added address that lied also leaves `configured` so the
+    // gater refuses its next dial.
     const idx = e.addrs.indexOf(addr);
     if (idx !== -1) e.addrs.splice(idx, 1);
+    const cidx = e.configured.indexOf(addr);
+    if (cidx !== -1) e.configured.splice(cidx, 1);
     if (!e.droppedAddrs.includes(addr)) e.droppedAddrs.push(addr);
   }
 
@@ -261,7 +337,8 @@ export class NodeList {
    * `anchorReached` is true while some anchor's latest event is an answer it
    * could check — a success, or a valid proof that is behind
    * (MESH_INTERFACE → No anchor reached). The status captures the latest
-   * event; `ok` or `behind` means the anchor was reached.
+   * event; `ok` or `behind` means the anchor was reached. The `trailing`
+   * row lands with the test cases that pin it.
    */
   anchorReached(): boolean {
     for (const e of this.entries_.values()) {
@@ -273,9 +350,8 @@ export class NodeList {
   /**
    * Ordering: `ok`, then `behind`, then nodes not yet tried, then `retry`
    * nodes whose time has come; never a `blacklisted` node
-   * (MESH_INTERFACE → The client's node list, Candidates). Inside a group the
-   * Map's insertion order answers "first known", with anchors in their given
-   * order first because the constructor inserts them before any `add`.
+   * (MESH_INTERFACE → The client's node list, Candidates). The `trailing`
+   * row lands with the test cases that pin it.
    */
   candidates(): string[] {
     const ok: string[] = [];
@@ -318,6 +394,18 @@ export class NodeList {
   }
 
   /**
+   * Merge the given addresses into `configured`, respecting the same
+   * dropped-address rule `mergeAddrs` holds: an address a key lied
+   * through does not return through a later anchor merge or hand-add.
+   */
+  private mergeConfigured(e: InternalEntry, addrs: string[]): void {
+    for (const addr of addrs) {
+      if (e.droppedAddrs.includes(addr)) continue;
+      if (!e.configured.includes(addr)) e.configured.push(addr);
+    }
+  }
+
+  /**
    * The clamp caps the exposed wait at `RETRY_CAP_MS` from the current clock
    * when, and only when, the clock has stepped back of its own below the
    * failure moment: on a monotonic clock the write-time cap suffices, and the
@@ -337,9 +425,15 @@ export class NodeList {
     return {
       notisId: e.notisId,
       anchor: e.anchor,
+      byHand: e.byHand,
       status: e.status,
       failures: e.failures,
       retryAtMs,
+      // `readMs` and `behindBy` are written by `mesh-client`'s
+      // decoration pass; the node list itself holds no measurement, so
+      // it emits `null` here.
+      readMs: null,
+      behindBy: null,
       addrs: [...e.addrs],
       droppedAddrs: [...e.droppedAddrs],
       evidence: e.evidence,

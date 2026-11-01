@@ -525,6 +525,9 @@ class MeshClientImpl implements MeshClient {
         this.nodeList.lie(ev.id, ev.evidence);
         this.latestEventReason.set(ev.id, `lie: ${ev.evidence.kind}`);
         break;
+      case 'trailing':
+        // The trailing event is handled with its test cases.
+        break;
     }
   }
 

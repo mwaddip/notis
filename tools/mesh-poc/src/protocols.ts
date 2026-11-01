@@ -31,3 +31,15 @@ export const PEER_DIAL_MIN_MS: 20000 = 20000;
 export const RELAY_LISTEN_TIMEOUT_MS: 10000 = 10000;
 export const CERT_RETRY_MS: 3600000 = 3600000;
 export const STUN_PORT: 3478 = 3478;
+/**
+ * MESH_INTERFACE → The client's node list → "A routed read goes to a
+ * node its need allows" — "the fast set is each node whose speed is
+ * within `FAST_SET_FACTOR` times the fastest's plus `FAST_SET_SLACK_MS`".
+ */
+export const FAST_SET_FACTOR: 2 = 2;
+export const FAST_SET_SLACK_MS: 50 = 50;
+/**
+ * MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by IP"
+ * — "the most STUN servers a client's ICE configuration names".
+ */
+export const STUN_SERVERS_MAX: 3 = 3;

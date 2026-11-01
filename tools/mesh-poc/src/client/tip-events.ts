@@ -1,14 +1,16 @@
 // MESH_INTERFACE → The client's node list — one event per node that
 // `resolveTip` answers, keyed by the id read from the node's mesh URL:
-// the winner is success; a verified non-winner is behind; `too-short`
-// is behind, the chain not yet long enough to prove; `unreachable` is a
-// failure of kind `transport`; `http` is a failure of kind `refused`;
-// `invalid` with `verifyResult.reason === 'clock'` is a failure of kind
-// `clock` — "a proof refused by the clock check alone is a failure,
-// never a lie" (MESH_INTERFACE → The client's node list, the clock
-// row); `invalid` with any other proof-verifier reason is a lie of
-// kind `proof-invalid`; `invalid` without a proof is a lie of kind
-// `malformed`.
+// a verified node with `behind === 0` is success (the winner, or a
+// tie with it); `behind === 1` is trailing (one block behind on the
+// tip's chain); any other verified node, and `too-short`, is behind,
+// the chain not yet at the tip or not long enough to prove;
+// `unreachable` is a failure of kind `transport`; `http` is a failure
+// of kind `refused`; `invalid` with `verifyResult.reason === 'clock'`
+// is a failure of kind `clock` — "a proof refused by the clock check
+// alone is a failure, never a lie" (MESH_INTERFACE → The client's
+// node list, the clock row); `invalid` with any other proof-verifier
+// reason is a lie of kind `proof-invalid`; `invalid` without a proof
+// is a lie of kind `malformed`.
 //
 // Total over what `resolveTip` answers today: a `refuseCode` outside the
 // table above is a change to read, not to guess, and throws. Pure,
@@ -20,6 +22,7 @@ import type { FailureKind, LieEvidence } from './node-list.js';
 
 export type TipEvent =
   | { id: string; ev: 'success' }
+  | { id: string; ev: 'trailing' }
   | { id: string; ev: 'behind' }
   | { id: string; ev: 'failure'; kind: FailureKind; message?: string }
   | { id: string; ev: 'lie'; evidence: LieEvidence };
