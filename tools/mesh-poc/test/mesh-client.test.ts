@@ -262,7 +262,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(anchorEntry!.status).toBe('retry');
   }, 90_000);
 
-  it.fails('a routed read reaches the one anchor and nodeId names it', async () => {
+  it('a routed read reaches the one anchor and nodeId names it', async () => {
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" — a `tip` read picks an `ok` node, opens
     // the stream on the connection the client holds, and `state.nodeId`
@@ -632,7 +632,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.nodes[0]!.status).toBe('retry');
   }, 60_000);
 
-  it.fails('a failed read triggers a check, and the next read reaches another ok node', async () => {
+  it('a failed read triggers a check, and the next read reaches another ok node', async () => {
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" + "A read opens no connection" — "a
     // failed routed read runs a check at once, which dials from the
@@ -1127,7 +1127,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('ok');
   }, 90_000);
 
-  it.fails('a tip read never goes to a trailing node', async () => {
+  it('a tip read never goes to a trailing node', async () => {
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" — "One that needs the tip goes to an
     // `ok` node". A is ok (behind 0), B is trailing (behind 1); every
@@ -1159,7 +1159,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     }
   }, 120_000);
 
-  it.fails('a tip read with no usable ok node rejects as transport and triggers a check', async () => {
+  it('a tip read with no usable ok node rejects as transport and triggers a check', async () => {
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" — "With none, the read fails as a
     // transport failure." + "a failed routed read runs a check at
@@ -1199,7 +1199,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(resolveCalls).toBeGreaterThan(callsBefore);
   }, 60_000);
 
-  it.fails('older reads spread over ok and trailing nodes in the fast set', async () => {
+  it('older reads spread over ok and trailing nodes in the fast set', async () => {
     // MESH_INTERFACE → The client's node list — "a read of content
     // older than the newest block goes to an `ok` or a `trailing`
     // node". A is ok, B is trailing; a sweep of random values over
@@ -1236,7 +1236,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(seen.size, 'the spread touches both ids').toBe(2);
   }, 120_000);
 
-  it.fails('nodeId names the node the latest read went to', async () => {
+  it('nodeId names the node the latest read went to', async () => {
     // MESH_INTERFACE → The client's node list — "The client's state
     // names the node and path the latest routed read went to". After
     // a successful `read`, `state.nodeId` equals the serving node.
@@ -1271,7 +1271,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(new Set([r1.nodeId, r2.nodeId]).size).toBe(2);
   }, 120_000);
 
-  it.fails('lastLeft names any node that left ok/trailing, not just the first candidate', async () => {
+  it('lastLeft names any node that left ok/trailing, not just the first candidate', async () => {
     // MESH_INTERFACE → The client's node list — the rule is "a node
     // that was `ok` or `trailing` before [the check] is neither after
     // it", not "the first candidate moved". Three anchors ok after
@@ -1321,7 +1321,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.lastLeft!.reason).toMatch(/^failure:/);
   }, 120_000);
 
-  it.fails('readMs is the proof read time of the latest check', async () => {
+  it('readMs is the proof read time of the latest check', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "it times
     // each node's proof read; that time is the node's speed until the
     // next check." The wrap times from fetch call to end of body.
@@ -1367,7 +1367,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(entry.readMs!).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
-  it.fails('behindBy is the latest check\'s behind count per node', async () => {
+  it('behindBy is the latest check\'s behind count per node', async () => {
     // MESH_INTERFACE → The client's node list — `TipResult.nodes[i].behind`
     // per node is written to the entry's `behindBy` from each check.
     const stubA = await makeStub(0); stubs.push(stubA);
@@ -1393,7 +1393,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.nodes.find((n) => n.notisId === b.id)!.behindBy).toBe(2);
   }, 90_000);
 
-  it.fails('agreement counts come from the latest check', async () => {
+  it('agreement counts come from the latest check', async () => {
     // MESH_INTERFACE → No anchor reached → "The agreement counts" —
     // after each check `state.agreement` holds `{ agreeing,
     // agreeingAnchors, notAgreeing }` from the latest `TipResult`.

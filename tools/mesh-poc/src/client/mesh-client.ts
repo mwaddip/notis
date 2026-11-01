@@ -33,13 +33,13 @@ import { generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
 import type { TipResult } from '@dagsocial/nipopow-client';
-import { fetchJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
+import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { isNonNegSafeInt } from '@dagsocial/node-reads';
 import { isHex64 } from '@dagsocial/types';
 import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
-import { parseMeshUrl, meshBaseUrl, MeshUrlError } from '../mesh-url.js';
-import { meshFetchOverConnection } from '../http-fetch.js';
+import { meshBaseUrl, idOfMeshUrl } from '../mesh-url.js';
+import { meshFetchOverConnection, MeshFetchError } from '../http-fetch.js';
 import { MeshConfigError, assertNoDns } from '../config.js';
 import {
   NodeList,
@@ -399,27 +399,7 @@ class MeshClientImpl implements MeshClient {
     this.scheduleNextCheck(0);
   }
 
-  readonly fetch: HttpFetch = async (url, init) => {
-    let parsed: { notisId: string } | null = null;
-    try {
-      parsed = parseMeshUrl(url);
-    } catch (e) {
-      if (!(e instanceof MeshUrlError)) throw e;
-      // Falls through to `meshFetchFn`, which rejects with its own
-      // `MeshFetchError` of kind 'url'.
-    }
-    try {
-      return await this.meshFetchFn(url, init);
-    } catch (e) {
-      // MESH_INTERFACE → The client's node list — a failed fetch to the
-      // node in use triggers an immediate check (one at a time, so a
-      // trigger during a check is that check).
-      if (parsed !== null && parsed.notisId === this.state_.nodeId) {
-        this.triggerImmediateCheck();
-      }
-      throw e;
-    }
-  };
+  readonly fetch: HttpFetch = (url, init) => this.meshFetchFn(url, init);
 
   async check(): Promise<TipResult> {
     if (this.checkInProgress) return this.checkInProgress;
@@ -428,14 +408,41 @@ class MeshClientImpl implements MeshClient {
     return this.checkInProgress;
   }
 
-  async read(_path: string, _need: ReadNeed): Promise<{ response: Response; nodeId: string }> {
-    // Stub ahead of its implementation; the suite's cases hold the
-    // intended behaviour. The intentional references silence the
-    // unused-import gate for the imports the implementation needs.
-    void pickServer;
-    void agreementCounts;
-    void this.random;
-    throw new Error('read not implemented');
+  async read(path: string, need: ReadNeed): Promise<{ response: Response; nodeId: string }> {
+    // MESH_INTERFACE → The client's node list → "A routed read goes
+    // to a node its need allows". `usable` is the strict read pick's
+    // non-null result over the same connection list the fetch opens
+    // its stream on.
+    const connections = this.libp2p.getConnections();
+    const entries = this.nodeList.entries();
+    const candidates = entries.map((e) => ({
+      id: e.notisId,
+      status: e.status,
+      readMs: this.readMsMap.get(e.notisId) ?? null,
+      usable: pickConnectionForRead(connections, toLibp2pPeerIdString(e.notisId)) !== null,
+    }));
+    const picked = pickServer(candidates, need, this.random);
+    if (picked === null) {
+      // Trigger a check so the next read may find an allowed node.
+      // During a running check (phase 5's own tip read) the trigger
+      // is a no-op — `checkInProgress !== null`.
+      this.triggerImmediateCheck();
+      throw new MeshFetchError('transport', `no node allowed for a ${need} read`);
+    }
+    const url = meshBaseUrl(picked) + path;
+    try {
+      const response = await this.meshFetchFn(url, undefined);
+      this.state_.nodeId = picked;
+      this.refreshTransportPath();
+      this.emitStateChange();
+      return { response, nodeId: picked };
+    } catch (e) {
+      // MESH_INTERFACE → The client's node list → "A read opens no
+      // connection" — "a failed routed read runs a check at once,
+      // which dials from the list".
+      this.triggerImmediateCheck();
+      throw e;
+    }
   }
 
   state(): ClientState {
@@ -504,6 +511,14 @@ class MeshClientImpl implements MeshClient {
   }
 
   private async runCheck(): Promise<TipResult> {
+    // Snapshot ok/trailing before the check runs so `lastLeft` names
+    // any node that leaves the set — the pre-dial itself may move a
+    // node to retry, so the snapshot has to sit before phase 1.
+    const okTrailingBefore = new Set<string>();
+    for (const e of this.nodeList.entries()) {
+      if (e.status === 'ok' || e.status === 'trailing') okTrailingBefore.add(e.notisId);
+    }
+
     // Phase 1: pre-dial every candidate the client has not already
     // connected to, so libp2p's unexpected-peer failure is caught per
     // address instead of folded into a generic transport failure.
@@ -516,9 +531,14 @@ class MeshClientImpl implements MeshClient {
 
     // Phase 2: the resolve seam reads whatever candidates remain. A node
     // whose pre-dial failed has moved to `retry` and will no longer be a
-    // candidate here.
+    // candidate here. The fetch is wrapped per URL so `readMs` is the
+    // duration from fetch call to end of body — a time to headers
+    // alone would miss the transfer.
     const afterIds = this.nodeList.candidates();
     const urls = afterIds.map((id) => meshBaseUrl(id));
+    this.readMsMap.clear();
+    this.behindByMap.clear();
+    const timedFetch = this.makeTimedFetch();
     // MESH_INTERFACE → "Two clocks" — the verifier reads the wall clock
     // (`wallClock`); the node list keeps its monotonic clock for retries.
     // A header's `createdAt` is wall-clock time, so a client whose own
@@ -530,44 +550,121 @@ class MeshClientImpl implements MeshClient {
       DEFAULT_K,
       this.profile,
       this.wallClock,
-      this.fetch,
+      timedFetch,
     );
 
     // Phase 3: each node in the result earns an event through `tipEvents`;
-    // apply them and record their reasons so `lastLeft` can name the one
-    // that moved the node in use.
+    // apply them and record their reasons. Also record `behind` per node
+    // so `decorateEntries` writes `behindBy` from the latest check.
     const nowMs = this.clock();
     for (const ev of tipEvents(result, nowMs)) {
       this.applyEvent(ev);
     }
-
-    // Phase 4: the node in use is the first candidate after this check.
-    const oldInUse = this.state_.nodeId;
-    const newInUse = this.nodeList.candidates()[0] ?? null;
-    if (newInUse !== oldInUse) {
-      this.state_.lastLeft = oldInUse !== null
-        ? { nodeId: oldInUse, reason: this.latestEventReason.get(oldInUse) ?? 'moved' }
-        : null;
-      this.state_.nodeId = newInUse;
-      this.refreshTransportPath();
-    } else if (oldInUse !== null) {
-      // The transport may still have changed (relay to direct, say) under
-      // a stable node id — refresh so `state()` is current.
-      this.refreshTransportPath();
+    for (const node of result.nodes) {
+      try {
+        this.behindByMap.set(idOfMeshUrl(node.url), node.behind);
+      } catch { /* an unparseable URL is a bug upstream; skip */ }
     }
 
-    // Phase 5: the node in use's own tip, read through `/blocks/current`.
-    // A failed read moves nothing: the open connection stays, the next
-    // check runs on the ordinary cadence.
-    if (newInUse !== null) {
-      await this.refreshTip(newInUse);
-    } else {
+    // Phase 5: the tip read, through the routed-read path. A `tip`
+    // read picks only `ok` nodes; `read` sets `state.nodeId` to the
+    // server on success and triggers a check on failure (a no-op
+    // during this one). `refreshTip`'s classification applies to the
+    // node that read went to.
+    try {
+      const tipRead = await this.read('/blocks/current', 'tip');
+      await this.classifyTipRead(tipRead.response, tipRead.nodeId);
+    } catch {
+      // The read failed before any response arrived — `null` either
+      // because no node was allowed, or because the underlying fetch
+      // threw. The next check runs on the ordinary cadence.
       this.state_.tip = null;
     }
+
+    // After the check: name any node that was ok/trailing before and
+    // is neither after it. One entry — the first found, since the
+    // page carries one `lastLeft`.
+    let left: string | null = null;
+    for (const id of okTrailingBefore) {
+      const e = this.nodeList.entry(id);
+      if (!e || (e.status !== 'ok' && e.status !== 'trailing')) {
+        left = id;
+        break;
+      }
+    }
+    if (left !== null) {
+      this.state_.lastLeft = {
+        nodeId: left,
+        reason: this.latestEventReason.get(left) ?? 'left',
+      };
+    }
+
+    // The agreement counts from the latest check: anchors are read
+    // from the current entries so a hand-added trusted node counts.
+    const anchorIds = new Set<string>();
+    for (const e of this.nodeList.entries()) {
+      if (e.anchor) anchorIds.add(e.notisId);
+    }
+    this.state_.agreement = agreementCounts(result, anchorIds);
 
     this.state_.anchorReached = this.nodeList.anchorReached();
     this.emitStateChange();
     return result;
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "A check" — "it times
+   * each node's proof read; that time is the node's speed until the
+   * next check." The wrapper runs the fetch and reads the body to
+   * its end before recording `readMs`, so a time to headers alone
+   * does not stand in for the transfer. A failed read leaves
+   * `readMs` unset.
+   */
+  private makeTimedFetch(): HttpFetch {
+    return async (url, init) => {
+      const startMs = this.clock();
+      let id: string | null = null;
+      try { id = idOfMeshUrl(url); } catch { /* non-mesh URL — never from resolveTip */ }
+      const response = await this.fetch(url, init);
+      if (id === null || !response.body) {
+        if (id !== null) this.readMsMap.set(id, this.clock() - startMs);
+        return response;
+      }
+      const original = response.body;
+      const clock = this.clock;
+      const readMsMap = this.readMsMap;
+      const nid = id;
+      const wrapped = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const reader = original.getReader();
+          void (async () => {
+            try {
+              for (;;) {
+                const r = await reader.read();
+                if (r.done) {
+                  readMsMap.set(nid, clock() - startMs);
+                  controller.close();
+                  return;
+                }
+                controller.enqueue(r.value);
+              }
+            } catch (e) {
+              // Mid-body failure leaves readMs unset — the caller
+              // sees the error.
+              controller.error(e);
+            }
+          })();
+        },
+        cancel(reason) {
+          original.cancel(reason).catch(() => undefined);
+        },
+      });
+      return new Response(wrapped, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    };
   }
 
   private applyEvent(ev: TipEvent): void {
@@ -755,23 +852,25 @@ class MeshClientImpl implements MeshClient {
     return pickConnectionForLabel(this.libp2p.getConnections(), expected);
   }
 
-  private async refreshTip(inUseId: string): Promise<void> {
-    // MESH_INTERFACE → The node endpoint — the mesh carries no new reader:
-    // `/blocks/current` reads through `fetchJson` under the route's own cap
-    // (`HEIGHT_READ_BYTES`, `CONSTANTS → Client reads`). A hostile node that
-    // sends more than the cap is cut off at the reader. The result is
-    // classified per `MESH_INTERFACE → The client's node list`: a transport
-    // or HTTP non-ok result moves the node by `failure`; an answer whose
-    // body does not parse, overflows the cap, or parses but is not a tip
-    // moves it by `lie` of kind `malformed` — a malformed answer over a
-    // link authenticated to the key is the contract's lie row.
-    const url = meshBaseUrl(inUseId) + '/blocks/current';
-    const r = await fetchJson<unknown>(this.fetch, url, HEIGHT_READ_BYTES);
+  /**
+   * MESH_INTERFACE → The node endpoint — the mesh carries no new reader:
+   * `/blocks/current` reads through `readCappedJson` under the route's
+   * own cap (`HEIGHT_READ_BYTES`, `CONSTANTS → Client reads`). A hostile
+   * node that sends more than the cap is cut off at the reader. The
+   * result is classified per `MESH_INTERFACE → The client's node list`:
+   * a transport or HTTP non-ok result moves the node by `failure`; an
+   * answer whose body does not parse, overflows the cap, or parses but
+   * is not a tip moves it by `lie` of kind `malformed` — a malformed
+   * answer over a link authenticated to the key is the contract's lie
+   * row. The classification applies to the node the read went to.
+   */
+  private async classifyTipRead(response: Response, nodeId: string): Promise<void> {
+    const r = await readCappedJson<unknown>(response, HEIGHT_READ_BYTES);
     const nowMs = this.clock();
     if (!r.ok) {
       if (isBodyLevelFailure(r)) {
         this.applyEvent({
-          id: inUseId,
+          id: nodeId,
           ev: 'lie',
           evidence: { kind: 'malformed', atMs: nowMs, detail: r.body },
         });
@@ -779,15 +878,15 @@ class MeshClientImpl implements MeshClient {
       }
       if (r.status === 0) {
         const kind: FailureKind = r.timedOut === true ? 'timeout' : 'transport';
-        this.applyEvent({ id: inUseId, ev: 'failure', kind });
+        this.applyEvent({ id: nodeId, ev: 'failure', kind });
         return;
       }
-      this.applyEvent({ id: inUseId, ev: 'failure', kind: 'refused' });
+      this.applyEvent({ id: nodeId, ev: 'failure', kind: 'refused' });
       return;
     }
     if (!isTipShape(r.data)) {
       this.applyEvent({
-        id: inUseId,
+        id: nodeId,
         ev: 'lie',
         evidence: { kind: 'malformed', atMs: nowMs, detail: 'tip shape invalid' },
       });
