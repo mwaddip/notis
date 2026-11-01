@@ -101,13 +101,13 @@ const BODY_UNPARSEABLE = 'unparseable body:';
 export function assertClientConfig(o: {
   anchors: readonly Anchor[];
   seeds?: readonly Anchor[];
-  stunServers: readonly string[];
+  stunServers?: readonly string[];
 }): void {
   for (const a of o.anchors) assertNoDns('anchor', a.addrs);
   if (o.seeds !== undefined) {
     for (const s of o.seeds) assertNoDns('seed', s.addrs);
   }
-  assertIceServers(o.stunServers);
+  if (o.stunServers !== undefined) assertIceServers(o.stunServers);
 }
 
 function assertIceServers(stunServers: readonly string[]): void {
@@ -193,6 +193,16 @@ export interface MeshClient {
   onState(cb: (s: ClientState) => void): () => void;
   stop(): Promise<void>;
   /**
+   * MESH_INTERFACE → NAT → "A client's STUN list comes from the public
+   * nodes it holds" — the ICE configuration the webRTC transport reads
+   * at each dial, derived from the client's current node entries. Never
+   * `undefined` `iceServers` (traps file, "The mesh and its stage"):
+   * libp2p falls back to DNS-named defaults when `iceServers` is
+   * absent, so the function always answers `{ iceServers: [...] }`,
+   * including an empty array when no public node is held.
+   */
+  iceConfiguration(): { iceServers: RTCIceServer[] };
+  /**
    * Test seam: the libp2p node under the client. The suite dispatches a
    * `peer:discovery` event here so the "a discovered node is added before
    * any event names it" case can hold its guard without a three-node DHT
@@ -212,7 +222,14 @@ export interface StartMeshClientOptions {
   seeds?: Anchor[];
   network: NetworkName;
   profile: NetworkProfile;
-  stunServers: string[];
+  /**
+   * MESH_INTERFACE → NAT — "A client's STUN list comes from the public
+   * nodes it holds". The option is on its way out: existing callers
+   * may still pass it, but the client derives its STUN list from the
+   * current node entries and ignores the given list. The next unit
+   * drops the option; see the AHEAD OF CODE marker in NAT.
+   */
+  stunServers?: string[];
   /**
    * MESH_INTERFACE → "Two clocks" — the retry timers' clock. The list and
    * every per-entry deadline reads this; a clock that steps never holds a
@@ -260,7 +277,7 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // mesh-node STUN by IP for the relayed WebRTC path.
   const transports = [
     webRTCDirect({ rtcConfiguration: { iceServers: [] } }),
-    webRTC({ rtcConfiguration: { iceServers: iceConfigurations(o.stunServers) } }),
+    webRTC({ rtcConfiguration: { iceServers: iceConfigurations(o.stunServers ?? []) } }),
     circuitRelayTransport(),
     webSockets(),
   ];
@@ -456,6 +473,17 @@ class MeshClientImpl implements MeshClient {
         behindBy: this.behindByMap,
       }),
     };
+  }
+
+  /**
+   * MESH_INTERFACE → NAT — "the ICE configuration names no server"
+   * when no public node is held. Stub answers an empty list; the
+   * feat(mesh-poc) commit replaces this with
+   * `iceConfigurations(stunServersFor(this.state().nodes,
+   * STUN_SERVERS_MAX))`.
+   */
+  iceConfiguration(): { iceServers: RTCIceServer[] } {
+    return { iceServers: [] };
   }
 
   onState(cb: (s: ClientState) => void): () => void {
