@@ -329,6 +329,21 @@ describe('s7 (reach and load)', () => {
     expect(fn(stateNoChecks)).toBe(false);
     expect(fn(stateNoChecks)).toBe(false);
   });
+  // MESH_INTERFACE → No anchor reached → "The agreement counts" —
+  // step 4 polls one page until its state carries `checks >= 1` and
+  // reads the counts from the returned value. The predicate is false
+  // on a fresh page's first-rendered state (`{ checks: 0, agreement:
+  // null }`) and true once the first check has landed (`{ checks: 1,
+  // agreement: {...} }`), so the agreement the step records is the
+  // same page's own.
+  it('S7_WAIT_COMPLETED_CHECK_PREDICATE is false on {checks: 0, agreement: null} and true on {checks: 1, agreement: {...}}', () => {
+    const fn = buildPredicate(s7.S7_WAIT_COMPLETED_CHECK_PREDICATE);
+    expect(fn(JSON.stringify({ checks: 0, agreement: null }))).toBe(false);
+    expect(fn(JSON.stringify({
+      checks: 1,
+      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+    }))).toBe(true);
+  });
   // MESH_INTERFACE → Discovery → "A node added by hand" / "Seeds" —
   // step 3 of s7 measures lan1 at its private address. A lan1 row
   // without `localAddrs` can only be named at its announced

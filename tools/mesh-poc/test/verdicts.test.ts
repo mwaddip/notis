@@ -530,4 +530,16 @@ describe('verdictS7Counts — agreement counts after a completed check', () => {
   it('agreeingAnchors 0 (no anchor agreed) → FAIL', () => {
     expect(verdictS7Counts({ agreeing: 3, agreeingAnchors: 0, notAgreeing: 0 })).toBe('FAIL');
   });
+  // MESH_INTERFACE → No anchor reached → "The agreement counts" —
+  // step 4 records a `{ reason, state }` measurement when the
+  // completed-check state's `agreement` is null; the verdict FAILs
+  // that measurement (its `agreeing` is not a number), so the step
+  // names the null instead of silently zeroing to `agreeing: 0`.
+  it('a measurement that names a null-agreement reason → FAIL', () => {
+    const m = {
+      reason: 'completed-check state has a null agreement',
+      state: { checks: 1, agreement: null },
+    };
+    expect(verdictS7Counts(m)).toBe('FAIL');
+  });
 });

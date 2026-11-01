@@ -7,6 +7,7 @@ export declare function pub2NetemArgs(topology: unknown): {
 };
 export declare function applyFaults(log: unknown, topology: unknown): void;
 export declare const S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE: string;
+export declare const S7_WAIT_COMPLETED_CHECK_PREDICATE: string;
 export declare function buildSeedOnlyLanVariant(
   baseConfig: { network: string; anchors: unknown },
   lan1Row: { notisId: string; localAddrs?: string[]; multiaddrs?: string[] } | null,

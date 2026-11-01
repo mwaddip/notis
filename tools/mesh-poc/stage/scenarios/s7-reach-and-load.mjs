@@ -154,12 +154,15 @@ export async function run(ctx) {
         netemApplied = false;
       }
 
-      // (a) seed phase — base config, lan1 named only by a seed.
+      // (a) seed phase — base config, lan1 named only by a seed. One
+      // page is polled until its state carries two completed checks,
+      // so lan1's `transport` is read from a page that has run its
+      // seed-dial logic — not from a fresh page whose nodes list is
+      // still empty, which would read `lan1EverConnected: false`
+      // vacuously. (Same shape as step 4's defect.)
       const seedVariant = buildSeedOnlyLanVariant(baseConfig, lan1Row);
       writeConfigVariant(ctx.outDir, seedVariant);
-      await waitOneCompletedCheck(ctx, browserUrl);
-      await waitOneCompletedCheck(ctx, browserUrl);
-      const seedState = await readState(ctx, browserUrl);
+      const seedState = await waitStateWithCompletedChecks(ctx, browserUrl, 2);
       const lan1Entry = seedState.nodes?.find((n) => n.notisId === lan1NotisId) ?? null;
       const lan1EverConnected = lan1Entry !== null && lan1Entry.transport !== null;
       // lan1's mesh log holds no `/ip4/10.103.0.11/` on an inbound
@@ -198,12 +201,22 @@ export async function run(ctx) {
     });
 
     // --- Step 4: the counts ---
+    // MESH_INTERFACE → No anchor reached → "The agreement counts" —
+    // one page polled until its first completed check lands, the
+    // counts read from the value that poll returns. `cdp.mjs poll`
+    // opens a fresh target per call, so a wait on one page and a
+    // read on another measures the second page's first non-empty
+    // state — before its first check, so `agreement` is null. A null
+    // `agreement` fails the step with that reason in its measurement,
+    // never silently zeroed.
     await rec.step(describe()[3], async () => {
       writeStageDefault(ctx.outDir);
-      await waitOneCompletedCheck(ctx, browserUrl);
-      const state = await readState(ctx, browserUrl);
-      const m = state.agreement ?? { agreeing: 0, agreeingAnchors: 0, notAgreeing: 0 };
-      return { verdict: verdictS7Counts(m), measurement: m };
+      const state = await waitStateWithCompletedChecks(ctx, browserUrl, 1);
+      if (state.agreement === null || state.agreement === undefined) {
+        const m = { reason: 'completed-check state has a null agreement', state };
+        return { verdict: verdictS7Counts(m), measurement: m };
+      }
+      return { verdict: verdictS7Counts(state.agreement), measurement: state.agreement };
     });
   } finally {
     if (netemApplied) {
@@ -279,10 +292,33 @@ async function waitOneCompletedCheck(ctx, url) {
   await cdpPoll(ctx, url, expression, S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE, LONG_WAIT_MS, POLL_MS);
 }
 
-async function readState(ctx, url) {
+// MESH_INTERFACE → No anchor reached → "The agreement counts" / The
+// client's node list → "how many checks it has completed" — one page
+// polled from a fresh target until its state carries `checks >=
+// minChecks`, the parsed state returned. Collapses the wait and the
+// read of the same client's state into one poll, so the step reads
+// counts, nodes, and agreement from the SAME page whose checks it
+// awaited.
+//
+// `S7_WAIT_COMPLETED_CHECK_PREDICATE` is the `minChecks === 1` form
+// exported for the stage test. Later `minChecks` builds the body
+// inline since one exported constant cannot vary.
+export const S7_WAIT_COMPLETED_CHECK_PREDICATE = `if (v === null) return false;
+    let s;
+    try { s = JSON.parse(v); } catch (_e) { return false; }
+    if (typeof s.checks !== 'number') return false;
+    return s.checks >= 1;`;
+
+async function waitStateWithCompletedChecks(ctx, url, minChecks) {
   const expression = "document.getElementById('state')?.textContent ?? null";
-  const predicate = 'return typeof v === "string" && v !== "";';
-  const value = await cdpPoll(ctx, url, expression, predicate, 30_000, 500);
+  const predicate = minChecks === 1
+    ? S7_WAIT_COMPLETED_CHECK_PREDICATE
+    : `if (v === null) return false;
+    let s;
+    try { s = JSON.parse(v); } catch (_e) { return false; }
+    if (typeof s.checks !== 'number') return false;
+    return s.checks >= ${minChecks};`;
+  const value = await cdpPoll(ctx, url, expression, predicate, LONG_WAIT_MS, POLL_MS);
   return JSON.parse(value);
 }
 
