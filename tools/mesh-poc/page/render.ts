@@ -34,6 +34,11 @@ export function render(state: ClientState, root: HTMLElement): void {
     while (container.firstChild !== null) container.removeChild(container.firstChild);
   }
 
+  // MESH_INTERFACE → No anchor reached → "The agreement counts" —
+  // sits above the no-anchor words; before the first check
+  // (`agreement === null`) it reads `Agreeing: —`.
+  container.appendChild(renderAgreement(state));
+
   if (!state.anchorReached) {
     const banner = document.createElement('div');
     banner.setAttribute('data-role', 'banner');
@@ -53,11 +58,32 @@ export function render(state: ClientState, root: HTMLElement): void {
   container.appendChild(pre);
 }
 
+function renderAgreement(state: ClientState): HTMLElement {
+  // MESH_INTERFACE → No anchor reached → "The agreement counts" —
+  // "the page says `not on the tip's last 20 blocks`"; before the
+  // first check it reads `Agreeing: —`.
+  const div = document.createElement('div');
+  div.setAttribute('data-role', 'agreement');
+  if (state.agreement === null) {
+    div.textContent = 'Agreeing: —';
+  } else {
+    const { agreeing, agreeingAnchors, notAgreeing } = state.agreement;
+    div.textContent =
+      `Agreeing: ${String(agreeing)} (${String(agreeingAnchors)} anchors)`
+      + ` · not on the tip's last 20 blocks: ${String(notAgreeing)}`;
+  }
+  return div;
+}
+
 function renderInUse(state: ClientState): HTMLElement {
   const section = document.createElement('section');
   section.setAttribute('data-role', 'in-use');
   const h = document.createElement('h2');
-  h.textContent = 'Node in use';
+  // MESH_INTERFACE → The client's node list → "A routed read goes to
+  // a node its need allows" — the heading names the latest routed
+  // read's node; the three rows keep their keys (the stage reads
+  // them).
+  h.textContent = 'Last read from';
   section.appendChild(h);
   const dl = document.createElement('dl');
   dl.className = 'in-use';

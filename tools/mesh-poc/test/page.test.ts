@@ -128,7 +128,7 @@ describe('page/render.ts', () => {
     expect(root.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 
-  it.fails('a refused config is shown', async () => {
+  it('a refused config is shown', async () => {
     // Real `startMeshClient` through `runMain`: a /dns4/ anchor runs through
     // `assertClientConfig` (`startMeshClient`'s first statement) and throws
     // `MeshConfigError` before any libp2p node is created. The "no node is
@@ -400,7 +400,7 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
 // `Agreeing: —`, and in every state it sits above the no-anchor words.
 
 describe('page/render.ts agreement line', () => {
-  it.fails('reads "Agreeing: —" before the first check (agreement === null)', () => {
+  it('reads "Agreeing: —" before the first check (agreement === null)', () => {
     const root = document.createElement('div');
     render(emptyState({ anchorReached: false, agreement: null }), root);
     const line = root.querySelector('[data-role="agreement"]');
@@ -408,7 +408,7 @@ describe('page/render.ts agreement line', () => {
     expect(line!.textContent).toBe('Agreeing: —');
   });
 
-  it.fails('reads "Agreeing: <n> (<a> anchors) · not on the tip\'s last 20 blocks: <m>" after a check', () => {
+  it('reads "Agreeing: <n> (<a> anchors) · not on the tip\'s last 20 blocks: <m>" after a check', () => {
     const root = document.createElement('div');
     render(
       emptyState({
@@ -424,7 +424,7 @@ describe('page/render.ts agreement line', () => {
     );
   });
 
-  it.fails('sits above the no-anchor words', () => {
+  it('sits above the no-anchor words', () => {
     const root = document.createElement('div');
     render(
       emptyState({
@@ -452,7 +452,7 @@ describe('page/render.ts agreement line', () => {
 // stage reads them.
 
 describe('page/render.ts last-read-from heading', () => {
-  it.fails('the heading reads "Last read from"; the three rows keep notisId / transport / path', () => {
+  it('the heading reads "Last read from"; the three rows keep notisId / transport / path', () => {
     const root = document.createElement('div');
     render(
       emptyState({
@@ -506,7 +506,7 @@ function fillAndSubmit(root: HTMLElement, over: {
 }
 
 describe('page/form.ts', () => {
-  it.fails('attaches a form outside the state renderer subtree; the trust box is checked by default', () => {
+  it('attaches a form outside the state renderer subtree; the trust box is checked by default', () => {
     const root = document.createElement('div');
     const { client } = buildFakeClient();
     attachHandForm({ root, client });
@@ -525,7 +525,7 @@ describe('page/form.ts', () => {
     expect(label!.textContent).toContain('trust this node');
   });
 
-  it.fails('a submit with the box ticked calls addByHand(key, [address], true)', () => {
+  it('a submit with the box ticked calls addByHand(key, [address], true)', () => {
     const root = document.createElement('div');
     const { client, calls } = buildFakeClient();
     attachHandForm({ root, client });
@@ -540,7 +540,7 @@ describe('page/form.ts', () => {
     expect(trustEl.checked, 'the box resets to its default (ticked)').toBe(true);
   });
 
-  it.fails('a submit with the box unticked calls addByHand(..., false)', () => {
+  it('a submit with the box unticked calls addByHand(..., false)', () => {
     const root = document.createElement('div');
     const { client, calls } = buildFakeClient();
     attachHandForm({ root, client });
@@ -548,7 +548,7 @@ describe('page/form.ts', () => {
     expect(calls.addByHand).toEqual([{ notisId: VALID_KEY_B, addrs: [VALID_ADDR_A], trusted: false }]);
   });
 
-  it.fails('a MeshConfigError from addByHand shows under the form; the fields are kept; a later success clears them', () => {
+  it('a MeshConfigError from addByHand shows under the form; the fields are kept; a later success clears them', () => {
     const root = document.createElement('div');
     const refuseKey = 'nope';
     let shouldThrow = true;
@@ -576,7 +576,7 @@ describe('page/form.ts', () => {
     expect((root.querySelector('input[name="address"]') as HTMLInputElement).value).toBe('');
   });
 
-  it.fails('a render does not touch the form (its sibling)', () => {
+  it('a render does not touch the form (its sibling)', () => {
     const root = document.createElement('div');
     const { client } = buildFakeClient();
     attachHandForm({ root, client });
@@ -599,7 +599,7 @@ describe('page/form.ts', () => {
 // order after `startMeshClient`.
 
 describe('page/main.ts config refusals', () => {
-  it.fails('config.stunServers is refused in words', async () => {
+  it('config.stunServers is refused in words', async () => {
     const root = document.createElement('div');
     const fakeFetch = async (): Promise<Response> =>
       new Response(
@@ -618,7 +618,7 @@ describe('page/main.ts config refusals', () => {
     );
   });
 
-  it.fails('a malformed byHand entry refuses the whole config in words', async () => {
+  it('a malformed byHand entry refuses the whole config in words', async () => {
     const root = document.createElement('div');
     const fakeFetch = async (): Promise<Response> =>
       new Response(
@@ -646,7 +646,7 @@ describe('page/main.ts config refusals', () => {
 // their given order.
 
 describe('page/main.ts byHand application', () => {
-  it.fails('config.byHand reaches addByHand in order', async () => {
+  it('config.byHand reaches addByHand in order', async () => {
     const root = document.createElement('div');
     const entries = [
       { notisId: VALID_KEY_A, addrs: [VALID_ADDR_A], trusted: true },
@@ -684,7 +684,7 @@ function entryAt(notisId: string, status: NodeEntry['status']): NodeEntry {
 }
 
 describe('page/reads.ts', () => {
-  it.fails('?reads=3&need=older runs three reads through client.read and writes three served ids with their statuses', async () => {
+  it('?reads=3&need=older runs three reads through client.read and writes three served ids with their statuses', async () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const idB = 'b'.repeat(64);
@@ -712,7 +712,7 @@ describe('page/reads.ts', () => {
     });
   });
 
-  it.fails('a tip read sends to /blocks/current', async () => {
+  it('a tip read sends to /blocks/current', async () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
@@ -727,7 +727,7 @@ describe('page/reads.ts', () => {
     expect(parsed).toEqual({ need: 'tip', served: [{ nodeId: idA, status: 'ok' }] });
   });
 
-  it.fails('waits for the first completed check (agreement !== null)', async () => {
+  it('waits for the first completed check (agreement !== null)', async () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
@@ -749,7 +749,7 @@ describe('page/reads.ts', () => {
     expect(parsed).toEqual({ need: 'older', served: [{ nodeId: idA, status: 'ok' }] });
   });
 
-  it.fails('a failed read lands as { nodeId: null, status: null, error }', async () => {
+  it('a failed read lands as { nodeId: null, status: null, error }', async () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
@@ -783,7 +783,7 @@ describe('page/reads.ts', () => {
 });
 
 describe('page/reads.ts sibling pattern', () => {
-  it.fails('a render leaves <pre id="reads"> in place', async () => {
+  it('a render leaves <pre id="reads"> in place', async () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
@@ -807,7 +807,7 @@ describe('page/reads.ts sibling pattern', () => {
 });
 
 describe('probe and reads coexist', () => {
-  it.fails('both can run on one page load; each owns its own <pre> as a sibling of the state root', async () => {
+  it('both can run on one page load; each owns its own <pre> as a sibling of the state root', async () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
