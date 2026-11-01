@@ -1325,21 +1325,39 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   it('readMs is the proof read time of the latest check', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "it times
     // each node's proof read; that time is the node's speed until the
-    // next check." The wrap times from fetch call to end of body.
-    const stub = await makeStub(0); stubs.push(stub);
+    // next check." The wrap times from fetch call to end of body — a
+    // time to headers alone would miss the transfer, which the
+    // delayed stub pins by holding the body back for 150 ms after it
+    // sends the headers; readMs is held to at least a hundred ms
+    // under a clock reading of 50 Hz on a slow machine.
+    const BODY_DELAY_MS = 150;
+    const srv = createServer((req, res) => {
+      if (req.url === '/nipopow/proof/24/20') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.flushHeaders();
+        setTimeout(() => {
+          res.end(JSON.stringify({ proof: 'canned-for-timing' }));
+        }, BODY_DELAY_MS);
+        return;
+      }
+      res.writeHead(404); res.end();
+    });
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
+    const port = (srv.address() as AddressInfo).port;
+    const stub: Stub = { srv, base: `http://127.0.0.1:${port}` };
+    stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'rms-')); dirs.push(dir);
     const started = await startNode(stub, dir); nodes.push(started.node);
 
-    // Resolver that calls httpFetch and drains the body, so the
-    // timing wrap captures the full read.
+    // The resolver calls httpFetch and drains the body; the timing
+    // wrap stamps readMs at end-of-body, so a `res.text()` return
+    // completes after the stub's `setTimeout` releases the body.
     const probingResolve: typeof import('@dagsocial/nipopow-client').resolveTip =
       async (urls, _m, _k, _profile, _nowMs, httpFetch) => {
         const n: NodeTipResult[] = [];
         for (const url of urls) {
-          try {
-            const res = await httpFetch(`${url}/nipopow/proof/24/20`);
-            await res.text();
-          } catch { /* ignore — the node answers 404 for this path */ }
+          const res = await httpFetch(`${url}/nipopow/proof/24/20`);
+          await res.text();
           n.push({
             url, verified: true,
             proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
@@ -1350,22 +1368,19 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         return { winner: n[0] ?? null, winnerIndex: 0, nodes: n, tip: null, suffixHead: null, splits: [] };
       };
 
-    // Clock as a counter: each call returns a strictly greater value,
-    // so `end - start` is positive even when the real transfer is
-    // instant.
-    let t = 0;
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       stunServers: [],
-      clock: () => ++t,
       resolve: probingResolve,
     });
     clients.push(client);
     await client.check();
     const entry = client.state().nodes.find((n) => n.notisId === started.id)!;
     expect(entry.readMs).not.toBeNull();
-    expect(entry.readMs!).toBeGreaterThanOrEqual(1);
+    // A timer stopped at headers reads under the body delay; the
+    // body-end timer reads over it.
+    expect(entry.readMs!).toBeGreaterThanOrEqual(BODY_DELAY_MS / 2);
   }, 60_000);
 
   it('behindBy is the latest check\'s behind count per node', async () => {
