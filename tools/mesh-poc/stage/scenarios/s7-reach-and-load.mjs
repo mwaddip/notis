@@ -126,10 +126,9 @@ export async function run(ctx) {
       writeStageDefault(ctx.outDir);
       log.apply('pub2-netem-add', netem.add, netem.del);
       netemApplied = true;
-      // One completed check for the fresh page to learn pub2's new
-      // speed; the baseline-change predicate handles the first-check
-      // and later-check cases alike.
-      await waitOneCompletedCheck(ctx, browserUrl);
+      // `driveReads` opens its own fresh page under `?reads=&need=`,
+      // which waits on its own first completed check before the reads
+      // begin; the fresh page measures pub2's new speed on that check.
       const served = await driveReads(ctx, browserUrl, 20, 'older');
       const pub2Id = identities?.pub2?.notisId ?? null;
       if (typeof pub2Id !== 'string') {
@@ -266,14 +265,13 @@ async function driveReads(ctx, baseUrl, n, need) {
 
 // MESH_INTERFACE → The client's node list → "A routed read goes to a
 // node its need allows" — "how many checks it has completed, so a
-// reader can tell one check's state from the next". The predicate's
-// body: `v` is the `#state` text; on the first poll the current
-// `checks` lands in `globalThis.__s7CheckBaseline`, on each later
-// poll the wait is done when `checks` has grown. The agreement
-// counts stay identical across checks when the same nodes answer
-// the same way, so a baseline on `agreement` never changes; the
-// counter is the one hook this wait has. Exported so the stage test
-// runs the same function body a scenario does.
+// reader can tell one check's state from the next". A baseline-change
+// predicate on `checks`: `v` is the `#state` text; on the first poll
+// the current `checks` lands in `globalThis.__s7CheckBaseline`, on
+// each later poll the wait is done when `checks` has grown. The
+// agreement counts stay identical across checks when the same nodes
+// answer the same way, so a baseline on `agreement` never changes;
+// the counter is the one hook this wait has.
 //
 // `buildPredicate` builds this body as `new Function('v', body)`, run
 // in cdp.mjs' Node process — there is no `window` here, so the
@@ -286,11 +284,6 @@ export const S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE = `if (v === null) return fal
     if (typeof s.checks !== 'number') return false;
     if (globalThis.__s7CheckBaseline === undefined) globalThis.__s7CheckBaseline = s.checks;
     return s.checks > globalThis.__s7CheckBaseline;`;
-
-async function waitOneCompletedCheck(ctx, url) {
-  const expression = "document.getElementById('state')?.textContent ?? null";
-  await cdpPoll(ctx, url, expression, S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE, LONG_WAIT_MS, POLL_MS);
-}
 
 // MESH_INTERFACE → No anchor reached → "The agreement counts" / The
 // client's node list → "how many checks it has completed" — one page
