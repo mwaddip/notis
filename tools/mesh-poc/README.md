@@ -308,8 +308,9 @@ the agreement counts.
 
 **A node on the browser's own network comes in by the reader's hand**
 (`MESH_INTERFACE → Discovery → "A node added by hand"`): the client dials a private address only
-when the reader entered it; a private address a remote node offers through the DHT, a peer list
-or a seed is refused.
+when its own configuration names it — an anchor's address or one the reader entered by hand, each
+for its key; a private address a remote node offers through the DHT, a peer list or a seed is
+refused.
 
 **STUN by default** (`MESH_INTERFACE → NAT → "A node's role is its operator's setting"`): a
 public node runs a STUN server on `STUN_PORT` at the IP of its first WebRTC-direct listen

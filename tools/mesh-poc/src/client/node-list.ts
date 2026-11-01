@@ -85,7 +85,7 @@ export interface NodeEntry {
    * read with the same pick + classify the top-level pair uses
    * (`pickConnectionForLabel` + `classifyConnectionAddr`). `null`
    * when the client holds no open connection to this key. The pair for
-   * the node in use agrees with `ClientState.transport` /
+   * the latest routed read's node agrees with `ClientState.transport` /
    * `ClientState.path`. Written by `mesh-client`'s decoration pass; the
    * node list itself holds no transport state.
    */

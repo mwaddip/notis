@@ -1230,13 +1230,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(new Set([r1.nodeId, r2.nodeId]).size).toBe(2);
   }, 120_000);
 
-  it('lastLeft names any node that left ok/trailing, not just the first candidate', async () => {
-    // MESH_INTERFACE → The client's node list — the rule is "a node
-    // that was `ok` or `trailing` before [the check] is neither after
-    // it", not "the first candidate moved". Three anchors ok after
-    // check 1; the second stops; after check 2 the second is in retry
-    // while the first stays `ok`, and `lastLeft` still names the one
-    // that left.
+  it('lastLeft names any node that left ok/trailing', async () => {
+    // MESH_INTERFACE → The client's node list — "a node that was `ok`
+    // or `trailing` before [the check] and is neither after it". Three
+    // anchors ok after check 1; the second stops; after check 2 the
+    // second is in retry while the first stays `ok`, and `lastLeft`
+    // names the one that left.
     const stubA = await makeStub(0); stubs.push(stubA);
     const stubB = await makeStub(1); stubs.push(stubB);
     const stubC = await makeStub(2); stubs.push(stubC);
@@ -1263,10 +1262,8 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     await client.check();
     expect(client.state().lastLeft).toBeNull();
 
-    // Stop B — A stays the first candidate and remains ok, so the old
-    // "node in use is the first candidate after the check" rule would
-    // see no change and leave `lastLeft` untouched; under the current
-    // rule, the check records B's departure.
+    // Stop B — A stays ok. The check records B's departure, so
+    // `lastLeft` names B.
     await b.node.stop();
     nodes.splice(nodes.indexOf(b.node), 1);
     await client.check();

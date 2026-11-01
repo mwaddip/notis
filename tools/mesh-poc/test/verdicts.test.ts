@@ -186,7 +186,7 @@ describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through 
   it('ICE record carries a host name → FAIL', () => {
     expect(verdictS2Priv1({ ...PASS, iceServers: [{ urls: ['stun:stun.example.com:3478'] }] })).toBe('FAIL');
   });
-  it('nodeIdInUse null (priv1 reached but ranks below the node in use) → PASS', () => {
+  it("nodeIdInUse null (priv1 reached but ranks below the latest routed read's node) → PASS", () => {
     expect(verdictS2Priv1({ ...PASS, nodeIdInUse: null })).toBe('PASS');
   });
 });

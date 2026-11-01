@@ -66,7 +66,7 @@ interface Host {
 }
 interface Topology { hosts: Record<string, Host>; internet: { subnet: string; gateway: string } }
 
-describe('topology.json: the browser dials public addresses only', () => {
+describe("topology.json: every public host's address sits outside the gater's private list, every NAT-inside segment inside it", () => {
   const topology = JSON.parse(readFileSync(TOPOLOGY_PATH, 'utf8')) as Topology;
 
   it("every public host's address is outside @libp2p/utils's private-ip list", () => {

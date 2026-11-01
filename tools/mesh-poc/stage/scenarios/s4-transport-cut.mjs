@@ -262,14 +262,14 @@ export async function run(ctx) {
         runFault(log, `notis-tcp-add-chain-${i}`, t.addChain);
         runFault(log, `notis-tcp-drop-${i}`, t.dropDport);
       }
-      // MESH_INTERFACE → The client's node list — "A check — resolveTip
-      // over the candidates — runs at start, every `CHECK_INTERVAL_MS`,
-      // and at once after a failed fetch to the node in use". A read
-      // taken immediately after the fault lands between checks; waiting
-      // one check interval lets the next tick fire on the cut. The
-      // record carries the post-cut state alone — `cdpPoll` with a
-      // predicate that holds for a settled state (nodeId AND transport
-      // present) returns one of them, never a transient frame.
+      // MESH_INTERFACE → The client's node list → "A check" — "runs at
+      // start, every `CHECK_INTERVAL_MS`, and at once after a failed
+      // routed read". A read taken immediately after the fault lands
+      // between checks; waiting one check interval lets the next tick
+      // fire on the cut. The record carries the post-cut state alone —
+      // `cdpPoll` with a predicate that holds for a settled state
+      // (nodeId AND transport present) returns one of them, never a
+      // transient frame.
       await new Promise((r) => setTimeout(r, CHECK_INTERVAL_MS));
       let text4 = null;
       try {

@@ -25,7 +25,7 @@ function missing(m) {
 
 // MESH_INTERFACE → Acceptance 1 — "the client reads a node's API by key
 // from anchors alone, over WebRTC-direct". Scenario 1 step 1: within
-// 60 s the client's state has an `anchor` node in use, reached over
+// 60 s the latest routed read went to an `anchor` node, reached over
 // WebRTC-direct with a direct path.
 // Measurement:
 //   `{ nodeId: string|null, isAnchor: boolean, timeMs: number,
