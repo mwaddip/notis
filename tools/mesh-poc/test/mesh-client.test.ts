@@ -1441,6 +1441,52 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.agreement!.notAgreeing).toBe(0);
   }, 90_000);
 
+  it('the tip read catch rethrows a non-MeshFetchError from classifyTipRead', async () => {
+    // MESH_INTERFACE → The node endpoint — phase 5 catches a failed or
+    // unroutable tip read (MeshFetchError kind `transport`) and sets
+    // `tip = null`. A throw from classifyTipRead itself is a bug, not
+    // a transport failure, and must surface instead of being
+    // swallowed. The test forces classifyTipRead to throw by routing
+    // the tip read to a notisId the list does not hold: the response
+    // classifies as a non-ok HTTP answer, and `nodeList.failure` on
+    // that unknown id throws from `unknown('failure', id)`.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const dirA = mkdtempSync(join(tmpdir(), 'f3-')); dirs.push(dirA);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE, stunServers: [],
+      resolve: fakeResolveWith([
+        (u) => winnerFirst(u),
+        (u) => winnerFirst(u),
+      ]),
+    });
+    clients.push(client);
+    await client.check();
+
+    const stranger = 'ff'.repeat(32);
+    const typed = client as unknown as { read: typeof client.read };
+    const originalRead = typed.read.bind(client);
+    typed.read = async (path, need) => {
+      if (need === 'tip') {
+        return {
+          response: new Response(JSON.stringify({ error: 'bad' }), {
+            status: 500,
+            headers: { 'content-type': 'application/json' },
+          }),
+          nodeId: stranger,
+        };
+      }
+      return originalRead(path, need);
+    };
+
+    let caught: unknown;
+    try { await client.check(); } catch (e) { caught = e; }
+    expect(caught, 'a non-MeshFetchError from classifyTipRead reaches the caller').toBeDefined();
+    expect(caught, 'the catch rethrows non-transport errors').not.toBeInstanceOf(MeshFetchError);
+  }, 60_000);
+
   it('a non-mesh URL in the resolve httpFetch surfaces as MeshUrlError', async () => {
     // MESH_INTERFACE → The node endpoint — every URL `resolveTip` reads
     // through `timedFetch` is `meshBaseUrl(id)`, so `idOfMeshUrl`

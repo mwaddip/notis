@@ -583,11 +583,16 @@ class MeshClientImpl implements MeshClient {
     try {
       const tipRead = await this.read('/blocks/current', 'tip');
       await this.classifyTipRead(tipRead.response, tipRead.nodeId);
-    } catch {
-      // The read failed before any response arrived — `null` either
-      // because no node was allowed, or because the underlying fetch
-      // threw. The next check runs on the ordinary cadence.
-      this.state_.tip = null;
+    } catch (e) {
+      // Only the read's own rejection — `MeshFetchError`, from a
+      // failed or unroutable read — reads as "no tip this round".
+      // Anything else came from inside classifyTipRead and is a bug;
+      // let it surface instead of hiding under `tip = null`.
+      if (e instanceof MeshFetchError) {
+        this.state_.tip = null;
+      } else {
+        throw e;
+      }
     }
 
     // After the check: name any node that was ok/trailing before and
