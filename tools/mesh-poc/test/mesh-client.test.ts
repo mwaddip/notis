@@ -1441,6 +1441,78 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.agreement!.notAgreeing).toBe(0);
   }, 90_000);
 
+  it('a failed read on a live connection triggers an immediate check', async () => {
+    // MESH_INTERFACE → The client's node list → "A read opens no
+    // connection" + "A routed read goes to a node its need allows" —
+    // "a failed routed read runs a check at once, which dials from
+    // the list." The existing "a failed read triggers a check" case
+    // reaches the no-node branch (A stopped, no open connection, no
+    // allowed node) which has its own trigger; the mutation removing
+    // the fetch-failure catch's trigger alone leaves that case green.
+    // This case holds the connection open and makes `newStream`
+    // reject once, so pickServer returns A and the fetch itself
+    // throws from inside meshFetchOverConnection. The 30 s periodic
+    // check cannot stand in — the wait is a second.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'f4-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'f4-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+
+    let resolveCalls = 0;
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE, stunServers: [],
+      random: () => 0,
+      resolve: fakeResolveWith([
+        (u) => { resolveCalls += 1; return winnerFirst(u); },
+        (u) => { resolveCalls += 1; return winnerFirst(u); },
+        (u) => { resolveCalls += 1; return winnerFirst(u); },
+      ]),
+    });
+    clients.push(client);
+    await client.check();
+    const callsBefore = resolveCalls;
+
+    // Patch A's own libp2p connection: next `newStream` rejects. The
+    // connection stays "open" so pickConnectionForRead returns it,
+    // and the fetch's meshFetchOverConnection catches the rejection
+    // and throws `MeshFetchError('transport', ...)` — the
+    // fetch-failure catch's path.
+    const aPeer = peerIdFromNotisId(a.id).toString();
+    const conn = client.libp2p.getConnections().find((c) => c.remotePeer.toString() === aPeer);
+    expect(conn, 'the client holds a live connection to A').toBeDefined();
+    let patched = true;
+    const originalNewStream = conn!.newStream.bind(conn!);
+    conn!.newStream = async (...args: Parameters<typeof originalNewStream>) => {
+      if (patched) {
+        patched = false;
+        throw new Error('simulated newStream failure on a live connection');
+      }
+      return originalNewStream(...args);
+    };
+
+    let readError: unknown;
+    try {
+      await client.read('/blocks/current', 'tip');
+    } catch (e) { readError = e; }
+    expect(readError, 'the read rejected').toBeInstanceOf(MeshFetchError);
+    expect((readError as MeshFetchError).kind).toBe('transport');
+
+    // Within one second the triggered check must land a fresh resolve
+    // call; the periodic check (30 s) cannot contribute inside the
+    // window.
+    const deadlineMs = Date.now() + 1_000;
+    while (resolveCalls === callsBefore && Date.now() < deadlineMs) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(resolveCalls, 'the fetch-failure catch triggered a check').toBeGreaterThan(callsBefore);
+  }, 60_000);
+
   it('the tip read catch rethrows a non-MeshFetchError from classifyTipRead', async () => {
     // MESH_INTERFACE → The node endpoint — phase 5 catches a failed or
     // unroutable tip read (MeshFetchError kind `transport`) and sets
