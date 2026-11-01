@@ -1,10 +1,12 @@
 // MESH_INTERFACE → Transports → "A client dials a private address only
-// when its own configuration names it" — `@libp2p/utils`'s connection
-// gater refuses every address `isPrivateIp` matches. The stage's
-// internet segment has to be outside that list; NAT-inside segments
-// stay inside it. The whole class of DEFECT (a page that cannot dial
-// any public anchor because every anchor's address matches a private
-// range) rested on this.
+// when its own configuration names it" — the client's own connection
+// gater refuses every address `isPrivateIp` matches but those its
+// configuration names for a key. The stage's internet segment has to
+// be outside the private-IP list; NAT-inside segments stay inside it,
+// and a page reaches them only when the reader hands them to it. The
+// whole class of DEFECT (a page that cannot dial any public anchor
+// because every anchor's address matches a private range) rested on
+// this.
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -12,8 +14,9 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 // `@libp2p/utils`'s `isPrivateIp` is not exposed as a subpath export, so
 // the test holds the same list (as of @libp2p/utils 7.4.5 —
-// `src/private-ip.ts`). A browser's connection gater refuses every address
-// that lies in any of these.
+// `src/private-ip.ts`). The client's own connection gater refuses every
+// address that lies in any of these, unless the client's configuration
+// names it for a key.
 const PRIVATE_IP_RANGES = [
   '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
   '169.254.0.0/16', '172.16.0.0/12',

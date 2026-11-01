@@ -897,7 +897,12 @@ class MeshClientImpl implements MeshClient {
     const entry = this.nodeList.entry(id);
     if (!entry) return;
     const addrs = [...entry.addrs];
-    // Plain `/ws` without `/tls/` or `/wss` is a browser's refusal — skip.
+    // Plain `/ws` without `/tls/` or `/wss` is the client's own refusal
+    // (MESH_INTERFACE → Transports → "A client dials a private address
+    // only when its own configuration names it"): the client's gater
+    // refuses it in every runtime; this pre-filter also records the
+    // per-address diagnostic so a reader sees which address failed how
+    // (the gater's bulk refusal lands as one `DialDeniedError`).
     const dialable: string[] = [];
     for (const addr of addrs) {
       if (/\/ws(?:\/|$)/.test(addr) && !/\/wss(?:\/|$)/.test(addr) && !/\/tls\//.test(addr)) {
