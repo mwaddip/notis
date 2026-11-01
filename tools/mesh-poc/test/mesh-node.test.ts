@@ -320,7 +320,7 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
   // STUN_PORT (RFC 8489's port) at the IP of its first WebRTC-direct
   // listen address, unless its operator names another or turns it off".
   // Pure cases over `stunSettingFor`: no socket, no filesystem reach.
-  it.fails('a public node with no MESH_STUN serves STUN at its first webrtc-direct listen IP on 3478', () => {
+  it('a public node with no MESH_STUN serves STUN at its first webrtc-direct listen IP on 3478', () => {
     const got = stunSettingFor('public', [
       '/ip4/127.0.0.1/tcp/4002',
       '/ip4/11.100.0.11/udp/4001/webrtc-direct',
@@ -335,20 +335,20 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
     expect(got).toBeUndefined();
   });
 
-  it.fails('an explicit MESH_STUN is kept', () => {
+  it('an explicit MESH_STUN is kept', () => {
     const got = stunSettingFor('public', [
       '/ip4/11.100.0.11/udp/4001/webrtc-direct',
     ], '198.51.100.7:3480');
     expect(got).toEqual({ host: '198.51.100.7', port: 3480 });
   });
 
-  it.fails('a hostname MESH_STUN is refused', () => {
+  it('a hostname MESH_STUN is refused', () => {
     expect(() => stunSettingFor('public', [
       '/ip4/11.100.0.11/udp/4001/webrtc-direct',
     ], 'stun.example.com:3478')).toThrow(MeshConfigError);
   });
 
-  it.fails('a private node with MESH_STUN set is refused', () => {
+  it('a private node with MESH_STUN set is refused', () => {
     expect(() => stunSettingFor('private', [
       '/ip4/10.101.0.11/udp/4001/webrtc-direct',
     ], '198.51.100.7:3478')).toThrow(MeshConfigError);
@@ -408,7 +408,7 @@ describe('mesh node — libp2p, the persisted certificate, the DHT', () => {
   // operator to hand over, and announces it to no one". The identity
   // line's `localAddrs` carries the WebRTC-direct listen with
   // `/certhash/` and `/p2p/<peerId>` the browser dials.
-  it.fails("a private node's identity line lists its local webrtc-direct address with certhash and peer id", async () => {
+  it("a private node's identity line lists its local webrtc-direct address with certhash and peer id", async () => {
     const stub = await makeStub(); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-node-priv-ident-')); dirs.push(dir);
     // The private node here has a WebRTC-direct listen on loopback. No

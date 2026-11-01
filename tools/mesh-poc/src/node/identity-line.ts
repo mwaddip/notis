@@ -2,6 +2,18 @@
 // prints its local WebRTC-direct address with its key, for its operator
 // to hand over, and announces it to no one". Pure: the identity line a
 // mesh node prints at start and on every address change.
+//
+// `listenerAddrs` is the flat list of every transport listener's own
+// `getAddrs()`, so a private node's WebRTC-direct listen address — with
+// the certificate hash the listener splices on at `getAddrs` time
+// (`@libp2p/webrtc` `private-to-public/listener.ts` `getAddrs()`:
+// `ma.encapsulate(/webrtc-direct/certhash/<hash>)`) — reaches
+// `localAddrsFor` with its `/certhash/` component. The identity line's
+// `localAddrs` is empty for a public node, which announces its
+// WebRTC-direct listen addresses already (`MESH_INTERFACE → NAT →
+// "A public node announces its listen addresses from the start"`).
+
+const WEBRTC_DIRECT_WITH_CERTHASH_RE = /\/webrtc-direct\/certhash\//;
 
 /**
  * Build the identity line's `localAddrs` from a node's listener
@@ -13,9 +25,17 @@ export function localAddrsFor(
   listenerAddrs: readonly string[],
   peerId: string,
 ): string[] {
-  // Stub — the real derivation lands in Task 8's feat commit.
-  void role; void listenerAddrs; void peerId;
-  return [];
+  if (role !== 'private') return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const a of listenerAddrs) {
+    if (!WEBRTC_DIRECT_WITH_CERTHASH_RE.test(a)) continue;
+    const withPeer = a.endsWith(`/p2p/${peerId}`) ? a : `${a}/p2p/${peerId}`;
+    if (seen.has(withPeer)) continue;
+    seen.add(withPeer);
+    out.push(withPeer);
+  }
+  return out;
 }
 
 export interface IdentityLine {
