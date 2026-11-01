@@ -50,11 +50,13 @@ import {
 import { tipEvents, type TipEvent } from './tip-events.js';
 import { pickServer, type ReadNeed } from './server-pick.js';
 import { agreementCounts, type AgreementCounts } from './agreement.js';
+import { stunServersFor } from './stun-list.js';
 import {
   dhtProtocol,
   CHECK_INTERVAL_MS,
   DIAL_TIMEOUT_MS,
   PEER_DIAL_MIN_MS,
+  STUN_SERVERS_MAX,
   type NetworkName,
 } from '../protocols.js';
 export type { ReadNeed } from './server-pick.js';
@@ -101,13 +103,11 @@ const BODY_UNPARSEABLE = 'unparseable body:';
 export function assertClientConfig(o: {
   anchors: readonly Anchor[];
   seeds?: readonly Anchor[];
-  stunServers?: readonly string[];
 }): void {
   for (const a of o.anchors) assertNoDns('anchor', a.addrs);
   if (o.seeds !== undefined) {
     for (const s of o.seeds) assertNoDns('seed', s.addrs);
   }
-  if (o.stunServers !== undefined) assertIceServers(o.stunServers);
 }
 
 function assertIceServers(stunServers: readonly string[]): void {
@@ -223,14 +223,6 @@ export interface StartMeshClientOptions {
   network: NetworkName;
   profile: NetworkProfile;
   /**
-   * MESH_INTERFACE → NAT — "A client's STUN list comes from the public
-   * nodes it holds". The option is on its way out: existing callers
-   * may still pass it, but the client derives its STUN list from the
-   * current node entries and ignores the given list. The next unit
-   * drops the option; see the AHEAD OF CODE marker in NAT.
-   */
-  stunServers?: string[];
-  /**
    * MESH_INTERFACE → "Two clocks" — the retry timers' clock. The list and
    * every per-entry deadline reads this; a clock that steps never holds a
    * node out or retries it at once. Monotonic (`performance.now`) by
@@ -273,11 +265,22 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // back to its DEFAULT_ICE_SERVERS (`@libp2p/webrtc@7.0.2`'s
   // `src/constants.ts:12`, which `src/private-to-public/utils/
   // get-rtcpeerconnection.ts:147` reads when `rtcConfiguration.
-  // iceServers` is undefined). `webRTC()` keeps the configured
-  // mesh-node STUN by IP for the relayed WebRTC path.
+  // iceServers` is undefined).
+  //
+  // MESH_INTERFACE → NAT → "A client's STUN list comes from the public
+  // nodes it holds" — `webRTC`'s `rtcConfiguration` is a function the
+  // transport reads on every dial (`@libp2p/webrtc@7.0.2`'s
+  // `src/private-to-private/transport.js:100` and `:143`), so the
+  // derived list flows into every new peer connection. The holder is
+  // reassigned once the client exists; before then, `webRTC` is built
+  // but no dial has run, and the fallback `{ iceServers: [] }` keeps
+  // libp2p off its DNS-named defaults.
+  const iceHolder: { current: () => { iceServers: RTCIceServer[] } } = {
+    current: () => ({ iceServers: [] }),
+  };
   const transports = [
     webRTCDirect({ rtcConfiguration: { iceServers: [] } }),
-    webRTC({ rtcConfiguration: { iceServers: iceConfigurations(o.stunServers ?? []) } }),
+    webRTC({ rtcConfiguration: () => iceHolder.current() }),
     circuitRelayTransport(),
     webSockets(),
   ];
@@ -304,6 +307,11 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
 
   const random = o.random ?? Math.random;
   const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, random, resolveFn);
+  // MESH_INTERFACE → NAT → "A client's STUN list comes from the
+  // public nodes it holds" — now that the client holds its node list,
+  // the holder derives the ICE configuration from it. `webRTC` reads
+  // the function on every dial, so the next dial sees the live list.
+  iceHolder.current = () => client.iceConfiguration();
   client.start();
   return client;
 }
@@ -477,13 +485,18 @@ class MeshClientImpl implements MeshClient {
 
   /**
    * MESH_INTERFACE → NAT — "the ICE configuration names no server"
-   * when no public node is held. Stub answers an empty list; the
-   * feat(mesh-poc) commit replaces this with
-   * `iceConfigurations(stunServersFor(this.state().nodes,
-   * STUN_SERVERS_MAX))`.
+   * when no public node is held. The derivation reads the current
+   * (decorated) entries — a node moved to `blacklisted`, a new
+   * speed from the latest check, or a hand-added anchor's address
+   * all flow in at the next dial. The internal `assertIceServers`
+   * holds the derived list to the IP-literal rule as the contract's
+   * refusal (a derived server that is not an IP literal cannot
+   * happen; the check stays as the contract's refusal).
    */
   iceConfiguration(): { iceServers: RTCIceServer[] } {
-    return { iceServers: [] };
+    const servers = stunServersFor(this.state().nodes, STUN_SERVERS_MAX);
+    assertIceServers(servers);
+    return { iceServers: iceConfigurations(servers) };
   }
 
   onState(cb: (s: ClientState) => void): () => void {

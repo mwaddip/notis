@@ -52,7 +52,7 @@ function makeEntry(partial: {
 // 198.51.100.0/24 (TEST-NET-2), 192.0.2.0/24 (TEST-NET-1).
 
 describe('stunServersFor', () => {
-  it.fails('derives stun:<ip>:3478 from public webrtc-direct addresses only', () => {
+  it('derives stun:<ip>:3478 from public webrtc-direct addresses only', () => {
     // 10.x and 100.64.x are refused by isPrivate; 11.100.0.x is not.
     const entries: NodeEntry[] = [
       makeEntry({
@@ -71,7 +71,7 @@ describe('stunServersFor', () => {
     expect(stunServersFor(entries, 3)).toEqual(['stun:11.100.0.11:3478']);
   });
 
-  it.fails("a relayed address gives its relay hop's IP", () => {
+  it("a relayed address gives its relay hop's IP", () => {
     // The FIRST `/ip4/<ip>/udp/<n>/webrtc-direct` triple is the relay's
     // hop on a circuit address — @multiformats/multiaddr parses the
     // address and the components come out in that order.
@@ -86,7 +86,7 @@ describe('stunServersFor', () => {
     expect(stunServersFor(entries, 3)).toEqual(['stun:11.100.0.11:3478']);
   });
 
-  it.fails('verified nodes first, fastest first, at most STUN_SERVERS_MAX', () => {
+  it('verified nodes first, fastest first, at most STUN_SERVERS_MAX', () => {
     // 1 non-verified (new) first in list, then four verified at
     // different speeds. STUN_SERVERS_MAX = 3; the result is the three
     // fastest verified, in speed order.
@@ -109,7 +109,7 @@ describe('stunServersFor', () => {
     ]);
   });
 
-  it.fails('a blacklisted node gives no STUN server', () => {
+  it('a blacklisted node gives no STUN server', () => {
     const entries: NodeEntry[] = [
       makeEntry({ notisId: 'aa'.repeat(32), status: 'blacklisted',
         addrs: ['/ip4/11.100.0.11/udp/0/webrtc-direct'] }),
@@ -128,7 +128,7 @@ describe('iceConfiguration — client-level', () => {
     }
   });
 
-  it.fails('no public node known gives [] and rtcConfiguration answers { iceServers: [] }', async () => {
+  it('no public node known gives [] and rtcConfiguration answers { iceServers: [] }', async () => {
     // The pure function first: only non-public addresses, output is [].
     expect(stunServersFor([
       makeEntry({ notisId: 'aa'.repeat(32), status: 'ok',
@@ -150,7 +150,7 @@ describe('iceConfiguration — client-level', () => {
     expect(client.iceConfiguration().iceServers).toEqual([]);
   }, 30_000);
 
-  it.fails('a client started from anchors alone builds its ICE servers from them', async () => {
+  it('a client started from anchors alone builds its ICE servers from them', async () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
       anchors: [{

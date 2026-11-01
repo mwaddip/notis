@@ -203,7 +203,6 @@ describe('startMeshClient — wallClock is handed to the resolve seam', () => {
       anchors,
       network: 'devnet',
       profile: profileFor('devnet'),
-      stunServers: [],
       resolve: resolveStub,
       // Explicitly set wallClock to a fake that is clearly wall-clock
       // (ms since epoch >> 1e12).

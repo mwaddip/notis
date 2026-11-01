@@ -131,7 +131,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     expect(() => assertClientConfig({
       anchors: [{ notisId: anchorKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
-      stunServers: [],
     })).toThrow(MeshConfigError);
   });
 
@@ -146,7 +145,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
           anchors: [{ notisId: anchorKey.notisId, addrs: [prefix] }],
           network: 'devnet',
           profile: PROFILE,
-          stunServers: [],
           resolve: fakeResolveWith([(u) => winnerFirst(u)]),
         });
       } catch (e) {
@@ -156,36 +154,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     }, 30_000);
   }
 
-  it('a hostname ICE server is refused and an IP ICE server is accepted', async () => {
-    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
-    let thrown: unknown;
-    try {
-      await startMeshClient({
-        anchors: [{ notisId: anchorKey.notisId, addrs: [] }],
-        network: 'devnet',
-        profile: PROFILE,
-        stunServers: ['stun:stun.example.org:3478'],
-        resolve: fakeResolveWith([]),
-      });
-    } catch (e) {
-      thrown = e;
-    }
-    expect(thrown).toBeInstanceOf(MeshConfigError);
-
-    // Each IP form accepted — a `startMeshClient` that returned starts a
-    // libp2p node, so `stop()` is called before the test exits.
-    for (const ice of ['stun:10.0.0.1:3478', 'stun:[fd00::1]:3478']) {
-      const client = await startMeshClient({
-        anchors: [{ notisId: anchorKey.notisId, addrs: [] }],
-        network: 'devnet',
-        profile: PROFILE,
-        stunServers: [ice],
-        resolve: fakeResolveWith([(u) => winnerFirst(u)]),
-      });
-      clients.push(client);
-      expect(client.state().anchorReached).toBe(false);
-    }
-  }, 60_000);
+  // MESH_INTERFACE → NAT — "A client's STUN list comes from the public
+  // nodes it holds". The STUN list is derived now; the old hostname
+  // ICE server refusal lives on in `iceConfiguration`'s internal
+  // `assertIceServers` call over the derived list, which cannot carry
+  // a hostname by construction (every derived entry is
+  // `stun:<ip>:3478` through `stunServersFor`). The pure
+  // `stunServersFor` cases in `test/stun-list.test.ts` cover the IP
+  // shape.
 
   // MESH_INTERFACE → Discovery → "Seeds" — a seed address meets the anchor's
   // refusals; `assertClientConfig` is called with both lists and throws on a
@@ -195,7 +171,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(() => assertClientConfig({
       anchors: [],
       seeds: [{ notisId: seedKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
-      stunServers: [],
     })).toThrow(MeshConfigError);
   });
 
@@ -210,7 +185,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       seeds: [{ notisId: seedKey.notisId, addrs: [] }],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       // No check runs here: the state is read before the scheduled first
       // check fires, so the seed is still in its initial `new` status —
       // `new` is one of the four candidate rows (MESH_INTERFACE → The
@@ -245,7 +219,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       seeds: [{ notisId: seed.id, addrs: [seed.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       // Phase 1 fails the stopped anchor and connects to the seed; phase 2
       // asks `resolveTip` with the seed's URL only, and winnerFirst makes
       // the seed the winner.
@@ -275,7 +248,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([(u) => winnerFirst(u)]),
     });
     clients.push(client);
@@ -314,7 +286,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       // Both checks keep A as winner, B as trailing; after A stops it
       // falls out of candidates and B stands alone.
       resolve: fakeResolveWith([(u) => winnerFirst(u), (u) => winnerFirst(u)]),
@@ -403,7 +374,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: onlyRealGoodResolve(good.id),
     });
     clients.push(client);
@@ -461,7 +431,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: onlyRealGoodResolve(good.id),
     });
     clients.push(client);
@@ -507,7 +476,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: onlyRealGoodResolve(good.id),
     });
     clients.push(client);
@@ -550,7 +518,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: a.id, addrs: [b.webrtcAddr, a.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([(u) => winnerFirst(u)]),
     });
     clients.push(client);
@@ -575,7 +542,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([
         (urls) => ({
           winner: null,
@@ -615,7 +581,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       // No candidate reachable — resolve may still be called with an empty
       // list; its empty answer leaves the state untouched.
       resolve: fakeResolveWith([() => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] })]),
@@ -655,7 +620,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       // Pin the fast-set pick to the first candidate so the first read
       // reliably reaches A.
       random: () => 0,
@@ -706,7 +670,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([
         () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
       ]),
@@ -744,7 +707,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: async () => {
         resolveCalls += 1;
         if (resolveCalls === 1) await gate;
@@ -817,7 +779,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([(u) => winnerFirst(u), (u) => winnerFirst(u)]),
     });
     clients.push(client);
@@ -918,7 +879,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([(u) => winnerFirst(u)]),
     });
     clients.push(client);
@@ -967,7 +927,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: k2.notisId, addrs: [k1.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      stunServers: [],
       resolve: callingHttpFetchResolve(),
     });
     clients.push(client);
@@ -1119,7 +1078,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([(u) => makeResult(u, [0, 0])]),
     });
     clients.push(client);
@@ -1149,7 +1107,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      stunServers: [],
       random: () => randValues[randIdx++ % randValues.length]!,
       resolve: fakeResolveWith([(u) => makeResult(u, [0, 1])]),
     });
@@ -1175,7 +1132,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([
         (u) => { resolveCalls += 1; return makeResult(u, [1]); },
         (u) => { resolveCalls += 1; return makeResult(u, [1]); },
@@ -1221,7 +1177,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      stunServers: [],
       random: () => {
         const v = randIdx / 50;
         randIdx = (randIdx + 1) % 50;
@@ -1256,7 +1211,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      stunServers: [],
       // 0 picks the first fast-set entry, 0.99 picks the last — so we
       // can force both nodes in turn.
       random: () => [0, 0.99][randIdx++ % 2]!,
@@ -1297,7 +1251,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([
         (u) => makeResult(u, [0, 0, 0]),
         (u) => makeResult(u, [0, 0, 0]),
@@ -1372,7 +1325,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
-      stunServers: [],
       resolve: probingResolve,
     });
     clients.push(client);
@@ -1400,7 +1352,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([(u) => makeResult(u, [0, 2])]),
     });
     clients.push(client);
@@ -1427,7 +1378,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      stunServers: [],
       resolve: fakeResolveWith([(u) => makeResult(u, [0, 1])]),
     });
     clients.push(client);
@@ -1466,7 +1416,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
-      network: 'devnet', profile: PROFILE, stunServers: [],
+      network: 'devnet', profile: PROFILE,
       random: () => 0,
       resolve: fakeResolveWith([
         (u) => { resolveCalls += 1; return winnerFirst(u); },
@@ -1528,7 +1478,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
     const client = await startMeshClient({
       anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
-      network: 'devnet', profile: PROFILE, stunServers: [],
+      network: 'devnet', profile: PROFILE,
       resolve: fakeResolveWith([
         (u) => winnerFirst(u),
         (u) => winnerFirst(u),
@@ -1578,7 +1528,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
       anchors: [{ notisId: anchorKey.notisId, addrs: [] }],
-      network: 'devnet', profile: PROFILE, stunServers: [],
+      network: 'devnet', profile: PROFILE,
       resolve: probingResolve,
     });
     clients.push(client);
@@ -1648,7 +1598,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
-      network: 'devnet', profile: PROFILE, stunServers: [],
+      network: 'devnet', profile: PROFILE,
       // random=0.99 picks the last entry of the fast set — a one-entry
       // fast set (A only) returns A; a two-entry fast set (A, B)
       // returns B.

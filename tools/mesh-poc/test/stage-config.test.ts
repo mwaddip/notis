@@ -105,7 +105,6 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
     expect(() => assertClientConfig({
       anchors: config.anchors,
       seeds: config.seeds,
-      stunServers: config.stunServers,
     })).not.toThrow();
   });
 });

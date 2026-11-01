@@ -61,7 +61,6 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
       ...(config.seeds !== undefined ? { seeds: config.seeds } : {}),
       network: config.network,
       profile,
-      stunServers: config.stunServers,
     });
   } catch (e) {
     if (e instanceof MeshConfigError) {

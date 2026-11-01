@@ -201,10 +201,15 @@ describe('WebRTC-direct names no ICE server; the relayed WebRTC path keeps STUN'
     ).toMatch(/\bwebRTCDirect\s*\(\s*\{\s*rtcConfiguration\s*:\s*\{\s*iceServers\s*:\s*\[\s*\]\s*\}\s*\}\s*\)/);
   });
 
-  it('the client passes the configured STUN list to webRTC()', () => {
+  it('the client passes a function to webRTC() rtcConfiguration', () => {
+    // MESH_INTERFACE → NAT → "A client's STUN list comes from the
+    // public nodes it holds" — rtcConfiguration is a function the
+    // webRTC transport reads at every dial (@libp2p/webrtc@7.0.2's
+    // private-to-private/transport.js:100, :143), so the derived
+    // list reaches each new peer connection.
     const src = readFileSync(SRC_MESH_CLIENT, 'utf8');
-    expect(src, 'webRTC(...) carries non-empty iceServers from stunServers').toMatch(
-      /\bwebRTC\s*\(\s*\{\s*rtcConfiguration\s*:\s*\{\s*iceServers\s*:\s*iceConfigurations\(/,
+    expect(src, 'webRTC({ rtcConfiguration: () => ... })').toMatch(
+      /\bwebRTC\s*\(\s*\{\s*rtcConfiguration\s*:\s*\(\s*\)\s*=>/,
     );
   });
 

@@ -605,7 +605,6 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
         anchors: [{ notisId, addrs: [wsAddr!, webrtcAddr!] }],
         network: 'devnet',
         profile: PROFILE,
-        stunServers: [],
         resolve: fakeResolve,
       });
       meshClients.push(client);
