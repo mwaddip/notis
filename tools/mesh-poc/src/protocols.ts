@@ -39,7 +39,8 @@ export const STUN_PORT: 3478 = 3478;
 export const FAST_SET_FACTOR: 2 = 2;
 export const FAST_SET_SLACK_MS: 50 = 50;
 /**
- * MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by IP"
- * — "the most STUN servers a client's ICE configuration names".
+ * MESH_INTERFACE → The client's node list — "the most STUN servers a
+ * client's ICE configuration names", the `STUN_SERVERS_MAX` row of
+ * the constants table.
  */
 export const STUN_SERVERS_MAX: 3 = 3;
