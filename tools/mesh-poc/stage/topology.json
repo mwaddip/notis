@@ -178,6 +178,23 @@
       "addr": "10.103.0.11",
       "veth": "br",
       "httpPort": 80
+    },
+    "lan1": {
+      "role": "private",
+      "nat": "endpoint-independent",
+      "parent": "natC",
+      "addr": "10.103.0.21",
+      "veth": "l1",
+      "mesh": {
+        "role": "private",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
     }
   }
 }

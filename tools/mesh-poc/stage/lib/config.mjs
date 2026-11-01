@@ -3,7 +3,10 @@
 // nodes' notisIds, and (optional) the mesh nodes' printed multiaddrs. Every
 // anchor's `addrs` carries a WebRTC-direct multiaddr; `pub1`'s also carries
 // a WSS address (`/tls/ws` over its bare IP). Seeds default to none (a
-// scenario writes its own); stun servers are the public nodes' STUN by IP.
+// scenario writes its own); the client takes its STUN servers from the
+// public nodes it holds (MESH_INTERFACE → NAT → "A client's STUN list
+// comes from the public nodes it holds"), so the built config carries
+// none, and the page refuses the field in words.
 //
 // A notisId converts to a libp2p peer id by `peerIdFromNotisId`'s rule
 // (`MESH_INTERFACE → Identity`): identity multihash of `08 01 12 20 ‖ key`,
@@ -18,7 +21,6 @@ import { publicMeshHosts } from './topology.mjs';
 export function buildPageConfig(topology, nodeIdentities, realMultiaddrs, opts) {
   const dryRun = opts !== undefined && opts !== null && opts.dryRun === true;
   const anchors = [];
-  const stunServers = [];
   for (const { name, host } of publicMeshHosts(topology)) {
     const id = nodeIdentities[name];
     if (typeof id !== 'string' || !/^[0-9a-f]{64}$/.test(id)) {
@@ -68,12 +70,10 @@ export function buildPageConfig(topology, nodeIdentities, realMultiaddrs, opts) 
       throw new Error(`${name}: no realMultiaddrs supplied in exec mode (pass { dryRun: true } to opt into the placeholder)`);
     }
     anchors.push({ notisId: id, addrs });
-    stunServers.push(`stun:${host.addr}:${host.mesh.stunPort}`);
   }
   return {
     network: topology.network,
     anchors,
-    stunServers,
     seeds: [],
   };
 }

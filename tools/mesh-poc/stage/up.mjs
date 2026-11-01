@@ -937,7 +937,7 @@ const minerBootChild = log.spawn(userWrap(nsOf('pub1'), {
   MINER_PCT: '100',
 }).concat([minerScript]), { description: 'miner-boot', logPath: logPathFor('miner-boot') });
 
-const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2'];
+const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2', 'lan1'];
 recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
 if (!dryRun) {
   // Each honest node is polled inside its own namespace as the user —

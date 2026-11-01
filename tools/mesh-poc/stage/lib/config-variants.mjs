@@ -14,8 +14,10 @@
 
 /**
  * Build a config variant whose single anchor is `<privHost>` reached
- * through `<viaPublicHost>`. The variant preserves `stunServers` and
- * leaves `seeds` empty.
+ * through `<viaPublicHost>`. The variant leaves `seeds` empty; the
+ * client's STUN list is derived from the public nodes it holds
+ * (MESH_INTERFACE → NAT → "A client's STUN list comes from the public
+ * nodes it holds"), so no `stunServers` key is written.
  *
  * The relay address is built from the stage's own `config.json`
  * (`baseConfig.anchors.find(a => a.notisId === viaPublicNotisId).addrs[0]`
@@ -43,7 +45,6 @@ export function buildPrivateViaRelayVariant(baseConfig, {
   return {
     network: baseConfig.network,
     anchors: [{ notisId: privNotisId, addrs: [relayAddr] }],
-    stunServers: Array.isArray(baseConfig.stunServers) ? baseConfig.stunServers : [],
     seeds: [],
   };
 }
@@ -131,21 +132,20 @@ export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, iden
   return {
     network: baseConfig.network,
     anchors: [{ notisId: privRow.notisId, addrs: [relayAnchor] }],
-    stunServers: Array.isArray(baseConfig.stunServers) ? baseConfig.stunServers : [],
     seeds: [],
   };
 }
 
 /**
- * MESH_INTERFACE → NAT → "A relay carries signalling, not data" — a
- * variant whose single anchor is a private node reached through the
- * relay it reserved on, with BOTH its `/p2p-circuit/webrtc` and plain
- * `/p2p-circuit` addresses. The browser cannot open an API stream over
- * the plain circuit address (relay limits refuse application streams);
- * the signalled WebRTC path over the circuit's webrtc form fails too
- * when the private is behind a symmetric NAT and the browser is behind
- * one of its own. The expected outcome is that the entry collects
- * failures and the client stays on another node it reaches.
+ * MESH_INTERFACE → NAT → "A relay carries data" — a variant whose
+ * single anchor is a private node reached through the relay it
+ * reserved on, with BOTH its `/p2p-circuit/webrtc` and plain
+ * `/p2p-circuit` addresses. The signalled WebRTC path over the
+ * circuit's webrtc form fails when the private is behind a symmetric
+ * NAT and the browser is behind one of its own; the plain
+ * `/p2p-circuit` form then carries the API stream over the relay as
+ * data. The expected outcome: the routed read lands on the private
+ * over the relay.
  */
 export function buildPrivateViaAnnouncedRelayPairVariant(baseConfig, { privRow, identities }) {
   if (!baseConfig || !Array.isArray(baseConfig.anchors)) {
@@ -190,14 +190,15 @@ export function buildPrivateViaAnnouncedRelayPairVariant(baseConfig, { privRow, 
     throw new Error(`relay ${relayPeerIdString}: no /webrtc-direct/certhash/ address`);
   }
   // Both the `/p2p-circuit/webrtc/p2p/<priv>` form (signalling + direct
-  // WebRTC data) and the plain `/p2p-circuit/p2p/<priv>` form (would
-  // carry data on the limited relayed stream — refused by the client).
+  // WebRTC data) and the plain `/p2p-circuit/p2p/<priv>` form (an API
+  // stream over the relay, MESH_INTERFACE → NAT → "A relay carries
+  // data"). The public node's relay keeps no circuit limits, so a
+  // read rides the relayed link whole.
   const relayedWebrtc = `${relayWebrtc}/p2p-circuit/webrtc/p2p/${privPeerIdString}`;
   const relayedPlain = `${relayWebrtc}/p2p-circuit/p2p/${privPeerIdString}`;
   return {
     network: baseConfig.network,
     anchors: [{ notisId: privRow.notisId, addrs: [relayedWebrtc, relayedPlain] }],
-    stunServers: Array.isArray(baseConfig.stunServers) ? baseConfig.stunServers : [],
     seeds: [],
   };
 }
@@ -215,7 +216,6 @@ export function buildWithHostileSeedsVariant(baseConfig, seeds) {
   return {
     network: baseConfig.network,
     anchors: baseConfig.anchors,
-    stunServers: Array.isArray(baseConfig.stunServers) ? baseConfig.stunServers : [],
     seeds: Array.isArray(seeds) ? seeds : [],
   };
 }

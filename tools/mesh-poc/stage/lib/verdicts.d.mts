@@ -15,3 +15,7 @@ export function verdictS6NoAnchor(m: unknown): Verdict;
 export function verdictS6Hostile(m: unknown): Verdict;
 export function verdictS4InterNodeTcp(m: unknown): Verdict;
 export function verdictIceServers(record: unknown): Verdict;
+export function verdictS7Spread(m: unknown): Verdict;
+export function verdictS7Fastest(m: unknown): Verdict;
+export function verdictS7Lan(m: unknown): Verdict;
+export function verdictS7Counts(m: unknown): Verdict;

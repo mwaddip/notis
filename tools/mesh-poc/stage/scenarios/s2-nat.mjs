@@ -1,24 +1,28 @@
 // MESH_INTERFACE → Acceptance 2 / NAT — "The browser reaches the node
 // behind the endpoint-independent NAT over WebRTC signalled through a
-// relay, its data direct. The node behind the symmetric NAT has no
-// direct path to the browser behind its NAT: it reads `retry`, never
-// `blacklisted`, and the client stays on a node it reaches."
+// relay, its data direct, its ICE servers drawn from the public nodes
+// it holds. It reaches the node behind the symmetric NAT through a
+// relay, its data relayed: that node reads `ok` or `trailing`, never
+// `retry` for want of a direct path, never `blacklisted`."
 //
 // Two sub-steps, each writing its own `config.json` variant:
 //   priv1 (endpoint-independent NAT) — the single anchor is priv1 by
 //     its `/p2p-circuit/webrtc/p2p/<priv1>` address through a public
-//     node's WebRTC-direct address. The step polls until priv1's own
-//     NodeList entry answers (`status` ok or behind, a checked answer
-//     — `behind` is ranking, not reach) with a non-null entry
-//     transport, and records
+//     node's WebRTC-direct address. The config carries no
+//     `stunServers` — the client derives its ICE list from the public
+//     nodes it holds, the relay hop among them (MESH_INTERFACE → NAT
+//     → "A client's STUN list comes from the public nodes it holds").
+//     The step polls until priv1's own NodeList entry answers
+//     (`status` ok, trailing or behind — all three say a checked
+//     answer; `trailing` and `behind` are ranking, not reach) with a
+//     non-null entry transport, and records
 //     `{ expectedNodeId, priv1Status, priv1Failures, transport, path,
 //        anchorAddrRelayed, connectMs, iceServers, nodeIdInUse }`.
 //   priv2 (symmetric NAT) — the single anchor is priv2 by BOTH its
 //     `/p2p-circuit/webrtc` and plain `/p2p-circuit` relayed
-//     addresses. The step polls priv2's `NodeList` entry and the page
-//     state's `nodeId` across the window; PASS when priv2 reads
-//     `retry` with ≥1 failure, never `blacklisted` at any poll, and
-//     the page's `nodeId` at the end names a node other than priv2.
+//     addresses. The step waits for a routed read to land on priv2
+//     and records `{ expectedNodeId, priv2Status, priv2Path,
+//     latestReadNodeId, blacklistedAtAnyPoll }`.
 //
 // No stage faults; the NAT is topology. The scenario's `finally`
 // restores the stage default so the next scenario starts clean.
@@ -43,7 +47,7 @@ const POLL_MS = 500;
 export function describe() {
   return [
     'priv1 (endpoint-independent NAT) answers over relayed WebRTC',
-    'priv2 (symmetric NAT) stays retry with a failure, the client stays on another node',
+    'priv2 (symmetric NAT) is reached through a relay that carries its data',
   ];
 }
 
@@ -87,8 +91,8 @@ export async function run(ctx) {
         const started1 = Date.now();
         // MESH_INTERFACE → Acceptance 2 — the step measures reach, not
         // ranking. Poll `#state` until priv1's own entry carries a
-        // `status` of ok or behind AND a non-null `transport`
-        // (`decorateEntries` writes the entry pair from
+        // `status` of ok, trailing or behind AND a non-null
+        // `transport` (`decorateEntries` writes the entry pair from
         // `pickConnectionForLabel` + `classifyConnectionAddr` for each
         // id). The ICE record is captured alongside through
         // `cdp.mjs poll-ice`.
@@ -101,7 +105,7 @@ export async function run(ctx) {
              if (!s || !Array.isArray(s.nodes)) return false;
              const entry = s.nodes.find(function (n) { return n && n.notisId === ${JSON.stringify(expectedNotisId)}; });
              if (!entry) return false;
-             if (entry.status !== 'ok' && entry.status !== 'behind') return false;
+             if (entry.status !== 'ok' && entry.status !== 'trailing' && entry.status !== 'behind') return false;
              return entry.transport !== null && entry.transport !== undefined;
            } catch (_e) { return false; }`,
           PRIV1_WAIT_MS, POLL_MS,
@@ -138,27 +142,24 @@ export async function run(ctx) {
         });
         writeConfigVariant(ctx.outDir, variant);
         const expectedNodeId = priv2Row.notisId;
-        // MESH_INTERFACE → Acceptance 2 — the step holds ONE page open
-        // across the whole window: `cdp.mjs eval` would open a fresh
-        // target per call and reset the client to nothing, so priv2's
-        // entry could never accumulate a failure on a working stage.
-        // The expression runs in the page, parses `#state`, updates an
-        // in-page accumulator `window.__s2priv2` (so `everInUse` and
-        // `blacklistedAtAnyPoll` ride across polls), and returns
-        // `JSON.stringify({ state, acc })` for the driver. The
-        // predicate stops polling when priv2 has >= 1 failure, the
-        // page's `nodeId` names a non-null node other than priv2, and
-        // priv2 is not blacklisted at this poll. A poll timeout
-        // propagates to the step recorder as the error it is.
+        // MESH_INTERFACE → NAT → "A relay carries data" / Acceptance 2
+        // — hold ONE page open across the whole window
+        // (`cdp.mjs eval` would open a fresh target per call and
+        // reset the client). The expression updates an in-page
+        // accumulator `window.__s2priv2` with
+        // `blacklistedAtAnyPoll` across polls, parses `#state`, and
+        // returns `JSON.stringify({ state, acc })`. The predicate
+        // stops polling when the latest routed read landed on priv2
+        // (`state.nodeId === expected`) with priv2's entry status
+        // ok or trailing and priv2 is not blacklisted at this poll.
         const expression = `(function () {
           const el = document.getElementById('state');
           const text = el ? el.textContent : null;
           if (typeof text !== 'string' || text === '') return null;
           let state;
           try { state = JSON.parse(text); } catch (_e) { return null; }
-          var acc = window.__s2priv2 || { everInUse: false, blacklistedAtAnyPoll: false };
+          var acc = window.__s2priv2 || { blacklistedAtAnyPoll: false };
           var expected = ${JSON.stringify(expectedNodeId)};
-          if (state && state.nodeId === expected) acc.everInUse = true;
           var entry = (state && Array.isArray(state.nodes))
             ? state.nodes.find(function (n) { return n && n.notisId === expected; })
             : null;
@@ -172,17 +173,13 @@ export async function run(ctx) {
             var expected = ${JSON.stringify(expectedNodeId)};
             if (!o || !o.state || !Array.isArray(o.state.nodes)) return false;
             var entry = o.state.nodes.find(function (n) { return n && n.notisId === expected; });
-            if (!entry || typeof entry.failures !== 'number' || entry.failures < 1) return false;
-            if (entry.status === 'blacklisted') return false;
-            if (o.state.nodeId === null || o.state.nodeId === undefined) return false;
-            if (o.state.nodeId === expected) return false;
+            if (!entry) return false;
+            if (entry.status !== 'ok' && entry.status !== 'trailing') return false;
+            if (o.state.nodeId !== expected) return false;
             return true;
           } catch (_e) { return false; }`;
         const matched = await cdpPoll(ctx, browserUrl, expression, predicateBody,
           PRIV2_WAIT_MS, POLL_MS);
-        // `matched` is the matching value — a string
-        // `JSON.stringify({ state, acc })`. The driver has already
-        // JSON.parse-d the stdout once.
         const parsed = JSON.parse(matched);
         const state = parsed.state;
         const acc = parsed.acc;
@@ -192,10 +189,8 @@ export async function run(ctx) {
         const measurement = {
           expectedNodeId,
           priv2Status: typeof entry?.status === 'string' ? entry.status : 'new',
-          priv2Failures: typeof entry?.failures === 'number' ? entry.failures : 0,
-          priv2LastFailure: entry?.lastFailure ?? null,
-          nodeIdInUse: state.nodeId ?? null,
-          everInUse: acc?.everInUse === true,
+          priv2Path: entry?.path ?? null,
+          latestReadNodeId: state.nodeId ?? null,
           blacklistedAtAnyPoll: acc?.blacklistedAtAnyPoll === true,
         };
         return { verdict: verdictS2Priv2(measurement), measurement };

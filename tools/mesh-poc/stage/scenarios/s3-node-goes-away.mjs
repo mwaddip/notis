@@ -1,17 +1,23 @@
 // MESH_INTERFACE → Acceptance 3 — "A node goes away. Killed, then
-// firewalled: the client moves to another node within two checks, the
-// node reads `retry`, never `blacklisted`, and reads `ok` again once
-// it is back."
+// firewalled: the client's reads move to other nodes within two
+// checks, the node reads `retry`, never `blacklisted`; once it is
+// back and within a block of the tip, the next check reads it by its
+// tip — `ok` at the tip, `trailing` one block short."
 //
 // Four sub-steps, in order:
 //   1. stop pub1's mesh node (`kill -TERM` the recorded PID);
 //      poll until the client's `state.nodes[pub1].status === 'retry'`
-//      AND, if pub1 was in use, `state.nodeId !== pub1`.
+//      AND, if pub1 was last named by a routed read,
+//      `state.nodeId !== pub1`.
 //   2. restart pub1's mesh node from the recorded `argv` and `env`;
-//      poll until `state.nodes[pub1].status === 'ok'`.
+//      wait until pub1's own `/blocks/current`, read inside its
+//      namespace, is within one block of pub2's; then read the
+//      client's state at the next completed check (`agreement`
+//      changes), and measure `{ nodeId, status, behindBy,
+//      recoveryTimeMs }`.
 //   3. apply the firewall rules in pub1's namespace (`s3_fw`) that
 //      drop UDP/TCP to pub1's mesh listener; poll same as step 1.
-//   4. remove `s3_fw`; poll same as step 2.
+//   4. remove `s3_fw`; wait same as step 2.
 //
 // Faults are applied inside `run(ctx)` one at a time between the
 // measurements, not up front. The dry-run still records every fault so
@@ -172,7 +178,9 @@ export async function run(ctx) {
       return { verdict: verdictS3Moved(m), measurement: m };
     });
 
-    // --- Step 2: restart pub1, poll for ok ---
+    // --- Step 2: restart pub1, wait until its own /blocks/current is
+    // within one block of pub2's, then read the client's state at the
+    // next completed check ---
     await rec.step(describe()[1], async () => {
       const t0 = Date.now();
       // `pidsPath` rewrites `pids.json` with the new pid in place of
@@ -180,18 +188,13 @@ export async function run(ctx) {
       const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
       pub1Entry.pid = newPid;
       pub1Stopped = false;
-      const afterRestart = await pollStateUntil(
-        `if (v === null) return false;
-         try {
-           const s = JSON.parse(v);
-           const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
-           return !!e && e.status === 'ok';
-         } catch (_e) { return false; }`,
-        { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after restart' },
-      );
+      await waitPub1WithinOneBlockOfPub2(ctx);
+      const after = await pollNextCompletedCheck(pollStateUntil, 'pub1 recovery check landed');
+      const entry = findEntry(after, pub1Id);
       const m = {
         nodeId: pub1Id,
-        status: findEntry(afterRestart, pub1Id)?.status ?? null,
+        status: entry?.status ?? null,
+        behindBy: entry?.behindBy ?? null,
         recoveryTimeMs: Date.now() - t0,
       };
       return { verdict: verdictS3Recovered(m), measurement: m };
@@ -234,25 +237,21 @@ export async function run(ctx) {
       return { verdict: verdictS3Moved(m), measurement: m };
     });
 
-    // --- Step 4: unfirewall, poll for ok ---
+    // --- Step 4: unfirewall, wait until pub1 is within one block of
+    // pub2 and read the next completed check ---
     await rec.step(describe()[3], async () => {
       const t0 = Date.now();
       nftApply('notismesh-pub1', ['delete', 'table', 'ip', FW_TABLE]);
       firewallApplied = false;
       log.removals.length = 0;
       log.records.push(`[fault:remove:${NAME}:pub1-fw-add-table] sudo ip netns exec notismesh-pub1 nft delete table ip ${FW_TABLE}`);
-      const afterUnfw = await pollStateUntil(
-        `if (v === null) return false;
-         try {
-           const s = JSON.parse(v);
-           const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
-           return !!e && e.status === 'ok';
-         } catch (_e) { return false; }`,
-        { timeoutMs: 180_000, pollMs: 1000, name: 'pub1 ok after unfirewall' },
-      );
+      await waitPub1WithinOneBlockOfPub2(ctx);
+      const after = await pollNextCompletedCheck(pollStateUntil, 'pub1 unfirewall check landed');
+      const entry = findEntry(after, pub1Id);
       const m = {
         nodeId: pub1Id,
-        status: findEntry(afterUnfw, pub1Id)?.status ?? null,
+        status: entry?.status ?? null,
+        behindBy: entry?.behindBy ?? null,
         recoveryTimeMs: Date.now() - t0,
       };
       return { verdict: verdictS3Recovered(m), measurement: m };
@@ -310,4 +309,61 @@ async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
     timeoutMs: timeoutMs + 10_000,
   });
   return JSON.parse(buf.toString('utf8'));
+}
+
+/**
+ * MESH_INTERFACE → Acceptance 3 — "once it is back and within a block
+ * of the tip". Poll pub1's own `/blocks/current` (read inside
+ * `notismesh-pub1`) and pub2's (read inside `notismesh-pub2`) until
+ * their `height` differs by at most one.
+ */
+async function waitPub1WithinOneBlockOfPub2(ctx) {
+  const pub1Port = String(ctx.topology.hosts.pub1.node.httpPort);
+  const pub2Port = String(ctx.topology.hosts.pub2.node.httpPort);
+  const read = (ns, port) => {
+    const out = execIn(ns, ['curl', '-sf', '--max-time', '5', `http://127.0.0.1:${port}/blocks/current`], {
+      user: ctx.invokingUser,
+      timeoutMs: 8_000,
+    });
+    const data = JSON.parse(out.toString('utf8'));
+    return typeof data.height === 'number' ? data.height : null;
+  };
+  const deadline = Date.now() + 180_000;
+  let last = null;
+  while (Date.now() < deadline) {
+    try {
+      const h1 = read('notismesh-pub1', pub1Port);
+      const h2 = read('notismesh-pub2', pub2Port);
+      last = { h1, h2 };
+      if (h1 !== null && h2 !== null && Math.abs(h2 - h1) <= 1) return last;
+    } catch {
+      // pub1 may still be starting up; keep polling
+    }
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  throw new Error(`waitPub1WithinOneBlockOfPub2 timed out; last ${JSON.stringify(last)}`);
+}
+
+/**
+ * MESH_INTERFACE → The client's node list — "A check — `resolveTip`
+ * over the candidates — runs at start, every `CHECK_INTERVAL_MS`". A
+ * check is complete when `agreement` changes (new counts land after
+ * the check). The poll captures the current `agreement.agreeing` as
+ * baseline, waits for it to change in a subsequent state, then
+ * returns the state at that moment.
+ */
+async function pollNextCompletedCheck(pollStateUntil, name) {
+  // Baseline the current agreement in the page itself through a poll
+  // whose expression stashes the baseline on first run, then only
+  // succeeds when a later state carries a different `agreement`
+  // object. The baseline comparison is by JSON.stringify, which
+  // changes with any count or null → non-null transition.
+  const predicate = `if (v === null) return false;
+    try {
+      const s = JSON.parse(v);
+      const stamp = JSON.stringify(s.agreement);
+      window.__s3Baseline = window.__s3Baseline === undefined ? stamp : window.__s3Baseline;
+      return stamp !== window.__s3Baseline;
+    } catch (_e) { return false; }`;
+  return pollStateUntil(predicate, { timeoutMs: 180_000, pollMs: 1_000, name });
 }

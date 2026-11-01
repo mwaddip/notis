@@ -7,7 +7,6 @@ export function buildPageConfig(
   network: 'devnet' | 'testnet' | 'mainnet';
   anchors: Array<{ notisId: string; addrs: string[] }>;
   seeds: Array<{ notisId: string; addrs: string[] }>;
-  stunServers: string[];
 };
 
 export function peerIdStringOf(notisId: string): string;

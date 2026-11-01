@@ -1,7 +1,6 @@
 export interface PageConfigShape {
   network: string;
   anchors: Array<{ notisId: string; addrs: string[] }>;
-  stunServers: string[];
   seeds: Array<{ notisId: string; addrs: string[] }>;
 }
 export declare function buildPrivateViaRelayVariant(

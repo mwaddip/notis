@@ -132,19 +132,20 @@ export function verdictIceServers(record) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 2 / NAT — "A browser reaches a private
-// node over WebRTC signalled through the relay, gathering ICE
-// candidates against public nodes' STUN servers alone". priv1's step
-// writes a variant whose anchor is priv1 reached through a public
-// node's `/p2p-circuit/webrtc` address, polls the page for priv1's
-// entry answering (`status` ok or behind — both say a checked answer
-// came back; `behind` is ranking, not reach) with a non-null entry
-// transport. The reach criterion: priv1's status is ok or behind, the
-// entry's transport is webrtc with path direct, the anchor address
-// holds `/p2p-circuit/webrtc`, and the ICE record passes the IP-only
-// rule. `nodeIdInUse` and `priv1Failures` are recorded for the
-// reader, not conditions — priv1 may rank below pub1 (behind) and
-// still be reached.
+// MESH_INTERFACE → Acceptance 2 / NAT — "A browser reaches the node
+// behind the endpoint-independent NAT over WebRTC signalled through a
+// relay, its data direct, its ICE servers drawn from the public nodes
+// it holds". priv1's step writes a variant whose anchor is priv1
+// reached through a public node's `/p2p-circuit/webrtc` address,
+// polls the page for priv1's entry answering (`status` ok, trailing
+// or behind — all three say a checked answer came back; `trailing`
+// and `behind` are ranking, not reach) with a non-null entry
+// transport. The reach criterion: priv1's status is ok, trailing or
+// behind, the entry's transport is webrtc with path direct, the
+// anchor address holds `/p2p-circuit/webrtc`, and the ICE record
+// passes the IP-only rule. `nodeIdInUse` and `priv1Failures` are
+// recorded for the reader, not conditions — priv1 may rank below pub1
+// and still be reached.
 // Measurement:
 //   `{ expectedNodeId, priv1Status, priv1Failures,
 //      transport, path, anchorAddrRelayed,
@@ -153,7 +154,7 @@ export function verdictIceServers(record) {
 export function verdictS2Priv1(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.expectedNodeId !== 'string') return 'FAIL';
-  if (m.priv1Status !== 'ok' && m.priv1Status !== 'behind') return 'FAIL';
+  if (m.priv1Status !== 'ok' && m.priv1Status !== 'trailing' && m.priv1Status !== 'behind') return 'FAIL';
   if (m.transport !== 'webrtc') return 'FAIL';
   if (m.path !== 'direct') return 'FAIL';
   if (typeof m.anchorAddrRelayed !== 'string') return 'FAIL';
@@ -163,22 +164,22 @@ export function verdictS2Priv1(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 2 / NAT → "A relay carries signalling,
-// not data" — "The node behind the symmetric NAT has no direct path
-// to the browser behind its NAT: it reads `retry`, never
-// `blacklisted`, and the client stays on a node it reaches."
+// MESH_INTERFACE → Acceptance 2 / NAT → "A relay carries data" — "The
+// node behind the symmetric NAT has no direct path to the browser
+// behind its NAT: it is reached through the relay, its data relayed;
+// it reads `ok` or `trailing`, never `blacklisted`, and a routed
+// read lands on it." The scenario waits for a routed read to land on
+// priv2 and reads the entry's path and status.
 // Measurement:
-//   `{ expectedNodeId, priv2Status, priv2Failures: number,
-//      priv2LastFailure: {kind,message}|null, nodeIdInUse: string|null,
-//      everInUse: boolean, blacklistedAtAnyPoll: boolean }`.
+//   `{ expectedNodeId, priv2Status, priv2Path, latestReadNodeId,
+//      blacklistedAtAnyPoll }`.
 export function verdictS2Priv2(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.expectedNodeId !== 'string') return 'FAIL';
-  if (m.priv2Status !== 'retry') return 'FAIL';
-  if (typeof m.priv2Failures !== 'number' || m.priv2Failures < 1) return 'FAIL';
+  if (m.priv2Status !== 'ok' && m.priv2Status !== 'trailing') return 'FAIL';
+  if (m.priv2Path !== 'relay') return 'FAIL';
+  if (m.latestReadNodeId !== m.expectedNodeId) return 'FAIL';
   if (m.blacklistedAtAnyPoll !== false) return 'FAIL';
-  if (typeof m.nodeIdInUse !== 'string') return 'FAIL';
-  if (m.nodeIdInUse === m.expectedNodeId) return 'FAIL';
   return 'PASS';
 }
 
@@ -197,14 +198,19 @@ export function verdictS3Moved(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 3 — "reads `ok` again once it is back".
-// Measurement: `{ nodeId: string, status: 'ok', recoveryTimeMs: number }`.
+// MESH_INTERFACE → Acceptance 3 — "once it is back and within a block
+// of the tip, the next check reads it by its tip — `ok` at the tip,
+// `trailing` one block short". `ok` requires `behindBy === 0`;
+// `trailing` requires `behindBy === 1`; any other pair, `retry` or
+// `blacklisted` fails.
+// Measurement: `{ nodeId, status, behindBy, recoveryTimeMs }`.
 export function verdictS3Recovered(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.nodeId !== 'string') return 'FAIL';
-  if (m.status !== 'ok') return 'FAIL';
   if (typeof m.recoveryTimeMs !== 'number') return 'FAIL';
-  return 'PASS';
+  if (m.status === 'ok' && m.behindBy === 0) return 'PASS';
+  if (m.status === 'trailing' && m.behindBy === 1) return 'PASS';
+  return 'FAIL';
 }
 
 // MESH_INTERFACE → Acceptance 4 — "UDP to one public node: the client
@@ -259,9 +265,11 @@ export function verdictS4Renewal(m) {
 
 // MESH_INTERFACE → Acceptance 5 — "A node with its own key and a copy of
 // an anchor's certificate, at the anchor's address: refused at the
-// link, that address dropped, the anchor not blacklisted".
+// link, that address dropped, the anchor not blacklisted". The honest
+// anchor's status may be `ok`, `trailing`, `retry` or `behind` — never
+// `blacklisted`.
 // Measurement:
-//   `{ anchorStatus: 'ok'|'retry'|'behind', droppedAddrs: string[], blockedAddr: string }`.
+//   `{ anchorStatus: 'ok'|'trailing'|'retry'|'behind', droppedAddrs: string[], blockedAddr: string }`.
 export function verdictS5(m) {
   if (missing(m)) return 'skipped';
   if (m.anchorStatus === 'blacklisted') return 'FAIL';
@@ -317,5 +325,92 @@ export function verdictS4InterNodeTcp(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.nodeId !== 'string') return 'FAIL';
   if (typeof m.transport !== 'string') return 'FAIL';
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance 7 — "Reads that may go to several nodes
+// spread across them; a read that needs the tip goes to an `ok` node
+// alone". PASS when the older reads name ≥ 2 distinct nodes and
+// every tip read's serving node was `ok` at that read.
+// Measurement:
+//   `{ olderServed: Array<{ nodeId: string | null }>,
+//      tipServed: Array<{ nodeId: string | null, statusAtRead: string | null }> }`.
+export function verdictS7Spread(m) {
+  if (missing(m)) return 'skipped';
+  if (!Array.isArray(m.olderServed)) return 'FAIL';
+  if (!Array.isArray(m.tipServed)) return 'FAIL';
+  const olderIds = new Set();
+  for (const e of m.olderServed) {
+    if (e !== null && typeof e === 'object' && typeof e.nodeId === 'string') olderIds.add(e.nodeId);
+  }
+  if (olderIds.size < 2) return 'FAIL';
+  for (const e of m.tipServed) {
+    if (e === null || typeof e !== 'object') return 'FAIL';
+    if (typeof e.nodeId !== 'string') return 'FAIL';
+    if (e.statusAtRead !== 'ok') return 'FAIL';
+  }
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance 7 — "a node slowed well past the others
+// serves no read". PASS when the `delayedNodeId` serves none of the
+// recorded reads.
+// Measurement: `{ delayedNodeId: string, served: Array<{ nodeId: string | null }> }`.
+export function verdictS7Fastest(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.delayedNodeId !== 'string') return 'FAIL';
+  if (!Array.isArray(m.served)) return 'FAIL';
+  if (m.served.length === 0) return 'FAIL';
+  for (const e of m.served) {
+    if (e === null || typeof e !== 'object') return 'FAIL';
+    if (e.nodeId === m.delayedNodeId) return 'FAIL';
+  }
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance 7 — "A node on the browser's own
+// network, named only by a seed, is never dialled; added by hand, it
+// is reached at its private address, and `anchorReached` reads true
+// from it alone when the reader trusts it and false when the reader
+// does not." Three measurements combined:
+//   seedPhase: lan1 never holds a connection (`transport === null` at
+//     every poll) AND the mesh log shows no inbound connection from
+//     `10.103.0.11` (the browser's address).
+//   trustedPhase: lan1 reads `ok` or `trailing` over `webrtc-direct`,
+//     `path: direct`, `anchorReached: true`.
+//   untrustedPhase: lan1 reads `ok` or `trailing` over `webrtc-direct`,
+//     `path: direct`, `anchorReached: false`.
+// Measurement: `{ seedPhase, trustedPhase, untrustedPhase }`.
+export function verdictS7Lan(m) {
+  if (missing(m)) return 'skipped';
+  const seed = m.seedPhase;
+  if (seed === null || typeof seed !== 'object') return 'FAIL';
+  if (seed.lan1EverConnected !== false) return 'FAIL';
+  if (seed.lan1InboundLogged !== false) return 'FAIL';
+  const okOrTrailing = (s) => s === 'ok' || s === 'trailing';
+  const trusted = m.trustedPhase;
+  if (trusted === null || typeof trusted !== 'object') return 'FAIL';
+  if (!okOrTrailing(trusted.lan1Status)) return 'FAIL';
+  if (trusted.transport !== 'webrtc-direct') return 'FAIL';
+  if (trusted.path !== 'direct') return 'FAIL';
+  if (trusted.anchorReached !== true) return 'FAIL';
+  const untrusted = m.untrustedPhase;
+  if (untrusted === null || typeof untrusted !== 'object') return 'FAIL';
+  if (!okOrTrailing(untrusted.lan1Status)) return 'FAIL';
+  if (untrusted.transport !== 'webrtc-direct') return 'FAIL';
+  if (untrusted.path !== 'direct') return 'FAIL';
+  if (untrusted.anchorReached !== false) return 'FAIL';
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance 7 / No anchor reached → "The agreement
+// counts" — "The page shows the agreement counts." PASS when
+// `agreeing >= 2` and `agreeingAnchors >= 1` after a completed
+// check.
+// Measurement: `{ agreeing, agreeingAnchors, notAgreeing }`.
+export function verdictS7Counts(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.agreeing !== 'number' || m.agreeing < 2) return 'FAIL';
+  if (typeof m.agreeingAnchors !== 'number' || m.agreeingAnchors < 1) return 'FAIL';
   return 'PASS';
 }
