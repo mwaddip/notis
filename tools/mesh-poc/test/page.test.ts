@@ -621,7 +621,7 @@ describe('page/main.ts config refusals', () => {
     const err = root.querySelector('[data-role="error"]');
     expect(err, 'a config error element is required').not.toBeNull();
     expect(err!.textContent).toContain(
-      'config.stunServers is no longer read: the client takes its STUN servers from the nodes it holds',
+      'config.stunServers is refused: the client takes its STUN servers from the nodes it holds',
     );
   });
 

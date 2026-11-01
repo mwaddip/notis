@@ -155,10 +155,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }
 
   // MESH_INTERFACE → NAT — "A client's STUN list comes from the public
-  // nodes it holds". The STUN list is derived now; the old hostname
-  // ICE server refusal lives on in `iceConfiguration`'s internal
-  // `assertIceServers` call over the derived list, which cannot carry
-  // a hostname by construction (every derived entry is
+  // nodes it holds". The STUN list is derived from the held nodes;
+  // `iceConfiguration` runs `assertIceServers` over the derived list,
+  // which cannot carry a hostname by construction (every derived entry is
   // `stun:<ip>:3478` through `stunServersFor`). The pure
   // `stunServersFor` cases in `test/stun-list.test.ts` cover the IP
   // shape.

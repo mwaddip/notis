@@ -254,13 +254,10 @@ describe('verdictS3Moved — pub1 reads retry; the latest routed read moved off 
     delete m['stoppedNodeId'];
     expect(verdictS3Moved(m)).toBe('FAIL');
   });
-  // The old verdict read `oldNodeId` from `state.nodeId` before the
-  // fault — the latest routed read's node, which under the spread
-  // can be pub2. If pub1 goes to `retry` and the latest routed read
-  // stays on pub2 (which is still ok), the measurement wrote
-  // `oldNodeId: <pub2>, newNodeId: <pub2>` and FAILed although the
-  // rule — "pub1 reads retry, the latest routed read moved off
-  // pub1" — held. The retargeted measurement names pub1 directly.
+  // The measurement names pub1 as `stoppedNodeId`. Under the spread
+  // the latest routed read can stay on pub2 (still ok) throughout;
+  // the rule — "pub1 reads retry, the latest routed read is not on
+  // pub1" — holds and the verdict is PASS.
   it('pub1 retry under spread (latest routed read never went to pub1) → PASS', () => {
     expect(verdictS3Moved({
       stoppedNodeId: 'a'.repeat(64),

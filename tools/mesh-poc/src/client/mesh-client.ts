@@ -418,13 +418,13 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   const random = o.random ?? Math.random;
   const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, random, resolveFn);
   // MESH_INTERFACE → NAT → "A client's STUN list comes from the
-  // public nodes it holds" — now that the client holds its node list,
+  // public nodes it holds" — the client holds its node list, so
   // the holder derives the ICE configuration from it. `webRTC` reads
   // the function on every dial, so the next dial sees the live list.
   iceHolder.current = () => client.iceConfiguration();
   // MESH_INTERFACE → Transports → "A client dials a private address
   // only when its own configuration names it" — the gater reads the
-  // live node list now, so a hand-add or an anchor update is visible
+  // live node list, so a hand-add or an anchor update is visible
   // to the next dial.
   configuredHolder.current = (notisId) => client.configuredAddrs(notisId);
   client.start();

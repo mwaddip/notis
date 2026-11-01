@@ -187,11 +187,11 @@ export function verdictS2Priv2(m) {
 // within two checks, the node reads `retry`, never `blacklisted`".
 // The step names pub1: pub1 is the node it stops (or firewalls), so
 // the subject of the verdict is pub1's status and whether the latest
-// routed read landed on another node. Taking "the old node" from
-// `state.nodeId` before the fault reads the LATEST routed read's
-// node, which under the spread can be pub2 — the measurement would
-// then compare pub2 against pub2 (unchanged) and FAIL although pub1
-// had gone to `retry` and the reads had moved off it.
+// routed read landed on another node. `verdictS3Moved` reads
+// pub1's status (`stoppedStatus`) and the latest routed read's node
+// (`latestReadNodeId`) separately: under the spread the latest read
+// can sit on pub2 throughout, and the rule holds once pub1 reads
+// `retry` and that read is not on pub1.
 // Measurement:
 //   `{ stoppedNodeId: string, stoppedStatus: 'retry'|'blacklisted'|...,
 //      latestReadNodeId: string, movedWithinChecks: number }`.

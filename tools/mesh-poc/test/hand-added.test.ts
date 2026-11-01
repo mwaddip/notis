@@ -192,7 +192,7 @@ describe('clientDenyDialMultiaddr — libp2p calls it with the full dial multiad
       caught = e;
     }
 
-    // Weakest claim 1: the gater received a multiaddr with the
+    // The gater received a multiaddr with the
     // trailing `/p2p/<peerId>` libp2p's dial queue encapsulated.
     expect(seen.length, `gater calls: ${seen.length}`).toBeGreaterThanOrEqual(1);
     expect(seen.every((s) => /\/p2p\/[^/]+$/.test(s)), `seen = ${seen.join(', ')}`).toBe(true);
@@ -201,7 +201,7 @@ describe('clientDenyDialMultiaddr — libp2p calls it with the full dial multiad
       `seen with trailing /p2p/${peerId.toString()} = ${seen.join(', ')}`,
     ).toBe(true);
 
-    // Weakest claim 2: the dial threw a `DialDeniedError` (or similar)
+    // The dial threw a `DialDeniedError` (or similar)
     // because every address was gated out, and no per-address
     // attribution was fired.
     expect(caught, 'dial rejected').not.toBeNull();

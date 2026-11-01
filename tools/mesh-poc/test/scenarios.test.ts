@@ -137,15 +137,10 @@ describe('s3 (node goes away)', () => {
     expect(fn(stateNoChecks)).toBe(false);
     expect(fn(stateNoChecks)).toBe(false);
   });
-  // The old predicate kept its baseline on `window.__s3CheckBaseline`;
   // cdp.mjs' `buildPredicate` runs the body with no `window` in scope.
-  // The old body also wrapped everything in try/catch, so a
-  // `ReferenceError: window is not defined` was swallowed, every poll
-  // returned false, and the 180 s deadline fired — measured on the
-  // live stage. The fix narrows the catch to `JSON.parse` alone: a
-  // predicate body that references a page global throws, cdp.mjs'
-  // `main` does not catch it, and the poll fails at once with the
-  // error.
+  // The catch covers `JSON.parse` alone: a predicate body that
+  // references a page global throws, cdp.mjs' `main` does not catch
+  // it, and the poll fails at once with the error.
   it('a predicate body that references a page global throws (poll fails fast, no silent timeout)', () => {
     const fn = buildPredicate(`let s;
       try { s = JSON.parse(v); } catch (_e) { return false; }

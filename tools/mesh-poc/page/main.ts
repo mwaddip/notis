@@ -182,11 +182,11 @@ function validateConfig(raw: unknown): PageConfig {
     throw new Error('config.anchors must be an array');
   }
   // MESH_INTERFACE → NAT → "A client's STUN list comes from the
-  // public nodes it holds" — the key is no longer read; its
-  // presence shows a stale stage writer in words.
+  // public nodes it holds" — a config carrying the key is refused, in
+  // words.
   if (o['stunServers'] !== undefined) {
     throw new Error(
-      'config.stunServers is no longer read: the client takes its STUN servers from the nodes it holds',
+      'config.stunServers is refused: the client takes its STUN servers from the nodes it holds',
     );
   }
   // MESH_INTERFACE → Discovery → "Seeds" — optional, default none; when present

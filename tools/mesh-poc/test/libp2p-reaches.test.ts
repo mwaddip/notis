@@ -8,8 +8,10 @@
 // that moves it fails its case. The WSS listener's reach
 // (`wss.ts:resolveInternals`), the private node's relay listen after
 // start (`mesh-node.ts`), and the `node:stream` shim (`vite.config.ts`
-// alias, `page/shims/node-stream.ts`) are already held by existing
-// cases — see `prompts/mesh-poc-al3-t3-REPORT.md` for the pointers.
+// alias, `page/shims/node-stream.ts`) are not held here: the first by
+// `wss.test.ts` ('a client reaches the node by key over WSS'), the
+// second by `mesh-node.test.ts` ('a private node announces its
+// circuit addresses alone').
 //
 // In-process, Node.js, TCP only, no root.
 
