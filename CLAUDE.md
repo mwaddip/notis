@@ -87,7 +87,7 @@ Four tools live under `tools/` — in the workspace by the `tools/*` glob, so in
   for its tip, figures, names and posts verifiers.
 - `@dagsocial/mesh-poc` — the mesh proof of concept: a browser page reaches a node's HTTP API by the node's key over
   libp2p, with no DNS name. A mesh service beside each unmodified node, the client and its node list, a page, and a
-  stage of network namespaces that runs `MESH_INTERFACE → Acceptance`'s six scenarios — the stage needs root and is
+  stage of network namespaces that runs `MESH_INTERFACE → Acceptance`'s seven scenarios — the stage needs root and is
   run by hand; its unit checks run in `pnpm -r test`.
 
 ## Design by Contract

@@ -18,12 +18,10 @@ Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
 
 **libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of the member are at an exact version. The member
 reaches places libp2p does not promise to keep — its `components` object, for a listener added after start (the secure
-WebSocket, a private node's relay listens); the dial queue's `dial-queue:calculated-addresses` progress event and its
-`AggregateError` order, for per-address attribution; a `node:stream` stub the page's bundle gives
-`@libp2p/http-utils` — and each is held by a case against the real libp2p, so an upgrade that moves one fails its case.
-
-> ⚠ **AHEAD OF CODE (2026-11-01).** `tools/mesh-poc/package.json` names caret ranges, and no case runs a reach against
-> the real libp2p yet.
+WebSocket, a private node's relay listens) and for the listener addresses a private node prints; the dial queue's
+`dial-queue:calculated-addresses` progress event and its `AggregateError` order, for per-address attribution; a
+`node:stream` stub the page's bundle gives `@libp2p/http-utils` — and each is held by a case against the real libp2p, so
+an upgrade that moves one fails its case.
 
 ## Identity
 
@@ -76,9 +74,6 @@ every private address but those its own configuration names for a key — an anc
 network, so a private address it offers — through the DHT, a peer list or a seed — is never dialled, and a page cannot
 be made to probe its own network.
 
-> ⚠ **AHEAD OF CODE (2026-11-01).** the client builds libp2p with its default gater, which refuses every private
-> address in a browser and none on Node.js.
-
 **Plain `ws://` is no browser path**: a browser client's home is a secure context. **WebTransport is not used**:
 js-libp2p's WebTransport does not listen on Node.js, and a Notis node is Node.js.
 
@@ -93,17 +88,12 @@ to a direct one where the NATs allow it. A browser reaches a private node over W
 gathering ICE candidates against public nodes' STUN servers alone — or, where no direct path opens, over the relay
 itself.
 
-> ⚠ **AHEAD OF CODE (2026-11-01).** a public node serves STUN only where `MESH_STUN` names one.
-
 **A relay carries data.** Reaching a node — any node — comes first. A public node relays with no data or duration limit
 on a circuit, keeping libp2p's default reservation count, so a relayed connection is not a limited one. A node a client
 has no direct path to — a node behind a symmetric NAT, for a client behind a NAT of its own — is reached through a
 relay, its data relayed; where the NATs allow a direct path, that path is dialled first and read first. A relayed link
 is authenticated end to end by the key it was dialled for (→ Transports): the relay can block what it carries, never
 read or forge it. Limits against abuse of a relay wait for an abuse that is measured.
-
-> ⚠ **AHEAD OF CODE (2026-11-01).** public nodes keep libp2p's default circuit limits (128 KiB, 2 minutes), and the
-> client reads a private node with no direct path as `retry`.
 
 **A relay that does not answer never stops a private node.** The node starts on its own addresses alone and asks each
 relay for its reservation afterwards, every attempt under `RELAY_LISTEN_TIMEOUT_MS`. A relay that is down, that goes
@@ -123,8 +113,6 @@ comes from the public nodes it holds**, never a fixed list: from each node not `
 included — as `stun:<ip>:3478`, one per IP; verified nodes (`ok`, `trailing`, `behind`) first, the fastest first; at
 most `STUN_SERVERS_MAX`. With no public node held the list is empty, and the ICE configuration names no server.
 
-> ⚠ **AHEAD OF CODE (2026-11-01).** the client takes a fixed `stunServers` list at start.
-
 ## Discovery
 
 **Anchors.** A client starts from a list of anchors, each `(notisId, addrs)`: a key it trusts and the addresses that
@@ -143,9 +131,6 @@ Transports → "A client dials a private address only when its own configuration
 lowercase hex, an address with a `/dns4/`, `/dns6/` or `/dnsaddr/` component, or one without `/webrtc-direct/` is
 refused. A private node prints its local WebRTC-direct address with its key, for its operator to hand over, and
 announces it to no one (→ NAT).
-
-> ⚠ **AHEAD OF CODE (2026-11-01).** the client takes anchors and seeds at start alone; a private node prints its key
-> alone.
 
 **The DHT is Notis's own.** Kademlia runs on the protocol `/notis/<network>/kad/1.0.0`, `<network>` one of `devnet`,
 `testnet`, `mainnet` — never on libp2p's default, which is the public IPFS DHT. Public nodes serve it, each listening
@@ -178,9 +163,6 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 | a valid proof further behind, off the tip's last `k` headers, or a chain too short to prove | being behind | `behind`, ranked below `trailing` |
 | an address answers with a key other than the one dialled | the address | that address dropped for that key when the dial's failure names it; the entry otherwise unchanged |
 | a malformed answer, or a proof that fails verification, over a link authenticated to the key | a lie | `blacklisted` for good, the evidence kept |
-
-> ⚠ **AHEAD OF CODE (2026-11-01).** the client reads `ok` for the one proof `resolveTip` keeps — a node tied with it
-> reads `behind` — and has no `trailing`.
 
 **A valid proof of a lighter chain is not a lie**: an honest node that was itself cut off serves one. **Nor is a header
 stamped ahead of the client's clock**: the verifier holds a header to the client's own time, and a client whose clock
@@ -231,9 +213,6 @@ state names the node and path the latest routed read went to; how many checks it
 one check's state from the next; and, after a check, a node that was `ok` or `trailing` before it and is neither after
 it, with its latest event.
 
-> ⚠ **AHEAD OF CODE (2026-11-01).** the client reads through one node in use, the first candidate after each check, and
-> times no proof read.
-
 | Name | Value | Reads as |
 |---|---|---|
 | `RETRY_BASE_MS` | `5_000` | 5 s, the first retry's wait |
@@ -262,8 +241,6 @@ as unverified, and the page says, in these words: `No anchor reached. Nothing sh
 its last `k` headers — agreeing — how many of those are anchors, and how many verified a proof off those headers: on
 another chain, or further back than they reach. The client cannot tell those two apart, so the page says `not on the
 tip's last 20 blocks`. A node that did not verify is in no count.
-
-> ⚠ **AHEAD OF CODE (2026-11-01).** the page shows no count.
 
 ## The IP certificate
 
@@ -309,9 +286,6 @@ seven scenarios passes on what it measured; a step that did not run reads `skipp
    `ok` node alone; a node slowed well past the others serves no read. A node on the browser's own network, named only
    by a seed, is never dialled; added by hand, it is reached at its private address, and `anchorReached` reads true from
    it alone when the reader trusts it and false when the reader does not. The page shows the agreement counts.
-
-> ⚠ **AHEAD OF CODE (2026-11-01).** the stage's scenarios 2 and 3 measure the rules this rewrite replaces, and it has
-> no scenario 7.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
 untested. The proof of concept holds only where WebRTC-direct connects on defaults in both.
