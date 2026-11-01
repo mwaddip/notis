@@ -21,7 +21,7 @@ import { identify } from '@libp2p/identify';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { multiaddr } from '@multiformats/multiaddr';
 import { generateKeyPair } from '@dagsocial/types';
-import { nodeKeyFromKeyPair } from '../src/identity.js';
+import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
 import { meshBaseUrl } from '../src/mesh-url.js';
 import { meshFetchOverConnection } from '../src/http-fetch.js';
@@ -146,12 +146,14 @@ describe('a public mesh node relays data with no circuit limit', () => {
     stateDirs.length = 0;
   });
 
-  // A measurement, not a guard: a private node's `getMultiaddrs()`
-  // publishes the plain `/p2p-circuit/p2p/<self>` once its reservation
-  // lands, independently of the WebRTC listener's own
-  // `/p2p-circuit/webrtc/p2p/<self>`. This may pass before the
-  // relay-limit change — it rests on libp2p's listener behaviour, not
-  // on the server's limit config. Later cases dial that plain address.
+  // A measurement, not a guard: once a private node's reservation
+  // lands, `getMultiaddrs()` publishes both the plain
+  // `/p2p-circuit/p2p/<self>` form (libp2p's own) and the
+  // `/p2p-circuit/webrtc/p2p/<self>` form (the `/webrtc` listen entry
+  // mesh-node.ts pushes for a private role encapsulates onto every
+  // circuit listener). This may pass before the relay-limit change —
+  // it rests on libp2p's listener behaviour, not on the server's limit
+  // config. Later cases dial the plain address.
   it('a private node lists a plain circuit address beside its WebRTC one', () => {
     const addrs = priv!.libp2p.getMultiaddrs().map((a) => a.toString());
     const privPeer = priv!.libp2p.peerId.toString();
@@ -160,11 +162,15 @@ describe('a public mesh node relays data with no circuit limit', () => {
       !a.includes('/webrtc/') &&
       a.endsWith(`/p2p/${privPeer}`),
     );
+    const webrtcCircuit = addrs.filter((a) =>
+      a.includes('/p2p-circuit/webrtc/') &&
+      a.endsWith(`/p2p/${privPeer}`),
+    );
     expect(plain.length, `addrs = ${addrs.join(', ')}`).toBeGreaterThan(0);
+    expect(webrtcCircuit.length, `addrs = ${addrs.join(', ')}`).toBeGreaterThan(0);
   });
 
   it('a relayed connection carries no limit', async () => {
-    const relayPeer = relay!.libp2p.peerId.toString();
     const privPeer = priv!.libp2p.peerId.toString();
     const addrs = relay!.multiaddrs();
     const relayTcp = addrs.find((a) => /\/tcp\/\d+\/p2p\//.test(a))!;
@@ -176,23 +182,18 @@ describe('a public mesh node relays data with no circuit limit', () => {
     // limits).
     await dialer!.dial(multiaddr(relayTcp));
     const conn = await dialer!.dial(multiaddr(plainCircuit));
-    try {
-      expect(conn.remotePeer.toString()).toBe(privPeer);
-      expect(conn.limits, `limits = ${JSON.stringify(conn.limits)}`).toBeUndefined();
-    } finally {
-      void relayPeer;
-    }
+    expect(conn.remotePeer.toString()).toBe(privPeer);
+    expect(conn.limits, `limits = ${JSON.stringify(conn.limits)}`).toBeUndefined();
   }, 20_000);
 
   it('a body larger than 128 KiB arrives whole over the circuit', async () => {
-    const relayPeer = relay!.libp2p.peerId.toString();
     const privPeer = priv!.libp2p.peerId.toString();
     const addrs = relay!.multiaddrs();
     const relayTcp = addrs.find((a) => /\/tcp\/\d+\/p2p\//.test(a))!;
     const plainCircuit = `${relayTcp}/p2p-circuit/p2p/${privPeer}`;
     await dialer!.dial(multiaddr(relayTcp));
     const conn = await dialer!.dial(multiaddr(plainCircuit));
-    const privNotisId = (await import('../src/identity.js')).notisIdFromPeerId(priv!.libp2p.peerId);
+    const privNotisId = notisIdFromPeerId(priv!.libp2p.peerId);
     const base = meshBaseUrl(privNotisId);
     const fetch = meshFetchOverConnection(() => conn, { timeoutMs: 30_000 });
     const res = await fetch(`${base}/blocks/current`);
@@ -202,6 +203,5 @@ describe('a public mesh node relays data with no circuit limit', () => {
     // Byte-equal: a shift or a truncation past the 128 KiB cap would
     // leave a diff at the first changed byte.
     expect(Buffer.from(bodyBuf).equals(Buffer.from(fixedBody))).toBe(true);
-    void relayPeer;
   }, 60_000);
 });
