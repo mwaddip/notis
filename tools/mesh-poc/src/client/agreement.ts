@@ -7,7 +7,7 @@
 // (`MESH_INTERFACE → Place in the workspace`).
 
 import type { TipResult } from '@dagsocial/nipopow-client';
-import { MeshUrlError } from '../mesh-url.js';
+import { idOfMeshUrl } from '../mesh-url.js';
 
 export interface AgreementCounts {
   agreeing: number;
@@ -34,23 +34,4 @@ export function agreementCounts(r: TipResult, anchorIds: ReadonlySet<string>): A
     }
   }
   return { agreeing, agreeingAnchors, notAgreeing };
-}
-
-// The URLs `resolveTip` keeps are bases a mesh fetch appends a path to
-// and so may carry no path of their own, which `parseMeshUrl` refuses;
-// this helper extracts the id either way. Same rule — 64 lowercase hex
-// characters — as `parseMeshUrl` and `tipEvents`' own id reader.
-const SCHEME = 'notis-mesh://';
-const NOTIS_ID_RE = /^[0-9a-f]{64}$/;
-function idOfMeshUrl(url: string): string {
-  if (!url.startsWith(SCHEME)) {
-    throw new MeshUrlError(`url must start with "${SCHEME}"`);
-  }
-  const rest = url.slice(SCHEME.length);
-  const slash = rest.indexOf('/');
-  const id = slash === -1 ? rest : rest.slice(0, slash);
-  if (!NOTIS_ID_RE.test(id)) {
-    throw new MeshUrlError('notisId must be 64 lowercase hex characters');
-  }
-  return id;
 }

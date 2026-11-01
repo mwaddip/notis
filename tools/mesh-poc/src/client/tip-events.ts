@@ -17,7 +17,7 @@
 // browser-safe (`MESH_INTERFACE → Place in the workspace`).
 
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
-import { MeshUrlError } from '../mesh-url.js';
+import { idOfMeshUrl } from '../mesh-url.js';
 import type { FailureKind, LieEvidence } from './node-list.js';
 
 export type TipEvent =
@@ -33,27 +33,6 @@ export function tipEvents(r: TipResult, nowMs: number): TipEvent[] {
     out.push(eventFor(idOfMeshUrl(node.url), node, nowMs));
   }
   return out;
-}
-
-// MESH_INTERFACE → The mesh URL — the shape is `notis-mesh://<64 hex>[path]`;
-// `parseMeshUrl` is strict about the path (an empty one is refused for a
-// path-expecting URL), while the node URLs `resolveTip` keeps in its answer
-// are bases a mesh fetch appends a path to and so may carry no path of their
-// own. This helper extracts the id from either shape; the key rule — 64
-// lowercase hex characters — is the same.
-const SCHEME = 'notis-mesh://';
-const NOTIS_ID_RE = /^[0-9a-f]{64}$/;
-function idOfMeshUrl(url: string): string {
-  if (!url.startsWith(SCHEME)) {
-    throw new MeshUrlError(`url must start with "${SCHEME}"`);
-  }
-  const rest = url.slice(SCHEME.length);
-  const slash = rest.indexOf('/');
-  const id = slash === -1 ? rest : rest.slice(0, slash);
-  if (!NOTIS_ID_RE.test(id)) {
-    throw new MeshUrlError('notisId must be 64 lowercase hex characters');
-  }
-  return id;
 }
 
 function eventFor(id: string, node: NodeTipResult, nowMs: number): TipEvent {

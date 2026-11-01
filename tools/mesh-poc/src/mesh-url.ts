@@ -35,3 +35,23 @@ export function parseMeshUrl(url: string): { notisId: string; path: string } {
   // `path` is everything from the first `/` on, so its query rides with it.
   return { notisId, path: rest.slice(slash) };
 }
+
+/**
+ * The notisId at the head of a mesh URL whose path may be absent.
+ * `parseMeshUrl` is strict about the path (refuses an empty one), while
+ * the node URLs `resolveTip` keeps in its answer are bases a mesh fetch
+ * appends a path to and so may carry no path of their own. The key rule
+ * — 64 lowercase hex characters — is the same.
+ */
+export function idOfMeshUrl(url: string): string {
+  if (!url.startsWith(SCHEME)) {
+    throw new MeshUrlError(`url must start with "${SCHEME}"`);
+  }
+  const rest = url.slice(SCHEME.length);
+  const slash = rest.indexOf('/');
+  const id = slash === -1 ? rest : rest.slice(0, slash);
+  if (!NOTIS_ID_RE.test(id)) {
+    throw new MeshUrlError('notisId must be 64 lowercase hex characters');
+  }
+  return id;
+}
