@@ -44,7 +44,19 @@ export async function runReads(opts: RunReadsOptions): Promise<void> {
   const served: ServedEntry[] = [];
   for (let i = 0; i < opts.n; i += 1) {
     try {
-      const { nodeId } = await opts.client.read(path, opts.need);
+      // MESH_INTERFACE → The client's node list → "A read opens no
+      // connection" — the body is drained before the entry is
+      // recorded, so the stream closes and the connection the read
+      // rides is free for the next one. A body that fails mid-read
+      // records the error entry.
+      const { response, nodeId } = await opts.client.read(path, opts.need);
+      try {
+        await response.arrayBuffer();
+      } catch (bodyErr) {
+        const message = bodyErr instanceof Error ? bodyErr.message : String(bodyErr);
+        served.push({ nodeId: null, status: null, error: message });
+        continue;
+      }
       const node = opts.client.state().nodes.find((e) => e.notisId === nodeId);
       served.push({ nodeId, status: node?.status ?? null });
     } catch (e) {

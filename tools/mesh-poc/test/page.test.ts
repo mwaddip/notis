@@ -820,6 +820,51 @@ describe('page/reads.ts', () => {
     expect(fake.calls.read, 'no reads for out-of-range n').toEqual([]);
     expect(root.querySelector('pre#reads'), 'no <pre id="reads"> for out-of-range n').toBeNull();
   });
+
+  // MESH_INTERFACE → The client's node list → "A read opens no
+  // connection" — each read drains the response body before
+  // recording its entry, so the stream closes and the connection
+  // the read rides is free for the next one.
+  it('each read drains the response body before recording', async () => {
+    const root = document.createElement('div');
+    const idA = 'a'.repeat(64);
+    const bodies: Response[] = [
+      new Response(new TextEncoder().encode('body-0')),
+      new Response(new TextEncoder().encode('body-1')),
+    ];
+    const kept = bodies.slice();
+    const fake = buildFakeClient({
+      agreement: { agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 },
+      nodes: [entryAt(idA, 'ok')],
+    });
+    (fake.client as unknown as { read: (p: string, n: ReadNeed) => Promise<{ response: Response; nodeId: string }> }).read =
+      async (_path: string, _need: ReadNeed) => ({ response: bodies.shift()!, nodeId: idA });
+    await runReads({ client: fake.client, n: 2, need: 'older', root });
+    expect(kept.map((r) => r.bodyUsed), 'every response body was consumed').toEqual([true, true]);
+  });
+
+  // MESH_INTERFACE → The client's node list — a body that fails
+  // mid-read records the error entry, so a half-read stream never
+  // sits open under a success entry.
+  it('a body that fails mid-read records the error entry', async () => {
+    const root = document.createElement('div');
+    const idA = 'a'.repeat(64);
+    const failing = new Response(new ReadableStream({
+      pull(controller) { controller.error(new Error('stream broke')); },
+    }));
+    const good = new Response(new TextEncoder().encode('ok-body'));
+    const bodies: Response[] = [failing, good];
+    const fake = buildFakeClient({
+      agreement: { agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 },
+      nodes: [entryAt(idA, 'ok')],
+    });
+    (fake.client as unknown as { read: (p: string, n: ReadNeed) => Promise<{ response: Response; nodeId: string }> }).read =
+      async (_path: string, _need: ReadNeed) => ({ response: bodies.shift()!, nodeId: idA });
+    await runReads({ client: fake.client, n: 2, need: 'older', root });
+    const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
+    expect(parsed.served[0]).toEqual({ nodeId: null, status: null, error: expect.stringContaining('stream broke') });
+    expect(parsed.served[1]).toEqual({ nodeId: idA, status: 'ok' });
+  });
 });
 
 describe('page/reads.ts sibling pattern', () => {
