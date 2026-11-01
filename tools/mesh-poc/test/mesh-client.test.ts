@@ -784,12 +784,13 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(cappedTimerMs(Number.POSITIVE_INFINITY)).toBe(MAX_TIMER_MS);
   });
 
-  // MESH_INTERFACE → The client's node list — the node in use's own tip
-  // is read through `fetchJson` under `HEIGHT_READ_BYTES`. A transport
-  // or HTTP non-ok result moves the node by `failure`; a body-level
-  // failure (overflow, unparseable) or an answer that is not a tip
-  // moves it by `lie` of kind `malformed` — a malformed answer over the
-  // key-authenticated link is the contract's lie row.
+  // MESH_INTERFACE → The client's node list — the tip read runs
+  // through `read('/blocks/current', 'tip')` under `HEIGHT_READ_BYTES`,
+  // and the classification applies to the node the read went to. A
+  // transport or HTTP non-ok result moves that node by `failure`; a
+  // body-level failure (overflow, unparseable) or an answer that is
+  // not a tip moves it by `lie` of kind `malformed` — a malformed
+  // answer over the key-authenticated link is the contract's lie row.
   async function startWithHostileTip(bodyFactory: (req: unknown) => { status: number; body: string }): Promise<{ client: MeshClient; stub: Stub; nodeStarted: { id: string; node: MeshNode; webrtcAddr: string } }> {
     const srv = createServer((req, res) => {
       if (req.url === '/blocks/current') {

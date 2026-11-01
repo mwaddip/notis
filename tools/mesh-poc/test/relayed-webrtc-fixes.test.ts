@@ -283,14 +283,15 @@ describe('classifyConnectionAddr reads transport/path from the multiaddr\'s comp
 // --- pickConnectionForLabel ---------------------------------------------
 
 describe('pickConnectionForLabel reads the connection the display names for a key', () => {
-  // MESH_INTERFACE → NAT → "A relay carries signalling, not data." —
-  // "a client opens no API stream on a limited connection". The
-  // label pick names open connections only, direct first, unlimited
-  // preferred, and falls back to a limited one when it is the only
-  // open link — the display shows that one connection the client
-  // holds, with no read running on it. The read's own pick
-  // (`pickConnectionForRead`) refuses the limited fallback and
-  // returns null there.
+  // MESH_INTERFACE → NAT → "A relay carries data" + The client's node
+  // list → "A read opens no connection" — a relayed link is not a
+  // limited one, and a limited open connection libp2p still holds is
+  // not a path a read opens its stream on. The label pick names open
+  // connections only, direct first, unlimited preferred, and falls
+  // back to a limited one when it is the only open link — the display
+  // shows that one connection the client holds, with no read running
+  // on it. The read's own pick (`pickConnectionForRead`) refuses the
+  // limited fallback and returns null there.
 
   const CERTHASH = 'uEiAVZaUYSQpGvbSz9JTC4e4hT4qg9eDWVvHe4lhPUT_wxg';
   const RELAY = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
@@ -422,8 +423,8 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
   // MESH_INTERFACE → NAT / The client's node list — every `nodes[]` entry
   // carries the pair `{ transport, path }` of its connection, read with
   // the same pick + classify the top-level pair uses. An entry with no
-  // open connection reads `null`/`null`; the pair for the node in use
-  // reads the same as the top-level pair.
+  // open connection reads `null`/`null`; the pair for the latest routed
+  // read's node reads the same as the top-level pair.
   //
   // The ids live under their Notis spelling (64 lowercase hex). The
   // helper converts each to the libp2p peer id string before matching
@@ -496,7 +497,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
     expect(decorated).toMatchObject({ transport: null, path: null });
   });
 
-  it('the pair for the node in use matches the pair top-level refreshTransportPath reads', () => {
+  it('the pair for the latest routed read\'s node matches the pair top-level refreshTransportPath reads', () => {
     // Both the top-level pair and the entry pair are derived from the
     // same `pickConnectionForLabel` + `classifyConnectionAddr` for the
     // same id; they must agree. This case asserts that invariant on a
@@ -783,10 +784,10 @@ describe('verdictS2Priv1 reads reach — priv1Status (ok|behind), transport, pat
 // --- verdictS2Priv2 --------------------------------------------------------
 
 describe('verdictS2Priv2 reads a retried entry with ≥1 failure, the page on another node', () => {
-  // MESH_INTERFACE → NAT → "A relay carries signalling, not data" /
-  // Acceptance 2 — "The node behind the symmetric NAT has no direct
-  // path to the browser behind its NAT: it reads `retry`, never
-  // `blacklisted`, and the client stays on a node it reaches." The
+  // MESH_INTERFACE → NAT → "A relay carries data" / Acceptance 2 —
+  // the node behind the symmetric NAT reaches the browser through a
+  // relay that carries data: it reads `ok` or `trailing`, never
+  // `blacklisted`, and the client stays on a node it reaches. The
   // verdict reads a measurement the scenario builds across the poll
   // window; a mutation deleting any pass condition turns one of these
   // cases red.
@@ -836,7 +837,7 @@ describe('verdictS2Priv2 reads a retried entry with ≥1 failure, the page on an
     expect(verdictS2Priv2({ ...base(), nodeIdInUse: null })).toBe('FAIL');
   });
 
-  it('FAIL when the page\'s node in use is priv2 itself', () => {
+  it('FAIL when the page\'s latest routed read went to priv2 itself', () => {
     expect(verdictS2Priv2({ ...base(), nodeIdInUse: PRIV2 })).toBe('FAIL');
   });
 
@@ -970,8 +971,8 @@ describe('s2\'s priv1 step measures reach, not ranking', () => {
 
   function cannedBehindState() {
     // priv1 answered a valid proof and is a block short of pub1 (the
-    // live-stage case the step must still read as reach). pub1 is `ok`
-    // and the node in use.
+    // live-stage case the step must still read as reach). pub1 is
+    // `ok` and the node the latest routed read went to.
     return {
       nodeId: pub1NotisId,
       transport: 'webrtc-direct',
@@ -1052,13 +1053,15 @@ describe('s2\'s priv1 step measures reach, not ranking', () => {
 });
 
 describe('s2\'s priv2 step', () => {
-  // MESH_INTERFACE → NAT → "A relay carries signalling, not data" /
-  // Acceptance 2 — priv2 is behind a symmetric NAT. The variant lists
-  // priv2 by both its /p2p-circuit/webrtc and plain /p2p-circuit
-  // addresses; the step polls one held page across the window, tracks
-  // `everInUse` and `blacklistedAtAnyPoll` as an in-page accumulator,
-  // and finishes when priv2's entry has ≥1 failure and the client's
-  // nodeId is a non-null node other than priv2.
+  // MESH_INTERFACE → NAT → "A relay carries data" / Acceptance 2 —
+  // priv2 is behind a symmetric NAT; a relay carries its data, so a
+  // relayed connection to priv2 is not a limited one. The variant
+  // lists priv2 by both its /p2p-circuit/webrtc and plain
+  // /p2p-circuit addresses; the step polls one held page across the
+  // window, tracks `everInUse` and `blacklistedAtAnyPoll` as an
+  // in-page accumulator, and finishes when priv2's entry has ≥1
+  // failure and the client's nodeId is a non-null node other than
+  // priv2.
 
   const priv2NotisId = 'bb'.repeat(32);
   const otherNotisId = 'cc'.repeat(32);

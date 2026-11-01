@@ -180,10 +180,10 @@ describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through 
 });
 
 describe('verdictS2Priv2 — symmetric NAT: retry, the client on another node', () => {
-  // MESH_INTERFACE → NAT → "A relay carries signalling, not data" /
-  // Acceptance 2 — "The node behind the symmetric NAT has no direct
-  // path to the browser behind its NAT: it reads `retry`, never
-  // `blacklisted`, and the client stays on a node it reaches."
+  // MESH_INTERFACE → NAT → "A relay carries data" / Acceptance 2 —
+  // the node behind the symmetric NAT is reached through a relay
+  // that carries its data; it reads `ok` or `trailing`, never
+  // `blacklisted`, and the client stays on a node it reaches.
   const PASS = {
     expectedNodeId: '1'.repeat(64),
     priv2Status: 'retry',

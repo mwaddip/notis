@@ -836,11 +836,12 @@ class MeshClientImpl implements MeshClient {
 
   private refreshTransportPathAndEmit(): void {
     // MESH_INTERFACE → NAT / The client's node list — a connection
-    // open/close changes the top-level pair for the node in use and
-    // the entry pair for whichever peer the event names. Both are
-    // read lazily from `getConnections()` at the next `state()` call,
-    // so an unconditional emit is enough — listeners see the fresh
-    // entries and top-level pair without waiting for the next check.
+    // open/close changes the top-level pair for the latest routed
+    // read's node and the entry pair for whichever peer the event
+    // names. Both are read lazily from `getConnections()` at the
+    // next `state()` call, so an unconditional emit is enough —
+    // listeners see the fresh entries and top-level pair without
+    // waiting for the next check.
     this.refreshTransportPath();
     this.emitStateChange();
   }
@@ -1133,11 +1134,12 @@ export function classifyConnectionAddr(ma: string): {
  * with the same pick + classify the top-level pair uses
  * (`pickConnectionForLabel` + `classifyConnectionAddr`). An entry
  * with no open connection reads `null` / `null`; the pair for the
- * node in use agrees with `ClientState.transport` / `ClientState.path`.
- * Pure: the caller passes `getConnections()` in. Called from `state()`
- * and the initial state build, so entries emitted anywhere carry the
- * fresh pair; the connection open/close listener re-emits so a new
- * entry pair reaches listeners without waiting for the next check.
+ * latest routed read's node agrees with `ClientState.transport` /
+ * `ClientState.path`. Pure: the caller passes `getConnections()` in.
+ * Called from `state()` and the initial state build, so entries
+ * emitted anywhere carry the fresh pair; the connection open/close
+ * listener re-emits so a new entry pair reaches listeners without
+ * waiting for the next check.
  */
 export function decorateEntries(
   entries: readonly NodeEntry[],
@@ -1173,15 +1175,17 @@ export function decorateEntries(
 }
 
 /**
- * MESH_INTERFACE → NAT → "A relay carries signalling, not data." —
- * "a client opens no API stream on a limited connection". The page's
- * `transport` and `path` name the connection a read would open its
- * stream on when one is available: open connections only, direct
- * first, unlimited preferred. Only when every open connection to the
- * peer is limited does this helper fall back to a limited one — the
- * display shows the one link the client holds, with no read running
- * on it. The read's own pick (`pickConnectionForRead`) refuses that
- * fallback.
+ * MESH_INTERFACE → NAT → "A relay carries data" + The client's node
+ * list → "A read opens no connection" — a relayed link is not a
+ * limited one; a limited open connection libp2p still holds (a
+ * transient reservation, say) is not a path a read opens its stream
+ * on. The page's `transport` and `path` name the connection a read
+ * would open its stream on when one is available: open connections
+ * only, direct first, unlimited preferred. Only when every open
+ * connection to the peer is limited does this helper fall back to
+ * a limited one — the display shows the one link the client holds,
+ * with no read running on it. The read's own pick
+ * (`pickConnectionForRead`) refuses that fallback.
  */
 export function pickConnectionForLabel(
   connections: readonly Connection[],

@@ -1,9 +1,10 @@
-// MESH_INTERFACE → "A browser client dials public addresses only" —
-// `@libp2p/utils`'s connection gater refuses every address `isPrivateIp`
-// matches. The stage's internet segment has to be outside that list;
-// NAT-inside segments stay inside it. The whole class of DEFECT (a page
-// that cannot dial any public anchor because every anchor's address
-// matches a private range) rested on this.
+// MESH_INTERFACE → Transports → "A client dials a private address only
+// when its own configuration names it" — `@libp2p/utils`'s connection
+// gater refuses every address `isPrivateIp` matches. The stage's
+// internet segment has to be outside that list; NAT-inside segments
+// stay inside it. The whole class of DEFECT (a page that cannot dial
+// any public anchor because every anchor's address matches a private
+// range) rested on this.
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
