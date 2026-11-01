@@ -227,8 +227,9 @@ the caller names. One that needs the tip goes to an `ok` node; a read of content
 knows nothing finer. Among the nodes a read may go to and the client holds a connection to, the fast set is each node
 whose speed is within `FAST_SET_FACTOR` times the fastest's plus `FAST_SET_SLACK_MS` — every one of them while none has
 a speed — and the read goes to one of the fast set at random. With none, it fails as a transport failure. The client's
-state names the node and path the latest routed read went to; and, after a check, a node that was `ok` or `trailing`
-before it and is neither after it, with its latest event.
+state names the node and path the latest routed read went to; how many checks it has completed, so a reader can tell
+one check's state from the next; and, after a check, a node that was `ok` or `trailing` before it and is neither after
+it, with its latest event.
 
 > ⚠ **AHEAD OF CODE (2026-11-01).** the client reads through one node in use, the first candidate after each check, and
 > times no proof read.
