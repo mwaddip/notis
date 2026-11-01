@@ -28,18 +28,18 @@ describe('stage:run --dry-run', () => {
     }
   }
 
-  it('exits 0 and prints the six scenarios in order', () => {
+  it('exits 0 and prints the seven scenarios in order', () => {
     runDryOnce();
     expect(status).toBe(0);
-    for (const name of ['s1', 's2', 's3', 's4', 's5', 's6']) {
+    for (const name of ['s1', 's2', 's3', 's4', 's5', 's6', 's7']) {
       expect(out, `[scenario:${name}] start`).toContain(`[scenario:${name}] start`);
       expect(out, `[scenario:${name}] end`).toContain(`[scenario:${name}] end`);
     }
     const startIdx = (n: string) => out.indexOf(`[scenario:${n}] start`);
-    const sIdxs = ['s1', 's2', 's3', 's4', 's5', 's6'].map(startIdx);
+    const sIdxs = ['s1', 's2', 's3', 's4', 's5', 's6', 's7'].map(startIdx);
     for (let i = 1; i < sIdxs.length; i += 1) {
       const prev = sIdxs[i - 1]!;
-      expect(sIdxs[i]!, `${['s1','s2','s3','s4','s5','s6'][i]} comes after the previous scenario`).toBeGreaterThan(prev);
+      expect(sIdxs[i]!, `${['s1','s2','s3','s4','s5','s6','s7'][i]} comes after the previous scenario`).toBeGreaterThan(prev);
     }
   }, 30_000);
 
@@ -97,7 +97,7 @@ describe('stage:run --dry-run', () => {
   // scenario JSON under `stage/out/scenarios/`.
   it('the dry-run complete marker is in the output', () => {
     runDryOnce();
-    expect(out, 'dry-run complete marker').toMatch(/\[dry-run complete\] 6 scenario\(s\)/);
+    expect(out, 'dry-run complete marker').toMatch(/\[dry-run complete\] 7 scenario\(s\)/);
   }, 30_000);
 });
 

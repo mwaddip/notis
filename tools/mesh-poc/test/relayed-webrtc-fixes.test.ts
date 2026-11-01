@@ -788,14 +788,14 @@ describe('verdictS2Priv1 reads reach — priv1Status (ok|behind), transport, pat
 
 // --- verdictS2Priv2 --------------------------------------------------------
 
-describe('verdictS2Priv2 reads a retried entry with ≥1 failure, the page on another node', () => {
+describe('verdictS2Priv2 reads priv2 reached through a relay that carries its data', () => {
   // MESH_INTERFACE → NAT → "A relay carries data" / Acceptance 2 —
-  // the node behind the symmetric NAT reaches the browser through a
-  // relay that carries data: it reads `ok` or `trailing`, never
-  // `blacklisted`, and the client stays on a node it reaches. The
-  // verdict reads a measurement the scenario builds across the poll
-  // window; a mutation deleting any pass condition turns one of these
-  // cases red.
+  // the node behind the symmetric NAT is reached through a relay
+  // that carries its data: priv2's entry reads `ok` or `trailing`,
+  // never `blacklisted`, its path is `relay`, and the latest routed
+  // read landed on priv2. The verdict reads a measurement the
+  // scenario builds across the poll window; a mutation deleting any
+  // pass condition turns one of these cases red.
 
   const PRIV2 = 'p2'.repeat(32);
   const OTHER = 'oo'.repeat(32);
@@ -803,11 +803,9 @@ describe('verdictS2Priv2 reads a retried entry with ≥1 failure, the page on an
   function base() {
     return {
       expectedNodeId: PRIV2,
-      priv2Status: 'retry',
-      priv2Failures: 2,
-      priv2LastFailure: { kind: 'other', message: 'All multiaddr dials failed' },
-      nodeIdInUse: OTHER,
-      everInUse: false,
+      priv2Status: 'ok',
+      priv2Path: 'relay',
+      latestReadNodeId: PRIV2,
       blacklistedAtAnyPoll: false,
     };
   }
@@ -822,28 +820,28 @@ describe('verdictS2Priv2 reads a retried entry with ≥1 failure, the page on an
     expect(verdictS2Priv2(base())).toBe('PASS');
   });
 
-  it('FAIL when priv2\'s status is blacklisted at the end', () => {
+  it('PASS on priv2 trailing (one block short on the tip\'s chain)', () => {
+    expect(verdictS2Priv2({ ...base(), priv2Status: 'trailing' })).toBe('PASS');
+  });
+
+  it('FAIL when priv2\'s status is blacklisted', () => {
     expect(verdictS2Priv2({ ...base(), priv2Status: 'blacklisted' })).toBe('FAIL');
   });
 
-  it('FAIL when priv2\'s status is ok (never retried)', () => {
-    expect(verdictS2Priv2({ ...base(), priv2Status: 'ok' })).toBe('FAIL');
+  it('FAIL when priv2\'s status is retry', () => {
+    expect(verdictS2Priv2({ ...base(), priv2Status: 'retry' })).toBe('FAIL');
   });
 
-  it('FAIL when priv2 has no recorded failure', () => {
-    expect(verdictS2Priv2({ ...base(), priv2Failures: 0 })).toBe('FAIL');
+  it('FAIL when priv2\'s path is direct (data not over the relay)', () => {
+    expect(verdictS2Priv2({ ...base(), priv2Path: 'direct' })).toBe('FAIL');
   });
 
   it('FAIL when priv2 was blacklisted at any poll', () => {
     expect(verdictS2Priv2({ ...base(), blacklistedAtAnyPoll: true })).toBe('FAIL');
   });
 
-  it('FAIL when the page reached no other node (nodeIdInUse null)', () => {
-    expect(verdictS2Priv2({ ...base(), nodeIdInUse: null })).toBe('FAIL');
-  });
-
-  it('FAIL when the page\'s latest routed read went to priv2 itself', () => {
-    expect(verdictS2Priv2({ ...base(), nodeIdInUse: PRIV2 })).toBe('FAIL');
+  it('FAIL when the latest routed read did not land on priv2', () => {
+    expect(verdictS2Priv2({ ...base(), latestReadNodeId: OTHER })).toBe('FAIL');
   });
 
   it('FAIL when expectedNodeId is missing', () => {
@@ -885,7 +883,6 @@ function makeOutDir(opts: { anchorNotisId: string; identities: Record<string, un
       notisId: opts.anchorNotisId,
       addrs: [`/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/${RELAY_PEER_FIXTURE}`],
     }],
-    stunServers: [],
     seeds: [],
   };
   writeFileSync(join(outDir, 'browser', 'config.json'), JSON.stringify(config));

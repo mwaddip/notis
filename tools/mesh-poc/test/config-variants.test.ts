@@ -15,7 +15,6 @@ const BASE_CONFIG = {
     { notisId: 'aa'.repeat(32), addrs: ['/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER'] },
     { notisId: 'bb'.repeat(32), addrs: ['/ip4/10.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER'] },
   ],
-  stunServers: ['stun:10.100.0.11:3478', 'stun:10.100.0.12:3478'],
   seeds: [],
 };
 
@@ -31,7 +30,10 @@ describe('buildPrivateViaRelayVariant', () => {
     expect(r.anchors[0]!.notisId).toBe('ff'.repeat(32));
     expect(r.anchors[0]!.addrs[0]).toBe('/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER/p2p-circuit/p2p/PRIV1PEER');
     expect(r.seeds).toEqual([]);
-    expect(r.stunServers).toEqual(['stun:10.100.0.11:3478', 'stun:10.100.0.12:3478']);
+    // MESH_INTERFACE → NAT → "A client's STUN list comes from the
+    // public nodes it holds" — the variant writes no `stunServers`
+    // key; the client derives its list from its node entries.
+    expect('stunServers' in r).toBe(false);
   });
 
   it('refuses a base config that does not name the via public anchor', () => {

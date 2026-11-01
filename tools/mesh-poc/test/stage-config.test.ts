@@ -40,6 +40,7 @@ function fakeIdentities(): Record<string, string> {
     'hostile-lagging': 'e'.repeat(64),
     priv1: 'f'.repeat(64),
     priv2: '1'.repeat(64),
+    lan1: '2'.repeat(64),
   };
 }
 
@@ -74,6 +75,20 @@ describe('stage/topology.json is whole', () => {
       expect(publicIds.has(a.notisId), `anchor ${a.notisId} is a public mesh node`).toBe(true);
     }
   });
+
+  // MESH_INTERFACE → Acceptance 7 — a private node sits on the
+  // browser's own inside bridge (natC's), with a mesh node of its
+  // own and its own devnet node, reached by the reader's hand.
+  it('lan1 is a private mesh node on natC\'s inside bridge', () => {
+    const topology = readTopology(TOPOLOGY_PATH);
+    const lan1 = (topology.hosts as Record<string, any>).lan1;
+    expect(lan1, 'topology holds a lan1 host').toBeDefined();
+    expect(lan1.role).toBe('private');
+    expect(lan1.parent).toBe('natC');
+    expect(lan1.addr).toBe('10.103.0.21');
+    expect(lan1.mesh?.role).toBe('private');
+    expect(lan1.node, 'lan1 carries its own devnet node').toBeDefined();
+  });
 });
 
 describe('the page config holds no DNS and passes the client\'s checks', () => {
@@ -98,7 +113,10 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
     expect(config.anchors.length).toBeGreaterThan(0);
-    expect(config.stunServers.length, 'the public mesh nodes contribute their STUN').toBeGreaterThan(0);
+    // MESH_INTERFACE → NAT → "A client's STUN list comes from the
+    // public nodes it holds" — the built config writes no
+    // `stunServers` key; the page refuses the key in words.
+    expect('stunServers' in config).toBe(false);
     // profileFor is read here as the page's `runMain` reads it, so a shape
     // the page builder returns is a shape the page accepts.
     profileFor(config.network);

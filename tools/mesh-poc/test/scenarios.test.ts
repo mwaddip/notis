@@ -10,6 +10,7 @@ import * as s3 from '../stage/scenarios/s3-node-goes-away.mjs';
 import * as s4 from '../stage/scenarios/s4-transport-cut.mjs';
 import * as s5 from '../stage/scenarios/s5-impersonation.mjs';
 import * as s6 from '../stage/scenarios/s6-hostile.mjs';
+import * as s7 from '../stage/scenarios/s7-reach-and-load.mjs';
 
 const TOPOLOGY = {
   network: 'devnet',
@@ -107,13 +108,14 @@ describe('s3 (node goes away)', () => {
 });
 
 describe('s2 (NAT)', () => {
-  it('describe() lists two steps: priv1 relay-then-direct, priv2 relay', () => {
+  it('describe() lists two steps: priv1 relay-then-direct, priv2 reached through a relay that carries its data', () => {
     const names = s2.describe();
     expect(names.length).toBe(2);
     expect(names[0]).toMatch(/priv1/);
     expect(names[0]).toMatch(/endpoint-independent/);
     expect(names[1]).toMatch(/priv2/);
     expect(names[1]).toMatch(/symmetric/);
+    expect(names[1]).toMatch(/relay/);
   });
   it('run({dryRun:true}) returns two skipped steps and no faults', async () => {
     const r = await s2.run({ dryRun: true, topology: TOPOLOGY });
@@ -232,5 +234,36 @@ describe('s6 (hostile)', () => {
     const dels = r.faults.filter((f) => /\[fault:remove/.test(f));
     expect(adds.length, 'one table + one chain + one drop per public mesh host').toBeGreaterThanOrEqual(3);
     expect(dels.length, 'one table delete').toBe(1);
+  });
+});
+
+describe('s7 (reach and load)', () => {
+  it('describe() lists four steps: spread + need, slowed node, local node, counts', () => {
+    const names = s7.describe();
+    expect(names.length).toBe(4);
+    expect(names[0]).toMatch(/spread/);
+    expect(names[1]).toMatch(/delayed|slowed/);
+    expect(names[2]).toMatch(/lan1/);
+    expect(names[3]).toMatch(/agreement|counts/);
+  });
+  it('pub2NetemArgs builds a tc qdisc add + del inside notismesh-pub2 on the outside veth', () => {
+    const n = s7.pub2NetemArgs(TOPOLOGY);
+    expect(n.add[4]).toBe('notismesh-pub2');
+    expect(n.add.join(' ')).toContain('tc qdisc add');
+    expect(n.add.join(' ')).toContain('netem delay 200ms');
+    expect(n.del[4]).toBe('notismesh-pub2');
+    expect(n.del.join(' ')).toContain('tc qdisc del');
+    // Interface is the veth peer pub2 holds inside its namespace.
+    expect(n.iface).toBe('vp-p2');
+  });
+  it('run({dryRun:true}) emits the netem add + its removal and four skipped steps', async () => {
+    const r = await s7.run({ dryRun: true, topology: TOPOLOGY });
+    expect(r.scenario).toBe('s7');
+    expect(r.steps.length).toBe(4);
+    for (const step of r.steps) expect(step.verdict).toBe('skipped');
+    const adds = r.faults.filter((f: string) => / tc qdisc add /.test(f) && !f.includes('[fault:remove'));
+    const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / tc qdisc del /.test(f));
+    expect(adds.length, 'one netem add').toBe(1);
+    expect(dels.length, 'one netem del').toBe(1);
   });
 });

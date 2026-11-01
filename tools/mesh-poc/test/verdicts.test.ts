@@ -19,6 +19,10 @@ import {
   verdictS5,
   verdictS6NoAnchor,
   verdictS6Hostile,
+  verdictS7Spread,
+  verdictS7Fastest,
+  verdictS7Lan,
+  verdictS7Counts,
 } from '../stage/lib/verdicts.mjs';
 
 describe('skipped — missing measurement', () => {
@@ -39,6 +43,10 @@ describe('skipped — missing measurement', () => {
     ['verdictS5', verdictS5],
     ['verdictS6NoAnchor', verdictS6NoAnchor],
     ['verdictS6Hostile', verdictS6Hostile],
+    ['verdictS7Spread', verdictS7Spread],
+    ['verdictS7Fastest', verdictS7Fastest],
+    ['verdictS7Lan', verdictS7Lan],
+    ['verdictS7Counts', verdictS7Counts],
   ];
   for (const [name, f] of verdicts) {
     it(`${name}: null → skipped`, () => {
@@ -138,10 +146,11 @@ describe('verdictS1DnsSilent — no DNS during the scenario', () => {
 
 describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through a relay', () => {
   // MESH_INTERFACE → Acceptance 2 — reach, not ranking: priv1's entry
-  // reads `status` ok or behind (both say a checked answer; `behind`
-  // is ranking, not reach) with a WebRTC-direct link on the relayed
-  // anchor address and an IP-only ICE-server record. `nodeIdInUse`
-  // and `priv1Failures` are recorded, not conditions.
+  // reads `status` ok, trailing or behind (all three say a checked
+  // answer; `trailing` and `behind` are ranking, not reach) with a
+  // WebRTC-direct link on the relayed anchor address and an IP-only
+  // ICE-server record. `nodeIdInUse` and `priv1Failures` are
+  // recorded, not conditions.
   const PASS = {
     expectedNodeId: 'f'.repeat(64),
     priv1Status: 'ok',
@@ -155,6 +164,9 @@ describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through 
   };
   it('relay-signalled WebRTC, priv1 ok → PASS', () => {
     expect(verdictS2Priv1(PASS)).toBe('PASS');
+  });
+  it('priv1 trailing (one block behind on the tip\'s chain) → PASS', () => {
+    expect(verdictS2Priv1({ ...PASS, priv1Status: 'trailing' })).toBe('PASS');
   });
   it('priv1 behind (ranks below pub1 but was reached) → PASS', () => {
     expect(verdictS2Priv1({ ...PASS, priv1Status: 'behind' })).toBe('PASS');
@@ -179,37 +191,38 @@ describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through 
   });
 });
 
-describe('verdictS2Priv2 — symmetric NAT: retry, the client on another node', () => {
+describe('verdictS2Priv2 — symmetric NAT: reached through a relay that carries data', () => {
   // MESH_INTERFACE → NAT → "A relay carries data" / Acceptance 2 —
   // the node behind the symmetric NAT is reached through a relay
   // that carries its data; it reads `ok` or `trailing`, never
-  // `blacklisted`, and the client stays on a node it reaches.
+  // `blacklisted`, and a routed read lands on it.
   const PASS = {
     expectedNodeId: '1'.repeat(64),
-    priv2Status: 'retry',
-    priv2Failures: 2,
-    priv2LastFailure: { kind: 'other', message: 'All multiaddr dials failed' },
-    nodeIdInUse: '2'.repeat(64),
-    everInUse: false,
+    priv2Status: 'ok',
+    priv2Path: 'relay',
+    latestReadNodeId: '1'.repeat(64),
     blacklistedAtAnyPoll: false,
   };
-  it('retry with ≥1 failure, page on another node → PASS', () => {
+  it('ok with path relay and the latest read landing on priv2 → PASS', () => {
     expect(verdictS2Priv2(PASS)).toBe('PASS');
+  });
+  it('trailing (one block behind on the tip\'s chain) → PASS', () => {
+    expect(verdictS2Priv2({ ...PASS, priv2Status: 'trailing' })).toBe('PASS');
+  });
+  it('priv2 status behind (lagging) → FAIL', () => {
+    expect(verdictS2Priv2({ ...PASS, priv2Status: 'behind' })).toBe('FAIL');
   });
   it('priv2 status blacklisted → FAIL', () => {
     expect(verdictS2Priv2({ ...PASS, priv2Status: 'blacklisted' })).toBe('FAIL');
   });
-  it('no failure recorded → FAIL', () => {
-    expect(verdictS2Priv2({ ...PASS, priv2Failures: 0 })).toBe('FAIL');
+  it('path direct (data not over the relay) → FAIL', () => {
+    expect(verdictS2Priv2({ ...PASS, priv2Path: 'direct' })).toBe('FAIL');
+  });
+  it('latest read landed on another node → FAIL', () => {
+    expect(verdictS2Priv2({ ...PASS, latestReadNodeId: '2'.repeat(64) })).toBe('FAIL');
   });
   it('priv2 blacklisted at an earlier poll → FAIL', () => {
     expect(verdictS2Priv2({ ...PASS, blacklistedAtAnyPoll: true })).toBe('FAIL');
-  });
-  it('page reached no other node (nodeIdInUse null) → FAIL', () => {
-    expect(verdictS2Priv2({ ...PASS, nodeIdInUse: null })).toBe('FAIL');
-  });
-  it('page in use is priv2 itself → FAIL', () => {
-    expect(verdictS2Priv2({ ...PASS, nodeIdInUse: PASS.expectedNodeId })).toBe('FAIL');
   });
 });
 
@@ -235,16 +248,29 @@ describe('verdictS3Moved — move to another node, old reads retry, within 2 che
   });
 });
 
-describe('verdictS3Recovered — once the node is back it reads ok', () => {
-  const PASS = { nodeId: 'a'.repeat(64), status: 'ok', recoveryTimeMs: 20_000 };
-  it('status ok with a recovery time → PASS', () => {
-    expect(verdictS3Recovered(PASS)).toBe('PASS');
+describe('verdictS3Recovered — once the node is back it reads at or one block short of the tip', () => {
+  const AT_TIP = { nodeId: 'a'.repeat(64), status: 'ok', behindBy: 0, recoveryTimeMs: 20_000 };
+  const ONE_SHORT = { nodeId: 'a'.repeat(64), status: 'trailing', behindBy: 1, recoveryTimeMs: 20_000 };
+  it('ok with behindBy 0 (at the tip) → PASS', () => {
+    expect(verdictS3Recovered(AT_TIP)).toBe('PASS');
+  });
+  it('trailing with behindBy 1 (one block short) → PASS', () => {
+    expect(verdictS3Recovered(ONE_SHORT)).toBe('PASS');
+  });
+  it('ok with behindBy 1 (status and distance disagree) → FAIL', () => {
+    expect(verdictS3Recovered({ ...AT_TIP, behindBy: 1 })).toBe('FAIL');
+  });
+  it('trailing with behindBy 0 (status and distance disagree) → FAIL', () => {
+    expect(verdictS3Recovered({ ...ONE_SHORT, behindBy: 0 })).toBe('FAIL');
   });
   it('status still retry → FAIL', () => {
-    expect(verdictS3Recovered({ ...PASS, status: 'retry' })).toBe('FAIL');
+    expect(verdictS3Recovered({ ...AT_TIP, status: 'retry' })).toBe('FAIL');
+  });
+  it('status blacklisted → FAIL', () => {
+    expect(verdictS3Recovered({ ...AT_TIP, status: 'blacklisted' })).toBe('FAIL');
   });
   it('recoveryTimeMs missing → FAIL', () => {
-    expect(verdictS3Recovered({ nodeId: PASS.nodeId, status: 'ok' })).toBe('FAIL');
+    expect(verdictS3Recovered({ nodeId: AT_TIP.nodeId, status: 'ok', behindBy: 0 })).toBe('FAIL');
   });
 });
 
@@ -391,5 +417,94 @@ describe('verdictS6Hostile — malformed + invalid blacklisted; lagging behind, 
   });
   it('lagging also blacklisted → FAIL', () => {
     expect(verdictS6Hostile({ ...PASS, lagging: { status: 'behind', blacklisted: true } })).toBe('FAIL');
+  });
+});
+
+describe('verdictS7Spread — older reads spread over ≥2 nodes; tip reads only go to ok nodes', () => {
+  const AT_LEAST_TWO = [
+    { nodeId: 'a'.repeat(64) }, { nodeId: 'b'.repeat(64) },
+    { nodeId: 'a'.repeat(64) }, { nodeId: 'b'.repeat(64) },
+  ];
+  const TIP_SERVED = [
+    { nodeId: 'a'.repeat(64), statusAtRead: 'ok' },
+    { nodeId: 'b'.repeat(64), statusAtRead: 'ok' },
+  ];
+  it('≥2 distinct older ids AND every tip read on an ok node → PASS', () => {
+    expect(verdictS7Spread({ olderServed: AT_LEAST_TWO, tipServed: TIP_SERVED })).toBe('PASS');
+  });
+  it('older reads all one node → FAIL', () => {
+    expect(verdictS7Spread({
+      olderServed: [{ nodeId: 'a'.repeat(64) }, { nodeId: 'a'.repeat(64) }],
+      tipServed: TIP_SERVED,
+    })).toBe('FAIL');
+  });
+  it('a tip read served by a trailing node → FAIL', () => {
+    expect(verdictS7Spread({
+      olderServed: AT_LEAST_TWO,
+      tipServed: [{ nodeId: 'a'.repeat(64), statusAtRead: 'ok' }, { nodeId: 'b'.repeat(64), statusAtRead: 'trailing' }],
+    })).toBe('FAIL');
+  });
+  it('a tip read with no serving node (null) → FAIL', () => {
+    expect(verdictS7Spread({
+      olderServed: AT_LEAST_TWO,
+      tipServed: [{ nodeId: null, statusAtRead: 'ok' }],
+    })).toBe('FAIL');
+  });
+});
+
+describe('verdictS7Fastest — the delayed node serves no read', () => {
+  const PASS = {
+    delayedNodeId: 'a'.repeat(64),
+    served: [{ nodeId: 'b'.repeat(64) }, { nodeId: 'c'.repeat(64) }],
+  };
+  it('every read on another node → PASS', () => {
+    expect(verdictS7Fastest(PASS)).toBe('PASS');
+  });
+  it('one read on the delayed node → FAIL', () => {
+    expect(verdictS7Fastest({ ...PASS, served: [{ nodeId: 'b'.repeat(64) }, { nodeId: 'a'.repeat(64) }] })).toBe('FAIL');
+  });
+  it('no reads at all → FAIL (no vacuous PASS)', () => {
+    expect(verdictS7Fastest({ ...PASS, served: [] })).toBe('FAIL');
+  });
+});
+
+describe('verdictS7Lan — a local node by the reader\'s hand', () => {
+  const PASS = {
+    seedPhase: { lan1EverConnected: false, lan1InboundLogged: false },
+    trustedPhase: { lan1Status: 'ok', transport: 'webrtc-direct', path: 'direct', anchorReached: true },
+    untrustedPhase: { lan1Status: 'ok', transport: 'webrtc-direct', path: 'direct', anchorReached: false },
+  };
+  it('all three phases hold the rule → PASS', () => {
+    expect(verdictS7Lan(PASS)).toBe('PASS');
+  });
+  it('trailing in trusted phase (one block short) → PASS', () => {
+    expect(verdictS7Lan({ ...PASS, trustedPhase: { ...PASS.trustedPhase, lan1Status: 'trailing' } })).toBe('PASS');
+  });
+  it('lan1 held a connection in the seed phase → FAIL', () => {
+    expect(verdictS7Lan({ ...PASS, seedPhase: { lan1EverConnected: true, lan1InboundLogged: false } })).toBe('FAIL');
+  });
+  it('mesh log recorded an inbound from the browser in the seed phase → FAIL', () => {
+    expect(verdictS7Lan({ ...PASS, seedPhase: { lan1EverConnected: false, lan1InboundLogged: true } })).toBe('FAIL');
+  });
+  it('transport not webrtc-direct in trusted phase → FAIL', () => {
+    expect(verdictS7Lan({ ...PASS, trustedPhase: { ...PASS.trustedPhase, transport: 'webrtc' } })).toBe('FAIL');
+  });
+  it('anchorReached true in untrusted phase → FAIL', () => {
+    expect(verdictS7Lan({ ...PASS, untrustedPhase: { ...PASS.untrustedPhase, anchorReached: true } })).toBe('FAIL');
+  });
+  it('anchorReached false in trusted phase → FAIL', () => {
+    expect(verdictS7Lan({ ...PASS, trustedPhase: { ...PASS.trustedPhase, anchorReached: false } })).toBe('FAIL');
+  });
+});
+
+describe('verdictS7Counts — agreement counts after a completed check', () => {
+  it('agreeing ≥ 2 and agreeingAnchors ≥ 1 → PASS', () => {
+    expect(verdictS7Counts({ agreeing: 2, agreeingAnchors: 1, notAgreeing: 0 })).toBe('PASS');
+  });
+  it('agreeing 1 (below the two-node threshold) → FAIL', () => {
+    expect(verdictS7Counts({ agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 })).toBe('FAIL');
+  });
+  it('agreeingAnchors 0 (no anchor agreed) → FAIL', () => {
+    expect(verdictS7Counts({ agreeing: 3, agreeingAnchors: 0, notAgreeing: 0 })).toBe('FAIL');
   });
 });

@@ -28,7 +28,6 @@ const BASE_CONFIG = {
     { notisId: 'aa'.repeat(32), addrs: ['/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER'] },
     { notisId: 'bb'.repeat(32), addrs: ['/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER'] },
   ],
-  stunServers: ['stun:11.100.0.11:3478', 'stun:11.100.0.12:3478'],
   seeds: [],
 };
 
@@ -99,7 +98,9 @@ describe('s2 variant is built from the private node\'s own announced /p2p-circui
     // No other address — a browser dials only through the relay here.
     expect(r.anchors[0]!.addrs.length).toBe(1);
     expect(r.seeds).toEqual([]);
-    expect(r.stunServers).toEqual(['stun:11.100.0.11:3478', 'stun:11.100.0.12:3478']);
+    // MESH_INTERFACE → NAT → "A client's STUN list comes from the
+    // public nodes it holds" — the variant writes no `stunServers`.
+    expect('stunServers' in r).toBe(false);
   });
 
   it('builds priv2\'s variant through its announced relay too', () => {
