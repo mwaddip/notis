@@ -163,7 +163,7 @@ describe('a public mesh node relays data with no circuit limit', () => {
     expect(plain.length, `addrs = ${addrs.join(', ')}`).toBeGreaterThan(0);
   });
 
-  it.fails('a relayed connection carries no limit', async () => {
+  it('a relayed connection carries no limit', async () => {
     const relayPeer = relay!.libp2p.peerId.toString();
     const privPeer = priv!.libp2p.peerId.toString();
     const addrs = relay!.multiaddrs();
@@ -184,7 +184,7 @@ describe('a public mesh node relays data with no circuit limit', () => {
     }
   }, 20_000);
 
-  it.fails('a body larger than 128 KiB arrives whole over the circuit', async () => {
+  it('a body larger than 128 KiB arrives whole over the circuit', async () => {
     const relayPeer = relay!.libp2p.peerId.toString();
     const privPeer = priv!.libp2p.peerId.toString();
     const addrs = relay!.multiaddrs();

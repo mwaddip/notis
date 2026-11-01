@@ -344,7 +344,17 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
         services: {
           ...commonServices,
           autoNAT: autoNATv2(),
-          circuitRelay: circuitRelayServer(),
+          // MESH_INTERFACE → NAT → "A relay carries data" — a public
+          // node relays with no circuit limit, so a client reaches a
+          // private node that has no direct path through the relay
+          // itself. `applyDefaultLimit: false` drops libp2p's default
+          // 128 KiB / 2-minute reservation limit; the HOP answer
+          // carries no limit, every connection the dialer makes
+          // through the relay reads `conn.limits === undefined`, and
+          // application streams open without `runOnLimitedConnection`.
+          circuitRelay: circuitRelayServer({
+            reservations: { applyDefaultLimit: false },
+          }),
         },
       })
     : await createLibp2p({
