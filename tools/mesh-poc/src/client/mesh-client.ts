@@ -110,6 +110,31 @@ export function assertClientConfig(o: {
   }
 }
 
+/**
+ * MESH_INTERFACE → Transports → "A client dials a private address only
+ * when its own configuration names it" — the client's `denyDialMultiaddr`,
+ * passed to libp2p's `connectionGater` in every runtime (Node.js and
+ * browser alike). `true` denies the dial, `false` allows it; libp2p's
+ * dial queue calls this before the per-address attribution fires, so a
+ * dial whose every address this function denies throws without a
+ * `dial-queue:calculated-addresses` entry for them.
+ *
+ * `configuredAddrsOf(notisId)` reads the addresses the client's own
+ * configuration names for a key — an anchor's given addresses and
+ * those entered by hand (never one merged from the DHT or a seed),
+ * through `NodeList.configuredAddrs`.
+ *
+ * AHEAD OF CODE (2026-11-01): the stub refuses every dial so each
+ * pure-gater case fails on its specific decision; the real body
+ * follows in the implementation commit.
+ */
+export function clientDenyDialMultiaddr(
+  _ma: Multiaddr,
+  _configuredAddrsOf: (notisId: string) => readonly string[],
+): boolean {
+  throw new Error('clientDenyDialMultiaddr: not implemented yet');
+}
+
 function assertIceServers(stunServers: readonly string[]): void {
   for (const s of stunServers) {
     const ipv4 = STUN_IPV4_RE.exec(s);
@@ -192,6 +217,15 @@ export interface MeshClient {
   state(): ClientState;
   onState(cb: (s: ClientState) => void): () => void;
   stop(): Promise<void>;
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — the reader
+   * adds a node by its key and an address. Refuses with
+   * `MeshConfigError` a key that is not 64 lowercase hex, an address
+   * with a `/dns4/`, `/dns6/` or `/dnsaddr/` component, or an address
+   * without `/webrtc-direct/`. Otherwise adds through `NodeList.addByHand`
+   * (anchor = trusted, byHand = true) and triggers an immediate check.
+   */
+  addByHand(notisId: string, addrs: string[], trusted: boolean): void;
   /**
    * MESH_INTERFACE → NAT → "A client's STUN list comes from the public
    * nodes it holds" — the ICE configuration the webRTC transport reads
@@ -502,6 +536,15 @@ class MeshClientImpl implements MeshClient {
   onState(cb: (s: ClientState) => void): () => void {
     this.listeners.add(cb);
     return () => { this.listeners.delete(cb); };
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand". Stub awaiting
+   * implementation (AHEAD OF CODE 2026-11-01); throws today so every
+   * case that reaches it fails.
+   */
+  addByHand(_notisId: string, _addrs: string[], _trusted: boolean): void {
+    throw new Error('MeshClient.addByHand: not implemented yet');
   }
 
   async stop(): Promise<void> {
