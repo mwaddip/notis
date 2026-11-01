@@ -167,6 +167,19 @@ describe('node-list', () => {
     list2.addByHand(idB, [addr2], false);
     list2.success(idB);
     expect(list2.anchorReached()).toBe(false);
+
+    // An existing non-anchor entry gets `anchor ||= trusted`: a later
+    // hand-add with `trusted: true` upgrades it to an anchor; a later
+    // hand-add with `trusted: false` on an existing anchor leaves it
+    // an anchor.
+    const addr3 = '/ip4/10.0.0.3/udp/4001/webrtc-direct/certhash/uEiC';
+    const list3 = new NodeList([], own, () => 0);
+    list3.add(idC, [addr3]);
+    expect(list3.entry(idC)!.anchor).toBe(false);
+    list3.addByHand(idC, [addr3], true);
+    expect(list3.entry(idC)!.anchor).toBe(true);
+    list3.addByHand(idC, [addr3], false);
+    expect(list3.entry(idC)!.anchor).toBe(true);
   });
 
   it('a hand-added node caught lying is blacklisted and stops counting as reached', () => {
