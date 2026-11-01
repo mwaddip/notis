@@ -316,16 +316,19 @@ class MeshClientImpl implements MeshClient {
   /**
    * MESH_INTERFACE → The client's node list → "A check" — "it times
    * each node's proof read; that time is the node's speed until the
-   * next check." The map is cleared at the start of every check and
-   * populated by the wrapped fetch handed to `resolveTip`.
+   * next check." A speed holds until the next check writes a fresh
+   * one, so a check populates a FRESH map while it runs and swaps
+   * references when `resolveTip` answers. A routed read reaching the
+   * live map during the hold sees the previous check's values.
    */
-  private readonly readMsMap: Map<string, number> = new Map();
+  private readMsMap: Map<string, number> = new Map();
   /**
    * MESH_INTERFACE → The client's node list — the latest check's
-   * `TipResult.nodes[i].behind` per node, written in phase 3 and
-   * consumed by `decorateEntries`.
+   * `TipResult.nodes[i].behind` per node. Written into a fresh map
+   * during the check and swapped in with `readMsMap` when
+   * `resolveTip` answers.
    */
-  private readonly behindByMap: Map<string, number | null> = new Map();
+  private behindByMap: Map<string, number | null> = new Map();
   private checkInProgress: Promise<TipResult> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
@@ -533,12 +536,15 @@ class MeshClientImpl implements MeshClient {
     // whose pre-dial failed has moved to `retry` and will no longer be a
     // candidate here. The fetch is wrapped per URL so `readMs` is the
     // duration from fetch call to end of body — a time to headers
-    // alone would miss the transfer.
+    // alone would miss the transfer. The check's new readings land in
+    // a FRESH map so a routed read in flight reads the previous
+    // check's speeds (MESH_INTERFACE → The client's node list → "A
+    // check"); the swap happens when `resolveTip` answers.
     const afterIds = this.nodeList.candidates();
     const urls = afterIds.map((id) => meshBaseUrl(id));
-    this.readMsMap.clear();
-    this.behindByMap.clear();
-    const timedFetch = this.makeTimedFetch();
+    const pendingReadMs = new Map<string, number>();
+    const pendingBehindBy = new Map<string, number | null>();
+    const timedFetch = this.makeTimedFetch(pendingReadMs);
     // MESH_INTERFACE → "Two clocks" — the verifier reads the wall clock
     // (`wallClock`); the node list keeps its monotonic clock for retries.
     // A header's `createdAt` is wall-clock time, so a client whose own
@@ -554,16 +560,19 @@ class MeshClientImpl implements MeshClient {
     );
 
     // Phase 3: each node in the result earns an event through `tipEvents`;
-    // apply them and record their reasons. Also record `behind` per node
-    // so `decorateEntries` writes `behindBy` from the latest check.
+    // apply them and record their reasons. Record `behind` per node into
+    // the pending map, then swap both maps in at once — the live maps
+    // move only when the check's new values are complete.
+    for (const node of result.nodes) {
+      try {
+        pendingBehindBy.set(idOfMeshUrl(node.url), node.behind);
+      } catch { /* an unparseable URL is a bug upstream; skip */ }
+    }
+    this.readMsMap = pendingReadMs;
+    this.behindByMap = pendingBehindBy;
     const nowMs = this.clock();
     for (const ev of tipEvents(result, nowMs)) {
       this.applyEvent(ev);
-    }
-    for (const node of result.nodes) {
-      try {
-        this.behindByMap.set(idOfMeshUrl(node.url), node.behind);
-      } catch { /* an unparseable URL is a bug upstream; skip */ }
     }
 
     // Phase 5: the tip read, through the routed-read path. A `tip`
@@ -618,21 +627,22 @@ class MeshClientImpl implements MeshClient {
    * next check." The wrapper runs the fetch and reads the body to
    * its end before recording `readMs`, so a time to headers alone
    * does not stand in for the transfer. A failed read leaves
-   * `readMs` unset.
+   * `readMs` unset. The target map is passed by the check so a
+   * fresh map holds the new readings while the live one still
+   * answers routed reads with the previous check's speeds.
    */
-  private makeTimedFetch(): HttpFetch {
+  private makeTimedFetch(target: Map<string, number>): HttpFetch {
     return async (url, init) => {
       const startMs = this.clock();
       let id: string | null = null;
       try { id = idOfMeshUrl(url); } catch { /* non-mesh URL — never from resolveTip */ }
       const response = await this.fetch(url, init);
       if (id === null || !response.body) {
-        if (id !== null) this.readMsMap.set(id, this.clock() - startMs);
+        if (id !== null) target.set(id, this.clock() - startMs);
         return response;
       }
       const original = response.body;
       const clock = this.clock;
-      const readMsMap = this.readMsMap;
       const nid = id;
       const wrapped = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -642,7 +652,7 @@ class MeshClientImpl implements MeshClient {
               for (;;) {
                 const r = await reader.read();
                 if (r.done) {
-                  readMsMap.set(nid, clock() - startMs);
+                  target.set(nid, clock() - startMs);
                   controller.close();
                   return;
                 }

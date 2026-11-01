@@ -22,6 +22,7 @@ import { meshBaseUrl } from '../src/mesh-url.js';
 import { MeshConfigError } from '../src/config.js';
 import { assertClientConfig, cappedTimerMs, MAX_TIMER_MS, pickConnectionForRead } from '../src/client/mesh-client.js';
 import { MeshFetchError } from '../src/http-fetch.js';
+import { MeshUrlError } from '../src/mesh-url.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { multiaddr } from '@multiformats/multiaddr';
@@ -1439,4 +1440,111 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.agreement!.agreeingAnchors).toBe(2);
     expect(s.agreement!.notAgreeing).toBe(0);
   }, 90_000);
+
+  it('a routed read during a check still picks by the previous check\'s speeds', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — "it times
+    // each node's proof read; that time is the node's speed until the
+    // next check." A speed holds until the next check writes a fresh
+    // one. The test holds the second check's resolve on a gate before
+    // its proof reads run; during the hold, a routed read with
+    // random=0.99 (which picks the last of the fast set) must reach A —
+    // the fast node from the first check — not B, the slow one. A map
+    // cleared before resolveTip spreads the pick to both A and B and
+    // random=0.99 lands on B instead.
+    const BODY_DELAY_MS = 300;
+    const makeSrv = (delayMs: number): Server => createServer((req, res) => {
+      if (req.url === '/nipopow/proof/24/20' || req.url === '/blocks/current') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.flushHeaders();
+        setTimeout(() => res.end(JSON.stringify({ height: 1, hash: 'ab'.repeat(32) })), delayMs);
+        return;
+      }
+      res.writeHead(404); res.end();
+    });
+    const srvA = makeSrv(0);
+    const srvB = makeSrv(BODY_DELAY_MS);
+    await new Promise<void>((resolve) => srvA.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => srvB.listen(0, '127.0.0.1', resolve));
+    const stubA: Stub = { srv: srvA, base: `http://127.0.0.1:${(srvA.address() as AddressInfo).port}` };
+    const stubB: Stub = { srv: srvB, base: `http://127.0.0.1:${(srvB.address() as AddressInfo).port}` };
+    stubs.push(stubA); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'f1-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'f1-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+
+    let gateRelease: () => void = () => {};
+    const gatePromise = new Promise<void>((r) => { gateRelease = r; });
+    let callNum = 0;
+    const probingResolve: typeof import('@dagsocial/nipopow-client').resolveTip =
+      async (urls, _m, _k, _profile, _wall, httpFetch) => {
+        callNum += 1;
+        // Hold the second check BEFORE its proof reads run, so the
+        // current readMsMap holds the first check's values when the
+        // test's routed read reads through pickServer.
+        if (callNum === 2) await gatePromise;
+        const n: NodeTipResult[] = [];
+        for (const url of urls) {
+          const res = await httpFetch(`${url}/nipopow/proof/24/20`);
+          await res.text();
+          n.push({
+            url, verified: true,
+            proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
+            verifyResult: null, refuseReason: null, refuseCode: null,
+            behind: 0, genesisHash: 'f'.repeat(64),
+          });
+        }
+        return { winner: n[0] ?? null, winnerIndex: 0, nodes: n, tip: null, suffixHead: null, splits: [] };
+      };
+
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE, stunServers: [],
+      // random=0.99 picks the last entry of the fast set — a one-entry
+      // fast set (A only) returns A; a two-entry fast set (A, B)
+      // returns B.
+      random: () => 0.99,
+      resolve: probingResolve,
+    });
+    clients.push(client);
+    await client.check();
+
+    // After the first check, A's readMs sits well under B's — the body
+    // delay forces that order. The fast-set bound at A's speed is
+    // 2*A + 50 ms, and B at ~300 ms is beyond it.
+    const s1 = client.state();
+    const aMs = s1.nodes.find((n) => n.notisId === a.id)!.readMs;
+    const bMs = s1.nodes.find((n) => n.notisId === b.id)!.readMs;
+    expect(aMs, 'A has a readMs after the first check').not.toBeNull();
+    expect(bMs, 'B has a readMs after the first check').not.toBeNull();
+    expect(aMs! < bMs!, `A (${String(aMs)} ms) is faster than B (${String(bMs)} ms)`).toBe(true);
+    expect(bMs! > 2 * aMs! + 50, 'B is beyond A\'s fast-set bound').toBe(true);
+
+    // Start the second check and wait for its probing resolve to reach
+    // the gate — its proof reads have not run yet.
+    const checkPromise = client.check();
+    const gateReachedBy = Date.now() + 10_000;
+    while (callNum < 2 && Date.now() < gateReachedBy) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(callNum, 'the second check reached the gate before its fetches').toBe(2);
+
+    // During the hold, issue a routed `older` read: both A and B are
+    // allowed (status is still `ok` from the first check — phase 3 has
+    // not run yet), and the fix keeps the first check's speeds live, so
+    // the fast set is [A] and random=0.99 picks A. Without the fix the
+    // map is cleared and the fast set is [A, B]; random=0.99 picks B.
+    try {
+      const { nodeId: pickedId } = await client.read('/blocks/current', 'older');
+      expect(pickedId, 'the routed read reaches A — the previous check\'s fast node').toBe(a.id);
+    } finally {
+      // Release the gate no matter the assertion — a held check would
+      // otherwise stall `client.stop()` and time the afterEach hook out.
+      gateRelease();
+      await checkPromise.catch(() => undefined);
+    }
+  }, 120_000);
 });
