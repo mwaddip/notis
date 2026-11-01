@@ -14,7 +14,7 @@ import { decodeNipopowProof, verifyProof } from '@dagsocial/nipopow';
 import { verifierProfile } from '@dagsocial/nipopow-client';
 import { profileFor } from '@dagsocial/types';
 import { readTopology, assertTopologyWhole } from '../stage/lib/topology.mjs';
-import { buildPageConfig } from '../stage/lib/config.mjs';
+import { buildPageConfig, buildIdentitiesOut } from '../stage/lib/config.mjs';
 import { malformedBody, invalidBody } from '../stage/hostile-upstream.mjs';
 import { assertClientConfig } from '../src/client/mesh-client.js';
 
@@ -124,6 +124,58 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
       anchors: config.anchors,
       seeds: config.seeds,
     })).not.toThrow();
+  });
+});
+
+describe('buildIdentitiesOut writes a row per host up started a mesh node for', () => {
+  const topology = {
+    network: 'devnet' as const,
+    hosts: {
+      pub1: {
+        role: 'public', addr: '10.100.0.11',
+        mesh: { role: 'public', webrtcPort: 4001 },
+        node: { httpPort: 3100 },
+      },
+      lan1: {
+        role: 'private', addr: '10.103.0.21',
+        mesh: { role: 'private', webrtcPort: 4001 },
+        node: { httpPort: 3100 },
+      },
+      // A host up started no mesh node for (no notisId) is left out.
+      browser: { role: 'browser', addr: '10.103.0.11' },
+    },
+  };
+
+  // MESH_INTERFACE → Discovery → "A node added by hand" — "A private
+  // node prints its local WebRTC-direct address with its key, for its
+  // operator to hand over". The row's `localAddrs` carries whatever
+  // the private host's identity line printed; s7's
+  // `buildByHandLanVariant` reads it so lan1 is named at an address
+  // a browser can dial.
+  it('each row carries localAddrs from the host\'s latest identity line', () => {
+    const notisIds = { pub1: 'a'.repeat(64), lan1: 'b'.repeat(64) };
+    const lan1Local = '/ip4/10.103.0.21/udp/4001/webrtc-direct/certhash/uEiA/p2p/PLan1';
+    const meshIdentities = {
+      pub1: { multiaddrs: ['/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/PPub1'], localAddrs: [] },
+      lan1: { multiaddrs: ['/circuit/addr'], localAddrs: [lan1Local] },
+    };
+    const out = buildIdentitiesOut(topology, notisIds, meshIdentities);
+    expect(Object.keys(out).sort()).toEqual(['lan1', 'pub1']);
+    expect(out.lan1!.localAddrs).toEqual([lan1Local]);
+    expect(out.pub1!.localAddrs).toEqual([]);
+    // The row's other fields are still written.
+    expect(out.lan1!.notisId).toBe('b'.repeat(64));
+    expect(out.lan1!.meshRole).toBe('private');
+    expect(out.lan1!.addr).toBe('10.103.0.21');
+    expect(out.lan1!.httpPort).toBe(3100);
+    expect(out.lan1!.multiaddrs).toEqual(['/circuit/addr']);
+  });
+
+  it('a host with no identity line reads empty lists', () => {
+    const notisIds = { pub1: 'a'.repeat(64), lan1: 'b'.repeat(64) };
+    const out = buildIdentitiesOut(topology, notisIds, { pub1: { multiaddrs: ['/x'] } });
+    expect(out.lan1!.multiaddrs).toEqual([]);
+    expect(out.lan1!.localAddrs).toEqual([]);
   });
 });
 

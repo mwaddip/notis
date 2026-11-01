@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { CommandLog, isProcessAlive } from './lib/commands.mjs';
 import { readTopology, natRouters, publicMeshHosts } from './lib/topology.mjs';
-import { buildPageConfig, peerIdStringOf } from './lib/config.mjs';
+import { buildPageConfig, buildIdentitiesOut, peerIdStringOf } from './lib/config.mjs';
 import { generateStageCerts } from './lib/pebble-certs.mjs';
 import { buildPebbleConfig } from './lib/pebble-config.mjs';
 import { descendantPids } from './lib/measure.mjs';
@@ -1095,22 +1095,7 @@ if (!dryRun) {
   // { notisId, meshRole, httpPort? } }`, one row per host up spawned
   // a mesh node for.
   const identitiesPath = join(OUT_DIR, 'identities.json');
-  const identitiesOut = {};
-  for (const [host, hostConfig] of Object.entries(topology.hosts)) {
-    const id = notisIds[host];
-    if (typeof id !== 'string') continue;
-    identitiesOut[host] = {
-      notisId: id,
-      meshRole: hostConfig.mesh?.role ?? null,
-      addr: hostConfig.addr ?? null,
-      httpPort: hostConfig.node?.httpPort ?? null,
-      // MESH_INTERFACE → Acceptance 6 — s6's seeds dial by printed
-      // multiaddr. Every mesh host's identity line (not just the public
-      // anchors) lands here so the scenario can read what the mesh node
-      // actually listens on, including the hostile ones.
-      multiaddrs: meshIdentities[host]?.multiaddrs ?? [],
-    };
-  }
+  const identitiesOut = buildIdentitiesOut(topology, notisIds, meshIdentities);
   writeFileSync(identitiesPath, JSON.stringify(identitiesOut, null, 2));
 }
 

@@ -78,6 +78,35 @@ export function buildPageConfig(topology, nodeIdentities, realMultiaddrs, opts) 
   };
 }
 
+/**
+ * MESH_INTERFACE → Acceptance — the stage's `identities.json`: a row
+ * per host up started a mesh node for, keyed by host name, each
+ * row carrying `{ notisId, meshRole, addr, httpPort, multiaddrs,
+ * localAddrs }`. `multiaddrs` carries the identity line's
+ * `multiaddrs` (what the mesh node announces, including a private
+ * node's `/p2p-circuit/webrtc/`); `localAddrs` carries the identity
+ * line's `localAddrs` (a private node's own WebRTC-direct listen,
+ * for an operator to hand over — `MESH_INTERFACE → Discovery →
+ * "A node added by hand"`). A host up has no notisId for is left
+ * out. Pure.
+ */
+export function buildIdentitiesOut(topology, notisIds, meshIdentities) {
+  const out = {};
+  for (const [host, hostConfig] of Object.entries(topology.hosts)) {
+    const id = notisIds[host];
+    if (typeof id !== 'string') continue;
+    out[host] = {
+      notisId: id,
+      meshRole: hostConfig.mesh?.role ?? null,
+      addr: hostConfig.addr ?? null,
+      httpPort: hostConfig.node?.httpPort ?? null,
+      multiaddrs: meshIdentities[host]?.multiaddrs ?? [],
+      localAddrs: meshIdentities[host]?.localAddrs ?? [],
+    };
+  }
+  return out;
+}
+
 export function peerIdStringOf(notisId) {
   const pub = publicKeyFromRaw(hexToBytes(notisId));
   return peerIdFromPublicKey(pub).toString();
