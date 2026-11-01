@@ -8,6 +8,7 @@ export interface CdpSession {
 }
 export declare function openSession(wsUrl: string, opts?: { timeoutMs?: number }): CdpSession;
 export declare function evaluate(url: string, expression: string, opts?: { cdpUrl?: string; timeoutMs?: number; awaitPromise?: boolean }): Promise<unknown>;
+export declare function buildPredicate(predicateBody: string): (v: unknown) => boolean;
 export declare function pollEvaluate(url: string, expression: string, predicate: (v: unknown) => boolean, opts?: { cdpUrl?: string; timeoutMs?: number; pollMs?: number }): Promise<unknown>;
 export interface CdpPage {
   target: { id: string; webSocketDebuggerUrl: string };

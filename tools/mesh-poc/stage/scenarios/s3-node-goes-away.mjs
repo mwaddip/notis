@@ -353,14 +353,19 @@ async function waitPub1WithinOneBlockOfPub2(ctx) {
  * the same way, so a baseline on `agreement` never changes; the
  * counter is the one hook this wait has. The predicate body is
  * exported so a unit case runs the same function body.
+ *
+ * `buildPredicate` builds this body as `new Function('v', body)`, run
+ * in cdp.mjs' Node process — there is no `window` here, so the
+ * baseline lives on `globalThis` (one cdp.mjs process per poll, so
+ * the state is the poll's). The catch wraps `JSON.parse` alone — any
+ * other throw propagates to `main` and fails the poll fast.
  */
 export const S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE = `if (v === null) return false;
-    try {
-      const s = JSON.parse(v);
-      if (typeof s.checks !== 'number') return false;
-      window.__s3CheckBaseline = window.__s3CheckBaseline === undefined ? s.checks : window.__s3CheckBaseline;
-      return s.checks > window.__s3CheckBaseline;
-    } catch (_e) { return false; }`;
+    let s;
+    try { s = JSON.parse(v); } catch (_e) { return false; }
+    if (typeof s.checks !== 'number') return false;
+    if (globalThis.__s3CheckBaseline === undefined) globalThis.__s3CheckBaseline = s.checks;
+    return s.checks > globalThis.__s3CheckBaseline;`;
 
 async function pollNextCompletedCheck(pollStateUntil, name) {
   return pollStateUntil(S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE, { timeoutMs: 180_000, pollMs: 1_000, name });

@@ -3,7 +3,8 @@
 // return results without touching the host. The exec-mode flow runs
 // on the real stage (not here).
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { buildPredicate } from '../stage/cdp.mjs';
 import * as s1 from '../stage/scenarios/s1-no-name.mjs';
 import * as s2 from '../stage/scenarios/s2-nat.mjs';
 import * as s3 from '../stage/scenarios/s3-node-goes-away.mjs';
@@ -109,26 +110,47 @@ describe('s3 (node goes away)', () => {
   // node its need allows" — "how many checks it has completed, so a
   // reader can tell one check's state from the next". The recovery
   // step waits on `checks`: a baseline on `agreement` never changes
-  // when the same nodes answer the same way.
-  it('S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE waits on checks: baseline at first poll, done when greater', () => {
-    const win: Record<string, unknown> = {};
-    const fn = new Function('window', 'v', s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
+  // when the same nodes answer the same way. The predicate is built
+  // the way cdp.mjs builds it — `buildPredicate(body)`, no `window`
+  // in scope — so the test runtime is the live one.
+  beforeEach(() => {
+    delete (globalThis as Record<string, unknown>).__s3CheckBaseline;
+  });
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).__s3CheckBaseline;
+  });
+  it('S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE (via buildPredicate) waits on checks: baseline at first poll, done when greater', () => {
+    const fn = buildPredicate(s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
     const stateAt = (checks: number): string => JSON.stringify({
       checks,
       agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
     });
-    expect(fn(win, stateAt(3))).toBe(false);
-    expect(fn(win, stateAt(3))).toBe(false);
-    expect(fn(win, stateAt(4))).toBe(true);
+    expect(fn(stateAt(3))).toBe(false);
+    expect(fn(stateAt(3))).toBe(false);
+    expect(fn(stateAt(4))).toBe(true);
   });
   it('S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE never ends when `checks` is missing (old `agreement` stamp)', () => {
-    const win: Record<string, unknown> = {};
-    const fn = new Function('window', 'v', s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
+    const fn = buildPredicate(s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
     const stateNoChecks = JSON.stringify({
       agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
     });
-    expect(fn(win, stateNoChecks)).toBe(false);
-    expect(fn(win, stateNoChecks)).toBe(false);
+    expect(fn(stateNoChecks)).toBe(false);
+    expect(fn(stateNoChecks)).toBe(false);
+  });
+  // The old predicate kept its baseline on `window.__s3CheckBaseline`;
+  // cdp.mjs' `buildPredicate` runs the body with no `window` in scope.
+  // The old body also wrapped everything in try/catch, so a
+  // `ReferenceError: window is not defined` was swallowed, every poll
+  // returned false, and the 180 s deadline fired — measured on the
+  // live stage. The fix narrows the catch to `JSON.parse` alone: a
+  // predicate body that references a page global throws, cdp.mjs'
+  // `main` does not catch it, and the poll fails at once with the
+  // error.
+  it('a predicate body that references a page global throws (poll fails fast, no silent timeout)', () => {
+    const fn = buildPredicate(`let s;
+      try { s = JSON.parse(v); } catch (_e) { return false; }
+      return s.checks > window.__someBaseline;`);
+    expect(() => fn(JSON.stringify({ checks: 1 }))).toThrow(/window is not defined/);
   });
 });
 
@@ -277,30 +299,35 @@ describe('s7 (reach and load)', () => {
   // `checks`, not `agreement`: the agreement counts stay identical
   // across checks when the same nodes answer the same way, so a
   // baseline on `agreement` never changes and the wait never ends.
-  it('S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE waits on checks: baseline at first poll, done when greater', () => {
-    const win: Record<string, unknown> = {};
-    const fn = new Function('window', 'v', s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
+  // The predicate is built the way cdp.mjs builds it —
+  // `buildPredicate(body)`, no `window` in scope — so the test
+  // runtime is the live one.
+  beforeEach(() => {
+    delete (globalThis as Record<string, unknown>).__s7CheckBaseline;
+  });
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).__s7CheckBaseline;
+  });
+  it('S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE (via buildPredicate) waits on checks: baseline at first poll, done when greater', () => {
+    const fn = buildPredicate(s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
     const stateAt = (checks: number): string => JSON.stringify({
       checks,
       agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
     });
     // First poll: baseline captured, predicate false.
-    expect(fn(win, stateAt(5))).toBe(false);
+    expect(fn(stateAt(5))).toBe(false);
     // Second poll at the same baseline value: still false.
-    expect(fn(win, stateAt(5))).toBe(false);
+    expect(fn(stateAt(5))).toBe(false);
     // Baseline+1: true.
-    expect(fn(win, stateAt(6))).toBe(true);
+    expect(fn(stateAt(6))).toBe(true);
   });
   it('S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE never ends on `agreement` alone when `checks` is missing', () => {
-    // Red before the fix: the old predicate baselined `agreement` as
-    // a string; identical counts across checks left the wait blocked.
-    const win: Record<string, unknown> = {};
-    const fn = new Function('window', 'v', s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
+    const fn = buildPredicate(s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
     const stateNoChecks = JSON.stringify({
       agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
     });
-    expect(fn(win, stateNoChecks)).toBe(false);
-    expect(fn(win, stateNoChecks)).toBe(false);
+    expect(fn(stateNoChecks)).toBe(false);
+    expect(fn(stateNoChecks)).toBe(false);
   });
   // MESH_INTERFACE → Discovery → "A node added by hand" / "Seeds" —
   // step 3 of s7 measures lan1 at its private address. A lan1 row

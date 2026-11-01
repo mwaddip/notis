@@ -255,19 +255,24 @@ async function driveReads(ctx, baseUrl, n, need) {
 // node its need allows" — "how many checks it has completed, so a
 // reader can tell one check's state from the next". The predicate's
 // body: `v` is the `#state` text; on the first poll the current
-// `checks` lands in `window.__s7CheckBaseline`, on each later poll
-// the wait is done when `checks` has grown. The agreement counts
-// stay identical across checks when the same nodes answer the same
-// way, so a baseline on `agreement` never changes; the counter is
-// the one hook this wait has. Exported so the stage test runs the
-// same function body a scenario does.
+// `checks` lands in `globalThis.__s7CheckBaseline`, on each later
+// poll the wait is done when `checks` has grown. The agreement
+// counts stay identical across checks when the same nodes answer
+// the same way, so a baseline on `agreement` never changes; the
+// counter is the one hook this wait has. Exported so the stage test
+// runs the same function body a scenario does.
+//
+// `buildPredicate` builds this body as `new Function('v', body)`, run
+// in cdp.mjs' Node process — there is no `window` here, so the
+// baseline lives on `globalThis` (one cdp.mjs process per poll, so
+// the state is the poll's). The catch wraps `JSON.parse` alone — any
+// other throw propagates to `main` and fails the poll fast.
 export const S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE = `if (v === null) return false;
-    try {
-      const s = JSON.parse(v);
-      if (typeof s.checks !== 'number') return false;
-      window.__s7CheckBaseline = window.__s7CheckBaseline === undefined ? s.checks : window.__s7CheckBaseline;
-      return s.checks > window.__s7CheckBaseline;
-    } catch (_e) { return false; }`;
+    let s;
+    try { s = JSON.parse(v); } catch (_e) { return false; }
+    if (typeof s.checks !== 'number') return false;
+    if (globalThis.__s7CheckBaseline === undefined) globalThis.__s7CheckBaseline = s.checks;
+    return s.checks > globalThis.__s7CheckBaseline;`;
 
 async function waitOneCompletedCheck(ctx, url) {
   const expression = "document.getElementById('state')?.textContent ?? null";

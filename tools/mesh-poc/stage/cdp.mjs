@@ -150,6 +150,23 @@ export async function evaluate(url, expression, {
 }
 
 /**
+ * Build a predicate from its body text. The one definition every
+ * caller uses so the predicate's runtime is the live one: `new
+ * Function('v', body)` runs in cdp.mjs' Node process, with no
+ * `window` and no `document` in scope — an *expression* runs in the
+ * page, a *predicate* runs here. The returned function takes the
+ * expression's value and returns truthy when the poll is done; it
+ * holds its state across polls on `globalThis` (the cdp.mjs process
+ * lives for one poll, so the state is the poll's) and catches
+ * `JSON.parse` alone — any other throw propagates to `main`, which
+ * fails the poll at once with the error instead of waiting out the
+ * deadline.
+ */
+export function buildPredicate(predicateBody) {
+  return new Function('v', predicateBody);
+}
+
+/**
  * Poll `expression` every `pollMs` until it answers a value matching
  * `predicate`, or `timeoutMs` elapses. Returns the final value; throws
  * on timeout.
@@ -347,8 +364,8 @@ async function main(argv) {
   }
   if (cmd === 'poll') {
     // `cdp.mjs poll <url> <expression> <predicate-body> <timeoutMs> <pollMs>`:
-    // keeps a target open, polls `<expression>` every `<pollMs>` until a
-    // `new Function('v', <predicate-body>)` reads it as truthy. Writes
+    // keeps a target open, polls `<expression>` every `<pollMs>` until
+    // `buildPredicate(<predicate-body>)` reads it as truthy. Writes
     // the matching value as JSON on stdout. The predicate body is run
     // in this process (not the page), so it stays short — eg
     // `return v !== null && JSON.parse(v).nodeId !== null`.
@@ -362,7 +379,7 @@ async function main(argv) {
     // The Function constructor is restricted here to a predicate body
     // the scenario itself writes (no attacker surface): the scenario
     // process is the only caller of this command.
-    const predicate = new Function('v', predicateBody);
+    const predicate = buildPredicate(predicateBody);
     const page = await openPage(url, { timeoutMs });
     try {
       const result = await page.pollEval(expression, predicate, { timeoutMs, pollMs });
@@ -384,7 +401,7 @@ async function main(argv) {
     }
     const timeoutMs = timeoutStr !== undefined ? parseInt(timeoutStr, 10) : DEFAULT_TIMEOUT_MS;
     const pollMs = pollStr !== undefined ? parseInt(pollStr, 10) : 500;
-    const predicate = new Function('v', predicateBody);
+    const predicate = buildPredicate(predicateBody);
     const page = await openPageWithIceRecord(url, { timeoutMs });
     try {
       const value = await page.pollEval(expression, predicate, { timeoutMs, pollMs });
