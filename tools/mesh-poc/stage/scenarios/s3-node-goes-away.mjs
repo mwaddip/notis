@@ -138,7 +138,6 @@ export async function run(ctx) {
     60_000, 500,
   );
   const stateBefore = JSON.parse(initialStateJson);
-  const oldNodeId = stateBefore.nodeId;
 
   // Track what we have to roll back on exit, pass or fail.
   let pub1Stopped = false;
@@ -147,33 +146,32 @@ export async function run(ctx) {
 
   try {
     // --- Step 1: stop pub1 ---
+    // MESH_INTERFACE → Acceptance 3 — the step stops pub1; its subject
+    // is pub1's status (`retry`, never `blacklisted`) and whether the
+    // latest routed read moved off pub1 within two checks. The
+    // baseline for `movedWithinChecks` is `state.checks` read before
+    // the fault.
     await rec.step(describe()[0], async () => {
-      const t0 = Date.now();
+      const checksBefore = typeof stateBefore.checks === 'number' ? stateBefore.checks : 0;
       const stopResult = sigterm(pub1Entry.pid);
       pub1Stopped = stopResult.sent;
       log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM ${pub1Entry.pid}`);
-      const expectMove = oldNodeId === pub1Id ? '!==' : '===';
       const afterStop = await pollStateUntil(
         `if (v === null) return false;
-         try {
-           const s = JSON.parse(v);
-           const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
-           if (!e) return false;
-           if (e.status === 'blacklisted') return true;
-           const moved = ${JSON.stringify(oldNodeId)} === ${JSON.stringify(pub1Id)}
-             ? s.nodeId !== ${JSON.stringify(pub1Id)} && s.nodeId !== null
-             : true;
-           return e.status === 'retry' && moved;
-         } catch (_e) { return false; }`,
+         let s;
+         try { s = JSON.parse(v); } catch (_e) { return false; }
+         const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
+         if (!e) return false;
+         if (e.status === 'blacklisted') return true;
+         return e.status === 'retry' && s.nodeId !== ${JSON.stringify(pub1Id)} && s.nodeId !== null;`,
         { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry + move' },
       );
-      void expectMove;
+      const stoppedEntry = findEntry(afterStop, pub1Id);
       const m = {
-        oldNodeId,
-        newNodeId: afterStop.nodeId,
-        oldStatus: findEntry(afterStop, pub1Id)?.status ?? null,
-        movedWithinChecks: Math.ceil((Date.now() - t0) / CHECK_INTERVAL_MS),
-        checkIntervalMs: CHECK_INTERVAL_MS,
+        stoppedNodeId: pub1Id,
+        stoppedStatus: stoppedEntry?.status ?? null,
+        latestReadNodeId: afterStop.nodeId,
+        movedWithinChecks: (typeof afterStop.checks === 'number' ? afterStop.checks : 0) - checksBefore,
       };
       return { verdict: verdictS3Moved(m), measurement: m };
     });
@@ -201,38 +199,37 @@ export async function run(ctx) {
     });
 
     // --- Step 3: firewall pub1 ---
+    // MESH_INTERFACE → Acceptance 3 — same subject as step 1: pub1
+    // reads `retry` (never `blacklisted`), the latest routed read
+    // moves off pub1 within two checks. The baseline for
+    // `movedWithinChecks` is the current `state.checks` (reads the
+    // live state, not a stale closure).
     await rec.step(describe()[2], async () => {
-      const t0 = Date.now();
+      const beforeText = await cdpEval(ctx, browserUrl, "document.getElementById('state')?.textContent ?? null");
+      const beforeState = typeof beforeText === 'string' ? JSON.parse(beforeText) : null;
+      const checksBefore = typeof beforeState?.checks === 'number' ? beforeState.checks : 0;
       log.apply('pub1-fw-add-table', f.addTable, f.deleteTable);
       firewallApplied = true;
       log.apply('pub1-fw-add-chain', f.addChain, null);
       log.apply('pub1-fw-drop-udp', f.dropUdp, null);
       log.apply('pub1-fw-drop-tcp-mesh', f.dropTcpMesh, null);
       log.apply('pub1-fw-drop-tcp-wss', f.dropTcpWss, null);
-      // Read current nodeId from state (not from a stale closure).
-      const beforeText = await cdpEval(ctx, browserUrl, "document.getElementById('state')?.textContent ?? null");
-      const beforeState = typeof beforeText === 'string' ? JSON.parse(beforeText) : null;
-      const oldNodeId3 = beforeState?.nodeId ?? oldNodeId;
       const afterFw = await pollStateUntil(
         `if (v === null) return false;
-         try {
-           const s = JSON.parse(v);
-           const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
-           if (!e) return false;
-           if (e.status === 'blacklisted') return true;
-           const oldNodeId3 = ${JSON.stringify(oldNodeId3)};
-           const pub1Id = ${JSON.stringify(pub1Id)};
-           const moved = oldNodeId3 === pub1Id ? s.nodeId !== pub1Id && s.nodeId !== null : true;
-           return e.status === 'retry' && moved;
-         } catch (_e) { return false; }`,
+         let s;
+         try { s = JSON.parse(v); } catch (_e) { return false; }
+         const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(pub1Id)});
+         if (!e) return false;
+         if (e.status === 'blacklisted') return true;
+         return e.status === 'retry' && s.nodeId !== ${JSON.stringify(pub1Id)} && s.nodeId !== null;`,
         { timeoutMs: RETRY_WAIT_MS, pollMs: 1000, name: 'pub1 retry under firewall' },
       );
+      const stoppedEntry = findEntry(afterFw, pub1Id);
       const m = {
-        oldNodeId: oldNodeId3,
-        newNodeId: afterFw.nodeId,
-        oldStatus: findEntry(afterFw, pub1Id)?.status ?? null,
-        movedWithinChecks: Math.ceil((Date.now() - t0) / CHECK_INTERVAL_MS),
-        checkIntervalMs: CHECK_INTERVAL_MS,
+        stoppedNodeId: pub1Id,
+        stoppedStatus: stoppedEntry?.status ?? null,
+        latestReadNodeId: afterFw.nodeId,
+        movedWithinChecks: (typeof afterFw.checks === 'number' ? afterFw.checks : 0) - checksBefore,
       };
       return { verdict: verdictS3Moved(m), measurement: m };
     });

@@ -185,15 +185,21 @@ export function verdictS2Priv2(m) {
 
 // MESH_INTERFACE → Acceptance 3 — "The client moves to another node
 // within two checks, the node reads `retry`, never `blacklisted`".
-// Scenario 3's four sub-steps share a verdict for `moved + status`.
+// The step names pub1: pub1 is the node it stops (or firewalls), so
+// the subject of the verdict is pub1's status and whether the latest
+// routed read landed on another node. Taking "the old node" from
+// `state.nodeId` before the fault reads the LATEST routed read's
+// node, which under the spread can be pub2 — the measurement would
+// then compare pub2 against pub2 (unchanged) and FAIL although pub1
+// had gone to `retry` and the reads had moved off it.
 // Measurement:
-//   `{ newNodeId: string, oldNodeId: string, oldStatus: 'retry'|'ok'|'blacklisted'|...,
-//      movedWithinChecks: number, checkIntervalMs: number }`.
+//   `{ stoppedNodeId: string, stoppedStatus: 'retry'|'blacklisted'|...,
+//      latestReadNodeId: string, movedWithinChecks: number }`.
 export function verdictS3Moved(m) {
   if (missing(m)) return 'skipped';
-  if (typeof m.newNodeId !== 'string') return 'FAIL';
-  if (typeof m.oldNodeId !== 'string' || m.newNodeId === m.oldNodeId) return 'FAIL';
-  if (m.oldStatus !== 'retry') return 'FAIL';
+  if (typeof m.stoppedNodeId !== 'string') return 'FAIL';
+  if (m.stoppedStatus !== 'retry') return 'FAIL';
+  if (typeof m.latestReadNodeId !== 'string' || m.latestReadNodeId === m.stoppedNodeId) return 'FAIL';
   if (typeof m.movedWithinChecks !== 'number' || m.movedWithinChecks > 2) return 'FAIL';
   return 'PASS';
 }

@@ -226,25 +226,48 @@ describe('verdictS2Priv2 — symmetric NAT: reached through a relay that carries
   });
 });
 
-describe('verdictS3Moved — move to another node, old reads retry, within 2 checks', () => {
+describe('verdictS3Moved — pub1 reads retry; the latest routed read moved off pub1; within 2 checks', () => {
+  // MESH_INTERFACE → Acceptance 3 — the step names pub1 (its subject),
+  // not the state's latest routed read's node, which under the spread
+  // can be pub2. The measurement reads pub1's own entry status and
+  // the latest routed read's node after the fault.
   const PASS = {
-    newNodeId: 'b'.repeat(64),
-    oldNodeId: 'a'.repeat(64),
-    oldStatus: 'retry',
+    stoppedNodeId: 'a'.repeat(64),
+    stoppedStatus: 'retry',
+    latestReadNodeId: 'b'.repeat(64),
     movedWithinChecks: 1,
-    checkIntervalMs: 30_000,
   };
-  it('moved + retry within 2 checks → PASS', () => {
+  it('pub1 retry + latest routed read on another node, within 2 checks → PASS', () => {
     expect(verdictS3Moved(PASS)).toBe('PASS');
   });
-  it('did not move (same node) → FAIL', () => {
-    expect(verdictS3Moved({ ...PASS, newNodeId: PASS.oldNodeId })).toBe('FAIL');
+  it('latest routed read still on pub1 (never moved off) → FAIL', () => {
+    expect(verdictS3Moved({ ...PASS, latestReadNodeId: PASS.stoppedNodeId })).toBe('FAIL');
   });
-  it('old reads blacklisted (not retry) → FAIL', () => {
-    expect(verdictS3Moved({ ...PASS, oldStatus: 'blacklisted' })).toBe('FAIL');
+  it('pub1 reads blacklisted (not retry) → FAIL', () => {
+    expect(verdictS3Moved({ ...PASS, stoppedStatus: 'blacklisted' })).toBe('FAIL');
   });
   it('took more than 2 checks → FAIL', () => {
     expect(verdictS3Moved({ ...PASS, movedWithinChecks: 3 })).toBe('FAIL');
+  });
+  it('stoppedNodeId missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['stoppedNodeId'];
+    expect(verdictS3Moved(m)).toBe('FAIL');
+  });
+  // The old verdict read `oldNodeId` from `state.nodeId` before the
+  // fault — the latest routed read's node, which under the spread
+  // can be pub2. If pub1 goes to `retry` and the latest routed read
+  // stays on pub2 (which is still ok), the measurement wrote
+  // `oldNodeId: <pub2>, newNodeId: <pub2>` and FAILed although the
+  // rule — "pub1 reads retry, the latest routed read moved off
+  // pub1" — held. The retargeted measurement names pub1 directly.
+  it('pub1 retry under spread (latest routed read never went to pub1) → PASS', () => {
+    expect(verdictS3Moved({
+      stoppedNodeId: 'a'.repeat(64),
+      stoppedStatus: 'retry',
+      latestReadNodeId: 'b'.repeat(64),
+      movedWithinChecks: 0,
+    })).toBe('PASS');
   });
 });
 
