@@ -41,7 +41,7 @@ export interface NodeEntry {
   notisId: string;
   anchor: boolean;
   /**
-   * MESH_INTERFACE → The client's node list → "A node added by hand" —
+   * MESH_INTERFACE → Discovery → "A node added by hand" —
    * true for an entry a reader has added through `addByHand`, carrying
    * forward across later events; the gater reads it through
    * `configuredAddrs` (MESH_INTERFACE → Transports → "A client dials a
@@ -118,7 +118,7 @@ interface InternalEntry {
   storedRetryAtMs: number;
   addrs: string[];
   /**
-   * MESH_INTERFACE → The client's node list → "A node added by hand" —
+   * MESH_INTERFACE → Discovery → "A node added by hand" —
    * the addresses the client's own configuration names for the key: an
    * anchor's given addresses and those entered by hand, never one
    * merged from the DHT or a seed. `configuredAddrs(id)` reads this
@@ -188,7 +188,7 @@ export class NodeList {
       clockAtFailure: 0,
       storedRetryAtMs: 0,
       addrs: [...addrs],
-      // MESH_INTERFACE → The client's node list → "A node added by hand":
+      // MESH_INTERFACE → Discovery → "A node added by hand":
       // `add` is a seed- or DHT-sourced add; its addresses are not
       // configured. `addByHand` is the one entry point that writes
       // `configured`.
@@ -201,7 +201,7 @@ export class NodeList {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list → "A node added by hand" —
+   * MESH_INTERFACE → Discovery → "A node added by hand" —
    * the reader may add a node by its key and an address. A new entry
    * gets `anchor = trusted`, `byHand = true`; an existing one merges
    * the addresses, sets `byHand = true`, and `anchor ||= trusted`; a
@@ -240,7 +240,7 @@ export class NodeList {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list → "A node added by hand"
+   * MESH_INTERFACE → Discovery → "A node added by hand"
    * — the addresses the client's own configuration names for the key:
    * an anchor's given addresses and those entered by hand, never one
    * merged from the DHT or a seed. An id the list does not hold reads
