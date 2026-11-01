@@ -201,12 +201,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // MESH_INTERFACE → Transports → "A client dials a private address only
   // when its own configuration names it" + Discovery → "Seeds" — a seed's
   // addresses are not configured, so the client's gater refuses a seed on
-  // a private address. The seed never answers, and `anchorReached` stays
-  // false — "no answer from [a seed] makes `anchorReached` true" is now a
-  // consequence of the gater: a private-address seed is denied before
-  // libp2p dials it. Both anchor and seed are on loopback (private); the
-  // anchor is configured, so the anchor's dial reaches libp2p and fails
-  // against its stopped node — status retry.
+  // a private address, and the seed never answers. Both anchor and seed
+  // are on loopback (private); the anchor is configured, so the anchor's
+  // dial reaches libp2p and fails against its stopped node — status
+  // retry — and `anchorReached` stays false because the anchor itself
+  // never answers.
   it('a seed on a private address is refused by the gater; anchorReached stays false', async () => {
     const stubSeed = await makeStub(0); stubs.push(stubSeed);
     const dirSeed = mkdtempSync(join(tmpdir(), 'mesh-client-seed-')); dirs.push(dirSeed);
