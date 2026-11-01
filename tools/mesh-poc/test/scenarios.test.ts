@@ -105,6 +105,31 @@ describe('s3 (node goes away)', () => {
     expect(a.dropTcpMesh.join(' ')).toContain('tcp dport 4002 drop');
     expect(a.dropTcpWss.join(' ')).toContain('tcp dport 443 drop');
   });
+  // MESH_INTERFACE → The client's node list → "A routed read goes to a
+  // node its need allows" — "how many checks it has completed, so a
+  // reader can tell one check's state from the next". The recovery
+  // step waits on `checks`: a baseline on `agreement` never changes
+  // when the same nodes answer the same way.
+  it('S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE waits on checks: baseline at first poll, done when greater', () => {
+    const win: Record<string, unknown> = {};
+    const fn = new Function('window', 'v', s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
+    const stateAt = (checks: number): string => JSON.stringify({
+      checks,
+      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+    });
+    expect(fn(win, stateAt(3))).toBe(false);
+    expect(fn(win, stateAt(3))).toBe(false);
+    expect(fn(win, stateAt(4))).toBe(true);
+  });
+  it('S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE never ends when `checks` is missing (old `agreement` stamp)', () => {
+    const win: Record<string, unknown> = {};
+    const fn = new Function('window', 'v', s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
+    const stateNoChecks = JSON.stringify({
+      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+    });
+    expect(fn(win, stateNoChecks)).toBe(false);
+    expect(fn(win, stateNoChecks)).toBe(false);
+  });
 });
 
 describe('s2 (NAT)', () => {
@@ -245,6 +270,37 @@ describe('s7 (reach and load)', () => {
     expect(names[1]).toMatch(/delayed|slowed/);
     expect(names[2]).toMatch(/lan1/);
     expect(names[3]).toMatch(/agreement|counts/);
+  });
+  // MESH_INTERFACE → The client's node list → "A routed read goes to a
+  // node its need allows" — "how many checks it has completed, so a
+  // reader can tell one check's state from the next". The wait reads
+  // `checks`, not `agreement`: the agreement counts stay identical
+  // across checks when the same nodes answer the same way, so a
+  // baseline on `agreement` never changes and the wait never ends.
+  it('S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE waits on checks: baseline at first poll, done when greater', () => {
+    const win: Record<string, unknown> = {};
+    const fn = new Function('window', 'v', s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
+    const stateAt = (checks: number): string => JSON.stringify({
+      checks,
+      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+    });
+    // First poll: baseline captured, predicate false.
+    expect(fn(win, stateAt(5))).toBe(false);
+    // Second poll at the same baseline value: still false.
+    expect(fn(win, stateAt(5))).toBe(false);
+    // Baseline+1: true.
+    expect(fn(win, stateAt(6))).toBe(true);
+  });
+  it('S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE never ends on `agreement` alone when `checks` is missing', () => {
+    // Red before the fix: the old predicate baselined `agreement` as
+    // a string; identical counts across checks left the wait blocked.
+    const win: Record<string, unknown> = {};
+    const fn = new Function('window', 'v', s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
+    const stateNoChecks = JSON.stringify({
+      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+    });
+    expect(fn(win, stateNoChecks)).toBe(false);
+    expect(fn(win, stateNoChecks)).toBe(false);
   });
   it('pub2NetemArgs builds a tc qdisc add + del inside notismesh-pub2 on the outside veth', () => {
     const n = s7.pub2NetemArgs(TOPOLOGY);

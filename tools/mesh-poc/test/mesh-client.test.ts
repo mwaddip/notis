@@ -1394,6 +1394,45 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.agreement!.notAgreeing).toBe(0);
   }, 90_000);
 
+  it('checks counts completed checks: 0 at start, +1 at the end of each runCheck', async () => {
+    // MESH_INTERFACE → The client's node list → "A routed read goes
+    // to a node its need allows" — "how many checks it has completed,
+    // so a reader can tell one check's state from the next". A
+    // waiter that reads `checks > baseline` sees exactly one
+    // completed check — the counts the agreement reports stay
+    // identical between checks (the same nodes answer with the same
+    // behind), so a baseline on `agreement` never changes and the
+    // counter is the one hook a stage step has.
+    const stubA = await makeStub(0); stubs.push(stubA);
+    const stubB = await makeStub(1); stubs.push(stubB);
+    const dirA = mkdtempSync(join(tmpdir(), 'chk-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'chk-b-')); dirs.push(dirB);
+    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const b = await startNode(stubB, dirB); nodes.push(b.node);
+
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: fakeResolveWith([
+        (u) => makeResult(u, [0, 1]),
+        (u) => makeResult(u, [0, 1]),
+        (u) => makeResult(u, [0, 1]),
+      ]),
+    });
+    clients.push(client);
+    // Before any check, the counter reads 0.
+    expect(client.state().checks).toBe(0);
+    await client.check();
+    expect(client.state().checks).toBe(1);
+    await client.check();
+    expect(client.state().checks).toBe(2);
+    await client.check();
+    expect(client.state().checks).toBe(3);
+  }, 90_000);
+
   it('a failed read on a live connection triggers an immediate check', async () => {
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" + "A routed read goes to a node its need allows" —

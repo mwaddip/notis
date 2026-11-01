@@ -63,6 +63,7 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     anchorReached: over.anchorReached ?? false,
     tip: over.tip ?? null,
     agreement: over.agreement ?? null,
+    checks: over.checks ?? 0,
     nodes: over.nodes ?? [],
   };
 }

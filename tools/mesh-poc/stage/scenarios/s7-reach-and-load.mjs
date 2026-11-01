@@ -249,16 +249,27 @@ async function driveReads(ctx, baseUrl, n, need) {
   return served.map((e) => ({ nodeId: e?.nodeId ?? null, statusAtRead: e?.status ?? null }));
 }
 
-async function waitOneCompletedCheck(ctx, url) {
-  const expression = "document.getElementById('state')?.textContent ?? null";
-  const predicate = `if (v === null) return false;
+// MESH_INTERFACE → The client's node list → "A routed read goes to a
+// node its need allows" — "how many checks it has completed, so a
+// reader can tell one check's state from the next". The predicate's
+// body: `v` is the `#state` text; on the first poll the current
+// `checks` lands in `window.__s7CheckBaseline`, on each later poll
+// the wait is done when `checks` has grown. The agreement counts
+// stay identical across checks when the same nodes answer the same
+// way, so a baseline on `agreement` never changes; the counter is
+// the one hook this wait has. Exported so the stage test runs the
+// same function body a scenario does.
+export const S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE = `if (v === null) return false;
     try {
       const s = JSON.parse(v);
-      const stamp = JSON.stringify(s.agreement);
-      window.__s7Baseline = window.__s7Baseline === undefined ? stamp : window.__s7Baseline;
-      return stamp !== window.__s7Baseline;
+      if (typeof s.checks !== 'number') return false;
+      window.__s7CheckBaseline = window.__s7CheckBaseline === undefined ? s.checks : window.__s7CheckBaseline;
+      return s.checks > window.__s7CheckBaseline;
     } catch (_e) { return false; }`;
-  await cdpPoll(ctx, url, expression, predicate, LONG_WAIT_MS, POLL_MS);
+
+async function waitOneCompletedCheck(ctx, url) {
+  const expression = "document.getElementById('state')?.textContent ?? null";
+  await cdpPoll(ctx, url, expression, S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE, LONG_WAIT_MS, POLL_MS);
 }
 
 async function readState(ctx, url) {

@@ -6,6 +6,7 @@ export declare function pub2NetemArgs(topology: unknown): {
   del: string[];
 };
 export declare function applyFaults(log: unknown, topology: unknown): void;
+export declare const S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE: string;
 export declare function run(ctx: { dryRun: boolean; topology: unknown; [k: string]: unknown }): Promise<{
   scenario: string;
   startedAt: number;

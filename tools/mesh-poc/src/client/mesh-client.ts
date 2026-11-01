@@ -240,6 +240,13 @@ export interface ClientState {
    * check; written from each check's `TipResult` thereafter.
    */
   agreement: AgreementCounts | null;
+  /**
+   * MESH_INTERFACE → The client's node list → "A routed read goes to
+   * a node its need allows" — "how many checks it has completed, so
+   * a reader can tell one check's state from the next". `0` at
+   * start; incremented once at the end of each `runCheck`.
+   */
+  checks: number;
   nodes: NodeEntry[];
 }
 
@@ -505,6 +512,7 @@ class MeshClientImpl implements MeshClient {
       anchorReached: false,
       tip: null,
       agreement: null,
+      checks: 0,
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
@@ -806,6 +814,12 @@ class MeshClientImpl implements MeshClient {
     this.state_.agreement = agreementCounts(result, anchorIds);
 
     this.state_.anchorReached = this.nodeList.anchorReached();
+    // MESH_INTERFACE → The client's node list → "A routed read goes
+    // to a node its need allows" — "how many checks it has completed,
+    // so a reader can tell one check's state from the next". The
+    // counter increments once at the end of `runCheck`, so a waiter
+    // that reads `checks > baseline` sees exactly one completed check.
+    this.state_.checks += 1;
     this.emitStateChange();
     return result;
   }

@@ -345,25 +345,23 @@ async function waitPub1WithinOneBlockOfPub2(ctx) {
 }
 
 /**
- * MESH_INTERFACE → The client's node list — "A check — `resolveTip`
- * over the candidates — runs at start, every `CHECK_INTERVAL_MS`". A
- * check is complete when `agreement` changes (new counts land after
- * the check). The poll captures the current `agreement.agreeing` as
- * baseline, waits for it to change in a subsequent state, then
- * returns the state at that moment.
+ * MESH_INTERFACE → The client's node list → "A routed read goes to a
+ * node its need allows" — "how many checks it has completed, so a
+ * reader can tell one check's state from the next". A check is
+ * complete when `checks` grows past the baseline. The agreement
+ * counts stay identical between checks when the same nodes answer
+ * the same way, so a baseline on `agreement` never changes; the
+ * counter is the one hook this wait has. The predicate body is
+ * exported so a unit case runs the same function body.
  */
-async function pollNextCompletedCheck(pollStateUntil, name) {
-  // Baseline the current agreement in the page itself through a poll
-  // whose expression stashes the baseline on first run, then only
-  // succeeds when a later state carries a different `agreement`
-  // object. The baseline comparison is by JSON.stringify, which
-  // changes with any count or null → non-null transition.
-  const predicate = `if (v === null) return false;
+export const S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE = `if (v === null) return false;
     try {
       const s = JSON.parse(v);
-      const stamp = JSON.stringify(s.agreement);
-      window.__s3Baseline = window.__s3Baseline === undefined ? stamp : window.__s3Baseline;
-      return stamp !== window.__s3Baseline;
+      if (typeof s.checks !== 'number') return false;
+      window.__s3CheckBaseline = window.__s3CheckBaseline === undefined ? s.checks : window.__s3CheckBaseline;
+      return s.checks > window.__s3CheckBaseline;
     } catch (_e) { return false; }`;
-  return pollStateUntil(predicate, { timeoutMs: 180_000, pollMs: 1_000, name });
+
+async function pollNextCompletedCheck(pollStateUntil, name) {
+  return pollStateUntil(S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE, { timeoutMs: 180_000, pollMs: 1_000, name });
 }
