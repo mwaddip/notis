@@ -25,10 +25,12 @@ import type { Connection, PeerId } from '@libp2p/interface';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import type { Address } from '@libp2p/interface';
 import {
+  isPrivate,
   loopbackAddressLast,
   publicAddressesFirst,
   circuitRelayAddressesLast,
 } from '@libp2p/utils';
+import { peerIdFromString } from '@libp2p/peer-id';
 import { generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
@@ -67,6 +69,12 @@ export type { ReadNeed } from './server-pick.js';
  */
 const STUN_IPV4_RE = /^stun:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5})$/;
 const STUN_IPV6_RE = /^stun:\[([0-9a-fA-F:]+)\]:(\d{1,5})$/;
+// MESH_INTERFACE → Identity — the Notis spelling of a key: 64 lowercase
+// hex characters. Also what `NodeList.addByHand` would refuse (as
+// `MeshKeyError`), but we check it here so the refusal is a
+// `MeshConfigError` as `MESH_INTERFACE → Discovery → "A node added by
+// hand"` specifies.
+const HEX64_RE = /^[0-9a-f]{64}$/;
 
 // A 32-bit signed timer deadline — `MESH_INTERFACE → Place in the
 // workspace`: a cap in both runtimes, since a browser's `setTimeout` reads
@@ -115,24 +123,62 @@ export function assertClientConfig(o: {
  * when its own configuration names it" — the client's `denyDialMultiaddr`,
  * passed to libp2p's `connectionGater` in every runtime (Node.js and
  * browser alike). `true` denies the dial, `false` allows it; libp2p's
- * dial queue calls this before the per-address attribution fires, so a
- * dial whose every address this function denies throws without a
- * `dial-queue:calculated-addresses` entry for them.
+ * dial queue calls this inside `calculateMultiaddrs` before the
+ * per-address progress event fires, so a dial whose every address this
+ * function denies throws `DialDeniedError` and no
+ * `dial-queue:calculated-addresses` entry is recorded for them.
+ *
+ * The rules, in order:
+ *   - a plain `/ws` without `/tls/` or `/wss` is denied, matching
+ *     libp2p's browser default gater's first branch.
+ *   - a non-private address is allowed.
+ *   - a private address with no trailing `/p2p/<id>` is denied: there
+ *     is no key for the gater to look up.
+ *   - a private address with a trailing `/p2p/<id>` is denied unless
+ *     the dial multiaddr with that tail removed equals a
+ *     `configuredAddrsOf(<id as notisId>)` entry with its own trailing
+ *     `/p2p/` removed. A relayed address is judged by its relay hop —
+ *     libp2p dials the relay first, and the relay's own key names the
+ *     trailing `/p2p/` the gater reads.
  *
  * `configuredAddrsOf(notisId)` reads the addresses the client's own
  * configuration names for a key — an anchor's given addresses and
- * those entered by hand (never one merged from the DHT or a seed),
- * through `NodeList.configuredAddrs`.
- *
- * AHEAD OF CODE (2026-11-01): the stub refuses every dial so each
- * pure-gater case fails on its specific decision; the real body
- * follows in the implementation commit.
+ * those entered by hand, never one merged from the DHT or a seed —
+ * through `NodeList.configuredAddrs`. A peer id of a non-Notis key
+ * type reads as the empty list and the address is refused.
  */
 export function clientDenyDialMultiaddr(
-  _ma: Multiaddr,
-  _configuredAddrsOf: (notisId: string) => readonly string[],
+  ma: Multiaddr,
+  configuredAddrsOf: (notisId: string) => readonly string[],
 ): boolean {
-  throw new Error('clientDenyDialMultiaddr: not implemented yet');
+  const components = ma.getComponents();
+  const names = components.map((c) => c.name);
+  // Plain `/ws` without `/tls/` or `/wss`.
+  if (names.includes('ws') && !names.includes('wss') && !names.includes('tls')) {
+    return true;
+  }
+  if (!isPrivate(ma)) return false;
+  // Private: read the trailing `/p2p/<id>`.
+  const last = components[components.length - 1];
+  if (last === undefined || last.name !== 'p2p') return true;
+  const peerIdString = typeof last.value === 'string' ? last.value : String(last.value ?? '');
+  let notisId: string;
+  try {
+    notisId = notisIdFromPeerId(peerIdFromString(peerIdString));
+  } catch {
+    return true; // not a Notis-shaped Ed25519 peer id
+  }
+  const configured = configuredAddrsOf(notisId);
+  if (configured.length === 0) return true;
+  const bareMa = stripTrailingP2p(ma.toString());
+  for (const cfg of configured) {
+    if (stripTrailingP2p(cfg) === bareMa) return false;
+  }
+  return true;
+}
+
+function stripTrailingP2p(s: string): string {
+  return s.replace(/\/p2p\/[^/]+$/, '');
 }
 
 function assertIceServers(stunServers: readonly string[]): void {
@@ -227,6 +273,14 @@ export interface MeshClient {
    */
   addByHand(notisId: string, addrs: string[], trusted: boolean): void;
   /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — the
+   * addresses the client's own configuration names for the key: an
+   * anchor's given addresses and those entered by hand, never one
+   * merged from the DHT or a seed. The gater reads this list through
+   * `NodeList.configuredAddrs` on every dial.
+   */
+  configuredAddrs(notisId: string): readonly string[];
+  /**
    * MESH_INTERFACE → NAT → "A client's STUN list comes from the public
    * nodes it holds" — the ICE configuration the webRTC transport reads
    * at each dial, derived from the client's current node entries. Never
@@ -319,6 +373,20 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
     webSockets(),
   ];
 
+  // MESH_INTERFACE → Transports → "A client dials a private address
+  // only when its own configuration names it" — the client's own
+  // `denyDialMultiaddr`, passed in every runtime so the rule is the
+  // same in Node and in a browser. The reader of configured addresses
+  // is a holder reassigned once the client (and so its node list)
+  // exists; before then, libp2p's start-time code does not call the
+  // gater (which fires only inside the dial queue), and the fallback
+  // reader answers no key.
+  const configuredHolder: { current: (notisId: string) => readonly string[] } = {
+    current: () => [],
+  };
+  const denyDialMultiaddr = (ma: Multiaddr): boolean =>
+    clientDenyDialMultiaddr(ma, configuredHolder.current);
+
   // `MESH_INTERFACE → Discovery` — the client runs the DHT as a client on
   // `/notis/<network>/kad/1.0.0`. `clientMode: true` keeps it off the
   // server side of the handler registration.
@@ -332,6 +400,7 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
     connectionManager: { addressSorter: notisAddressSorter },
+    connectionGater: { denyDialMultiaddr },
     services: {
       identify: identify(),
       ping: ping(),
@@ -346,6 +415,11 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // the holder derives the ICE configuration from it. `webRTC` reads
   // the function on every dial, so the next dial sees the live list.
   iceHolder.current = () => client.iceConfiguration();
+  // MESH_INTERFACE → Transports → "A client dials a private address
+  // only when its own configuration names it" — the gater reads the
+  // live node list now, so a hand-add or an anchor update is visible
+  // to the next dial.
+  configuredHolder.current = (notisId) => client.configuredAddrs(notisId);
   client.start();
   return client;
 }
@@ -539,12 +613,38 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
-   * MESH_INTERFACE → Discovery → "A node added by hand". Stub awaiting
-   * implementation (AHEAD OF CODE 2026-11-01); throws today so every
-   * case that reaches it fails.
+   * MESH_INTERFACE → Discovery → "A node added by hand" — refuses with
+   * `MeshConfigError` before touching the list, adds through
+   * `NodeList.addByHand`, then triggers an immediate check. The three
+   * refusals: a key that is not 64 lowercase hex, an address with a
+   * `/dns4/`, `/dns6/` or `/dnsaddr/` component (through `assertNoDns`),
+   * and an address without a `/webrtc-direct/` component. A trusted
+   * node is an anchor (`anchor = true`); an untrusted one is a
+   * candidate. `NodeList.addByHand` is also what writes the gater's
+   * `configuredAddrs` list for the key.
    */
-  addByHand(_notisId: string, _addrs: string[], _trusted: boolean): void {
-    throw new Error('MeshClient.addByHand: not implemented yet');
+  addByHand(notisId: string, addrs: string[], trusted: boolean): void {
+    if (!HEX64_RE.test(notisId)) {
+      throw new MeshConfigError(`addByHand key refused: ${notisId} is not 64 lowercase hex characters`);
+    }
+    assertNoDns('addByHand', addrs);
+    for (const a of addrs) {
+      if (!a.includes('/webrtc-direct/')) {
+        throw new MeshConfigError(`addByHand address refused: ${a} carries no /webrtc-direct/ component`);
+      }
+    }
+    this.nodeList.addByHand(notisId, addrs, trusted);
+    this.triggerImmediateCheck();
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — the
+   * addresses the client's own configuration names for the key, read
+   * by the gater's `configuredHolder` on every dial. The list is
+   * passed through `NodeList.configuredAddrs`.
+   */
+  configuredAddrs(notisId: string): readonly string[] {
+    return this.nodeList.configuredAddrs(notisId);
   }
 
   async stop(): Promise<void> {

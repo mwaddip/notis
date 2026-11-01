@@ -198,13 +198,16 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(seedEntry!.status).toBe('new');
   }, 30_000);
 
-  // MESH_INTERFACE → Discovery → "Seeds" / No anchor reached — "no answer from
-  // [a seed] makes `anchorReached` true": a check where the anchor is
-  // unreachable and the seed answers as the winner leaves `anchorReached`
-  // false. A real mesh node stands behind the seed so the pre-dial reaches
-  // it; the anchor's addr is the stopped node's, so its pre-dial fails and
-  // phase 2 reads only the seed.
-  it('an answering seed does not make anchorReached true', async () => {
+  // MESH_INTERFACE → Transports → "A client dials a private address only
+  // when its own configuration names it" + Discovery → "Seeds" — a seed's
+  // addresses are not configured, so the client's gater refuses a seed on
+  // a private address. The seed never answers, and `anchorReached` stays
+  // false — "no answer from [a seed] makes `anchorReached` true" is now a
+  // consequence of the gater: a private-address seed is denied before
+  // libp2p dials it. Both anchor and seed are on loopback (private); the
+  // anchor is configured, so the anchor's dial reaches libp2p and fails
+  // against its stopped node — status retry.
+  it('a seed on a private address is refused by the gater; anchorReached stays false', async () => {
     const stubSeed = await makeStub(0); stubs.push(stubSeed);
     const dirSeed = mkdtempSync(join(tmpdir(), 'mesh-client-seed-')); dirs.push(dirSeed);
     const seed = await startNode(stubSeed, dirSeed); nodes.push(seed.node);
@@ -219,9 +222,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       seeds: [{ notisId: seed.id, addrs: [seed.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      // Phase 1 fails the stopped anchor and connects to the seed; phase 2
-      // asks `resolveTip` with the seed's URL only, and winnerFirst makes
-      // the seed the winner.
+      // winnerFirst would make the seed the winner if phase 2 reached
+      // it — but the gater refuses the seed's loopback-private address
+      // before libp2p dials, so phase 1 ends the seed in retry and
+      // phase 2 reads no URL for it.
       resolve: fakeResolveWith([(u) => winnerFirst(u)]),
     });
     clients.push(client);
@@ -230,7 +234,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.anchorReached).toBe(false);
     const seedEntry = s.nodes.find((n) => n.notisId === seed.id);
     expect(seedEntry!.anchor).toBe(false);
-    expect(seedEntry!.status).toBe('ok');
+    expect(seedEntry!.status).toBe('retry');
     const anchorEntry = s.nodes.find((n) => n.notisId === anchor.id);
     expect(anchorEntry!.anchor).toBe(true);
     expect(anchorEntry!.status).toBe('retry');

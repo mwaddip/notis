@@ -85,12 +85,12 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
   const configuredAddrsOf = (id: string): readonly string[] =>
     id === idA ? [anchorAddrA] : [];
 
-  it.fails('a hand-entered private address passes the gater for its own key', () => {
+  it('a hand-entered private address passes the gater for its own key', () => {
     const ma = multiaddr(anchorAddrA);
     expect(clientDenyDialMultiaddr(ma, configuredAddrsOf)).toBe(false);
   });
 
-  it.fails("an anchor's private address passes for its own key; a seed's is refused", () => {
+  it("an anchor's private address passes for its own key; a seed's is refused", () => {
     const anchorMa = multiaddr(anchorAddrA);
     expect(clientDenyDialMultiaddr(anchorMa, configuredAddrsOf)).toBe(false);
     // A seed's private address (another IP under another key, that
@@ -99,7 +99,7 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
     expect(clientDenyDialMultiaddr(multiaddr(seedAddr), configuredAddrsOf)).toBe(true);
   });
 
-  it.fails('the same private address under another key is refused', () => {
+  it('the same private address under another key is refused', () => {
     // Same host/port/certhash as the anchor's — but with peerB's
     // trailing `/p2p/`. The gater reads the key from the trailing
     // `/p2p/<id>`, so configured for idA does not pass this address
@@ -108,7 +108,7 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
     expect(clientDenyDialMultiaddr(ma, configuredAddrsOf)).toBe(true);
   });
 
-  it.fails('a private address from the DHT for a hand-added key is refused', () => {
+  it('a private address from the DHT for a hand-added key is refused', () => {
     // The hand-added key is idA (configured as anchorAddrA). A
     // different private address under idA — one the DHT, a seed or a
     // peer list offered — is not in configured, so the gater refuses
@@ -117,7 +117,7 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
     expect(clientDenyDialMultiaddr(multiaddr(dhtAddr), configuredAddrsOf)).toBe(true);
   });
 
-  it.fails('a public address passes; a plain /ws is refused', () => {
+  it('a public address passes; a plain /ws is refused', () => {
     const pubAddr = `/ip4/8.8.8.8/udp/4001/webrtc-direct/certhash/uEiA/p2p/${peerA}`;
     expect(clientDenyDialMultiaddr(multiaddr(pubAddr), configuredAddrsOf)).toBe(false);
     const wsAddr = `/ip4/8.8.8.8/tcp/8080/ws/p2p/${peerA}`;
@@ -127,14 +127,14 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
     expect(clientDenyDialMultiaddr(multiaddr(wssAddr), configuredAddrsOf)).toBe(false);
   });
 
-  it.fails('a private address with no trailing /p2p/ is refused', () => {
+  it('a private address with no trailing /p2p/ is refused', () => {
     // Without a trailing `/p2p/<id>` there is no key for the gater to
     // look up, so a private address is refused.
     const ma = multiaddr('/ip4/10.0.0.5/udp/4001/webrtc-direct/certhash/uEiA');
     expect(clientDenyDialMultiaddr(ma, configuredAddrsOf)).toBe(true);
   });
 
-  it.fails('a relayed address is judged by its relay hop', () => {
+  it('a relayed address is judged by its relay hop', () => {
     // libp2p dials the relay first; the gater sees the relay's address
     // when it dials the relay. The RELAY's `/p2p/<relay>` names the key
     // the gater looks up (the dial multiaddr for the relay ends in the
@@ -230,7 +230,7 @@ describe('MeshClient.addByHand — refusals', () => {
     });
   }
 
-  it.fails('addByHand refuses a dns address, a bad key, a non-webrtc-direct address', async () => {
+  it('addByHand refuses a dns address, a bad key, a non-webrtc-direct address', async () => {
     client = await startBare();
     const kp = generateKeyPair();
     const id = bytesToHex(kp.publicKey);
@@ -298,7 +298,7 @@ describe('MeshClient.addByHand — anchorReached', () => {
     return c;
   }
 
-  it.fails('a trusted hand-added node makes anchorReached true when it answers', async () => {
+  it('a trusted hand-added node makes anchorReached true when it answers', async () => {
     client = await startBareWithResolve(winnerForEveryUrl());
     const kp = generateKeyPair();
     const id = bytesToHex(kp.publicKey);
@@ -316,7 +316,7 @@ describe('MeshClient.addByHand — anchorReached', () => {
     expect(s.anchorReached, 'anchorReached reads true').toBe(true);
   }, 15_000);
 
-  it.fails('an untrusted hand-added node does not make anchorReached true', async () => {
+  it('an untrusted hand-added node does not make anchorReached true', async () => {
     client = await startBareWithResolve(winnerForEveryUrl());
     const kp = generateKeyPair();
     const id = bytesToHex(kp.publicKey);
