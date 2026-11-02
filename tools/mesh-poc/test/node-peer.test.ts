@@ -39,6 +39,7 @@ import { identify } from '@libp2p/identify';
 import { gossipsub } from '@libp2p/gossipsub';
 import { blockTopic, gossipsubOptions } from '../src/gossip-rules.js';
 import { startNodePeer, type NodePeer } from '../src/node/node-peer.js';
+import { HANDSHAKE_PROTOCOL } from '@dagsocial/net';
 
 // MESH_INTERFACE → Block gossip — the mesh service dials its node's libp2p
 // TCP address (no `/p2p/`), runs net's handshake as the dialler, subscribes
@@ -648,6 +649,83 @@ describe('startNodePeer against a real NetNode', () => {
       ).toThrow();
 
       expect(dialsAttempted).toBe(0);
+    },
+    30_000,
+  );
+
+  it.fails(
+    'a node that never answers the handshake is left at the deadline and dialled again',
+    async () => {
+      // NET_INTERFACE → Handshake → "A connection handshakes within its
+      // deadline, or is closed". A stall host accepts the handshake stream,
+      // reads the inbound frame, and never writes or closes — the dialler's
+      // read is the one that must end.
+      const stallLibp2p = await createLibp2p({
+        addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] },
+        transports: [tcp()],
+        connectionEncrypters: [noise()],
+        streamMuxers: [yamux()],
+        connectionMonitor: { enabled: false },
+        services: { identify: identify() },
+      });
+      openHosts.push({ libp2p: stallLibp2p, received: [] });
+
+      let handlerEntries = 0;
+      const handlerDone = new Set<number>();
+      let firstHandlerEnd: 'eof' | 'error' | null = null;
+      await stallLibp2p.handle(HANDSHAKE_PROTOCOL, (stream): void => {
+        const entry = ++handlerEntries;
+        const iter = stream as unknown as AsyncIterable<unknown>;
+        void (async () => {
+          try {
+            // Drain the inbound frame then stay here, reading nothing more.
+            // The remote end is the one that ends this iteration — either
+            // by aborting the stream (handler sees error) or closing the
+            // connection (handler sees EOF).
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            for await (const _chunk of iter) { /* drop */ }
+            if (entry === 1) firstHandlerEnd = 'eof';
+          } catch {
+            if (entry === 1) firstHandlerEnd = 'error';
+          } finally {
+            handlerDone.add(entry);
+          }
+        })();
+      });
+
+      const host = await startHost(MAGIC_DEVNET);
+      openHosts.push(host);
+
+      const maddr = stallLibp2p.getMultiaddrs()[0]?.toString();
+      if (!maddr) throw new Error('stall host has no listen address');
+      const p = maddr.indexOf('/p2p/');
+      const stallAddr = p >= 0 ? maddr.slice(0, p) : maddr;
+
+      const opts = {
+        nodeP2p: stallAddr,
+        magic: MAGIC_DEVNET,
+        protocolVersion: PROTOCOL_VERSION,
+        nodeName: 'mesh-service-case-stall',
+        retryMs: 200,
+        handshakeTimeoutMs: 1_000,
+      };
+      const peer = startNodePeer(host.libp2p, opts);
+      openPeers.push(peer);
+
+      // Within ~3 s, the handler is entered at least twice — the first was
+      // left at the deadline and the dialler redialled.
+      await vi.waitFor(
+        () => { expect(handlerEntries).toBeGreaterThanOrEqual(2); },
+        { timeout: 3_000, interval: 50 },
+      );
+
+      // The dialler never records a connection as the peer's.
+      expect(peer.connected()).toBe(false);
+
+      // The first stream ended for the stall handler — either in error or at
+      // EOF.
+      expect(handlerDone.has(1)).toBe(true);
+      expect(firstHandlerEnd).not.toBeNull();
     },
     30_000,
   );
