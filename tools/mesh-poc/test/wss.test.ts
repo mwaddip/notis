@@ -66,7 +66,7 @@ async function makeStub(): Promise<Stub> {
   const srv = createServer((req, res) => {
     if (req.url === '/blocks/current') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ height: 1, id: 'ab'.repeat(32) }));
+      res.end(JSON.stringify({ height: 1, hash: 'ab'.repeat(32) }));
     } else {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'not found' }));

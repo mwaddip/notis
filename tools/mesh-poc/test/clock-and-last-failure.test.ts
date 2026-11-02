@@ -19,8 +19,6 @@ import type { NodeEntry } from '../src/client/node-list.js';
 import { render } from '../page/render.js';
 import type { ClientState } from '../src/client/mesh-client.js';
 import { emptyTraffic } from '../src/client/mesh-client.js';
-import { startMeshClient } from '../src/client/mesh-client.js';
-import { profileFor } from '@dagsocial/types';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
 function fakeTipResult(nodes: NodeTipResult[], winnerIndex = -1): TipResult {
@@ -184,40 +182,8 @@ describe('page/render — lastFailure under a retry entry', () => {
   });
 });
 
-describe('startMeshClient — wallClock is handed to the resolve seam', () => {
-  it('the resolve seam receives a wall-clock now (reads > 1e12 ms)', async () => {
-    // happy-dom lives in this file, so we need a minimal libp2p-less
-    // start: `resolve` is a stub that captures the `now` argument the
-    // client passes.
-    const anchors = [{
-      notisId: 'a'.repeat(64),
-      addrs: ['/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/A/p2p/PA'],
-    }];
-    let capturedNow: (() => number) | null = null;
-    // The real resolveTip takes (urls, m, k, profile, now, fetch).
-    const resolveStub = (async (_urls: unknown, _m: unknown, _k: unknown, _profile: unknown, now: () => number) => {
-      capturedNow = now;
-      return { winnerIndex: -1, nodes: [] };
-    }) as unknown as Parameters<typeof startMeshClient>[0]['resolve'];
-    // The client's `clock` default is monotonic (`performance.now`,
-    // which happy-dom supports); scenarios inject a fake monotonic
-    // clock. We skip injecting one and only check wallClock.
-    const client = await startMeshClient({
-      anchors,
-      network: 'devnet',
-      profile: profileFor('devnet'),
-      resolve: resolveStub,
-      // Explicitly set wallClock to a fake that is clearly wall-clock
-      // (ms since epoch >> 1e12).
-      wallClock: () => 1_900_000_000_000,
-    });
-    try {
-      // Force a check so the resolve stub runs.
-      await client.check();
-      expect(capturedNow, 'resolve was called').not.toBeNull();
-      expect(capturedNow!(), 'wallClock reads > 1e12 ms').toBeGreaterThan(1e12);
-    } finally {
-      await client.stop();
-    }
-  });
-});
+// MESH_INTERFACE → "Two clocks" — `startMeshClient` hands its
+// `wallClock` to the resolve seam, not the retry clock. The guard
+// lives in `test/mesh-client.test.ts`, where libp2p's WebRTC-direct
+// dial reaches a real mesh node (`@vitest-environment happy-dom` here
+// prevents libp2p from binding).

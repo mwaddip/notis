@@ -24,7 +24,6 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { privateKeyFromRaw } from '@libp2p/crypto/keys';
 import { bytesToHex, generateKeyPair, profileFor } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
-import type { NodeTipResult } from '@dagsocial/nipopow-client';
 import {
   clientDenyDialMultiaddr,
   createDialProgressRecorder,
@@ -32,7 +31,13 @@ import {
   type MeshClient,
 } from '../src/client/mesh-client.js';
 import { MeshConfigError } from '../src/config.js';
-import { peerIdFromNotisId, seedOfSecretKey } from '../src/identity.js';
+import { peerIdFromNotisId, seedOfSecretKey, nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
+import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { chainUpstream, chainResolve, type ChainUpstream } from './helpers/chain-harness.js';
+import { makeLinkedChain } from './helpers/devnet-block.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 
@@ -45,29 +50,6 @@ function emptyResolve(): typeof import('@dagsocial/nipopow-client').resolveTip {
     suffixHead: null,
     splits: [],
   });
-}
-
-function winnerForEveryUrl(): typeof import('@dagsocial/nipopow-client').resolveTip {
-  return async (urls) => {
-    const nodes: NodeTipResult[] = urls.map((url) => ({
-      url,
-      verified: true,
-      proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
-      verifyResult: null,
-      refuseReason: null,
-      refuseCode: null,
-      behind: 0,
-      genesisHash: 'f'.repeat(64),
-    }));
-    return {
-      winner: nodes[0] ?? null,
-      winnerIndex: nodes.length > 0 ? 0 : -1,
-      nodes,
-      tip: null,
-      suffixHead: null,
-      splits: [],
-    };
-  };
 }
 
 // ---------- the gater — pure function cases ----------
@@ -272,65 +254,87 @@ describe('MeshClient.addByHand — refusals', () => {
 // ---------- MeshClient.addByHand — anchorReached ----------
 
 describe('MeshClient.addByHand — anchorReached', () => {
+  const nodes: MeshNode[] = [];
+  const ups: ChainUpstream[] = [];
+  const dirs: string[] = [];
   let client: MeshClient | null = null;
   afterEach(async () => {
     try { await client?.stop(); } catch { /* already stopped */ }
     client = null;
+    for (const n of nodes.splice(0)) { try { await n.stop(); } catch { /* already stopped */ } }
+    for (const u of ups.splice(0)) { try { await u.close(); } catch { /* already closed */ } }
+    for (const d of dirs.splice(0)) { rmSync(d, { recursive: true, force: true }); }
   });
 
-  async function startBareWithResolve(
-    resolve: Parameters<typeof startMeshClient>[0]['resolve'],
-  ): Promise<MeshClient> {
-    const c = await startMeshClient({
-      anchors: [],
-      network: 'devnet',
-      profile: PROFILE,
-      resolve,
+  const K = 5;
+  const CHAIN = makeLinkedChain(K, PROFILE);
+
+  async function startNode(
+    upstream: { base: string },
+    dir: string,
+  ): Promise<{ node: MeshNode; id: string; webrtcAddr: string }> {
+    const key = nodeKeyFromKeyPair(generateKeyPair());
+    const n = await startMeshNode({
+      key, network: 'devnet', role: 'public',
+      listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+      bootstrap: [], stateDir: dir, upstream: upstream.base,
     });
-    // The resolve seam mocks the proof directly: the pre-dial has no
-    // real target so we stub `libp2p.dial` to return without opening a
-    // connection. The hand-added entry stays `new` into phase 2, where
-    // the fake resolve marks it as a verified behind-0 success, the
-    // event moves it to `ok`, and `nodeList.anchorReached()` reads the
-    // `anchor` flag — the trusted/untrusted switch under test.
-    (c.libp2p as unknown as { dial: (...args: unknown[]) => Promise<unknown> }).dial =
-      async () => undefined;
-    return c;
+    const addrs = n.multiaddrs();
+    const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
+    if (!webrtcAddr) { await n.stop(); throw new Error('no WebRTC-direct listen address'); }
+    const id = notisIdFromPeerId(n.libp2p.peerId);
+    return { node: n, id, webrtcAddr };
   }
 
   it('a trusted hand-added node makes anchorReached true when it answers', async () => {
-    client = await startBareWithResolve(winnerForEveryUrl());
-    const kp = generateKeyPair();
-    const id = bytesToHex(kp.publicKey);
-    const peerIdStr = peerIdFromNotisId(id).toString();
-    const addr = `/ip4/127.0.0.1/udp/59999/webrtc-direct/certhash/uEiA/p2p/${peerIdStr}`;
+    // A hand-added entry is a candidate like any other; a real mesh
+    // node for it means phase 2 reads its /blocks/current and phase 4
+    // settles the chain against its proof. Trusted = anchor; so after
+    // the check `anchorReached` reads true.
+    const up = await chainUpstream(CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'ha-t-')); dirs.push(dir);
+    const n = await startNode(up, dir); nodes.push(n.node);
 
-    client.addByHand(id, [addr], true);
+    client = await startMeshClient({
+      anchors: [],
+      network: 'devnet',
+      profile: PROFILE,
+      resolve: chainResolve(() => CHAIN, K),
+    });
+
+    client.addByHand(n.id, [n.webrtcAddr], true);
     await client.check();
 
     const s = client.state();
-    const entry = s.nodes.find((n) => n.notisId === id);
+    const entry = s.nodes.find((e) => e.notisId === n.id);
     expect(entry, 'the hand-added entry exists').toBeDefined();
     expect(entry!.anchor, 'trusted sets anchor').toBe(true);
     expect(entry!.byHand, 'byHand is true').toBe(true);
     expect(s.anchorReached, 'anchorReached reads true').toBe(true);
-  }, 15_000);
+  }, 60_000);
 
   it('an untrusted hand-added node does not make anchorReached true', async () => {
-    client = await startBareWithResolve(winnerForEveryUrl());
-    const kp = generateKeyPair();
-    const id = bytesToHex(kp.publicKey);
-    const peerIdStr = peerIdFromNotisId(id).toString();
-    const addr = `/ip4/127.0.0.1/udp/59999/webrtc-direct/certhash/uEiA/p2p/${peerIdStr}`;
+    // Untrusted = seed; the entry answers and becomes `ok`, but
+    // `anchorReached` reads the `anchor` flag, which is false here.
+    const up = await chainUpstream(CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'ha-u-')); dirs.push(dir);
+    const n = await startNode(up, dir); nodes.push(n.node);
 
-    client.addByHand(id, [addr], false);
+    client = await startMeshClient({
+      anchors: [],
+      network: 'devnet',
+      profile: PROFILE,
+      resolve: chainResolve(() => CHAIN, K),
+    });
+
+    client.addByHand(n.id, [n.webrtcAddr], false);
     await client.check();
 
     const s = client.state();
-    const entry = s.nodes.find((n) => n.notisId === id);
+    const entry = s.nodes.find((e) => e.notisId === n.id);
     expect(entry, 'the hand-added entry exists').toBeDefined();
     expect(entry!.anchor, 'untrusted leaves anchor false').toBe(false);
     expect(entry!.byHand, 'byHand is true').toBe(true);
     expect(s.anchorReached, 'anchorReached reads false').toBe(false);
-  }, 15_000);
+  }, 60_000);
 });
