@@ -117,8 +117,8 @@ export function startNodePeer(
           // MESH_INTERFACE → Block gossip — "a body ... declaring no
           // address and no capability". The declared height carries no
           // claim at net's scheduler (NET_INTERFACE → Sync State Machine
-          // → "the handshake's `chainHeight` alone is no claim"); 0 says
-          // what a node with no chain says.
+          // → "A claim is the peer's applied tip, height and hash."), so
+          // 0 — what a node with no chain claims — opens no header request.
           chainHeight: 0,
           capabilities: [],
         };
