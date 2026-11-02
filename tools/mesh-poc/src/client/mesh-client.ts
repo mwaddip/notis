@@ -1343,10 +1343,10 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list — read a single header at
-   * `height` from `nodeId` through the timed fetch (`/blocks/<height>`
-   * → `headerBytes`), under the fill's own cap (`BLOCK_READ_BYTES`,
-   * the constants-table row). One of:
+   * MESH_INTERFACE → The client's node list → "A check" — read a
+   * single header at `height` from `nodeId` through the timed fetch
+   * (`/blocks/<height>` → `headerBytes`), under the fill's own cap
+   * (`BLOCK_READ_BYTES`, the constants-table row). One of:
    *   - `{ kind: 'header', header }` — the parsed header;
    *   - `{ kind: 'failure', failureKind, message? }` — a fetch that
    *     threw or timed out, or a non-2xx answer (the `retry` row of
