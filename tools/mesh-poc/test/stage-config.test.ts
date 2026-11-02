@@ -38,6 +38,7 @@ function fakeIdentities(): Record<string, string> {
     'hostile-malformed': 'c'.repeat(64),
     'hostile-invalid': 'd'.repeat(64),
     'hostile-lagging': 'e'.repeat(64),
+    'hostile-publisher': '3'.repeat(64),
     priv1: 'f'.repeat(64),
     priv2: '1'.repeat(64),
     lan1: '2'.repeat(64),
@@ -336,15 +337,22 @@ describe('stage up --dry-run', () => {
     }
   }, 30_000);
 
-  // MESH_INTERFACE → Acceptance — the miner reads pub1's HTTP; pub1's HTTP
-  // binds pub1's namespace loopback, so the miner runs inside
-  // `notismesh-pub1`.
-  it('the miner spawn runs inside notismesh-pub1', () => {
+  // MESH_INTERFACE → Acceptance — the miner reads its node's HTTP; a
+  // node's HTTP binds its namespace loopback. The honest miner (boot
+  // + steady) runs inside `notismesh-pub1`; the lagging miner (fork
+  // on a lighter chain) runs inside `notismesh-hostile-lagging`.
+  it('each miner spawn runs inside its node\'s namespace', () => {
     runDryOnce();
     const minerLines = out.split('\n').filter((l) => l.startsWith('[spawn:miner'));
     expect(minerLines.length, 'at least one miner spawn is present').toBeGreaterThan(0);
+    const pub1Ns = 'ip netns exec notismesh-pub1';
+    const laggingNs = 'ip netns exec notismesh-hostile-lagging';
     for (const minerLine of minerLines) {
-      expect(minerLine, `miner inside pub1 namespace: ${minerLine}`).toContain('ip netns exec notismesh-pub1');
+      if (minerLine.startsWith('[spawn:miner-lagging]')) {
+        expect(minerLine, `miner-lagging inside hostile-lagging namespace: ${minerLine}`).toContain(laggingNs);
+      } else {
+        expect(minerLine, `miner inside pub1 namespace: ${minerLine}`).toContain(pub1Ns);
+      }
     }
   }, 30_000);
 

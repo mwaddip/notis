@@ -722,6 +722,7 @@ const notisNodeEntry = join(REPO_ROOT, 'packages', 'node', 'dist', 'index.js');
 const minerScript = join(REPO_ROOT, 'packages', 'node', 'scripts', 'miner.mjs');
 const meshNodeEntry = join(PACKAGE_ROOT, 'dist', 'node', 'main.js');
 const hostileUpstreamScript = join(HERE, 'hostile-upstream.mjs');
+const hostileGossipScript = join(HERE, 'hostile-gossip.mjs');
 
 const pub1Host = topology.hosts.pub1;
 const pub1Base = `http://${pub1Host.addr}:${pub1Host.node.httpPort}`;
@@ -863,7 +864,14 @@ function startMeshNodeForHost(name, host) {
     } : {}),
   };
   const meshLogPath = logPathFor(`mesh:${name}`);
-  const meshChild = log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}`, logPath: meshLogPath });
+  // MESH_INTERFACE → Acceptance 6 → "A mesh node publishing a block
+  // that fails its checks is blacklisted with its evidence" — a
+  // publisher host runs `hostile-gossip.mjs` instead of the ordinary
+  // mesh node entry; both share the same env shape and identity-line
+  // output, so the stage's identity-reading predicate reaches the
+  // publisher unchanged.
+  const entryScript = host.mesh.publisher === true ? hostileGossipScript : meshNodeEntry;
+  const meshChild = log.spawn(userWrap(ns, meshEnv).concat([entryScript]), { description: `mesh:${name}`, logPath: meshLogPath });
   if (!dryRun) {
     // The mesh node's stdout is a file; tail it until the first JSON
     // identity line that satisfies its role's predicate (a public

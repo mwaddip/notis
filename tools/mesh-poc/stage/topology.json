@@ -113,6 +113,23 @@
         "role": "server"
       }
     },
+    "hostile-publisher": {
+      "role": "hostile",
+      "nat": "none",
+      "addr": "11.100.0.34",
+      "veth": "hp",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002,
+        "publisher": true
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
     "natA": {
       "role": "nat",
       "nat": "endpoint-independent",
