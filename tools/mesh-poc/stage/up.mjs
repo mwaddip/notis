@@ -31,6 +31,12 @@ import { buildPageConfig, buildIdentitiesOut, peerIdStringOf } from './lib/confi
 import { generateStageCerts } from './lib/pebble-certs.mjs';
 import { buildPebbleConfig } from './lib/pebble-config.mjs';
 import { descendantPids } from './lib/measure.mjs';
+import {
+  HOSTILE_FORK_PAIR,
+  joinBootstrapPeers,
+  pairBootstrapAddr,
+  buildPairCutArgs,
+} from './lib/hostile-fork-pair.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -736,10 +742,17 @@ const meshIdentityPromises = {};
 
 // Notis nodes come first — their p2p port is what the mesh nodes'
 // upstream URL points at (through 127.0.0.1 inside each namespace).
+// MESH_INTERFACE → Acceptance 8 — the hostile fork pair
+// (`hostile-lagging`, `hostile-malformed`) name each other in
+// `BOOTSTRAP_PEERS` beside pub1 so the cut applied after the height
+// wait leaves each node one Active peer: the partner. See
+// `stage/lib/hostile-fork-pair.mjs` for the pair's rules.
 for (const [name, host] of Object.entries(topology.hosts)) {
   if (host.node === undefined) continue;
   const ns = nsOf(name);
   const dbPath = join(OUT_DIR, name, 'notis.db');
+  const pub1Addr = `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}`;
+  const partnerAddr = pairBootstrapAddr(topology, name);
   const notisEnv = {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: host.node.role,
@@ -747,7 +760,7 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     ADMIN_PORT: String(host.node.httpPort + 1),
     DB_PATH: dbPath,
     LISTEN_ADDRS: `/ip4/${host.addr}/tcp/${host.node.p2pPort}`,
-    BOOTSTRAP_PEERS: `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}`,
+    BOOTSTRAP_PEERS: joinBootstrapPeers(pub1Addr, partnerAddr === null ? [] : [partnerAddr]),
     MINING_SECRET: 'stage-mining-secret',
   };
   log.spawn(userWrap(ns, notisEnv).concat([notisNodeEntry]), { description: `notis:${name}`, logPath: logPathFor(`notis:${name}`) });
@@ -1010,29 +1023,38 @@ log.spawn(userWrap(nsOf('pub1'), {
   MINER_PCT: '2',
 }).concat([minerScript]), { description: 'miner-steady', logPath: logPathFor('miner-steady') });
 
-// MESH_INTERFACE → The client's node list — `hostile-lagging`'s mesh node
-// stays up and reachable; only its Notis node is cut off from the other
-// Notis nodes' p2p port, so scenario 6b's "behind, never blacklisted" sees
-// a mesh node that serves a valid proof of a lighter chain. The cut is
-// applied AFTER the height wait, so the lagging node is behind from a
-// synced start.
+// MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
+// proof read at the next check — one per distinct tip, and the
+// client's own — and the heavier chain is the client's" /
+// MINING_INTERFACE → "The peer-readiness gate" — a lone node with no
+// Active peer withholds its template. The fork pair
+// (`hostile-lagging` and `hostile-malformed`) peers with each other
+// alone after the cut: each one's `lag_cut` accepts the partner's
+// address + Notis p2p port and drops everything else on the p2p port,
+// so each stays one Active peer short of none. Mesh service ports
+// (`mesh.tcpPort`, `mesh.webrtcPort`) and HTTP are left untouched: the
+// browser still reads each hostile mesh node's state and proof.
+// `hostile-malformed`'s chain reaches no browser — its mesh service's
+// upstream swaps `/blocks/current.hash` for `LIE_HASH` and answers
+// non-hex to the proof route, so the browser blacklists it — while
+// `hostile-lagging`'s mesh serves its own fork tip and the browser
+// places it `behind`.
 const laggingHost = topology.hosts['hostile-lagging'];
-if (laggingHost) {
-  const laggingP2pPort = laggingHost.node.p2pPort;
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'table', 'ip', 'lag_cut'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'chain', 'ip', 'lag_cut', 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'rule', 'ip', 'lag_cut', 'out', 'tcp', 'dport', String(laggingP2pPort), 'drop'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'chain', 'ip', 'lag_cut', 'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', '}'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'rule', 'ip', 'lag_cut', 'in', 'tcp', 'sport', String(laggingP2pPort), 'drop'], { privileged: true });
+const malformedHost = topology.hosts['hostile-malformed'];
+if (laggingHost && malformedHost) {
+  for (const { argv } of buildPairCutArgs(topology)) {
+    log.shell(argv[0], argv.slice(1), { privileged: true });
+  }
 
-  // MESH_INTERFACE → Acceptance 8 → "a block mined on a node reaches
-  // the browser by gossip" / Acceptance 6 → "a node on a lighter chain
-  // is `behind`". After the cut, a low-duty miner inside the lagging
-  // namespace against its own node forks the lagging chain from the
-  // honest one with less work — `MINER_PCT=1` is half the honest
-  // chain's duty, so the lagging fork stays lighter however long the
-  // run goes. `down` ends the recorded tree the same way it ends
-  // `miner-steady`.
+  // MESH_INTERFACE → Acceptance 8 — "a block mined on a node reaches
+  // the browser by gossip through a mesh service and moves the
+  // client's tip before its next check" / Acceptance — "a node on a
+  // lighter chain is `behind`". After the cut, a low-duty miner inside the lagging
+  // namespace against its own node mines on top of the pair's synced
+  // chain — the partner link lets `miner-lagging` build templates, the
+  // honest chain's miner-steady runs at twice this duty so the pair's
+  // fork stays lighter however long the run goes. `down` ends the
+  // recorded tree the same way it ends `miner-steady`.
   log.spawn(userWrap(nsOf('hostile-lagging'), {
     NODE_URL: `http://127.0.0.1:${laggingHost.node.httpPort}`,
     MINING_SECRET: 'stage-mining-secret',

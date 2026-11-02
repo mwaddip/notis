@@ -16,6 +16,14 @@ import { profileFor } from '@dagsocial/types';
 import { readTopology, assertTopologyWhole } from '../stage/lib/topology.mjs';
 import { buildPageConfig, buildIdentitiesOut } from '../stage/lib/config.mjs';
 import { malformedBody, invalidBody } from '../stage/hostile-upstream.mjs';
+import {
+  HOSTILE_FORK_PAIR,
+  partnerOf,
+  joinBootstrapPeers,
+  pairBootstrapAddr,
+  buildHostCutArgs,
+  buildPairCutArgs,
+} from '../stage/lib/hostile-fork-pair.mjs';
 import { assertClientConfig } from '../src/client/mesh-client.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -217,6 +225,165 @@ describe('the hostile upstream', () => {
   });
 });
 
+// MESH_INTERFACE → Acceptance 8 — "a node on another chain has its proof
+// read at the next check — one per distinct tip, and the client's own
+// — and the heavier chain is the client's" / MINING_INTERFACE → "The
+// peer-readiness gate" — the hostile fork pair's pure builders.
+// `hostile-lagging` and `hostile-malformed` peer with each other alone
+// so the lagging miner can produce templates; the per-host cut leaves
+// exactly one accept rule for the partner's p2p address ahead of the
+// drop-everything-on-p2p-port rules on both the output and input
+// chain.
+describe('the hostile fork pair bootstrap and cut builders', () => {
+  function fakeTopology(): any {
+    return {
+      hosts: {
+        pub1: { role: 'public', addr: '11.100.0.11', node: { httpPort: 3100, p2pPort: 9100 } },
+        'hostile-lagging': { role: 'hostile', addr: '11.100.0.33', node: { httpPort: 3100, p2pPort: 9100 } },
+        'hostile-malformed': { role: 'hostile', addr: '11.100.0.31', node: { httpPort: 3100, p2pPort: 9100 } },
+      },
+    };
+  }
+
+  it('HOSTILE_FORK_PAIR names hostile-lagging and hostile-malformed in that order', () => {
+    expect([...HOSTILE_FORK_PAIR]).toEqual(['hostile-lagging', 'hostile-malformed']);
+  });
+
+  it("partnerOf returns the other host; a host outside the pair returns null", () => {
+    expect(partnerOf('hostile-lagging')).toBe('hostile-malformed');
+    expect(partnerOf('hostile-malformed')).toBe('hostile-lagging');
+    expect(partnerOf('pub1')).toBeNull();
+    expect(partnerOf('hostile-invalid')).toBeNull();
+  });
+
+  it('joinBootstrapPeers keeps the base first and appends new entries, dropping duplicates and empties', () => {
+    const base = '/ip4/11.100.0.11/tcp/9100';
+    const partner = '/ip4/11.100.0.31/tcp/9100';
+    expect(joinBootstrapPeers(base, [partner])).toBe(
+      '/ip4/11.100.0.11/tcp/9100,/ip4/11.100.0.31/tcp/9100',
+    );
+    // duplicates kept once; empty strings and non-strings dropped
+    expect(joinBootstrapPeers(base, [base, partner, '', null as any, partner])).toBe(
+      '/ip4/11.100.0.11/tcp/9100,/ip4/11.100.0.31/tcp/9100',
+    );
+    // the base-first invariant: an extra listed before the base cannot overtake it
+    expect(joinBootstrapPeers(base, []).startsWith(base)).toBe(true);
+  });
+
+  it('pairBootstrapAddr builds the partner addr with the partner p2p port and no /p2p/ tail; a non-pair host answers null', () => {
+    const topo = fakeTopology();
+    expect(pairBootstrapAddr(topo, 'hostile-lagging')).toBe('/ip4/11.100.0.31/tcp/9100');
+    expect(pairBootstrapAddr(topo, 'hostile-malformed')).toBe('/ip4/11.100.0.33/tcp/9100');
+    expect(pairBootstrapAddr(topo, 'pub1')).toBeNull();
+    // Node p2p's BOOTSTRAP_PEERS rejects a tail with /p2p/ for a
+    // bare-TCP seed; the builder must not add one.
+    const lag = pairBootstrapAddr(topo, 'hostile-lagging');
+    expect(lag).not.toMatch(/\/p2p\//);
+  });
+
+  // The accept rule for the pair's partner MUST sit ahead of the drop
+  // on the same chain; nft reads rules in order, so a drop before the
+  // accept would cut the pair's own traffic too.
+  it('buildHostCutArgs writes accept rules ahead of drops on both chains for hostile-lagging', () => {
+    const topo = fakeTopology();
+    const rules = buildHostCutArgs(topo, 'hostile-lagging');
+    const idx = (predicate: (r: { description: string; argv: string[] }) => boolean) =>
+      rules.findIndex(predicate);
+    const outAccept = idx((r) => r.description === 'hostile-lagging-pair-out-accept-hostile-malformed');
+    const outDrop = idx((r) => r.description === 'hostile-lagging-pair-out-drop');
+    const inAccept = idx((r) => r.description === 'hostile-lagging-pair-in-accept-hostile-malformed');
+    const inDrop = idx((r) => r.description === 'hostile-lagging-pair-in-drop');
+    expect(outAccept, `out-accept present`).toBeGreaterThan(-1);
+    expect(outDrop, `out-drop present`).toBeGreaterThan(-1);
+    expect(inAccept, `in-accept present`).toBeGreaterThan(-1);
+    expect(inDrop, `in-drop present`).toBeGreaterThan(-1);
+    expect(outAccept, `out-accept before out-drop`).toBeLessThan(outDrop);
+    expect(inAccept, `in-accept before in-drop`).toBeLessThan(inDrop);
+  });
+
+  // The accept rule names the partner's address + p2p port on the
+  // correct direction: outbound keys on daddr (where the packet is
+  // headed), inbound on saddr (where the packet came from).
+  it('buildHostCutArgs: hostile-lagging\'s accepts name hostile-malformed\'s addr and p2p port on the right direction', () => {
+    const topo = fakeTopology();
+    const rules = buildHostCutArgs(topo, 'hostile-lagging');
+    const outAccept = rules.find((r) => r.description === 'hostile-lagging-pair-out-accept-hostile-malformed')!;
+    const inAccept = rules.find((r) => r.description === 'hostile-lagging-pair-in-accept-hostile-malformed')!;
+    const outArgv = outAccept.argv.join(' ');
+    const inArgv = inAccept.argv.join(' ');
+    expect(outArgv).toMatch(/\bdaddr 11\.100\.0\.31\b/);
+    expect(outArgv).toMatch(/\btcp dport 9100 accept\b/);
+    expect(inArgv).toMatch(/\bsaddr 11\.100\.0\.31\b/);
+    expect(inArgv).toMatch(/\btcp sport 9100 accept\b/);
+  });
+
+  // The hostile-malformed cut mirrors the lagging one with the pair
+  // reversed: accept the lagging node's address, drop everything else.
+  it('buildHostCutArgs: hostile-malformed\'s accepts name hostile-lagging\'s addr', () => {
+    const topo = fakeTopology();
+    const rules = buildHostCutArgs(topo, 'hostile-malformed');
+    const outAccept = rules.find((r) => r.description === 'hostile-malformed-pair-out-accept-hostile-lagging')!;
+    const inAccept = rules.find((r) => r.description === 'hostile-malformed-pair-in-accept-hostile-lagging')!;
+    expect(outAccept, 'out-accept present').toBeDefined();
+    expect(inAccept, 'in-accept present').toBeDefined();
+    expect(outAccept.argv.join(' ')).toMatch(/\bdaddr 11\.100\.0\.33\b/);
+    expect(inAccept.argv.join(' ')).toMatch(/\bsaddr 11\.100\.0\.33\b/);
+  });
+
+  // Every rule runs inside this host's namespace; a stray `nft add
+  // rule` outside the namespace would land on the host.
+  it('buildHostCutArgs: every argv is a sudo ip netns exec notismesh-<name> nft command', () => {
+    const topo = fakeTopology();
+    for (const name of HOSTILE_FORK_PAIR) {
+      const rules = buildHostCutArgs(topo, name);
+      expect(rules.length, `${name}: at least seven rules`).toBeGreaterThanOrEqual(7);
+      for (const r of rules) {
+        expect(r.argv.slice(0, 6)).toEqual(['sudo', 'ip', 'netns', 'exec', `notismesh-${name}`, 'nft']);
+      }
+    }
+  });
+
+  // The cut's table name must be a legal nft identifier and the chains
+  // must declare `type filter hook output/input priority 0`. nft -c
+  // would reject anything else — the dry-run gate's nft -c case asserts
+  // that for the whole dry-run.
+  it('buildHostCutArgs: table and chains carry the right nft phrases', () => {
+    const topo = fakeTopology();
+    const rules = buildHostCutArgs(topo, 'hostile-lagging', { table: 'lag_cut' });
+    const table = rules.find((r) => r.description === 'hostile-lagging-pair-add-table')!;
+    const chainOut = rules.find((r) => r.description === 'hostile-lagging-pair-add-chain-out')!;
+    const chainIn = rules.find((r) => r.description === 'hostile-lagging-pair-add-chain-in')!;
+    expect(table.argv.join(' ')).toMatch(/\bnft add table ip lag_cut$/);
+    expect(chainOut.argv.join(' ')).toMatch(/\bnft add chain ip lag_cut out { type filter hook output priority 0 ; }$/);
+    expect(chainIn.argv.join(' ')).toMatch(/\bnft add chain ip lag_cut in { type filter hook input priority 0 ; }$/);
+  });
+
+  // buildPairCutArgs concatenates both hosts' rules in pair order: a
+  // single call carries the whole fork cut.
+  it('buildPairCutArgs: both hosts in order, each host\'s seven rules in a row', () => {
+    const topo = fakeTopology();
+    const rules = buildPairCutArgs(topo);
+    const hosts = rules.map((r) => r.description.split('-pair-')[0]);
+    // The first seven belong to hostile-lagging, the next seven to
+    // hostile-malformed. There is no interleaving.
+    const first = hosts.indexOf('hostile-lagging');
+    const malformedStart = hosts.indexOf('hostile-malformed');
+    expect(first).toBe(0);
+    expect(malformedStart).toBeGreaterThan(0);
+    for (let i = 0; i < malformedStart; i += 1) {
+      expect(hosts[i], `rule ${i} is a hostile-lagging rule`).toBe('hostile-lagging');
+    }
+    for (let i = malformedStart; i < hosts.length; i += 1) {
+      expect(hosts[i], `rule ${i} is a hostile-malformed rule`).toBe('hostile-malformed');
+    }
+  });
+
+  it('buildHostCutArgs: a host outside HOSTILE_FORK_PAIR throws naming the pair', () => {
+    const topo = fakeTopology();
+    expect(() => buildHostCutArgs(topo, 'pub1')).toThrow(/HOSTILE_FORK_PAIR/);
+  });
+});
+
 describe('stage up --dry-run', () => {
   // Shared capture — the dry-run runs once and every case below reads its
   // output. A per-case run would spawn Node seven times.
@@ -391,6 +558,82 @@ describe('stage up --dry-run', () => {
     expect(joined, 'the cut has no output-drop policy').not.toMatch(/policy\s+drop/);
     expect(joined, 'the cut drops TCP to the Notis p2p port').toMatch(/tcp\s+dport\s+9100.*drop/);
     expect(joined, 'the cut drops TCP from the Notis p2p port').toMatch(/tcp\s+sport\s+9100.*drop/);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
+  // proof read at the next check — one per distinct tip, and the
+  // client's own — and the heavier chain is the client's" /
+  // MINING_INTERFACE → "The peer-readiness gate" — the hostile fork
+  // pair's node bootstrap list names the other hostile beside pub1,
+  // so each pair member starts with a path to its partner. Every
+  // other node's `BOOTSTRAP_PEERS` carries pub1 alone — no stray
+  // address, no comma-separated fork peer that would make an honest
+  // node dial a hostile.
+  it('the pair hostiles\' Notis BOOTSTRAP_PEERS names pub1 and the partner; every other Notis BOOTSTRAP_PEERS carries pub1 alone', () => {
+    runDryOnce();
+    const spawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:notis:'));
+    expect(spawnLines.length, 'at least one notis spawn').toBeGreaterThan(0);
+    const pairAddrs: Record<string, string> = {
+      'hostile-lagging': '/ip4/11.100.0.31/tcp/9100',
+      'hostile-malformed': '/ip4/11.100.0.33/tcp/9100',
+    };
+    for (const line of spawnLines) {
+      const n = /\[spawn:notis:([^\]]+)\]/.exec(line);
+      expect(n, line).not.toBeNull();
+      const name = n![1]!;
+      const m = /BOOTSTRAP_PEERS=([^\s]+)/.exec(line);
+      expect(m, `BOOTSTRAP_PEERS present on ${name}`).not.toBeNull();
+      const value = m![1]!;
+      if (Object.hasOwn(pairAddrs, name)) {
+        const partner = pairAddrs[name]!;
+        expect(value, `${name} names pub1`).toContain('/ip4/11.100.0.11/tcp/9100');
+        expect(value, `${name} names partner ${partner}`).toContain(partner);
+      } else {
+        expect(value, `${name} names pub1 alone`).toBe('/ip4/11.100.0.11/tcp/9100');
+      }
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
+  // proof read at the next check — one per distinct tip, and the
+  // client's own — and the heavier chain is the client's" — the pair
+  // cut runs the same seven-rule ruleset on both hosts, with the
+  // accept rule for the partner's p2p address sitting ahead of the
+  // drop on both the output and input chain. nft reads rules in
+  // order, so a drop before the accept would cut the pair's own
+  // traffic too and the lagging miner would be back to one Active
+  // peer: none.
+  it('the lag_cut carries an accept rule for the partner\'s p2p addr ahead of the drop on both hosts', () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const partnerFor: Record<string, string> = {
+      'hostile-lagging': '11.100.0.31',
+      'hostile-malformed': '11.100.0.33',
+    };
+    for (const host of ['hostile-lagging', 'hostile-malformed']) {
+      const partner = partnerFor[host]!;
+      const nsFragment = `ip netns exec notismesh-${host} nft add rule ip lag_cut`;
+      const outAcceptIdx = lines.findIndex((l) =>
+        l.includes(nsFragment) &&
+        l.includes(` out ip daddr ${partner} `) &&
+        l.includes(' accept'));
+      const inAcceptIdx = lines.findIndex((l) =>
+        l.includes(nsFragment) &&
+        l.includes(` in ip saddr ${partner} `) &&
+        l.includes(' accept'));
+      const outDropIdx = lines.findIndex((l) =>
+        l.includes(nsFragment) &&
+        /\bout tcp dport 9100 drop\b/.test(l));
+      const inDropIdx = lines.findIndex((l) =>
+        l.includes(nsFragment) &&
+        /\bin tcp sport 9100 drop\b/.test(l));
+      expect(outAcceptIdx, `${host}: out-accept present`).toBeGreaterThanOrEqual(0);
+      expect(inAcceptIdx, `${host}: in-accept present`).toBeGreaterThanOrEqual(0);
+      expect(outDropIdx, `${host}: out-drop present`).toBeGreaterThanOrEqual(0);
+      expect(inDropIdx, `${host}: in-drop present`).toBeGreaterThanOrEqual(0);
+      expect(outAcceptIdx, `${host}: out-accept before out-drop`).toBeLessThan(outDropIdx);
+      expect(inAcceptIdx, `${host}: in-accept before in-drop`).toBeLessThan(inDropIdx);
+    }
   }, 30_000);
 
   // MESH_INTERFACE → Acceptance — the lag cut only after the height wait, so

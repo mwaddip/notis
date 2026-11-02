@@ -64,9 +64,9 @@ symmetric sub-segments (`stage/topology.json`):
 | pub2 | public mesh node + Notis node | `11.100.0.12` |
 | pebble | ACME test server | `11.100.0.21` |
 | dns-log | REFUSED resolver + DNS witness | `11.100.0.22` |
-| hostile-malformed | mesh node forwarding a non-hex `proof` and a tip of its own | `11.100.0.31` |
+| hostile-malformed | mesh node forwarding a non-hex `proof` and a tip of its own; after the height wait its Notis p2p port peers only with hostile-lagging | `11.100.0.31` |
 | hostile-invalid | mesh node forwarding a `verifyProof`-refusing proof and a tip of its own | `11.100.0.32` |
-| hostile-lagging | mesh node whose Notis p2p port is cut post-sync; a 1 % miner forks its chain lighter | `11.100.0.33` |
+| hostile-lagging | mesh node whose Notis p2p port peers only with hostile-malformed post-sync; a 1 % miner on its node grows the pair's lighter fork | `11.100.0.33` |
 | hostile-publisher | mesh node publishing malformed ordering blocks on the gossip topic | `11.100.0.34` |
 | natA | endpoint-independent NAT router (public `11.100.0.101`, inside `10.101.0.0/24`) | — |
 | priv1 | private mesh node + Notis node behind natA | `10.101.0.11` |
@@ -129,7 +129,8 @@ timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
   Notis node, each mesh node (public first; private second — their relay reservations land on the
   publics that are up), the miner inside pub1 at `MINER_PCT=100` until every honest node reads
   `/blocks/current.height >= 50`, then the steady miner at `MINER_PCT=2`, cuts hostile-lagging's
-  Notis p2p port from the rest, writes `stage/out/browser/config.json` and
+  and hostile-malformed's Notis p2p port from everything but each other, writes
+  `stage/out/browser/config.json` and
   `stage/out/browser/config.default.json` from the mesh nodes' printed multiaddrs, writes
   `stage/out/identities.json`, installs Pebble's root into Chromium's NSS db under
   `stage/out/browser/home/.pki/nssdb` with trust flag `C,,`, starts the page server on
