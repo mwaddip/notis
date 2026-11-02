@@ -64,9 +64,10 @@ symmetric sub-segments (`stage/topology.json`):
 | pub2 | public mesh node + Notis node | `11.100.0.12` |
 | pebble | ACME test server | `11.100.0.21` |
 | dns-log | REFUSED resolver + DNS witness | `11.100.0.22` |
-| hostile-malformed | mesh node forwarding a non-hex `proof` | `11.100.0.31` |
-| hostile-invalid | mesh node forwarding a `verifyProof`-refusing proof | `11.100.0.32` |
-| hostile-lagging | mesh node whose Notis p2p port is cut post-sync | `11.100.0.33` |
+| hostile-malformed | mesh node forwarding a non-hex `proof` and a tip of its own | `11.100.0.31` |
+| hostile-invalid | mesh node forwarding a `verifyProof`-refusing proof and a tip of its own | `11.100.0.32` |
+| hostile-lagging | mesh node whose Notis p2p port is cut post-sync; a 2 % miner forks its chain lighter | `11.100.0.33` |
+| hostile-publisher | mesh node publishing malformed ordering blocks on the gossip topic | `11.100.0.34` |
 | natA | endpoint-independent NAT router (public `11.100.0.101`, inside `10.101.0.0/24`) | — |
 | priv1 | private mesh node + Notis node behind natA | `10.101.0.11` |
 | natB | symmetric NAT router (public `11.100.0.102`, inside `10.102.0.0/24`) | — |
@@ -283,16 +284,23 @@ The anchor's address is dropped for that key; the anchor keeps its status.
 
 ### s6 — Hostile nodes (`MESH_INTERFACE → Acceptance 6`)
 
-Two sub-steps.
+Three sub-steps.
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
 | 1 | `anchors unreachable: anchorReached is false, page shows the contract words` | nft rules in the browser namespace drop every anchor address; `state.anchorReached === false`; the page's `[data-role="banner"]` reads `No anchor reached. Nothing shown here is verified.` byte for byte; **at least one hostile seed** reached a terminal status (`ok` / `behind` / `blacklisted`) — positive evidence the page connected to something. | A different banner text; `anchorReached: true`; no seed left `new`. |
 | 2 | `anchors reachable, hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted` | `hostile-malformed` → `blacklisted`, evidence `malformed`; `hostile-invalid` → `blacklisted`, evidence `proof-invalid`; `hostile-lagging` → `behind`, never `blacklisted`. | Any of those three not landing. |
+| 3 | `the publisher is blacklisted for gossip-block; the client forwarded nothing` | `hostile-publisher` → `blacklisted`, evidence `gossip-block`; every honest mesh node's log holds no `[mesh] ordering block rejected from <X>` line where `X` is anything but the publisher's peer id (the client refused the bad block, so no honest mesh ever sourced it from the browser). | Publisher not blacklisted or evidence of a different kind; one honest mesh log named a reject source other than the publisher. |
 
 **What a tester reports even on PASS:** the hostile-lagging node at `blacklisted` at any point —
 a timeout, a refused connection, a dropped link or a non-2xx is `retry`, and a valid proof of a
 lighter chain is `behind`; neither is `blacklisted` (`MESH_INTERFACE → The client's node list`).
+
+**The traffic the page shows.** Every page carries a `[data-role="traffic"]` section with the
+counts the client keeps per check: `Proofs read`, the byte counts for `tip`, `header`, `proof`
+and `gossip`, and `forwarded` (how many blocks the client's gossipsub handler delivered — a
+rejected block never increments this). A tester reads `forwarded` during s6 step 3 to see at a
+glance that the browser dropped the publisher's bad block (`MESH_INTERFACE → Block gossip`).
 
 ### s7 — Reach and load (`MESH_INTERFACE → Acceptance 7`)
 
