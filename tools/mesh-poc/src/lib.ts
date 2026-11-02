@@ -32,6 +32,9 @@ export type {
   NodeEntry,
 } from './client/node-list.js';
 
+export { BlockCheck } from './block-check.js';
+export type { BlockVerdict, BlockCheckContext } from './block-check.js';
+
 export {
   dhtProtocol,
   RETRY_BASE_MS,

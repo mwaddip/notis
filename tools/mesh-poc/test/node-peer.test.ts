@@ -1,19 +1,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createServer } from 'node:net';
-import { ed25519 } from '@noble/curves/ed25519.js';
 import {
-  generateKeyPair,
-  computeUtxoTxRoot,
   encodeOrderingBlock,
-  hexToBytes,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAGIC_DEVNET,
   PROTOCOL_VERSION,
-} from '@dagsocial/types';
-import type {
-  OrderingBlock,
-  BlockHeader,
-  UtxoTxTree,
 } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
@@ -26,7 +17,6 @@ import {
   verifyValidatorSignature,
   verifyUtxoTxRoot,
   verifyPostBody,
-  blockHash,
 } from '@dagsocial/validation';
 import { NetNode, HANDSHAKE_DEADLINE_FACTOR } from '@dagsocial/net';
 import type { NetConfig, NetValidators } from '@dagsocial/net';
@@ -40,6 +30,7 @@ import { gossipsub } from '@libp2p/gossipsub';
 import { blockTopic, gossipsubOptions } from '../src/gossip-rules.js';
 import { startNodePeer, type NodePeer } from '../src/node/node-peer.js';
 import { HANDSHAKE_PROTOCOL } from '@dagsocial/net';
+import { makeBlockAt } from './helpers/devnet-block.js';
 
 // MESH_INTERFACE → Block gossip — the mesh service dials its node's libp2p
 // TCP address (no `/p2p/`), runs net's handshake as the dialler, subscribes
@@ -120,40 +111,6 @@ async function pickFreePort(): Promise<number> {
 // VALIDATION_INTERFACE → verifyOrderingBlockStructure requires at least one
 // settlement tx id and payload. A fresh validator key per fixture so the
 // signature matches the header the fixture mines.
-function makeBlockAt(height: number, protocolVersion: number): OrderingBlock {
-  const kp = generateKeyPair();
-  const seed = kp.secretKey.subarray(16);
-  const utxoTxTree: UtxoTxTree = {
-    utxoTxIds: [height.toString(16).padStart(64, '0')],
-    utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
-  };
-  const base: BlockHeader = {
-    protocolVersion,
-    height,
-    prevBlockHash: '00'.repeat(32),
-    utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
-    stateRoot: '00'.repeat(33),
-    validatorId: kp.publicKey,
-    powNonce: 0,
-    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
-    createdAt: 1_000_000 + height,
-    interlinkRoot: '00'.repeat(32),
-    adProofsRoot: '00'.repeat(32),
-  };
-  let header: BlockHeader | null = null;
-  for (let n = 0; n < 1_000_000; n++) {
-    const h = { ...base, powNonce: n };
-    if (verifyOrderingBlockPoW(h)) {
-      header = h;
-      break;
-    }
-  }
-  if (!header) throw new Error('could not mine header at the network floor');
-  const hash = blockHash(header);
-  if (hash === null) throw new Error('header outside encodable domain');
-  const validatorSignature = ed25519.sign(hexToBytes(hash), seed);
-  return { header, utxoTxTree, validatorSignature };
-}
 
 interface Host {
   libp2p: Libp2p;
