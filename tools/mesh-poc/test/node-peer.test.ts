@@ -411,7 +411,7 @@ describe('startNodePeer against a real NetNode', () => {
     60_000,
   );
 
-  it.fails(
+  it(
     'an unrelated connection closing leaves the node connection as it is',
     async () => {
       const magic = MAGIC_DEVNET;
@@ -501,7 +501,7 @@ describe('startNodePeer against a real NetNode', () => {
     60_000,
   );
 
-  it.fails(
+  it(
     'a redial that fires during a dial opens no second handshake',
     async () => {
       const magic = MAGIC_DEVNET;
@@ -601,7 +601,7 @@ describe('startNodePeer against a real NetNode', () => {
     60_000,
   );
 
-  it.fails(
+  it(
     'an address with /p2p/ or a DNS name is refused at the call',
     async () => {
       const host = await startHost(MAGIC_DEVNET);
