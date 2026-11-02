@@ -523,9 +523,10 @@ describe('startNodePeer against a real NetNode', () => {
       await firstDialSeen;
 
       // Drive several `connection:close` events from unrelated libp2p
-      // hosts while the first handshake is in flight. Each close, on
-      // today's code, schedules a redial; the timer fires inside the
-      // handshake window and runs a second `connectOnce` in parallel.
+      // hosts while the first handshake is in flight. Each close
+      // schedules a redial; the timer fires inside the handshake
+      // window and would run a second `connectOnce` in parallel
+      // without the park's gate.
       for (let i = 0; i < 3; i++) {
         const other = await startHost(magic);
         openHosts.push(other);

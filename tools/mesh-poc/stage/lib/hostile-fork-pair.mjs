@@ -175,8 +175,8 @@ export function buildPairCutArgs(topology, options) {
  *   - every other host names `pub1Addr` alone — the honest nodes'
  *     bootstrap stays unchanged.
  *
- * Returned as a single comma-separated string (one addr for every
- * host today), ready for the Notis node's env.
+ * Returned as a single comma-separated string (one addr per host),
+ * ready for the Notis node's env.
  */
 export function notisBootstrapPeersFor(topology, name, pub1Addr) {
   const partner = pairBootstrapAddr(topology, name);

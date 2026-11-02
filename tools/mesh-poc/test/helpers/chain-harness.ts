@@ -143,8 +143,8 @@ function blockToJson(block: OrderingBlock, extraIds = 0): Record<string, unknown
 
 /**
  * `resolveTip`-shaped answers over ordering chains, without calling
- * `verifyProof`: each URL in order, `'invalid'` as today's
- * `invalidWithProof`, `'unreachable'` with `refuseCode: 'unreachable'`,
+ * `verifyProof`: each URL in order, `'invalid'` as `invalidWithProof`,
+ * `'unreachable'` with `refuseCode: 'unreachable'`,
  * otherwise a verified `NodeTipResult` whose `proof.suffixHead.header`
  * and `proof.suffixTail` are the chain's last `k` headers and whose
  * `verifyResult` is `{ ok: true, headers: [block1, …suffix], tip,

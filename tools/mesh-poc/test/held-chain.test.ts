@@ -331,8 +331,7 @@ describe('HeldChain — link', () => {
   it('failed: the fill links to a held header below the tip (a fork), the window unchanged', () => {
     // MESH_INTERFACE → The client's node list → "The client's chain" — the
     // chain grows only from its tip: a fill reaching a held header below
-    // the tip is a fork, refused with the window untouched. The current
-    // code accepts any held parent, so this case fails on today's `link`.
+    // the tip is a fork, refused with the window untouched.
     const chain = makeLinkedChain(10, devnetProfile);
     const held = new HeldChain(devnetProfile, K);
     // Window: heights 6..10 (tip 10), block 1 held separately.
@@ -389,7 +388,7 @@ describe('HeldChain — link', () => {
     // MESH_INTERFACE → The client's node list → "The client's chain" — a
     // fill reaches a held header only by linking to the tip; a fill whose
     // lowest links to block 1 is a divergence from the whole chain, not an
-    // extension of the tip. The current code accepts the block-1 parent.
+    // extension of the tip, so the window stands.
     const chain = makeLinkedChain(10, devnetProfile);
     const held = new HeldChain(devnetProfile, K);
     held.settle(chain.slice(5).map(b => b.header), chain[0]!.header);
