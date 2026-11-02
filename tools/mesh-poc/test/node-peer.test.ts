@@ -246,7 +246,7 @@ describe('startNodePeer against a real NetNode', () => {
     }
   });
 
-  it.fails(
+  it(
     'the node holds the peer Active past the handshake deadline and two SyncInfo rounds',
     async () => {
       const magic = MAGIC_DEVNET;
@@ -297,7 +297,7 @@ describe('startNodePeer against a real NetNode', () => {
     CASE_TIMEOUT_MS + 20_000,
   );
 
-  it.fails(
+  it(
     'a block the node broadcasts reaches the host on the topic',
     async () => {
       const magic = MAGIC_DEVNET;
@@ -330,12 +330,20 @@ describe('startNodePeer against a real NetNode', () => {
         },
         { timeout: 15_000, interval: 100 },
       );
-      expect(host.received[0]).toEqual(encodeOrderingBlock(block));
+      // Compare as plain Uint8Array — libp2p may hand the data as a
+      // Node `Buffer`, which `toEqual` serialises differently.
+      const received = host.received[0]!;
+      const bytes = new Uint8Array(
+        received.buffer,
+        received.byteOffset,
+        received.byteLength,
+      );
+      expect(bytes).toEqual(encodeOrderingBlock(block));
     },
     60_000,
   );
 
-  it.fails(
+  it(
     'a restarted node is dialled again',
     async () => {
       const magic = MAGIC_DEVNET;
@@ -352,6 +360,7 @@ describe('startNodePeer against a real NetNode', () => {
       openHosts.push(host);
 
       const nodeAddr = nodeTcpAddrNoP2p(node1);
+      const node1PeerId = node1.peerId();
       const peer = startNodePeer(host.libp2p, {
         nodeP2p: nodeAddr,
         magic,
@@ -395,8 +404,8 @@ describe('startNodePeer against a real NetNode', () => {
         { timeout: 20_000, interval: 100 },
       );
       // The two nodes carry different peer ids — the host learned each
-      // at Noise.
-      expect(node2.peerId()).not.toBe(node1.peerId());
+      // at Noise. `node1`'s peer id was captured before it stopped.
+      expect(node2.peerId()).not.toBe(node1PeerId);
     },
     60_000,
   );
