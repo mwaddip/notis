@@ -159,19 +159,36 @@ export const S8_GOSSIP_PREDICATE = `if (v === null) return false;
   return Array.isArray(hs) && hs.length >= 4;`;
 
 /**
- * Match clientHist (tracker's tip-change records, an array of
- * `{height, atMs, checks}`) to pub1Hist (first-seen atMs per height,
- * an array of `{height, atMs}`). Both inputs are held to arrays —
- * a string, a Map or any other shape answers an empty list, so the
- * step's `m.deliveries` reads short of three and the verdict
- * `verdictS8Gossip` FAILs naming the field. For the first three
- * pub1 heights past the tracker's baseline, each delivery's
- * `delayMs` is the client's first atMs at or above that height
- * minus pub1's atMs at it; `checksMoved` is whether the client's
- * `checks` advanced between pub1's atMs and the client's atMs
- * (compared against the latest clientHist record whose atMs is at
- * or before pub1's atMs). Pure, Node-safe; drives the step 2
- * measurement and is testable on simulated histories.
+ * Match each client tip change past the baseline with pub1's first
+ * record AT OR ABOVE that height. `clientHist` is the tracker's
+ * tip-change records (an array of `{height, atMs, checks}`); the
+ * baseline is `clientHist[0]`, the first state the tracker captured.
+ * `pub1Hist` is the first-seen atMs per height (an array of
+ * `{height, atMs}`). Both inputs are held to arrays — a string, a
+ * Map or any other shape answers an empty list, so the step's
+ * `m.deliveries` reads short of three and the verdict
+ * `verdictS8Gossip` FAILs naming the field.
+ *
+ * One delivery per client tip change past the baseline, capped at
+ * three — the earliest three client heights after `baseline.height`.
+ * Keying on the client's changes rather than pub1's heights lets a
+ * pub1 height the 250 ms poll missed through: the client's own tip
+ * change still records a delivery against pub1's next-reached height.
+ *
+ * `delayMs` = `clientRec.atMs - pub1 first atMs at or above the
+ * client's height`. A negative delayMs says gossip beat the poll (the
+ * client learnt the height before the poll's next tick); the verdict
+ * reads `delayMs <= 5000` so a negative value is a delivery within
+ * the bound.
+ *
+ * `checksMoved` = whether the client's `checks` advanced between
+ * pub1's atMs for the delivery and the client's own atMs; compared
+ * against the latest clientHist record whose atMs is at or before
+ * pub1's atMs. A check that ran mid-window carried the block by
+ * proof, not gossip — the verdict refuses it.
+ *
+ * Pure, Node-safe; drives the step 2 measurement and is testable on
+ * simulated histories.
  */
 export function computeDeliveries(clientHist, pub1Hist) {
   if (!Array.isArray(clientHist) || clientHist.length === 0) return [];
@@ -181,27 +198,54 @@ export function computeDeliveries(clientHist, pub1Hist) {
   if (typeof baselineHeight !== 'number') return [];
   const sortedPub1 = pub1Hist
     .filter((p) => p !== null && typeof p === 'object'
-      && typeof p.height === 'number' && p.height > baselineHeight
+      && typeof p.height === 'number'
       && typeof p.atMs === 'number')
-    .sort((a, b) => a.height - b.height)
-    .slice(0, 3);
+    .sort((a, b) => a.height - b.height);
   const deliveries = [];
-  for (const { height: h, atMs: pubAtMs } of sortedPub1) {
-    const clientRec = clientHist.find((c) => c && typeof c.height === 'number' && c.height >= h);
-    if (!clientRec || typeof clientRec.atMs !== 'number' || typeof clientRec.checks !== 'number') continue;
+  for (let i = 1; i < clientHist.length && deliveries.length < 3; i += 1) {
+    const c = clientHist[i];
+    if (c === null || typeof c !== 'object') continue;
+    if (typeof c.height !== 'number' || c.height <= baselineHeight) continue;
+    if (typeof c.atMs !== 'number' || typeof c.checks !== 'number') continue;
+    const pubRec = sortedPub1.find((p) => p.height >= c.height);
+    if (pubRec === undefined) continue;
     let checksAtPub = typeof baseline.checks === 'number' ? baseline.checks : 0;
-    for (const c of clientHist) {
-      if (typeof c.atMs !== 'number' || typeof c.checks !== 'number') continue;
-      if (c.atMs > pubAtMs) break;
-      checksAtPub = c.checks;
+    for (const cr of clientHist) {
+      if (cr === null || typeof cr !== 'object') continue;
+      if (typeof cr.atMs !== 'number' || typeof cr.checks !== 'number') continue;
+      if (cr.atMs > pubRec.atMs) break;
+      checksAtPub = cr.checks;
     }
     deliveries.push({
-      height: h,
-      delayMs: clientRec.atMs - pubAtMs,
-      checksMoved: clientRec.checks > checksAtPub,
+      height: c.height,
+      delayMs: c.atMs - pubRec.atMs,
+      checksMoved: c.checks > checksAtPub,
     });
   }
   return deliveries;
+}
+
+/**
+ * Parse `cdp.mjs poll`'s stdout as the tracker's inner object. The
+ * `poll` command writes `JSON.stringify(result)` where `result` is
+ * itself the expression's `JSON.stringify(window.__s8*)` — so the
+ * stdout is a JSON string of a JSON string of the tracker's state.
+ * One `JSON.parse` unwraps the outer encoding to the inner string; a
+ * second parse reads the object. Step 2's inline logic did this with
+ * a `typeof outer === 'string' ? JSON.parse(outer) : outer` dance;
+ * step 4's inline `JSON.parse(value)` did only one parse and threw
+ * `Cannot read properties of undefined (reading 'proofReads')` when
+ * the single parse left `r` a string and the step read `r.base`.
+ *
+ * Returns the parsed object, `null` when the input is not a string
+ * or either parse fails. Pure, no DOM, no clock.
+ */
+export function parseTrackerValue(value) {
+  if (typeof value !== 'string') return null;
+  let outer;
+  try { outer = JSON.parse(value); } catch { return null; }
+  if (typeof outer !== 'string') return outer;
+  try { return JSON.parse(outer); } catch { return null; }
 }
 
 /**
@@ -629,7 +673,11 @@ export async function run(ctx) {
         // Wait for the tracker to signal a fill (a tip change of ≥ 3
         // at once past its baseline), capped at 3 minutes.
         const value = await tracker.promise;
-        const r = JSON.parse(value);
+        const r = parseTrackerValue(value);
+        if (r === null) {
+          const m = { reason: 's8 step 4: tracker returned a value that did not parse', value };
+          return { verdict: verdictS8Gap(m), measurement: m };
+        }
         if (r.base === null || r.final === null) {
           const m = { reason: 's8 step 4: tracker returned without base or final', state: r };
           return { verdict: verdictS8Gap(m), measurement: m };

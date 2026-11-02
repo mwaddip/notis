@@ -820,4 +820,127 @@ describe('s8 (prove once, follow by gossip)', () => {
     expect(s8.computeDeliveries(clientHist, 'not-an-array')).toEqual([]);
     expect(s8.computeDeliveries(clientHist, null)).toEqual([]);
   });
+
+  // MESH_INTERFACE → Acceptance 8 — the earlier `af9541f8` test paired
+  // pub1 heights with the client's; a run with pub1 missing one of the
+  // three heights (the poll's 250 ms cadence skipped it) returned two
+  // deliveries, verdict FAIL. The rule the brief states — "one delivery
+  // per client tip change after its baseline" — pairs each new client
+  // height with pub1's first record AT OR ABOVE it, so a pub1 height
+  // the poll missed does not drop the client's own change. The data
+  // below is pasted whole from a saved run on `41de7dc4` where pub1
+  // never saw height 922 (921 and 923 only, 2 s apart); the three
+  // client changes still land as three deliveries, each within the
+  // 5 s bound and with `checksMoved` false.
+  it("computeDeliveries over a run's clientHist and pub1Hist with pub1 missing one height answers one delivery per client change past baseline", () => {
+    const clientHist = [
+      { height: 920, atMs: 1793631574361, checks: 1 },
+      { height: 921, atMs: 1793631579468, checks: 1 },
+      { height: 922, atMs: 1793631582561, checks: 1 },
+      { height: 923, atMs: 1793631582661, checks: 1 },
+    ];
+    const pub1Hist = [
+      { height: 920, atMs: 1793631574011 },
+      { height: 921, atMs: 1793631579690 },
+      { height: 923, atMs: 1793631582672 },
+    ];
+    const deliveries = s8.computeDeliveries(clientHist, pub1Hist);
+    expect(deliveries).toEqual([
+      { height: 921, delayMs: -222, checksMoved: false },
+      { height: 922, delayMs: -111, checksMoved: false },
+      { height: 923, delayMs: -11, checksMoved: false },
+    ]);
+    for (const d of deliveries) {
+      expect(d.delayMs).toBeLessThanOrEqual(5_000);
+      expect(d.checksMoved).toBe(false);
+    }
+  });
+
+  // MESH_INTERFACE → Acceptance 8 — `checksMoved === true` when the
+  // client's `checks` advanced between pub1's atMs for the delivery's
+  // height (or the first pub1 record at or above it) and the client's
+  // own tip-change atMs. A check that ran mid-window carried the block
+  // by proof, not gossip; `verdictS8Gossip` reads this field.
+  it('computeDeliveries marks checksMoved true when a check ran between pub1\'s atMs and the client\'s tip change', () => {
+    const clientHist = [
+      { height: 100, atMs: 1_000, checks: 5 },
+      { height: 101, atMs: 2_000, checks: 6 }, // pub1 saw 101 at 1_500; checks went 5 → 6
+    ];
+    const pub1Hist = [{ height: 101, atMs: 1_500 }];
+    const deliveries = s8.computeDeliveries(clientHist, pub1Hist);
+    expect(deliveries).toEqual([
+      { height: 101, delayMs: 500, checksMoved: true },
+    ]);
+  });
+
+  // MESH_INTERFACE → Acceptance 8 — the step reads the FIRST three
+  // deliveries past the baseline. A fourth client change does not
+  // enter the verdict's read; `verdictS8Gossip` keyed on
+  // `deliveries.length === 3`.
+  it('computeDeliveries caps at three deliveries', () => {
+    const clientHist = [
+      { height: 10, atMs: 0, checks: 0 },
+      { height: 11, atMs: 100, checks: 0 },
+      { height: 12, atMs: 200, checks: 0 },
+      { height: 13, atMs: 300, checks: 0 },
+      { height: 14, atMs: 400, checks: 0 },
+    ];
+    const pub1Hist = [
+      { height: 11, atMs: 50 },
+      { height: 12, atMs: 150 },
+      { height: 13, atMs: 250 },
+      { height: 14, atMs: 350 },
+    ];
+    const deliveries = s8.computeDeliveries(clientHist, pub1Hist);
+    expect(deliveries.length).toBe(3);
+    expect(deliveries.map((d) => d.height)).toEqual([11, 12, 13]);
+  });
+});
+
+// MESH_INTERFACE → Acceptance 8 — step 4's tracker exits with the
+// first tip jump of three or more and the gossip-poll scenario writes
+// a report on its own clock. `cdp.mjs poll`'s stdout is
+// `JSON.stringify(result)` where `result` is itself the expression's
+// `JSON.stringify(window.__s8GAP)`: one JSON.parse unwraps the stdout
+// to a JSON STRING of the inner payload, a second parse reads it as
+// an object. Step 2 has done the double parse for weeks; step 4's
+// single parse left `r` a string and `r.base.proofReads` threw
+// `Cannot read properties of undefined (reading 'proofReads')`.
+// `parseTrackerValue` is the shared parser extracted from the step; the
+// case below reproduces the throw against a single parse and asserts
+// the shared parser answers an object.
+describe("s8 — parseTrackerValue reads cdp.mjs' double-encoded stdout", () => {
+  it('parses a double-encoded tracker value as the inner object', () => {
+    const inner = { base: { tipHeight: 100, proofReads: 1 }, lastTipHeight: 103, final: { tipHeight: 103, proofReads: 1, jump: 3 } };
+    const stdout = JSON.stringify(JSON.stringify(inner));
+    const r = s8.parseTrackerValue(stdout);
+    expect(r).toEqual(inner);
+    // The run's throw: a single JSON.parse of the double-encoded
+    // stdout returns a string; dereferencing `.base.proofReads` throws
+    // the "undefined" message the saved run holds.
+    const once = JSON.parse(stdout);
+    expect(typeof once).toBe('string');
+    expect(() => once.base.proofReads).toThrow(/Cannot read properties of undefined/);
+    // Confirming the shape of the thrown message so a reader of the
+    // saved run finds the match the test asserts.
+    try { void (once as any).base.proofReads; }
+    catch (err) {
+      expect((err as Error).message).toContain("reading 'proofReads'");
+    }
+  });
+
+  it('parses a once-encoded tracker value as the inner object (idempotent)', () => {
+    // The scenario's cdpPoll helper does one parse before resolving;
+    // the shared parser is safe to call on both an already-parsed
+    // object and a once-encoded string.
+    const inner = { base: null, final: null };
+    const r1 = s8.parseTrackerValue(JSON.stringify(inner));
+    expect(r1).toEqual(inner);
+  });
+
+  it('answers null on a non-string input', () => {
+    expect(s8.parseTrackerValue(null)).toBeNull();
+    expect(s8.parseTrackerValue(42 as any)).toBeNull();
+    expect(s8.parseTrackerValue({} as any)).toBeNull();
+  });
 });

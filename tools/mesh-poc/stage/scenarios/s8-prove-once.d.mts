@@ -13,6 +13,7 @@ export declare function computeDeliveries(
   clientHist: unknown,
   pub1Hist: unknown,
 ): Array<{ height: number; delayMs: number; checksMoved: boolean }>;
+export declare function parseTrackerValue(value: unknown): any;
 export declare function honestMeshHosts(topology: unknown): string[];
 export declare function s8NoProofsObserve(
   prev: unknown,
