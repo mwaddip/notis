@@ -651,30 +651,25 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     // MESH_INTERFACE → The client's node list → "A check" — the own-tip
     // URL prepended to the proof call is a node whose tip read this
     // check placed `tip` against the final chain, not a node that was
-    // `ok` at the last check. A `ok` last check; the chain extends by
-    // B's block; C's fork triggers the proof call; the own-tip URL
-    // must be B (now at the tip), not A (now one behind).
+    // `ok` at the last check. A is `ok` from last check and moves to a
+    // fork at the same height (unplaced in phase 3b, no event — A keeps
+    // its `ok` status); B advances one block and is placed `tip` this
+    // check; the own-tip URL must be B.
     const base = makeLinkedChain(K + 2, PROFILE);
     const start = base.slice(0, K + 1);
     const ext = base.slice(0, K + 2);
     const forkChain = makeLinkedChain(K + 1, PROFILE); // different hash at K+1
     const upA = await chainUpstream(start); ups.push(upA);
     const upB = await chainUpstream(start); ups.push(upB);
-    const upC = await chainUpstream(start); ups.push(upC);
     const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
     const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
-    const dC = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dC);
     const a = await startNode(upA, dA); nodes.push(a.node);
     const b = await startNode(upB, dB); nodes.push(b.node);
-    const c = await startNode(upC, dC); nodes.push(c.node);
 
-    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[]; c: OrderingBlock[] } = {
-      a: start, b: start, c: start,
-    };
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[] } = { a: start, b: start };
     const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
       if (url.includes(a.id)) return chainsNow.a;
       if (url.includes(b.id)) return chainsNow.b;
-      if (url.includes(c.id)) return chainsNow.c;
       return 'unreachable';
     };
     const resolveUrls: string[][] = [];
@@ -683,7 +678,6 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       anchors: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
-        { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
       resolve: async (urls, ...rest) => {
@@ -692,21 +686,25 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       },
     });
     clients.push(client);
-    await client.check(); // settle at K+1 — all `ok` on `start`
+    await client.check(); // settle at K+1 — both `ok` on `start`
     const callsAfterSettle = resolveUrls.length;
 
-    // Advance B one block above (K+2); C moves to a fork at K+1 (same
-    // height, different hash) so phase 4 runs.
+    // A moves to a fork at the same height (K+1, different hash); B
+    // advances one block above (K+2). A's placement in phase 3b is
+    // `unplaced` (window height matches, hash does not): no event
+    // fires — A keeps `ok` from last check. B's `above` fill links
+    // and places B at the tip.
+    upA.setChain(forkChain);
+    chainsNow.a = forkChain;
     upB.setChain(ext);
     chainsNow.b = ext;
-    upC.setChain(forkChain);
-    chainsNow.c = forkChain;
     await client.check();
 
     expect(resolveUrls.length).toBeGreaterThan(callsAfterSettle);
     const lastUrls = resolveUrls[resolveUrls.length - 1]!;
-    // The own-tip URL is a node placed `tip` THIS check: that is B
-    // (the fill linked at K+2), not A (now `trailing`).
+    // The own-tip URL is a node placed `tip` THIS check — B, not A
+    // (which is still `ok` from last check but was never placed `tip`
+    // this check).
     expect(lastUrls[0]).toBe('notis-mesh://' + b.id);
   }, 180_000);
 
@@ -754,9 +752,10 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   it('a refused proof is asked of the next node naming the hash', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "the next
     // asked in the same check when that proof is refused". B1 and B2
-    // name the same fork hash; B1's proof is invalid: it is
-    // `blacklisted` with its own evidence, B2's proof is read in the
-    // same check and B2 reads by its own verdict.
+    // name the same fork hash; B1's proof is invalid, so it is
+    // `blacklisted` with its own evidence; B2's proof is read in the
+    // same check through a further `resolveTip` and B2 is blacklisted
+    // too — asserting both evidences shows the retry picked up B2.
     const chainA = makeLinkedChain(K + 2, PROFILE);
     const chainBfork = makeLinkedChain(K + 2, PROFILE); // different hashes
     const upA = await chainUpstream(chainA); ups.push(upA);
@@ -772,9 +771,11 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
       if (url.includes(a.id)) return chainA;
       if (url.includes(b1.id)) return 'invalid';   // B1's proof refused
-      if (url.includes(b2.id)) return chainBfork;  // B2's proof reads chainBfork
+      if (url.includes(b2.id)) return 'invalid';   // B2's proof refused
       return 'unreachable';
     };
+    const resolveUrls: string[][] = [];
+    const underlying = chainResolve(chainOf, K);
     const client = await startMeshClient({
       anchors: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
@@ -782,7 +783,10 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b2.id, addrs: [b2.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      resolve: chainResolve(chainOf, K),
+      resolve: async (urls, ...rest) => {
+        resolveUrls.push([...urls]);
+        return underlying(urls, ...rest);
+      },
     });
     clients.push(client);
     await client.check();
@@ -792,11 +796,18 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const b2Entry = s.nodes.find((n) => n.notisId === b2.id)!;
     expect(b1Entry.status).toBe('blacklisted');
     expect(b1Entry.evidence?.kind).toBe('proof-invalid');
-    // B2 reads by its own verdict: chainBfork is a fork (not on chainA's
-    // suffix), so B2 is `behind` under `behindOnWinnerSuffix` returning
-    // null (eventForTipResult then answers `behind` for a verified
-    // result with behind=null).
-    expect(b2Entry.status).toBe('behind');
+    // Without the retry, B2's proof is never read and B2 stays at
+    // whatever the re-placement left it (event `behind`, not
+    // blacklisted). With the retry, B2's proof is read in a further
+    // resolveTip pass, is also refused, and B2 is blacklisted with
+    // its own evidence.
+    expect(b2Entry.status).toBe('blacklisted');
+    expect(b2Entry.evidence?.kind).toBe('proof-invalid');
+    // The retry pass asked B2 explicitly.
+    const b2Asked = resolveUrls.some((pass) =>
+      pass.some((u) => u.includes(b2.id)),
+    );
+    expect(b2Asked).toBe(true);
   }, 180_000);
 
   it('after a switch every tip is placed against the new chain', async () => {
