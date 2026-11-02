@@ -24,15 +24,21 @@ import { dcutr } from '@libp2p/dcutr';
 import { autoNATv2 } from '@libp2p/autonat-v2';
 import { bootstrap } from '@libp2p/bootstrap';
 import { keychain } from '@libp2p/keychain';
+import { gossipsub, TopicValidatorResult } from '@libp2p/gossipsub';
+import type { GossipSub } from '@libp2p/gossipsub';
 import { FsDatastore } from 'datastore-fs';
 import { http as httpService, type HTTP } from '@libp2p/http';
 import { mkdirSync } from 'node:fs';
 import { isIPv4, isIPv6 } from 'node:net';
 import { join } from 'node:path';
+import { PROTOCOL_VERSION, profileFor } from '@dagsocial/types';
 import type { NodeKey } from '../identity.js';
 import { dhtProtocol, type NetworkName, RETRY_BASE_MS, RETRY_CAP_MS, RELAY_LISTEN_TIMEOUT_MS } from '../protocols.js';
 import { MeshConfigError, assertNoDns } from '../config.js';
+import { blockTopic, gossipsubOptions } from '../gossip-rules.js';
+import { BlockCheck } from '../block-check.js';
 import { nodeApiServer } from './api-forward.js';
+import { startNodePeer, type NodePeer } from './node-peer.js';
 import { startStunServer } from './stun.js';
 import type { IpCertificate } from './acme.js';
 import {
@@ -103,6 +109,33 @@ export interface MeshNodeOptions {
    * client's `assertClientConfig`).
    */
   readonly stunServers?: readonly string[];
+  /**
+   * MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer of
+   * its own node" — the node's libp2p TCP address with no `/p2p/`
+   * component. When set, the mesh service dials it after start and
+   * runs net's handshake as the dialler, holding one gossip-peer
+   * connection to its own node (`startNodePeer`). An address with a
+   * `/p2p/`, `/dns4/`, `/dns6/` or `/dnsaddr/` component is refused
+   * before libp2p starts.
+   */
+  readonly nodeP2p?: string;
+}
+
+/**
+ * MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer of its own
+ * node" — the dial target carries no `/p2p/` (the peer id is learnt at the
+ * link) and no DNS name (identity is the key, not a name).  The same forbidden
+ * list `startNodePeer` enforces, run here so a bad `nodeP2p` throws out of
+ * `startMeshNode` before any libp2p state is created.
+ */
+function assertNodeP2pAddress(raw: string): void {
+  for (const forbidden of ['/p2p/', '/dns4/', '/dns6/', '/dnsaddr/']) {
+    if (raw.includes(forbidden)) {
+      throw new MeshConfigError(
+        `nodeP2p refused: ${JSON.stringify(raw)} carries a ${forbidden} component`,
+      );
+    }
+  }
 }
 
 export interface MeshNode {
@@ -161,12 +194,14 @@ export function effectiveAnnounce(
 
 export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   // Address validation is first — these are the start-time refusals of
-  // `MESH_INTERFACE → Transports` / `→ Discovery`. A rejection here never
-  // creates a datastore, so a bad config does not litter the state dir.
+  // `MESH_INTERFACE → Transports` / `→ Discovery` / `→ Block gossip`. A
+  // rejection here never creates a datastore, so a bad config does not litter
+  // the state dir.
   assertNoDns('listen', opts.listen);
   if (opts.announce) assertNoDns('announce', opts.announce);
   assertNoDns('bootstrap', opts.bootstrap);
   assertBootstrapHasPeer(opts.bootstrap);
+  if (opts.nodeP2p !== undefined) assertNodeP2pAddress(opts.nodeP2p);
 
   // `MESH_INTERFACE → NAT` — STUN serves from a public address. A private
   // node with `stun` set is a config error at start, before any socket or
@@ -291,12 +326,19 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
   // Role-specific services ride on a shared skeleton: the public role adds
   // AutoNAT v2 and the circuit-relay server; the private role adds DCUtR
   // (`MESH_INTERFACE → NAT`).
+  // MESH_INTERFACE → Block gossip → "One router, net's rules" — gossipsub
+  // on `gossipsubOptions(magic)`, carried by both roles' services so a
+  // mesh service of either role is a gossip peer of its node.
+  const profile = profileFor(opts.network);
+  const magic = profile.magic;
+  const topic = blockTopic(magic);
   const commonServices = {
     identify: identify(),
     ping: ping(),
     http: httpService({ server: nodeApiServer(opts.upstream) }),
     keychain: keychain(),
     dht: kadDHT({ protocol: dhtProtocol(opts.network), clientMode }),
+    pubsub: gossipsub(gossipsubOptions(magic)),
   };
 
   // MESH_INTERFACE → Discovery — a public mesh node without an explicit
@@ -439,6 +481,79 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
     }
   }
 
+  // MESH_INTERFACE → Block gossip → "A block is checked before it is forwarded,
+  // and never applied". The mesh service subscribes to the ordering-block topic
+  // and runs the Stage 1 checks over every message as a `BlockCheck`: no chain,
+  // so `scheduledTargetBits` and `standing` answer `null`
+  // (→ "A refused block is evidence as `net` weighs it").
+  const pubsub = (typed as unknown as {
+    services: { pubsub: GossipSub & {
+      reportMessageValidationResult(
+        msgId: string,
+        propagationSource: string,
+        acceptance: TopicValidatorResult,
+      ): void;
+    } };
+  }).services.pubsub;
+  const blockCheck = new BlockCheck({
+    profile,
+    scheduledTargetBits: () => null,
+    standing: () => null,
+    nowMs: Date.now,
+  });
+  pubsub.topicValidators.set(topic, (_peer, msg) => {
+    const peerIdStr = _peer.toString();
+    const verdict = blockCheck.check(new Uint8Array(msg.data));
+    if (verdict.result === 'accept') return TopicValidatorResult.Accept;
+    if (verdict.result === 'ignore') return TopicValidatorResult.Ignore;
+    console.log(
+      `[mesh] ordering block rejected from ${peerIdStr}: ${verdict.detail}`,
+    );
+    return TopicValidatorResult.Reject;
+  });
+  // MESH_INTERFACE → Block gossip → "One router, net's rules" — gossipsub's
+  // `asyncValidation` holds a message that passed its topic validator in the
+  // cache until the listener reports Accept, Ignore or Reject
+  // (NET_INTERFACE → Forwarding Rule → "An ordering block is forwarded once
+  // Stage 1 passes; a transaction once this node admits it"). The mesh service
+  // applies nothing; on delivery it reports `Accept` so the message is
+  // forwarded, as `net` does for a block.
+  pubsub.subscribe(topic);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onMessage = (ev: any): void => {
+    const detail = ev?.detail;
+    const msg = detail?.msg;
+    if (!msg || msg.topic !== topic) return;
+    const msgId: string | undefined = detail?.msgId;
+    if (msgId === undefined) return;
+    const relayPeerId: string =
+      (detail as { propagationSource?: { toString(): string } })
+        .propagationSource?.toString() ?? '';
+    pubsub.reportMessageValidationResult(
+      msgId,
+      relayPeerId,
+      TopicValidatorResult.Accept,
+    );
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (pubsub as any).addEventListener('gossipsub:message', onMessage);
+
+  // MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer of its
+  // own node" — when `nodeP2p` is set, dial that address and run net's
+  // handshake as the dialler, holding one connection open as a gossip peer
+  // of the node (`startNodePeer`). The peer is stopped before libp2p's
+  // own stop so the held connection's close does not race the host's
+  // teardown.
+  let nodePeer: NodePeer | null = null;
+  if (opts.nodeP2p !== undefined) {
+    nodePeer = startNodePeer(typed, {
+      nodeP2p: opts.nodeP2p,
+      magic,
+      protocolVersion: PROTOCOL_VERSION,
+      nodeName: opts.key.notisId.slice(0, 16),
+    });
+  }
+
   return {
     libp2p: typed,
     multiaddrs: () => typed.getMultiaddrs().map((a) => a.toString()),
@@ -480,6 +595,16 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
         await stun.close();
         stun = null;
       }
+      // MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer of
+      // its own node" — stop the node peer before libp2p's own stop so the
+      // held connection's close is observed by the peer (which drops its
+      // redial), not by a libp2p that is already tearing its hosts down.
+      if (nodePeer) {
+        await nodePeer.stop();
+        nodePeer = null;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pubsub as any).removeEventListener('gossipsub:message', onMessage);
       await typed.stop();
     },
   };

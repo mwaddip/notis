@@ -227,7 +227,7 @@ describe('mesh node — the block router', () => {
     return node;
   }
 
-  it.fails(
+  it(
     'a mesh node with nodeP2p peers with a NetNode and relays its block to a host',
     async () => {
       const magic = MAGIC_DEVNET;
@@ -276,7 +276,7 @@ describe('mesh node — the block router', () => {
     90_000,
   );
 
-  it.fails(
+  it(
     'a mesh node with no nodeP2p relays a valid block between two hosts',
     async () => {
       const magic = MAGIC_DEVNET;
@@ -316,7 +316,7 @@ describe('mesh node — the block router', () => {
     90_000,
   );
 
-  it.fails(
+  it(
     'a block failing its checks is not forwarded',
     async () => {
       const magic = MAGIC_DEVNET;
@@ -372,7 +372,7 @@ describe('mesh node — the block router', () => {
     90_000,
   );
 
-  it.fails(
+  it(
     'a nodeP2p with a /p2p/ component is refused before libp2p starts',
     async () => {
       const stub = await makeStub(); stubs.push(stub);

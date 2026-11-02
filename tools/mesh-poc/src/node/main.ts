@@ -157,21 +157,37 @@ try {
 }
 const stunServers = parseStunServers(process.env.MESH_STUN_SERVERS);
 const wss = parseWss(process.env.MESH_WSS, stateDir);
+// MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer of its
+// own node" — `MESH_NODE_P2P` names the node's libp2p TCP address, no
+// `/p2p/` or DNS component. A refusal (DNS, `/p2p/`) throws out of
+// `startMeshNode` as a `MeshConfigError`, surfaced below as the other
+// start-time refusals are.
+const nodeP2p = process.env.MESH_NODE_P2P;
 
 const key = await loadOrCreateNodeKey(keyPath);
-const node = await startMeshNode({
-  key,
-  network,
-  role,
-  listen,
-  announce: announce.length > 0 ? announce : undefined,
-  bootstrap,
-  stateDir,
-  upstream,
-  ...(stun ? { stun } : {}),
-  ...(stunServers.length > 0 ? { stunServers } : {}),
-  ...(wss ? { wss } : {}),
-});
+let node: Awaited<ReturnType<typeof startMeshNode>>;
+try {
+  node = await startMeshNode({
+    key,
+    network,
+    role,
+    listen,
+    announce: announce.length > 0 ? announce : undefined,
+    bootstrap,
+    stateDir,
+    upstream,
+    ...(stun ? { stun } : {}),
+    ...(stunServers.length > 0 ? { stunServers } : {}),
+    ...(wss ? { wss } : {}),
+    ...(nodeP2p !== undefined && nodeP2p !== '' ? { nodeP2p } : {}),
+  });
+} catch (e) {
+  if (e instanceof MeshConfigError) {
+    console.error(e.message);
+    process.exit(1);
+  }
+  throw e;
+}
 
 // MESH_INTERFACE → Discovery — anchors read `(notisId, addrs)`; print one
 // JSON line on stdout so the caller sees the identity and current
