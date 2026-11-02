@@ -411,12 +411,13 @@ export function verdictS7Lan(m) {
 
 // MESH_INTERFACE → Acceptance 7 / No anchor reached → "The agreement
 // counts" — "The page shows the agreement counts." PASS when
-// `agreeing >= 2` and `agreeingAnchors >= 1` after a completed
-// check.
-// Measurement: `{ agreeing, agreeingAnchors, notAgreeing }`.
+// `onChain >= 2` and `onChainAnchors >= 1` after a completed check:
+// the counts the client's `agreementCounts` writes to
+// `state.agreement`.
+// Measurement: `{ onChain, onChainAnchors, offChain }`.
 export function verdictS7Counts(m) {
   if (missing(m)) return 'skipped';
-  if (typeof m.agreeing !== 'number' || m.agreeing < 2) return 'FAIL';
-  if (typeof m.agreeingAnchors !== 'number' || m.agreeingAnchors < 1) return 'FAIL';
+  if (typeof m.onChain !== 'number' || m.onChain < 2) return 'FAIL';
+  if (typeof m.onChainAnchors !== 'number' || m.onChainAnchors < 1) return 'FAIL';
   return 'PASS';
 }

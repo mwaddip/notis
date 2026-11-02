@@ -518,20 +518,26 @@ describe('verdictS7Lan — a local node by the reader\'s hand', () => {
 });
 
 describe('verdictS7Counts — agreement counts after a completed check', () => {
-  it('agreeing ≥ 2 and agreeingAnchors ≥ 1 → PASS', () => {
-    expect(verdictS7Counts({ agreeing: 2, agreeingAnchors: 1, notAgreeing: 0 })).toBe('PASS');
+  it('onChain ≥ 2 and onChainAnchors ≥ 1 → PASS', () => {
+    expect(verdictS7Counts({ onChain: 2, onChainAnchors: 1, offChain: 0 })).toBe('PASS');
   });
-  it('agreeing 1 (below the two-node threshold) → FAIL', () => {
-    expect(verdictS7Counts({ agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 })).toBe('FAIL');
+  it('onChain 1 (below the two-node threshold) → FAIL', () => {
+    expect(verdictS7Counts({ onChain: 1, onChainAnchors: 1, offChain: 0 })).toBe('FAIL');
   });
-  it('agreeingAnchors 0 (no anchor agreed) → FAIL', () => {
-    expect(verdictS7Counts({ agreeing: 3, agreeingAnchors: 0, notAgreeing: 0 })).toBe('FAIL');
+  it('onChainAnchors 0 (no anchor on the chain) → FAIL', () => {
+    expect(verdictS7Counts({ onChain: 3, onChainAnchors: 0, offChain: 0 })).toBe('FAIL');
+  });
+  it('onChain not a number → FAIL', () => {
+    expect(verdictS7Counts({ onChain: '2', onChainAnchors: 1, offChain: 0 })).toBe('FAIL');
+  });
+  it('onChainAnchors not a number → FAIL', () => {
+    expect(verdictS7Counts({ onChain: 2, onChainAnchors: null, offChain: 0 })).toBe('FAIL');
   });
   // MESH_INTERFACE → No anchor reached → "The agreement counts" —
   // step 4 records a `{ reason, state }` measurement when the
   // completed-check state's `agreement` is null; the verdict FAILs
-  // that measurement (its `agreeing` is not a number), so the step
-  // names the null instead of silently zeroing to `agreeing: 0`.
+  // that measurement (its `onChain` is not a number), so the step
+  // names the null instead of silently zeroing to `onChain: 0`.
   it('a measurement that names a null-agreement reason → FAIL', () => {
     const m = {
       reason: 'completed-check state has a null agreement',
