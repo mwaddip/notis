@@ -3,7 +3,7 @@
 A browser page reaches a Notis node's HTTP API **by the node's Ed25519 key**, over libp2p, from a
 handful of anchors and **no DNS name**, with mesh nodes sitting beside unmodified devnet
 `@dagsocial/node`s — the client's answer is the node's own, byte for byte. The stage runs the whole
-machinery inside Linux network namespaces on one host and the seven scenarios in
+machinery inside Linux network namespaces on one host and the eight scenarios in
 `MESH_INTERFACE → Acceptance` drive it from the browser's side.
 
 ## Threat model
@@ -186,7 +186,7 @@ only `stage/out/pids.json`** — every other file under `stage/out/` stays, for 
 over after a run; the next `stage:up` rotates the whole `stage/out/` directory to
 `stage/out.prev/` (replacing any older `.prev`) at its start.
 
-## The seven scenarios
+## The eight scenarios
 
 Each scenario's step list is `verdicts.mjs`'s rules in order. A `PASS` requires **positive
 evidence**: a vacuous read (no connection, no measurement) is never a pass. A step reads `skipped`
@@ -324,6 +324,36 @@ refused.
 public node runs a STUN server on `STUN_PORT` at the IP of its first WebRTC-direct listen
 address unless its operator names another or turns it off; the client's ICE list is derived
 from the public nodes it holds.
+
+### s8 — Prove once, follow by gossip (`MESH_INTERFACE → Acceptance 8`)
+
+Four sub-steps that drive the "after the first check, no proof is read" rule across settled
+checks, gossip delivery, a lighter fork from a hostile neighbour, and recovery after a gossip
+cut.
+
+| # | Step | Pass condition | What breaks it |
+|---|---|---|---|
+| 1 | `no proof read across five completed checks on the stage default` | After the chain settles (first `checks >= 1` with every honest node at `ok`, `trailing` or `behind`): across the next five completed checks, `state.traffic.proofReads` is unchanged, and every honest node still reads `ok`, `trailing` or `behind`. | A `proofReads` that moved; a honest node at `retry` or `blacklisted`; fewer than five checks past the baseline. |
+| 2 | `three new blocks reach the browser by gossip within 5 s each` | One page kept open across the three deliveries, so the client's gossip subscription survives. The page's tracker pushes a `{height, atMs, checks}` record whenever `state.tip.height` changes; the first three records past the baseline have `delayMs ≤ 5000` (vs. the previous record) and `checksMoved === false` for at least two of the three. | A delivery delayed past 5 s; a delivery whose `checks` moved between it and the previous record (a check ran meanwhile — carried the block by proof, not gossip). |
+| 3 | `the lagging fork reads behind, client tip stays on pub1's chain, exactly two proofs that check` | Hostile-seeds variant with `hostile-lagging` mining its own lighter fork since `up`. The step waits for a completed check cycle in which `traffic.proofReads` rose by exactly two — the lagging node's proof plus the client's own tip proof, the one shape "one per distinct tip, and the client's own" takes when every other node names the chain's tip. PASS: `hostile-lagging.status === 'behind'`, `state.tip.hash` equals pub1's node's block hash at that height, and the delta is exactly two. | Lagging `blacklisted` or any status other than `behind`; the client's tip hash differs from pub1's at that height (the fork won); a check whose delta was 1 (lagging never read) or 3 (another off-chain tip too). |
+| 4 | `the browser's gossip cut for three blocks and restored: tip catches up by headers, no proof read` | On the stage default: a page kept open across the window. The scenario firewalls the browser from every mesh host, waits until pub1's node is three blocks past the tracker's captured baseline, removes the firewall, and reads `state` once the tip has grown by three past the baseline (3-min deadline — nodes return on the retry cadence). PASS: `tipHeightFinal` moved past `tipHeightBefore` (positive evidence of catch-up), `pub1HeightFinal - tipHeightFinal <= 1`, and `proofReadsAfter === proofReadsBefore`. | A `proofReads` that moved during the window; a tip that did not catch up to within one block of pub1's current tip; a vacuous "tip never moved". |
+
+**No proof after the first** (`MESH_INTERFACE → The client's node list → "A check"`): a check that
+places every tip on the client's chain reads no proof. After the first check settles the chain,
+further checks name the same tips in the same place; the client stays with its chain and does not
+re-read anybody's proof.
+
+**One page across the window** (step 2 and step 4): a fresh page runs its initial check at startup,
+which reads the latest tip by proof — if step 2 opened a fresh page for each delivery the
+measurement would be of the first-check latency, not the gossip latency; if step 4 did, the fresh
+page's first-check proof would mask the "no proof read" conclusion. Step 2 keeps one page open
+through a long-timeout `cdp.mjs poll`; step 4 keeps one open through a non-blocking spawn of
+`cdp.mjs poll` so the scenario can run its synchronous nft apply/remove work beside it.
+
+**The traffic the page shows during s8.** The `[data-role="traffic"]` section (`Proofs read`, byte
+counts for `tip`/`header`/`proof`/`gossip`, and `forwarded`) is what step 1 and step 4 both
+measure through `state.traffic.proofReads`: `Proofs read` is the field a tester reads at a glance
+to confirm the "no proof read" claim.
 
 ## Firefox by hand
 
