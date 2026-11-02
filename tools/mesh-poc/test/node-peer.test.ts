@@ -30,6 +30,7 @@ import {
 } from '@dagsocial/validation';
 import { NetNode, HANDSHAKE_DEADLINE_FACTOR } from '@dagsocial/net';
 import type { NetConfig, NetValidators } from '@dagsocial/net';
+import type { Connection } from '@libp2p/interface';
 import { createLibp2p, type Libp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@libp2p/noise';
@@ -408,5 +409,246 @@ describe('startNodePeer against a real NetNode', () => {
       expect(node2.peerId()).not.toBe(node1PeerId);
     },
     60_000,
+  );
+
+  it.fails(
+    'an unrelated connection closing leaves the node connection as it is',
+    async () => {
+      const magic = MAGIC_DEVNET;
+      const node = new NetNode(makeConfig(), validators);
+      await node.start();
+      openNodes.push(node);
+
+      const penalised: Array<{ peerId: string; kind: string; detail: string | null }> = [];
+      node.onPeerPenalised((peerId, kind, detail) => {
+        penalised.push({ peerId, kind, detail });
+      });
+
+      const host = await startHost(magic);
+      openHosts.push(host);
+
+      const nodePeerIdObj = node.libp2pNode!.peerId;
+
+      // Park the first dial to the node so the unrelated close lands
+      // while the first `connectOnce` is still in flight.
+      const nodeAddr = nodeTcpAddrNoP2p(node);
+      const originalDial = host.libp2p.dial.bind(host.libp2p);
+      let releasePark: () => void = () => {};
+      const park = new Promise<void>((r) => { releasePark = r; });
+      let firstDialSeenResolve: () => void = () => {};
+      const firstDialSeen = new Promise<void>((r) => { firstDialSeenResolve = r; });
+      let nodeDialSeen = 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (host.libp2p as any).dial = async function (addr: any, options?: any) {
+        if (typeof addr?.toString === 'function' && addr.toString().startsWith(nodeAddr)) {
+          const n = ++nodeDialSeen;
+          if (n === 1) { firstDialSeenResolve(); await park; }
+        }
+        return originalDial(addr, options);
+      };
+
+      const retryMs = 50;
+      const peer = startNodePeer(host.libp2p, {
+        nodeP2p: nodeAddr,
+        magic,
+        protocolVersion: PROTOCOL_VERSION,
+        nodeName: 'mesh-service-case-unrelated-close',
+        retryMs,
+      });
+      openPeers.push(peer);
+
+      // Wait until the first dial has entered the park.
+      await firstDialSeen;
+
+      // The host also holds a connection to a third libp2p host; close
+      // that one.
+      const third = await startHost(magic);
+      openHosts.push(third);
+      const thirdAddr = third.libp2p.getMultiaddrs()[0];
+      if (!thirdAddr) throw new Error('third host has no listen address');
+      await originalDial(thirdAddr);
+      await host.libp2p.hangUp(third.libp2p.peerId);
+
+      // Across two retryMs, let any wasted redial fire.
+      await new Promise((r) => setTimeout(r, 2 * retryMs + 100));
+
+      // Release the park; the first dial proceeds.
+      releasePark();
+
+      await vi.waitFor(
+        () => { expect(peer.connected()).toBe(true); },
+        { timeout: 15_000, interval: 50 },
+      );
+
+      // Capture the connection the host now holds to the node.
+      const connsFirst = host.libp2p.getConnections(nodePeerIdObj);
+      expect(connsFirst).toHaveLength(1);
+      const connIdFirst = connsFirst[0]!.id;
+
+      // Across two retryMs, the connection is unchanged.
+      await new Promise((r) => setTimeout(r, 2 * retryMs + 200));
+
+      const connsAfter = host.libp2p.getConnections(nodePeerIdObj);
+      expect(connsAfter).toHaveLength(1);
+      expect(connsAfter[0]!.id).toBe(connIdFirst);
+      expect(node.getConnectedPeers()).toContain(host.libp2p.peerId.toString());
+
+      const hostPenalties = penalised.filter(
+        (p) => p.peerId === host.libp2p.peerId.toString(),
+      );
+      expect(hostPenalties).toEqual([]);
+    },
+    60_000,
+  );
+
+  it.fails(
+    'a redial that fires during a dial opens no second handshake',
+    async () => {
+      const magic = MAGIC_DEVNET;
+      const node = new NetNode(makeConfig(), validators);
+      await node.start();
+      openNodes.push(node);
+
+      const host = await startHost(magic);
+      openHosts.push(host);
+
+      const nodePeerIdStr = node.peerId();
+      const nodePeerIdObj = node.libp2pNode!.peerId;
+
+      // Count every connection the host opened to the node and every
+      // close of one — a double-handshake race drops the shared
+      // connection and shows as both a close and a second open.
+      const openedToNode: string[] = [];
+      const closedToNode: string[] = [];
+      host.libp2p.addEventListener('connection:open', ((
+        ev: CustomEvent<Connection>,
+      ) => {
+        const c = ev.detail;
+        if (c && c.remotePeer.toString() === nodePeerIdStr) openedToNode.push(c.id);
+      }) as EventListener);
+      host.libp2p.addEventListener('connection:close', ((
+        ev: CustomEvent<Connection>,
+      ) => {
+        const c = ev.detail;
+        if (c && c.remotePeer.toString() === nodePeerIdStr) closedToNode.push(c.id);
+      }) as EventListener);
+
+      // Park the first dial so several unrelated closes land while
+      // the first handshake is in flight.
+      const nodeAddr = nodeTcpAddrNoP2p(node);
+      const originalDial = host.libp2p.dial.bind(host.libp2p);
+      let releasePark: () => void = () => {};
+      const park = new Promise<void>((r) => { releasePark = r; });
+      let firstDialSeenResolve: () => void = () => {};
+      const firstDialSeen = new Promise<void>((r) => { firstDialSeenResolve = r; });
+      let nodeDialSeen = 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (host.libp2p as any).dial = async function (addr: any, options?: any) {
+        if (typeof addr?.toString === 'function' && addr.toString().startsWith(nodeAddr)) {
+          const n = ++nodeDialSeen;
+          if (n === 1) { firstDialSeenResolve(); await park; }
+        }
+        return originalDial(addr, options);
+      };
+
+      const retryMs = 20;
+      const peer = startNodePeer(host.libp2p, {
+        nodeP2p: nodeAddr,
+        magic,
+        protocolVersion: PROTOCOL_VERSION,
+        nodeName: 'mesh-service-case-in-flight',
+        retryMs,
+      });
+      openPeers.push(peer);
+
+      // Wait until the first dial has entered the park.
+      await firstDialSeen;
+
+      // Drive several `connection:close` events from unrelated libp2p
+      // hosts while the first handshake is in flight. Each close, on
+      // today's code, schedules a redial; the timer fires inside the
+      // handshake window and runs a second `connectOnce` in parallel.
+      for (let i = 0; i < 3; i++) {
+        const other = await startHost(magic);
+        openHosts.push(other);
+        const otherAddr = other.libp2p.getMultiaddrs()[0];
+        if (!otherAddr) throw new Error('other host has no listen address');
+        await originalDial(otherAddr);
+        await host.libp2p.hangUp(other.libp2p.peerId);
+        await new Promise((r) => setTimeout(r, 2 * retryMs + 20));
+      }
+
+      // Release the park; the first dial proceeds.
+      releasePark();
+
+      await vi.waitFor(
+        () => { expect(peer.connected()).toBe(true); },
+        { timeout: 15_000, interval: 50 },
+      );
+
+      // Give the induced race (if any) time to resolve.
+      await new Promise((r) => setTimeout(r, 2 * retryMs + 500));
+
+      // The handshake completes once: one connection ever opened to
+      // the node.
+      expect(openedToNode).toHaveLength(1);
+      // The node connection is never closed by the peer.
+      expect(closedToNode).toEqual([]);
+      // The host still holds the connection, and `connected()` is true.
+      expect(host.libp2p.getConnections(nodePeerIdObj)).toHaveLength(1);
+      expect(peer.connected()).toBe(true);
+    },
+    60_000,
+  );
+
+  it.fails(
+    'an address with /p2p/ or a DNS name is refused at the call',
+    async () => {
+      const host = await startHost(MAGIC_DEVNET);
+      openHosts.push(host);
+
+      // Capture every call to libp2p.dial — a refused address never
+      // reaches it.
+      let dialsAttempted = 0;
+      const originalDial = host.libp2p.dial.bind(host.libp2p);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (host.libp2p as any).dial = async function (addr: any, options?: any) {
+        dialsAttempted++;
+        return originalDial(addr, options);
+      };
+
+      const common = {
+        magic: MAGIC_DEVNET,
+        protocolVersion: PROTOCOL_VERSION,
+        nodeName: 'mesh-service-case-address',
+      };
+
+      // `/p2p/` component — the contract names the address with no `/p2p/`.
+      expect(() =>
+        startNodePeer(host.libp2p, {
+          ...common,
+          nodeP2p:
+            '/ip4/127.0.0.1/tcp/0/p2p/12D3KooWJqB2fQ8qQmQL8aQW5EcW9f3S3B8gKjcGtg5WwTR6a4Yx',
+        }),
+      ).toThrow();
+
+      // `/dns4/`.
+      expect(() =>
+        startNodePeer(host.libp2p, { ...common, nodeP2p: '/dns4/example.com/tcp/4001' }),
+      ).toThrow();
+
+      // `/dns6/`.
+      expect(() =>
+        startNodePeer(host.libp2p, { ...common, nodeP2p: '/dns6/example.com/tcp/4001' }),
+      ).toThrow();
+
+      // `/dnsaddr/`.
+      expect(() =>
+        startNodePeer(host.libp2p, { ...common, nodeP2p: '/dnsaddr/example.com' }),
+      ).toThrow();
+
+      expect(dialsAttempted).toBe(0);
+    },
+    30_000,
   );
 });
