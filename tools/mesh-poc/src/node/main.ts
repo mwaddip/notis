@@ -189,6 +189,24 @@ try {
   throw e;
 }
 
+// A signal after `startMeshNode` returns stops the node; the handlers stand
+// before the first identity line is written, so a caller that signals on that
+// line is always answered. A signal before the node exists exits at once.
+let stopped = false;
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (stopped) return;
+  stopped = true;
+  try {
+    await node.stop();
+  } catch (e) {
+    console.error(`stop failed on ${signal}: ${(e as Error).message}`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+process.on('SIGTERM', (sig) => { void shutdown(sig); });
+process.on('SIGINT', (sig) => { void shutdown(sig); });
+
 // MESH_INTERFACE → Discovery — anchors read `(notisId, addrs)`; print one
 // JSON line on stdout so the caller sees the identity and current
 // reachable multiaddrs without parsing a log stream. A public node's
@@ -238,18 +256,3 @@ node.libp2p.addEventListener('self:peer:update', () => {
   lastPrinted = sortedKey;
   writeIdentity(current);
 });
-
-let stopped = false;
-async function shutdown(signal: NodeJS.Signals): Promise<void> {
-  if (stopped) return;
-  stopped = true;
-  try {
-    await node.stop();
-  } catch (e) {
-    console.error(`stop failed on ${signal}: ${(e as Error).message}`);
-    process.exit(1);
-  }
-  process.exit(0);
-}
-process.on('SIGTERM', (sig) => { void shutdown(sig); });
-process.on('SIGINT', (sig) => { void shutdown(sig); });
