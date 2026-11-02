@@ -484,6 +484,41 @@ describe('page/render.ts last-read-from heading', () => {
   });
 });
 
+// MESH_INTERFACE → Block gossip → "A refused block is evidence as
+// `net` weighs it" / The client's node list — the traffic section
+// shows the counts the client keeps per check: how many proofs were
+// read; the bytes read for tip, header, proof and gossip; and the
+// number of blocks forwarded on delivery.
+
+describe('page/render.ts traffic section', () => {
+  it('the section reads Proofs read, tip, header, proof, gossip and forwarded in order, with the live values', () => {
+    const root = document.createElement('div');
+    render(
+      emptyState({
+        anchorReached: true,
+        traffic: {
+          tipBytes: 123,
+          headerBytes: 456,
+          proofBytes: 7890,
+          gossipBytes: 11,
+          proofReads: 3,
+          forwarded: 2,
+        },
+      }),
+      root,
+    );
+    const section = root.querySelector('[data-role="traffic"]');
+    expect(section, 'the traffic section is required').not.toBeNull();
+    const h = section!.querySelector('h2');
+    expect(h, 'a heading is required').not.toBeNull();
+    expect(h!.textContent).toBe('Traffic');
+    const dts = Array.from(section!.querySelectorAll('dt')).map((d) => d.textContent ?? '');
+    expect(dts).toEqual(['Proofs read', 'tip', 'header', 'proof', 'gossip', 'forwarded']);
+    const dds = Array.from(section!.querySelectorAll('dd')).map((d) => d.textContent ?? '');
+    expect(dds).toEqual(['3', '123', '456', '7890', '11', '2']);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // MESH_INTERFACE → Discovery → "A node added by hand" — the page's form
 // takes a key, an address and a "trust this node" checkbox (checked by

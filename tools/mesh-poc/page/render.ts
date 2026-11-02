@@ -49,6 +49,7 @@ export function render(state: ClientState, root: HTMLElement): void {
   container.appendChild(renderInUse(state));
   container.appendChild(renderLastLeft(state));
   container.appendChild(renderTip(state));
+  container.appendChild(renderTraffic(state));
   container.appendChild(renderNodes(state));
 
   // MESH_INTERFACE → Acceptance — the stage reads `#state`, no global.
@@ -132,6 +133,30 @@ function renderTip(state: ClientState): HTMLElement {
   // The hash is `null` at the genesis marker (MESH_INTERFACE → The node
   // endpoint); render it as the word so a reader sees the shape.
   appendPair(dl, 'hash', state.tip.hash ?? 'null');
+  section.appendChild(dl);
+  return section;
+}
+
+function renderTraffic(state: ClientState): HTMLElement {
+  // MESH_INTERFACE → Block gossip → "A refused block is evidence as
+  // `net` weighs it" / The client's node list — the counts the client
+  // keeps per check: how many nipopow proofs were read; the bytes it
+  // read for the tip, each header, each proof and each gossip
+  // message; and the number of blocks it forwarded on delivery.
+  const section = document.createElement('section');
+  section.setAttribute('data-role', 'traffic');
+  const h = document.createElement('h2');
+  h.textContent = 'Traffic';
+  section.appendChild(h);
+  const dl = document.createElement('dl');
+  dl.className = 'in-use';
+  const t = state.traffic;
+  appendPair(dl, 'Proofs read', String(t.proofReads));
+  appendPair(dl, 'tip', String(t.tipBytes));
+  appendPair(dl, 'header', String(t.headerBytes));
+  appendPair(dl, 'proof', String(t.proofBytes));
+  appendPair(dl, 'gossip', String(t.gossipBytes));
+  appendPair(dl, 'forwarded', String(t.forwarded));
   section.appendChild(dl);
   return section;
 }
