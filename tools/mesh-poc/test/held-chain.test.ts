@@ -327,6 +327,102 @@ describe('HeldChain — link', () => {
     expect(held.link(headers)).toBe('failed');
     expect(hashOf(held.tip()!)).toBe(tipBefore);
   });
+
+  it.fails('failed: the fill links to a held header below the tip (a fork), the window unchanged', () => {
+    // MESH_INTERFACE → The client's node list → "The client's chain" — the
+    // chain grows only from its tip: a fill reaching a held header below
+    // the tip is a fork, refused with the window untouched. The current
+    // code accepts any held parent, so this case fails on today's `link`.
+    const chain = makeLinkedChain(10, devnetProfile);
+    const held = new HeldChain(devnetProfile, K);
+    // Window: heights 6..10 (tip 10), block 1 held separately.
+    held.settle(chain.slice(5).map(b => b.header), chain[0]!.header);
+    const tipHashBefore = hashOf(held.tip()!);
+    // Re-mine two headers at heights 9 and 10 whose lowest (height 9)
+    // parents chain[7] (height 8, two below the tip and inside the window).
+    const parent8 = chain[7]!.header;
+    const scheduled9 = asertTargetBits(retarget, chain[0]!.header.createdAt, {
+      height: parent8.height,
+      createdAt: parent8.createdAt,
+    });
+    const forkH9 = makeBlockAt(9, PROTOCOL_VERSION, {
+      prevBlockHash: hashOf(parent8),
+      createdAt: parent8.createdAt + devnetProfile.orderingBlockIdealMs,
+      powTargetBits: scheduled9,
+    });
+    const scheduled10 = asertTargetBits(retarget, chain[0]!.header.createdAt, {
+      height: forkH9.header.height,
+      createdAt: forkH9.header.createdAt,
+    });
+    const forkH10 = makeBlockAt(10, PROTOCOL_VERSION, {
+      prevBlockHash: hashOf(forkH9.header),
+      createdAt: forkH9.header.createdAt + devnetProfile.orderingBlockIdealMs,
+      powTargetBits: scheduled10,
+    });
+    // Reads over the window before the call.
+    const placeTipBefore = held.place(tipHashBefore, 10);
+    const placeOneBelowBefore = held.place(hashOf(chain[8]!.header), 9);
+    const placeTwoBelowBefore = held.place(hashOf(chain[7]!.header), 8);
+    const placeLowestBefore = held.place(hashOf(chain[5]!.header), 6);
+    const headerAt6Before = hashOf(held.headerAt(6)!);
+    const headerAt7Before = hashOf(held.headerAt(7)!);
+    const headerAt8Before = hashOf(held.headerAt(8)!);
+    const headerAt9Before = hashOf(held.headerAt(9)!);
+    const headerAt10Before = hashOf(held.headerAt(10)!);
+    // Highest first.
+    const headers = [forkH10.header, forkH9.header];
+    expect(held.link(headers)).toBe('failed');
+    expect(hashOf(held.tip()!)).toBe(tipHashBefore);
+    // Every window read stands.
+    expect(held.place(tipHashBefore, 10)).toBe(placeTipBefore);
+    expect(held.place(hashOf(chain[8]!.header), 9)).toBe(placeOneBelowBefore);
+    expect(held.place(hashOf(chain[7]!.header), 8)).toBe(placeTwoBelowBefore);
+    expect(held.place(hashOf(chain[5]!.header), 6)).toBe(placeLowestBefore);
+    expect(hashOf(held.headerAt(6)!)).toBe(headerAt6Before);
+    expect(hashOf(held.headerAt(7)!)).toBe(headerAt7Before);
+    expect(hashOf(held.headerAt(8)!)).toBe(headerAt8Before);
+    expect(hashOf(held.headerAt(9)!)).toBe(headerAt9Before);
+    expect(hashOf(held.headerAt(10)!)).toBe(headerAt10Before);
+  });
+
+  it.fails('failed: the fill links to block 1 from above the window', () => {
+    // MESH_INTERFACE → The client's node list → "The client's chain" — a
+    // fill reaches a held header only by linking to the tip; a fill whose
+    // lowest links to block 1 is a divergence from the whole chain, not an
+    // extension of the tip. The current code accepts the block-1 parent.
+    const chain = makeLinkedChain(10, devnetProfile);
+    const held = new HeldChain(devnetProfile, K);
+    held.settle(chain.slice(5).map(b => b.header), chain[0]!.header);
+    const tipHashBefore = hashOf(held.tip()!);
+    const block1 = chain[0]!.header;
+    // Re-mine a header at height 2 whose parent is block 1.
+    const scheduled2 = asertTargetBits(retarget, block1.createdAt, {
+      height: block1.height,
+      createdAt: block1.createdAt,
+    });
+    const forkH2 = makeBlockAt(2, PROTOCOL_VERSION, {
+      prevBlockHash: hashOf(block1),
+      createdAt: block1.createdAt + devnetProfile.orderingBlockIdealMs,
+      powTargetBits: scheduled2,
+    });
+    // Reads over the window and block 1 before the call.
+    const placeTipBefore = held.place(tipHashBefore, 10);
+    const placeBlock1Before = held.place(hashOf(block1), 1);
+    const placeLowestBefore = held.place(hashOf(chain[5]!.header), 6);
+    const headerAt1Before = hashOf(held.headerAt(1)!);
+    const headerAt6Before = hashOf(held.headerAt(6)!);
+    const headerAt10Before = hashOf(held.headerAt(10)!);
+    const headers = [forkH2.header];
+    expect(held.link(headers)).toBe('failed');
+    expect(hashOf(held.tip()!)).toBe(tipHashBefore);
+    // Every held read stands.
+    expect(held.place(tipHashBefore, 10)).toBe(placeTipBefore);
+    expect(held.place(hashOf(block1), 1)).toBe(placeBlock1Before);
+    expect(held.place(hashOf(chain[5]!.header), 6)).toBe(placeLowestBefore);
+    expect(hashOf(held.headerAt(1)!)).toBe(headerAt1Before);
+    expect(hashOf(held.headerAt(6)!)).toBe(headerAt6Before);
+    expect(hashOf(held.headerAt(10)!)).toBe(headerAt10Before);
+  });
 });
 
 describe('HeldChain — scheduledTargetBits', () => {
