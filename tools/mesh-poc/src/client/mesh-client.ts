@@ -45,7 +45,7 @@ import { blockHash } from '@dagsocial/validation';
 import { HeldChain, type Placement } from './held-chain.js';
 import { headerFromJson } from './header-json.js';
 import { blockTopic, gossipsubOptions } from '../gossip-rules.js';
-import { BlockCheck } from '../block-check.js';
+import { BlockCheck, type BlockVerdict } from '../block-check.js';
 import { MeshKeyError, nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
 import { meshBaseUrl, idOfMeshUrl } from '../mesh-url.js';
 import { meshFetchOverConnection, MeshFetchError } from '../http-fetch.js';
@@ -482,6 +482,28 @@ function iceConfigurations(stunServers: readonly string[]): RTCIceServer[] {
   return stunServers.map((url) => ({ urls: url }));
 }
 
+/**
+ * MESH_INTERFACE → Block gossip → "A refused block is evidence as `net`
+ * weighs it" — a lie is the propagation source's key, "the client
+ * blacklists that key", and no one else's. `lieTarget` answers the key
+ * when all four conditions hold — the verdict is a reject, it is a lie,
+ * the source peer id reads as a Notis key, and the list holds that key
+ * — and `null` otherwise, so a reject that is not a lie, a lie from a
+ * peer id that is not an Ed25519 key, and a lie from a key the list
+ * does not hold all leave the list unchanged.
+ */
+export function lieTarget(
+  verdict: BlockVerdict,
+  sourceNotisId: string | null,
+  held: (id: string) => boolean,
+): string | null {
+  if (verdict.result !== 'reject') return null;
+  if (!verdict.lie) return null;
+  if (sourceNotisId === null) return null;
+  if (!held(sourceNotisId)) return null;
+  return sourceNotisId;
+}
+
 class MeshClientImpl implements MeshClient {
   readonly libp2p: Libp2p;
   private readonly clock: () => number;
@@ -670,25 +692,31 @@ class MeshClientImpl implements MeshClient {
     const verdict = this.blockCheck.check(data);
     if (verdict.result === 'ignore') return TopicValidatorResult.Ignore;
     if (verdict.result === 'reject') {
-      if (verdict.lie) {
-        let notisId: string | null = null;
-        try {
-          notisId = notisIdFromPeerId(peer);
-        } catch (e) {
-          // MeshKeyError: a peer id that is not an Ed25519 key, or
-          // whose public key is not 32 bytes. Not a Notis peer; the
-          // reject stands with no list change.
-          if (!(e instanceof MeshKeyError)) throw e;
-        }
-        if (notisId !== null && this.nodeList.entry(notisId) !== undefined) {
-          this.nodeList.lie(notisId, {
-            kind: 'gossip-block',
-            atMs: this.clock(),
-            detail: verdict.detail,
-          });
-          this.latestEventReason.set(notisId, 'lie: gossip-block');
-          this.emitStateChange();
-        }
+      let sourceNotisId: string | null = null;
+      try {
+        sourceNotisId = notisIdFromPeerId(peer);
+      } catch (e) {
+        // MeshKeyError: a peer id that is not an Ed25519 key, or
+        // whose public key is not 32 bytes. Not a Notis peer; the
+        // reject stands with no list change.
+        if (!(e instanceof MeshKeyError)) throw e;
+      }
+      const target = lieTarget(
+        verdict,
+        sourceNotisId,
+        (id) => this.nodeList.entry(id) !== undefined,
+      );
+      if (target !== null) {
+        // `lieTarget` returns a key only when `verdict` is a
+        // `reject` with `lie: true`, so `verdict.detail` is reachable
+        // under this branch.
+        this.nodeList.lie(target, {
+          kind: 'gossip-block',
+          atMs: this.clock(),
+          detail: verdict.detail,
+        });
+        this.latestEventReason.set(target, 'lie: gossip-block');
+        this.emitStateChange();
       }
       return TopicValidatorResult.Reject;
     }
