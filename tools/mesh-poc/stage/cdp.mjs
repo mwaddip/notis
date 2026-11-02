@@ -9,7 +9,15 @@
 //
 // The one invariant this driver holds: every WebSocket it opens is
 // closed before `run()` returns, every target it opens via `/json/new`
-// is closed via `/json/close/<id>`, and every timer is capped.
+// is closed via `/json/close/<id>`, and every timer is capped. SIGTERM
+// and SIGINT are the one path by which the driver's own `finally`
+// chain is bypassed — `execFileSync`'s timeout and `tracker.kill()`
+// both signal the process. `createTerminationRegistry` holds the open
+// targets' closes and runs them before `process.exit`, so a scenario
+// that ends a driver it spawned leaves no target open behind
+// (MESH_INTERFACE → Block gossip → "A router scores its peers by
+// gossipsub's defaults" — a leaked page keeps a browser peer in the
+// mesh and the IP colocation penalty accumulates).
 //
 // CLI shape:
 //   node cdp.mjs eval <url> <expression>
@@ -22,6 +30,65 @@ import { setTimeout as sleepP } from 'node:timers/promises';
 
 const DEFAULT_CDP_URL = 'http://127.0.0.1:9222';
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * The open-targets registry. Every page-opening call registers its
+ * close with `register(close)` and unregisters when the normal flow
+ * closes it; a SIGTERM or SIGINT runs every registered close in turn
+ * before the process exits. The handler fires at most once, so a
+ * repeated signal does not double-close.
+ *
+ * `bind: false` and `exit:` lets a case drive the handler without
+ * installing it on `process` or ending the test process.
+ */
+export function createTerminationRegistry({ exit = process.exit, bind = true } = {}) {
+  const cleanups = new Set();
+  let fired = false;
+  const handler = async (sig) => {
+    if (fired) return;
+    fired = true;
+    const list = Array.from(cleanups);
+    cleanups.clear();
+    for (const c of list) {
+      try { await c(); } catch { /* ignore — exit is the point */ }
+    }
+    exit(sig === 'SIGINT' ? 130 : 143);
+  };
+  const onTerm = () => { void handler('SIGTERM'); };
+  const onInt = () => { void handler('SIGINT'); };
+  if (bind) {
+    process.on('SIGTERM', onTerm);
+    process.on('SIGINT', onInt);
+  }
+  return {
+    register(close) {
+      cleanups.add(close);
+      return () => cleanups.delete(close);
+    },
+    run(sig) { return handler(sig); },
+    hasFired() { return fired; },
+    size() { return cleanups.size; },
+    unbind() {
+      if (!bind) return;
+      process.off('SIGTERM', onTerm);
+      process.off('SIGINT', onInt);
+    },
+  };
+}
+
+// The module-level registry every page-opening function registers
+// against. `main()` is the one caller that binds signal handlers;
+// tests build their own with `bind: false` and never touch this one.
+const terminationRegistry = createTerminationRegistry({ bind: false });
+
+/**
+ * Register a cleanup against the module-level registry. Returns an
+ * unregister function. A page-opening function registers its target
+ * close here and unregisters when the normal flow closes it.
+ */
+export function registerPageCleanup(close) {
+  return terminationRegistry.register(close);
+}
 
 /**
  * List Chromium's current targets, as `/json` returns them.
@@ -130,6 +197,7 @@ export async function evaluate(url, expression, {
   awaitPromise = true,
 } = {}) {
   const target = await openTarget(url, cdpUrl);
+  const unregister = registerPageCleanup(() => closeTarget(target.id, cdpUrl));
   const wsUrl = target.webSocketDebuggerUrl;
   if (typeof wsUrl !== 'string') throw new Error(`target has no webSocketDebuggerUrl: ${JSON.stringify(target)}`);
   const session = openSession(wsUrl, { timeoutMs });
@@ -146,6 +214,7 @@ export async function evaluate(url, expression, {
   } finally {
     session.close();
     await closeTarget(target.id, cdpUrl);
+    unregister();
   }
 }
 
@@ -243,6 +312,7 @@ export async function openPage(url, {
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   const target = await openTarget(url, cdpUrl);
+  const unregister = registerPageCleanup(() => closeTarget(target.id, cdpUrl));
   const wsUrl = target.webSocketDebuggerUrl;
   if (typeof wsUrl !== 'string') throw new Error(`target has no webSocketDebuggerUrl: ${JSON.stringify(target)}`);
   const session = openSession(wsUrl, { timeoutMs });
@@ -282,6 +352,7 @@ export async function openPage(url, {
       closed = true;
       session.close();
       await closeTarget(target.id, cdpUrl);
+      unregister();
     },
   };
 }
@@ -301,6 +372,7 @@ export async function openPageWithIceRecord(url, {
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   const target = await openTarget('about:blank', cdpUrl);
+  const unregister = registerPageCleanup(() => closeTarget(target.id, cdpUrl));
   const wsUrl = target.webSocketDebuggerUrl;
   if (typeof wsUrl !== 'string') throw new Error(`target has no webSocketDebuggerUrl: ${JSON.stringify(target)}`);
   const session = openSession(wsUrl, { timeoutMs });
@@ -346,11 +418,20 @@ export async function openPageWithIceRecord(url, {
       closed = true;
       session.close();
       await closeTarget(target.id, cdpUrl);
+      unregister();
     },
   };
 }
 
 async function main(argv) {
+  // SIGTERM arrives from `execFileSync`'s timeout and from
+  // `tracker.kill()`; SIGINT from a hand-run ^C. Each runs every open
+  // target's close through the module-level registry before the
+  // process exits, so a scenario that times out or ends its tracker
+  // leaves no page open in Chromium (MESH_INTERFACE → Block gossip →
+  // "A router scores its peers by gossipsub's defaults").
+  process.on('SIGTERM', () => { void terminationRegistry.run('SIGTERM'); });
+  process.on('SIGINT', () => { void terminationRegistry.run('SIGINT'); });
   const [cmd, ...rest] = argv;
   if (cmd === 'eval') {
     const [url, expression] = rest;
