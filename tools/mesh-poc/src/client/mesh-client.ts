@@ -518,12 +518,13 @@ class MeshClientImpl implements MeshClient {
   private readonly wallClock: () => number;
   private readonly random: () => number;
   /**
-   * MESH_INTERFACE → The client's node list → "A check" — "it times
-   * each node's proof read; that time is the node's speed until the
-   * next check." A speed holds until the next check writes a fresh
-   * one, so a check populates a FRESH map while it runs and swaps
-   * references when `resolveTip` answers. A routed read reaching the
-   * live map during the hold sees the previous check's values.
+   * MESH_INTERFACE → The client's node list → "A check" — a check reads
+   * every candidate's tip timed from the request to the end of the
+   * body, and that time is the node's speed until the next check. A
+   * speed holds until the next check writes a fresh one, so a check
+   * populates a FRESH map while it runs and swaps references when
+   * `resolveTip` answers. A routed read reaching the live map during
+   * the hold sees the previous check's values.
    */
   private readMsMap: Map<string, number> = new Map();
   /**
@@ -581,12 +582,12 @@ class MeshClientImpl implements MeshClient {
     this.profile = o.profile;
     this.nodeList = new NodeList(o.anchors, ownId, clock);
     this.chain = new HeldChain(o.profile, DEFAULT_K);
-    // MESH_INTERFACE → Discovery → "Seeds" — "a seed is a candidate like any
-    // node the DHT finds". Added before the first check, so a seed is in
-    // the candidates `resolveTip` reads from the start; `NodeList.add`
-    // records them as non-anchor entries, so a seed's success leaves
-    // `anchorReached` false. The client's own key is dropped the same way
-    // an anchor list's own-key entry is.
+    // MESH_INTERFACE → Discovery → "Seeds" — a seed is a candidate like
+    // any node the DHT finds. Added before the first check, so a seed
+    // is in the candidates `resolveTip` reads from the start;
+    // `NodeList.add` records them as non-anchor entries, so a seed's
+    // success leaves `anchorReached` false. The client's own key is
+    // dropped the same way an anchor list's own-key entry is.
     if (o.seeds !== undefined) {
       for (const s of o.seeds) {
         if (s.notisId === ownId) continue;
@@ -795,11 +796,12 @@ class MeshClientImpl implements MeshClient {
 
   async check(): Promise<void> {
     if (this.checkInProgress) return this.checkInProgress;
-    // MESH_INTERFACE → The client's node list → "A check" — "one check at a
-    // time: a trigger during a check is that check". The marker is set
-    // before `runCheck`'s own code runs, so a `triggerImmediateCheck`
-    // fired from inside the check (phase 6's `read` finding no node, say)
-    // sees the running check and does not schedule a 0 ms recurrence.
+    // MESH_INTERFACE → The client's node list → "A check" — the client
+    // runs one check at a time; a trigger that fires while a check is in
+    // flight is that check. The marker is set before `runCheck`'s own
+    // code runs, so a `triggerImmediateCheck` fired from inside the
+    // check (the routed-tip read finding no node, say) sees the running
+    // check and does not schedule a 0 ms recurrence.
     this.checkInProgress = Promise.resolve()
       .then(() => this.runCheck())
       .finally(() => { this.checkInProgress = null; });
@@ -940,9 +942,10 @@ class MeshClientImpl implements MeshClient {
 
   private triggerImmediateCheck(): void {
     if (this.stopped) return;
-    // MESH_INTERFACE → The client's node list → "A check" — "one check at
-    // a time: a trigger during a check is that check." The ongoing check
-    // is the response; a trigger during it adds no second check.
+    // MESH_INTERFACE → The client's node list → "A check" — the client
+    // runs one check at a time; a trigger that fires while a check is in
+    // flight is that check. The ongoing check is the response; a
+    // trigger during it adds no second check.
     if (this.checkInProgress !== null) return;
     if (this.timer !== null) {
       clearTimeout(this.timer);
@@ -1023,13 +1026,14 @@ class MeshClientImpl implements MeshClient {
       // `failure` and `lie` events were applied inside classifyTipRead.
     }
 
-    // Phase 3a: `above` fills first — highest named height first, each
-    // from the client's tip as it then stands; a node whose tip is
-    // placed by an earlier fill is not read again
-    // (MESH_INTERFACE → The client's node list → "A check" — "read down
-    // to a held header as a fill is, the client's tip moving when they
-    // link"). The sort by height descending lets the tallest fill move
-    // the tip once; lower `above` reads then place from the extended
+    // `above` fills first — highest named height first, each from the
+    // client's tip as it then stands; a node whose tip is placed by an
+    // earlier fill is not read again. A fill reads the serving node's
+    // headers by height from its tip down to the client's, the client's
+    // tip moving when the fill links (MESH_INTERFACE → The client's
+    // node list → "The client's chain"). The sort by height descending
+    // lets the tallest fill move the tip once; lower `above` reads then
+    // place from the extended
     // chain without a header read of their own.
     const aboveCandidates = tipReads
       .filter((r) => r.hash !== null)
@@ -1285,10 +1289,10 @@ class MeshClientImpl implements MeshClient {
       if (!seenHashes.has(h)) this.keptVerdicts.delete(h);
     }
 
-    // Phase 6: the routed tip read runs the classification so a failure
-    // or a lie moves the serving node (MESH_INTERFACE → The client's
-    // node list → "The client's chain"); `state.tip` is the client's
-    // chain's, set below.
+    // The routed tip read runs the classification so a failure or a lie
+    // moves the serving node (MESH_INTERFACE → The client's node list);
+    // `state.tip` is the client's chain's (→ "The client's chain"), set
+    // below.
     try {
       const tipRead = await this.read('/blocks/current', 'tip');
       await this.classifyTipRead(tipRead.response, tipRead.nodeId);
@@ -1392,12 +1396,10 @@ class MeshClientImpl implements MeshClient {
 
   /**
    * The first node (by candidate rank) whose tip read THIS check placed
-   * `tip` against the final chain — MESH_INTERFACE → The client's node
-   * list → "A check", "a node whose tip read this check placed `tip`
-   * against that final chain, the first of them the list ranks". A
-   * node still at the previous check's `ok` would be stale: the `under`
-   * reader and the own-tip prepend both want a node the chain has just
-   * placed at the tip.
+   * `tip` against the final chain (MESH_INTERFACE → The client's node
+   * list → "A check"). A node still at the previous check's `ok` would
+   * be stale: the `under` reader and the own-tip prepend both want a
+   * node the chain has just placed at the tip.
    */
   private firstNodeAtChainTip(placedAtTip: ReadonlySet<string>): string | null {
     for (const id of this.nodeList.candidates()) {
@@ -1407,14 +1409,15 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list → "A check" — "it times
-   * each node's tip read; that time is the node's speed until the
-   * next check." Only a `/blocks/current` read's time ends up in the
-   * `readMs` target — the header reads for `above`/`under` and the
-   * proof reads for an unplaced tip go through the same wrapper but
-   * never overwrite a node's speed. The target map is a fresh one for
-   * each check so a routed read in flight still answers from the
-   * previous check's values until phase 4 completes.
+   * MESH_INTERFACE → The client's node list → "A check" — a check reads
+   * every candidate's tip, `GET /blocks/current`, timed from the
+   * request to the end of the body, and that time is the node's speed
+   * until the next check. Only a `/blocks/current` read's time ends up
+   * in the `readMs` target — the header reads for `above`/`under` and
+   * the proof reads for an unplaced tip go through the same wrapper
+   * but never overwrite a node's speed. The target map is a fresh one
+   * for each check so a routed read in flight still answers from the
+   * previous check's values until the swap at the end of the check.
    *
    * Traffic is cumulative over the client's life: a `/blocks/current`
    * read's bytes land in `tipBytes`, a `/blocks/<n>` read's in
@@ -2129,10 +2132,11 @@ export function pickConnectionForLabel(
 
 /**
  * MESH_INTERFACE → The client's node list → "A read opens no
- * connection" — "an open one, a direct one first, never a limited
- * one". The strict read pick: `pickConnectionForLabel`'s result,
- * refused when it is limited. The shared part — open, right peer,
- * direct first, unlimited preferred — lives in the label pick.
+ * connection" — "an open one, a direct one first, a relayed one when
+ * that is all there is, never a limited one". The strict read pick:
+ * `pickConnectionForLabel`'s result, refused when it is limited. The
+ * shared part — open, right peer, direct first, unlimited preferred —
+ * lives in the label pick.
  */
 export function pickConnectionForRead(
   connections: readonly Connection[],
