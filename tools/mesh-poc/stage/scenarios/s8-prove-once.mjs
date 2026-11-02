@@ -58,25 +58,32 @@
 //      `behind`. `verdictS8Fork`: PASS when lagging reads `behind`,
 //      the client's tip hash equals pub1's node's block hash at that
 //      height, and the delta is exactly two.
-//   4. A gap filled by headers — stage default: firewall the browser
-//      from every mesh node (a `FaultLog` fault, removed in `finally`)
-//      until pub1's node is three blocks past the client's tip at the
-//      moment the firewall landed; remove it; wait for the tracker to
-//      signal a fill followed by one more gossip-paced tip change.
-//      The cut is short — gossip moves the tip one block at a time,
-//      so the firewall ends before any check sees it. The tracker
-//      ends at the first one-block tip change AFTER its first jump
-//      of three or more (the fill, then gossip extending the tip it
-//      reached — the client is at the head), recording `proofReads`
-//      and the tip at that one-block-after point; the scenario then
-//      reads pub1. `verdictS8Gap`: PASS when `proofReads` did not
-//      move, the fill `jump` was three or more, and the tip is within
-//      two of pub1's read. The step keeps one page open through a
-//      non-blocking spawn of `cdp.mjs poll`; a fresh page's first
-//      check reads a proof, which would mask the "no proof"
-//      conclusion. The pure `s8GapObserve` carries the state
-//      transition; `buildS8GapExpression` inlines it so the live
-//      tracker and the Node tests run the same logic.
+//   4. A gap filled by headers — stage default plus a step-scoped
+//      hostile firewall from the browser to every hostile host
+//      (same rule as step 1, a `FaultLog` fault, removed in `finally`).
+//      The hostile firewall keeps the gap-fill measurement honest:
+//      without it the client's DHT walk reaches each hostile mesh
+//      node and its proof is read at a check — the saved run on
+//      `ef19ed10` recorded five proof reads at the check after the
+//      cut was removed, which is the hostile set. Beside the hostile
+//      firewall, the gap cut: firewall the browser from every mesh
+//      node until pub1's node is three blocks past the client's tip
+//      at the moment the cut landed; remove the cut; wait for the
+//      tracker to signal a fill followed by one more gossip-paced
+//      tip change. The cut is short — gossip moves the tip one
+//      block at a time, so the cut ends before any check sees it.
+//      The tracker ends at the first one-block tip change AFTER its
+//      first jump of three or more (the fill, then gossip extending
+//      the tip it reached — the client is at the head), recording
+//      `proofReads` and the tip at that one-block-after point; the
+//      scenario then reads pub1. `verdictS8Gap`: PASS when
+//      `proofReads` did not move, the fill `jump` was three or more,
+//      and the tip is within two of pub1's read. The step keeps one
+//      page open through a non-blocking spawn of `cdp.mjs poll`; a
+//      fresh page's first check reads a proof, which would mask the
+//      "no proof" conclusion. The pure `s8GapObserve` carries the
+//      state transition; `buildS8GapExpression` inlines it so the
+//      live tracker and the Node tests run the same logic.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -98,8 +105,20 @@ import { StepRecorder } from '../lib/step-recorder.mjs';
 export const NAME = 's8';
 const POLL_MS = 500;
 const LONG_WAIT_MS = 240_000;
+// MESH_INTERFACE → Acceptance 8 — steps 1 and 4 poll a page while the
+// client's own namespace black-holes every hostile host. A dropped
+// packet is no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s, from
+// `src/protocols.ts`) per hostile dial until the retry back-off takes
+// those nodes out of the candidates. A check runs one dial deadline
+// per candidate; step 1's five completed checks past settlement, and
+// step 4's 20 s warmup, up-to-120 s of pub1 advancement and ~3 min of
+// fill signalling, run minutes rather than 30 s. The cap at 600 s is
+// the deadline each poll holds under this cost — a floor on the
+// step's wait, not a bound on the stage's own pace.
+export const BLACK_HOLE_WAIT_MS = 600_000;
 const GAP_TABLE = 's8_gap';
 const STEP1_HOSTILE_TABLE = 's8_step1_hostile';
+const STEP4_HOSTILE_TABLE = 's8_step4_hostile';
 
 export function describe() {
   return [
@@ -110,18 +129,22 @@ export function describe() {
   ];
 }
 
-// MESH_INTERFACE → Acceptance 8 — step 1 keeps "every node names a
-// tip on the client's chain" true by firewalling the browser from
-// every hostile host for the step's duration. Without the firewall
-// the client's DHT walk reaches each hostile mesh node, each of
-// which names a tip of its own (`hostile-lagging` on the pair's
-// chain, `hostile-malformed` / `hostile-invalid` with lies, the
-// publisher likewise), and the first check reads their proofs —
-// moving `proofReads` and breaking "no proof read across five
-// completed checks". The firewall is a `FaultLog` fault, applied at
-// step start and removed in the step's own `finally`, so the firewall
-// does not spill into step 2.
-export function s8Step1HostileFirewallArgs(topology) {
+// MESH_INTERFACE → Acceptance 8 — step 1 and step 4 each keep "every
+// node names a tip on the client's chain" true by firewalling the
+// browser from every hostile host for the step's duration. Without
+// the firewall the client's DHT walk reaches each hostile mesh node,
+// each of which names a tip of its own (`hostile-lagging` on the
+// pair's chain, `hostile-malformed` / `hostile-invalid` with lies,
+// the publisher likewise), and the first check reads their proofs
+// — moving `proofReads` and breaking "no proof read across five
+// completed checks" (step 1) or masking the gap's own fill with
+// hostile reads (step 4, as on `ef19ed10`). The firewall is a
+// `FaultLog` fault, applied at step start and removed in the step's
+// own `finally`, so the firewall does not spill into the next step.
+// `tableName` is each step's own table (`s8_step1_hostile`,
+// `s8_step4_hostile`) so one step's remove does not drop the other's
+// rules.
+function hostileFirewallArgs(topology, tableName) {
   const ns = 'notismesh-browser';
   const hostileHosts = [];
   for (const [host, hostConfig] of Object.entries(topology.hosts)) {
@@ -129,14 +152,22 @@ export function s8Step1HostileFirewallArgs(topology) {
     if (typeof hostConfig.addr !== 'string') continue;
     hostileHosts.push({ name: host, addr: hostConfig.addr });
   }
-  const addTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', STEP1_HOSTILE_TABLE];
-  const addChain = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', STEP1_HOSTILE_TABLE, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'];
+  const addTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', tableName];
+  const addChain = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', tableName, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'];
   const drops = hostileHosts.map(({ name, addr }) => ({
     name,
-    argv: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', STEP1_HOSTILE_TABLE, 'out', 'ip', 'daddr', addr, 'drop'],
+    argv: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', tableName, 'out', 'ip', 'daddr', addr, 'drop'],
   }));
-  const deleteTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', STEP1_HOSTILE_TABLE];
+  const deleteTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', tableName];
   return { addTable, addChain, drops, deleteTable };
+}
+
+export function s8Step1HostileFirewallArgs(topology) {
+  return hostileFirewallArgs(topology, STEP1_HOSTILE_TABLE);
+}
+
+export function s8Step4HostileFirewallArgs(topology) {
+  return hostileFirewallArgs(topology, STEP4_HOSTILE_TABLE);
 }
 
 // MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for
@@ -163,16 +194,23 @@ export function s8GapFirewallArgs(topology) {
 }
 
 export function applyFaults(log, topology) {
-  const h = s8Step1HostileFirewallArgs(topology);
-  log.apply('browser-step1-hostile-add-table', h.addTable, h.deleteTable);
-  log.apply('browser-step1-hostile-add-chain', h.addChain, null);
-  for (const { name, argv } of h.drops) {
+  const h1 = s8Step1HostileFirewallArgs(topology);
+  log.apply('browser-step1-hostile-add-table', h1.addTable, h1.deleteTable);
+  log.apply('browser-step1-hostile-add-chain', h1.addChain, null);
+  for (const { name, argv } of h1.drops) {
     log.apply(`browser-step1-hostile-drop-${name}`, argv, null);
   }
-  // The step-scoped firewall is removed inside step 1's own finally
-  // (log.remove('browser-step1-hostile-add-table')), but dry-run never
+  // The step-scoped firewalls are removed inside each step's own
+  // finally (log.remove('browser-step1-hostile-add-table') and
+  // log.remove('browser-step4-hostile-add-table')), but dry-run never
   // runs a step: the scenario-wide removeAll in run() still writes a
   // record for every applied fault, which is what this listing is for.
+  const h4 = s8Step4HostileFirewallArgs(topology);
+  log.apply('browser-step4-hostile-add-table', h4.addTable, h4.deleteTable);
+  log.apply('browser-step4-hostile-add-chain', h4.addChain, null);
+  for (const { name, argv } of h4.drops) {
+    log.apply(`browser-step4-hostile-drop-${name}`, argv, null);
+  }
   const f = s8GapFirewallArgs(topology);
   log.apply('browser-gap-add-table', f.addTable, f.deleteTable);
   log.apply('browser-gap-add-chain', f.addChain, null);
@@ -627,7 +665,10 @@ export async function run(ctx) {
       }
       try {
         const expression = buildS8NoProofsExpression(honestIds, anchorIds);
-        const value = await cdpPoll(ctx, browserUrl, expression, S8_NOPROOFS_PREDICATE, LONG_WAIT_MS, POLL_MS);
+        // 600 s cap: a check with black-holed hostile candidates
+        // runs one dial deadline per candidate until retry backs
+        // them off (`BLACK_HOLE_WAIT_MS` at the top of this file).
+        const value = await cdpPoll(ctx, browserUrl, expression, S8_NOPROOFS_PREDICATE, BLACK_HOLE_WAIT_MS, POLL_MS);
         const r = JSON.parse(value);
         if (r.base === null || r.final === null) {
           const m = { reason: 's8 step 1: tracker returned without base or final', state: r };
@@ -733,12 +774,29 @@ export async function run(ctx) {
     // --- Step 4: a gap filled by headers ---
     await rec.step(describe()[3], async () => {
       writeStageDefault(ctx.outDir);
+      // MESH_INTERFACE → Acceptance 8 — "every node names a tip on
+      // the client's chain". Without this firewall the client's DHT
+      // walk reaches each hostile mesh node, and a check reads its
+      // proof — moving `proofReads` beyond the fill, as on
+      // `ef19ed10`. Same rule as step 1: a `FaultLog` fault, applied
+      // at step start and removed in this step's own `finally`, so
+      // it does not spill out. The delete-table alone removes every
+      // drop (nftables cascades on table delete).
+      const hostileArgs = s8Step4HostileFirewallArgs(ctx.topology);
+      log.apply('browser-step4-hostile-add-table', hostileArgs.addTable, hostileArgs.deleteTable);
+      log.apply('browser-step4-hostile-add-chain', hostileArgs.addChain, null);
+      for (const { name, argv } of hostileArgs.drops) {
+        log.apply(`browser-step4-hostile-drop-${name}`, argv, null);
+      }
       // Spawn cdp.mjs poll non-blocking: the stage's execIn uses
       // execFileSync, so a plain cdpPoll would freeze the main event
       // loop and block the firewall apply/remove calls. A spawn lets
       // the tracker page stay open while the scenario does its
       // synchronous nft work.
-      const tracker = spawnCdpPoll(ctx, browserUrl, buildS8GapExpression(), S8_GAP_PREDICATE, LONG_WAIT_MS, POLL_MS);
+      // 600 s cap: a check with black-holed hostile candidates runs
+      // one dial deadline per candidate until retry backs them off
+      // (`BLACK_HOLE_WAIT_MS` at the top of this file).
+      const tracker = spawnCdpPoll(ctx, browserUrl, buildS8GapExpression(), S8_GAP_PREDICATE, BLACK_HOLE_WAIT_MS, POLL_MS);
       try {
         // Give the page time to load and the tracker time to capture
         // its baseline (first check landing). The baseline settles
@@ -810,6 +868,10 @@ export async function run(ctx) {
         return { verdict: verdictS8Gap(m), measurement: m };
       } finally {
         try { tracker.kill(); } catch { /* already exited */ }
+        // Step-scoped: the step-4 hostile firewall does not spill
+        // into any later work; the outer `finally`'s `log.removeAll`
+        // is a backstop if this call throws.
+        log.remove('browser-step4-hostile-add-table');
       }
     });
   } finally {

@@ -1,6 +1,13 @@
 export declare const NAME: 's8';
+export declare const BLACK_HOLE_WAIT_MS: 600000;
 export declare function describe(): string[];
 export declare function s8Step1HostileFirewallArgs(topology: unknown): {
+  addTable: string[];
+  addChain: string[];
+  drops: Array<{ name: string; argv: string[] }>;
+  deleteTable: string[];
+};
+export declare function s8Step4HostileFirewallArgs(topology: unknown): {
   addTable: string[];
   addChain: string[];
   drops: Array<{ name: string; argv: string[] }>;
