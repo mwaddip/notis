@@ -585,9 +585,9 @@ class MeshClientImpl implements MeshClient {
     this.onConnectionOpen = (): void => this.refreshTransportPathAndEmit();
     this.onConnectionClose = (): void => this.refreshTransportPathAndEmit();
     // MESH_INTERFACE → Block gossip → "A block is checked before it is
-    // forwarded" — the client's HeldChain answers the schedule and the
-    // standing; the clock is the monotonic one BlockCheck's own
-    // seen-accepted memory reads.
+    // forwarded, and never applied" — the client's HeldChain answers
+    // the schedule and the standing; the clock is the monotonic one
+    // BlockCheck's own seen-accepted memory reads.
     this.blockCheck = new BlockCheck({
       profile: o.profile,
       scheduledTargetBits: (h) => this.chain.scheduledTargetBits(h),
