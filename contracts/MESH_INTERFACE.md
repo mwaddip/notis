@@ -346,10 +346,11 @@ eight scenarios passes on what it measured; a step that did not run reads `skipp
    renewal replaces the certificate with no request dropped.
 5. **Impersonation.** A node with its own key and a copy of an anchor's certificate, at the anchor's address: refused
    at the link, that address dropped, the anchor not blacklisted.
-6. **Hostile nodes.** With every anchor out of reach, `anchorReached` is false and the page says so. A node answering
-   malformed proofs and one answering failing proofs are blacklisted with their evidence; a node serving a valid proof
-   of a lighter chain is `behind`. A mesh node publishing a block that fails its checks is blacklisted with its
-   evidence, and the client does not forward it.
+6. **Hostile nodes.** With every anchor out of reach, `anchorReached` is false and the page says so. A node naming a tip
+   of its own that answers malformed proofs, and one that answers failing proofs, are blacklisted with their evidence; a
+   node naming the chain's tip is placed there and its proof is never read; a node on a lighter chain is `behind`. A
+   mesh node publishing a block that fails its checks is blacklisted with its evidence, and the client does not forward
+   it.
 7. **Reach and load.** Reads that may go to several nodes spread across them; a read that needs the tip goes to an
    `ok` node alone; a node slowed well past the others serves no read. A node on the browser's own network, named only
    by a seed, is never dialled; added by hand, it is reached at its private address, and `anchorReached` reads true from
