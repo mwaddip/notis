@@ -18,6 +18,7 @@ import { NodeList } from '../src/client/node-list.js';
 import type { NodeEntry } from '../src/client/node-list.js';
 import { render } from '../page/render.js';
 import type { ClientState } from '../src/client/mesh-client.js';
+import { emptyTraffic } from '../src/client/mesh-client.js';
 import { startMeshClient } from '../src/client/mesh-client.js';
 import { profileFor } from '@dagsocial/types';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
@@ -64,6 +65,7 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     tip: over.tip ?? null,
     agreement: over.agreement ?? null,
     checks: over.checks ?? 0,
+    traffic: over.traffic ?? emptyTraffic(),
     nodes: over.nodes ?? [],
   };
 }

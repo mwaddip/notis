@@ -225,6 +225,33 @@ function isValidPort(s: string): boolean {
   return n >= 0 && n <= 65_535;
 }
 
+/**
+ * MESH_INTERFACE → The client's node list → "A check" — the cumulative
+ * byte totals the timed fetch records by path over the life of the
+ * client: `/blocks/current` → `tipBytes`, `/blocks/<n>` → `headerBytes`,
+ * `/nipopow/proof/...` → `proofBytes` and one `proofReads` per proof
+ * read. `gossipBytes` and `forwarded` stay `0` here.
+ */
+export interface ClientTraffic {
+  tipBytes: number;
+  proofBytes: number;
+  headerBytes: number;
+  gossipBytes: number;
+  proofReads: number;
+  forwarded: number;
+}
+
+export function emptyTraffic(): ClientTraffic {
+  return {
+    tipBytes: 0,
+    proofBytes: 0,
+    headerBytes: 0,
+    gossipBytes: 0,
+    proofReads: 0,
+    forwarded: 0,
+  };
+}
+
 export interface ClientState {
   nodeId: string | null;
   transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
@@ -247,6 +274,7 @@ export interface ClientState {
    * start; incremented once at the end of each `runCheck`.
    */
   checks: number;
+  traffic: ClientTraffic;
   nodes: NodeEntry[];
 }
 
@@ -513,6 +541,7 @@ class MeshClientImpl implements MeshClient {
       tip: null,
       agreement: null,
       checks: 0,
+      traffic: emptyTraffic(),
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
     };
     // MESH_INTERFACE → The client's node list → "A read opens no

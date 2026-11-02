@@ -20,8 +20,8 @@ export type { AgreementCounts } from './client/agreement.js';
 export { pickServer } from './client/server-pick.js';
 export type { ReadNeed, PickCandidate } from './client/server-pick.js';
 
-export { startMeshClient, assertClientConfig } from './client/mesh-client.js';
-export type { MeshClient, ClientState } from './client/mesh-client.js';
+export { startMeshClient, assertClientConfig, emptyTraffic } from './client/mesh-client.js';
+export type { MeshClient, ClientState, ClientTraffic } from './client/mesh-client.js';
 
 export { NodeList } from './client/node-list.js';
 export type {

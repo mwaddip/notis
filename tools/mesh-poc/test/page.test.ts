@@ -10,6 +10,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { ClientState, MeshClient } from '../src/client/mesh-client.js';
+import { emptyTraffic } from '../src/client/mesh-client.js';
 import type { NodeEntry } from '../src/client/node-list.js';
 import type { ReadNeed } from '../src/client/server-pick.js';
 import { MeshConfigError } from '../src/config.js';
@@ -54,6 +55,7 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     tip: over.tip ?? null,
     agreement: over.agreement ?? null,
     checks: over.checks ?? 0,
+    traffic: over.traffic ?? emptyTraffic(),
     nodes: over.nodes ?? [],
   };
 }
@@ -175,7 +177,7 @@ describe('page/probe.ts', () => {
     const listeners = new Set<(s: ClientState) => void>();
     let state: ClientState = {
       nodeId: null, transport: null, path: null, lastLeft: null,
-      anchorReached: false, tip: null, agreement: null, checks: 0, nodes: [],
+      anchorReached: false, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
     };
     const fetched: string[] = [];
     const client: FakeClient = {
@@ -239,7 +241,7 @@ describe('page/probe.ts', () => {
     const listeners = new Set<(s: ClientState) => void>();
     let state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct', lastLeft: null,
-      anchorReached: true, tip: null, agreement: null, checks: 0, nodes: [],
+      anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
     };
     const client: FakeClient = {
       fetch: async () => new Response(body as unknown as BodyInit, { status: 200 }),
@@ -263,7 +265,7 @@ describe('page/probe.ts survives a render', () => {
   function buildFake(opts: { nodeId: string; body: Uint8Array }): FakeClient {
     const state: ClientState = {
       nodeId: opts.nodeId, transport: 'webrtc-direct', path: 'direct',
-      lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, nodes: [],
+      lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
     };
     return {
       fetch: async () => new Response(opts.body as unknown as BodyInit, { status: 200 }),
@@ -282,7 +284,7 @@ describe('page/probe.ts survives a render', () => {
     const probeText = before!.textContent;
     const state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
-      lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, nodes: [],
+      lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
     };
     render(state, root);
     const after = root.querySelector('pre#probe');
@@ -298,7 +300,7 @@ describe('page/probe.ts survives a render', () => {
     const probeText = root.querySelector('pre#probe')!.textContent;
     const state1: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
-      lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, nodes: [],
+      lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
     };
     render(state1, root);
     const state2: ClientState = { ...state1, tip: { height: 7, hash: 'c'.repeat(64) } };
@@ -362,6 +364,7 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
     tip: null,
     agreement: init.agreement ?? null,
     checks: init.checks ?? 0,
+    traffic: emptyTraffic(),
     nodes: init.nodes ?? [],
   };
   const calls: FakeClient['calls'] = { addByHand: [], read: [], stop: 0 };
