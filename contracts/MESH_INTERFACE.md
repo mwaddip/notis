@@ -206,11 +206,11 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 
 **The client's chain.** The client holds its chain's last `k` headers and block 1's. A check's proofs settle it — the
 winner's suffix and its first header — and a switch to another winner replaces it the same way. A gossiped block whose
-parent is the client's tip extends it; one whose parent is held below the tip runs a check at once; one whose parent is
-not held starts a fill: headers read by height, `GET /blocks/:height`, from a node at the tip, each held to its work,
-its schedule and its link, down to a held header and no more than `k` of them — a fill that fails or passes `k` runs a
-check at once. **The tip moves only by a header carrying its work on the client's chain**, never by a node's word.
-Before the first check settles a chain, a block adds nothing to it.
+parent is the client's tip extends it; one whose parent is held below the tip, or not held at all, runs a check at once.
+A fill — a check's reading of a tip above the client's — reads that node's headers by height, `GET /blocks/:height`,
+from its tip down to the client's, each held to its work, its schedule and its link, and no more than `k` of them; a
+fill that fails, or would pass `k`, leaves that tip to a proof. **The tip moves only by a header carrying its work on
+the client's chain**, never by a node's word. Before the first check settles a chain, a block adds nothing to it.
 
 > ⚠ **AHEAD OF CODE (2026-11-02).** the client holds no chain: `ok`, `trailing` and `behind` are read off each node's
 > own proof (`src/client/tip-events.ts`), and the tip is the best proof's.
@@ -251,14 +251,14 @@ on a monotonic clock. A success ends the run.
 **Candidates** are tried in this order: `ok`, `trailing`, `behind`, nodes not yet tried, then `retry` nodes whose time
 has come. A `blacklisted` node is never one.
 
-**A check** runs at start, every `CHECK_INTERVAL_MS`, and at once after a failed routed read, a fork or a failed fill (→
-"The client's chain"). It dials the candidates it holds no connection to; reads every candidate's tip, `GET
-/blocks/current`, timed from the request to the end of the body — that time is the node's speed until the next check;
-and places each tip on the client's chain by hash: the tip, one below, further down, or above — read down to a held
-header as a fill is, the client's tip moving when they link — or, below the held headers, held to the client's own
-header at that height, read from a node at its tip. **It reads proofs only for what that cannot place**: at the first
-check every tip, and after it a tip no rule places, a fork or a failed fill — one proof per distinct tip, from the node
-the list ranks first among those naming it, the next asked in the same check when that proof is refused; and, while the
+**A check** runs at start, every `CHECK_INTERVAL_MS`, and at once after a failed routed read or a gossiped block that
+does not extend the client's tip (→ "The client's chain"). It dials the candidates it holds no connection to; reads
+every candidate's tip, `GET /blocks/current`, timed from the request to the end of the body — that time is the node's
+speed until the next check; and places each tip on the client's chain by hash: the tip, one below, further down, or
+above — filled (→ "The client's chain"), the client's tip moving when the fill links — or, below the held headers, held
+to the client's own header at that height, read from a node at its tip. **It reads proofs only for what that cannot
+place**: at the first check every tip, and after it a tip no rule places — one proof per distinct tip, from the node the
+list ranks first among those naming it, the next asked in the same check when that proof is refused; and, while the
 client holds a chain, its own tip's proof from a node at its tip, handed to `resolveTip` first so a tie keeps the chain.
 Every node naming a tip takes that tip's verdict. A check that places every tip reads no proof.
 
