@@ -139,7 +139,27 @@ async function main() {
     if (stopped) return;
     seq += 1;
     const data = badBlockBytes(seq);
-    pubsub.publish(topic, data).catch((err) => {
+    const n = seq;
+    pubsub.publish(topic, data).then((result) => {
+      // The publisher's reach, logged per publish — the counter and
+      // `publish`'s recipients (gossipsub resolves the Promise to
+      // `{ recipients: PeerId[] }` once the mesh has seen the message,
+      // whether or not any peer subscribed). Every tenth publish also
+      // logs the topic's subscribers as the local router holds them,
+      // which answers "did the browser join the topic yet?" without
+      // waiting on a honest mesh node's logs.
+      const recipients = Array.isArray(result?.recipients)
+        ? result.recipients.map((p) => p.toString()).sort()
+        : [];
+      process.stdout.write(`publish seq=${n} recipients=[${recipients.join(',')}]\n`);
+      if (n % 10 === 0) {
+        const getSubs = pubsub.getSubscribers;
+        const subs = typeof getSubs === 'function'
+          ? pubsub.getSubscribers(topic).map((p) => p.toString()).sort()
+          : [];
+        process.stdout.write(`publish seq=${n} subscribers=[${subs.join(',')}]\n`);
+      }
+    }, (err) => {
       // A publish with no peers subscribed resolves (gossipsub's
       // `allowPublishToZeroTopicPeers: true` + `ignoreDuplicatePublishError`
       // in `gossipsubOptions`). Anything else is logged, loop stays
