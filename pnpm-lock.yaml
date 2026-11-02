@@ -380,6 +380,9 @@ importers:
 
   tools/mesh-poc:
     dependencies:
+      '@dagsocial/net':
+        specifier: workspace:*
+        version: link:../../packages/net
       '@dagsocial/nipopow':
         specifier: workspace:*
         version: link:../../packages/nipopow
@@ -392,6 +395,9 @@ importers:
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@dagsocial/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
       '@libp2p/autonat-v2':
         specifier: 2.1.8
         version: 2.1.8
@@ -407,6 +413,9 @@ importers:
       '@libp2p/dcutr':
         specifier: 3.0.32
         version: 3.0.32
+      '@libp2p/gossipsub':
+        specifier: 17.2.1
+        version: 17.2.1
       '@libp2p/http':
         specifier: 2.0.6
         version: 2.0.6
