@@ -993,7 +993,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(entry.readMs!).toBeLessThan(HEIGHT_DELAY_MS / 2);
   }, 180_000);
 
-  it.fails('a lost tip\'s proof is read once', async () => {
+  it('a lost tip\'s proof is read once', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "A tip
     // whose proof verified and lost keeps its verdict while the
     // client's chain stands". A node on a lighter chain names a tip

@@ -532,6 +532,16 @@ class MeshClientImpl implements MeshClient {
    * `resolveTip` answers.
    */
   private behindByMap: Map<string, number | null> = new Map();
+  /**
+   * MESH_INTERFACE → The client's node list → "A tip whose proof
+   * verified and lost keeps its verdict" — per tip hash, the event
+   * `tipEvent` answered and its `behind` from a proof that verified
+   * and lost. A node naming the hash again at the next check takes
+   * that verdict with no proof read; cleared when `chain.settle`
+   * moves to a new winner, and a hash leaves when no node named it
+   * at a check.
+   */
+  private readonly keptVerdicts: Map<string, { event: TipEvent; behind: number | null }> = new Map();
   private readonly chain: HeldChain;
   /**
    * MESH_INTERFACE → Block gossip → "A block is checked before it is
@@ -1121,6 +1131,17 @@ class MeshClientImpl implements MeshClient {
       if (perNodeVerdict.get(read.id) === 'on') continue;
       const entry = this.nodeList.entry(read.id);
       if (entry && entry.status === 'blacklisted') continue;
+      // MESH_INTERFACE → The client's node list → "A check" — "A tip
+      // whose proof verified and lost keeps its verdict while the
+      // client's chain stands: a node naming it again is placed off
+      // the chain with no proof read".
+      const kept = this.keptVerdicts.get(read.hash);
+      if (kept !== undefined) {
+        this.applyEvent({ ...kept.event, id: read.id });
+        pendingBehindBy.set(read.id, kept.behind);
+        perNodeVerdict.set(read.id, 'off');
+        continue;
+      }
       let list = groups.get(read.hash);
       if (list === undefined) { list = []; groups.set(read.hash, list); }
       list.push(read.id);
@@ -1187,6 +1208,13 @@ class MeshClientImpl implements MeshClient {
               pendingBehindBy.set(otherId, n.behind);
               perNodeVerdict.set(otherId, verdict);
             }
+            // MESH_INTERFACE → The client's node list → "A check" —
+            // a verified proof whose hash is not the winner's is a
+            // lost tip the client keeps the verdict of, so the next
+            // check needs no proof while the chain stands.
+            if (n.behind !== 0) {
+              this.keptVerdicts.set(hash, { event, behind: n.behind });
+            }
           }
         }
       }
@@ -1203,6 +1231,9 @@ class MeshClientImpl implements MeshClient {
           if (vr !== null && vr.ok === true && proof !== null) {
             const suffix: BlockHeader[] = [proof.suffixHead.header, ...proof.suffixTail];
             this.chain.settle(suffix, vr.headers[0]!);
+            // MESH_INTERFACE → The client's node list → "A check" —
+            // the kept verdicts are dropped when the chain switches.
+            this.keptVerdicts.clear();
             placedAtTip.clear();
             for (const read of tipReads) {
               if (read.hash === null) continue;
@@ -1237,6 +1268,17 @@ class MeshClientImpl implements MeshClient {
 
     this.readMsMap = pendingReadMs;
     this.behindByMap = pendingBehindBy;
+
+    // MESH_INTERFACE → The client's node list → "A check" — the
+    // memory never outgrows the tips last seen: a hash leaves when
+    // no node named it at a check.
+    const seenHashes = new Set<string>();
+    for (const read of tipReads) {
+      if (read.hash !== null) seenHashes.add(read.hash);
+    }
+    for (const h of [...this.keptVerdicts.keys()]) {
+      if (!seenHashes.has(h)) this.keptVerdicts.delete(h);
+    }
 
     // Phase 6: the routed tip read goes through the routed-read path.
     // The classification still runs so a failure or a lie moves the
