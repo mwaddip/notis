@@ -992,4 +992,161 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     // would be at least the delay.
     expect(entry.readMs!).toBeLessThan(HEIGHT_DELAY_MS / 2);
   }, 180_000);
+
+  it.fails('a lost tip\'s proof is read once', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — "A tip
+    // whose proof verified and lost keeps its verdict while the
+    // client's chain stands". A node on a lighter chain names a tip
+    // the held chain cannot place; the first check after settlement
+    // reads its proof and the client's own, and reads `behind`.
+    // Three more checks with that fork unchanged read no proofs —
+    // the kept verdict stands in.
+    const chainMain = makeLinkedChain(K + 5, PROFILE); // heavier
+    const chainFork = makeLinkedChain(K + 2, PROFILE); // lighter, different hashes
+    const upA = await chainUpstream(chainMain); ups.push(upA);
+    const upB = await chainUpstream(chainFork); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[] } = {
+      a: chainMain,
+      b: chainFork,
+    };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      return 'unreachable';
+    };
+    const underlying = chainResolve(chainOf, K);
+    const resolveUrls: string[][] = [];
+    const urlCount = (): number => resolveUrls.reduce((s, p) => s + p.length, 0);
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
+    });
+    clients.push(client);
+    await client.check(); // settle at chainMain
+    const urlsAfterSettle = urlCount();
+
+    await client.check(); // first after settle — reads fork + own
+    const urlsAfterFirst = urlCount();
+    expect(urlsAfterFirst - urlsAfterSettle).toBe(2);
+
+    for (let i = 0; i < 3; i++) await client.check();
+    expect(urlCount()).toBe(urlsAfterFirst);
+
+    const s = client.state();
+    expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('behind');
+    expect(s.agreement!.offChain).toBe(1);
+  }, 240_000);
+
+  it('a lost tip that moves is read again', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — the kept
+    // verdict is keyed by tip hash: a node answering a different hash
+    // the next check falls out of the shortcut and reads the proof
+    // again, from the node naming the new hash and the client's own.
+    const chainMain = makeLinkedChain(K + 5, PROFILE);
+    const chainFork = makeLinkedChain(K + 2, PROFILE);
+    const chainFork2 = makeLinkedChain(K + 3, PROFILE); // different hashes
+    const upA = await chainUpstream(chainMain); ups.push(upA);
+    const upB = await chainUpstream(chainFork); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[] } = {
+      a: chainMain,
+      b: chainFork,
+    };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      return 'unreachable';
+    };
+    const underlying = chainResolve(chainOf, K);
+    const resolveUrls: string[][] = [];
+    const urlCount = (): number => resolveUrls.reduce((s, p) => s + p.length, 0);
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
+    });
+    clients.push(client);
+    await client.check(); // settle at chainMain
+    await client.check(); // first after settle — kept verdict stored
+    const urlsBeforeMove = urlCount();
+
+    // B moves to a different fork chain (new tip hash).
+    upB.setChain(chainFork2);
+    chainsNow.b = chainFork2;
+    await client.check();
+    expect(urlCount() - urlsBeforeMove).toBe(2);
+  }, 240_000);
+
+  it('a switch drops the kept verdicts', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — "the kept
+    // verdicts are dropped when the chain switches". After a heavier
+    // chain wins and the chain switches, a node naming a tip lost
+    // against the old chain is read again on the next check.
+    const chainMain = makeLinkedChain(K + 2, PROFILE);     // initial
+    const chainFork = makeLinkedChain(K + 1, PROFILE);     // lighter, lost
+    const chainHeavier = makeLinkedChain(K + 5, PROFILE);  // triggers the switch
+    const upA = await chainUpstream(chainMain); ups.push(upA);
+    const upB = await chainUpstream(chainFork); ups.push(upB);
+    const upD = await chainUpstream(chainMain); ups.push(upD);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const dD = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dD);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+    const d = await startNode(upD, dD); nodes.push(d.node);
+
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[]; d: OrderingBlock[] } = {
+      a: chainMain,
+      b: chainFork,
+      d: chainMain,
+    };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      if (url.includes(d.id)) return chainsNow.d;
+      return 'unreachable';
+    };
+    const underlying = chainResolve(chainOf, K);
+    const resolveUrls: string[][] = [];
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+        { notisId: d.id, addrs: [d.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
+    });
+    clients.push(client);
+    await client.check(); // settle at chainMain
+    await client.check(); // first after settle — forkHash kept
+
+    // D moves to the heavier chain; this check switches the chain.
+    upD.setChain(chainHeavier);
+    chainsNow.d = chainHeavier;
+    await client.check(); // chain switches, kept verdicts cleared
+
+    // On the next check, B's forkHash must be re-read: the kept
+    // verdict was dropped by the switch. If it had stood, Phase 4
+    // would replay for B and the resolve pass would omit B.url.
+    await client.check();
+    const lastCall = resolveUrls[resolveUrls.length - 1]!;
+    expect(lastCall.some((u) => u.includes(b.id))).toBe(true);
+  }, 300_000);
 });
