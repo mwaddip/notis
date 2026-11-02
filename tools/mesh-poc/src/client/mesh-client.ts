@@ -795,142 +795,158 @@ class MeshClientImpl implements MeshClient {
       // `failure` and `lie` events were applied inside classifyTipRead.
     }
 
-    // Phase 3: place each tip on the client's chain. `tip`,
-    // `one-below`, `below` and a `null` hash land events at once;
-    // `above` reads headers down from the named height to the client's
-    // tip height + 1 (no more than `k`) and runs `chain.link`;
-    // `under` reads the header at that height from the first node the
-    // list ranks at the client's tip and matches hashes.
-    const placements = new Map<string, Placement>();
-    for (const read of tipReads) {
-      const placement = read.hash === null
-        ? 'unplaced'
-        : this.chain.place(read.hash, read.height);
-      placements.set(read.id, placement);
+    // Phase 3a: `above` fills first — highest named height first, each
+    // from the client's tip as it then stands; a node whose tip is
+    // placed by an earlier fill is not read again
+    // (MESH_INTERFACE → The client's node list → "A check" — "read down
+    // to a held header as a fill is, the client's tip moving when they
+    // link"). The sort by height descending lets the tallest fill move
+    // the tip once; lower `above` reads then place from the extended
+    // chain without a header read of their own.
+    const aboveCandidates = tipReads
+      .filter((r) => r.hash !== null)
+      .slice()
+      .sort((a, b) => b.height - a.height);
+    for (const read of aboveCandidates) {
+      if (this.stopped) break;
+      const chainTipNow = this.chain.tip();
+      if (chainTipNow === null) break; // chain unsettled — all 'above' falls to phase 4
+      const placement = this.chain.place(read.hash!, read.height);
+      if (placement !== 'above') continue; // placed by an earlier fill
+      const gap = read.height - chainTipNow.height;
+      if (gap > DEFAULT_K) continue; // more than k above — stays unplaced for phase 4
+      const headers: BlockHeader[] = [];
+      let hostileLie = false;
+      for (let h = read.height; h > chainTipNow.height; h -= 1) {
+        const hdr = await this.readHeaderAt(read.id, h, timedFetch);
+        if (hdr === null) {
+          this.applyEvent({
+            id: read.id,
+            ev: 'lie',
+            evidence: { kind: 'malformed', atMs: this.clock(), detail: 'header did not read' },
+          });
+          hostileLie = true;
+          break;
+        }
+        headers.push(hdr); // highest-first — chain.link's input shape
+      }
+      if (hostileLie) continue;
+      if (headers.length === 0 || blockHash(headers[0]!) !== read.hash) continue;
+      this.chain.link(headers);
     }
-    // First pass: `tip`, `one-below`, `below`, and `null` hashes.
+
+    // Phase 3b: place EVERY tip read once against the chain as it then
+    // stands; land each event and verdict, and `behindBy` for placed
+    // nodes (0 at the tip, 1 one below, the count below for `below`,
+    // the matched `under`'s distance). `above`, `under` and `unplaced`
+    // (including a hash the window holds but doesn't match) move on
+    // (`under` → phase 3c; the rest → phase 4).
+    const placements = new Map<string, Placement>();
+    const placedAtTip = new Set<string>();
     for (const read of tipReads) {
-      const placement = placements.get(read.id)!;
       if (read.hash === null) {
         this.applyEvent({ id: read.id, ev: 'behind' });
         // Verdict stays `none`: a null hash places nowhere and reads
         // no proof.
         continue;
       }
+      const placement = this.chain.place(read.hash, read.height);
+      placements.set(read.id, placement);
+      const chainTipAfterFills = this.chain.tip();
       if (placement === 'tip') {
         this.applyEvent({ id: read.id, ev: 'success' });
         perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, 0);
+        placedAtTip.add(read.id);
       } else if (placement === 'one-below') {
         this.applyEvent({ id: read.id, ev: 'trailing' });
         perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, 1);
       } else if (placement === 'below') {
         this.applyEvent({ id: read.id, ev: 'behind' });
         perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, chainTipAfterFills!.height - read.height);
       }
     }
-    // Second pass: `above` — read headers down, link.
+
+    // Phase 3c: `under` — read the chain's own header at that height
+    // from the first node placed `tip` this check; a match reads
+    // `behind` with no proof, a mismatch falls to phase 4.
     for (const read of tipReads) {
-      if (placements.get(read.id) !== 'above') continue;
-      const chainTip = this.chain.tip();
-      if (chainTip === null) continue; // chain unsettled — treat as unplaced
-      const gap = read.height - chainTip.height;
-      if (gap > DEFAULT_K) continue; // more than k above — unplaced
-      const headers: BlockHeader[] = [];
-      let hostileLie = false;
-      for (let h = read.height; h > chainTip.height; h -= 1) {
-        const hdr = await this.readHeaderAt(read.id, h, timedFetch);
-        if (hdr === null) {
-          const nowMs = this.clock();
-          this.applyEvent({
-            id: read.id,
-            ev: 'lie',
-            evidence: { kind: 'malformed', atMs: nowMs, detail: 'header did not read' },
-          });
-          hostileLie = true;
-          break;
-        }
-        headers.push(hdr); // highest-first, matches chain.link's input shape
-      }
-      if (hostileLie) continue;
-      if (headers.length === 0 || blockHash(headers[0]!) !== read.hash) {
-        // Top one's blockHash doesn't match the named hash — unplaced.
-        continue;
-      }
-      const linkResult = this.chain.link(headers);
-      if (linkResult === 'linked') {
-        this.applyEvent({ id: read.id, ev: 'success' });
-        perNodeVerdict.set(read.id, 'on');
-      }
-    }
-    // Third pass: `under` — read the client's own header at that height
-    // from the first node the list ranks at the client's tip.
-    for (const read of tipReads) {
+      if (this.stopped) break;
       if (placements.get(read.id) !== 'under') continue;
-      const firstAtTip = this.firstNodeAtChainTip();
+      const firstAtTip = this.firstNodeAtChainTip(placedAtTip);
       if (firstAtTip === null) continue;
       const hdr = await this.readHeaderAt(firstAtTip, read.height, timedFetch);
       if (hdr === null) {
-        const nowMs = this.clock();
         this.applyEvent({
           id: firstAtTip,
           ev: 'lie',
-          evidence: { kind: 'malformed', atMs: nowMs, detail: 'header did not read' },
+          evidence: { kind: 'malformed', atMs: this.clock(), detail: 'header did not read' },
         });
         continue;
       }
       if (blockHash(hdr) === read.hash) {
         this.applyEvent({ id: read.id, ev: 'behind' });
         perNodeVerdict.set(read.id, 'on');
+        const chainTipNow = this.chain.tip();
+        pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
       }
-    }
-
-    // Collect still-unplaced tips for phase 4.
-    const unplaced: TipRead[] = [];
-    for (const read of tipReads) {
-      if (read.hash === null) continue;
-      const verdict = perNodeVerdict.get(read.id);
-      if (verdict === 'on') continue;
-      // The entry may already be `blacklisted` (its own `above`/`under`
-      // lie); then its tip is not in the unplaced set.
-      const entry = this.nodeList.entry(read.id);
-      if (entry && entry.status === 'blacklisted') continue;
-      unplaced.push(read);
     }
 
     // Phase 4: proof read per distinct unplaced hash, from the first
-    // node naming it (by candidate rank). While the chain is settled
-    // and any hash is unplaced, prepend the URL of the first node at
-    // the client's tip so a tie keeps the chain.
-    const groups = new Map<string, string[]>(); // hash → ids naming it, in rank order
-    for (const read of unplaced) {
-      const hash = read.hash;
-      if (hash === null) continue;
-      let list = groups.get(hash);
-      if (list === undefined) {
-        list = [];
-        groups.set(hash, list);
-      }
+    // node naming it (by candidate rank); while the chain is settled,
+    // prepend the URL of the first node at the client's tip so a tie
+    // keeps the chain. A hash whose proof is refused is asked again
+    // of the next node naming it, in a further `resolveTip` over the
+    // own-tip URL and the replacements, until each hash has a verdict
+    // or no node naming it is left; each refused node its own
+    // evidence. After a switch, every tip this check read is placed
+    // again against the new chain with no new read; a tip still
+    // unplaced and with no proof verdict of its own reads `behind`.
+    const groups = new Map<string, string[]>(); // hash → ids in rank order
+    for (const read of tipReads) {
+      if (read.hash === null) continue;
+      if (perNodeVerdict.get(read.id) === 'on') continue;
+      const entry = this.nodeList.entry(read.id);
+      if (entry && entry.status === 'blacklisted') continue;
+      let list = groups.get(read.hash);
+      if (list === undefined) { list = []; groups.set(read.hash, list); }
       list.push(read.id);
     }
-    const resolveUrls: string[] = [];
-    const urlToHash = new Map<string, string>(); // tracks which hash each resolve URL stands for
-    const chainSettled = this.chain.settled();
-    if (chainSettled && groups.size > 0) {
-      const firstAtTip = this.firstNodeAtChainTip();
-      if (firstAtTip !== null) resolveUrls.push(meshBaseUrl(firstAtTip));
-    }
-    for (const [hash, ids] of groups) {
-      const url = meshBaseUrl(ids[0]!);
-      if (!resolveUrls.includes(url)) resolveUrls.push(url);
-      urlToHash.set(url, hash);
-    }
+    const triedPerHash = new Map<string, Set<string>>();
+    for (const h of groups.keys()) triedPerHash.set(h, new Set<string>());
+    const verifiedHashes = new Set<string>();
+    const urlToHash = new Map<string, string>();
 
-    if (resolveUrls.length > 0) {
+    while (!this.stopped) {
+      const passUrls: string[] = [];
+      // The own-tip URL first, while the chain is settled.
+      if (this.chain.settled()) {
+        const firstAtTip = this.firstNodeAtChainTip(placedAtTip);
+        if (firstAtTip !== null) passUrls.push(meshBaseUrl(firstAtTip));
+      }
+      // Next untried node for each hash still without a verified
+      // result.
+      let anyReplacement = false;
+      for (const [hash, ids] of groups) {
+        if (verifiedHashes.has(hash)) continue;
+        const tried = triedPerHash.get(hash)!;
+        const next = ids.find((id) => !tried.has(id));
+        if (next === undefined) continue;
+        tried.add(next);
+        const url = meshBaseUrl(next);
+        passUrls.push(url);
+        urlToHash.set(url, hash);
+        anyReplacement = true;
+      }
+      if (!anyReplacement) break;
+
       // MESH_INTERFACE → "Two clocks" — the verifier reads the wall
       // clock (`wallClock`); the node list keeps its monotonic clock
       // for retries. A header's `createdAt` is wall-clock time.
       const result = await this.resolveFn(
-        resolveUrls,
+        passUrls,
         DEFAULT_M,
         DEFAULT_K,
         this.profile,
@@ -945,24 +961,27 @@ class MeshClientImpl implements MeshClient {
         const event = eventForTipResult(nid, n, nowMs);
         this.applyEvent(event);
 
-        // Propagate the queried node's event to every other id that
-        // named the same hash (and set the same `behind` for them).
-        const hash = urlToHash.get(n.url);
-        if (hash !== undefined && n.verified) {
-          const ids = groups.get(hash) ?? [];
-          const verdict: 'on' | 'off' = n.behind !== null ? 'on' : 'off';
-          perNodeVerdict.set(nid, verdict);
-          for (const otherId of ids) {
-            if (otherId === nid) continue;
-            this.applyEvent({ ...event, id: otherId });
-            pendingBehindBy.set(otherId, n.behind);
-            perNodeVerdict.set(otherId, verdict);
+        if (n.verified) {
+          const hash = urlToHash.get(n.url);
+          if (hash !== undefined) {
+            verifiedHashes.add(hash);
+            // Propagate the queried node's event to every other id
+            // that named the same hash.
+            const ids = groups.get(hash) ?? [];
+            const verdict: 'on' | 'off' = n.behind !== null ? 'on' : 'off';
+            perNodeVerdict.set(nid, verdict);
+            for (const otherId of ids) {
+              if (otherId === nid) continue;
+              this.applyEvent({ ...event, id: otherId });
+              pendingBehindBy.set(otherId, n.behind);
+              perNodeVerdict.set(otherId, verdict);
+            }
           }
         }
       }
 
-      // If the winner's tip is not the chain's, settle to it so the
-      // next check reads from the new chain.
+      // If the winner's tip is not the chain's, settle to it and
+      // re-place every tip this check read against the new chain.
       if (result.winner !== null && result.tip !== null) {
         const winnerTipHash = blockHash(result.tip);
         const chainTip = this.chain.tip();
@@ -973,6 +992,33 @@ class MeshClientImpl implements MeshClient {
           if (vr !== null && vr.ok === true && proof !== null) {
             const suffix: BlockHeader[] = [proof.suffixHead.header, ...proof.suffixTail];
             this.chain.settle(suffix, vr.headers[0]!);
+            placedAtTip.clear();
+            for (const read of tipReads) {
+              if (read.hash === null) continue;
+              const newPlacement = this.chain.place(read.hash, read.height);
+              placements.set(read.id, newPlacement);
+              const chainTipNow = this.chain.tip();
+              if (newPlacement === 'tip') {
+                this.applyEvent({ id: read.id, ev: 'success' });
+                perNodeVerdict.set(read.id, 'on');
+                pendingBehindBy.set(read.id, 0);
+                placedAtTip.add(read.id);
+              } else if (newPlacement === 'one-below') {
+                this.applyEvent({ id: read.id, ev: 'trailing' });
+                perNodeVerdict.set(read.id, 'on');
+                pendingBehindBy.set(read.id, 1);
+              } else if (newPlacement === 'below') {
+                this.applyEvent({ id: read.id, ev: 'behind' });
+                perNodeVerdict.set(read.id, 'on');
+                pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
+              } else if (!verifiedHashes.has(read.hash)) {
+                // 'above', 'under' or 'unplaced' with no proof verdict
+                // of its own: reads `behind`.
+                this.applyEvent({ id: read.id, ev: 'behind' });
+                perNodeVerdict.set(read.id, 'off');
+              }
+              // else: hash has a proof verdict — keep its event/verdict.
+            }
           }
         }
       }
@@ -1073,14 +1119,17 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
-   * The first node (by candidate rank) whose status is `ok` —
-   * MESH_INTERFACE → The client's node list → "A check", "the first
-   * node the list ranks at the client's tip".
+   * The first node (by candidate rank) whose tip read THIS check placed
+   * `tip` against the final chain — MESH_INTERFACE → The client's node
+   * list → "A check", "a node whose tip read this check placed `tip`
+   * against that final chain, the first of them the list ranks". A
+   * node still at the previous check's `ok` would be stale: the `under`
+   * reader and the own-tip prepend both want a node the chain has just
+   * placed at the tip.
    */
-  private firstNodeAtChainTip(): string | null {
+  private firstNodeAtChainTip(placedAtTip: ReadonlySet<string>): string | null {
     for (const id of this.nodeList.candidates()) {
-      const e = this.nodeList.entry(id);
-      if (e && e.status === 'ok') return id;
+      if (placedAtTip.has(id)) return id;
     }
     return null;
   }

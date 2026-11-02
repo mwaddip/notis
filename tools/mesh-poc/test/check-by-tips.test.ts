@@ -181,12 +181,15 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   it('a tip above the client\'s is read down and linked', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "above —
     // read down to a held header as a fill is, the client's tip moving
-    // when they link". One node advances one block, another three;
-    // headers read, the client's tip moves, both `ok`, no proof.
+    // when they link". The highest named height's fill runs first,
+    // from the client's tip as it then stands; a lower `above` tip
+    // placed by that fill is read from the extended chain. A at K+2,
+    // B at K+4: B's fill moves the chain to K+4; A reads `behind` as a
+    // place two below the new tip; no proof read.
     const base = makeLinkedChain(K + 4, PROFILE);
     const start = base.slice(0, K + 1);     // tip at K+1
-    const oneAbove = base.slice(0, K + 2);  // one block above
-    const threeAbove = base.slice(0, K + 4); // three blocks above
+    const oneAbove = base.slice(0, K + 2);  // A: one block above start
+    const threeAbove = base.slice(0, K + 4); // B: three blocks above start
 
     const upA = await chainUpstream(start); ups.push(upA);
     const upB = await chainUpstream(start); ups.push(upB);
@@ -228,7 +231,9 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(resolveUrls.length).toBe(callsAfterSettle);
     expect(client.state().traffic.headerBytes).toBeGreaterThan(headersBefore);
     const s = client.state();
-    expect(s.nodes.find((n) => n.notisId === a.id)!.status).toBe('ok');
+    // After B's fill moves the chain tip to K+4, A at K+2 is two below;
+    // place says `below` → event `behind`.
+    expect(s.nodes.find((n) => n.notisId === a.id)!.status).toBe('behind');
     expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('ok');
   }, 180_000);
 
@@ -533,7 +538,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s2.tip!.hash).toBe(chainTipHash);
   }, 120_000);
 
-  it.fails('a fill that moves the tip leaves the node at the old tip trailing', async () => {
+  it('a fill that moves the tip leaves the node at the old tip trailing', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — phase 3
     // places every tip against the chain as it then stands, after the
     // `above` fills have moved the tip. A at the old tip and B one
@@ -579,7 +584,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(picked.nodeId).toBe(b.id);
   }, 180_000);
 
-  it.fails('two nodes above at different heights are filled once, from the highest', async () => {
+  it('two nodes above at different heights are filled once, from the highest', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — phase 3
     // runs the `above` fills first, highest named height first; a node
     // whose tip is placed by an earlier fill is not read again. B at
@@ -642,7 +647,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s.nodes.find((n) => n.notisId === c.id)!.status).toBe('ok');
   }, 240_000);
 
-  it.fails('the own-tip URL is a node placed at the tip this check', async () => {
+  it('the own-tip URL is a node placed at the tip this check', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — the own-tip
     // URL prepended to the proof call is a node whose tip read this
     // check placed `tip` against the final chain, not a node that was
@@ -705,7 +710,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(lastUrls[0]).toBe('notis-mesh://' + b.id);
   }, 180_000);
 
-  it.fails('behindBy is written for placed nodes', async () => {
+  it('behindBy is written for placed nodes', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — every
     // placed node carries its `behindBy`: 0 at the tip, 1 one below,
     // the count below for a tip within the window.
@@ -746,7 +751,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s.nodes.find((n) => n.notisId === c.id)!.behindBy).toBe(2);
   }, 180_000);
 
-  it.fails('a refused proof is asked of the next node naming the hash', async () => {
+  it('a refused proof is asked of the next node naming the hash', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "the next
     // asked in the same check when that proof is refused". B1 and B2
     // name the same fork hash; B1's proof is invalid: it is
@@ -794,7 +799,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(b2Entry.status).toBe('behind');
   }, 180_000);
 
-  it.fails('after a switch every tip is placed against the new chain', async () => {
+  it('after a switch every tip is placed against the new chain', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — a switch
     // to a heavier chain leaves the previous `tip` placement stale;
     // the re-placement moves nodes named on the old chain to `behind`.
