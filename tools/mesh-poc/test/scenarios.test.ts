@@ -567,7 +567,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // joins it by hand), every hostile host — is left out, so the base
   // of each tracker is not held forever by an entry that never
   // answers.
-  it.fails('honestMeshHosts picks pub/private mesh hosts, excludes lan1 (browser-net) and hostile hosts', () => {
+  it('honestMeshHosts picks pub/private mesh hosts, excludes lan1 (browser-net) and hostile hosts', () => {
     const topology = {
       hosts: {
         browser: { role: 'browser', parent: 'natC', addr: '10.103.0.11' },
@@ -582,7 +582,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     };
     expect(s8.honestMeshHosts(topology)).toEqual(['pub1', 'pub2', 'priv1', 'priv2']);
   });
-  it.fails('honestMeshHosts: a host without a mesh config is left out even if its role is public or private', () => {
+  it('honestMeshHosts: a host without a mesh config is left out even if its role is public or private', () => {
     const topology = {
       hosts: {
         browser: { role: 'browser', parent: 'natC', addr: '10.103.0.11' },
@@ -599,7 +599,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // at or above it. Three deliveries, each under 1 s, checksMoved
   // false — the data the saved run on `af9541f8` carried, had step 2
   // parsed its tracker value as an array instead of a string.
-  it.fails('computeDeliveries over the saved run\'s clientHist (parsed) and pub1Hist arrays answers three deliveries, each under 1 s, checksMoved false', () => {
+  it('computeDeliveries over the saved run\'s clientHist (parsed) and pub1Hist arrays answers three deliveries, each under 1 s, checksMoved false', () => {
     const clientHist = [
       { height: 2132, atMs: 1793623452426, checks: 1 },
       { height: 2133, atMs: 1793623453726, checks: 1 },
@@ -633,7 +633,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     const pub1Hist = [{ height: 2132, atMs: 1793623452004 }, { height: 2133, atMs: 1793623453110 }];
     expect(s8.computeDeliveries(clientHistString, pub1Hist)).toEqual([]);
   });
-  it.fails('computeDeliveries over a non-array pub1Hist answers an empty list', () => {
+  it('computeDeliveries over a non-array pub1Hist answers an empty list', () => {
     const clientHist = [{ height: 2132, atMs: 1793623452426, checks: 1 }];
     expect(s8.computeDeliveries(clientHist, 'not-an-array')).toEqual([]);
     expect(s8.computeDeliveries(clientHist, null)).toEqual([]);

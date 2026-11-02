@@ -42,7 +42,7 @@ describe('badBlockBytes — the publisher\'s block', () => {
   // re-emit a no-op). Each publish needs distinct bytes, else the first
   // publish's message is the only one honest peers ever see; a browser
   // that joins the mesh after it stays unaware.
-  it.fails('badBlockBytes(n) answers bytes distinct for each n', () => {
+  it('badBlockBytes(n) answers bytes distinct for each n', () => {
     const a = badBlockBytes(1);
     const b = badBlockBytes(2);
     expect(a).not.toEqual(b);

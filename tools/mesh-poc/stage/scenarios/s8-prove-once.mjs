@@ -154,27 +154,34 @@ export const S8_GOSSIP_PREDICATE = `if (v === null) return false;
   return Array.isArray(hs) && hs.length >= 4;`;
 
 /**
- * Match clientHist (tracker's tip-change records) to pub1Hist
- * (first-seen atMs per height). For the first three pub1 heights
- * past the tracker's baseline, each delivery's `delayMs` is the
- * client's first atMs at or above that height minus pub1's atMs at
- * it; `checksMoved` is whether the client's `checks` advanced
- * between pub1's atMs and the client's atMs (compared against the
- * latest clientHist record whose atMs is at or before pub1's atMs).
- * Pure, Node-safe; drives the step 2 measurement and is testable
- * on simulated histories.
+ * Match clientHist (tracker's tip-change records, an array of
+ * `{height, atMs, checks}`) to pub1Hist (first-seen atMs per height,
+ * an array of `{height, atMs}`). Both inputs are held to arrays —
+ * a string, a Map or any other shape answers an empty list, so the
+ * step's `m.deliveries` reads short of three and the verdict
+ * `verdictS8Gossip` FAILs naming the field. For the first three
+ * pub1 heights past the tracker's baseline, each delivery's
+ * `delayMs` is the client's first atMs at or above that height
+ * minus pub1's atMs at it; `checksMoved` is whether the client's
+ * `checks` advanced between pub1's atMs and the client's atMs
+ * (compared against the latest clientHist record whose atMs is at
+ * or before pub1's atMs). Pure, Node-safe; drives the step 2
+ * measurement and is testable on simulated histories.
  */
 export function computeDeliveries(clientHist, pub1Hist) {
   if (!Array.isArray(clientHist) || clientHist.length === 0) return [];
+  if (!Array.isArray(pub1Hist)) return [];
   const baseline = clientHist[0];
   const baselineHeight = baseline?.height;
   if (typeof baselineHeight !== 'number') return [];
-  const sortedPub1 = [...pub1Hist.entries()]
-    .filter(([h]) => h > baselineHeight)
-    .sort(([a], [b]) => a - b)
+  const sortedPub1 = pub1Hist
+    .filter((p) => p !== null && typeof p === 'object'
+      && typeof p.height === 'number' && p.height > baselineHeight
+      && typeof p.atMs === 'number')
+    .sort((a, b) => a.height - b.height)
     .slice(0, 3);
   const deliveries = [];
-  for (const [h, pubAtMs] of sortedPub1) {
+  for (const { height: h, atMs: pubAtMs } of sortedPub1) {
     const clientRec = clientHist.find((c) => c && typeof c.height === 'number' && c.height >= h);
     if (!clientRec || typeof clientRec.atMs !== 'number' || typeof clientRec.checks !== 'number') continue;
     let checksAtPub = typeof baseline.checks === 'number' ? baseline.checks : 0;
@@ -190,6 +197,32 @@ export function computeDeliveries(clientHist, pub1Hist) {
     });
   }
   return deliveries;
+}
+
+/**
+ * The honest mesh hosts the stage-default config can reach — step 1
+ * reads each one's status past a settled baseline, and step 4 reads
+ * each one's status across a firewall window. The rule from topology:
+ *   - role is `public` or `private` (a hostile host carries role
+ *     `hostile`, excluded here);
+ *   - a `mesh` config is present (a host without one is not a mesh
+ *     node);
+ *   - the host does not sit on the browser's own network — lan1
+ *     shares `parent: natC` with the browser and is in no stage
+ *     default config (`MESH_INTERFACE → Discovery → "A node added by
+ *     hand"`, s7 joins it), so a tracker that waits for its status
+ *     past `new` would never advance.
+ */
+export function honestMeshHosts(topology) {
+  const browserParent = topology?.hosts?.browser?.parent;
+  const hosts = [];
+  for (const [host, hostConfig] of Object.entries(topology?.hosts ?? {})) {
+    if (hostConfig?.role !== 'public' && hostConfig?.role !== 'private') continue;
+    if (hostConfig?.mesh === undefined) continue;
+    if (typeof browserParent === 'string' && hostConfig.parent === browserParent) continue;
+    hosts.push(host);
+  }
+  return hosts;
 }
 
 // MESH_INTERFACE → Acceptance 8 — step 1 reads `#state` across five
@@ -381,17 +414,11 @@ export async function run(ctx) {
     throw new Error('s8: topology has no pub1.node.httpPort');
   }
 
-  // MESH_INTERFACE → Acceptance 6 → "A mesh node publishing a block
-  // that fails its checks is blacklisted with its evidence". The
-  // honest hosts set for step 1: every host with role `public` or
-  // `private` AND a `mesh` config, excluding hostile hosts. These
-  // are the nodes a stage-default client will have in its node list.
-  const honestHosts = [];
-  for (const [host, hostConfig] of Object.entries(ctx.topology.hosts)) {
-    if (hostConfig?.role !== 'public' && hostConfig?.role !== 'private') continue;
-    if (hostConfig?.mesh === undefined) continue;
-    honestHosts.push(host);
-  }
+  // The honest set for steps 1 and 4 — the honest mesh hosts the
+  // stage-default config can reach, excluding `lan1` (browser's own
+  // network) and every hostile host. See `honestMeshHosts` above for
+  // the rule.
+  const honestHosts = honestMeshHosts(ctx.topology);
   const honestIds = honestHosts.map((h) => identities[h]?.notisId).filter((id) => typeof id === 'string');
 
   let gapFirewallApplied = false;
@@ -446,13 +473,23 @@ export async function run(ctx) {
         const value = await tracker.promise;
         polling = false;
         await pub1Poll;
-        const hs = JSON.parse(value);
-        const deliveries = computeDeliveries(hs, pub1FirstAtMs);
-        const m = {
-          deliveries,
-          clientHist: hs,
-          pub1Hist: Array.from(pub1FirstAtMs.entries()).map(([height, atMs]) => ({ height, atMs })),
-        };
+        // cdp.mjs' stdout is `JSON.stringify(result)` where `result`
+        // is itself the expression's `JSON.stringify(window.__s8GHs)`
+        // — one parse unwraps the stdout to the inner JSON string,
+        // a second parses that string to the array of records.
+        const outer = JSON.parse(value);
+        const clientHist = typeof outer === 'string' ? JSON.parse(outer) : outer;
+        const pub1Hist = Array.from(pub1FirstAtMs.entries()).map(([height, atMs]) => ({ height, atMs }));
+        if (!Array.isArray(clientHist)) {
+          const m = {
+            reason: 's8 step 2: clientHist did not parse to an array',
+            clientHist: outer,
+            pub1Hist,
+          };
+          return { verdict: verdictS8Gossip(m), measurement: m };
+        }
+        const deliveries = computeDeliveries(clientHist, pub1Hist);
+        const m = { deliveries, clientHist, pub1Hist };
         return { verdict: verdictS8Gossip(m), measurement: m };
       } finally {
         polling = false;

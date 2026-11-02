@@ -24,15 +24,28 @@ const PUBLISH_INTERVAL_MS = 2_000;
 
 /**
  * MESH_INTERFACE → Block gossip → "A refused block is evidence as `net`
- * weighs it" — the publisher's block. Three zero bytes under
- * `MAX_ORDERING_BLOCK_BYTES` whose `readOrderingBlockSections` throws:
- * `BlockCheck.check` catches the throw and returns
- * `{ result: 'reject', lie: true, detail: 'malformed ordering block
- * header: ...' }`. Zero PoW is beside the point — the parse never
- * reaches the PoW check.
+ * weighs it" — the publisher's block, keyed by a counter so each
+ * publish rides fresh bytes. Three bytes under
+ * `MAX_ORDERING_BLOCK_BYTES`: `readOrderingBlockSections` throws on
+ * every counter value (3 bytes cannot carry a header, a body-length
+ * prefix and the 64-byte validator signature), so `BlockCheck.check`
+ * reads it as `{ result: 'reject', lie: true, detail: 'malformed
+ * ordering block header: ...' }`. Distinct bytes keep gossipsub's
+ * `msgIdFn` from collapsing successive publishes into one message:
+ * the seen-cache keys on the message id (`blake2b` of the raw bytes)
+ * and `ignoreDuplicatePublishError` + `GOSSIP_SEEN_WINDOW_MS = 120 s`
+ * (`src/gossip-rules.ts`) drop a duplicate at the publisher's own
+ * router. A browser that joins the mesh after the first publish only
+ * sees the publisher's blocks once each publish carries fresh bytes.
  */
-export function badBlockBytes() {
-  return new Uint8Array([0, 0, 0]);
+export function badBlockBytes(n) {
+  // Three-byte little-endian counter — distinct for every n in
+  // [0, 2^24), still three bytes under MAX_ORDERING_BLOCK_BYTES so
+  // the readOrderingBlockSections parse throws before PoW.
+  const low = n & 0xff;
+  const mid = (n >>> 8) & 0xff;
+  const high = (n >>> 16) & 0xff;
+  return new Uint8Array([low, mid, high]);
 }
 
 function parseNetwork(v) {
@@ -121,9 +134,11 @@ async function main() {
   const pubsub = node.libp2p.services.pubsub;
 
   let stopped = false;
+  let seq = 0;
   const timer = setInterval(() => {
     if (stopped) return;
-    const data = badBlockBytes();
+    seq += 1;
+    const data = badBlockBytes(seq);
     pubsub.publish(topic, data).catch((err) => {
       // A publish with no peers subscribed resolves (gossipsub's
       // `allowPublishToZeroTopicPeers: true` + `ignoreDuplicatePublishError`

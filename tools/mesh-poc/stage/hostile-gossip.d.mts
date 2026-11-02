@@ -1,1 +1,1 @@
-export function badBlockBytes(): Uint8Array;
+export function badBlockBytes(n: number): Uint8Array;
