@@ -443,16 +443,17 @@ describe('s8 (prove once, follow by gossip)', () => {
     }
     expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_gap');
   });
-  it('run({dryRun:true}) emits step 1 hostile firewall + gap firewall + their deletes', async () => {
+  it('run({dryRun:true}) emits step 1 hostile firewall + step 4 hostile firewall + gap firewall + their deletes', async () => {
     const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s8');
     expect(r.steps.length).toBe(4);
     for (const step of r.steps) expect(step.verdict).toBe('skipped');
     const adds = r.faults.filter((f: string) => / nft add /.test(f) && !f.includes('[fault:remove'));
     const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / nft delete table /.test(f));
-    expect(adds.length, 'two tables + two chains + per-host drops for each').toBeGreaterThanOrEqual(6);
-    // Two table deletes — one for s8_step1_hostile, one for s8_gap.
-    expect(dels.length, 'one table delete per firewall (removes every drop)').toBe(2);
+    expect(adds.length, 'three tables + three chains + per-host drops for each').toBeGreaterThanOrEqual(8);
+    // Three table deletes — one for s8_step1_hostile, one for
+    // s8_step4_hostile, one for s8_gap.
+    expect(dels.length, 'one table delete per firewall (removes every drop)').toBe(3);
   });
   // MESH_INTERFACE → Acceptance 8 — step 1 firewalls the browser from
   // every hostile host so the first check reads no hostile proof.
@@ -503,6 +504,78 @@ describe('s8 (prove once, follow by gossip)', () => {
       /\[fault:s8:browser-gap-/.test(f) || /\[fault:remove:s8:browser-gap-/.test(f),
     );
     expect(gap.length, 'at least one apply + one remove').toBeGreaterThanOrEqual(2);
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 4 firewalls the browser from
+  // every hostile host for its whole duration, beside the gap cut.
+  // Without it the client's DHT walk reaches each hostile mesh node
+  // and reads its proof at a check, moving `proofReads` beyond the
+  // fill — the saved run on `ef19ed10` recorded five proof reads at
+  // the check after the cut was removed, which is the hostile set.
+  // Same rules as step 1 (a `FaultLog` fault, removed in `finally`).
+  it('s8Step4HostileFirewallArgs builds a table + chain + per-hostile-host drop + delete-table inside the browser namespace', () => {
+    const topologyWithHostile = {
+      hosts: {
+        pub1: { role: 'public', addr: '11.100.0.11', mesh: { role: 'public' } },
+        pub2: { role: 'public', addr: '11.100.0.12', mesh: { role: 'public' } },
+        'hostile-malformed': { role: 'hostile', addr: '11.100.0.31', mesh: { role: 'public' } },
+        'hostile-invalid': { role: 'hostile', addr: '11.100.0.32', mesh: { role: 'public' } },
+        'hostile-lagging': { role: 'hostile', addr: '11.100.0.33', mesh: { role: 'public' } },
+        'hostile-publisher': { role: 'hostile', addr: '11.100.0.34', mesh: { role: 'public' } },
+      },
+    };
+    const a = s8.s8Step4HostileFirewallArgs(topologyWithHostile);
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    expect(a.drops.length, 'one drop per hostile host').toBe(4);
+    const dropNames = a.drops.map((d) => d.name).sort();
+    expect(dropNames).toEqual(['hostile-invalid', 'hostile-lagging', 'hostile-malformed', 'hostile-publisher']);
+    for (const { argv } of a.drops) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+      expect(argv.join(' ')).toMatch(/nft add rule ip s8_step4_hostile out ip daddr 11\.100\.0\.\d+ drop/);
+    }
+    expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_step4_hostile');
+    // Honest hosts are not dropped — a drop to pub1 would break the
+    // step's baseline, as a drop to a mesh anchor would in step 1.
+    for (const { argv } of a.drops) {
+      expect(argv.join(' ')).not.toContain('11.100.0.11');
+      expect(argv.join(' ')).not.toContain('11.100.0.12');
+    }
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 4's fault list carries two
+  // firewalls at once: the step-4 hostile firewall (whole-step) and
+  // the gap cut (removed before the fill). A reader of
+  // `stage/out/scenarios/s8.json`'s `faults` sees both appliers and
+  // both removers.
+  it('run({dryRun:true}) step 4\'s fault list carries both the step-4 hostile firewall and the gap cut (apply + remove each)', async () => {
+    const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
+    const step4Hostile = r.faults.filter((f: string) =>
+      /\[fault:s8:browser-step4-hostile-/.test(f) || /\[fault:remove:s8:browser-step4-hostile-/.test(f),
+    );
+    expect(step4Hostile.length, 'step-4 hostile apply + remove').toBeGreaterThanOrEqual(2);
+    const step4HostileRemove = r.faults.filter((f: string) =>
+      /\[fault:remove:s8:browser-step4-hostile-/.test(f),
+    );
+    expect(step4HostileRemove.length, 'step-4 hostile remove present').toBeGreaterThanOrEqual(1);
+    const gap = r.faults.filter((f: string) =>
+      /\[fault:s8:browser-gap-/.test(f) || /\[fault:remove:s8:browser-gap-/.test(f),
+    );
+    expect(gap.length, 'gap apply + remove').toBeGreaterThanOrEqual(2);
+    const gapRemove = r.faults.filter((f: string) =>
+      /\[fault:remove:s8:browser-gap-/.test(f),
+    );
+    expect(gapRemove.length, 'gap remove present').toBeGreaterThanOrEqual(1);
+  });
+  // MESH_INTERFACE → Acceptance 8 — steps 1 and 4 poll a page where
+  // the client dials hostile hosts the stage DHT names and whose
+  // packets drop at the browser's own namespace. A dropped packet is
+  // no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s, `src/protocols.ts`)
+  // per hostile dial until the retry back-off takes those nodes out of
+  // the candidates. The cap at 600 s is the deadline a step's poll
+  // holds under this cost, not a bound on the stage's own pace. 240 s
+  // was the cap before and step 1 timed out at it on `ef19ed10`.
+  it('BLACK_HOLE_WAIT_MS caps steps 1 and 4\'s polls at 600 s (argued by one dial deadline per candidate)', () => {
+    expect(s8.BLACK_HOLE_WAIT_MS).toBe(600_000);
   });
   // MESH_INTERFACE → Acceptance 8 — the four tracker predicates and
   // their expression-builders run under the live cdp.mjs runtime
