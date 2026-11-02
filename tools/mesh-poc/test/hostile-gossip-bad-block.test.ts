@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 // eslint-disable-next-line import/extensions
-import { badBlockBytes } from '../stage/hostile-gossip.mjs';
+import { badBlockBytes, scoresLine } from '../stage/hostile-gossip.mjs';
 import { BlockCheck } from '../src/block-check.js';
 import { profileFor } from '@dagsocial/types';
 
@@ -64,5 +64,15 @@ describe('badBlockBytes — the publisher\'s block', () => {
     if (verdict.result === 'reject') {
       expect(verdict.lie).toBe(true);
     }
+  });
+});
+
+describe('scoresLine — the publisher\'s score line', () => {
+  it('lists each subscriber with its score rounded to two decimals, in peer-id order', () => {
+    expect(scoresLine(10, [{ peerId: 'b', score: -1.005 * 100 }, { peerId: 'a', score: 0.126 }]))
+      .toBe('publish seq=10 scores=[a:0.13,b:-100.50]');
+  });
+  it('answers an empty list for no subscribers', () => {
+    expect(scoresLine(20, [])).toBe('publish seq=20 scores=[]');
   });
 });

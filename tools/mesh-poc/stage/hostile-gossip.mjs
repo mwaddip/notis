@@ -48,6 +48,19 @@ export function badBlockBytes(n) {
   return new Uint8Array([low, mid, high]);
 }
 
+/**
+ * The publisher's score line — `publish seq=N scores=[<peerId>:<score>,…]`,
+ * one entry per subscriber of the topic with the router's score for it
+ * (`getScore`), rounded to two decimals, in peer-id order.
+ */
+export function scoresLine(n, entries) {
+  const parts = entries
+    .slice()
+    .sort((a, b) => (a.peerId < b.peerId ? -1 : a.peerId > b.peerId ? 1 : 0))
+    .map((e) => `${e.peerId}:${e.score.toFixed(2)}`);
+  return `publish seq=${n} scores=[${parts.join(',')}]`;
+}
+
 function parseNetwork(v) {
   if (v === 'devnet' || v === 'testnet' || v === 'mainnet') return v;
   console.error(`MESH_NETWORK must be devnet, testnet or mainnet, not ${JSON.stringify(v)}`);
@@ -158,6 +171,8 @@ async function main() {
           ? pubsub.getSubscribers(topic).map((p) => p.toString()).sort()
           : [];
         process.stdout.write(`publish seq=${n} subscribers=[${subs.join(',')}]\n`);
+        const entries = subs.map((peerId) => ({ peerId, score: pubsub.getScore(peerId) }));
+        process.stdout.write(`${scoresLine(n, entries)}\n`);
       }
     }, (err) => {
       // A publish with no peers subscribed resolves (gossipsub's
