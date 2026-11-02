@@ -1,6 +1,8 @@
-// MESH_INTERFACE → "Two clocks" + "a proof refused by the clock check
-// alone is a failure, never a lie" + "An entry keeps its last failure's
-// kind and message".
+// MESH_INTERFACE → "Two clocks"; the clock row of the client's
+// node-list table — a proof refused by the client's clock check alone
+// is `retry`, never a lie; and the rule that an entry keeps its last
+// failure's kind and message for the page to show while the node is
+// in `retry`.
 //
 // Cases:
 //   - `tipEvent` maps `refuseCode: 'invalid'` with `verifyResult.reason

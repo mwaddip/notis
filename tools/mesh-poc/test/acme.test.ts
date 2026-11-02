@@ -116,11 +116,12 @@ describe('acme — acmeSource reads the state directory', () => {
   });
 
   it('a leftover temp file beside a good certificate file is ignored', async () => {
-    // MESH_INTERFACE → The IP certificate — "The certificate and its key
-    // live under `<stateDir>/acme/`". A crash between writes leaves a temp
-    // name that the next start must not treat as the current certificate.
-    // The implementation writes `<stateDir>/acme/wss-cert.json` atomically
-    // through `tempname + rename`.
+    // MESH_INTERFACE → The IP certificate — the certificate and its
+    // key live under the node's state directory. A crash between
+    // writes leaves a temp name that the next start must not treat as
+    // the current certificate. The implementation writes
+    // `<stateDir>/acme/wss-cert.json` atomically through `tempname +
+    // rename`.
     const stateDir = mkdtempSync(join(tmpdir(), 'mesh-acme-'));
     dirs.push(stateDir);
     const acmeDir = join(stateDir, 'acme');

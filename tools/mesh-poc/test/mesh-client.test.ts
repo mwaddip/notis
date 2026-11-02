@@ -132,9 +132,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     })).toThrow(MeshConfigError);
   });
 
-  // MESH_INTERFACE → Discovery → "Seeds" — "a seed is a candidate like any node
-  // the DHT finds": a seed is in the client's node list as a non-anchor entry
-  // in `new` status, which `NodeList.candidates()` lists.
+  // MESH_INTERFACE → Discovery → "Seeds" — a seed is a candidate like
+  // any node the DHT finds: a seed is in the client's node list as a
+  // non-anchor entry in `new` status, which `NodeList.candidates()`
+  // lists.
   it('a seed is a candidate', async () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const seedKey = nodeKeyFromKeyPair(generateKeyPair());
@@ -229,10 +230,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 60_000);
 
   it('a node that leaves ok/trailing is named by lastLeft, with its reason', async () => {
-    // MESH_INTERFACE → The client's node list — "set after a check when
-    // a node that was `ok` or `trailing` before it is neither after it".
-    // Two anchors ok after check 1; A stops; after check 2 A moves to
-    // retry and `lastLeft` names A with its failure reason.
+    // MESH_INTERFACE → The client's node list → "A routed read goes to
+    // a node its need allows" — after a check, a node that was `ok` or
+    // `trailing` before it and is neither after it goes into
+    // `state.lastLeft` with its latest event. Two anchors ok after
+    // check 1; A stops; after check 2 A moves to retry and `lastLeft`
+    // names A with its failure reason.
     const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
     const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'mesh-client-a-')); dirs.push(dirA);
@@ -638,13 +641,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 30_000);
 
   it('one check at a time: a trigger during a check joins the in-flight one', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" —
-    // "one check at a time: a trigger during a check is that check."
-    // Three concurrent `check()` calls during an in-flight check must
-    // not start three runs — they all join the same promise. A hostile
-    // upstream holds its `/blocks/current` response on an external
-    // gate; while phase 2 waits, three checks are issued and all join
-    // the first — the upstream's server-side counter sees one request.
+    // MESH_INTERFACE → The client's node list → "A check" — the client
+    // runs one check at a time; a trigger that fires while a check is
+    // in flight is that check. Three concurrent `check()` calls during
+    // an in-flight check must not start three runs — they all join the
+    // same promise. A hostile upstream holds its `/blocks/current`
+    // response on an external gate; while the tip-read phase waits,
+    // three checks are issued and all join the first — the upstream's
+    // server-side counter sees one request.
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => { release = r; });
     let currentReads = 0;
@@ -690,11 +694,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(currentReads).toBe(1);
   }, 60_000);
 
-  // MESH_INTERFACE → Place in the workspace — "every timer capped at
-  // 2^31 − 1 ms". A unit case over the cap: a value past the ceiling
-  // folds down, a negative or `NaN` folds to zero, a legitimate value
-  // passes through. The whole-client timer path reaches `setTimeout`
-  // only after `cappedTimerMs` runs.
+  // Every timer the client sets runs through `cappedTimerMs`, which
+  // folds its argument into the 32-bit `setTimeout` range: a value
+  // past the ceiling folds down, a negative or `NaN` folds to zero, a
+  // legitimate value passes through. The whole-client timer path
+  // reaches `setTimeout` only after `cappedTimerMs` runs.
   it('every timer is capped at 2^31 − 1 ms', () => {
     expect(MAX_TIMER_MS).toBe(0x7fff_ffff);
     expect(cappedTimerMs(0)).toBe(0);
@@ -920,9 +924,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
   it('a key whose only open connection is limited is not read on', () => {
     // MESH_INTERFACE → The client's node list → "A read opens no
-    // connection" — "an open one, a direct one first, never a
-    // limited one". The strict read pick refuses the limited
-    // fallback: a connections list of only limited open ones reads
+    // connection" — "an open one, a direct one first, a relayed one
+    // when that is all there is, never a limited one". The strict
+    // read pick refuses the limited fallback: a connections list of
+    // only limited open ones reads
     // null, even when `direct` and the right peer. The display pick
     // (`pickConnectionForLabel`) answers the limited connection in
     // the same shape (its full matrix is in
@@ -989,9 +994,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 30_000);
 
   it('a node tied with the winner reads ok after a check', async () => {
-    // MESH_INTERFACE → The client's node list — "A valid proof whose
-    // tip is the tip — the best verified proof's, a tie included"
-    // reads `ok`. Both anchors verified `behind === 0`, both read ok.
+    // MESH_INTERFACE → The client's node list — the node-list table's
+    // first row: a tip the client's chain already holds at the tip
+    // reads `ok`, the winner and every verified tie with it. Both
+    // anchors verified `behind === 0`, both read ok.
     const upA = await chainUpstream(SHARED_CHAIN); ups.push(upA);
     const upB = await chainUpstream(SHARED_CHAIN); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'tie-a-')); dirs.push(dirA);
@@ -1174,10 +1180,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 120_000);
 
   it('lastLeft names any node that left ok/trailing', async () => {
-    // MESH_INTERFACE → The client's node list — "a node that was `ok`
-    // or `trailing` before [the check] and is neither after it". Three
-    // anchors ok after check 1; the second stops; after check 2 the
-    // second is in retry while the first stays `ok`, and `lastLeft`
+    // MESH_INTERFACE → The client's node list → "A routed read goes to
+    // a node its need allows" — the state carries, after a check, a
+    // node that was `ok` or `trailing` before it and is neither after
+    // it. Three anchors ok after check 1; the second stops; after
+    // check 2 the second is in retry while the first stays `ok`, and
+    // `lastLeft`
     // names the one that left.
     const upA = await chainUpstream(SHARED_CHAIN); ups.push(upA);
     const upB = await chainUpstream(SHARED_CHAIN); ups.push(upB);
@@ -1223,11 +1231,13 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 120_000);
 
   it('readMs is the tip read time of the latest check', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "it times
-    // each node's tip read; that time is the node's speed until the
-    // next check." The wrap times from fetch call to end of body — a
-    // time to headers alone would miss the transfer, which the
-    // delayed stub pins by holding the body back for 150 ms after it
+    // MESH_INTERFACE → The client's node list → "A check" — a check
+    // reads every candidate's tip, `GET /blocks/current`, timed from
+    // the request to the end of the body, and that time is the node's
+    // speed until the next check. The wrap times from fetch call to
+    // end of body — a time to headers alone would miss the transfer,
+    // which the delayed stub pins by holding the body back for 150 ms
+    // after it
     // sends the headers.
     const BODY_DELAY_MS = 150;
     const srv = createServer((req, res) => {
@@ -1463,12 +1473,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 60_000);
 
   it('the resolve seam receives a wall-clock now (reads > 1e12 ms)', async () => {
-    // MESH_INTERFACE → "Two clocks" — "the verifier reads the wall
-    // clock". `startMeshClient` hands its `wallClock` to the resolve
-    // seam; the retry clock stays monotonic. Phase 4 reads a proof
-    // only when a tip is unplaced, so the test seats a reachable mesh
-    // node and uses a stub resolve that captures the `now` the
-    // client passes.
+    // MESH_INTERFACE → "Two clocks" — "The verifier reads the wall
+    // clock" — a header's stamp is wall-clock time. `startMeshClient`
+    // hands its `wallClock` to the resolve seam; the retry clock stays
+    // monotonic. The proof read runs only when a tip is unplaced, so
+    // the test seats a reachable mesh node and uses a stub resolve
+    // that captures the `now` the client passes.
     const up = await chainUpstream(SHARED_CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'wc-')); dirs.push(dir);
     const started = await startNode(up, dir); nodes.push(started.node);
@@ -1528,20 +1538,22 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 60_000);
 
   it('a routed read during a check still picks by the previous check\'s speeds', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "it times
-    // each node's tip read; that time is the node's speed until the
-    // next check." A speed holds until the next check writes a fresh
-    // one. The test holds the second check's `/blocks/current` reads
-    // on a server-side gate; during the hold, a routed `older` read
-    // with random=0.99 (which picks the last of the fast set) must
-    // reach A — the fast node from the first check — not B, the slow
-    // one. A map cleared before the new readings land spreads the
-    // pick to both A and B and random=0.99 lands on B instead.
-    // A is the fast tip reader, B the slow one; both serve the same
-    // chain so each is `ok` after the first check. The second check
-    // holds A's `/blocks/current` on an external gate; during the
-    // hold the routed `older` read reads from the previous check's
-    // readMs values — the fast set is [A] and random=0.99 picks A.
+    // MESH_INTERFACE → The client's node list → "A check" — a check
+    // reads every candidate's tip, `GET /blocks/current`, timed from
+    // the request to the end of the body, and that time is the node's
+    // speed until the next check. A speed holds until the next check
+    // writes a fresh one. The test holds the second check's
+    // `/blocks/current` reads on a server-side gate; during the hold,
+    // a routed `older` read with random=0.99 (which picks the last of
+    // the fast set) must reach A — the fast node from the first check
+    // — not B, the slow one. A map cleared before the new readings
+    // land spreads the pick to both A and B and random=0.99 lands on
+    // B instead. A is the fast tip reader, B the slow one; both serve
+    // the same chain so each is `ok` after the first check. The
+    // second check holds A's `/blocks/current` on an external gate;
+    // during the hold the routed `older` read reads from the previous
+    // check's readMs values — the fast set is [A] and random=0.99
+    // picks A.
     // Without the fix the live map is cleared, the fast set is [A, B],
     // and random=0.99 picks B.
     const BODY_DELAY_MS = 300;

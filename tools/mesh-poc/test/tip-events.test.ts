@@ -54,11 +54,11 @@ describe('tipEvent', () => {
   });
 
   it('a tie with the winner is success, not behind', () => {
-    // MESH_INTERFACE → The client's node list — "A valid proof whose
-    // tip is the tip — the best verified proof's, a tie included"
-    // reads `ok`. `resolveTip` writes `behind === 0` for every
-    // verified node whose tip the winner's suffix carries at distance
-    // 0, winner included.
+    // MESH_INTERFACE → The client's node list — the node-list table's
+    // first row: a tip the client's chain already holds at the tip
+    // reads `ok`, the winner and every verified tie with it.
+    // `resolveTip` writes `behind === 0` for every verified node whose
+    // tip the winner's suffix carries at distance 0, winner included.
     const r = result(
       [
         node(idA, { verified: true, refuseCode: null, behind: 0 }),

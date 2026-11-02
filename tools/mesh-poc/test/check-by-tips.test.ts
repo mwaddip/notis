@@ -214,13 +214,14 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 180_000);
 
   it('a tip above the client\'s is read down and linked', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "above —
-    // read down to a held header as a fill is, the client's tip moving
-    // when they link". The highest named height's fill runs first,
-    // from the client's tip as it then stands; a lower `above` tip
-    // placed by that fill is read from the extended chain. A at K+2,
-    // B at K+4: B's fill moves the chain to K+4; A reads `behind` as a
-    // place two below the new tip; no proof read.
+    // MESH_INTERFACE → The client's node list → "The client's chain" —
+    // a fill reads the serving node's headers by height from its tip
+    // down to the client's, the client's tip moving when the fill
+    // links. The highest named height's fill runs first, from the
+    // client's tip as it then stands; a lower `above` tip placed by
+    // that fill is read from the extended chain. A at K+2, B at K+4:
+    // B's fill moves the chain to K+4; A reads `behind` as a place two
+    // below the new tip; no proof read.
     const base = makeLinkedChain(K + 4, PROFILE);
     const start = base.slice(0, K + 1);     // tip at K+1
     const oneAbove = base.slice(0, K + 2);  // A: one block above start
@@ -320,9 +321,9 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 240_000);
 
   it('an unplaced tip reads its proof and the client\'s own, own first', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "while the
-    // chain is settled, the URL of the first node at the client's tip
-    // first" so a tie keeps the chain.
+    // MESH_INTERFACE → The client's node list → "A check" — while the
+    // client holds a chain, its own tip's proof from a node at its tip
+    // is handed to `resolveTip` first so a tie keeps the chain.
     const chainA = makeLinkedChain(K + 1, PROFILE);
     const chainB = makeLinkedChain(K + 1, PROFILE); // fork
     const upA = await chainUpstream(chainA); ups.push(upA);
@@ -402,8 +403,10 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 60_000);
 
   it('a header that does not read is the serving node\'s lie', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "A header
-    // that does not read is the serving node's `malformed` lie".
+    // MESH_INTERFACE → The client's node list → "The client's chain" —
+    // a fill reads headers each held to its work, its schedule and its
+    // link; a header that does not read lands as the serving node's
+    // `malformed` lie through the node-list table's lie row.
     const base = makeLinkedChain(K + 2, PROFILE);
     const start = base.slice(0, K + 1); // settle here
     // A hostile upstream: /blocks/current claims tip above the client's,
@@ -463,10 +466,11 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 180_000);
 
   it('speed is the tip read\'s time', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "it times
-    // each node's tip read; that time is the node's speed until the
-    // next check". `readMs` is set from `/blocks/current` through the
-    // timed fetch, not from the proof read.
+    // MESH_INTERFACE → The client's node list → "A check" — a check
+    // reads every candidate's tip, `GET /blocks/current`, timed from
+    // the request to the end of the body, and that time is the node's
+    // speed until the next check. `readMs` is set from the timed
+    // fetch, not from the proof read.
     const chain = makeLinkedChain(K + 1, PROFILE);
     const BODY_DELAY_MS = 150;
     const tipHeader = chain[chain.length - 1]!.header;
@@ -989,10 +993,12 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 180_000);
 
   it('speed is the tip read\'s even when a header read follows', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "it times
-    // each node's tip read; that time is the node's speed until the
-    // next check". A header read for an `above` fill through the same
-    // timed fetch must not overwrite the node's speed.
+    // MESH_INTERFACE → The client's node list → "A check" — a check
+    // reads every candidate's tip, `GET /blocks/current`, timed from
+    // the request to the end of the body, and that time is the node's
+    // speed until the next check. A header read for an `above` fill
+    // through the same timed fetch must not overwrite the node's
+    // speed.
     const base = makeLinkedChain(K + 2, PROFILE);
     const start = base.slice(0, K + 1);
     const ext = base.slice(0, K + 2);
@@ -1129,8 +1135,9 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 240_000);
 
   it('a kept verdict is forgotten once no node names its tip', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "a hash
-    // leaves when no node named it at a check". A node on a lighter
+    // MESH_INTERFACE → The client's node list → "A check" — the client
+    // keeps a tip's verdict while the chain stands, and a kept hash
+    // leaves when no node names it at a check. A node on a lighter
     // fork names H1 (read, kept), then names H2 for a check (so H1
     // leaves at the end-of-check sweep), then names H1 again — H1's
     // proof is read anew, from the node naming it and the client's
@@ -1257,10 +1264,12 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 240_000);
 
   it('a switch drops the kept verdicts', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "the kept
-    // verdicts are dropped when the chain switches". After a heavier
-    // chain wins and the chain switches, a node naming a tip lost
-    // against the old chain is read again on the next check.
+    // MESH_INTERFACE → The client's node list → "A check" — a tip whose
+    // proof verified and lost keeps its verdict while the client's
+    // chain stands; when the chain switches the kept verdicts fall
+    // away. After a heavier chain wins and the chain switches, a node
+    // naming a tip lost against the old chain is read again on the
+    // next check.
     const chainMain = makeLinkedChain(K + 2, PROFILE);     // initial
     const chainFork = makeLinkedChain(K + 1, PROFILE);     // lighter, lost
     const chainHeavier = makeLinkedChain(K + 5, PROFILE);  // triggers the switch
@@ -1469,11 +1478,12 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 180_000);
 
   it('a check with no candidate schedules no other at once', async () => {
-    // MESH_INTERFACE → The client's node list — "one check at a time:
-    // a trigger during a check is that check". A check that reaches
-    // phase 6 with no candidate throws `MeshFetchError` and triggers
-    // an immediate check; the trigger must see the running check and
-    // not schedule a 0 ms recurrence.
+    // MESH_INTERFACE → The client's node list — the client runs one
+    // check at a time; a trigger that fires while a check is in flight
+    // is that check. A check that reaches the routed tip read with no
+    // candidate throws `MeshFetchError` and triggers an immediate
+    // check; the trigger must see the running check and not schedule
+    // a 0 ms recurrence.
     const built = await handBuilt((req, res) => {
       if (req.url === '/blocks/current') {
         (res as unknown as { destroy(): void }).destroy();

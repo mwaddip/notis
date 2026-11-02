@@ -31,9 +31,9 @@ import {
 } from '../stage/lib/verdicts.mjs';
 
 describe('skipped — missing measurement', () => {
-  // MESH_INTERFACE → Acceptance — "a step that did not run — or ran and
-  // recorded nothing — reads `skipped`, never `PASS`". Every verdict
-  // reads `null`, `undefined` and an empty object as `skipped`.
+  // MESH_INTERFACE → Acceptance — a step that did not run reads
+  // `skipped`, never a pass. Every verdict reads `null`, `undefined`
+  // and an empty object as `skipped`.
   const verdicts: ReadonlyArray<[string, (m: unknown) => string]> = [
     ['verdictS1Node', verdictS1Node],
     ['verdictS1Probe', verdictS1Probe],
@@ -690,10 +690,11 @@ describe('verdictS8NoProofs — no proof is read across five checks and every ho
 });
 
 describe('verdictS8Gossip — three new blocks reach the browser quickly, no check moved them', () => {
-  // MESH_INTERFACE → Acceptance 8 — "at least two of the three
-  // reached the client within 5 s with `checks` unchanged". A delivery
-  // is a (height, delayMs, checksMoved) record; PASS requires two of
-  // three to carry delayMs ≤ 5000 AND checksMoved === false.
+  // MESH_INTERFACE → Acceptance 8 — a block mined on a node reaches
+  // the browser by gossip through a mesh service and moves the
+  // client's tip before its next check. A delivery is a (height,
+  // delayMs, checksMoved) record; PASS requires two of three to carry
+  // delayMs ≤ 5000 AND checksMoved === false.
   const PASS = {
     deliveries: [
       { height: 42, delayMs: 1_200, checksMoved: false },
@@ -763,13 +764,13 @@ describe('verdictS8Gossip — three new blocks reach the browser quickly, no che
 });
 
 describe('verdictS8Fork — the lagging fork is behind; the client stays on the heavier chain', () => {
-  // MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
-  // proof read at the next check — one per distinct tip, and the
-  // client's own — and the heavier chain is the client's". PASS when
-  // lagging reads `behind`, client's tip hash equals pub1's node's
-  // hash at that height, and the check that read lagging raised
-  // proofReads by exactly two (lagging + own tip; the one check in
-  // which lagging's tip was the one tip not on the chain).
+  // MESH_INTERFACE → Acceptance 8 — a node on another chain has its
+  // proof read when its tip moves, with the client's own, and the
+  // client's tip stays the honest chain's. PASS when lagging reads
+  // `behind`, client's tip hash equals pub1's node's hash at that
+  // height, and the check that read lagging raised proofReads by
+  // exactly two (lagging + own tip; the one check in which lagging's
+  // tip was the one tip not on the chain).
   const PASS = {
     laggingStatus: 'behind',
     clientTipHash: 'ab'.repeat(32),
