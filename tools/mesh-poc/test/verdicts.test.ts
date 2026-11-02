@@ -633,6 +633,43 @@ describe('verdictS8NoProofs — no proof is read across five checks and every ho
       ],
     })).toBe('FAIL');
   });
+  // A node the client's list does not hold names no tip to it: `absent` is not judged.
+  const MEASURED = {
+    proofReadsBaseline: 1,
+    proofReadsFinal: 1,
+    checksBaseline: 1,
+    checksFinal: 6,
+    honestNodeStatuses: [
+      { notisId: 'edd6cabcde08ce2a0bd4d1b91fe59daaec1f2da4d5eff15e053ecf884449d4fe', status: 'ok' },
+      { notisId: '031f99957be4f37bffc2078dc64ceeab3463066625b339112d0d51244a0f7a06', status: 'ok' },
+      { notisId: '0a253dcbd57b58744b105f78d4f4d0d77a3287c28229ccd8b61e8096b61faffe', status: 'absent' },
+      { notisId: '86ccc280fe7e406b86c4cba71201a617d1720e9976e0114e5f7744addab9d81a', status: 'absent' },
+    ],
+  };
+  it.fails('two held nodes ok, two absent (a measured step 1) → PASS', () => {
+    expect(verdictS8NoProofs(MEASURED)).toBe('PASS');
+  });
+  it('one held honest node in retry beside absent entries → FAIL', () => {
+    expect(verdictS8NoProofs({
+      ...MEASURED,
+      honestNodeStatuses: [
+        { notisId: 'a'.repeat(64), status: 'ok' },
+        { notisId: 'b'.repeat(64), status: 'ok' },
+        { notisId: 'c'.repeat(64), status: 'retry' },
+        { notisId: 'd'.repeat(64), status: 'absent' },
+      ],
+    })).toBe('FAIL');
+  });
+  it('fewer than two held reads (one ok, the rest absent) → FAIL', () => {
+    expect(verdictS8NoProofs({
+      ...MEASURED,
+      honestNodeStatuses: [
+        { notisId: 'a'.repeat(64), status: 'ok' },
+        { notisId: 'b'.repeat(64), status: 'absent' },
+        { notisId: 'c'.repeat(64), status: 'absent' },
+      ],
+    })).toBe('FAIL');
+  });
   it('a honest node reads blacklisted → FAIL', () => {
     expect(verdictS8NoProofs({
       ...PASS,
