@@ -151,9 +151,9 @@ export function startNodePeer(
         const frame = buildHandshakeFrame(opts.magic, msg);
         // libp2p 3.x streams carry `send(data) → boolean` and
         // `onDrain()` for the write side; a false return parks on
-        // the muxer's send window. `abort(err)` discards unsent and
-        // unread data and makes a pending read reject (@libp2p/interface
-        // → MessageStream → "abort"). Half-close the writable end so
+        // the muxer's send window. libp2p's `MessageStream.abort(err)`
+        // discards unsent and unread data and makes a pending read
+        // reject. Half-close the writable end so
         // the reader on the other side sees EOF of our frame.
         const streamApi = stream as unknown as {
           send: (b: Uint8Array) => boolean;
