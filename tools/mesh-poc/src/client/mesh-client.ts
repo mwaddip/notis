@@ -327,9 +327,9 @@ export interface MeshClient {
    * MESH_INTERFACE → NAT → "A client's STUN list comes from the public
    * nodes it holds" — the ICE configuration the webRTC transport reads
    * at each dial, derived from the client's current node entries. Never
-   * `undefined` `iceServers` (traps file, "The mesh and its stage"):
-   * libp2p falls back to DNS-named defaults when `iceServers` is
-   * absent, so the function always answers `{ iceServers: [...] }`,
+   * `undefined` `iceServers`: libp2p falls back to DNS-named defaults
+   * when `iceServers` is absent, so the function always answers
+   * `{ iceServers: [...] }`,
    * including an empty array when no public node is held.
    */
   iceConfiguration(): { iceServers: RTCIceServer[] };

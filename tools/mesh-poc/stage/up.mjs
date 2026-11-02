@@ -59,9 +59,8 @@ if (!INVOKING_USER) {
 
 // MESH_INTERFACE → Acceptance — Pebble v2.8.0's linux-amd64 release as the
 // tar.gz archive the project publishes; the inner binary is at
-// `pebble-linux-amd64/linux/amd64/pebble`. The SHA-256 was computed by
-// downloading the archive once (see `prompts/mesh-poc-t9-REPORT.md` for
-// the URL and the command).
+// `pebble-linux-amd64/linux/amd64/pebble`. The SHA-256 is the archive's at
+// `PEBBLE_URL`.
 const PEBBLE_VERSION = 'v2.8.0';
 const PEBBLE_URL = `https://github.com/letsencrypt/pebble/releases/download/${PEBBLE_VERSION}/pebble-linux-amd64.tar.gz`;
 const PEBBLE_SHA256 = '34595d915bbc2fc827affb3f58593034824df57e95353b031c8d5185724485ce';
