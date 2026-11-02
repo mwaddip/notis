@@ -20,3 +20,7 @@ export function verdictS7Spread(m: unknown): Verdict;
 export function verdictS7Fastest(m: unknown): Verdict;
 export function verdictS7Lan(m: unknown): Verdict;
 export function verdictS7Counts(m: unknown): Verdict;
+export function verdictS8NoProofs(m: unknown): Verdict;
+export function verdictS8Gossip(m: unknown): Verdict;
+export function verdictS8Fork(m: unknown): Verdict;
+export function verdictS8Gap(m: unknown): Verdict;

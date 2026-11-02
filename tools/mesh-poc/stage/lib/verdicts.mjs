@@ -446,3 +446,64 @@ export function verdictS7Counts(m) {
   if (typeof m.onChainAnchors !== 'number' || m.onChainAnchors < 1) return 'FAIL';
   return 'PASS';
 }
+
+// MESH_INTERFACE → Acceptance 8 — "After the first check, no proof is
+// read across five checks while every node names a tip on the
+// client's chain". PASS when `proofReadsFinal === proofReadsBaseline`
+// across at least five completed checks and every honest node in the
+// client's node list reads `ok`, `trailing` or `behind` at the final
+// state (the chain is settled, no node is in `retry` or
+// `blacklisted`).
+// Measurement:
+//   `{ proofReadsBaseline, proofReadsFinal, checksBaseline, checksFinal,
+//      honestNodeStatuses: Array<{ notisId, status }> }`.
+export function verdictS8NoProofs(m) {
+  if (missing(m)) return 'skipped';
+  return 'skipped';
+}
+
+// MESH_INTERFACE → Acceptance 8 — "a block mined on a node reaches
+// the browser by gossip through a mesh service and moves the client's
+// tip before its next check". PASS when at least two of the three
+// consecutive new blocks reached the client within 5 s with the check
+// counter unchanged over the delivery window (a check every 30 s
+// cannot carry a block that short; one delivery that coincides with a
+// check says nothing either way, so the two-of-three threshold holds).
+// Measurement:
+//   `{ deliveries: Array<{ height, delayMs, checksMoved }> }`.
+export function verdictS8Gossip(m) {
+  if (missing(m)) return 'skipped';
+  return 'skipped';
+}
+
+// MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
+// proof read at the next check — one per distinct tip, and the
+// client's own — and the heavier chain is the client's". PASS when
+// the lagging node reads `behind` (never blacklisted); the client's
+// tip hash equals pub1's node's block hash at that height; and the
+// check that read the lagging node's tip raised `proofReads` by
+// exactly two (the lagging node's proof plus the client's own tip
+// proof — the one check in which the lagging node's tip was the one
+// tip not on the chain).
+// Measurement:
+//   `{ laggingStatus, clientTipHash, pub1BlockHashAtClientHeight,
+//      proofReadsDeltaAtCheck }`.
+export function verdictS8Fork(m) {
+  if (missing(m)) return 'skipped';
+  return 'skipped';
+}
+
+// MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for three
+// blocks and restored, its tip catches up by headers with no proof
+// read". PASS when the client's tip caught up to within one block of
+// pub1's current tip, the tip actually moved past the firewalled
+// baseline (positive evidence of catch-up — a vacuous "already there"
+// reads FAIL), and `proofReads` did not move across the firewall
+// window.
+// Measurement:
+//   `{ proofReadsBefore, proofReadsAfter, tipHeightBefore,
+//      tipHeightFinal, pub1HeightFinal }`.
+export function verdictS8Gap(m) {
+  if (missing(m)) return 'skipped';
+  return 'skipped';
+}
