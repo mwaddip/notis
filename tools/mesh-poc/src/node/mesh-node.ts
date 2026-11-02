@@ -101,7 +101,7 @@ export interface MeshNodeOptions {
   readonly relayRetryBaseMs?: number;
   readonly relayRetryCapMs?: number;
   /**
-   * MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
+   * MESH_INTERFACE → NAT — "Every STUN server is a mesh node named by
    * IP". A private node's WebRTC transport gathers ICE candidates
    * against the public nodes' STUN by IP; `stunServers` holds the
    * `stun:<ip>:<port>` URLs the stage builds from `MESH_STUN_SERVERS`
@@ -216,9 +216,9 @@ export async function startMeshNode(opts: MeshNodeOptions): Promise<MeshNode> {
 
   const clientMode = opts.role === 'private';
   const listen = [...opts.listen];
-  // MESH_INTERFACE → NAT — "A private node ... takes relay reservations
-  // on public nodes and is reached through them". libp2p 3.5's
-  // circuit-relay listener keys off the listen address's shape
+  // MESH_INTERFACE → NAT — a private node takes a relay reservation on
+  // each public node it is told of and is reached through them. libp2p
+  // 3.5's circuit-relay listener keys off the listen address's shape
   // (`@libp2p/circuit-relay-v2/src/transport/listener.ts`): a bare
   // `/p2p-circuit` triggers RelayDiscovery (a DHT walk / discovery
   // topology / peer-store scan) whose timing varies, while a

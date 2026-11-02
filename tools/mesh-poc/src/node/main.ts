@@ -110,7 +110,7 @@ function parseWss(
   return { ip: host, port, source };
 }
 
-// MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
+// MESH_INTERFACE → NAT — "Every STUN server is a mesh node named by
 // IP". `MESH_STUN_SERVERS` reads a comma-separated list of
 // `stun:<ip>:<port>` URLs; each is refused if it names a hostname
 // (same rule as the client's `assertClientConfig`). Private-only;

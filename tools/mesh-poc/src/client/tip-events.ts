@@ -1,14 +1,15 @@
 // MESH_INTERFACE → The client's node list — the event for one node
 // that `resolveTip` answers, keyed by the id read from the node's mesh URL:
 // a verified node with `behind === 0` is success (the winner, or a
-// tie with it); `behind === 1` is trailing (one block behind on the
-// tip's chain); any other verified node, and `too-short`, is behind,
-// the chain not yet at the tip or not long enough to prove;
-// `unreachable` is a failure of kind `transport`; `http` is a failure
-// of kind `refused`; `invalid` with `verifyResult.reason === 'clock'`
-// is a failure of kind `clock` — "a proof refused by the clock check
-// alone is a failure, never a lie" (MESH_INTERFACE → The client's
-// node list, the clock row); `invalid` with any other proof-verifier
+// tie with it); `behind === 1` is trailing (the tip it names is one
+// block below the client's tip); any other verified node, and
+// `too-short`, is behind, the chain not yet at the tip or not long
+// enough to prove; `unreachable` is a failure of kind `transport`;
+// `http` is a failure of kind `refused`; `invalid` with
+// `verifyResult.reason === 'clock'` is a failure of kind `clock` — the
+// clock row of the node-list table says a proof refused by the
+// client's clock check alone is `retry`, never a lie (MESH_INTERFACE →
+// The client's node list); `invalid` with any other proof-verifier
 // reason is a lie of kind `proof-invalid`; `invalid` without a proof
 // is a lie of kind `malformed`.
 //
@@ -28,14 +29,14 @@ export type TipEvent =
 
 export function tipEvent(id: string, node: NodeTipResult, nowMs: number): TipEvent {
   if (node.verified) {
-    // MESH_INTERFACE → The client's node list — "A valid proof whose
-    // tip is the tip — the best verified proof's, a tie included" is
-    // `ok`; `behind === 0` is that condition over `TipResult`'s
-    // `behind` (the winner itself and every verified node whose tip
-    // the winner's suffix carries at distance 0). "One block short of
-    // the tip, on the tip's chain" is trailing. Any other verified
-    // node — further behind, or off the winner's suffix (`behind` is
-    // `null`) — is `behind`.
+    // MESH_INTERFACE → The client's node list — the node-list table
+    // reads `ok` where the tip a node names is the client's tip, and
+    // `trailing` one block below it. `behind === 0` is the first row's
+    // condition over `TipResult`'s `behind` (the winner itself and
+    // every verified node whose tip the winner's suffix carries at
+    // distance 0); `behind === 1` is the trailing row's. Any other
+    // verified node — further behind, or off the winner's suffix
+    // (`behind` is `null`) — is `behind`.
     if (node.behind === 0) return { id, ev: 'success' };
     if (node.behind === 1) return { id, ev: 'trailing' };
     return { id, ev: 'behind' };

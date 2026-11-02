@@ -60,12 +60,12 @@ export interface NodeEntry {
   failures: number;
   retryAtMs: number;
   /**
-   * MESH_INTERFACE → The client's node list → "A check" — "it times
-   * each node's proof read; that time is the node's speed until the
-   * next check." Written by the client's decoration pass from the
-   * latest check's measurement; `null` from the list, and `null` until
-   * a check has timed a proof read for this key, or after a failed
-   * read.
+   * MESH_INTERFACE → The client's node list → "A check" — a check reads
+   * every candidate's tip timed from the request to the end of the
+   * body, and that time is the node's speed until the next check.
+   * Written by the client's decoration pass from the latest check's
+   * measurement; `null` from the list, and `null` until a check has
+   * timed a tip read for this key, or after a failed read.
    */
   readMs: number | null;
   /**
@@ -269,8 +269,10 @@ export class NodeList {
     e.failures = 0;
     e.storedRetryAtMs = 0;
     e.status = 'ok';
-    // MESH_INTERFACE → The client's node list — "cleared on success":
-    // a node that answers again clears the diagnostic that was on it.
+    // MESH_INTERFACE → The client's node list → "An entry keeps its last
+    // failure's kind and message" — the entry keeps the diagnostic for
+    // the page to show while the node is in `retry`; a success clears
+    // it.
     e.lastFailure = null;
     e.lastFailures = {};
   }
@@ -329,10 +331,11 @@ export class NodeList {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list — the "one block behind on
-   * the tip's chain" row. Mirrors `behind`: resets the retry schedule
-   * and the failure count, leaves evidence and dropped addresses
-   * alone, and a `blacklisted` entry is unchanged.
+   * MESH_INTERFACE → The client's node list — the entry row for a node
+   * whose tip is one block below the client's tip. Mirrors `behind`:
+   * resets the retry schedule and the failure count, leaves evidence
+   * and dropped addresses alone, and a `blacklisted` entry is
+   * unchanged.
    */
   trailing(id: string): void {
     assertNotisId(id);

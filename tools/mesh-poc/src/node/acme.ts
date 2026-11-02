@@ -170,11 +170,12 @@ export function acmeSource(o: {
 
       // The challenge server binds to `o.ip` (not every interface) and the
       // configured `challengePort`. `MESH_INTERFACE → The IP certificate`
-      // reads "port 80 of the IP" and the stage's ACME server reaches
-      // whichever port the operator opts in on; the server's own
-      // validation (surfaced by `waitForValidStatus`) is the authoritative
-      // check and `client.verifyChallenge`'s local self-check is skipped:
-      // its `http://<ip>/…` always lands on port 80.
+      // names the `http-01` challenge on port 80 of that IP, and the
+      // stage's ACME server reaches whichever port the operator opts in
+      // on; the server's own validation (surfaced by `waitForValidStatus`)
+      // is the authoritative check and `client.verifyChallenge`'s local
+      // self-check is skipped: its `http://<ip>/…` always lands on
+      // port 80.
       const tokens = new Map<string, string>();
       const challengeServer = createServer((req, res) => {
         const prefix = '/.well-known/acme-challenge/';

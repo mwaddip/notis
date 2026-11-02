@@ -17,12 +17,13 @@ import type { NodeEntry } from '../src/client/node-list.js';
 const NO_ANCHOR_WORDS = 'No anchor reached. Nothing shown here is verified.';
 
 export function render(state: ClientState, root: HTMLElement): void {
-  // MESH_INTERFACE → Acceptance → "No name, no hosted page" — the
-  // stage's CDP reads `<pre id="probe">` for its byte-for-byte check.
-  // The state renderer owns one subtree under `#root` (a `<div
-  // data-role="state-root">`) and the probe owns `<pre id="probe">` as
-  // a sibling; a render replaces its own container's children, leaving
-  // the probe in place.
+  // MESH_INTERFACE → Acceptance 1 — the mesh's answers equal the
+  // node's direct HTTP answers byte for byte, and the stage's CDP
+  // reads `<pre id="probe">` for that byte-for-byte check. The state
+  // renderer owns one subtree under `#root` (a `<div
+  // data-role="state-root">`) and the probe owns `<pre id="probe">`
+  // as a sibling; a render replaces its own container's children,
+  // leaving the probe in place.
   let container = root.querySelector(':scope > [data-role="state-root"]') as HTMLElement | null;
   if (container === null) {
     container = document.createElement('div');
@@ -60,9 +61,10 @@ export function render(state: ClientState, root: HTMLElement): void {
 }
 
 function renderAgreement(state: ClientState): HTMLElement {
-  // MESH_INTERFACE → No anchor reached → "The agreement counts" —
-  // "the page says `On this chain` … `Not on this chain's last 20
-  // blocks`"; before the first check it reads `On this chain: —`.
+  // MESH_INTERFACE → No anchor reached → "The agreement counts" — the
+  // page shows `On this chain` and `Not on this chain's last 20
+  // blocks` after each check; before the first check it reads `On
+  // this chain: —`.
   const div = document.createElement('div');
   div.setAttribute('data-role', 'agreement');
   if (state.agreement === null) {
