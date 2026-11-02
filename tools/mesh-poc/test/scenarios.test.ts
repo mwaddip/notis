@@ -12,6 +12,7 @@ import * as s4 from '../stage/scenarios/s4-transport-cut.mjs';
 import * as s5 from '../stage/scenarios/s5-impersonation.mjs';
 import * as s6 from '../stage/scenarios/s6-hostile.mjs';
 import * as s7 from '../stage/scenarios/s7-reach-and-load.mjs';
+import * as s8 from '../stage/scenarios/s8-prove-once.mjs';
 
 const TOPOLOGY = {
   network: 'devnet',
@@ -415,5 +416,108 @@ describe('s7 (reach and load)', () => {
     const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / tc qdisc del /.test(f));
     expect(adds.length, 'one netem add').toBe(1);
     expect(dels.length, 'one netem del').toBe(1);
+  });
+});
+
+describe('s8 (prove once, follow by gossip)', () => {
+  it('describe() lists four steps: no proof, gossip delivery, fork, gap filled by headers', () => {
+    const names = s8.describe();
+    expect(names.length).toBe(4);
+    expect(names[0]).toMatch(/no proof/);
+    expect(names[1]).toMatch(/gossip/);
+    expect(names[2]).toMatch(/lagging/);
+    expect(names[3]).toMatch(/catches up by headers|gap/);
+  });
+  it('s8GapFirewallArgs builds a table + chain + per-mesh-host drop + delete-table inside the browser namespace', () => {
+    const a = s8.s8GapFirewallArgs(TOPOLOGY);
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    // The test TOPOLOGY carries pub1 and pub2 — both have `mesh` and
+    // an `addr`, so two drops are built.
+    expect(a.drops.length, 'one drop per mesh host with an addr').toBe(2);
+    for (const { name, argv } of a.drops) {
+      expect(typeof name).toBe('string');
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+      expect(argv.join(' ')).toMatch(/nft add rule ip s8_gap out ip daddr \d+\.\d+\.\d+\.\d+ drop/);
+    }
+    expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_gap');
+  });
+  it('run({dryRun:true}) emits the gap table + per-host drops + the one delete and four skipped steps', async () => {
+    const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
+    expect(r.scenario).toBe('s8');
+    expect(r.steps.length).toBe(4);
+    for (const step of r.steps) expect(step.verdict).toBe('skipped');
+    const adds = r.faults.filter((f: string) => / nft add /.test(f) && !f.includes('[fault:remove'));
+    const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / nft delete table /.test(f));
+    expect(adds.length, 'one table + one chain + one drop per mesh host').toBeGreaterThanOrEqual(3);
+    expect(dels.length, 'one table delete (removes every drop)').toBe(1);
+  });
+  // MESH_INTERFACE → Acceptance 8 — the four tracker predicates and
+  // their expression-builders run under the live cdp.mjs runtime
+  // (`buildPredicate`, no `window` in scope), so a case holds the
+  // same JSON shape the live stage would carry on `#state`.
+  it('S8_GOSSIP_PREDICATE (via buildPredicate) is false until the tracker has four tip records', () => {
+    const fn = buildPredicate(s8.S8_GOSSIP_PREDICATE);
+    expect(fn(null)).toBe(false);
+    expect(fn(JSON.stringify([]))).toBe(false);
+    expect(fn(JSON.stringify([{ height: 1, atMs: 0, checks: 1 }, { height: 2, atMs: 1, checks: 1 }, { height: 3, atMs: 2, checks: 1 }]))).toBe(false);
+    expect(fn(JSON.stringify([
+      { height: 1, atMs: 0, checks: 1 },
+      { height: 2, atMs: 1_000, checks: 1 },
+      { height: 3, atMs: 2_000, checks: 1 },
+      { height: 4, atMs: 3_000, checks: 1 },
+    ]))).toBe(true);
+  });
+  it('S8_NOPROOFS_PREDICATE is true only once the tracker\'s final record is written', () => {
+    const fn = buildPredicate(s8.S8_NOPROOFS_PREDICATE);
+    expect(fn(null)).toBe(false);
+    expect(fn(JSON.stringify({ base: null, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: { checks: 2, proofReads: 4 }, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({
+      base: { checks: 2, proofReads: 4 },
+      final: { checks: 7, proofReads: 4, honestNodeStatuses: [{ notisId: 'a'.repeat(64), status: 'ok' }] },
+    }))).toBe(true);
+  });
+  it('S8_FORK_PREDICATE is true only once the tracker records the two-proof check', () => {
+    const fn = buildPredicate(s8.S8_FORK_PREDICATE);
+    expect(fn(null)).toBe(false);
+    expect(fn(JSON.stringify({ base: null, final: null, laggingId: 'c'.repeat(64) }))).toBe(false);
+    expect(fn(JSON.stringify({
+      base: { checks: 3, proofReads: 10 },
+      final: {
+        laggingStatus: 'behind', laggingBehindBy: 2,
+        clientTipHash: 'ab'.repeat(32), clientTipHeight: 42,
+        proofReadsDeltaAtCheck: 2,
+      },
+      laggingId: 'c'.repeat(64),
+    }))).toBe(true);
+  });
+  it('S8_GAP_PREDICATE is true only once the tracker records the catch-up', () => {
+    const fn = buildPredicate(s8.S8_GAP_PREDICATE);
+    expect(fn(null)).toBe(false);
+    expect(fn(JSON.stringify({ base: null, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: { tipHeight: 100, proofReads: 6, atMs: 0 }, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({
+      base: { tipHeight: 100, proofReads: 6, atMs: 0 },
+      final: { tipHeight: 104, proofReads: 6, atMs: 60_000 },
+    }))).toBe(true);
+  });
+  // MESH_INTERFACE → Acceptance 8 — the expression-builders substitute
+  // the honest-id set and the lagging node's id into the live page's
+  // tracker; the substitutions use `JSON.stringify` so a notisId with
+  // special characters cannot break the expression. A hex notisId
+  // round-trips through `JSON.stringify` as a quoted string.
+  it('buildS8NoProofsExpression embeds the honestIds as a JSON array', () => {
+    const ids = ['a'.repeat(64), 'b'.repeat(64)];
+    const expr = s8.buildS8NoProofsExpression(ids);
+    expect(expr).toContain(JSON.stringify(ids));
+    expect(expr).toContain('__s8NP');
+  });
+  it('buildS8ForkExpression embeds the laggingId as a JSON string', () => {
+    const id = 'c'.repeat(64);
+    const expr = s8.buildS8ForkExpression(id);
+    expect(expr).toContain(JSON.stringify(id));
+    expect(expr).toContain('__s8F');
   });
 });
