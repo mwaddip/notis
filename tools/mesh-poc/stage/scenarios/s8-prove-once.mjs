@@ -486,18 +486,29 @@ export const S8_FORK_PREDICATE = `if (v === null) return false;
 // `jump >= 3`); `fillJump` is the intermediate the state carries
 // between the fill and the next tip change.
 //
-// `s8GapObserve` is pure (no DOM, no clock, no `window` access) so
-// the Node suite drives it with a sequence of simulated `#state`
-// snapshots and reads the resulting state's `final` field.
-export function s8GapObserve(prev, s) {
+// `s8GapObserve` is pure (no DOM, no `window` access; the wall clock
+// is `nowMs`, read once per call by the caller) so the Node suite
+// drives it with a sequence of simulated `#state` snapshots and
+// reads the resulting state's `tipHist` and `final` fields.
+// `tipHist` records every tip change past the baseline — height,
+// atMs, checks, proofReads — so a run shows the whole sequence,
+// including a tip that goes back.
+export function s8GapObserve(prev, s, nowMs) {
   if (s === null || typeof s !== 'object') return prev;
   if (typeof s.checks !== 'number') return prev;
   if (s.traffic === null || typeof s.traffic !== 'object') return prev;
   if (typeof s.traffic.proofReads !== 'number') return prev;
   if (s.tip === null || typeof s.tip !== 'object' || typeof s.tip.height !== 'number') return prev;
+  if (typeof nowMs !== 'number') return prev;
   var next = prev === null || typeof prev !== 'object'
-    ? { base: null, lastTipHeight: null, fillJump: null, final: null }
-    : { base: prev.base, lastTipHeight: prev.lastTipHeight, fillJump: prev.fillJump, final: prev.final };
+    ? { base: null, lastTipHeight: null, fillJump: null, tipHist: [], final: null }
+    : {
+        base: prev.base,
+        lastTipHeight: prev.lastTipHeight,
+        fillJump: prev.fillJump,
+        tipHist: Array.isArray(prev.tipHist) ? prev.tipHist.slice() : [],
+        final: prev.final,
+      };
   if (next.base === null && s.checks >= 1) {
     next.base = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads };
     next.lastTipHeight = s.tip.height;
@@ -508,6 +519,12 @@ export function s8GapObserve(prev, s) {
   if (s.tip.height === next.lastTipHeight) return next;
   var jump = s.tip.height - next.lastTipHeight;
   next.lastTipHeight = s.tip.height;
+  next.tipHist.push({
+    height: s.tip.height,
+    atMs: nowMs,
+    checks: s.checks,
+    proofReads: s.traffic.proofReads,
+  });
   if (next.fillJump === null) {
     // Phase A: waiting for the fill — a tip change of three or more
     // at once names the headers-driven catch-up.
@@ -525,14 +542,14 @@ export function buildS8GapExpression() {
   return `(function(){
   if (!window.__s8GAPInit) {
     window.__s8GAPInit = true;
-    window.__s8GAP = { base: null, lastTipHeight: null, final: null };
+    window.__s8GAP = { base: null, lastTipHeight: null, fillJump: null, tipHist: [], final: null };
     window.__s8GAPObserve = ${observerSrc};
     setInterval(function () {
       try {
         var el = document.getElementById('state');
         if (el === null) return;
         var s = JSON.parse(el.textContent);
-        window.__s8GAP = window.__s8GAPObserve(window.__s8GAP, s);
+        window.__s8GAP = window.__s8GAPObserve(window.__s8GAP, s, Date.now());
       } catch (_e) { /* ignore */ }
     }, 200);
   }
@@ -788,6 +805,7 @@ export async function run(ctx) {
           pub1HeightFinal,
           pubAtFirewall,
           pubAtRemoval,
+          tipHist: Array.isArray(r.tipHist) ? r.tipHist : [],
         };
         return { verdict: verdictS8Gap(m), measurement: m };
       } finally {

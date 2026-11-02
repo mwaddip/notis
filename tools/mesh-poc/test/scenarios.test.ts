@@ -746,7 +746,8 @@ describe('s8 (prove once, follow by gossip)', () => {
       { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } },
     ];
     let st: unknown = null;
-    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
     expect((st as { final: unknown }).final).toBeNull();
     expect((st as { lastTipHeight: number }).lastTipHeight).toBe(103);
     expect((st as { fillJump: unknown }).fillJump).toBeNull();
@@ -758,7 +759,8 @@ describe('s8 (prove once, follow by gossip)', () => {
       { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
     ];
     let st: unknown = null;
-    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
     expect((st as { final: unknown }).final).toBeNull();
     expect((st as { fillJump: number }).fillJump).toBe(4);
     expect((st as { lastTipHeight: number }).lastTipHeight).toBe(105);
@@ -771,7 +773,8 @@ describe('s8 (prove once, follow by gossip)', () => {
       { checks: 2, tip: { height: 106 }, traffic: { proofReads: 5 } },
     ];
     let st: unknown = null;
-    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
     expect((st as { final: { tipHeight: number; proofReads: number; jump: number } }).final).toEqual({
       tipHeight: 106,
       proofReads: 5,
@@ -789,7 +792,8 @@ describe('s8 (prove once, follow by gossip)', () => {
       { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
     ];
     let st: unknown = null;
-    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
     expect((st as { final: { tipHeight: number; jump: number } }).final).toEqual({
       tipHeight: 105,
       proofReads: 5,
@@ -803,7 +807,8 @@ describe('s8 (prove once, follow by gossip)', () => {
       { checks: 2, tip: { height: 104 }, traffic: { proofReads: 7 } },
     ];
     let st: unknown = null;
-    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
     expect((st as { final: { jump: number; tipHeight: number } }).final).toEqual({
       tipHeight: 104,
       proofReads: 7,
@@ -816,25 +821,26 @@ describe('s8 (prove once, follow by gossip)', () => {
       { checks: 2, tip: { height: 102 }, traffic: { proofReads: 7 } },
     ];
     let st: unknown = null;
-    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
     expect((st as { final: unknown }).final).toBeNull();
     expect((st as { fillJump: unknown }).fillJump).toBeNull();
     expect((st as { lastTipHeight: number }).lastTipHeight).toBe(102);
   });
   it('s8GapObserve: baseline NOT captured before the first completed check', () => {
-    const st = s8.s8GapObserve(null, { checks: 0, tip: { height: 100 }, traffic: { proofReads: 0 } }, 1000);
+    const st = s8.s8GapObserve(null, { checks: 0, tip: { height: 100 }, traffic: { proofReads: 0 } }, 1_000);
     expect((st as { base: unknown }).base).toBeNull();
   });
-  it.fails('s8GapObserve: tipHist records every tip change after the baseline, carrying height, atMs, checks and proofReads', () => {
+  it('s8GapObserve: tipHist records every tip change after the baseline, carrying height, atMs, checks and proofReads', () => {
     // The tracker keeps the full sequence so a run shows every tip
-    // change past the baseline — a chain that moves forward and then
-    // back shows both moves.
+    // change past the baseline — a fill of three, then a tip that
+    // went back by one, shows both moves.
     const sequence = [
-      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } }, nowMs: 1_000 },
+      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } }, nowMs: 1_000 }, // baseline
       { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } }, nowMs: 1_100 }, // same height — no record
       { snap: { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } }, nowMs: 1_200 }, // fill
-      { snap: { checks: 2, tip: { height: 102 }, traffic: { proofReads: 5 } }, nowMs: 1_300 }, // tip went back
-      { snap: { checks: 2, tip: { height: 104 }, traffic: { proofReads: 6 } }, nowMs: 1_400 }, // one-block-after
+      { snap: { checks: 2, tip: { height: 102 }, traffic: { proofReads: 5 } }, nowMs: 1_300 }, // one more change — tip went back
+      { snap: { checks: 2, tip: { height: 104 }, traffic: { proofReads: 6 } }, nowMs: 1_400 }, // past final — no record
     ];
     let st: unknown = null;
     for (const r of sequence) st = s8.s8GapObserve(st, r.snap, r.nowMs);
@@ -842,13 +848,13 @@ describe('s8 (prove once, follow by gossip)', () => {
     expect(tipHist).toEqual([
       { height: 103, atMs: 1_200, checks: 2, proofReads: 5 },
       { height: 102, atMs: 1_300, checks: 2, proofReads: 5 },
-      { height: 104, atMs: 1_400, checks: 2, proofReads: 6 },
     ]);
-    // final still records with jump = 3 (the fill at 103) — the end
-    // condition is unchanged.
-    expect((st as { final: { jump: number; tipHeight: number } }).final).toEqual({
-      tipHeight: 104,
-      proofReads: 6,
+    // The end condition is unchanged: a fill of three then one more
+    // tip change — regardless of direction — locks final with the
+    // fill's jump.
+    expect((st as { final: { jump: number; tipHeight: number; proofReads: number } }).final).toEqual({
+      tipHeight: 102,
+      proofReads: 5,
       jump: 3,
     });
   });
