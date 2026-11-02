@@ -152,12 +152,12 @@ export async function run(ctx) {
       for (let i = 0; i < a.drops.length; i += 1) {
         runFault(log, `browser-anchor-drop-${i}`, a.drops[i]);
       }
-      // MESH_INTERFACE → Acceptance 6 — "a client talking to hostile
-      // nodes alone says no anchor was reached". Positive evidence: at
-      // least one seed left `new` for `ok`, `behind` or `blacklisted`
-      // inside the window. The predicate below holds for the banner +
-      // anchorReached=false AND at least one seed classified past
-      // `new`.
+      // MESH_INTERFACE → Acceptance 6 — with every anchor out of reach,
+      // `anchorReached` is false and the page says so. Positive
+      // evidence: at least one seed left `new` for `ok`, `behind` or
+      // `blacklisted` inside the window. The predicate below holds for
+      // the banner + anchorReached=false AND at least one seed
+      // classified past `new`.
       const hostileIds = Object.values(seedsByHost).filter((v) => typeof v === 'string');
       const hostileIdsJson = JSON.stringify(hostileIds);
       const bannerText = await cdpPoll(ctx, browserUrl,

@@ -1,11 +1,10 @@
-// MESH_INTERFACE → Acceptance — "a step that did not run — or ran and
-// recorded nothing — reads `skipped`, never `PASS`". One verdict function
-// per step, each a pure function of the step's recorded measurement. A
-// measurement of `null` or `undefined` reads as `skipped`; the step has
-// to supply every field the pass condition names, and every condition in
-// the function has to hold for `PASS`. One pass condition deleted alone
-// turns the step's own case red (CLAUDE.md → Comment style — Mutation
-// round on the verdict functions).
+// MESH_INTERFACE → Acceptance — a step that did not run reads
+// `skipped`, never a pass. One verdict function per step, each a pure
+// function of the step's recorded measurement. A measurement of `null`
+// or `undefined` reads as `skipped`; the step has to supply every
+// field the pass condition names, and every condition in the function
+// has to hold for `PASS`. One pass condition deleted alone turns the
+// step's own case red.
 //
 // Shape of a verdict:
 //   verdict(measurement) → 'PASS' | 'FAIL' | 'skipped'
@@ -23,10 +22,10 @@ function missing(m) {
   return true;
 }
 
-// MESH_INTERFACE → Acceptance 1 — "the client reads a node's API by key
-// from anchors alone, over WebRTC-direct". Scenario 1 step 1: within
-// 60 s the latest routed read went to an `anchor` node, reached over
-// WebRTC-direct with a direct path.
+// MESH_INTERFACE → Acceptance 1 — "The client reads a node's API by
+// key from anchors alone, over WebRTC-direct". Scenario 1 step 1:
+// within 60 s the latest routed read went to an `anchor` node, reached
+// over WebRTC-direct with a direct path.
 // Measurement:
 //   `{ nodeId: string|null, isAnchor: boolean, timeMs: number,
 //      transport: string, path: string }`.
@@ -41,15 +40,15 @@ export function verdictS1Node(m) {
 }
 
 // MESH_INTERFACE → Acceptance 1 — "the mesh's answers equal the node's
-// direct HTTP answers byte for byte". Scenario 1 step 2: for each probed
-// path, the SHA-256 and byte length the page recorded equal the node's
-// own HTTP answer. `/blocks/current` moves between reads at mining
-// speed, so the probe is bracketed between a pre-probe direct read
-// and a post-probe direct read; the probe is valid if it equals
+// direct HTTP answers byte for byte". Scenario 1 step 2: for each
+// probed path, the SHA-256 and byte length the page recorded equal the
+// node's own HTTP answer. `/blocks/current` moves between reads at
+// mining speed, so the probe is bracketed between a pre-probe direct
+// read and a post-probe direct read; the probe is valid if it equals
 // EITHER (the chain moved after the first read, or the probe caught
 // an older tip the second direct read sees past). Legacy
 // `{ direct, retryDirect }` is accepted for the proof route whose
-// shape stays "direct, then one retry".
+// shape is a direct read followed by one retry.
 export function verdictS1Probe(m) {
   if (missing(m)) return 'skipped';
   const probe = m.probe;
@@ -90,7 +89,7 @@ export function verdictS1DnsSilent(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
+// MESH_INTERFACE → NAT — "Every STUN server is a mesh node named by
 // IP"; a client refuses a hostname. The record is a list of
 // `{ urls: string[] }`, one entry per `RTCPeerConnection` the page
 // built. The verdict:
@@ -132,7 +131,7 @@ export function verdictIceServers(record) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 2 / NAT — "A browser reaches the node
+// MESH_INTERFACE → Acceptance 2 / NAT — "The browser reaches the node
 // behind the endpoint-independent NAT over WebRTC signalled through a
 // relay, its data direct, its ICE servers drawn from the public nodes
 // it holds". priv1's step writes a variant whose anchor is priv1
@@ -164,12 +163,13 @@ export function verdictS2Priv1(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 2 / NAT → "A relay carries data" — "The
+// MESH_INTERFACE → Acceptance 2 / NAT → "A relay carries data" — the
 // node behind the symmetric NAT has no direct path to the browser
-// behind its NAT: it is reached through the relay, its data relayed;
-// it reads `ok` or `trailing`, never `blacklisted`, and a routed
-// read lands on it." The scenario waits for a routed read to land on
-// priv2 and reads the entry's path and status.
+// behind its NAT, so it is reached through the relay with its data
+// relayed; the entry reads `ok` or `trailing`, never `retry` for want
+// of a direct path, never `blacklisted`, and a routed read lands on
+// it. The scenario waits for a routed read to land on priv2 and reads
+// the entry's path and status.
 // Measurement:
 //   `{ expectedNodeId, priv2Status, priv2Path, latestReadNodeId,
 //      blacklistedAtAnyPoll }`.
@@ -183,10 +183,11 @@ export function verdictS2Priv2(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 3 — "The client moves to another node
-// within two checks, the node reads `retry`, never `blacklisted`".
-// The step names pub1: pub1 is the node it stops (or firewalls), so
-// the subject of the verdict is pub1's status and whether the latest
+// MESH_INTERFACE → Acceptance 3 — the client's reads move to other
+// nodes within two checks, and the stopped node reads `retry`, never
+// `blacklisted`. The step names pub1: pub1 is the node it stops (or
+// firewalls), so the subject of the verdict is pub1's status and
+// whether the latest
 // routed read landed on another node. `verdictS3Moved` reads
 // pub1's status (`stoppedStatus`) and the latest routed read's node
 // (`latestReadNodeId`) separately: under the spread the latest read
@@ -206,7 +207,7 @@ export function verdictS3Moved(m) {
 
 // MESH_INTERFACE → Acceptance 3 — "once it is back and within a block
 // of the tip, the next check reads it by its tip — `ok` at the tip,
-// `trailing` one block short". `ok` requires `behindBy === 0`;
+// `trailing` one block short." `ok` requires `behindBy === 0`;
 // `trailing` requires `behindBy === 1`; any other pair, `retry` or
 // `blacklisted` fails.
 // Measurement: `{ nodeId, status, behindBy, recoveryTimeMs }`.
@@ -236,9 +237,9 @@ export function verdictS4Pub1UdpDrop(m) {
   return 'FAIL';
 }
 
-// MESH_INTERFACE → Acceptance 4 — "UDP to all: through the secure
-// WebSocket; a renewal replaces the certificate with no request
-// dropped". Measurement:
+// MESH_INTERFACE → Acceptance 4 — "UDP to all: the client gets in
+// through the secure WebSocket; a renewal replaces the certificate
+// with no request dropped." Measurement:
 //   `{ transport: 'wss', nodeId: string, expectedNodeId: string,
 //      certIssuerName: string, expectedIssuerName: string }`.
 export function verdictS4AllUdpDrop(m) {
@@ -286,13 +287,13 @@ export function verdictS5(m) {
 }
 
 // MESH_INTERFACE → Acceptance 6 — "With every anchor out of reach,
-// `anchorReached` is false and the page says so". The property is "a
-// client talking to hostile nodes alone says no anchor was reached", so
-// PASS requires positive evidence that at least one seed answered
-// inside the window (its entry left `new` for `ok`, `behind` or
-// `blacklisted`). A page that reached NOTHING — anchors blocked and
-// seeds never dialled, which the stage's broken page would also show —
-// would otherwise read PASS vacuously.
+// `anchorReached` is false and the page says so." The property this
+// step turns on is that a client talking to hostile nodes alone says
+// no anchor was reached, so PASS requires positive evidence that at
+// least one seed answered inside the window (its entry left `new` for
+// `ok`, `behind` or `blacklisted`). A page that reached NOTHING —
+// anchors blocked and seeds never dialled, which the stage's broken
+// page would also show — would otherwise read PASS vacuously.
 // Measurement:
 //   `{ anchorReached: boolean, bannerText: string|null,
 //      seedAnswered: boolean, seedId: string|null, seedStatus: string|null }`.
@@ -304,9 +305,10 @@ export function verdictS6NoAnchor(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 6 — "A node answering malformed proofs
-// and one answering failing proofs are blacklisted with their evidence;
-// a node serving a valid proof of a lighter chain is `behind`".
+// MESH_INTERFACE → Acceptance 6 — a node naming a tip of its own that
+// answers malformed proofs, and one that answers failing proofs, are
+// blacklisted with their evidence; a node on a lighter chain is
+// `behind`.
 // Measurement:
 //   `{ malformed: { status, evidenceKind }, invalid: { status, evidenceKind },
 //      lagging: { status, blacklisted } }`.
@@ -346,11 +348,11 @@ export function verdictS6Publisher(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 4 — "A transport is cut" step 4: "record
-// what still answers" after the inter-node Notis-p2p TCP is cut. The
-// browser's state is read after a check cycle fires on the cut, and the
-// verdict is PASS when the record carries a `nodeId` and a `transport`
-// — never on an empty read.
+// MESH_INTERFACE → Acceptance 4 — "A transport is cut" step 4 records
+// what still answers after the inter-node Notis-p2p TCP is cut. The
+// browser's state is read after a check cycle fires on the cut, and
+// the verdict is PASS when the record carries a `nodeId` and a
+// `transport` — never on an empty read.
 // Measurement: `{ transport, nodeId, tip }`.
 export function verdictS4InterNodeTcp(m) {
   if (missing(m)) return 'skipped';
@@ -499,15 +501,15 @@ export function verdictS8Gossip(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
-// proof read at the next check — one per distinct tip, and the
-// client's own — and the heavier chain is the client's". PASS when
-// the lagging node reads `behind` (never blacklisted); the client's
-// tip hash equals pub1's node's block hash at that height; and the
-// check that read the lagging node's tip raised `proofReads` by
-// exactly two (the lagging node's proof plus the client's own tip
-// proof — the one check in which the lagging node's tip was the one
-// tip not on the chain).
+// MESH_INTERFACE → Acceptance 8 — a node on another chain has its
+// proof read when its tip moves, with the client's own, and the
+// client's tip stays the honest chain's. PASS when the lagging node
+// reads `behind` (never blacklisted); the client's tip hash equals
+// pub1's node's block hash at that height; and the check that read
+// the lagging node's tip raised `proofReads` by exactly two (the
+// lagging node's proof plus the client's own tip proof — the one
+// check in which the lagging node's tip was the one tip not on the
+// chain).
 // Measurement:
 //   `{ laggingStatus, clientTipHash, pub1BlockHashAtClientHeight,
 //      proofReadsDeltaAtCheck }`.

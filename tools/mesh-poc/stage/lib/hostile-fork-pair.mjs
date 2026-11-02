@@ -1,9 +1,8 @@
-// MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
-// proof read at the next check — one per distinct tip, and the
-// client's own — and the heavier chain is the client's" and
-// MINING_INTERFACE → "The peer-readiness gate" — `hostile-lagging`'s
-// miner only produces templates when the node holds at least one
-// Active peer.
+// MESH_INTERFACE → Acceptance 8 — a node on another chain has its
+// proof read when its tip moves, with the client's own, and the
+// client's tip stays the honest chain's; and MINING_INTERFACE →
+// "The peer-readiness gate" — `hostile-lagging`'s miner only produces
+// templates when the node holds at least one Active peer.
 //
 // The remedy: pair `hostile-lagging` with `hostile-malformed` as each
 // other's one Active peer, on a chain of their own from genesis. Each

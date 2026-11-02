@@ -1,12 +1,11 @@
-// MESH_INTERFACE → Acceptance 8 — "Prove once, follow by gossip. After
-// the first check, no proof is read across five checks while every
-// node names a tip on the client's chain; a block mined on a node
-// reaches the browser by gossip through a mesh service and moves the
-// client's tip before its next check; a node on another chain has
-// its proof read at the next check — one per distinct tip, and the
-// client's own — and the heavier chain is the client's; the browser's
-// gossip cut for three blocks and restored, its tip catches up by
-// headers with no proof read."
+// MESH_INTERFACE → Acceptance 8 — "After the first check, no proof is
+// read across five checks while every node names a tip on the client's
+// chain; a block mined on a node reaches the browser by gossip through
+// a mesh service and moves the client's tip before its next check; a
+// node on another chain … has its proof read when its tip moves, with
+// the client's own, and the client's tip stays the honest chain's; the
+// browser's gossip cut for three blocks and restored, its tip catches
+// up by headers with no proof read."
 //
 // Four sub-steps, in order:
 //   1. No proof after the first — stage default + a step-scoped
@@ -45,19 +44,20 @@
 //      node names the chain's tip. The pair's chain shares no block
 //      with the honest one; devnet pins no `genesisId` (TYPES_INTERFACE
 //      → `profileFor`), so the lagging node's proof verifies and
-//      `compareProofs` picks the heavier (honest) chain by work.
-//      `resolveTip` then measures each verified node's tip against
-//      the winner's suffix (MESH_INTERFACE → The client's node list →
-//      "A check"): a node whose tip is not in the winner's suffix
-//      reads `behind: null`, and `tipEvent` turns `node.verified &&
-//      node.behind === null` into `{ ev: 'behind' }`. The client's
-//      tip is the winner's — pub1's. `splits` records only when
-//      `compareProofs` returns `incomparable`; for a strict work
-//      winner the result is `a` or `b`, splits stays empty, and the
-//      lagging node still reads `behind`. `verdictS8Fork`: PASS when
-//      lagging reads `behind`, the client's tip hash equals pub1's
-//      node's block hash at that height, and the delta is exactly
-//      two.
+//      `compareProofs` answers `incomparable / no-common-ancestor`
+//      (NIPOPOW_INTERFACE → compareProofs). `resolveTip` is handed the
+//      client's own tip's proof first (MESH_INTERFACE → The client's
+//      node list → "A check"), and on an `incomparable` verdict it
+//      keeps the proof it already holds — the client's chain stands.
+//      `resolveTip` then measures each verified node's tip against the
+//      winner's suffix: the lagging tip is not on it, so it reads
+//      `behind: null`, and `tipEvent` turns `node.verified &&
+//      node.behind === null` into `{ ev: 'behind' }`. The client's tip
+//      stays its own — pub1's. `splits` records only on an
+//      `incomparable` verdict, so it carries the lagging node's proof
+//      paired with the client's. `verdictS8Fork`: PASS when lagging
+//      reads `behind`, the client's tip hash equals pub1's node's
+//      block hash at that height, and the delta is exactly two.
 //   4. A gap filled by headers — stage default plus a step-scoped
 //      hostile firewall from the browser to every hostile host
 //      (same rule as step 1, a `FaultLog` fault, removed in `finally`).
@@ -134,15 +134,14 @@ export function describe() {
 // the firewall the client's DHT walk reaches each hostile mesh node,
 // each of which names a tip of its own (`hostile-lagging` on the
 // pair's chain, `hostile-malformed` / `hostile-invalid` with lies,
-// the publisher likewise), and the first check reads their proofs
-// — moving `proofReads` and breaking "no proof read across five
-// completed checks" (step 1) or masking the gap's own fill with
-// hostile reads (step 4). The firewall is a
-// `FaultLog` fault, applied at step start and removed in the step's
-// own `finally`, so the firewall does not spill into the next step.
-// `tableName` is each step's own table (`s8_step1_hostile`,
-// `s8_step4_hostile`) so one step's remove does not drop the other's
-// rules.
+// the publisher likewise), and the first check reads their proofs —
+// moving `proofReads` and breaking "no proof is read across five
+// checks" (step 1) or masking the gap's own fill with hostile reads
+// (step 4). The firewall is a `FaultLog` fault, applied at step start
+// and removed in the step's own `finally`, so the firewall does not
+// spill into the next step. `tableName` is each step's own table
+// (`s8_step1_hostile`, `s8_step4_hostile`) so one step's remove does
+// not drop the other's rules.
 function hostileFirewallArgs(topology, tableName) {
   const ns = 'notismesh-browser';
   const hostileHosts = [];

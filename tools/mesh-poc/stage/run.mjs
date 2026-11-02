@@ -96,14 +96,13 @@ async function main(argv) {
 
   const cdpScript = join(HERE, 'cdp.mjs');
 
-  // MESH_INTERFACE → Acceptance — "A step that times out or throws is
-  // recorded FAIL with its last measured value and the error, the
-  // scenario's faults are removed, and the run goes on to the next
+  // MESH_INTERFACE → Acceptance — a step that times out or throws is
+  // recorded as a failure with its last measured value and the error,
+  // the scenario's faults are removed, and the run goes on to the next
   // step or scenario; the run's exit code is non-zero if any step
-  // failed." Scenarios catch per-step throws with their own
-  // `StepRecorder` helper (`stage/lib/step-recorder.mjs`); the
-  // orchestrator still catches a scenario-level throw so one bad
-  // scenario cannot abort the run.
+  // failed. Scenarios catch per-step throws with their own
+  // `StepRecorder` helper; the orchestrator still catches a
+  // scenario-level throw so one bad scenario cannot abort the run.
   let hadFailure = false;
   for (const name of toRun) {
     const scenario = SCENARIOS[name];

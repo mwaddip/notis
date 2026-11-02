@@ -17,10 +17,10 @@ import { decodeNipopowProof, encodeNipopowProof } from '@dagsocial/nipopow';
 const PROOF_ROUTE = /^\/nipopow\/proof\/(\d+)\/(\d+)(?:\?.*)?$/;
 const BLOCKS_CURRENT_ROUTE = /^\/blocks\/current(?:\?.*)?$/;
 
-// MESH_INTERFACE → Acceptance 6 → "a tip of their own" — a 64-hex value
-// no chain holds. The pattern is a constant so the test checks the
-// shape; one shared value for both liars is enough (each is identified
-// by its notisId, not by its tip).
+// MESH_INTERFACE → Acceptance 6 — a hostile node naming a tip of its
+// own; a 64-hex value no chain holds. The pattern is a constant so the
+// test checks the shape; one shared value for both liars is enough
+// (each is identified by its notisId, not by its tip).
 export const LIE_HASH = 'ba'.repeat(32);
 
 export function malformedBody() {
@@ -32,13 +32,14 @@ export function malformedBody() {
 }
 
 export function blocksCurrentBody(upstreamJson) {
-  // MESH_INTERFACE → Acceptance 6 → "answers malformed proofs ... and
-  // answers failing proofs ... naming a tip of its own" — keep the
-  // upstream's height (so the client reads a plausible chain) and
-  // replace the hash with a 64-hex value no chain holds. Every other
-  // field passes through, so a shape change in the Notis node's
-  // `/blocks/current` reaches the client here without the stage
-  // dropping it (the client reads what it needs; the rest it ignores).
+  // MESH_INTERFACE → Acceptance 6 — a node naming a tip of its own that
+  // answers malformed proofs, and one that answers failing proofs, are
+  // blacklisted with their evidence. Keep the upstream's height (so the
+  // client reads a plausible chain) and replace the hash with a 64-hex
+  // value no chain holds. Every other field passes through, so a shape
+  // change in the Notis node's `/blocks/current` reaches the client
+  // here without the stage dropping it (the client reads what it needs;
+  // the rest it ignores).
   return { ...upstreamJson, hash: LIE_HASH };
 }
 

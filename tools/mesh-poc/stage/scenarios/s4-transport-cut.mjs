@@ -1,7 +1,8 @@
-// MESH_INTERFACE → Acceptance 4 — "A transport is cut. UDP to one public
-// node, then to all: the client gets in through another node, then
-// through the secure WebSocket; a renewal replaces the certificate with
-// no request dropped".
+// MESH_INTERFACE → Acceptance 4 — "A transport is cut." UDP to one
+// public node: the client stays connected, through another node or
+// over that node's secure WebSocket. UDP to all: the client gets in
+// through the secure WebSocket; a renewal replaces the certificate
+// with no request dropped.
 //
 // Four sub-steps:
 //   1. Drop UDP from browser to pub1 → client reads nodeId !== pub1.
@@ -25,11 +26,11 @@ import { readFileSize, countMatchesSince } from '../lib/log-watch.mjs';
 import { writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
-// MESH_INTERFACE → The client's node list — "A check — `resolveTip` over
-// the candidates — runs at start, every `CHECK_INTERVAL_MS`". Step 4
-// (inter-node TCP cut) reads the browser's state after a check has
-// fired on the cut, so the record carries the post-cut state rather
-// than a transient null between checks.
+// MESH_INTERFACE → The client's node list — "A check runs at start,
+// every `CHECK_INTERVAL_MS`". Step 4 (inter-node TCP cut) reads the
+// browser's state after a check has fired on the cut, so the record
+// carries the post-cut state rather than a transient null between
+// checks.
 const CHECK_INTERVAL_MS = 30_000;
 
 export const NAME = 's4';
