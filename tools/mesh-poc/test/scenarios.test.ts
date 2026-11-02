@@ -513,7 +513,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // cut where every honest node reads ok or trailing. The scenarios
   // below drive the observer with a sequence of state snapshots and
   // read the resulting state's `cut` and `final` fields.
-  it.fails('s8GapObserve: a state sequence that never cuts does not end', () => {
+  it('s8GapObserve: a state sequence that never cuts does not end', () => {
     const honestIds = ['a'.repeat(64), 'b'.repeat(64)];
     const sequence = [
       { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
@@ -525,7 +525,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     expect((st as { cut: unknown }).cut).toBeNull();
     expect((st as { final: unknown }).final).toBeNull();
   });
-  it.fails('s8GapObserve: a sequence that cuts and recovers ends at the recovery check', () => {
+  it('s8GapObserve: a sequence that cuts and recovers ends at the recovery check', () => {
     const honestIds = ['a'.repeat(64), 'b'.repeat(64)];
     const sequence = [
       { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
@@ -555,7 +555,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     expect(expr).toContain(JSON.stringify(id));
     expect(expr).toContain('__s8F');
   });
-  it.fails('buildS8GapExpression embeds the honestIds as a JSON array', () => {
+  it('buildS8GapExpression embeds the honestIds as a JSON array', () => {
     const ids = ['a'.repeat(64), 'b'.repeat(64)];
     const expr = s8.buildS8GapExpression(ids);
     expect(expr).toContain(JSON.stringify(ids));

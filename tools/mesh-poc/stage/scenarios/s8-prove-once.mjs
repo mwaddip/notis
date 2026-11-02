@@ -37,17 +37,20 @@
 //      hash at that height, and the delta is exactly two.
 //   4. A gap filled by headers — stage default: firewall the browser
 //      from every mesh node (a `FaultLog` fault, removed in `finally`)
-//      until pub1's node is three blocks past the client's tip; remove
-//      it; wait until the client's tip is within one block of pub1's
-//      node (a deadline of three minutes: nodes come back on the
-//      retry cadence). `verdictS8Gap`: PASS when the tip caught up and
-//      `proofReads` did not move. The step keeps one page open across
-//      the apply/remove window through a non-blocking spawn of
+//      until pub1's node is three blocks past the browser's tip at the
+//      moment the firewall landed; remove it; wait for the tracker to
+//      signal catch-up (a 3-minute cap on the tracker). `verdictS8Gap`:
+//      PASS when the tip caught up and `proofReads` did not move.
+//      The step keeps one page open through a non-blocking spawn of
 //      `cdp.mjs poll`; a fresh page's first check reads a proof, which
-//      would mask the "no proof" conclusion. The tracker signals ready
-//      when the client's tip has grown by at least three past its own
-//      captured baseline — the point the firewall was lifted at or
-//      past, so a fill linked through the kept headers.
+//      would mask the "no proof" conclusion. The tracker signals final
+//      at the first completed check after one in which no honest node
+//      read `ok` or `trailing` (the cut, every mesh host blocked),
+//      where every honest node reads `ok` or `trailing` — the client
+//      has caught up with the nodes it reads. The pure `s8GapObserve`
+//      carries the state transition; `buildS8GapExpression` inlines it
+//      with the honest-id set so the live tracker and the Node tests
+//      run the same logic.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -240,43 +243,72 @@ export function buildS8ForkExpression(laggingId) {
 export const S8_FORK_PREDICATE = `if (v === null) return false;
   try { return JSON.parse(v).final !== null; } catch (_e) { return false; }`;
 
-// MESH_INTERFACE → Acceptance 8 — step 4 keeps one page open across
-// the gap window via a non-blocking spawn: the scenario applies the
-// firewall, waits for pub1's node to be three blocks ahead, removes
-// it, and the tracker signals ready when the client's tip has grown
-// by three past its own captured baseline.
-export const S8_GAP_EXPR = `(function(){
+// MESH_INTERFACE → Acceptance 8 — step 4's tracker reads each
+// completed check's honest-node statuses, marks a cut on a check
+// where no honest node reads ok or trailing, and signals final at
+// the first check after the cut where every honest node reads ok
+// or trailing. `s8GapObserve` is pure (no DOM, no clock, no `window`
+// access) so the Node suite drives it with a sequence of simulated
+// `#state` snapshots and reads the resulting state's `cut` and
+// `final` fields.
+export function s8GapObserve(prev, s, honestIds) {
+  if (s === null || typeof s !== 'object') return prev;
+  if (typeof s.checks !== 'number') return prev;
+  if (s.traffic === null || typeof s.traffic !== 'object') return prev;
+  if (typeof s.traffic.proofReads !== 'number') return prev;
+  if (s.tip === null || typeof s.tip !== 'object' || typeof s.tip.height !== 'number') return prev;
+  var next = prev === null || typeof prev !== 'object'
+    ? { base: null, cut: null, final: null, lastChecks: 0 }
+    : { base: prev.base, cut: prev.cut, final: prev.final, lastChecks: prev.lastChecks };
+  if (typeof next.lastChecks !== 'number') next.lastChecks = 0;
+  if (next.base === null && s.checks >= 1) {
+    next.base = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads };
+    next.lastChecks = s.checks;
+    return next;
+  }
+  if (next.base === null) return next;
+  if (next.final !== null) return next;
+  if (s.checks === next.lastChecks) return next;
+  next.lastChecks = s.checks;
+  var honestEntries = [];
+  for (var i = 0; i < honestIds.length; i += 1) {
+    var id = honestIds[i];
+    var entry = (s.nodes || []).find(function (n) { return n && n.notisId === id; });
+    if (entry) honestEntries.push({ notisId: id, status: entry.status });
+  }
+  var anyOk = honestEntries.some(function (e) { return e.status === 'ok' || e.status === 'trailing'; });
+  var allOk = honestEntries.length === honestIds.length
+    && honestEntries.every(function (e) { return e.status === 'ok' || e.status === 'trailing'; });
+  if (next.cut === null && !anyOk) {
+    next.cut = { checks: s.checks };
+  }
+  if (next.cut !== null && allOk) {
+    next.final = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads };
+  }
+  return next;
+}
+
+export function buildS8GapExpression(honestIds) {
+  const idsJson = JSON.stringify(honestIds);
+  const observerSrc = s8GapObserve.toString();
+  return `(function(){
   if (!window.__s8GAPInit) {
     window.__s8GAPInit = true;
-    window.__s8GAP = { base: null, final: null };
+    window.__s8GAP = { base: null, cut: null, final: null, lastChecks: 0 };
+    window.__s8GAPIds = ${idsJson};
+    window.__s8GAPObserve = ${observerSrc};
     setInterval(function () {
       try {
         var el = document.getElementById('state');
         if (el === null) return;
         var s = JSON.parse(el.textContent);
-        if (!s || typeof s.checks !== 'number' || typeof (s.tip && s.tip.height) !== 'number') return;
-        if (window.__s8GAP.base === null && s.checks >= 1) {
-          window.__s8GAP.base = {
-            tipHeight: s.tip.height,
-            proofReads: s.traffic.proofReads,
-            atMs: Date.now(),
-          };
-          return;
-        }
-        if (window.__s8GAP.base === null) return;
-        if (window.__s8GAP.final !== null) return;
-        if (s.tip.height >= window.__s8GAP.base.tipHeight + 3) {
-          window.__s8GAP.final = {
-            tipHeight: s.tip.height,
-            proofReads: s.traffic.proofReads,
-            atMs: Date.now(),
-          };
-        }
+        window.__s8GAP = window.__s8GAPObserve(window.__s8GAP, s, window.__s8GAPIds);
       } catch (_e) { /* ignore */ }
     }, 200);
   }
   return JSON.stringify(window.__s8GAP);
 })()`;
+}
 
 export const S8_GAP_PREDICATE = `if (v === null) return false;
   try { return JSON.parse(v).final !== null; } catch (_e) { return false; }`;
@@ -413,7 +445,7 @@ export async function run(ctx) {
       // loop and block the firewall apply/remove calls. A spawn lets
       // the tracker page stay open while the scenario does its
       // synchronous nft work.
-      const tracker = spawnCdpPoll(ctx, browserUrl, S8_GAP_EXPR, S8_GAP_PREDICATE, LONG_WAIT_MS, POLL_MS);
+      const tracker = spawnCdpPoll(ctx, browserUrl, buildS8GapExpression(honestIds), S8_GAP_PREDICATE, LONG_WAIT_MS, POLL_MS);
       try {
         // Give the page time to load and the tracker time to capture
         // its baseline (first check landing). The baseline settles
