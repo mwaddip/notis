@@ -14,6 +14,7 @@ import {
   decodeHandshakeBody,
   MAX_HANDSHAKE_FRAME_BYTES,
 } from '@dagsocial/net';
+import { MeshConfigError } from '../config.js';
 
 export interface StartNodePeerOptions {
   /**
@@ -50,6 +51,23 @@ const DEFAULT_RETRY_MS = 1_000;
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 
 /**
+ * MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer of its own
+ * node" — the dial target carries no `/p2p/` (the peer id is learnt at the
+ * link) and no DNS name (identity is the key, not a name). The one place the
+ * rule is stated: `startNodePeer` and `startMeshNode` both run it, the
+ * latter so a bad `nodeP2p` throws before any libp2p state is created.
+ */
+export function assertNodeP2pAddress(raw: string): void {
+  for (const forbidden of ['/p2p/', '/dns4/', '/dns6/', '/dnsaddr/']) {
+    if (raw.includes(forbidden)) {
+      throw new MeshConfigError(
+        `nodeP2p refused: ${JSON.stringify(raw)} carries a ${forbidden} component`,
+      );
+    }
+  }
+}
+
+/**
  * Dial the node's libp2p TCP address, run net's handshake as the dialler,
  * and hold the one connection open; redial on failure or close.
  * MESH_INTERFACE → Block gossip.
@@ -67,18 +85,9 @@ export function startNodePeer(
   let stopped = false;
   let redialTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Resolve the dial target once. MESH_INTERFACE → Block gossip —
-  // "named with no `/p2p/` component": a `/p2p/`, `/dns4/`, `/dns6/`
-  // or `/dnsaddr/` component is refused here, so the one rule holds
-  // in one place.
+  // Resolve the dial target once.
   const raw = opts.nodeP2p;
-  for (const forbidden of ['/p2p/', '/dns4/', '/dns6/', '/dnsaddr/']) {
-    if (raw.includes(forbidden)) {
-      throw new Error(
-        `startNodePeer: nodeP2p ${JSON.stringify(raw)} carries a ${forbidden} component`,
-      );
-    }
-  }
+  assertNodeP2pAddress(raw);
   let target: Multiaddr;
   try {
     target = multiaddr(raw);

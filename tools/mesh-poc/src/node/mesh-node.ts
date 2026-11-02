@@ -38,7 +38,7 @@ import { MeshConfigError, assertNoDns } from '../config.js';
 import { blockTopic, gossipsubOptions } from '../gossip-rules.js';
 import { BlockCheck } from '../block-check.js';
 import { nodeApiServer } from './api-forward.js';
-import { startNodePeer, type NodePeer } from './node-peer.js';
+import { startNodePeer, assertNodeP2pAddress, type NodePeer } from './node-peer.js';
 import { startStunServer } from './stun.js';
 import type { IpCertificate } from './acme.js';
 import {
@@ -119,23 +119,6 @@ export interface MeshNodeOptions {
    * before libp2p starts.
    */
   readonly nodeP2p?: string;
-}
-
-/**
- * MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer of its own
- * node" — the dial target carries no `/p2p/` (the peer id is learnt at the
- * link) and no DNS name (identity is the key, not a name).  The same forbidden
- * list `startNodePeer` enforces, run here so a bad `nodeP2p` throws out of
- * `startMeshNode` before any libp2p state is created.
- */
-function assertNodeP2pAddress(raw: string): void {
-  for (const forbidden of ['/p2p/', '/dns4/', '/dns6/', '/dnsaddr/']) {
-    if (raw.includes(forbidden)) {
-      throw new MeshConfigError(
-        `nodeP2p refused: ${JSON.stringify(raw)} carries a ${forbidden} component`,
-      );
-    }
-  }
 }
 
 export interface MeshNode {

@@ -42,6 +42,7 @@ import { blockTopic } from '../src/gossip-rules.js';
 import { nodeKeyFromKeyPair } from '../src/identity.js';
 import type { NodeKey } from '../src/identity.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { MeshConfigError } from '../src/config.js';
 import { makeBlockAt } from './helpers/devnet-block.js';
 import {
   startPlainGossipsubHost,
@@ -401,7 +402,7 @@ describe('mesh node — the block router', () => {
       } finally {
         if (started) { try { await started.stop(); } catch { /* already stopped */ } }
       }
-      expect(thrown).toBeInstanceOf(Error);
+      expect(thrown).toBeInstanceOf(MeshConfigError);
       expect((thrown as Error).message).toContain('/p2p/');
     },
     30_000,
