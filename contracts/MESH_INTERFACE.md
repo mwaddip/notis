@@ -8,9 +8,6 @@ rule.** Every node it reaches is an unmodified `@dagsocial/node`, and every answ
 extension already runs. The client and each mesh service are peers in the nodes' own block gossip, under `net`'s rules
 (→ Block gossip). What it has to show is → Acceptance.
 
-> ⚠ **AHEAD OF CODE (2026-11-02).** no mesh service or client runs gossip; `tools/mesh-poc/src/node/mesh-node.ts` and
-> `src/client/mesh-client.ts` build libp2p with identify, ping and the DHT alone.
-
 It carries Notis's own traffic and nothing else: no exit to the wider network, no IP tunnel.
 
 ## Place in the workspace
@@ -20,9 +17,6 @@ A member under `tools/`. It depends on `@dagsocial/types`, `@dagsocial/validatio
 `@dagsocial/net` runs, `@libp2p/gossipsub` among it. `src/lib.ts` and everything it reaches runs in the browser as
 written; `src/node/` runs on Node.js. No WASM. One native module, `node-datachannel` under `@libp2p/webrtc`, serves
 WebRTC on Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
-
-> ⚠ **AHEAD OF CODE (2026-11-02).** `tools/mesh-poc/package.json` names neither `@dagsocial/validation`,
-> `@dagsocial/net` nor `@libp2p/gossipsub`.
 
 **libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of the member are at an exact version. The member
 reaches places libp2p does not promise to keep — its `components` object, for a listener added after start (the secure
@@ -126,8 +120,8 @@ most `STUN_SERVERS_MAX`. With no public node held the list is empty, and the ICE
 **A mesh service is a gossip peer of its own node.** It dials its node's libp2p TCP address, named with no `/p2p/`
 component — the node's peer id is learnt at the link — and runs `net`'s handshake as the dialler (`NET_INTERFACE →
 Handshake`), its body declaring no address and no capability. It subscribes to the ordering-block topic alone and
-publishes nothing of its own. A node it cannot reach, or one that restarts, is dialled again; a mesh service with no
-node beside it runs the router with no node peer.
+publishes nothing of its own. A node it cannot reach, or one that restarts, is dialled again; a mesh service given no
+node address runs the router with no node peer.
 
 **One router, `net`'s rules.** The mesh service and the client each run gossipsub on `net`'s ordering-block topic and on
 no other, with `net`'s envelope, message id and seen window (`NET_INTERFACE → Gossip Topics`): unsigned, named by
@@ -145,9 +139,6 @@ node refuses with no penalty. No receiver applies a block or forwards a transact
 its field domains, the network's floor, its work, its validator signature, its structure or its body's root, is a lie of
 the key that sent it: the client blacklists that key, the evidence kept. A version mismatch, a scheduled-target mismatch
 and a header the receiver knows record nothing. A mesh service keeps no list and logs the refusal.
-
-> ⚠ **AHEAD OF CODE (2026-11-02).** no gossip runs in `tools/mesh-poc`; `src/block-check.ts`, `src/gossip-rules.ts` and
-> `src/node/node-peer.ts` do not exist.
 
 ## Discovery
 
@@ -186,9 +177,6 @@ The client's side is an `HttpFetch` over the mesh URL: `GET` only, ending at `RE
 reads proofs from (→ The client's node list → "A check"), each proof held to the client's network profile
 (`NIPOPOW_INTERFACE → The trust model`). There is no second verifier.
 
-> ⚠ **AHEAD OF CODE (2026-11-02).** `runCheck` (`src/client/mesh-client.ts`) hands `resolveTip` every candidate's URL at
-> every check.
-
 ## The client's node list
 
 The client keeps one entry per node key and moves it by what a failure is evidence of — the split
@@ -205,15 +193,13 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 | a malformed answer, a proof that fails verification, or a gossiped block refused as a lie (→ Block gossip), over a link authenticated to the key | a lie | `blacklisted` for good, the evidence kept |
 
 **The client's chain.** The client holds its chain's last `k` headers and block 1's. A check's proofs settle it — the
-winner's suffix and its first header — and a switch to another winner replaces it the same way. A gossiped block whose
-parent is the client's tip extends it; one whose parent is held below the tip, or not held at all, runs a check at once.
-A fill — a check's reading of a tip above the client's — reads that node's headers by height, `GET /blocks/:height`,
-from its tip down to the client's, each held to its work, its schedule and its link, and no more than `k` of them; a
-fill that fails, or would pass `k`, leaves that tip to a proof. **The tip moves only by a header carrying its work on
-the client's chain**, never by a node's word. Before the first check settles a chain, a block adds nothing to it.
-
-> ⚠ **AHEAD OF CODE (2026-11-02).** the client holds no chain: `ok`, `trailing` and `behind` are read off each node's
-> own proof (`src/client/tip-events.ts`), and the tip is the best proof's.
+winner's suffix and its first header — and a switch to another winner replaces it the same way; a winner whose tip the
+client's chain already holds is no switch, and the chain stands. A gossiped block whose parent is the client's tip
+extends it; one whose parent is held below the tip, or not held at all, runs a check at once. A fill — a check's reading
+of a tip above the client's — reads that node's headers by height, `GET /blocks/:height`, from its tip down to the
+client's, each held to its work, its schedule and its link, and no more than `k` of them; a fill that fails, or would
+pass `k`, leaves that tip to a proof. **The tip moves only by a header carrying its work on the client's chain**, never
+by a node's word. Before the first check settles a chain, a block adds nothing to it.
 
 **A valid proof of a lighter chain is not a lie**: an honest node that was itself cut off serves one. **Nor is a header
 stamped ahead of the client's clock**: the verifier holds a header to the client's own time, and a client whose clock
@@ -264,9 +250,6 @@ Every node naming a tip takes that tip's verdict. **A tip whose proof verified a
 client's chain stands: a node naming it again is placed off the chain with no proof read, until it names another tip or
 the chain switches. A check that places every tip reads no proof.
 
-> ⚠ **AHEAD OF CODE (2026-11-02).** a check is `resolveTip` over every candidate, timing each node's proof read
-> (`runCheck`, `makeTimedFetch` in `src/client/mesh-client.ts`).
-
 **A routed read goes to a node its need allows.** A routed read is one the client sends to a node it picks, not to a key
 the caller names. One that needs the tip goes to an `ok` node; a read of content older than the newest block goes to an
 `ok` or a `trailing` node; a `behind` node serves no read. Freshness is the last check's: between checks the client
@@ -308,9 +291,6 @@ last `k` headers — `On this chain` — how many of those are anchors, and how 
 this chain's last 20 blocks`: on another chain, or further back than they reach, which the client cannot tell apart. The
 counts say what the nodes name, never that each verified: a node counts without serving a proof of its own, since a
 proof carries no challenge and any node can serve one it copied. A node that answered no tip is in no count.
-
-> ⚠ **AHEAD OF CODE (2026-11-02).** the counts are read off each node's verified proof (`src/client/agreement.ts`), and
-> the page says `Agreeing`.
 
 ## The IP certificate
 
@@ -358,14 +338,11 @@ eight scenarios passes on what it measured; a step that did not run reads `skipp
    `ok` node alone; a node slowed well past the others serves no read. A node on the browser's own network, named only
    by a seed, is never dialled; added by hand, it is reached at its private address, and `anchorReached` reads true from
    it alone when the reader trusts it and false when the reader does not. The page shows the agreement counts.
-8. **Prove once, follow by gossip.** After the first check, no proof is read across five checks while every node names
-   a tip on the client's chain; a block mined on a node reaches the browser by gossip through a mesh service and moves
-   the client's tip before its next check; a node on another chain has its proof read at the next check — one per
-   distinct tip, and the client's own — and the heavier chain is the client's; the browser's gossip cut for three
-   blocks and restored, its tip catches up by headers with no proof read.
-
-> ⚠ **AHEAD OF CODE (2026-11-02).** the stage runs seven scenarios; `stage/scenarios/s8-prove-once.mjs` and the hostile
-> publisher do not exist.
+8. **Prove once, follow by gossip.** After the first check, no proof is read across five checks while every node names a
+   tip on the client's chain; a block mined on a node reaches the browser by gossip through a mesh service and moves the
+   client's tip before its next check; a node on another chain — on the stage, a chain mined from its own genesis — has
+   its proof read when its tip moves, with the client's own, and the client's tip stays the honest chain's; the
+   browser's gossip cut for three blocks and restored, its tip catches up by headers with no proof read.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
 untested. The proof of concept holds only where WebRTC-direct connects on defaults in both.
