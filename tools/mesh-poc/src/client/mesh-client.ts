@@ -1218,13 +1218,19 @@ class MeshClientImpl implements MeshClient {
         }
       }
 
-      // If the winner's tip is not the chain's, settle to it and
-      // re-place every tip this check read against the new chain.
+      // MESH_INTERFACE → The client's node list → "The client's
+      // chain" — "The tip moves only by a header carrying its work on
+      // the client's chain, never by a node's word". A winner whose
+      // tip is held by the window — the chain's own tip, or a header
+      // below it that the window still keeps, as when gossip extended
+      // the chain while this proof read was in flight — is no switch;
+      // the chain stands. When the hash is not held, settle to the
+      // winner and re-place every tip this check read against the
+      // new chain.
       if (result.winner !== null && result.tip !== null) {
         const winnerTipHash = blockHash(result.tip);
-        const chainTip = this.chain.tip();
-        const chainTipHash = chainTip !== null ? blockHash(chainTip) : null;
-        if (winnerTipHash !== null && winnerTipHash !== chainTipHash) {
+        if (winnerTipHash !== null
+            && this.chain.standing(winnerTipHash, result.tip.height) !== 'held') {
           const vr = result.winner.verifyResult;
           const proof = result.winner.proof;
           if (vr !== null && vr.ok === true && proof !== null) {

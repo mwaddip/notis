@@ -1503,7 +1503,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(checksAfter - checksBefore).toBeLessThanOrEqual(1);
   }, 60_000);
 
-  it.fails('a settle is skipped when the winner\'s tip is held by the chain', async () => {
+  it('a settle is skipped when the winner\'s tip is held by the chain', async () => {
     // MESH_INTERFACE → The client's node list → "The client's chain" —
     // "The tip moves only by a header carrying its work on the client's
     // chain, never by a node's word". The race: a Phase-4 proof read
