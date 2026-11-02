@@ -39,7 +39,8 @@ import { verifierProfile } from '@dagsocial/nipopow-client';
 import { blockTopic } from '../src/gossip-rules.js';
 import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
-import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import { lieTarget, startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import type { BlockVerdict } from '../src/block-check.js';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain, makeBlockAt } from './helpers/devnet-block.js';
 
@@ -454,4 +455,261 @@ describe('mesh-client in block gossip', () => {
     // Not forwarded (Reject means no delivery; forwarded unchanged).
     expect(client.state().traffic.forwarded).toBe(forwardedBefore);
   }, 180_000);
+
+  it('gossipBytes rises by the published message\'s byte length', async () => {
+    // The validator counts every message it weighs. One accepted publish
+    // of `bytes` must raise `traffic.gossipBytes` by exactly `bytes.length`.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+    });
+    openClients.push(client);
+    await client.check();
+
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    );
+    const bytesBefore = client.state().traffic.gossipBytes;
+
+    const next = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    const bytes = encodeOrderingBlock(next);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, bytes);
+
+    await vi.waitFor(() => {
+      expect(client.state().traffic.gossipBytes).toBe(bytesBefore + bytes.length);
+    }, { timeout: 15_000, interval: 50 });
+  }, 180_000);
+
+  it('the tip block published a second time after extending the chain is ignored', async () => {
+    // After the tip extends to a gossiped block, the new tip's header is
+    // in `HeldChain.byHash`, so `BlockCheck`'s standing read answers
+    // `'held'` and the verdict is `'ignore'`. The validator maps `ignore`
+    // to `TopicValidatorResult.Ignore`, so the delivery handler never
+    // fires — `traffic.forwarded` unchanged, `state.tip` unchanged, no
+    // lie. gossipsub's own seenCache (seenTTL = GOSSIP_SEEN_WINDOW_MS,
+    // 120 s) deduplicates by msgId, so a second publish of the same
+    // bytes would otherwise never reach the validator; the caches on
+    // the publisher and the receiver are cleared before the second
+    // publish so BlockCheck's standing read is the one that fires.
+    // The validator's own `gossipBytes` increment is proof the
+    // validator ran.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+    });
+    openClients.push(client);
+    await client.check();
+
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    );
+
+    const next = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    const bytes = encodeOrderingBlock(next);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, bytes);
+    await vi.waitFor(() => {
+      expect(client.state().tip?.height).toBe(K + 2);
+    }, { timeout: 15_000, interval: 100 });
+
+    // Clear gossipsub's seenCache on both ends so the second publish of
+    // the same bytes reaches the client's validator. `SimpleTimeCache`
+    // (gossipsub's utility) exposes `clear()`; the field is private on
+    // the GossipSub type but reachable on the instance.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pubsubOf(started.mesh.libp2p) as any).seenCache.clear();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pubsubOf(client.libp2p) as any).seenCache.clear();
+
+    const tipBefore = client.state().tip;
+    const forwardedBefore = client.state().traffic.forwarded;
+    const bytesBefore = client.state().traffic.gossipBytes;
+
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, bytes);
+
+    // The validator ran — proof is the `gossipBytes` increment.
+    await vi.waitFor(() => {
+      expect(client.state().traffic.gossipBytes).toBeGreaterThan(bytesBefore);
+    }, { timeout: 15_000, interval: 50 });
+
+    // The `ignore` mapping holds: no forward, no tip move, no lie.
+    expect(client.state().traffic.forwarded).toBe(forwardedBefore);
+    expect(client.state().tip?.hash).toBe(tipBefore?.hash);
+    expect(client.state().tip?.height).toBe(tipBefore?.height);
+    const entry = client.state().nodes.find((n) => n.notisId === started.id);
+    expect(entry?.status).not.toBe('blacklisted');
+    expect(entry?.evidence).toBeNull();
+  }, 180_000);
+
+  it('a block from A reaches B through the client\'s forward', async () => {
+    // Two mesh nodes A and B, each an anchor of the client, kept apart
+    // this way: neither has the other in `bootstrap`, neither is told
+    // about the other's addresses by hand, and no identify response
+    // carries a third-party address (libp2p 3.5's identify shares the
+    // local peer's own listen addresses and protocols, nothing else).
+    // The DHT runs on the Notis protocol as a client with no bootstrap
+    // peers, so no walk starts. Both nodes dial no one; only the client
+    // dials them.
+    //
+    // The guard tested: the delivery handler reports Accept so
+    // gossipsub forwards the message. A publishes a valid extending
+    // block; B's `gossipsub:message` event fires only because the
+    // client's forward reached it.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const a = await startNode(chain); openNodes.push(a);
+    const b = await startNode(chain); openNodes.push(b);
+
+    const resolve = chainResolve((url) => {
+      if (url.includes(a.id)) return chain;
+      if (url.includes(b.id)) return chain;
+      return 'unreachable';
+    }, K);
+
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve,
+    });
+    openClients.push(client);
+    await client.check();
+
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(a.mesh.libp2p), a.mesh.libp2p.peerId.toString(),
+    );
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(b.mesh.libp2p), b.mesh.libp2p.peerId.toString(),
+    );
+
+    // Guard: A and B are not directly connected.
+    const aPeerIds = a.mesh.libp2p.getConnections().map((c) => c.remotePeer.toString());
+    const bPeerIds = b.mesh.libp2p.getConnections().map((c) => c.remotePeer.toString());
+    expect(aPeerIds).not.toContain(b.mesh.libp2p.peerId.toString());
+    expect(bPeerIds).not.toContain(a.mesh.libp2p.peerId.toString());
+
+    // Listen on B's router for the forwarded message. The race against a
+    // 15 s deadline turns a missed forward (B never fires) into a prompt
+    // red run on a guard mutation (`Accept` → `Ignore` on the report
+    // call) rather than a 240 s test-timeout.
+    const bReceived = new Promise<Uint8Array | null>((resolveBytes) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const handler = (ev: any): void => {
+        const msg = ev.detail?.msg;
+        if (msg && msg.topic === TOPIC) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (pubsubOf(b.mesh.libp2p) as any).removeEventListener('gossipsub:message', handler);
+          resolveBytes(msg.data);
+        }
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pubsubOf(b.mesh.libp2p) as any).addEventListener('gossipsub:message', handler);
+      setTimeout(() => resolveBytes(null), 15_000);
+    });
+
+    const next = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    const bytes = encodeOrderingBlock(next);
+    await pubsubOf(a.mesh.libp2p).publish(TOPIC, bytes);
+
+    const received = await bReceived;
+    expect(received).not.toBeNull();
+    expect(received!.length).toBe(bytes.length);
+    // The forward tick on the client is the delivery handler's
+    // Accept-report path firing.
+    await vi.waitFor(() => {
+      expect(client.state().traffic.forwarded).toBeGreaterThan(0);
+    }, { timeout: 15_000, interval: 50 });
+
+    // Guard still holds after the forward: A and B remained apart,
+    // the forward happened through the client.
+    const aAfter = a.mesh.libp2p.getConnections().map((c) => c.remotePeer.toString());
+    const bAfter = b.mesh.libp2p.getConnections().map((c) => c.remotePeer.toString());
+    expect(aAfter).not.toContain(b.mesh.libp2p.peerId.toString());
+    expect(bAfter).not.toContain(a.mesh.libp2p.peerId.toString());
+  }, 240_000);
+
+  it('before settlement, a valid gossiped block is forwarded, nothing moves, no check fires', async () => {
+    // The first check completes with every anchor's proof `unreachable`:
+    // `HeldChain.settled()` stays `false`. A valid block arrives through
+    // gossip, the validator accepts it (standing is `null`,
+    // `scheduledTargetBits` is `null` with no `block1` held, so the
+    // schedule is skipped), the delivery handler fires:
+    // `traffic.forwarded + 1`, then the early `!this.chain.settled()`
+    // return leaves `state.tip` null and runs no immediate check.
+    // Within 3 s (well under `CHECK_INTERVAL_MS = 30_000`), `checks`
+    // must not rise.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(() => 'unreachable', K),
+    });
+    openClients.push(client);
+    await client.check();
+    expect(client.state().tip).toBeNull();
+
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    );
+
+    const checksBefore = client.state().checks;
+    const forwardedBefore = client.state().traffic.forwarded;
+
+    // A valid block with an unknown prev hash. With no `block1` the
+    // schedule is skipped; floor PoW passes.
+    const unknownPrev = 'cc'.repeat(32);
+    const orphan = makeFloorBlock(50, unknownPrev);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, encodeOrderingBlock(orphan));
+
+    await vi.waitFor(() => {
+      expect(client.state().traffic.forwarded).toBe(forwardedBefore + 1);
+    }, { timeout: 15_000, interval: 50 });
+
+    // 3 s is well under CHECK_INTERVAL_MS; a periodic check cannot fire
+    // in this window, and the unsettled early-return must not trigger
+    // one either.
+    await new Promise((r) => setTimeout(r, 3_000));
+    expect(client.state().checks).toBe(checksBefore);
+    expect(client.state().tip).toBeNull();
+  }, 180_000);
+});
+
+describe('lieTarget', () => {
+  // MESH_INTERFACE → Block gossip → "A refused block is evidence as
+  // `net` weighs it" — a lie names only the propagation source's own
+  // key, and only when the list holds that key. The four conditions —
+  // reject, lie, Notis-key source, held — all state inside `lieTarget`.
+  const held = (set: Set<string>): ((id: string) => boolean) => (id) => set.has(id);
+  const KEY = 'aa'.repeat(32);
+  const UNHELD = 'bb'.repeat(32);
+  const LIE: BlockVerdict = { result: 'reject', lie: true, detail: 'bad signature' };
+  const NON_LIE: BlockVerdict = { result: 'reject', lie: false, detail: 'version mismatch' };
+
+  it('a lie from a held key names the key', () => {
+    expect(lieTarget(LIE, KEY, held(new Set([KEY])))).toBe(KEY);
+  });
+
+  it('a lie from a key the list does not hold is null', () => {
+    expect(lieTarget(LIE, UNHELD, held(new Set([KEY])))).toBeNull();
+  });
+
+  it('a null source — a peer id that is not a Notis key — is null', () => {
+    expect(lieTarget(LIE, null, held(new Set([KEY])))).toBeNull();
+  });
+
+  it('a non-lie reject is null', () => {
+    expect(lieTarget(NON_LIE, KEY, held(new Set([KEY])))).toBeNull();
+  });
 });
