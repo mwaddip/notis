@@ -61,6 +61,11 @@ describe('stage/topology.json is whole', () => {
     expect(errors, errors.join('; ')).toEqual([]);
   });
 
+  it('the host the pair\'s miner mines against runs a miner node', () => {
+    const topology = readTopology(TOPOLOGY_PATH);
+    expect(topology.hosts['hostile-lagging'].node.role).toBe('miner');
+  });
+
   it('each NAT router has an inside and an outside', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const nats = Object.entries(topology.hosts as Record<string, any>).filter(([, h]) => h.role === 'nat');

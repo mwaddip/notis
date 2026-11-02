@@ -110,7 +110,7 @@
       "node": {
         "httpPort": 3100,
         "p2pPort": 9100,
-        "role": "server"
+        "role": "miner"
       }
     },
     "hostile-publisher": {
