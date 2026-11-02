@@ -532,4 +532,448 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s2.tip!.height).toBe(K + 1);
     expect(s2.tip!.hash).toBe(chainTipHash);
   }, 120_000);
+
+  it.fails('a fill that moves the tip leaves the node at the old tip trailing', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — phase 3
+    // places every tip against the chain as it then stands, after the
+    // `above` fills have moved the tip. A at the old tip and B one
+    // above: after the fill links, A reads `trailing`, B reads `ok`,
+    // and a tip-need routed read goes to B.
+    const base = makeLinkedChain(K + 2, PROFILE);
+    const start = base.slice(0, K + 1);
+    const ext = base.slice(0, K + 2);
+    const upA = await chainUpstream(start); ups.push(upA);
+    const upB = await chainUpstream(start); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[] } = { a: start, b: start };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+    await client.check(); // settle at K+1 — both `ok`
+
+    // Advance B one block above; A stays at K+1.
+    upB.setChain(ext);
+    chainsNow.b = ext;
+    await client.check();
+
+    const s = client.state();
+    expect(s.nodes.find((n) => n.notisId === a.id)!.status).toBe('trailing');
+    expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('ok');
+    // A tip-need routed read goes to an `ok` node — B, not A.
+    const picked = await client.read('/blocks/current', 'tip');
+    expect(picked.nodeId).toBe(b.id);
+  }, 180_000);
+
+  it.fails('two nodes above at different heights are filled once, from the highest', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — phase 3
+    // runs the `above` fills first, highest named height first; a node
+    // whose tip is placed by an earlier fill is not read again. B at
+    // h+2, C at h+3: C's fill reads three headers; B is placed from the
+    // extended chain with no read of its own.
+    const base = makeLinkedChain(K + 4, PROFILE);
+    const start = base.slice(0, K + 1);
+    const bChain = base.slice(0, K + 3);     // B at K+3 (two above start)
+    const cChain = base.slice(0, K + 4);     // C at K+4 (three above start)
+
+    const upA = await chainUpstream(start); ups.push(upA);
+    const upB = await chainUpstream(start); ups.push(upB);
+    const upC = await chainUpstream(start); ups.push(upC);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const dC = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dC);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+    const c = await startNode(upC, dC); nodes.push(c.node);
+
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[]; c: OrderingBlock[] } = {
+      a: start, b: start, c: start,
+    };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      if (url.includes(c.id)) return chainsNow.c;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+        { notisId: c.id, addrs: [c.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+    await client.check(); // settle at K+1
+    const bHeightReadsBefore = upB.heightReads();
+    const cHeightReadsBefore = upC.heightReads();
+
+    // Advance B to K+2 and C to K+3.
+    upB.setChain(bChain);
+    chainsNow.b = bChain;
+    upC.setChain(cChain);
+    chainsNow.c = cChain;
+    await client.check();
+
+    // C's fill reads 3 headers; B's tip is placed from the extended
+    // chain with no header read of its own.
+    expect(upC.heightReads() - cHeightReadsBefore).toBe(3);
+    expect(upB.heightReads() - bHeightReadsBefore).toBe(0);
+    const s = client.state();
+    // After the fill the chain tip is K+3; A is at K+1 (two below), B
+    // at K+2 (one below), C at K+3 (tip).
+    expect(s.nodes.find((n) => n.notisId === a.id)!.status).toBe('behind');
+    expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('trailing');
+    expect(s.nodes.find((n) => n.notisId === c.id)!.status).toBe('ok');
+  }, 240_000);
+
+  it.fails('the own-tip URL is a node placed at the tip this check', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — the own-tip
+    // URL prepended to the proof call is a node whose tip read this
+    // check placed `tip` against the final chain, not a node that was
+    // `ok` at the last check. A `ok` last check; the chain extends by
+    // B's block; C's fork triggers the proof call; the own-tip URL
+    // must be B (now at the tip), not A (now one behind).
+    const base = makeLinkedChain(K + 2, PROFILE);
+    const start = base.slice(0, K + 1);
+    const ext = base.slice(0, K + 2);
+    const forkChain = makeLinkedChain(K + 1, PROFILE); // different hash at K+1
+    const upA = await chainUpstream(start); ups.push(upA);
+    const upB = await chainUpstream(start); ups.push(upB);
+    const upC = await chainUpstream(start); ups.push(upC);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const dC = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dC);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+    const c = await startNode(upC, dC); nodes.push(c.node);
+
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[]; c: OrderingBlock[] } = {
+      a: start, b: start, c: start,
+    };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      if (url.includes(c.id)) return chainsNow.c;
+      return 'unreachable';
+    };
+    const resolveUrls: string[][] = [];
+    const underlying = chainResolve(chainOf, K);
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+        { notisId: c.id, addrs: [c.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, ...rest) => {
+        resolveUrls.push([...urls]);
+        return underlying(urls, ...rest);
+      },
+    });
+    clients.push(client);
+    await client.check(); // settle at K+1 — all `ok` on `start`
+    const callsAfterSettle = resolveUrls.length;
+
+    // Advance B one block above (K+2); C moves to a fork at K+1 (same
+    // height, different hash) so phase 4 runs.
+    upB.setChain(ext);
+    chainsNow.b = ext;
+    upC.setChain(forkChain);
+    chainsNow.c = forkChain;
+    await client.check();
+
+    expect(resolveUrls.length).toBeGreaterThan(callsAfterSettle);
+    const lastUrls = resolveUrls[resolveUrls.length - 1]!;
+    // The own-tip URL is a node placed `tip` THIS check: that is B
+    // (the fill linked at K+2), not A (now `trailing`).
+    expect(lastUrls[0]).toBe('notis-mesh://' + b.id);
+  }, 180_000);
+
+  it.fails('behindBy is written for placed nodes', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — every
+    // placed node carries its `behindBy`: 0 at the tip, 1 one below,
+    // the count below for a tip within the window.
+    const chain = makeLinkedChain(K + 2, PROFILE);
+    const upA = await chainUpstream(chain); ups.push(upA);
+    const upB = await chainUpstream(chain.slice(0, K + 1)); ups.push(upB);  // one below
+    const upC = await chainUpstream(chain.slice(0, K)); ups.push(upC);      // two below
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const dC = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dC);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+    const c = await startNode(upC, dC); nodes.push(c.node);
+
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chain;
+      if (url.includes(b.id)) return chain.slice(0, K + 1);
+      if (url.includes(c.id)) return chain.slice(0, K);
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+        { notisId: c.id, addrs: [c.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+    await client.check(); // settle to A's chain
+    // Second check — now the chain is settled and placements apply.
+    await client.check();
+
+    const s = client.state();
+    expect(s.nodes.find((n) => n.notisId === a.id)!.behindBy).toBe(0);
+    expect(s.nodes.find((n) => n.notisId === b.id)!.behindBy).toBe(1);
+    expect(s.nodes.find((n) => n.notisId === c.id)!.behindBy).toBe(2);
+  }, 180_000);
+
+  it.fails('a refused proof is asked of the next node naming the hash', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — "the next
+    // asked in the same check when that proof is refused". B1 and B2
+    // name the same fork hash; B1's proof is invalid: it is
+    // `blacklisted` with its own evidence, B2's proof is read in the
+    // same check and B2 reads by its own verdict.
+    const chainA = makeLinkedChain(K + 2, PROFILE);
+    const chainBfork = makeLinkedChain(K + 2, PROFILE); // different hashes
+    const upA = await chainUpstream(chainA); ups.push(upA);
+    const upB1 = await chainUpstream(chainBfork); ups.push(upB1);
+    const upB2 = await chainUpstream(chainBfork); ups.push(upB2);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const d1 = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(d1);
+    const d2 = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(d2);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b1 = await startNode(upB1, d1); nodes.push(b1.node);
+    const b2 = await startNode(upB2, d2); nodes.push(b2.node);
+
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainA;
+      if (url.includes(b1.id)) return 'invalid';   // B1's proof refused
+      if (url.includes(b2.id)) return chainBfork;  // B2's proof reads chainBfork
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b1.id, addrs: [b1.webrtcAddr] },
+        { notisId: b2.id, addrs: [b2.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+    await client.check();
+
+    const s = client.state();
+    const b1Entry = s.nodes.find((n) => n.notisId === b1.id)!;
+    const b2Entry = s.nodes.find((n) => n.notisId === b2.id)!;
+    expect(b1Entry.status).toBe('blacklisted');
+    expect(b1Entry.evidence?.kind).toBe('proof-invalid');
+    // B2 reads by its own verdict: chainBfork is a fork (not on chainA's
+    // suffix), so B2 is `behind` under `behindOnWinnerSuffix` returning
+    // null (eventForTipResult then answers `behind` for a verified
+    // result with behind=null).
+    expect(b2Entry.status).toBe('behind');
+  }, 180_000);
+
+  it.fails('after a switch every tip is placed against the new chain', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — a switch
+    // to a heavier chain leaves the previous `tip` placement stale;
+    // the re-placement moves nodes named on the old chain to `behind`.
+    // Two nodes A1 and A2 on chainLight: the own-tip URL is one of
+    // them, the other is placed `tip` in phase 3 but is NOT in phase
+    // 4. After B's heavier chain wins and the chain switches, A2 must
+    // read `behind` as well.
+    const chainLight = makeLinkedChain(K + 1, PROFILE);
+    const chainHeavy = makeLinkedChain(K + 5, PROFILE); // different hashes, heavier
+    const upA1 = await chainUpstream(chainLight); ups.push(upA1);
+    const upA2 = await chainUpstream(chainLight); ups.push(upA2);
+    const upB = await chainUpstream(chainLight); ups.push(upB);
+    const d1 = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(d1);
+    const d2 = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(d2);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a1 = await startNode(upA1, d1); nodes.push(a1.node);
+    const a2 = await startNode(upA2, d2); nodes.push(a2.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+
+    const chainsNow: {
+      a1: OrderingBlock[]; a2: OrderingBlock[]; b: OrderingBlock[];
+    } = { a1: chainLight, a2: chainLight, b: chainLight };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a1.id)) return chainsNow.a1;
+      if (url.includes(a2.id)) return chainsNow.a2;
+      if (url.includes(b.id)) return chainsNow.b;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a1.id, addrs: [a1.webrtcAddr] },
+        { notisId: a2.id, addrs: [a2.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+    await client.check(); // settle at chainLight (all ok)
+
+    // B switches to chainHeavy. A1 and A2 stay on chainLight; both are
+    // placed `tip` against the pre-switch chain. Phase 4's own-tip
+    // prepend is one of them; the OTHER is not in phase 4 at all.
+    upB.setChain(chainHeavy);
+    chainsNow.b = chainHeavy;
+    await client.check();
+
+    const s = client.state();
+    // After the switch, A1 and A2 are both on another chain; both read
+    // `behind`. B reads `ok` on the new chain.
+    expect(s.nodes.find((n) => n.notisId === a1.id)!.status).toBe('behind');
+    expect(s.nodes.find((n) => n.notisId === a2.id)!.status).toBe('behind');
+    expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('ok');
+  }, 240_000);
+
+  it('a tip below the held window matched by the chain\'s own header reads behind with no proof', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — "below the
+    // held headers, held to the client's own header at that height,
+    // read from a node at its tip". The `under` branch: the chain's
+    // header at that height matches, event `behind`, no proof read.
+    const chainBig = makeLinkedChain(K + 5, PROFILE);
+    const chainShort = chainBig.slice(0, 2); // length 2 — under the window
+    const upA = await chainUpstream(chainBig); ups.push(upA);
+    const upB = await chainUpstream(chainShort); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainBig;
+      if (url.includes(b.id)) return chainShort;
+      return 'unreachable';
+    };
+    const resolveUrls: string[][] = [];
+    const underlying = chainResolve(chainOf, K);
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, ...rest) => {
+        resolveUrls.push([...urls]);
+        return underlying(urls, ...rest);
+      },
+    });
+    clients.push(client);
+    await client.check(); // settle at chainBig; window = heights (K+5-K+1)..(K+5), lowestHeight > 2
+    const proofReadsAfterSettle = client.state().traffic.proofReads;
+    const callsAfterSettle = resolveUrls.length;
+    await client.check();
+
+    const s = client.state();
+    expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('behind');
+    // No new proof read on the second check — the under matched.
+    expect(client.state().traffic.proofReads).toBe(proofReadsAfterSettle);
+    expect(resolveUrls.length).toBe(callsAfterSettle);
+  }, 180_000);
+
+  it('a tip below the held window not matched by the chain\'s own header reads its proof', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — the `under`
+    // branch mismatched: the chain's own header hash differs from the
+    // tip read's hash; the tip falls through to the proof call.
+    const chainBig = makeLinkedChain(K + 5, PROFILE);
+    const chainFork = makeLinkedChain(2, PROFILE); // different hashes at heights 1 and 2
+    const upA = await chainUpstream(chainBig); ups.push(upA);
+    const upB = await chainUpstream(chainFork); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainBig;
+      if (url.includes(b.id)) return chainFork;
+      return 'unreachable';
+    };
+    const resolveUrls: string[][] = [];
+    const underlying = chainResolve(chainOf, K);
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, ...rest) => {
+        resolveUrls.push([...urls]);
+        return underlying(urls, ...rest);
+      },
+    });
+    clients.push(client);
+    await client.check(); // settle at chainBig
+    const callsAfterSettle = resolveUrls.length;
+    await client.check();
+
+    const s = client.state();
+    // B's proof is read (chainFork is too-short → event `behind`).
+    expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('behind');
+    expect(resolveUrls.length).toBeGreaterThan(callsAfterSettle);
+  }, 180_000);
+
+  it('speed is the tip read\'s even when a header read follows', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — "it times
+    // each node's tip read; that time is the node's speed until the
+    // next check". A header read for an `above` fill through the same
+    // timed fetch must not overwrite the node's speed.
+    const base = makeLinkedChain(K + 2, PROFILE);
+    const start = base.slice(0, K + 1);
+    const ext = base.slice(0, K + 2);
+    const HEIGHT_DELAY_MS = 300;
+    const upA = await chainUpstream(start, { heightReadDelayMs: HEIGHT_DELAY_MS });
+    ups.push(upA);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+
+    const chainsNow: { a: OrderingBlock[] } = { a: start };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+    await client.check(); // settle at start
+
+    // Advance A one block above so phase 3a reads a slow `/blocks/K+2`.
+    upA.setChain(ext);
+    chainsNow.a = ext;
+    await client.check();
+
+    const entry = client.state().nodes.find((e) => e.notisId === a.id)!;
+    expect(entry.readMs).not.toBeNull();
+    // The tip read's time is well under the header-read delay. The
+    // header read is slower; if it overwrote `readMs`, the figure
+    // would be at least the delay.
+    expect(entry.readMs!).toBeLessThan(HEIGHT_DELAY_MS / 2);
+  }, 180_000);
 });

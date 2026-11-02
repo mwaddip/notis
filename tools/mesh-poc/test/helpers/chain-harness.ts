@@ -19,6 +19,8 @@ export interface ChainUpstream {
   base: string;
   setChain(c: OrderingBlock[]): void;
   close(): Promise<void>;
+  /** Count of `/blocks/:h` hits since the server started. */
+  heightReads(): number;
 }
 
 /**
@@ -28,9 +30,19 @@ export interface ChainUpstream {
  * `GET /blocks/:h` answers that height's block, `404 { error: 'not
  * found' }` on every other path. `setChain` swaps what it serves — a
  * node advancing, or moving to a fork — without a restart.
+ *
+ * `options.heightReadDelayMs` (default 0): a `setTimeout` wait before
+ * answering any `/blocks/:h` — the harness simulates a slow header read
+ * without touching `/blocks/current`'s own time (MESH_INTERFACE → The
+ * client's node list → "A check" — the speed is the tip read's).
  */
-export async function chainUpstream(chain: OrderingBlock[]): Promise<ChainUpstream> {
+export async function chainUpstream(
+  chain: OrderingBlock[],
+  options?: { heightReadDelayMs?: number },
+): Promise<ChainUpstream> {
   let current = chain;
+  let heightHits = 0;
+  const heightDelayMs = options?.heightReadDelayMs ?? 0;
   const srv: Server = createServer((req, res) => {
     const url = req.url ?? '';
     if (url === '/blocks/current') {
@@ -47,15 +59,23 @@ export async function chainUpstream(chain: OrderingBlock[]): Promise<ChainUpstre
     }
     const m = /^\/blocks\/(\d+)$/.exec(url);
     if (m) {
+      heightHits += 1;
       const h = Number(m[1]);
       const block = current.find((b) => b.header.height === h);
-      if (!block) {
-        res.writeHead(404, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'not found' }));
-        return;
+      const answer = (): void => {
+        if (!block) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(blockToJson(block)));
+      };
+      if (heightDelayMs > 0) {
+        setTimeout(answer, heightDelayMs);
+      } else {
+        answer();
       }
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(blockToJson(block)));
       return;
     }
     res.writeHead(404, { 'content-type': 'application/json' });
@@ -70,6 +90,9 @@ export async function chainUpstream(chain: OrderingBlock[]): Promise<ChainUpstre
     },
     close(): Promise<void> {
       return new Promise<void>((resolve) => srv.close(() => resolve()));
+    },
+    heightReads(): number {
+      return heightHits;
     },
   };
 }
