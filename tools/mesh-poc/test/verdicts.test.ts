@@ -646,7 +646,7 @@ describe('verdictS8NoProofs — no proof is read across five checks and every ho
       { notisId: '86ccc280fe7e406b86c4cba71201a617d1720e9976e0114e5f7744addab9d81a', status: 'absent' },
     ],
   };
-  it.fails('two held nodes ok, two absent (a measured step 1) → PASS', () => {
+  it('two held nodes ok, two absent (a measured step 1) → PASS', () => {
     expect(verdictS8NoProofs(MEASURED)).toBe('PASS');
   });
   it('one held honest node in retry beside absent entries → FAIL', () => {

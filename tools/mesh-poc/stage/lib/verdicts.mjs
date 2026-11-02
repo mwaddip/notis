@@ -450,10 +450,11 @@ export function verdictS7Counts(m) {
 // MESH_INTERFACE → Acceptance 8 — "After the first check, no proof is
 // read across five checks while every node names a tip on the
 // client's chain". PASS when `proofReadsFinal === proofReadsBaseline`
-// across at least five completed checks and every honest node in the
-// client's node list reads `ok`, `trailing` or `behind` at the final
-// state (the chain is settled, no node is in `retry` or
-// `blacklisted`).
+// across at least five completed checks and at least two honest nodes
+// the client's list holds all read `ok`, `trailing` or `behind` at the
+// final state (the chain is settled, no held node is in `retry` or
+// `blacklisted`). An `absent` entry is a node the list never held; it
+// names no tip and is not judged.
 // Measurement:
 //   `{ proofReadsBaseline, proofReadsFinal, checksBaseline, checksFinal,
 //      honestNodeStatuses: Array<{ notisId, status }> }`.
@@ -464,10 +465,14 @@ export function verdictS8NoProofs(m) {
   if (typeof m.checksBaseline !== 'number' || typeof m.checksFinal !== 'number') return 'FAIL';
   if (m.checksFinal - m.checksBaseline < 5) return 'FAIL';
   if (!Array.isArray(m.honestNodeStatuses) || m.honestNodeStatuses.length === 0) return 'FAIL';
+  let held = 0;
   for (const e of m.honestNodeStatuses) {
     if (e === null || typeof e !== 'object') return 'FAIL';
+    if (e.status === 'absent') continue;
     if (e.status !== 'ok' && e.status !== 'trailing' && e.status !== 'behind') return 'FAIL';
+    held += 1;
   }
+  if (held < 2) return 'FAIL';
   return 'PASS';
 }
 
