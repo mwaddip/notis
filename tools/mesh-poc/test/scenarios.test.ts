@@ -496,12 +496,47 @@ describe('s8 (prove once, follow by gossip)', () => {
   it('S8_GAP_PREDICATE is true only once the tracker records the catch-up', () => {
     const fn = buildPredicate(s8.S8_GAP_PREDICATE);
     expect(fn(null)).toBe(false);
-    expect(fn(JSON.stringify({ base: null, final: null }))).toBe(false);
-    expect(fn(JSON.stringify({ base: { tipHeight: 100, proofReads: 6, atMs: 0 }, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: null, cut: null, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: { tipHeight: 100, proofReads: 6 }, cut: null, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: { tipHeight: 100, proofReads: 6 }, cut: { checks: 2 }, final: null }))).toBe(false);
     expect(fn(JSON.stringify({
-      base: { tipHeight: 100, proofReads: 6, atMs: 0 },
-      final: { tipHeight: 104, proofReads: 6, atMs: 60_000 },
+      base: { tipHeight: 100, proofReads: 6 },
+      cut: { checks: 2 },
+      final: { tipHeight: 104, proofReads: 6 },
     }))).toBe(true);
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 4's expression carries a pure
+  // observer that reads a snapshot of `#state` and returns the next
+  // tracker state. The observer captures a baseline on the first
+  // completed check, marks a cut on a check where no honest node reads
+  // ok or trailing, and records final at the first check after the
+  // cut where every honest node reads ok or trailing. The scenarios
+  // below drive the observer with a sequence of state snapshots and
+  // read the resulting state's `cut` and `final` fields.
+  it.fails('s8GapObserve: a state sequence that never cuts does not end', () => {
+    const honestIds = ['a'.repeat(64), 'b'.repeat(64)];
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
+      { checks: 2, tip: { height: 101 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'trailing' }] },
+      { checks: 3, tip: { height: 102 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
+    ];
+    let st: unknown = null;
+    for (const s of sequence) st = s8.s8GapObserve(st, s, honestIds);
+    expect((st as { cut: unknown }).cut).toBeNull();
+    expect((st as { final: unknown }).final).toBeNull();
+  });
+  it.fails('s8GapObserve: a sequence that cuts and recovers ends at the recovery check', () => {
+    const honestIds = ['a'.repeat(64), 'b'.repeat(64)];
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
+      { checks: 2, tip: { height: 100 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'retry' }, { notisId: honestIds[1], status: 'retry' }] },
+      { checks: 3, tip: { height: 104 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
+    ];
+    let st: unknown = null;
+    for (const s of sequence) st = s8.s8GapObserve(st, s, honestIds);
+    expect((st as { cut: unknown }).cut).not.toBeNull();
+    expect((st as { final: { tipHeight: number; proofReads: number } }).final.tipHeight).toBe(104);
+    expect((st as { final: { tipHeight: number; proofReads: number } }).final.proofReads).toBe(5);
   });
   // MESH_INTERFACE → Acceptance 8 — the expression-builders substitute
   // the honest-id set and the lagging node's id into the live page's
@@ -519,5 +554,11 @@ describe('s8 (prove once, follow by gossip)', () => {
     const expr = s8.buildS8ForkExpression(id);
     expect(expr).toContain(JSON.stringify(id));
     expect(expr).toContain('__s8F');
+  });
+  it.fails('buildS8GapExpression embeds the honestIds as a JSON array', () => {
+    const ids = ['a'.repeat(64), 'b'.repeat(64)];
+    const expr = s8.buildS8GapExpression(ids);
+    expect(expr).toContain(JSON.stringify(ids));
+    expect(expr).toContain('__s8GAP');
   });
 });

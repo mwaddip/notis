@@ -13,7 +13,8 @@ export declare function buildS8NoProofsExpression(honestIds: string[]): string;
 export declare const S8_NOPROOFS_PREDICATE: string;
 export declare function buildS8ForkExpression(laggingId: string): string;
 export declare const S8_FORK_PREDICATE: string;
-export declare const S8_GAP_EXPR: string;
+export declare function buildS8GapExpression(honestIds: string[]): string;
+export declare function s8GapObserve(prev: unknown, s: unknown, honestIds: string[]): unknown;
 export declare const S8_GAP_PREDICATE: string;
 export declare function run(ctx: { dryRun: boolean; topology: unknown; [k: string]: unknown }): Promise<{
   scenario: string;
