@@ -1,8 +1,8 @@
-// MESH_INTERFACE → Acceptance — "Faults are privileged and confined to the
-// stage's namespaces: nft rules added and removed in a named namespace, a
-// recorded process stopped by its PID and started again with its recorded
-// command. Every fault a scenario applies, it removes before it ends, pass
-// or fail."
+// MESH_INTERFACE → Acceptance — faults are privileged and confined to
+// the stage's named namespaces: nft rules are added and removed in a
+// named namespace, a recorded process is stopped by its PID and
+// started again with its recorded command, and every fault a scenario
+// applies it removes before it ends, pass or fail.
 //
 // `FaultLog` records every fault the scenario applies and marks it with a
 // `[fault:<scenario>:<name>]` prefix on dry-run output; the matching
