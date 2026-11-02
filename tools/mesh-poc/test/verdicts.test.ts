@@ -603,10 +603,10 @@ describe('verdictS8NoProofs — no proof is read across five checks and every ho
       { notisId: 'c'.repeat(64), status: 'trailing' },
     ],
   };
-  it.fails('every pass condition holds → PASS', () => {
+  it('every pass condition holds → PASS', () => {
     expect(verdictS8NoProofs(PASS)).toBe('PASS');
   });
-  it.fails('a node reads behind → PASS (behind is still on the chain)', () => {
+  it('a node reads behind → PASS (behind is still on the chain)', () => {
     expect(verdictS8NoProofs({
       ...PASS,
       honestNodeStatuses: [
@@ -615,16 +615,16 @@ describe('verdictS8NoProofs — no proof is read across five checks and every ho
       ],
     })).toBe('PASS');
   });
-  it.fails('proofReadsFinal rose above baseline (a proof was read) → FAIL', () => {
+  it('proofReadsFinal rose above baseline (a proof was read) → FAIL', () => {
     expect(verdictS8NoProofs({ ...PASS, proofReadsFinal: 5 })).toBe('FAIL');
   });
-  it.fails('fewer than five checks past baseline → FAIL', () => {
+  it('fewer than five checks past baseline → FAIL', () => {
     expect(verdictS8NoProofs({ ...PASS, checksFinal: 6 })).toBe('FAIL');
   });
-  it.fails('honestNodeStatuses empty (no positive evidence) → FAIL', () => {
+  it('honestNodeStatuses empty (no positive evidence) → FAIL', () => {
     expect(verdictS8NoProofs({ ...PASS, honestNodeStatuses: [] })).toBe('FAIL');
   });
-  it.fails('a honest node reads retry → FAIL', () => {
+  it('a honest node reads retry → FAIL', () => {
     expect(verdictS8NoProofs({
       ...PASS,
       honestNodeStatuses: [
@@ -633,7 +633,7 @@ describe('verdictS8NoProofs — no proof is read across five checks and every ho
       ],
     })).toBe('FAIL');
   });
-  it.fails('a honest node reads blacklisted → FAIL', () => {
+  it('a honest node reads blacklisted → FAIL', () => {
     expect(verdictS8NoProofs({
       ...PASS,
       honestNodeStatuses: [
@@ -642,12 +642,12 @@ describe('verdictS8NoProofs — no proof is read across five checks and every ho
       ],
     })).toBe('FAIL');
   });
-  it.fails('proofReadsFinal missing (not a number) → FAIL, never PASS', () => {
+  it('proofReadsFinal missing (not a number) → FAIL, never PASS', () => {
     const m: Record<string, unknown> = { ...PASS };
     delete m['proofReadsFinal'];
     expect(verdictS8NoProofs(m)).toBe('FAIL');
   });
-  it.fails('honestNodeStatuses not an array → FAIL', () => {
+  it('honestNodeStatuses not an array → FAIL', () => {
     expect(verdictS8NoProofs({ ...PASS, honestNodeStatuses: null })).toBe('FAIL');
   });
 });
@@ -664,10 +664,10 @@ describe('verdictS8Gossip — three new blocks reach the browser quickly, no che
       { height: 44, delayMs: 1_800, checksMoved: false },
     ],
   };
-  it.fails('three deliveries within 5 s, no check moved → PASS', () => {
+  it('three deliveries within 5 s, no check moved → PASS', () => {
     expect(verdictS8Gossip(PASS)).toBe('PASS');
   });
-  it.fails('two within and one that coincided with a check → PASS (two of three)', () => {
+  it('two within and one that coincided with a check → PASS (two of three)', () => {
     expect(verdictS8Gossip({
       deliveries: [
         { height: 42, delayMs: 1_200, checksMoved: false },
@@ -676,7 +676,7 @@ describe('verdictS8Gossip — three new blocks reach the browser quickly, no che
       ],
     })).toBe('PASS');
   });
-  it.fails('only one delivery within 5 s with checks unchanged → FAIL', () => {
+  it('only one delivery within 5 s with checks unchanged → FAIL', () => {
     expect(verdictS8Gossip({
       deliveries: [
         { height: 42, delayMs: 1_200, checksMoved: false },
@@ -685,7 +685,7 @@ describe('verdictS8Gossip — three new blocks reach the browser quickly, no che
       ],
     })).toBe('FAIL');
   });
-  it.fails('two below the 5 s bound but one coincided with a check (one net clean) → FAIL', () => {
+  it('two below the 5 s bound but one coincided with a check (one net clean) → FAIL', () => {
     expect(verdictS8Gossip({
       deliveries: [
         { height: 42, delayMs: 1_200, checksMoved: false },
@@ -694,7 +694,7 @@ describe('verdictS8Gossip — three new blocks reach the browser quickly, no che
       ],
     })).toBe('FAIL');
   });
-  it.fails('fewer than three deliveries → FAIL', () => {
+  it('fewer than three deliveries → FAIL', () => {
     expect(verdictS8Gossip({
       deliveries: [
         { height: 42, delayMs: 1_200, checksMoved: false },
@@ -702,10 +702,10 @@ describe('verdictS8Gossip — three new blocks reach the browser quickly, no che
       ],
     })).toBe('FAIL');
   });
-  it.fails('deliveries is not an array → FAIL', () => {
+  it('deliveries is not an array → FAIL', () => {
     expect(verdictS8Gossip({ deliveries: null })).toBe('FAIL');
   });
-  it.fails('a delivery with no delayMs field → FAIL, never PASS', () => {
+  it('a delivery with no delayMs field → FAIL, never PASS', () => {
     expect(verdictS8Gossip({
       deliveries: [
         { height: 42, checksMoved: false },
@@ -714,7 +714,7 @@ describe('verdictS8Gossip — three new blocks reach the browser quickly, no che
       ],
     })).toBe('FAIL');
   });
-  it.fails('a delivery with checksMoved as a non-boolean → FAIL', () => {
+  it('a delivery with checksMoved as a non-boolean → FAIL', () => {
     expect(verdictS8Gossip({
       deliveries: [
         { height: 42, delayMs: 1_200, checksMoved: 0 },
@@ -739,28 +739,28 @@ describe('verdictS8Fork — the lagging fork is behind; the client stays on the 
     pub1BlockHashAtClientHeight: 'ab'.repeat(32),
     proofReadsDeltaAtCheck: 2,
   };
-  it.fails('every pass condition holds → PASS', () => {
+  it('every pass condition holds → PASS', () => {
     expect(verdictS8Fork(PASS)).toBe('PASS');
   });
-  it.fails('lagging reads blacklisted (never) → FAIL', () => {
+  it('lagging reads blacklisted (never) → FAIL', () => {
     expect(verdictS8Fork({ ...PASS, laggingStatus: 'blacklisted' })).toBe('FAIL');
   });
-  it.fails('lagging reads retry → FAIL (lagging names a valid proof of a lighter chain)', () => {
+  it('lagging reads retry → FAIL (lagging names a valid proof of a lighter chain)', () => {
     expect(verdictS8Fork({ ...PASS, laggingStatus: 'retry' })).toBe('FAIL');
   });
-  it.fails('lagging reads ok (its tip is on the chain, no fork left) → FAIL', () => {
+  it('lagging reads ok (its tip is on the chain, no fork left) → FAIL', () => {
     expect(verdictS8Fork({ ...PASS, laggingStatus: 'ok' })).toBe('FAIL');
   });
-  it.fails('client tip hash differs from pub1\'s hash at that height (fork won) → FAIL', () => {
+  it('client tip hash differs from pub1\'s hash at that height (fork won) → FAIL', () => {
     expect(verdictS8Fork({ ...PASS, pub1BlockHashAtClientHeight: 'cd'.repeat(32) })).toBe('FAIL');
   });
-  it.fails('proofReadsDelta at the check is 1 (own tip only, lagging never read) → FAIL', () => {
+  it('proofReadsDelta at the check is 1 (own tip only, lagging never read) → FAIL', () => {
     expect(verdictS8Fork({ ...PASS, proofReadsDeltaAtCheck: 1 })).toBe('FAIL');
   });
-  it.fails('proofReadsDelta at the check is 3 (another off-chain tip too) → FAIL', () => {
+  it('proofReadsDelta at the check is 3 (another off-chain tip too) → FAIL', () => {
     expect(verdictS8Fork({ ...PASS, proofReadsDeltaAtCheck: 3 })).toBe('FAIL');
   });
-  it.fails('clientTipHash missing → FAIL, never PASS', () => {
+  it('clientTipHash missing → FAIL, never PASS', () => {
     const m: Record<string, unknown> = { ...PASS };
     delete m['clientTipHash'];
     expect(verdictS8Fork(m)).toBe('FAIL');
@@ -781,25 +781,25 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
     tipHeightFinal: 104,
     pub1HeightFinal: 105,
   };
-  it.fails('every pass condition holds → PASS', () => {
+  it('every pass condition holds → PASS', () => {
     expect(verdictS8Gap(PASS)).toBe('PASS');
   });
-  it.fails('tip is level with pub1 (within zero) → PASS', () => {
+  it('tip is level with pub1 (within zero) → PASS', () => {
     expect(verdictS8Gap({ ...PASS, tipHeightFinal: 105 })).toBe('PASS');
   });
-  it.fails('proofReads moved during the window → FAIL (a proof was read)', () => {
+  it('proofReads moved during the window → FAIL (a proof was read)', () => {
     expect(verdictS8Gap({ ...PASS, proofReadsAfter: 7 })).toBe('FAIL');
   });
-  it.fails('tip did not catch up — still two blocks behind pub1 → FAIL', () => {
+  it('tip did not catch up — still two blocks behind pub1 → FAIL', () => {
     expect(verdictS8Gap({ ...PASS, pub1HeightFinal: 110 })).toBe('FAIL');
   });
-  it.fails('tipHeightFinal equals tipHeightBefore (vacuous "already there") → FAIL', () => {
+  it('tipHeightFinal equals tipHeightBefore (vacuous "already there") → FAIL', () => {
     expect(verdictS8Gap({ ...PASS, tipHeightFinal: 100, pub1HeightFinal: 100 })).toBe('FAIL');
   });
-  it.fails('tipHeightFinal below tipHeightBefore (tip moved backwards) → FAIL', () => {
+  it('tipHeightFinal below tipHeightBefore (tip moved backwards) → FAIL', () => {
     expect(verdictS8Gap({ ...PASS, tipHeightFinal: 99, pub1HeightFinal: 99 })).toBe('FAIL');
   });
-  it.fails('pub1HeightFinal missing → FAIL, never PASS', () => {
+  it('pub1HeightFinal missing → FAIL, never PASS', () => {
     const m: Record<string, unknown> = { ...PASS };
     delete m['pub1HeightFinal'];
     expect(verdictS8Gap(m)).toBe('FAIL');

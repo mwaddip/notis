@@ -459,7 +459,16 @@ export function verdictS7Counts(m) {
 //      honestNodeStatuses: Array<{ notisId, status }> }`.
 export function verdictS8NoProofs(m) {
   if (missing(m)) return 'skipped';
-  return 'skipped';
+  if (typeof m.proofReadsBaseline !== 'number' || typeof m.proofReadsFinal !== 'number') return 'FAIL';
+  if (m.proofReadsFinal !== m.proofReadsBaseline) return 'FAIL';
+  if (typeof m.checksBaseline !== 'number' || typeof m.checksFinal !== 'number') return 'FAIL';
+  if (m.checksFinal - m.checksBaseline < 5) return 'FAIL';
+  if (!Array.isArray(m.honestNodeStatuses) || m.honestNodeStatuses.length === 0) return 'FAIL';
+  for (const e of m.honestNodeStatuses) {
+    if (e === null || typeof e !== 'object') return 'FAIL';
+    if (e.status !== 'ok' && e.status !== 'trailing' && e.status !== 'behind') return 'FAIL';
+  }
+  return 'PASS';
 }
 
 // MESH_INTERFACE → Acceptance 8 — "a block mined on a node reaches
@@ -473,7 +482,16 @@ export function verdictS8NoProofs(m) {
 //   `{ deliveries: Array<{ height, delayMs, checksMoved }> }`.
 export function verdictS8Gossip(m) {
   if (missing(m)) return 'skipped';
-  return 'skipped';
+  if (!Array.isArray(m.deliveries) || m.deliveries.length !== 3) return 'FAIL';
+  let within = 0;
+  for (const d of m.deliveries) {
+    if (d === null || typeof d !== 'object') return 'FAIL';
+    if (typeof d.delayMs !== 'number') return 'FAIL';
+    if (typeof d.checksMoved !== 'boolean') return 'FAIL';
+    if (d.delayMs <= 5_000 && d.checksMoved === false) within += 1;
+  }
+  if (within < 2) return 'FAIL';
+  return 'PASS';
 }
 
 // MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
@@ -490,7 +508,11 @@ export function verdictS8Gossip(m) {
 //      proofReadsDeltaAtCheck }`.
 export function verdictS8Fork(m) {
   if (missing(m)) return 'skipped';
-  return 'skipped';
+  if (m.laggingStatus !== 'behind') return 'FAIL';
+  if (typeof m.clientTipHash !== 'string' || typeof m.pub1BlockHashAtClientHeight !== 'string') return 'FAIL';
+  if (m.clientTipHash !== m.pub1BlockHashAtClientHeight) return 'FAIL';
+  if (typeof m.proofReadsDeltaAtCheck !== 'number' || m.proofReadsDeltaAtCheck !== 2) return 'FAIL';
+  return 'PASS';
 }
 
 // MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for three
@@ -505,5 +527,11 @@ export function verdictS8Fork(m) {
 //      tipHeightFinal, pub1HeightFinal }`.
 export function verdictS8Gap(m) {
   if (missing(m)) return 'skipped';
-  return 'skipped';
+  if (typeof m.proofReadsBefore !== 'number' || typeof m.proofReadsAfter !== 'number') return 'FAIL';
+  if (m.proofReadsAfter !== m.proofReadsBefore) return 'FAIL';
+  if (typeof m.tipHeightBefore !== 'number' || typeof m.tipHeightFinal !== 'number') return 'FAIL';
+  if (typeof m.pub1HeightFinal !== 'number') return 'FAIL';
+  if (m.pub1HeightFinal - m.tipHeightFinal > 1) return 'FAIL';
+  if (m.tipHeightFinal <= m.tipHeightBefore) return 'FAIL';
+  return 'PASS';
 }
