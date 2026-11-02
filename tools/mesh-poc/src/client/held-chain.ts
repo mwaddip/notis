@@ -131,18 +131,25 @@ export class HeldChain {
 
   /**
    * A gap fill, highest-first and no longer than `k`: each header's
-   * `prevBlockHash` is the next one's `blockHash`, the last's a held
-   * header's. Checked bottom-up — PoW, the scheduled target over the
-   * parent below, the link — before anything moves (all or nothing). On
-   * `linked` the window gains the fill, lowest dropped past `k`.
+   * `prevBlockHash` is the next one's `blockHash`, the last's the tip's.
+   * Checked bottom-up — PoW, the scheduled target over the parent below,
+   * the link — before anything moves (all or nothing). On `linked` the
+   * window gains the fill, lowest dropped past `k`. A lowest header whose
+   * parent is a held header below the tip is a fork, and one whose parent
+   * is block 1 (or any other held hash) is a divergence from the whole
+   * chain; neither extends the tip and so neither is accepted here
+   * (MESH_INTERFACE → The client's node list → "The client's chain").
    */
   link(headers: BlockHeader[]): 'linked' | 'failed' {
     if (!this.block1 || this.window.length === 0) return 'failed';
     if (headers.length === 0 || headers.length > this.k) return 'failed';
     const lowest = headers[headers.length - 1]!;
-    // The last header's parent must be a held window header or block 1.
-    let parent: BlockHeader | null = this.findHeldByHash(lowest.prevBlockHash);
-    if (parent === null) return 'failed';
+    // The chain grows only from its tip: the lowest's parent must be the
+    // tip's hash. Anything else is a fork or a divergence.
+    const tip = this.window[this.window.length - 1]!;
+    const tipHash = blockHash(tip);
+    if (tipHash === null || lowest.prevBlockHash !== tipHash) return 'failed';
+    let parent: BlockHeader = tip;
     // Bottom-up: lowest → highest, each with its parent.
     for (let i = headers.length - 1; i >= 0; i--) {
       const cur = headers[i]!;

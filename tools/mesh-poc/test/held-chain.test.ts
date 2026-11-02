@@ -328,7 +328,7 @@ describe('HeldChain — link', () => {
     expect(hashOf(held.tip()!)).toBe(tipBefore);
   });
 
-  it.fails('failed: the fill links to a held header below the tip (a fork), the window unchanged', () => {
+  it('failed: the fill links to a held header below the tip (a fork), the window unchanged', () => {
     // MESH_INTERFACE → The client's node list → "The client's chain" — the
     // chain grows only from its tip: a fill reaching a held header below
     // the tip is a fork, refused with the window untouched. The current
@@ -385,7 +385,7 @@ describe('HeldChain — link', () => {
     expect(hashOf(held.headerAt(10)!)).toBe(headerAt10Before);
   });
 
-  it.fails('failed: the fill links to block 1 from above the window', () => {
+  it('failed: the fill links to block 1 from above the window', () => {
     // MESH_INTERFACE → The client's node list → "The client's chain" — a
     // fill reaches a held header only by linking to the tip; a fill whose
     // lowest links to block 1 is a divergence from the whole chain, not an
