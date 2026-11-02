@@ -71,8 +71,8 @@ describe('stage:run --dry-run', () => {
     expect(bad, `fault lines outside a notismesh-* namespace:\n  ${bad.join('\n  ')}`).toEqual([]);
   }, 30_000);
 
-  // MESH_INTERFACE → Acceptance — "Every fault a scenario applies, it
-  // removes before it ends, pass or fail." For every `[fault:<scenario>:
+  // MESH_INTERFACE → Acceptance — every fault a scenario applies, it
+  // removes before it ends, pass or fail. For every `[fault:<scenario>:
   // <name>]` with a non-null `removalArgv`, a matching `[fault:remove:
   // <scenario>:<name>]` appears later in the output. The scenarios
   // carry the pairing explicitly: `nft add table ip <T>` pairs with
@@ -99,9 +99,9 @@ describe('stage:run --dry-run', () => {
     }
   }, 30_000);
 
-  // MESH_INTERFACE → Acceptance — "`--dry-run` ... creates no
-  // namespace, file or process". The scenarios' dry-run also writes no
-  // scenario JSON under `stage/out/scenarios/`.
+  // MESH_INTERFACE → Acceptance — a `--dry-run` creates no namespace,
+  // file or process. The scenarios' dry-run also writes no scenario
+  // JSON under `stage/out/scenarios/`.
   it('the dry-run complete marker is in the output', () => {
     runDryOnce();
     expect(out, 'dry-run complete marker').toMatch(/\[dry-run complete\] 8 scenario\(s\)/);

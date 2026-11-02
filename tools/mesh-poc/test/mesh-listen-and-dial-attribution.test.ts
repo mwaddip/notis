@@ -84,9 +84,9 @@ describe('every mesh host listens on its own segment IP with concrete ports', ()
 });
 
 describe('a private mesh node reprints its identity line when a /p2p-circuit lands', () => {
-  // MESH_INTERFACE → Discovery / NAT — "a `private` node announces its
-  // relay reservations alone". These land AFTER the first identity line
-  // the mesh node prints: the client's config.json carried only the
+  // MESH_INTERFACE → NAT — "A `private` node announces its relay
+  // reservations alone." These land AFTER the first identity line the
+  // mesh node prints: the client's config.json carried only the
   // loopback address and s2 failed with "AggregateError: All multiaddr
   // dials failed" on both private hosts.
 

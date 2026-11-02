@@ -1,6 +1,6 @@
-// MESH_INTERFACE → NAT — "A private node ... takes relay reservations
-// on public nodes and is reached through them". libp2p 3.5's
-// circuit-relay listener keys off the listen multiaddr's shape
+// MESH_INTERFACE → NAT — a private node takes a relay reservation on
+// each public node it is told of and is reached through them. libp2p
+// 3.5's circuit-relay listener keys off the listen multiaddr's shape
 // (`@libp2p/circuit-relay-v2/src/transport/listener.ts` listen):
 // `CircuitSearch` (a bare `/p2p-circuit`) triggers RelayDiscovery (DHT
 // walk / discovery topology / peer-store scan) with variable timing;

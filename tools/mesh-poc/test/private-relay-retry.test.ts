@@ -1,8 +1,9 @@
 // MESH_INTERFACE → NAT — "A relay that does not answer never stops a
-// private node. One that is down when the node starts, or that goes
-// away, is tried again on the node list's retry cadence (RETRY_BASE_MS
-// doubling to RETRY_CAP_MS), and the node reserves on it once it
-// answers; meanwhile it serves through whichever relays it holds".
+// private node." A relay that is down, that goes away, or that never
+// completes a reservation is tried again on the node list's retry
+// cadence (`RETRY_BASE_MS` doubling to `RETRY_CAP_MS`), and the node
+// reserves on it once it answers; meanwhile it serves through
+// whichever relays it holds.
 //
 // Two cases:
 //   - retryIntervalMs(n) follows the node list's cadence (fake timers

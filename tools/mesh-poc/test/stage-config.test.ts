@@ -232,9 +232,9 @@ describe('the hostile upstream', () => {
   });
 });
 
-// MESH_INTERFACE → Acceptance 8 — "a node on another chain has its proof
-// read at the next check — one per distinct tip, and the client's own
-// — and the heavier chain is the client's" / MINING_INTERFACE → "The
+// MESH_INTERFACE → Acceptance 8 — a node on another chain has its
+// proof read when its tip moves, with the client's own, and the
+// client's tip stays the honest chain's / MINING_INTERFACE → "The
 // peer-readiness gate" — the hostile fork pair's pure builders.
 // `hostile-lagging` and `hostile-malformed` peer with each other alone
 // so the lagging miner can produce templates; the per-host cut leaves
@@ -490,12 +490,12 @@ describe('stage up --dry-run', () => {
     expect(mtimeOf(join(OUT_DIR, 'browser', 'config.json')), 'config.json unchanged by dry-run').toBe(configBefore);
   }, 30_000);
 
-  // MESH_INTERFACE → Acceptance — "The host is never touched outside
-  // `notismesh-*` namespaces". Veth pairs are created inside their
-  // destination namespaces (`ip -n <ns> link add ... peer name ... netns
-  // <other>` places both ends at creation), so no `ip link ...` line
-  // without `-n` or `netns exec` appears for a link operation other than
-  // `netns add`/`del`.
+  // MESH_INTERFACE → Acceptance — the host is never touched outside
+  // the `notismesh-*` namespaces. Veth pairs are created inside their
+  // destination namespaces (`ip -n <ns> link add ... peer name ...
+  // netns <other>` places both ends at creation), so no `ip link ...`
+  // line without `-n` or `netns exec` appears for a link operation
+  // other than `netns add`/`del`.
   it('no command creates or changes a link outside a notismesh-* namespace', () => {
     runDryOnce();
     const bad: string[] = [];
@@ -576,12 +576,13 @@ describe('stage up --dry-run', () => {
     expect(out, 'chromium spawn').toContain('[spawn:chromium]');
   }, 30_000);
 
-  // MESH_INTERFACE → Acceptance / The client's node list — scenario 6b's
-  // "behind, never blacklisted" needs `hostile-lagging`'s mesh node to answer
-  // the browser (`behind` on a valid proof of a lighter chain). An output
-  // `policy drop` would drop the mesh node's replies too — the mesh client
-  // would read it as unreachable (`retry`), never `behind`. The cut drops
-  // only TCP to/from the Notis p2p port, and nothing else.
+  // MESH_INTERFACE → Acceptance / The client's node list — scenario
+  // 6b's step needs `hostile-lagging`'s mesh node to answer the
+  // browser so a valid proof of a lighter chain lands as `behind` and
+  // never `blacklisted`. An output `policy drop` would drop the mesh
+  // node's replies too — the mesh client would read it as unreachable
+  // (`retry`), never `behind`. The cut drops only TCP to/from the
+  // Notis p2p port, and nothing else.
   it('the hostile-lagging cut is Notis-p2p-only, not an output-drop policy', () => {
     runDryOnce();
     const lagLines = out.split('\n').filter((l) => l.includes('lag_cut'));
@@ -592,11 +593,11 @@ describe('stage up --dry-run', () => {
     expect(joined, 'the cut drops TCP from the Notis p2p port').toMatch(/tcp\s+sport\s+9100.*drop/);
   }, 30_000);
 
-  // MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
-  // proof read at the next check — one per distinct tip, and the
-  // client's own — and the heavier chain is the client's" /
-  // MINING_INTERFACE → "The peer-readiness gate" — the hostile fork
-  // pair grows a chain of its own from genesis: each pair host names
+  // MESH_INTERFACE → Acceptance 8 — a node on another chain has its
+  // proof read when its tip moves, with the client's own, and the
+  // client's tip stays the honest chain's / MINING_INTERFACE → "The
+  // peer-readiness gate" — the hostile fork pair grows a chain of its
+  // own from genesis: each pair host names
   // the partner ALONE in `BOOTSTRAP_PEERS` (no pub1), so the pair
   // never dials an honest node and never sees the honest chain's
   // blocks. Every other node's `BOOTSTRAP_PEERS` carries pub1 alone.
@@ -656,12 +657,12 @@ describe('stage up --dry-run', () => {
     }
   }, 30_000);
 
-  // MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
-  // proof read at the next check — one per distinct tip, and the
-  // client's own — and the heavier chain is the client's" — the pair
-  // cut runs the same seven-rule ruleset on both hosts, with the
-  // accept rule for the partner's p2p address sitting ahead of the
-  // drop on both the output and input chain. nft reads rules in
+  // MESH_INTERFACE → Acceptance 8 — a node on another chain has its
+  // proof read when its tip moves, with the client's own, and the
+  // client's tip stays the honest chain's — the pair cut runs the
+  // same seven-rule ruleset on both hosts, with the accept rule for
+  // the partner's p2p address sitting ahead of the drop on both the
+  // output and input chain. nft reads rules in
   // order, so a drop before the accept would cut the pair's own
   // traffic too and the lagging miner would be back to one Active
   // peer: none.
