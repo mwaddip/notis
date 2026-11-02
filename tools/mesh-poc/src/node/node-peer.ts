@@ -31,6 +31,14 @@ export interface StartNodePeerOptions {
    * Defaults to one second.
    */
   readonly retryMs?: number;
+  /**
+   * The handshake's deadline: the stream open, the write and the read
+   * each run under it. On the read's expiry the stream is aborted so a
+   * pending read rejects, the connection is closed and a redial scheduled
+   * (NET_INTERFACE → Handshake → "A connection handshakes within its
+   * deadline, or is closed"). Defaults to ten seconds.
+   */
+  readonly handshakeTimeoutMs?: number;
 }
 
 export interface NodePeer {
@@ -39,7 +47,7 @@ export interface NodePeer {
 }
 
 const DEFAULT_RETRY_MS = 1_000;
-const HANDSHAKE_DEADLINE_MS = 10_000;
+const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 
 /**
  * Dial the node's libp2p TCP address, run net's handshake as the dialler,
@@ -51,11 +59,11 @@ export function startNodePeer(
   opts: StartNodePeerOptions,
 ): NodePeer {
   const retryMs = opts.retryMs ?? DEFAULT_RETRY_MS;
+  const handshakeTimeoutMs =
+    opts.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
   // The connection the dialler holds, if any — set only after the
   // handshake completes, cleared on its close or on stop.
   let currentConn: Connection | null = null;
-  // The in-flight `connectOnce`, if any — one dial at a time.
-  let inFlight: Promise<void> | null = null;
   let stopped = false;
   let redialTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -102,118 +110,111 @@ export function startNodePeer(
 
   const connectOnce = async (): Promise<void> => {
     if (stopped) return;
-    // One dial at a time: a redial that fires while this one is still
-    // in flight returns here, so libp2p never joins a second dial to
-    // the first and the handshake runs on this connection alone.
-    if (inFlight !== null) return;
     if (currentConn !== null) return;
-    const run = (async (): Promise<void> => {
-      let conn: Connection;
-      try {
-        conn = await libp2p.dial(target);
-      } catch {
-        scheduleRedial();
-        return;
-      }
+    let conn: Connection;
+    try {
+      conn = await libp2p.dial(target);
+    } catch {
+      scheduleRedial();
+      return;
+    }
 
-      // NET_INTERFACE → Handshake — "The side that dialled a connection
-      // opens a stream on `/dagsocial/handshake/1` on it".
-      let completed = false;
+    // NET_INTERFACE → Handshake — "The side that dialled a connection
+    // opens a stream on `/dagsocial/handshake/1` on it".
+    let completed = false;
+    try {
+      const stream = await conn.newStream(HANDSHAKE_PROTOCOL, {
+        signal: AbortSignal.timeout(handshakeTimeoutMs),
+      });
       try {
-        const stream = await conn.newStream(HANDSHAKE_PROTOCOL, {
-          signal: AbortSignal.timeout(HANDSHAKE_DEADLINE_MS),
-        });
+        const msg = {
+          agentName: 'dagsocial-mesh',
+          protocolVersion: opts.protocolVersion,
+          nodeName: opts.nodeName,
+          // MESH_INTERFACE → Block gossip — "its body declaring no
+          // address and no capability". The declared height carries
+          // no claim at net's scheduler (NET_INTERFACE → Sync State
+          // Machine → "A claim is the peer's applied tip, height and
+          // hash."), so 0 opens no header request.
+          chainHeight: 0,
+          capabilities: [],
+        };
+        const frame = buildHandshakeFrame(opts.magic, msg);
+        // libp2p 3.x streams carry `send(data) → boolean` and
+        // `onDrain()` for the write side; a false return parks on
+        // the muxer's send window. `abort(err)` discards unsent and
+        // unread data and makes a pending read reject (@libp2p/interface
+        // → MessageStream → "abort"). Half-close the writable end so
+        // the reader on the other side sees EOF of our frame.
+        const streamApi = stream as unknown as {
+          send: (b: Uint8Array) => boolean;
+          onDrain: (o?: { signal?: AbortSignal }) => Promise<void>;
+          close: (o?: { signal?: AbortSignal }) => Promise<void>;
+          abort: (err: Error) => void;
+        };
+        const writeDeadline = AbortSignal.timeout(handshakeTimeoutMs);
+        if (!streamApi.send(frame)) {
+          await streamApi.onDrain({ signal: writeDeadline });
+        }
+        await streamApi.close({ signal: writeDeadline });
+        // Read the node's answer under its own deadline. Past it the
+        // stream is aborted so a pending read rejects, the connection
+        // is closed and a redial scheduled.
+        const readDeadline = AbortSignal.timeout(handshakeTimeoutMs);
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        const onAbort = (): void => {
+          try {
+            streamApi.abort(new Error('handshake read deadline'));
+          } catch { /* already gone */ }
+        };
+        readDeadline.addEventListener('abort', onAbort, { once: true });
         try {
-          const msg = {
-            agentName: 'dagsocial-mesh',
-            protocolVersion: opts.protocolVersion,
-            nodeName: opts.nodeName,
-            // MESH_INTERFACE → Block gossip — "a body ... declaring no
-            // address and no capability". The declared height carries
-            // no claim at net's scheduler (NET_INTERFACE → Sync State
-            // Machine → "A claim is the peer's applied tip, height and
-            // hash."), so 0 opens no header request.
-            chainHeight: 0,
-            capabilities: [],
-          };
-          const frame = buildHandshakeFrame(opts.magic, msg);
-          // libp2p 3.x streams carry `send(data) → boolean` and
-          // `onDrain()` for the write side; a false return parks on
-          // the muxer's send window. Half-close the writable end
-          // afterwards so the reader on the other side sees EOF of
-          // our frame.
-          const writable = stream as unknown as {
-            send: (b: Uint8Array) => boolean;
-            onDrain: (o?: { signal?: AbortSignal }) => Promise<void>;
-            close: (o?: { signal?: AbortSignal }) => Promise<void>;
-          };
-          const writeDeadline = AbortSignal.timeout(HANDSHAKE_DEADLINE_MS);
-          if (!writable.send(frame)) {
-            await writable.onDrain({ signal: writeDeadline });
-          }
-          await writable.close({ signal: writeDeadline });
-          // Read the node's answer under its own deadline, the same
-          // the open carries. Past it the connection is closed and a
-          // redial scheduled.
-          const readDeadline = AbortSignal.timeout(HANDSHAKE_DEADLINE_MS);
-          const chunks: Uint8Array[] = [];
-          let total = 0;
           const iterable = stream as unknown as AsyncIterable<
             Uint8Array | { subarray(): Uint8Array }
           >;
-          const iterator = iterable[Symbol.asyncIterator]();
-          const onAbort = (): void => {
-            try { void iterator.return?.(); } catch { /* already gone */ }
-          };
-          readDeadline.addEventListener('abort', onAbort, { once: true });
-          try {
-            while (true) {
-              const { value, done } = await iterator.next();
-              if (done) break;
-              if (readDeadline.aborted) break;
-              const bytes =
-                value instanceof Uint8Array ? value : value.subarray();
-              chunks.push(bytes);
-              total += bytes.length;
-              if (total > MAX_HANDSHAKE_FRAME_BYTES) break;
-            }
-          } finally {
-            readDeadline.removeEventListener('abort', onAbort);
+          for await (const value of iterable) {
+            const bytes =
+              value instanceof Uint8Array ? value : value.subarray();
+            chunks.push(bytes);
+            total += bytes.length;
+            if (total > MAX_HANDSHAKE_FRAME_BYTES) break;
           }
-          if (
-            !readDeadline.aborted
-            && total > 0
-            && total <= MAX_HANDSHAKE_FRAME_BYTES
-          ) {
-            const data = new Uint8Array(total);
-            let off = 0;
-            for (const c of chunks) { data.set(c, off); off += c.length; }
-            try {
-              const framed = decodeFrame(opts.magic, data);
-              const body = decodeHandshakeBody(framed.body);
-              if (body !== null) completed = true;
-            } catch { /* malformed answer — net closes the connection */ }
-          }
-        } finally {
-          try { await stream.close(); } catch { /* already gone */ }
+        } catch { /* abort or reset — the deadline is a defined outcome */ }
+        finally {
+          readDeadline.removeEventListener('abort', onAbort);
         }
-      } catch {
-        try { await conn.close(); } catch { /* already gone */ }
-        scheduleRedial();
-        return;
+        if (
+          !readDeadline.aborted
+          && total > 0
+          && total <= MAX_HANDSHAKE_FRAME_BYTES
+        ) {
+          const data = new Uint8Array(total);
+          let off = 0;
+          for (const c of chunks) { data.set(c, off); off += c.length; }
+          try {
+            const framed = decodeFrame(opts.magic, data);
+            const body = decodeHandshakeBody(framed.body);
+            if (body !== null) completed = true;
+          } catch { /* malformed answer — net closes the connection */ }
+        }
+      } finally {
+        try { await stream.close(); } catch { /* already gone */ }
       }
+    } catch {
+      try { await conn.close(); } catch { /* already gone */ }
+      scheduleRedial();
+      return;
+    }
 
-      if (!completed) {
-        try { await conn.close(); } catch { /* already gone */ }
-        scheduleRedial();
-        return;
-      }
+    if (!completed) {
+      try { await conn.close(); } catch { /* already gone */ }
+      scheduleRedial();
+      return;
+    }
 
-      // The handshake completed — this connection is the peer's.
-      currentConn = conn;
-    })();
-    inFlight = run.finally(() => { inFlight = null; });
-    await inFlight;
+    // The handshake completed — this connection is the peer's.
+    currentConn = conn;
   };
 
   // libp2p raises `connection:close` for every connection it holds.

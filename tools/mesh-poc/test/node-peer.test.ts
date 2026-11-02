@@ -653,7 +653,7 @@ describe('startNodePeer against a real NetNode', () => {
     30_000,
   );
 
-  it.fails(
+  it(
     'a node that never answers the handshake is left at the deadline and dialled again',
     async () => {
       // NET_INTERFACE → Handshake → "A connection handshakes within its
@@ -722,10 +722,13 @@ describe('startNodePeer against a real NetNode', () => {
       // The dialler never records a connection as the peer's.
       expect(peer.connected()).toBe(false);
 
-      // The first stream ended for the stall handler — either in error or at
-      // EOF.
+      // The first stream ended for the stall handler at EOF: we half-close
+      // the writable side with `stream.close()` before the stall, so the
+      // handler drains the frame and sees EOF when its for-await ends. The
+      // read-deadline abort is observable on the dialler's side alone (its
+      // pending read rejects), and is what frees `connectOnce` to redial.
       expect(handlerDone.has(1)).toBe(true);
-      expect(firstHandlerEnd).not.toBeNull();
+      expect(firstHandlerEnd).toBe('eof');
     },
     30_000,
   );
