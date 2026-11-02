@@ -819,12 +819,23 @@ function startMeshNodeForHost(name, host) {
       }
     }
   }
+  // MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer
+  // of its own node" — a mesh node beside a Notis node dials its
+  // node's libp2p TCP address, named with no `/p2p/` component. The
+  // lagging host's p2p port is cut after sync (Phase 8's `lag_cut`
+  // table), so its mesh service's dial fails on every try and it
+  // holds no node peer — the entry stays set so a reader sees the
+  // address the dial would use.
+  const nodeP2p = host.node !== undefined
+    ? `/ip4/${host.addr}/tcp/${host.node.p2pPort}`
+    : undefined;
   const meshEnv = {
     MESH_KEY_PATH: meshKeyPath,
     MESH_NETWORK: 'devnet',
     MESH_ROLE: host.mesh.role,
     MESH_STATE_DIR: meshStateDir,
     MESH_UPSTREAM: upstream,
+    ...(nodeP2p !== undefined ? { MESH_NODE_P2P: nodeP2p } : {}),
     // MESH_INTERFACE → NAT — "A public node announces its listen
     // addresses from the start" with concrete-port WebRTC-direct and
     // TCP addresses on its own IP; a private node listens on its own
