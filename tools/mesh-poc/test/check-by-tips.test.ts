@@ -1277,4 +1277,194 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const lastCall = resolveUrls[resolveUrls.length - 1]!;
     expect(lastCall.some((u) => u.includes(b.id))).toBe(true);
   }, 300_000);
+
+  it.fails('a fill whose header read fails at the transport leaves the node in retry, never blacklisted', async () => {
+    // MESH_INTERFACE → The client's node list — a transport failure on
+    // a fill's header read is the retry row of the table, never a lie.
+    // The hostile's /blocks/current claims a tip above the client's;
+    // /blocks/<K+2> destroys the socket, so the mesh node's upstream
+    // fetch throws and the client's read fails at the transport.
+    const base = makeLinkedChain(K + 2, PROFILE);
+    const start = base.slice(0, K + 1);
+    const settleTipHash = blockHash(start[start.length - 1]!.header);
+    const bogusHash = 'f'.repeat(64);
+    let claimAbove = false;
+    const built = await handBuilt((req, res) => {
+      if (req.url === '/blocks/current') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        if (!claimAbove) {
+          res.end(JSON.stringify({ height: K + 1, hash: settleTipHash }));
+        } else {
+          res.end(JSON.stringify({ height: K + 2, hash: bogusHash }));
+        }
+      } else if (req.url === '/blocks/' + (K + 2)) {
+        (res as unknown as { destroy(): void }).destroy();
+      } else {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      }
+    });
+    builts.push(built);
+    const upOther = await chainUpstream(start); ups.push(upOther);
+    const dH = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dH);
+    const dO = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dO);
+    const hostile = await startNode(built, dH); nodes.push(hostile.node);
+    const other = await startNode(upOther, dO); nodes.push(other.node);
+    const chainsNow: { h: OrderingBlock[] | 'unreachable'; o: OrderingBlock[] } = {
+      h: start,
+      o: start,
+    };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(hostile.id)) return chainsNow.h;
+      if (url.includes(other.id)) return chainsNow.o;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: hostile.id, addrs: [hostile.webrtcAddr] },
+        { notisId: other.id, addrs: [other.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+    await client.check(); // settle at K+1
+    claimAbove = true;
+    chainsNow.h = 'unreachable'; // phase 4's own-reach fails at the transport too
+    await client.check();
+    const hostileEntry = client.state().nodes.find((e) => e.notisId === hostile.id)!;
+    expect(hostileEntry.status).toBe('retry');
+  }, 180_000);
+
+  it.fails('a fill answered 404 leaves the node in retry', async () => {
+    // MESH_INTERFACE → The client's node list — a non-2xx answer is a
+    // transport-tier failure (the `retry` row), never a lie. The
+    // hostile claims a tip above and answers /blocks/<K+2> with 404.
+    const base = makeLinkedChain(K + 2, PROFILE);
+    const start = base.slice(0, K + 1);
+    const settleTipHash = blockHash(start[start.length - 1]!.header);
+    const bogusHash = 'f'.repeat(64);
+    let claimAbove = false;
+    const built = await handBuilt((req, res) => {
+      if (req.url === '/blocks/current') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        if (!claimAbove) {
+          res.end(JSON.stringify({ height: K + 1, hash: settleTipHash }));
+        } else {
+          res.end(JSON.stringify({ height: K + 2, hash: bogusHash }));
+        }
+      } else if (req.url === '/blocks/' + (K + 2)) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      } else {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      }
+    });
+    builts.push(built);
+    const upOther = await chainUpstream(start); ups.push(upOther);
+    const dH = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dH);
+    const dO = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dO);
+    const hostile = await startNode(built, dH); nodes.push(hostile.node);
+    const other = await startNode(upOther, dO); nodes.push(other.node);
+    const chainsNow: { h: OrderingBlock[] | 'unreachable'; o: OrderingBlock[] } = {
+      h: start,
+      o: start,
+    };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(hostile.id)) return chainsNow.h;
+      if (url.includes(other.id)) return chainsNow.o;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: hostile.id, addrs: [hostile.webrtcAddr] },
+        { notisId: other.id, addrs: [other.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+    await client.check(); // settle at K+1
+    claimAbove = true;
+    chainsNow.h = 'unreachable';
+    await client.check();
+    const hostileEntry = client.state().nodes.find((e) => e.notisId === hostile.id)!;
+    expect(hostileEntry.status).toBe('retry');
+  }, 180_000);
+
+  it.fails('a fill reads a block whose JSON is over 1 KiB', async () => {
+    // MESH_INTERFACE → The client's node list — the fill's cap is
+    // `BLOCK_READ_BYTES`, 8 MiB, not /blocks/current's own 1 KiB. A
+    // block with 30 `utxoTxIds` in its JSON is over 1 KiB and the fill
+    // reads its header all the same.
+    const base = makeLinkedChain(K + 2, PROFILE);
+    const start = base.slice(0, K + 1);
+    const oneAbove = base.slice(0, K + 2);
+    const upA = await chainUpstream(start, { extraUtxoTxIdsInJson: 30 }); ups.push(upA);
+    const upB = await chainUpstream(start, { extraUtxoTxIdsInJson: 30 }); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[] } = { a: start, b: start };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+    await client.check(); // settle
+    upA.setChain(oneAbove);
+    chainsNow.a = oneAbove;
+    await client.check();
+    const s = client.state();
+    // A's fill reads one header at K+2 whose JSON is over 1 KiB; under
+    // the correct cap the fill links, so A ends `ok`. Under the old
+    // cap readHeaderAt returns null and A is blacklisted as `malformed`.
+    expect(s.nodes.find((n) => n.notisId === a.id)!.status).toBe('ok');
+  }, 180_000);
+
+  it.fails('a check with no candidate schedules no other at once', async () => {
+    // MESH_INTERFACE → The client's node list — "one check at a time:
+    // a trigger during a check is that check". A check that reaches
+    // phase 6 with no candidate throws `MeshFetchError` and triggers
+    // an immediate check; the trigger must see the running check and
+    // not schedule a 0 ms recurrence.
+    const built = await handBuilt((req, res) => {
+      if (req.url === '/blocks/current') {
+        (res as unknown as { destroy(): void }).destroy();
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not found' }));
+    });
+    builts.push(built);
+    const d = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(d);
+    const n = await startNode(built, d); nodes.push(n.node);
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve(() => 'unreachable', K),
+    });
+    clients.push(client);
+    await client.check(); // /blocks/current fails at the transport → retry
+    expect(client.state().nodes.find((e) => e.notisId === n.id)!.status).toBe('retry');
+    await client.check(); // no candidate; phase 6's trigger must not reschedule
+    const checksBefore = client.state().checks;
+    await new Promise<void>((r) => setTimeout(r, 1200));
+    const checksAfter = client.state().checks;
+    // Without the fix: the 0 ms recurrence runs thousands of checks
+    // per second. With it: no check runs until `CHECK_INTERVAL_MS`.
+    expect(checksAfter - checksBefore).toBeLessThanOrEqual(1);
+  }, 60_000);
 });

@@ -35,14 +35,21 @@ export interface ChainUpstream {
  * answering any `/blocks/:h` — the harness simulates a slow header read
  * without touching `/blocks/current`'s own time (MESH_INTERFACE → The
  * client's node list → "A check" — the speed is the tip read's).
+ *
+ * `options.extraUtxoTxIdsInJson` (default 0): the number of fake 64-hex
+ * ids appended to each served block's `utxoTxTree.utxoTxIds` in the
+ * JSON only — the real block is unchanged, and `readHeaderAt` reads
+ * `data.header` alone, so the extra bytes inflate the body past
+ * `/blocks/current`'s 1 KiB cap without touching header verification.
  */
 export async function chainUpstream(
   chain: OrderingBlock[],
-  options?: { heightReadDelayMs?: number },
+  options?: { heightReadDelayMs?: number; extraUtxoTxIdsInJson?: number },
 ): Promise<ChainUpstream> {
   let current = chain;
   let heightHits = 0;
   const heightDelayMs = options?.heightReadDelayMs ?? 0;
+  const extraIds = options?.extraUtxoTxIdsInJson ?? 0;
   const srv: Server = createServer((req, res) => {
     const url = req.url ?? '';
     if (url === '/blocks/current') {
@@ -69,7 +76,7 @@ export async function chainUpstream(
           return;
         }
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(blockToJson(block)));
+        res.end(JSON.stringify(blockToJson(block, extraIds)));
       };
       if (heightDelayMs > 0) {
         setTimeout(answer, heightDelayMs);
@@ -101,9 +108,16 @@ export async function chainUpstream(
  * The served shape of an ordering block (NODE_INTERFACE → Blocks):
  * `header` fields as served, `validatorId` lowercase hex,
  * `validatorSignature` lowercase hex, `utxoTxTree.utxoTxIds` and
- * `utxoTxTree.postIds` as arrays, `utxoTxTree.utxoTxs` empty.
+ * `utxoTxTree.postIds` as arrays, `utxoTxTree.utxoTxs` empty. When
+ * `extraIds` is positive, `utxoTxIds` is padded with that many fake
+ * 64-hex ids after the block's own, inflating the body without
+ * touching the header (used by cases that pin the fill's byte cap).
  */
-function blockToJson(block: OrderingBlock): Record<string, unknown> {
+function blockToJson(block: OrderingBlock, extraIds = 0): Record<string, unknown> {
+  const ids: string[] = [...block.utxoTxTree.utxoTxIds];
+  for (let i = 0; i < extraIds; i += 1) {
+    ids.push(i.toString(16).padStart(64, '0'));
+  }
   return {
     header: {
       protocolVersion: block.header.protocolVersion,
@@ -119,7 +133,7 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       adProofsRoot: block.header.adProofsRoot,
     },
     utxoTxTree: {
-      utxoTxIds: block.utxoTxTree.utxoTxIds,
+      utxoTxIds: ids,
       postIds: [] as string[],
       utxoTxs: [] as string[],
     },
