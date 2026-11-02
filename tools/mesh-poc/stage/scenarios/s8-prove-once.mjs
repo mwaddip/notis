@@ -338,12 +338,13 @@ export function honestMeshHosts(topology) {
 // completed checks past a settled baseline. The pure observer below
 // captures the baseline — first state with the chain settled
 // (`checks >= 1`, `proofReads >= 1`) where every honest node the list
-// HOLDS reads `ok`, `trailing` or `behind` AND both anchors are held
-// — and records final at `base.checks + 5` once the rule holds again;
-// it waits past that count if the rule has broken, re-settling when
-// the honest set is back in range. `buildS8NoProofsExpression` inlines
-// the observer with `.toString()` so the live tracker and the Node
-// tests run the same transition.
+// HOLDS reads `ok`, `trailing` or `behind` AND both anchors are held;
+// final records at `base.checks + 5` whatever the statuses are, and
+// every honest id's status at that moment — 'absent' when the list
+// does not hold it — goes into the measurement so `verdictS8NoProofs`
+// names the one that is not on the chain.
+// `buildS8NoProofsExpression` inlines the observer with `.toString()`
+// so the live tracker and the Node tests run the same transition.
 export function s8NoProofsObserve(prev, s, honestIds, anchorIds) {
   if (s === null || typeof s !== 'object') return prev;
   if (typeof s.checks !== 'number') return prev;
@@ -354,13 +355,19 @@ export function s8NoProofsObserve(prev, s, honestIds, anchorIds) {
     : { base: prev.base, final: prev.final };
   var nodes = Array.isArray(s.nodes) ? s.nodes : [];
   var heldHonest = [];
+  var allHonestStatuses = [];
   for (var i = 0; i < honestIds.length; i += 1) {
     var hid = honestIds[i];
     var he = null;
     for (var j = 0; j < nodes.length; j += 1) {
       if (nodes[j] && nodes[j].notisId === hid) { he = nodes[j]; break; }
     }
-    if (he !== null) heldHonest.push({ notisId: hid, status: he.status });
+    if (he !== null) {
+      heldHonest.push({ notisId: hid, status: he.status });
+      allHonestStatuses.push({ notisId: hid, status: he.status });
+    } else {
+      allHonestStatuses.push({ notisId: hid, status: 'absent' });
+    }
   }
   var anchorsHeld = 0;
   for (var k = 0; k < anchorIds.length; k += 1) {
@@ -383,11 +390,11 @@ export function s8NoProofsObserve(prev, s, honestIds, anchorIds) {
   }
   if (next.base === null) return next;
   if (next.final !== null) return next;
-  if (s.checks >= next.base.checks + 5 && allAnchorsHeld && allHeldInRange) {
+  if (s.checks >= next.base.checks + 5) {
     next.final = {
       checks: s.checks,
       proofReads: s.traffic.proofReads,
-      honestNodeStatuses: heldHonest,
+      honestNodeStatuses: allHonestStatuses,
     };
   }
   return next;

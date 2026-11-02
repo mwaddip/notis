@@ -652,7 +652,7 @@ describe('s8 (prove once, follow by gossip)', () => {
       { notisId: ANCHOR_B, status: 'trailing' },
     ]);
   });
-  it.fails('s8NoProofsObserve: final captured at base.checks + 5 even if an anchor was dropped (status \'absent\' goes into the measurement)', () => {
+  it('s8NoProofsObserve: final captured at base.checks + 5 even if an anchor was dropped (status \'absent\' goes into the measurement)', () => {
     const anchorIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const base = {
@@ -675,7 +675,7 @@ describe('s8 (prove once, follow by gossip)', () => {
       { notisId: ANCHOR_B, status: 'absent' },
     ]);
   });
-  it.fails('s8NoProofsObserve: final captured at base.checks + 5 even if a held honest reads retry (status \'retry\' goes into the measurement)', () => {
+  it('s8NoProofsObserve: final captured at base.checks + 5 even if a held honest reads retry (status \'retry\' goes into the measurement)', () => {
     const anchorIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
     const base = {
@@ -699,7 +699,7 @@ describe('s8 (prove once, follow by gossip)', () => {
       { notisId: PRIV_1, status: 'retry' },
     ]);
   });
-  it.fails('s8NoProofsObserve: final captured at exactly base.checks + 5 whatever the statuses are afterward', () => {
+  it('s8NoProofsObserve: final captured at exactly base.checks + 5 whatever the statuses are afterward', () => {
     const anchorIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const base = {
