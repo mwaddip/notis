@@ -72,7 +72,7 @@ function assembleRaw(
 }
 
 describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
-  it.fails('over MAX_ORDERING_BLOCK_BYTES → reject, lie', () => {
+  it('over MAX_ORDERING_BLOCK_BYTES → reject, lie', () => {
     const raw = new Uint8Array(MAX_ORDERING_BLOCK_BYTES + 1);
     const verdict = new BlockCheck(makeCtx()).check(raw);
     expect(verdict).toEqual({
@@ -82,7 +82,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('sections that do not read → reject, lie', () => {
+  it('sections that do not read → reject, lie', () => {
     const raw = new Uint8Array([0xff, 0xff, 0xff, 0xff]);
     const verdict = new BlockCheck(makeCtx()).check(raw);
     expect(verdict).toEqual({
@@ -92,7 +92,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('invalid field domains → reject, lie', () => {
+  it('invalid field domains → reject, lie', () => {
     // `powTargetBits` outside `[0, POW_TARGET_BITS_MAX]`
     // (`VALIDATION_INTERFACE → verifyHeaderFieldDomains`). The vlqU writer
     // accepts the integer so the frame reads; `verifyHeaderFieldDomains`
@@ -112,7 +112,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('protocol version not the era → reject, not a lie', () => {
+  it('protocol version not the era → reject, not a lie', () => {
     // Devnet's `protocolVersionSchedule` is a single era at version 1 from
     // height 0; a block declaring version 2 at height 1 is a compatibility
     // signal (`NET_INTERFACE → Peer Penalty System`), Transient, so this
@@ -127,7 +127,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('below orderingBlockPowTargetFloorBits → reject, lie', () => {
+  it('below orderingBlockPowTargetFloorBits → reject, lie', () => {
     // Devnet's floor is `ORDERING_BLOCK_POW_TARGET_FLOOR`; a header a bit
     // below is refused `misbehavior` before `verifyOrderingBlockPoW` runs
     // (`NET_INTERFACE → Stage 1`).
@@ -143,7 +143,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('PoW not met → reject, lie', () => {
+  it('PoW not met → reject, lie', () => {
     // A mined header's nonce bumped to the first value that `verifyOrderingBlockPoW`
     // refuses; the floor is reached, so this is the one check that fires
     // (`NET_INTERFACE → Stage 1`).
@@ -166,7 +166,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('scheduled target differs → reject, not a lie', () => {
+  it('scheduled target differs → reject, not a lie', () => {
     // The parent-held schedule the provider answers for this header disagrees
     // with its `powTargetBits`; the refusal rests on this node's state
     // (`NET_INTERFACE → Stage 1 → "A scheduled-target mismatch is refused,
@@ -183,7 +183,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('scheduledTargetBits null → the schedule is not checked', () => {
+  it('scheduledTargetBits null → the schedule is not checked', () => {
     // A `null` answer means the schedule provider cannot judge this header,
     // the check skipped; the otherwise-valid block is accepted.
     const block = makeBlockAt(1, PROTOCOL_VERSION);
@@ -194,7 +194,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     expect(verdict.result).toBe('accept');
   });
 
-  it.fails('standing held or refused → ignore', () => {
+  it('standing held or refused → ignore', () => {
     // A header this node holds or has refused is Ignored, no penalty
     // (`NET_INTERFACE → Stage 1 → "A header this node knows is Ignored"`).
     const block = makeBlockAt(1, PROTOCOL_VERSION);
@@ -205,7 +205,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     expect(refused).toEqual({ result: 'ignore' });
   });
 
-  it.fails('accepted inside the seen window → ignore; past it → accept again', () => {
+  it('accepted inside the seen window → ignore; past it → accept again', () => {
     // The seen-accepted memory is the instance's; a second call for the same
     // header inside `GOSSIP_SEEN_WINDOW_MS` is Ignored, and a call once that
     // window has passed accepts again
@@ -223,7 +223,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     expect(third.result).toBe('accept');
   });
 
-  it.fails('validator signature fails → reject, lie', () => {
+  it('validator signature fails → reject, lie', () => {
     // `verifyValidatorSignature` runs after the header-only checks and
     // before the body decode (`NET_INTERFACE → Stage 1`); a 64-byte
     // signature that does not verify is `misbehavior`, a lie.
@@ -241,7 +241,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('body undecodable → reject, lie', () => {
+  it('body undecodable → reject, lie', () => {
     // The body section is read as length-prefixed bytes
     // (`TYPES_INTERFACE → Layout — Block`), then `decodeUtxoTxTree` parses
     // them; a short run of 0xff refuses the decode. The header is mined,
@@ -261,7 +261,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('structure invalid → reject, lie', () => {
+  it('structure invalid → reject, lie', () => {
     // An empty body carries no settlement transaction, which
     // `verifyOrderingBlockStructure` refuses
     // (`VALIDATION_INTERFACE → verifyOrderingBlockStructure`). The header
@@ -279,7 +279,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('body not the root\'s → reject, lie', () => {
+  it('body not the root\'s → reject, lie', () => {
     // The structure passes but the body is not the one the header's
     // `utxoTxRoot` commits (`NET_INTERFACE → Stage 1 → "A worked header is
     // forwarded with the body its root commits"`): `misbehavior`.
@@ -299,7 +299,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     });
   });
 
-  it.fails('valid → accept, the block and its blockHash', () => {
+  it('valid → accept, the block and its blockHash', () => {
     const block = makeBlockAt(1, PROTOCOL_VERSION);
     const raw = encodeOrderingBlock(block);
     const verdict = new BlockCheck(makeCtx()).check(raw);
@@ -312,7 +312,7 @@ describe('BlockCheck — net\'s Stage 1 for the block topic', () => {
     expect(devnetProfile.magic).toBe(MAGIC_DEVNET);
   });
 
-  it.fails('a throw from a context provider → ignore, not a lie', () => {
+  it('a throw from a context provider → ignore, not a lie', () => {
     // `scheduledTargetBits` throwing is this receiver's own fault; the
     // outer catch Ignores it with no penalty
     // (`NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's"`).
