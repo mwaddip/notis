@@ -35,7 +35,7 @@ function headerToJson(h: BlockHeader): Record<string, unknown> {
 }
 
 describe('headerFromJson — the served header reader', () => {
-  it.fails('round-trips a served devnet header', () => {
+  it('round-trips a served devnet header', () => {
     const [block1] = makeLinkedChain(1, devnetProfile);
     const original = block1!.header;
     const json = headerToJson(original);
@@ -54,35 +54,35 @@ describe('headerFromJson — the served header reader', () => {
     expect(read!.adProofsRoot).toBe(original.adProofsRoot);
   });
 
-  it.fails('null for a missing field', () => {
+  it('null for a missing field', () => {
     const [block1] = makeLinkedChain(1, devnetProfile);
     const json = headerToJson(block1!.header) as Record<string, unknown>;
     delete json['interlinkRoot'];
     expect(headerFromJson(json)).toBeNull();
   });
 
-  it.fails('null for a non-hex validatorId', () => {
+  it('null for a non-hex validatorId', () => {
     const [block1] = makeLinkedChain(1, devnetProfile);
     const json = headerToJson(block1!.header);
     json['validatorId'] = 'z'.repeat(64);
     expect(headerFromJson(json)).toBeNull();
   });
 
-  it.fails('null for a float height', () => {
+  it('null for a float height', () => {
     const [block1] = makeLinkedChain(1, devnetProfile);
     const json = headerToJson(block1!.header);
     json['height'] = 1.5;
     expect(headerFromJson(json)).toBeNull();
   });
 
-  it.fails('null for a non-object input', () => {
+  it('null for a non-object input', () => {
     expect(headerFromJson(null)).toBeNull();
     expect(headerFromJson(undefined)).toBeNull();
     expect(headerFromJson('string')).toBeNull();
     expect(headerFromJson(42)).toBeNull();
   });
 
-  it.fails('null for a validatorId that is not a string', () => {
+  it('null for a validatorId that is not a string', () => {
     const [block1] = makeLinkedChain(1, devnetProfile);
     const json = headerToJson(block1!.header);
     // The on-wire shape is a hex string (`blockToJson`); a non-string value is

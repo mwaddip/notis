@@ -47,33 +47,33 @@ function seatedChain(n: number, k: number = K): {
 }
 
 describe('HeldChain — before settle', () => {
-  it.fails('settled() is false, tip() is null', () => {
+  it('settled() is false, tip() is null', () => {
     const h = new HeldChain(devnetProfile, K);
     expect(h.settled()).toBe(false);
     expect(h.tip()).toBeNull();
   });
 
-  it.fails('place answers unplaced for any hash and height', () => {
+  it('place answers unplaced for any hash and height', () => {
     const h = new HeldChain(devnetProfile, K);
     expect(h.place('00'.repeat(32), 1)).toBe('unplaced');
     expect(h.place('ff'.repeat(32), 100)).toBe('unplaced');
     expect(h.place(null, 1)).toBe('unplaced');
   });
 
-  it.fails('extend answers gap for any header', () => {
+  it('extend answers gap for any header', () => {
     const h = new HeldChain(devnetProfile, K);
     const [block1] = makeLinkedChain(1, devnetProfile);
     expect(h.extend(block1!.header)).toBe('gap');
   });
 
-  it.fails('standing answers null for any hash', () => {
+  it('standing answers null for any hash', () => {
     const h = new HeldChain(devnetProfile, K);
     expect(h.standing('aa'.repeat(32), 1)).toBeNull();
   });
 });
 
 describe('HeldChain — settle', () => {
-  it.fails('seats the window and block 1', () => {
+  it('seats the window and block 1', () => {
     const { chain, held } = seatedChain(10);
     expect(held.settled()).toBe(true);
     const tipHdr = held.tip();
@@ -82,7 +82,7 @@ describe('HeldChain — settle', () => {
     expect(hashOf(tipHdr!)).toBe(hashOf(chain[9]!.header));
   });
 
-  it.fails('settle twice replaces the window and block 1', () => {
+  it('settle twice replaces the window and block 1', () => {
     // First seating: a chain of 10.
     const chainA = makeLinkedChain(10, devnetProfile);
     const held = new HeldChain(devnetProfile, K);
@@ -102,39 +102,39 @@ describe('HeldChain — settle', () => {
 });
 
 describe('HeldChain — place', () => {
-  it.fails('tip hash → tip', () => {
+  it('tip hash → tip', () => {
     const { chain, held } = seatedChain(10);
     expect(held.place(hashOf(chain[9]!.header), 10)).toBe('tip');
   });
 
-  it.fails('header below the tip → one-below', () => {
+  it('header below the tip → one-below', () => {
     const { chain, held } = seatedChain(10);
     expect(held.place(hashOf(chain[8]!.header), 9)).toBe('one-below');
   });
 
-  it.fails('a lower held header → below', () => {
+  it('a lower held header → below', () => {
     const { chain, held } = seatedChain(10);
     // Window spans heights 6..10; height 7 is "lower held", not one-below.
     expect(held.place(hashOf(chain[6]!.header), 7)).toBe('below');
   });
 
-  it.fails('a height above the tip → above', () => {
+  it('a height above the tip → above', () => {
     const { held } = seatedChain(10);
     expect(held.place('aa'.repeat(32), 11)).toBe('above');
   });
 
-  it.fails('a held height with another hash → unplaced', () => {
+  it('a held height with another hash → unplaced', () => {
     const { held } = seatedChain(10);
     // Height 9 is in the window but the hash is wrong.
     expect(held.place('aa'.repeat(32), 9)).toBe('unplaced');
   });
 
-  it.fails('hash === null → unplaced', () => {
+  it('hash === null → unplaced', () => {
     const { held } = seatedChain(10);
     expect(held.place(null, 9)).toBe('unplaced');
   });
 
-  it.fails('a height below the held window → under', () => {
+  it('a height below the held window → under', () => {
     const { held } = seatedChain(10);
     // Window is heights 6..10. Height 3 is below it (and so is block 1).
     expect(held.place('aa'.repeat(32), 3)).toBe('under');
@@ -143,7 +143,7 @@ describe('HeldChain — place', () => {
 });
 
 describe('HeldChain — extend', () => {
-  it.fails('parent is the tip → extended, window keeps k', () => {
+  it('parent is the tip → extended, window keeps k', () => {
     const { chain, held } = seatedChain(10);
     // Build block 11 whose parent is the current tip (height 10).
     const parent = chain[9]!.header;
@@ -164,7 +164,7 @@ describe('HeldChain — extend', () => {
     expect(held.standing(hashOf(chain[6]!.header), 7)).toBe('held');
   });
 
-  it.fails('parent held below the tip → fork, nothing changes', () => {
+  it('parent held below the tip → fork, nothing changes', () => {
     const { chain, held } = seatedChain(10);
     const tipBefore = hashOf(held.tip()!);
     // Build a block whose parent is held at height 8 (below the tip).
@@ -183,7 +183,7 @@ describe('HeldChain — extend', () => {
     expect(hashOf(held.tip()!)).toBe(tipBefore);
   });
 
-  it.fails('parent not held → gap, nothing changes', () => {
+  it('parent not held → gap, nothing changes', () => {
     const { held } = seatedChain(10);
     const tipBefore = hashOf(held.tip()!);
     const orphan = makeBlockAt(50, PROTOCOL_VERSION, {
@@ -195,7 +195,7 @@ describe('HeldChain — extend', () => {
 });
 
 describe('HeldChain — link', () => {
-  it.fails('linked: highest first, each links to the next, the last to a held header', () => {
+  it('linked: highest first, each links to the next, the last to a held header', () => {
     // Chain of 13; held window is heights 5..9 (k=5), block 1 held
     // separately. The gap-fill reads headers 13, 12, 11, 10 downward (highest
     // first) and the last (height 10) links to the tip (height 9).
@@ -214,17 +214,28 @@ describe('HeldChain — link', () => {
     expect(held.standing(hashOf(chain[4]!.header), 5)).toBeNull();
   });
 
-  it.fails('failed: a header whose bits are off by one (schedule check)', () => {
+  it('failed: a header whose bits are off by one (schedule check)', () => {
+    // Re-mine the highest header with bits one past the schedule's — the
+    // header still verifies at its own bits, but `link`'s schedule check
+    // compares against `asertTargetBits(retarget, t_a, parent)` and
+    // refuses the mismatch.
     const chain = makeLinkedChain(13, devnetProfile);
     const held = new HeldChain(devnetProfile, K);
     held.settle(chain.slice(4, 9).map(b => b.header), chain[0]!.header);
     const tipBefore = hashOf(held.tip()!);
-    const bent: BlockHeader = {
-      ...chain[12]!.header,
-      powTargetBits: chain[12]!.header.powTargetBits + 1,
-    };
+    const parent12 = chain[11]!.header;
+    const scheduled = asertTargetBits(retarget, chain[0]!.header.createdAt, {
+      height: parent12.height,
+      createdAt: parent12.createdAt,
+    });
+    const parent12Hash = hashOf(parent12);
+    const bent = makeBlockAt(13, PROTOCOL_VERSION, {
+      prevBlockHash: parent12Hash,
+      createdAt: parent12.createdAt + devnetProfile.orderingBlockIdealMs,
+      powTargetBits: scheduled + 1,
+    });
     const headers = [
-      bent,
+      bent.header,
       chain[11]!.header,
       chain[10]!.header,
       chain[9]!.header,
@@ -233,7 +244,7 @@ describe('HeldChain — link', () => {
     expect(hashOf(held.tip()!)).toBe(tipBefore);
   });
 
-  it.fails('failed: the last header links to nothing held', () => {
+  it('failed: the last header links to nothing held', () => {
     const chain = makeLinkedChain(13, devnetProfile);
     const held = new HeldChain(devnetProfile, K);
     held.settle(chain.slice(4, 9).map(b => b.header), chain[0]!.header);
@@ -251,7 +262,37 @@ describe('HeldChain — link', () => {
     expect(hashOf(held.tip()!)).toBe(tipBefore);
   });
 
-  it.fails('failed: a header whose PoW does not verify', () => {
+  it('failed: a middle header does not link to the one below', () => {
+    // The lowest and the highest are from the chain; the middle one is
+    // a freshly mined header at the same height with the right bits, but
+    // its `prevBlockHash` points at nothing — so headers[1]'s prev no
+    // longer matches headers[2]'s hash. The inner link check catches
+    // this; nothing above it would.
+    const chain = makeLinkedChain(13, devnetProfile);
+    const held = new HeldChain(devnetProfile, K);
+    held.settle(chain.slice(4, 9).map(b => b.header), chain[0]!.header);
+    const tipBefore = hashOf(held.tip()!);
+    const parent10 = chain[9]!.header;
+    const scheduled11 = asertTargetBits(retarget, chain[0]!.header.createdAt, {
+      height: parent10.height,
+      createdAt: parent10.createdAt,
+    });
+    const detachedMid = makeBlockAt(11, PROTOCOL_VERSION, {
+      prevBlockHash: 'dd'.repeat(32),
+      createdAt: parent10.createdAt + devnetProfile.orderingBlockIdealMs,
+      powTargetBits: scheduled11,
+    });
+    const headers = [
+      chain[12]!.header,
+      chain[11]!.header,
+      detachedMid.header, // headers[2]; headers[1].prevBlockHash points at chain[11]'s hash, not this one
+      chain[9]!.header,
+    ];
+    expect(held.link(headers)).toBe('failed');
+    expect(hashOf(held.tip()!)).toBe(tipBefore);
+  });
+
+  it('failed: a header whose PoW does not verify', () => {
     const chain = makeLinkedChain(13, devnetProfile);
     const held = new HeldChain(devnetProfile, K);
     held.settle(chain.slice(4, 9).map(b => b.header), chain[0]!.header);
@@ -268,7 +309,7 @@ describe('HeldChain — link', () => {
     expect(hashOf(held.tip()!)).toBe(tipBefore);
   });
 
-  it.fails('failed: more than k headers', () => {
+  it('failed: more than k headers', () => {
     // The gap fill stops at `k` headers; a longer input is refused.
     const chain = makeLinkedChain(13, devnetProfile);
     const held = new HeldChain(devnetProfile, K);
@@ -289,13 +330,13 @@ describe('HeldChain — link', () => {
 });
 
 describe('HeldChain — scheduledTargetBits', () => {
-  it.fails('height 1 → the retarget\'s anchorBits', () => {
+  it('height 1 → the retarget\'s anchorBits', () => {
     const { held } = seatedChain(10);
     const [block1] = makeLinkedChain(1, devnetProfile);
     expect(held.scheduledTargetBits(block1!.header)).toBe(retarget.anchorBits);
   });
 
-  it.fails('parent held → asertTargetBits(retarget, block1.createdAt, parent)', () => {
+  it('parent held → asertTargetBits(retarget, block1.createdAt, parent)', () => {
     const { chain, held } = seatedChain(10);
     // Build a header at height 11 whose parent is the tip (height 10).
     const parent = chain[9]!.header;
@@ -313,7 +354,7 @@ describe('HeldChain — scheduledTargetBits', () => {
     expect(held.scheduledTargetBits(header11)).toBe(expected);
   });
 
-  it.fails('parent not held → null', () => {
+  it('parent not held → null', () => {
     const { held } = seatedChain(10);
     const orphan = makeBlockAt(50, PROTOCOL_VERSION, {
       prevBlockHash: 'cc'.repeat(32),
@@ -323,38 +364,38 @@ describe('HeldChain — scheduledTargetBits', () => {
 });
 
 describe('HeldChain — standing', () => {
-  it.fails('held for a window header', () => {
+  it('held for a window header', () => {
     const { chain, held } = seatedChain(10);
     expect(held.standing(hashOf(chain[8]!.header), 9)).toBe('held');
   });
 
-  it.fails('held for block 1', () => {
+  it('held for block 1', () => {
     const { chain, held } = seatedChain(10);
     expect(held.standing(hashOf(chain[0]!.header), 1)).toBe('held');
   });
 
-  it.fails('null for any other hash', () => {
+  it('null for any other hash', () => {
     const { held } = seatedChain(10);
     expect(held.standing('cc'.repeat(32), 42)).toBeNull();
   });
 });
 
 describe('HeldChain — headerAt', () => {
-  it.fails('reads a window header by height', () => {
+  it('reads a window header by height', () => {
     const { chain, held } = seatedChain(10);
     const h = held.headerAt(8);
     expect(h).not.toBeNull();
     expect(hashOf(h!)).toBe(hashOf(chain[7]!.header));
   });
 
-  it.fails('reads block 1 by height 1', () => {
+  it('reads block 1 by height 1', () => {
     const { chain, held } = seatedChain(10);
     const h = held.headerAt(1);
     expect(h).not.toBeNull();
     expect(hashOf(h!)).toBe(hashOf(chain[0]!.header));
   });
 
-  it.fails('null for a height outside the window and not block 1', () => {
+  it('null for a height outside the window and not block 1', () => {
     const { held } = seatedChain(10);
     expect(held.headerAt(4)).toBeNull();
     expect(held.headerAt(100)).toBeNull();
