@@ -561,4 +561,81 @@ describe('s8 (prove once, follow by gossip)', () => {
     expect(expr).toContain(JSON.stringify(ids));
     expect(expr).toContain('__s8GAP');
   });
+  // MESH_INTERFACE → Acceptance 8 — step 1 and step 4's baseline reads
+  // the honest mesh hosts the stage-default config can reach. A host
+  // the stage-default never dials — lan1 (browser's own network, s7
+  // joins it by hand), every hostile host — is left out, so the base
+  // of each tracker is not held forever by an entry that never
+  // answers.
+  it.fails('honestMeshHosts picks pub/private mesh hosts, excludes lan1 (browser-net) and hostile hosts', () => {
+    const topology = {
+      hosts: {
+        browser: { role: 'browser', parent: 'natC', addr: '10.103.0.11' },
+        pub1: { role: 'public', addr: '11.100.0.11', mesh: { role: 'public' } },
+        pub2: { role: 'public', addr: '11.100.0.12', mesh: { role: 'public' } },
+        priv1: { role: 'private', parent: 'natA', addr: '10.101.0.11', mesh: { role: 'private' } },
+        priv2: { role: 'private', parent: 'natB', addr: '10.102.0.11', mesh: { role: 'private' } },
+        lan1: { role: 'private', parent: 'natC', addr: '10.103.0.21', mesh: { role: 'private' } },
+        'hostile-publisher': { role: 'hostile', addr: '11.100.0.34', mesh: { role: 'public', publisher: true } },
+        'hostile-lagging': { role: 'hostile', addr: '11.100.0.33', mesh: { role: 'public' } },
+      },
+    };
+    expect(s8.honestMeshHosts(topology)).toEqual(['pub1', 'pub2', 'priv1', 'priv2']);
+  });
+  it.fails('honestMeshHosts: a host without a mesh config is left out even if its role is public or private', () => {
+    const topology = {
+      hosts: {
+        browser: { role: 'browser', parent: 'natC', addr: '10.103.0.11' },
+        pub1: { role: 'public', addr: '11.100.0.11', mesh: { role: 'public' } },
+        'pub-no-mesh': { role: 'public', addr: '11.100.0.13' },
+      },
+    };
+    expect(s8.honestMeshHosts(topology)).toEqual(['pub1']);
+  });
+  // MESH_INTERFACE → Acceptance 8 — the pure delivery read: given the
+  // tracker's clientHist (tip-change records) and the scenario's
+  // pub1Hist (first-seen atMs per height), computeDeliveries pairs
+  // each pub1 height past the baseline with the client's first atMs
+  // at or above it. Three deliveries, each under 1 s, checksMoved
+  // false — the data the saved run on `af9541f8` carried, had step 2
+  // parsed its tracker value as an array instead of a string.
+  it.fails('computeDeliveries over the saved run\'s clientHist (parsed) and pub1Hist arrays answers three deliveries, each under 1 s, checksMoved false', () => {
+    const clientHist = [
+      { height: 2132, atMs: 1793623452426, checks: 1 },
+      { height: 2133, atMs: 1793623453726, checks: 1 },
+      { height: 2134, atMs: 1793623456726, checks: 1 },
+      { height: 2135, atMs: 1793623458726, checks: 1 },
+    ];
+    const pub1Hist = [
+      { height: 2132, atMs: 1793623452004 },
+      { height: 2133, atMs: 1793623453110 },
+      { height: 2134, atMs: 1793623456364 },
+      { height: 2135, atMs: 1793623458345 },
+    ];
+    const deliveries = s8.computeDeliveries(clientHist, pub1Hist);
+    expect(deliveries).toEqual([
+      { height: 2133, delayMs: 616, checksMoved: false },
+      { height: 2134, delayMs: 362, checksMoved: false },
+      { height: 2135, delayMs: 381, checksMoved: false },
+    ]);
+    for (const d of deliveries) {
+      expect(d.delayMs).toBeLessThan(1_000);
+      expect(d.checksMoved).toBe(false);
+    }
+  });
+  it('computeDeliveries over a string clientHist answers an empty list (the shape saved as `clientHist` in the run)', () => {
+    // The saved run on `af9541f8` recorded `clientHist` as a JSON
+    // string — cdp.mjs' stdout is `JSON.stringify(result)` where the
+    // expression's `result` is itself the `JSON.stringify(...)` of
+    // the tracker. One `JSON.parse` leaves a string; the step must
+    // parse it to an array before calling `computeDeliveries`.
+    const clientHistString = '[{"height":2132,"atMs":1793623452426,"checks":1},{"height":2133,"atMs":1793623453726,"checks":1}]';
+    const pub1Hist = [{ height: 2132, atMs: 1793623452004 }, { height: 2133, atMs: 1793623453110 }];
+    expect(s8.computeDeliveries(clientHistString, pub1Hist)).toEqual([]);
+  });
+  it.fails('computeDeliveries over a non-array pub1Hist answers an empty list', () => {
+    const clientHist = [{ height: 2132, atMs: 1793623452426, checks: 1 }];
+    expect(s8.computeDeliveries(clientHist, 'not-an-array')).toEqual([]);
+    expect(s8.computeDeliveries(clientHist, null)).toEqual([]);
+  });
 });
