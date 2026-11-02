@@ -1,9 +1,7 @@
 // MESH_INTERFACE → The client's node list → "The client's chain" — the client
-// reads a header out of `/blocks/:height`'s JSON (NODE_INTERFACE → HTTP API →
-// "The `header` object in `/blocks/:height`'s response carries all eleven
-// header fields"), converts `validatorId`'s hex to raw bytes, and holds the
-// shape to `verifyHeaderFieldDomains`
-// (VALIDATION_INTERFACE → verifyHeaderFieldDomains).
+// reads a header out of `/blocks/:height`'s JSON (NODE_INTERFACE → Blocks),
+// converts `validatorId`'s hex to raw bytes, and holds the shape to
+// `verifyHeaderFieldDomains` (VALIDATION_INTERFACE → verifyHeaderFieldDomains).
 
 import { hexToBytes, isHex64 } from '@dagsocial/types';
 import type { BlockHeader } from '@dagsocial/types';
@@ -14,10 +12,10 @@ import { verifyHeaderFieldDomains } from '@dagsocial/validation';
  * answer `null` when any field is of the wrong shape or `validatorId`'s
  * hex does not decode. The eleven fields are those of
  * `TYPES_INTERFACE → Layout — Block`, with `validatorId` as 64 lowercase
- * hex (NODE_INTERFACE → `blockToJson`); every other field crosses as JSON
- * as it reads in the type. `verifyHeaderFieldDomains` is the last gate —
- * a reader that passed it is of the domain every hasher and verifier the
- * client calls accepts (TYPES_INTERFACE → Layout — Block → "The domains").
+ * hex (NODE_INTERFACE → Blocks); every other field crosses as JSON as it
+ * reads in the type. `verifyHeaderFieldDomains` is the last gate — a
+ * reader that passed it is of the domain every hasher and verifier the
+ * client calls accepts (TYPES_INTERFACE → Layout — Block).
  */
 export function headerFromJson(v: unknown): BlockHeader | null {
   if (v === null || typeof v !== 'object') return null;

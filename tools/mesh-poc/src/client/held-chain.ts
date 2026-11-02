@@ -172,8 +172,8 @@ export class HeldChain {
    * `anchorBits` at height 1, `asertTargetBits(retarget, t_a, parent)`
    * when the parent is held, `null` otherwise — the block check skips the
    * schedule when `null`
-   * (NET_INTERFACE → Stage 1 → "a header whose parent the node lacks is
-   * judged without it").
+   * (NET_INTERFACE → Stage 1 →
+   * "A scheduled-target mismatch is refused, never forwarded, and never penalised").
    */
   scheduledTargetBits(header: BlockHeader): number | null {
     if (!this.block1) return null;

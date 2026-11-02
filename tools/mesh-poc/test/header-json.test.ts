@@ -8,16 +8,15 @@ import { headerFromJson } from '../src/client/header-json.js';
 import { makeLinkedChain } from './helpers/devnet-block.js';
 
 // MESH_INTERFACE → The client's node list → "The client's chain" — the
-// served `/blocks/:height`'s `header` JSON object (NODE_INTERFACE → HTTP API
-// → "The `header` object in `/blocks/:height`'s response carries all eleven
-// header fields") read as a BlockHeader, `validatorId` hex to bytes, held to
+// served `/blocks/:height`'s `header` JSON object (NODE_INTERFACE → Blocks)
+// read as a BlockHeader, `validatorId` hex to bytes, held to
 // `verifyHeaderFieldDomains`.
 
 const devnetProfile = profileFor('devnet');
 
-// `blockToJson`'s shape — the eleven header fields the node serves,
-// `validatorId` as hex, every root as its hex (NODE_INTERFACE →
-// `packages/node/src/routes/blocks.ts` → `blockToJson`).
+// The shape of the served `header`: the eleven header fields of
+// `TYPES_INTERFACE → Layout — Block`, `validatorId` as 64 lowercase hex,
+// every root as its hex (NODE_INTERFACE → Blocks).
 function headerToJson(h: BlockHeader): Record<string, unknown> {
   return {
     protocolVersion: h.protocolVersion,
