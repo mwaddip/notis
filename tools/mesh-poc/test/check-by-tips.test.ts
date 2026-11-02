@@ -1278,7 +1278,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(lastCall.some((u) => u.includes(b.id))).toBe(true);
   }, 300_000);
 
-  it.fails('a fill whose header read fails at the transport leaves the node in retry, never blacklisted', async () => {
+  it('a fill whose header read fails at the transport leaves the node in retry, never blacklisted', async () => {
     // MESH_INTERFACE → The client's node list — a transport failure on
     // a fill's header read is the retry row of the table, never a lie.
     // The hostile's /blocks/current claims a tip above the client's;
@@ -1336,7 +1336,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(hostileEntry.status).toBe('retry');
   }, 180_000);
 
-  it.fails('a fill answered 404 leaves the node in retry', async () => {
+  it('a fill answered 404 leaves the node in retry', async () => {
     // MESH_INTERFACE → The client's node list — a non-2xx answer is a
     // transport-tier failure (the `retry` row), never a lie. The
     // hostile claims a tip above and answers /blocks/<K+2> with 404.
@@ -1393,7 +1393,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(hostileEntry.status).toBe('retry');
   }, 180_000);
 
-  it.fails('a fill reads a block whose JSON is over 1 KiB', async () => {
+  it('a fill reads a block whose JSON is over 1 KiB', async () => {
     // MESH_INTERFACE → The client's node list — the fill's cap is
     // `BLOCK_READ_BYTES`, 8 MiB, not /blocks/current's own 1 KiB. A
     // block with 30 `utxoTxIds` in its JSON is over 1 KiB and the fill
@@ -1433,7 +1433,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s.nodes.find((n) => n.notisId === a.id)!.status).toBe('ok');
   }, 180_000);
 
-  it.fails('a check with no candidate schedules no other at once', async () => {
+  it('a check with no candidate schedules no other at once', async () => {
     // MESH_INTERFACE → The client's node list — "one check at a time:
     // a trigger during a check is that check". A check that reaches
     // phase 6 with no candidate throws `MeshFetchError` and triggers

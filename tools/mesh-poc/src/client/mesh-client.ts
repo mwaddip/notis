@@ -66,6 +66,7 @@ import {
   DIAL_TIMEOUT_MS,
   PEER_DIAL_MIN_MS,
   STUN_SERVERS_MAX,
+  BLOCK_READ_BYTES,
   type NetworkName,
 } from '../protocols.js';
 export type { ReadNeed } from './server-pick.js';
@@ -794,7 +795,13 @@ class MeshClientImpl implements MeshClient {
 
   async check(): Promise<void> {
     if (this.checkInProgress) return this.checkInProgress;
-    this.checkInProgress = this.runCheck()
+    // MESH_INTERFACE → The client's node list → "A check" — "one check at a
+    // time: a trigger during a check is that check". The marker is set
+    // before `runCheck`'s own code runs, so a `triggerImmediateCheck`
+    // fired from inside the check (phase 6's `read` finding no node, say)
+    // sees the running check and does not schedule a 0 ms recurrence.
+    this.checkInProgress = Promise.resolve()
+      .then(() => this.runCheck())
       .finally(() => { this.checkInProgress = null; });
     return this.checkInProgress;
   }
@@ -1037,21 +1044,17 @@ class MeshClientImpl implements MeshClient {
       const gap = read.height - chainTipNow.height;
       if (gap > DEFAULT_K) continue; // more than k above — stays unplaced for phase 4
       const headers: BlockHeader[] = [];
-      let hostileLie = false;
+      let fillAborted = false;
       for (let h = read.height; h > chainTipNow.height; h -= 1) {
-        const hdr = await this.readHeaderAt(read.id, h, timedFetch);
-        if (hdr === null) {
-          this.applyEvent({
-            id: read.id,
-            ev: 'lie',
-            evidence: { kind: 'malformed', atMs: this.clock(), detail: 'header did not read' },
-          });
-          hostileLie = true;
+        const result = await this.readHeaderAt(read.id, h, timedFetch);
+        if (result.kind !== 'header') {
+          this.applyHeaderReadFailure(read.id, result);
+          fillAborted = true;
           break;
         }
-        headers.push(hdr); // highest-first — chain.link's input shape
+        headers.push(result.header); // highest-first — chain.link's input shape
       }
-      if (hostileLie) continue;
+      if (fillAborted) continue;
       if (headers.length === 0 || blockHash(headers[0]!) !== read.hash) continue;
       this.chain.link(headers);
     }
@@ -1098,16 +1101,12 @@ class MeshClientImpl implements MeshClient {
       if (placements.get(read.id) !== 'under') continue;
       const firstAtTip = this.firstNodeAtChainTip(placedAtTip);
       if (firstAtTip === null) continue;
-      const hdr = await this.readHeaderAt(firstAtTip, read.height, timedFetch);
-      if (hdr === null) {
-        this.applyEvent({
-          id: firstAtTip,
-          ev: 'lie',
-          evidence: { kind: 'malformed', atMs: this.clock(), detail: 'header did not read' },
-        });
+      const result = await this.readHeaderAt(firstAtTip, read.height, timedFetch);
+      if (result.kind !== 'header') {
+        this.applyHeaderReadFailure(firstAtTip, result);
         continue;
       }
-      if (blockHash(hdr) === read.hash) {
+      if (blockHash(result.header) === read.hash) {
         this.applyEvent({ id: read.id, ev: 'behind' });
         perNodeVerdict.set(read.id, 'on');
         const chainTipNow = this.chain.tip();
@@ -1344,31 +1343,45 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list → "A check" — read a
-   * single header at `height` from `nodeId` through the timed fetch
-   * (`/blocks/<height>` → `headerBytes`). A non-ok HTTP answer, a body
-   * that does not parse, a shape that is not a header, or a wrong
-   * domain reads as `null`; the caller treats a `null` as the
-   * serving node's `malformed` lie.
+   * MESH_INTERFACE → The client's node list — read a single header at
+   * `height` from `nodeId` through the timed fetch (`/blocks/<height>`
+   * → `headerBytes`), under the fill's own cap (`BLOCK_READ_BYTES`,
+   * the constants-table row). One of:
+   *   - `{ kind: 'header', header }` — the parsed header;
+   *   - `{ kind: 'failure', failureKind, message? }` — a fetch that
+   *     threw or timed out, or a non-2xx answer (the `retry` row of
+   *     "The client's node list");
+   *   - `{ kind: 'lie', detail }` — a body over the cap or that does
+   *     not parse, a missing `header`, or `headerFromJson` answering
+   *     `null` (the lie row of "The client's node list").
+   * The caller applies the failure or the lie to the serving node;
+   * `readHeaderAt` itself writes no event. The split
+   * `classifyTipRead` makes is shared through `classifyNonOkRead`.
    */
   private async readHeaderAt(
     nodeId: string,
     height: number,
     timedFetch: HttpFetch,
-  ): Promise<BlockHeader | null> {
+  ): Promise<HeaderReadResult> {
     const url = meshBaseUrl(nodeId) + `/blocks/${String(height)}`;
     let response: Response;
     try {
       response = await timedFetch(url, undefined);
-    } catch {
-      return null;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { kind: 'failure', failureKind: 'transport', message };
     }
-    const r = await readCappedJson<unknown>(response, HEIGHT_READ_BYTES);
-    if (!r.ok) return null;
+    const r = await readCappedJson<unknown>(response, BLOCK_READ_BYTES);
+    if (!r.ok) {
+      const c = classifyNonOkRead(r);
+      if (c.kind === 'lie') return { kind: 'lie', detail: c.detail };
+      return { kind: 'failure', failureKind: c.failureKind };
+    }
     const data = r.data;
-    if (!isRecord(data)) return null;
-    const header = data['header'];
-    return headerFromJson(header);
+    if (!isRecord(data)) return { kind: 'lie', detail: 'block JSON is not an object' };
+    const header = headerFromJson(data['header']);
+    if (header === null) return { kind: 'lie', detail: 'header shape invalid' };
+    return { kind: 'header', header };
   }
 
   /**
@@ -1672,20 +1685,16 @@ class MeshClientImpl implements MeshClient {
     const r = await readCappedJson<unknown>(response, HEIGHT_READ_BYTES);
     const nowMs = this.clock();
     if (!r.ok) {
-      if (isBodyLevelFailure(r)) {
+      const c = classifyNonOkRead(r);
+      if (c.kind === 'lie') {
         this.applyEvent({
           id: nodeId,
           ev: 'lie',
-          evidence: { kind: 'malformed', atMs: nowMs, detail: r.body },
+          evidence: { kind: 'malformed', atMs: nowMs, detail: c.detail },
         });
         return { kind: 'lie' };
       }
-      if (r.status === 0) {
-        const kind: FailureKind = r.timedOut === true ? 'timeout' : 'transport';
-        this.applyEvent({ id: nodeId, ev: 'failure', kind });
-        return { kind: 'failure' };
-      }
-      this.applyEvent({ id: nodeId, ev: 'failure', kind: 'refused' });
+      this.applyEvent({ id: nodeId, ev: 'failure', kind: c.failureKind });
       return { kind: 'failure' };
     }
     if (!isTipShape(r.data)) {
@@ -1697,6 +1706,28 @@ class MeshClientImpl implements MeshClient {
       return { kind: 'lie' };
     }
     return { kind: 'tip', height: r.data.height, hash: r.data.hash };
+  }
+
+  /**
+   * Apply a `readHeaderAt` failure or lie to the serving node: a
+   * failure moves it by `applyEvent({ ev: 'failure', ... })` (the
+   * `retry` row of MESH_INTERFACE → The client's node list), a lie
+   * by a `malformed` evidence (the lie row). The caller leaves the
+   * tip unplaced.
+   */
+  private applyHeaderReadFailure(
+    nodeId: string,
+    result: Extract<HeaderReadResult, { kind: 'failure' } | { kind: 'lie' }>,
+  ): void {
+    if (result.kind === 'failure') {
+      this.applyEvent({ id: nodeId, ev: 'failure', kind: result.failureKind, message: result.message });
+    } else {
+      this.applyEvent({
+        id: nodeId,
+        ev: 'lie',
+        evidence: { kind: 'malformed', atMs: this.clock(), detail: result.detail },
+      });
+    }
   }
 
   private handleDiscovery(detail: { id: PeerId; multiaddrs: Multiaddr[] }): void {
@@ -1733,10 +1764,33 @@ function isBodyLevelFailure(r: NodeError): boolean {
   return r.body.startsWith(BODY_OVER_CAP) || r.body.startsWith(BODY_UNPARSEABLE);
 }
 
+/**
+ * MESH_INTERFACE → The client's node list — the split a non-ok
+ * `NodeResult` reads into: a `malformed` lie (a body over its cap or
+ * that does not parse), or a failure of kind `timeout`, `transport`
+ * or `refused` (the `retry` row of the table). Shared by the two
+ * reads the client makes under this table — `classifyTipRead` and
+ * `readHeaderAt`.
+ */
+function classifyNonOkRead(
+  r: NodeError,
+): { kind: 'lie'; detail: string } | { kind: 'failure'; failureKind: FailureKind } {
+  if (isBodyLevelFailure(r)) return { kind: 'lie', detail: r.body };
+  if (r.status === 0) {
+    return { kind: 'failure', failureKind: r.timedOut === true ? 'timeout' : 'transport' };
+  }
+  return { kind: 'failure', failureKind: 'refused' };
+}
+
 type TipClassification =
   | { kind: 'tip'; height: number; hash: string | null }
   | { kind: 'failure' }
   | { kind: 'lie' };
+
+type HeaderReadResult =
+  | { kind: 'header'; header: BlockHeader }
+  | { kind: 'failure'; failureKind: FailureKind; message?: string }
+  | { kind: 'lie'; detail: string };
 
 /**
  * The path portion of a mesh URL — everything from the first `/`
