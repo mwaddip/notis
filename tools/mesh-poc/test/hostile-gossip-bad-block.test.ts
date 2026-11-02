@@ -36,7 +36,7 @@ describe('badBlockBytes — the publisher\'s block', () => {
     }
   });
   // MESH_INTERFACE → Block gossip → "A block is checked before it is
-  // forwarded" — gossipsub's `msgIdFn` keyes seen-cache lookups by the
+  // forwarded, and never applied" — gossipsub's `msgIdFn` keyes seen-cache lookups by the
   // bytes' hash, and `GOSSIP_SEEN_WINDOW_MS` holds a duplicate for 120 s
   // (`ignoreDuplicatePublishError: true` makes the publisher's own
   // re-emit a no-op). Each publish needs distinct bytes, else the first
