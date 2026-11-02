@@ -3,21 +3,28 @@
 // the chain cannot place; the agreement counts come off the per-tip
 // verdicts; `state.tip` is the chain's.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateKeyPair } from '@dagsocial/types';
-import { profileFor } from '@dagsocial/types';
-import type { NetworkProfile, NetworkType, OrderingBlock } from '@dagsocial/types';
-import { blockHash } from '@dagsocial/validation';
+import {
+  encodeOrderingBlock,
+  generateKeyPair,
+  MAGIC_DEVNET,
+  PROTOCOL_VERSION,
+  profileFor,
+} from '@dagsocial/types';
+import type { BlockHeader, NetworkProfile, NetworkType, OrderingBlock } from '@dagsocial/types';
+import { asertTargetBits, blockHash } from '@dagsocial/validation';
+import { verifierProfile } from '@dagsocial/nipopow-client';
+import { blockTopic } from '../src/gossip-rules.js';
 import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
-import { makeLinkedChain } from './helpers/devnet-block.js';
+import { makeBlockAt, makeLinkedChain } from './helpers/devnet-block.js';
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 const K = 5;
@@ -53,6 +60,34 @@ async function startNode(
   }
   const id = notisIdFromPeerId(n.libp2p.peerId);
   return { node: n, id, webrtcAddr };
+}
+
+/**
+ * A block built on top of `parent`, carrying the schedule asertTargetBits
+ * imposes at parent's height, mined, and signed by a fresh key. Lets a
+ * case extend a chain by gossip without the harness's whole-chain
+ * mutation path.
+ */
+function makeChildBlock(parent: BlockHeader, t_a: number, profile: NetworkProfile): OrderingBlock {
+  const retarget = verifierProfile(profile, 0).retarget;
+  const scheduled = asertTargetBits(retarget, t_a, { height: parent.height, createdAt: parent.createdAt });
+  const prev = blockHash(parent);
+  if (prev === null) throw new Error('parent header outside the encodable domain');
+  return makeBlockAt(parent.height + 1, PROTOCOL_VERSION, {
+    prevBlockHash: prev,
+    createdAt: parent.createdAt + profile.orderingBlockIdealMs,
+    powTargetBits: scheduled,
+  });
+}
+
+interface MeshPeerQuery {
+  getMeshPeers(topic: string): string[];
+  publish(topic: string, data?: Uint8Array): Promise<unknown>;
+}
+
+function pubsubOf(libp2p: unknown): MeshPeerQuery {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (libp2p as any).services.pubsub as MeshPeerQuery;
 }
 
 describe('mesh-client — a check reads tips, places them, and proves the rest', () => {
@@ -1467,4 +1502,89 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     // per second. With it: no check runs until `CHECK_INTERVAL_MS`.
     expect(checksAfter - checksBefore).toBeLessThanOrEqual(1);
   }, 60_000);
+
+  it.fails('a settle is skipped when the winner\'s tip is held by the chain', async () => {
+    // MESH_INTERFACE → The client's node list → "The client's chain" —
+    // "The tip moves only by a header carrying its work on the client's
+    // chain, never by a node's word". The race: a Phase-4 proof read
+    // from a node at the client's tip ends with that tip's hash while
+    // a gossiped block has already extended the chain by one; the
+    // winner's tip is one below the new tip and is held by the window,
+    // so the chain stands — no settle onto the shorter suffix.
+    //
+    // The gossip is injected inside the second check's `resolve`
+    // wrapper (the closest the harness allows): `underlying` answers
+    // the proof read, then the wrapper publishes the extending block
+    // from A's mesh node and waits for the client's `chain.extend` to
+    // land before returning, so Phase 4 weighs the winner's tip
+    // against the extended chain.
+    const chainBase = makeLinkedChain(K + 1, PROFILE);
+    const forkChain = makeLinkedChain(K + 1, PROFILE); // same length, different hashes
+    const extraBlock = makeChildBlock(
+      chainBase[chainBase.length - 1]!.header,
+      chainBase[0]!.header.createdAt,
+      PROFILE,
+    );
+    const upA = await chainUpstream(chainBase); ups.push(upA);
+    const upX = await chainUpstream(forkChain); ups.push(upX);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dX = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dX);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const x = await startNode(upX, dX); nodes.push(x.node);
+
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainBase;
+      if (url.includes(x.id)) return forkChain;
+      return 'unreachable';
+    };
+    const underlying = chainResolve(chainOf, K);
+
+    let injectOnNextResolve: null | (() => Promise<void>) = null;
+    const resolve: typeof underlying = async (urls, ...rest) => {
+      const r = await underlying(urls, ...rest);
+      if (injectOnNextResolve !== null) {
+        const fn = injectOnNextResolve;
+        injectOnNextResolve = null;
+        await fn();
+      }
+      return r;
+    };
+
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: x.id, addrs: [x.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve,
+    });
+    clients.push(client);
+    await client.check(); // settle at chainBase (K+1); A `ok`, X `behind`.
+    expect(client.state().tip?.height).toBe(K + 1);
+
+    // Gossipsub mesh with A so the inside-resolve publish propagates.
+    const TOPIC = blockTopic(MAGIC_DEVNET);
+    await vi.waitFor(() => {
+      expect(pubsubOf(client.libp2p).getMeshPeers(TOPIC))
+        .toContain(a.node.libp2p.peerId.toString());
+      expect(pubsubOf(a.node.libp2p).getMeshPeers(TOPIC))
+        .toContain(client.libp2p.peerId.toString());
+    }, { timeout: 60_000, interval: 300 });
+
+    // Second check: inject the gossiped extension inside the Phase-4
+    // resolve so the chain gains K+2 before the winner's tip (K+1) is
+    // weighed.
+    injectOnNextResolve = async () => {
+      await pubsubOf(a.node.libp2p).publish(TOPIC, encodeOrderingBlock(extraBlock));
+      await vi.waitFor(() => {
+        expect(client.state().tip?.height).toBe(K + 2);
+      }, { timeout: 15_000, interval: 50 });
+    };
+    await client.check();
+
+    // The winner's tip (K+1) is held by the window after the gossip
+    // extension, so the chain stands at K+2 — no settle onto the old
+    // suffix.
+    expect(client.state().tip?.height).toBe(K + 2);
+  }, 180_000);
 });
