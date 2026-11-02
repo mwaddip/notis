@@ -1012,6 +1012,20 @@ if (laggingHost) {
   log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'rule', 'ip', 'lag_cut', 'out', 'tcp', 'dport', String(laggingP2pPort), 'drop'], { privileged: true });
   log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'chain', 'ip', 'lag_cut', 'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', '}'], { privileged: true });
   log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'rule', 'ip', 'lag_cut', 'in', 'tcp', 'sport', String(laggingP2pPort), 'drop'], { privileged: true });
+
+  // MESH_INTERFACE → Acceptance 8 → "a block mined on a node reaches
+  // the browser by gossip" / Acceptance 6 → "a node on a lighter chain
+  // is `behind`". After the cut, a low-duty miner inside the lagging
+  // namespace against its own node forks the lagging chain from the
+  // honest one with less work — the honest miner's full duty keeps
+  // the honest tip the heavier chain. 2 % keeps the fork alive without
+  // burning a core, and `down` ends the recorded tree the same way it
+  // ends `miner-steady`.
+  log.spawn(userWrap(nsOf('hostile-lagging'), {
+    NODE_URL: `http://127.0.0.1:${laggingHost.node.httpPort}`,
+    MINING_SECRET: 'stage-mining-secret',
+    MINER_PCT: '2',
+  }).concat([minerScript]), { description: 'miner-lagging', logPath: logPathFor('miner-lagging') });
 }
 
 // -----------------------------------------------------------------------
