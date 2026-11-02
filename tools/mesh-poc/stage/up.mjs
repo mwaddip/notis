@@ -948,7 +948,8 @@ if (!dryRun) {
 // binds pub1's namespace loopback, so the miner runs inside notismesh-pub1.
 // `MINER_PCT=100` while the chain reaches height 50; after the height
 // wait the boot miner is replaced by a `miner-steady` at
-// `MINER_PCT=10`, which keeps the chain growing so `hostile-lagging`
+// `MINER_PCT=2`, a 2 % duty cycle that keeps the chain growing while
+// leaving the stage's checks ample room to measure, so `hostile-lagging`
 // falls further behind without burning a core for the whole run.
 const minerBootChild = log.spawn(userWrap(nsOf('pub1'), {
   NODE_URL: `http://127.0.0.1:${pub1Host.node.httpPort}`,
@@ -988,11 +989,14 @@ if (!dryRun) {
 }
 
 // MESH_INTERFACE → Acceptance — stop the 100 %-duty boot miner and
-// restart at `MINER_PCT=10`, chosen so the chain still grows at ~1
-// block per 10 s on this devnet (the miner script's duty cycle is a
-// percentage of CPU time, so 10 % keeps roughly one block in flight
-// per 10 s on a single core). A seven-hour run at that duty uses
-// ~0.1 cores on average rather than one full core.
+// restart at `MINER_PCT=2`: a 2 % duty cycle keeps the chain growing
+// without burning a core, and leaves blocks spread over seconds, not
+// milliseconds, so each check the stage runs sees a settled view
+// between arrivals. Devnet's difficulty target sits at its ceiling
+// (`orderingBlockPowTargetCeilingBits`), so the duty cycle alone
+// paces the chain. The ratio to `miner-lagging` matters: the honest
+// chain's duty is twice the lagging fork's, so the honest tip stays
+// the heavier chain.
 if (!dryRun && minerBootChild !== null) {
   try { process.kill(minerBootChild.pid, 'SIGTERM'); } catch { /* already gone */ }
   // Drop the boot miner's pid from the recorded list so `down` does
@@ -1003,7 +1007,7 @@ if (!dryRun && minerBootChild !== null) {
 log.spawn(userWrap(nsOf('pub1'), {
   NODE_URL: `http://127.0.0.1:${pub1Host.node.httpPort}`,
   MINING_SECRET: 'stage-mining-secret',
-  MINER_PCT: '10',
+  MINER_PCT: '2',
 }).concat([minerScript]), { description: 'miner-steady', logPath: logPathFor('miner-steady') });
 
 // MESH_INTERFACE → The client's node list — `hostile-lagging`'s mesh node
@@ -1025,14 +1029,14 @@ if (laggingHost) {
   // the browser by gossip" / Acceptance 6 → "a node on a lighter chain
   // is `behind`". After the cut, a low-duty miner inside the lagging
   // namespace against its own node forks the lagging chain from the
-  // honest one with less work — the honest miner's full duty keeps
-  // the honest tip the heavier chain. 2 % keeps the fork alive without
-  // burning a core, and `down` ends the recorded tree the same way it
-  // ends `miner-steady`.
+  // honest one with less work — `MINER_PCT=1` is half the honest
+  // chain's duty, so the lagging fork stays lighter however long the
+  // run goes. `down` ends the recorded tree the same way it ends
+  // `miner-steady`.
   log.spawn(userWrap(nsOf('hostile-lagging'), {
     NODE_URL: `http://127.0.0.1:${laggingHost.node.httpPort}`,
     MINING_SECRET: 'stage-mining-secret',
-    MINER_PCT: '2',
+    MINER_PCT: '1',
   }).concat([minerScript]), { description: 'miner-lagging', logPath: logPathFor('miner-lagging') });
 }
 
