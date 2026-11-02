@@ -88,27 +88,6 @@ function fakeResolveWith(
   };
 }
 
-function winnerFirst(urls: string[]): TipResult {
-  const nodes: NodeTipResult[] = urls.map((url, i) => ({
-    url,
-    verified: true,
-    proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
-    verifyResult: null,
-    refuseReason: null,
-    refuseCode: null,
-    behind: i === 0 ? 0 : 1,
-    genesisHash: 'f'.repeat(64),
-  }));
-  return {
-    winner: nodes[0] ?? null,
-    winnerIndex: nodes.length > 0 ? 0 : -1,
-    nodes,
-    tip: null,
-    suffixHead: null,
-    splits: [],
-  };
-}
-
 describe('mesh-client — refusals, dialling by key, state and triggers', () => {
   const nodes: MeshNode[] = [];
   const stubs: Stub[] = [];
@@ -222,10 +201,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       seeds: [{ notisId: seed.id, addrs: [seed.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      // winnerFirst would make the seed the winner if phase 2 reached
-      // it — but the gater refuses the seed's loopback-private address
-      // before libp2p dials, so phase 1 ends the seed in retry and
-      // phase 2 reads no URL for it.
+      // The chainResolve would make the seed verified if phase 2
+      // reached it — but the gater refuses the seed's loopback-private
+      // address before libp2p dials, so phase 1 ends the seed in retry
+      // and phase 2 reads no URL for it.
       resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
@@ -1369,12 +1348,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → No anchor reached → "The agreement counts" —
     // after each check `state.agreement` holds `{ agreeing,
     // agreeingAnchors, notAgreeing }` from the latest `TipResult`.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'ag-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'ag-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
       anchors: [
@@ -1382,7 +1361,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([(u) => makeResult(u, [0, 1])]),
+      resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
     // Before the first check, agreement is null.
@@ -1404,12 +1383,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // identical between checks (the same nodes answer with the same
     // behind), so a baseline on `agreement` never changes and the
     // counter is the one hook a stage step has.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'chk-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'chk-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
       anchors: [
@@ -1417,11 +1396,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([
-        (u) => makeResult(u, [0, 1]),
-        (u) => makeResult(u, [0, 1]),
-        (u) => makeResult(u, [0, 1]),
-      ]),
+      resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
     // Before any check, the counter reads 0.
@@ -1446,14 +1421,15 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // reject once, so pickServer returns A and the fetch itself
     // throws from inside meshFetchOverConnection. The 30 s periodic
     // check cannot stand in — the wait is a second.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'f4-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'f4-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     let resolveCalls = 0;
+    const underlying = chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K);
     const client = await startMeshClient({
       anchors: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
@@ -1461,11 +1437,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet', profile: PROFILE,
       random: () => 0,
-      resolve: fakeResolveWith([
-        (u) => { resolveCalls += 1; return winnerFirst(u); },
-        (u) => { resolveCalls += 1; return winnerFirst(u); },
-        (u) => { resolveCalls += 1; return winnerFirst(u); },
-      ]),
+      resolve: async (...args) => { resolveCalls += 1; return underlying(...args); },
     });
     clients.push(client);
     await client.check();
@@ -1515,17 +1487,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // the tip read to a notisId the list does not hold: the response
     // classifies as a non-ok HTTP answer, and `nodeList.failure` on
     // that unknown id throws from `unknown('failure', id)`.
-    const stubA = await makeStub(0); stubs.push(stubA);
+    const upA = await chainUpstream(SHARED_CHAIN); ups.push(upA);
     const dirA = mkdtempSync(join(tmpdir(), 'f3-')); dirs.push(dirA);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
 
     const client = await startMeshClient({
       anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([
-        (u) => winnerFirst(u),
-        (u) => winnerFirst(u),
-      ]),
+      resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
     await client.check();
