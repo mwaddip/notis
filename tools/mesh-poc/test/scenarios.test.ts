@@ -822,8 +822,35 @@ describe('s8 (prove once, follow by gossip)', () => {
     expect((st as { lastTipHeight: number }).lastTipHeight).toBe(102);
   });
   it('s8GapObserve: baseline NOT captured before the first completed check', () => {
-    const st = s8.s8GapObserve(null, { checks: 0, tip: { height: 100 }, traffic: { proofReads: 0 } });
+    const st = s8.s8GapObserve(null, { checks: 0, tip: { height: 100 }, traffic: { proofReads: 0 } }, 1000);
     expect((st as { base: unknown }).base).toBeNull();
+  });
+  it.fails('s8GapObserve: tipHist records every tip change after the baseline, carrying height, atMs, checks and proofReads', () => {
+    // The tracker keeps the full sequence so a run shows every tip
+    // change past the baseline — a chain that moves forward and then
+    // back shows both moves.
+    const sequence = [
+      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } }, nowMs: 1_000 },
+      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } }, nowMs: 1_100 }, // same height — no record
+      { snap: { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } }, nowMs: 1_200 }, // fill
+      { snap: { checks: 2, tip: { height: 102 }, traffic: { proofReads: 5 } }, nowMs: 1_300 }, // tip went back
+      { snap: { checks: 2, tip: { height: 104 }, traffic: { proofReads: 6 } }, nowMs: 1_400 }, // one-block-after
+    ];
+    let st: unknown = null;
+    for (const r of sequence) st = s8.s8GapObserve(st, r.snap, r.nowMs);
+    const tipHist = (st as { tipHist: Array<{ height: number; atMs: number; checks: number; proofReads: number }> }).tipHist;
+    expect(tipHist).toEqual([
+      { height: 103, atMs: 1_200, checks: 2, proofReads: 5 },
+      { height: 102, atMs: 1_300, checks: 2, proofReads: 5 },
+      { height: 104, atMs: 1_400, checks: 2, proofReads: 6 },
+    ]);
+    // final still records with jump = 3 (the fill at 103) — the end
+    // condition is unchanged.
+    expect((st as { final: { jump: number; tipHeight: number } }).final).toEqual({
+      tipHeight: 104,
+      proofReads: 6,
+      jump: 3,
+    });
   });
   // MESH_INTERFACE → Acceptance 8 — the expression-builders substitute
   // the honest-id set, the anchor set and the lagging node's id into
