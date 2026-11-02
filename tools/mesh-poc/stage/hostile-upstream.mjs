@@ -1,16 +1,27 @@
 // MESH_INTERFACE → Acceptance — the hostile upstream a mesh node points at
 // instead of a real Notis node. One mode per hostile host: `malformed` answers
 // `/nipopow/proof/:m/:k` with a non-hex `proof`; `invalid` fetches the real
-// proof from `pub1`'s node, flips a nonce byte of one header so the proof
-// decodes and `verifyProof` refuses it; every other route forwards to pub1.
-// The two body builders are pure functions, exported so the test and the
-// server share one implementation.
+// proof from pub1's node, flips a nonce byte of one header so the proof
+// decodes and `verifyProof` refuses it. Both modes also answer
+// `/blocks/current` with the upstream's height and a 64-hex lie for the
+// hash (MESH_INTERFACE → Acceptance 6 → "A node naming a tip of its own
+// that answers malformed proofs, and one that answers failing proofs,
+// are blacklisted with their evidence"). Every other route forwards to
+// pub1. The body builders are pure functions, exported so the tests and
+// the server share one implementation.
 
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { decodeNipopowProof, encodeNipopowProof } from '@dagsocial/nipopow';
 
 const PROOF_ROUTE = /^\/nipopow\/proof\/(\d+)\/(\d+)(?:\?.*)?$/;
+const BLOCKS_CURRENT_ROUTE = /^\/blocks\/current(?:\?.*)?$/;
+
+// MESH_INTERFACE → Acceptance 6 → "a tip of their own" — a 64-hex value
+// no chain holds. The pattern is a constant so the test checks the
+// shape; one shared value for both liars is enough (each is identified
+// by its notisId, not by its tip).
+export const LIE_HASH = 'ba'.repeat(32);
 
 export function malformedBody() {
   // MESH_INTERFACE → The client's node list → "a lie" row — a non-hex `proof`
@@ -18,6 +29,17 @@ export function malformedBody() {
   // decodes the field as hex, the hex read fails, and the entry moves by
   // `lie` of kind `malformed`.
   return { proof: 'not-hex' };
+}
+
+export function blocksCurrentBody(upstreamJson) {
+  // MESH_INTERFACE → Acceptance 6 → "answers malformed proofs ... and
+  // answers failing proofs ... naming a tip of its own" — keep the
+  // upstream's height (so the client reads a plausible chain) and
+  // replace the hash with a 64-hex value no chain holds. Every other
+  // field passes through, so a shape change in the Notis node's
+  // `/blocks/current` reaches the client here without the stage
+  // dropping it (the client reads what it needs; the rest it ignores).
+  return { ...upstreamJson, hash: LIE_HASH };
 }
 
 export function invalidBody(validProofHex) {
@@ -67,9 +89,16 @@ export function startHostileUpstream(opts) {
   }
   const server = createServer((req, res) => {
     const url = req.url ?? '/';
-    const m = PROOF_ROUTE.exec(url);
-    if (m !== null && req.method === 'GET') {
+    const mProof = PROOF_ROUTE.exec(url);
+    if (mProof !== null && req.method === 'GET') {
       answerProof(res, mode, pub1Base, url).catch((err) => {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: String(err?.message ?? err) }));
+      });
+      return;
+    }
+    if (BLOCKS_CURRENT_ROUTE.test(url) && req.method === 'GET') {
+      answerBlocksCurrent(res, pub1Base, url).catch((err) => {
         res.writeHead(500, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: String(err?.message ?? err) }));
       });
@@ -107,6 +136,23 @@ async function answerProof(res, mode, pub1Base, url) {
   }
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify(invalidBody(body.proof)));
+}
+
+async function answerBlocksCurrent(res, pub1Base, url) {
+  // MESH_INTERFACE → Acceptance 6 — the two liars name a tip of their
+  // own: forward the upstream's `/blocks/current`, parse its JSON and
+  // swap the hash for `LIE_HASH`. A non-200 upstream passes through
+  // unchanged (so a Notis node that returns 500 while booting is not
+  // paved over with a lie).
+  const upstream = await fetch(`${pub1Base}${url}`);
+  if (!upstream.ok) {
+    res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
+    res.end(await upstream.text());
+    return;
+  }
+  const body = await upstream.json();
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(blocksCurrentBody(body)));
 }
 
 async function forward(req, res, pub1Base) {
