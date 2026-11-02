@@ -28,18 +28,25 @@ describe('stage:run --dry-run', () => {
     }
   }
 
-  it('exits 0 and prints the seven scenarios in order', () => {
+  // MESH_INTERFACE → Block gossip → "A router scores its peers by
+  // gossipsub's defaults" — the IP colocation penalty's hour-long
+  // window pins every peer behind one NAT address to one score. s6
+  // builds and tears down a fresh browser-side mesh each step, so
+  // running it first keeps the earlier scenarios' pages out of its
+  // measurement window.
+  const EXPECTED_ORDER = ['s6', 's1', 's2', 's3', 's4', 's5', 's7', 's8'];
+  it('exits 0 and prints the eight scenarios in order, s6 first', () => {
     runDryOnce();
     expect(status).toBe(0);
-    for (const name of ['s1', 's2', 's3', 's4', 's5', 's6', 's7']) {
+    for (const name of EXPECTED_ORDER) {
       expect(out, `[scenario:${name}] start`).toContain(`[scenario:${name}] start`);
       expect(out, `[scenario:${name}] end`).toContain(`[scenario:${name}] end`);
     }
     const startIdx = (n: string) => out.indexOf(`[scenario:${n}] start`);
-    const sIdxs = ['s1', 's2', 's3', 's4', 's5', 's6', 's7'].map(startIdx);
+    const sIdxs = EXPECTED_ORDER.map(startIdx);
     for (let i = 1; i < sIdxs.length; i += 1) {
       const prev = sIdxs[i - 1]!;
-      expect(sIdxs[i]!, `${['s1','s2','s3','s4','s5','s6','s7'][i]} comes after the previous scenario`).toBeGreaterThan(prev);
+      expect(sIdxs[i]!, `${EXPECTED_ORDER[i]} comes after ${EXPECTED_ORDER[i - 1]}`).toBeGreaterThan(prev);
     }
   }, 30_000);
 

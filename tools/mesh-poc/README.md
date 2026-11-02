@@ -111,7 +111,7 @@ timeout 10m  pnpm -r build
 timeout  5m  pnpm --filter @dagsocial/mesh-poc page:build
 
 timeout 20m  pnpm --filter @dagsocial/mesh-poc stage:up
-timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # or stage:run s1 s2 ... s7
+timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # default order: s6 s1 s2 s3 s4 s5 s7 s8
 timeout  1m  pnpm --filter @dagsocial/mesh-poc stage:report
 timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
 ```
@@ -144,13 +144,16 @@ timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
   `stage up: <N> processes, <M> namespaces`. On failure it rolls back exactly what it created
   (SIGTERMs each recorded PID, deletes each namespace in reverse order, removes
   `/etc/netns/notismesh-*`).
-- **`stage:run [s1 ... s7]`** runs the named scenarios in the order given (default: all seven).
-  Writes `stage/out/scenarios/<name>.json` per scenario: `{ scenario, startedAt, endedAt, steps,
-  faults }`, each step `{ name, verdict, measurement, timeMs }`. **A step that times out or throws
-  is `FAIL`; the scenario's faults are removed and the run goes on. A step that did not run reads
-  `skipped`, never a pass.** Each scenario writes its own `config.json` variant at start, so the
-  previous scenario's variant does not leak; the scenario's `finally` restores
-  `config.default.json`. Non-zero exit when any step is `FAIL`.
+- **`stage:run [<name>...]`** runs the named scenarios in the order given (default: all eight,
+  `s6 s1 s2 s3 s4 s5 s7 s8` — `MESH_INTERFACE → Block gossip → "A router scores its peers by
+  gossipsub's defaults"` kicks in past ten peers from one NAT address and keeps the penalty an
+  hour, so s6's publisher reads the client's score as zero when the client has to be the only
+  browser peer at that address). Writes `stage/out/scenarios/<name>.json` per scenario:
+  `{ scenario, startedAt, endedAt, steps, faults }`, each step `{ name, verdict, measurement,
+  timeMs }`. **A step that times out or throws is `FAIL`; the scenario's faults are removed and
+  the run goes on. A step that did not run reads `skipped`, never a pass.** Each scenario writes
+  its own `config.json` variant at start, so the previous scenario's variant does not leak; the
+  scenario's `finally` restores `config.default.json`. Non-zero exit when any step is `FAIL`.
 - **`stage:report`** reads `stage/out/scenarios/*.json` and writes `stage/out/summary.md`: one
   section per scenario, every step's verdict, time and measurement; a Firefox block is left for the
   hand pass, marked as such.
