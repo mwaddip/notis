@@ -140,6 +140,13 @@ its field domains, the network's floor, its work, its validator signature, its s
 the key that sent it: the client blacklists that key, the evidence kept. A version mismatch, a scheduled-target mismatch
 and a header the receiver knows record nothing. A mesh service keeps no list and logs the refusal.
 
+**A router scores its peers by gossipsub's defaults.** The mesh service's router and the client's keep libp2p
+gossipsub's default peer scores, its IP colocation penalty among them: past ten peers a router has seen from one IP
+address, each of them scores −5 × (n − 10)², a score a peer keeps for an hour after it leaves. From twelve such peers a
+router forwards them nothing, from fourteen it publishes nothing to them, and from fifteen it ignores what they send
+(gossipsub's gossip, publish and graylist thresholds: −10, −50, −80). Browsers behind one NAT share an address, and so
+does a node on their network: past that count they follow the chain by checks alone.
+
 ## Discovery
 
 **Anchors.** A client starts from a list of anchors, each `(notisId, addrs)`: a key it trusts and the addresses that
