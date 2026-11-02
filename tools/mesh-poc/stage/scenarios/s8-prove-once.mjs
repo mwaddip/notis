@@ -14,17 +14,19 @@
 //      `checks`; wait for five more completed checks;
 //      `verdictS8NoProofs`: PASS when `proofReads` did not move and
 //      every honest node read `ok`, `trailing` or `behind`.
-//   2. A block by gossip — three new blocks in turn: pub1's node
-//      height read inside its namespace, then `#state` polled until
-//      the client's `tip.height` reaches it; record for each the delay
-//      between the two and whether `checks` moved meanwhile. The
-//      measurement reads the browser's own tip-change timeline — one
-//      page kept open across the three deliveries, so the client's
-//      gossip subscription survives between them (a fresh page runs
-//      an initial check that reads the latest tip by proof, which is
-//      the state 1 behaviour not step 2's). `verdictS8Gossip`: PASS
-//      when ≥ 2 of 3 reached the client within 5 s with `checks`
-//      unchanged.
+//   2. A block by gossip — the held-page tracker records
+//      `{ height, atMs, checks }` at each client tip change; beside
+//      it the scenario reads pub1's `/blocks/current` inside its
+//      namespace every 250 ms and records the first `atMs` it sees
+//      each height. For three heights pub1 reaches past the tracker's
+//      baseline height, `delayMs` = the client's first `atMs` at or
+//      above that height − pub1's first `atMs` at it, and
+//      `checksMoved` = whether the client's `checks` advanced in
+//      that window (comparing the latest clientHist record at or
+//      before pub1's atMs with clientHist's record for the delivery).
+//      Both clocks are this machine's wall clock (the page's
+//      `Date.now()` and Node's). `verdictS8Gossip`: PASS when ≥ 2 of
+//      3 reached the client within 5 s with `checks` unchanged.
 //   3. Another chain — the hostile-seed variant with `hostile-lagging`
 //      mining its own lighter fork since `up`. The step finds a check
 //      where the lagging node's tip was the one tip not on the chain
@@ -115,12 +117,14 @@ export function applyFaults(log, topology) {
 }
 
 // MESH_INTERFACE → Acceptance 8 — step 2 reads `#state` through a page
-// kept open across the delivery window: one target observed over the
-// three new blocks' arrivals, so the client's gossip subscription
-// survives between them. The expression installs a page-side setInterval
-// that pushes a `{height, atMs, checks}` record whenever `state.tip.height`
-// changes; the predicate returns true once four such records exist
-// (one baseline plus three deliveries).
+// kept open across the delivery window: one target observed over three
+// new blocks' arrivals, so the client's gossip subscription survives
+// between them. The expression installs a page-side setInterval that
+// pushes a `{height, atMs, checks}` record whenever `state.tip.height`
+// changes; the predicate returns true once four records exist (one
+// baseline plus three deliveries). The scenario's own pub1 polling
+// (every 250 ms, inside pub1's namespace) carries the pub1 side of the
+// delay; `computeDeliveries` matches the two timelines by height.
 export const S8_GOSSIP_EXPR = `(function(){
   if (!window.__s8GInit) {
     window.__s8GInit = true;
@@ -148,6 +152,45 @@ export const S8_GOSSIP_PREDICATE = `if (v === null) return false;
   var hs;
   try { hs = JSON.parse(v); } catch (_e) { return false; }
   return Array.isArray(hs) && hs.length >= 4;`;
+
+/**
+ * Match clientHist (tracker's tip-change records) to pub1Hist
+ * (first-seen atMs per height). For the first three pub1 heights
+ * past the tracker's baseline, each delivery's `delayMs` is the
+ * client's first atMs at or above that height minus pub1's atMs at
+ * it; `checksMoved` is whether the client's `checks` advanced
+ * between pub1's atMs and the client's atMs (compared against the
+ * latest clientHist record whose atMs is at or before pub1's atMs).
+ * Pure, Node-safe; drives the step 2 measurement and is testable
+ * on simulated histories.
+ */
+export function computeDeliveries(clientHist, pub1Hist) {
+  if (!Array.isArray(clientHist) || clientHist.length === 0) return [];
+  const baseline = clientHist[0];
+  const baselineHeight = baseline?.height;
+  if (typeof baselineHeight !== 'number') return [];
+  const sortedPub1 = [...pub1Hist.entries()]
+    .filter(([h]) => h > baselineHeight)
+    .sort(([a], [b]) => a - b)
+    .slice(0, 3);
+  const deliveries = [];
+  for (const [h, pubAtMs] of sortedPub1) {
+    const clientRec = clientHist.find((c) => c && typeof c.height === 'number' && c.height >= h);
+    if (!clientRec || typeof clientRec.atMs !== 'number' || typeof clientRec.checks !== 'number') continue;
+    let checksAtPub = typeof baseline.checks === 'number' ? baseline.checks : 0;
+    for (const c of clientHist) {
+      if (typeof c.atMs !== 'number' || typeof c.checks !== 'number') continue;
+      if (c.atMs > pubAtMs) break;
+      checksAtPub = c.checks;
+    }
+    deliveries.push({
+      height: h,
+      delayMs: clientRec.atMs - pubAtMs,
+      checksMoved: clientRec.checks > checksAtPub,
+    });
+  }
+  return deliveries;
+}
 
 // MESH_INTERFACE → Acceptance 8 — step 1 reads `#state` across five
 // checks past a settled baseline. The expression installs a page-side
@@ -382,23 +425,39 @@ export async function run(ctx) {
     // --- Step 2: a block by gossip ---
     await rec.step(describe()[1], async () => {
       writeStageDefault(ctx.outDir);
-      const pub1Before = readPub1Height(ctx, pub1Port);
-      const value = await cdpPoll(ctx, browserUrl, S8_GOSSIP_EXPR, S8_GOSSIP_PREDICATE, LONG_WAIT_MS, POLL_MS);
-      const hs = JSON.parse(value);
-      const pub1After = readPub1Height(ctx, pub1Port);
-      // Three deliveries: hs[1..3] vs hs[0..2]. If hs has more than
-      // four entries (tracker ran longer than needed), use the first
-      // three deliveries past the baseline.
-      const deliveries = [];
-      for (let i = 1; i < hs.length && deliveries.length < 3; i += 1) {
-        deliveries.push({
-          height: hs[i].height,
-          delayMs: hs[i].atMs - hs[i - 1].atMs,
-          checksMoved: hs[i].checks > hs[i - 1].checks,
-        });
+      // Spawn the tracker non-blocking so the scenario can read pub1
+      // beside it; the tracker's `{height, atMs, checks}` records
+      // land on the page's wall clock (Date.now()), the pub1 poll's
+      // atMs on this process's wall clock — same machine, same clock
+      // domain.
+      const tracker = spawnCdpPoll(ctx, browserUrl, S8_GOSSIP_EXPR, S8_GOSSIP_PREDICATE, LONG_WAIT_MS, POLL_MS);
+      const pub1FirstAtMs = new Map();
+      let polling = true;
+      try {
+        const pub1Poll = (async () => {
+          while (polling) {
+            const h = readPub1Height(ctx, pub1Port);
+            if (typeof h === 'number' && !pub1FirstAtMs.has(h)) {
+              pub1FirstAtMs.set(h, Date.now());
+            }
+            await sleep(250);
+          }
+        })();
+        const value = await tracker.promise;
+        polling = false;
+        await pub1Poll;
+        const hs = JSON.parse(value);
+        const deliveries = computeDeliveries(hs, pub1FirstAtMs);
+        const m = {
+          deliveries,
+          clientHist: hs,
+          pub1Hist: Array.from(pub1FirstAtMs.entries()).map(([height, atMs]) => ({ height, atMs })),
+        };
+        return { verdict: verdictS8Gossip(m), measurement: m };
+      } finally {
+        polling = false;
+        try { tracker.kill(); } catch { /* already exited */ }
       }
-      const m = { deliveries, pub1HeightBefore: pub1Before, pub1HeightAfter: pub1After };
-      return { verdict: verdictS8Gossip(m), measurement: m };
     });
 
     // --- Step 3: another chain ---

@@ -9,6 +9,10 @@ export declare function s8GapFirewallArgs(topology: unknown): {
 export declare function applyFaults(log: unknown, topology: unknown): void;
 export declare const S8_GOSSIP_EXPR: string;
 export declare const S8_GOSSIP_PREDICATE: string;
+export declare function computeDeliveries(
+  clientHist: ReadonlyArray<{ height: number; atMs: number; checks: number }>,
+  pub1Hist: ReadonlyMap<number, number>,
+): Array<{ height: number; delayMs: number; checksMoved: boolean }>;
 export declare function buildS8NoProofsExpression(honestIds: string[]): string;
 export declare const S8_NOPROOFS_PREDICATE: string;
 export declare function buildS8ForkExpression(laggingId: string): string;
