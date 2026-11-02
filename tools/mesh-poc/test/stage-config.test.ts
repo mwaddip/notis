@@ -829,6 +829,22 @@ describe('stage up --dry-run', () => {
     }
   }, 30_000);
 
+  // MESH_INTERFACE → Block gossip → "A router scores its peers by
+  // gossipsub's defaults" — Chromium's own start page is where every
+  // scenario's cdp.mjs opens its targets from; if it loads the stage
+  // page itself, that start-page client stays in the gossip mesh for
+  // the whole run. Starting Chromium on `about:blank` keeps the start
+  // page out of the mesh — scenarios open their own targets at the
+  // stage URL as before.
+  it('Chromium starts on about:blank, not the stage page', () => {
+    runDryOnce();
+    const line = out.split('\n').find((l) => l.startsWith('[spawn:chromium]'));
+    expect(line, 'chromium spawn is in the dry-run').toBeDefined();
+    expect(line, 'chromium starts on about:blank').toContain(' about:blank');
+    expect(line, 'chromium does not open the stage page at launch')
+      .not.toMatch(/\bhttp:\/\/localhost:\d+\/(?:\s|$)/);
+  }, 30_000);
+
   // MESH_INTERFACE → Acceptance — scenario 1 runs with the browser's own
   // resolver answering nothing. Chromium's `--host-resolver-rules` reads
   // one rule, and `MAP * ~NOTFOUND , EXCLUDE localhost` tells Chromium
