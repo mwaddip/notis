@@ -34,7 +34,6 @@ import { peerIdFromString } from '@libp2p/peer-id';
 import { generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
-import type { NodeTipResult } from '@dagsocial/nipopow-client';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { isNonNegSafeInt } from '@dagsocial/node-reads';
@@ -53,7 +52,7 @@ import {
   type FailureKind,
   type NodeEntry,
 } from './node-list.js';
-import { type TipEvent } from './tip-events.js';
+import { tipEvent, type TipEvent } from './tip-events.js';
 import { pickServer, type ReadNeed } from './server-pick.js';
 import { agreementCounts, type AgreementCounts, type AgreementEntry } from './agreement.js';
 import { stunServersFor } from './stun-list.js';
@@ -958,7 +957,7 @@ class MeshClientImpl implements MeshClient {
       for (const n of result.nodes) {
         const nid = idOfMeshUrl(n.url);
         pendingBehindBy.set(nid, n.behind);
-        const event = eventForTipResult(nid, n, nowMs);
+        const event = tipEvent(nid, n, nowMs);
         this.applyEvent(event);
 
         if (n.verified) {
@@ -1484,42 +1483,6 @@ type TipClassification =
   | { kind: 'tip'; height: number; hash: string | null }
   | { kind: 'failure' }
   | { kind: 'lie' };
-
-/**
- * MESH_INTERFACE → The client's node list — the one-node form of
- * `tipEvents` for a `NodeTipResult`: a verified behind=0 is success,
- * behind=1 is trailing, any other verified is behind; an `invalid`
- * with the `clock` reason is a `clock` failure; any other `invalid`
- * is a lie by `proof-invalid` or `malformed`; `unreachable` and
- * `http` are transport and refused failures.
- */
-function eventForTipResult(id: string, node: NodeTipResult, nowMs: number): TipEvent {
-  if (node.verified) {
-    if (node.behind === 0) return { id, ev: 'success' };
-    if (node.behind === 1) return { id, ev: 'trailing' };
-    return { id, ev: 'behind' };
-  }
-  const detail = node.refuseReason ?? '';
-  switch (node.refuseCode) {
-    case 'too-short':
-      return { id, ev: 'behind' };
-    case 'unreachable':
-      return { id, ev: 'failure', kind: 'transport', message: detail };
-    case 'http':
-      return { id, ev: 'failure', kind: 'refused', message: detail };
-    case 'invalid': {
-      const vr = node.verifyResult;
-      if (vr !== null && vr.ok === false && vr.reason === 'clock') {
-        return { id, ev: 'failure', kind: 'clock', message: detail };
-      }
-      return node.proof !== null
-        ? { id, ev: 'lie', evidence: { kind: 'proof-invalid', atMs: nowMs, detail } }
-        : { id, ev: 'lie', evidence: { kind: 'malformed', atMs: nowMs, detail } };
-    }
-    default:
-      throw new Error(`eventForTipResult: unknown refuseCode ${JSON.stringify(node.refuseCode)}`);
-  }
-}
 
 /**
  * The path portion of a mesh URL — everything from the first `/`

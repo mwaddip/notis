@@ -11,7 +11,7 @@ export { MeshFetchError, meshFetch, meshFetchOverConnection } from './http-fetch
 
 export { MeshConfigError, assertNoDns } from './config.js';
 
-export { tipEvents } from './client/tip-events.js';
+export { tipEvent } from './client/tip-events.js';
 export type { TipEvent } from './client/tip-events.js';
 
 export { agreementCounts } from './client/agreement.js';

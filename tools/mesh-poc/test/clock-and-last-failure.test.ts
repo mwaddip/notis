@@ -3,7 +3,7 @@
 // kind and message".
 //
 // Cases:
-//   - `tipEvents` maps `refuseCode: 'invalid'` with `verifyResult.reason
+//   - `tipEvent` maps `refuseCode: 'invalid'` with `verifyResult.reason
 //     === 'clock'` to a `failure` with `FailureKind: 'clock'`, not a lie.
 //   - `NodeList.failure(id, kind, message)` writes `lastFailure`;
 //     `success(id)` clears it.
@@ -13,7 +13,8 @@
 
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
-import { tipEvents } from '../src/client/tip-events.js';
+import { tipEvent, type TipEvent } from '../src/client/tip-events.js';
+import { idOfMeshUrl } from '../src/mesh-url.js';
 import { NodeList } from '../src/client/node-list.js';
 import type { NodeEntry } from '../src/client/node-list.js';
 import { render } from '../page/render.js';
@@ -68,11 +69,16 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
   };
 }
 
-describe('tipEvents — clock refusal is a failure, not a lie', () => {
+// One event per node, each through `tipEvent`.
+function eventsOf(r: TipResult, nowMs: number): TipEvent[] {
+  return r.nodes.map((n) => tipEvent(idOfMeshUrl(n.url), n, nowMs));
+}
+
+describe('tipEvent — clock refusal is a failure, not a lie', () => {
   const id = 'a'.repeat(64);
   const url = `notis-mesh://${id}`;
   it('refuseCode "invalid" + verifyResult.reason "clock" → failure, kind clock', () => {
-    const events = tipEvents(fakeTipResult([{
+    const events = eventsOf(fakeTipResult([{
       url,
       verified: false,
       proof: null,
@@ -89,7 +95,7 @@ describe('tipEvents — clock refusal is a failure, not a lie', () => {
     expect(ev.ev === 'failure' ? ev.message : null).toContain('clock');
   });
   it('refuseCode "invalid" + verifyResult.reason "pow" (not clock) → lie, kind proof-invalid', () => {
-    const events = tipEvents(fakeTipResult([{
+    const events = eventsOf(fakeTipResult([{
       url,
       verified: false,
       proof: { prefix: [], suffixHead: null, suffixTail: [] } as unknown as NonNullable<NodeTipResult['proof']>,

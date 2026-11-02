@@ -1,5 +1,5 @@
-// MESH_INTERFACE → The client's node list — one event per node that
-// `resolveTip` answers, keyed by the id read from the node's mesh URL:
+// MESH_INTERFACE → The client's node list — the event for one node
+// that `resolveTip` answers, keyed by the id read from the node's mesh URL:
 // a verified node with `behind === 0` is success (the winner, or a
 // tie with it); `behind === 1` is trailing (one block behind on the
 // tip's chain); any other verified node, and `too-short`, is behind,
@@ -16,8 +16,7 @@
 // table above is a change to read, not to guess, and throws. Pure,
 // browser-safe (`MESH_INTERFACE → Place in the workspace`).
 
-import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
-import { idOfMeshUrl } from '../mesh-url.js';
+import type { NodeTipResult } from '@dagsocial/nipopow-client';
 import type { FailureKind, LieEvidence } from './node-list.js';
 
 export type TipEvent =
@@ -27,15 +26,7 @@ export type TipEvent =
   | { id: string; ev: 'failure'; kind: FailureKind; message?: string }
   | { id: string; ev: 'lie'; evidence: LieEvidence };
 
-export function tipEvents(r: TipResult, nowMs: number): TipEvent[] {
-  const out: TipEvent[] = [];
-  for (const node of r.nodes) {
-    out.push(eventFor(idOfMeshUrl(node.url), node, nowMs));
-  }
-  return out;
-}
-
-function eventFor(id: string, node: NodeTipResult, nowMs: number): TipEvent {
+export function tipEvent(id: string, node: NodeTipResult, nowMs: number): TipEvent {
   if (node.verified) {
     // MESH_INTERFACE → The client's node list — "A valid proof whose
     // tip is the tip — the best verified proof's, a tie included" is
@@ -71,6 +62,6 @@ function eventFor(id: string, node: NodeTipResult, nowMs: number): TipEvent {
         : { id, ev: 'lie', evidence: { kind: 'malformed', atMs: nowMs, detail } };
     }
     default:
-      throw new Error(`tipEvents: unknown refuseCode ${JSON.stringify(node.refuseCode)}`);
+      throw new Error(`tipEvent: unknown refuseCode ${JSON.stringify(node.refuseCode)}`);
   }
 }
