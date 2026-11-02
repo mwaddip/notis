@@ -9,11 +9,15 @@
 // headers with no proof read."
 //
 // Four sub-steps, in order:
-//   1. No proof after the first — stage default: wait for a completed
-//      check with the chain settled; record `traffic.proofReads` and
-//      `checks`; wait for five more completed checks;
+//   1. No proof after the first — stage default: the baseline is the
+//      first state with the chain settled (`checks >= 1`,
+//      `proofReads >= 1`) where every honest node the list HOLDS
+//      reads `ok`, `trailing` or `behind` and both anchors are held;
+//      the final, five completed checks later, the same rule — a
+//      honest node absent from the list is not asserted, so a node
+//      the browser only reaches by DHT does not stall the baseline.
 //      `verdictS8NoProofs`: PASS when `proofReads` did not move and
-//      every honest node read `ok`, `trailing` or `behind`.
+//      every held honest node read `ok`, `trailing` or `behind`.
 //   2. A block by gossip — the held-page tracker records
 //      `{ height, atMs, checks }` at each client tip change; beside
 //      it the scenario reads pub1's `/blocks/current` inside its
@@ -39,20 +43,20 @@
 //      hash at that height, and the delta is exactly two.
 //   4. A gap filled by headers — stage default: firewall the browser
 //      from every mesh node (a `FaultLog` fault, removed in `finally`)
-//      until pub1's node is three blocks past the browser's tip at the
+//      until pub1's node is three blocks past the client's tip at the
 //      moment the firewall landed; remove it; wait for the tracker to
-//      signal catch-up (a 3-minute cap on the tracker). `verdictS8Gap`:
-//      PASS when the tip caught up and `proofReads` did not move.
+//      signal a fill. The cut is short — gossip moves the tip one
+//      block at a time, so the firewall ends before any check sees
+//      it. The tracker ends at the first tip change, after its
+//      baseline, of three or more blocks at once (a fill), recording
+//      `proofReads` and the tip there; the scenario then reads pub1.
+//      `verdictS8Gap`: PASS when `proofReads` did not move, the jump
+//      was three or more, and the tip is within two of pub1's read.
 //      The step keeps one page open through a non-blocking spawn of
 //      `cdp.mjs poll`; a fresh page's first check reads a proof, which
-//      would mask the "no proof" conclusion. The tracker signals final
-//      at the first completed check after one in which no honest node
-//      read `ok` or `trailing` (the cut, every mesh host blocked),
-//      where every honest node reads `ok` or `trailing` — the client
-//      has caught up with the nodes it reads. The pure `s8GapObserve`
-//      carries the state transition; `buildS8GapExpression` inlines it
-//      with the honest-id set so the live tracker and the Node tests
-//      run the same logic.
+//      would mask the "no proof" conclusion. The pure `s8GapObserve`
+//      carries the state transition; `buildS8GapExpression` inlines
+//      it so the live tracker and the Node tests run the same logic.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,6 +72,7 @@ import { execIn } from '../lib/measure.mjs';
 import { writeStageDefault, writeConfigVariant } from '../lib/scenario-config.mjs';
 import { buildWithHostileSeedsVariant, buildHostileSeeds } from '../lib/config-variants.mjs';
 import { peerIdStringOf } from '../lib/config.mjs';
+import { publicMeshHosts } from '../lib/topology.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's8';
@@ -226,42 +231,81 @@ export function honestMeshHosts(topology) {
 }
 
 // MESH_INTERFACE → Acceptance 8 — step 1 reads `#state` across five
-// checks past a settled baseline. The expression installs a page-side
-// setInterval that captures the baseline (first time `checks >= 1`
-// AND every honest node reads `ok`, `trailing` or `behind`) and the
-// final state (five checks later). `honestIds` is substituted by the
-// scenario at expression-build time.
-export function buildS8NoProofsExpression(honestIds) {
-  const idsJson = JSON.stringify(honestIds);
+// completed checks past a settled baseline. The pure observer below
+// captures the baseline — first state with the chain settled
+// (`checks >= 1`, `proofReads >= 1`) where every honest node the list
+// HOLDS reads `ok`, `trailing` or `behind` AND both anchors are held
+// — and records final at `base.checks + 5` once the rule holds again;
+// it waits past that count if the rule has broken, re-settling when
+// the honest set is back in range. `buildS8NoProofsExpression` inlines
+// the observer with `.toString()` so the live tracker and the Node
+// tests run the same transition.
+export function s8NoProofsObserve(prev, s, honestIds, anchorIds) {
+  if (s === null || typeof s !== 'object') return prev;
+  if (typeof s.checks !== 'number') return prev;
+  if (s.traffic === null || typeof s.traffic !== 'object') return prev;
+  if (typeof s.traffic.proofReads !== 'number') return prev;
+  var next = prev === null || typeof prev !== 'object'
+    ? { base: null, final: null }
+    : { base: prev.base, final: prev.final };
+  var nodes = Array.isArray(s.nodes) ? s.nodes : [];
+  var heldHonest = [];
+  for (var i = 0; i < honestIds.length; i += 1) {
+    var hid = honestIds[i];
+    var he = null;
+    for (var j = 0; j < nodes.length; j += 1) {
+      if (nodes[j] && nodes[j].notisId === hid) { he = nodes[j]; break; }
+    }
+    if (he !== null) heldHonest.push({ notisId: hid, status: he.status });
+  }
+  var anchorsHeld = 0;
+  for (var k = 0; k < anchorIds.length; k += 1) {
+    var aid = anchorIds[k];
+    for (var m = 0; m < nodes.length; m += 1) {
+      if (nodes[m] && nodes[m].notisId === aid) { anchorsHeld += 1; break; }
+    }
+  }
+  var allAnchorsHeld = anchorsHeld === anchorIds.length;
+  var allHeldInRange = heldHonest.every(function (e) {
+    return e.status === 'ok' || e.status === 'trailing' || e.status === 'behind';
+  });
+  if (next.base === null
+      && s.checks >= 1
+      && s.traffic.proofReads >= 1
+      && allAnchorsHeld
+      && allHeldInRange) {
+    next.base = { checks: s.checks, proofReads: s.traffic.proofReads };
+    return next;
+  }
+  if (next.base === null) return next;
+  if (next.final !== null) return next;
+  if (s.checks >= next.base.checks + 5 && allAnchorsHeld && allHeldInRange) {
+    next.final = {
+      checks: s.checks,
+      proofReads: s.traffic.proofReads,
+      honestNodeStatuses: heldHonest,
+    };
+  }
+  return next;
+}
+
+export function buildS8NoProofsExpression(honestIds, anchorIds) {
+  const honestJson = JSON.stringify(honestIds);
+  const anchorJson = JSON.stringify(anchorIds);
+  const observerSrc = s8NoProofsObserve.toString();
   return `(function(){
   if (!window.__s8NPInit) {
     window.__s8NPInit = true;
-    window.__s8NP = { base: null, final: null, honestIds: ${idsJson} };
+    window.__s8NP = { base: null, final: null };
+    window.__s8NPHonest = ${honestJson};
+    window.__s8NPAnchors = ${anchorJson};
+    window.__s8NPObserve = ${observerSrc};
     setInterval(function () {
       try {
         var el = document.getElementById('state');
         if (el === null) return;
         var s = JSON.parse(el.textContent);
-        if (!s || typeof s.checks !== 'number') return;
-        var honestEntries = [];
-        for (var i = 0; i < window.__s8NP.honestIds.length; i++) {
-          var id = window.__s8NP.honestIds[i];
-          var entry = (s.nodes || []).find(function (n) { return n.notisId === id; });
-          if (entry) honestEntries.push({ notisId: id, status: entry.status });
-        }
-        var allHonestInRange = honestEntries.length === window.__s8NP.honestIds.length
-          && honestEntries.every(function (e) { return e.status === 'ok' || e.status === 'trailing' || e.status === 'behind'; });
-        if (window.__s8NP.base === null && s.checks >= 1 && allHonestInRange) {
-          window.__s8NP.base = { checks: s.checks, proofReads: s.traffic.proofReads };
-          return;
-        }
-        if (window.__s8NP.base !== null && window.__s8NP.final === null && s.checks >= window.__s8NP.base.checks + 5) {
-          window.__s8NP.final = {
-            checks: s.checks,
-            proofReads: s.traffic.proofReads,
-            honestNodeStatuses: honestEntries,
-          };
-        }
+        window.__s8NP = window.__s8NPObserve(window.__s8NP, s, window.__s8NPHonest, window.__s8NPAnchors);
       } catch (_e) { /* ignore */ }
     }, 200);
   }
@@ -319,66 +363,54 @@ export function buildS8ForkExpression(laggingId) {
 export const S8_FORK_PREDICATE = `if (v === null) return false;
   try { return JSON.parse(v).final !== null; } catch (_e) { return false; }`;
 
-// MESH_INTERFACE → Acceptance 8 — step 4's tracker reads each
-// completed check's honest-node statuses, marks a cut on a check
-// where no honest node reads ok or trailing, and signals final at
-// the first check after the cut where every honest node reads ok
-// or trailing. `s8GapObserve` is pure (no DOM, no clock, no `window`
-// access) so the Node suite drives it with a sequence of simulated
-// `#state` snapshots and reads the resulting state's `cut` and
-// `final` fields.
-export function s8GapObserve(prev, s, honestIds) {
+// MESH_INTERFACE → Acceptance 8 — step 4's tracker captures a baseline
+// on the first completed check and records final at the first tip
+// change, after the baseline, of three or more blocks at once (a
+// fill: gossip moves the tip one block at a time, so a jump of three
+// names a headers-driven catch-up). `s8GapObserve` is pure (no DOM,
+// no clock, no `window` access) so the Node suite drives it with a
+// sequence of simulated `#state` snapshots and reads the resulting
+// state's `final` field — `tipHeight`, `proofReads` and `jump` are
+// the fields `verdictS8Gap`'s rule reads.
+export function s8GapObserve(prev, s) {
   if (s === null || typeof s !== 'object') return prev;
   if (typeof s.checks !== 'number') return prev;
   if (s.traffic === null || typeof s.traffic !== 'object') return prev;
   if (typeof s.traffic.proofReads !== 'number') return prev;
   if (s.tip === null || typeof s.tip !== 'object' || typeof s.tip.height !== 'number') return prev;
   var next = prev === null || typeof prev !== 'object'
-    ? { base: null, cut: null, final: null, lastChecks: 0 }
-    : { base: prev.base, cut: prev.cut, final: prev.final, lastChecks: prev.lastChecks };
-  if (typeof next.lastChecks !== 'number') next.lastChecks = 0;
+    ? { base: null, lastTipHeight: null, final: null }
+    : { base: prev.base, lastTipHeight: prev.lastTipHeight, final: prev.final };
   if (next.base === null && s.checks >= 1) {
     next.base = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads };
-    next.lastChecks = s.checks;
+    next.lastTipHeight = s.tip.height;
     return next;
   }
   if (next.base === null) return next;
   if (next.final !== null) return next;
-  if (s.checks === next.lastChecks) return next;
-  next.lastChecks = s.checks;
-  var honestEntries = [];
-  for (var i = 0; i < honestIds.length; i += 1) {
-    var id = honestIds[i];
-    var entry = (s.nodes || []).find(function (n) { return n && n.notisId === id; });
-    if (entry) honestEntries.push({ notisId: id, status: entry.status });
-  }
-  var anyOk = honestEntries.some(function (e) { return e.status === 'ok' || e.status === 'trailing'; });
-  var allOk = honestEntries.length === honestIds.length
-    && honestEntries.every(function (e) { return e.status === 'ok' || e.status === 'trailing'; });
-  if (next.cut === null && !anyOk) {
-    next.cut = { checks: s.checks };
-  }
-  if (next.cut !== null && allOk) {
-    next.final = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads };
+  if (s.tip.height !== next.lastTipHeight) {
+    var jump = s.tip.height - next.lastTipHeight;
+    next.lastTipHeight = s.tip.height;
+    if (jump >= 3) {
+      next.final = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads, jump: jump };
+    }
   }
   return next;
 }
 
-export function buildS8GapExpression(honestIds) {
-  const idsJson = JSON.stringify(honestIds);
+export function buildS8GapExpression() {
   const observerSrc = s8GapObserve.toString();
   return `(function(){
   if (!window.__s8GAPInit) {
     window.__s8GAPInit = true;
-    window.__s8GAP = { base: null, cut: null, final: null, lastChecks: 0 };
-    window.__s8GAPIds = ${idsJson};
+    window.__s8GAP = { base: null, lastTipHeight: null, final: null };
     window.__s8GAPObserve = ${observerSrc};
     setInterval(function () {
       try {
         var el = document.getElementById('state');
         if (el === null) return;
         var s = JSON.parse(el.textContent);
-        window.__s8GAP = window.__s8GAPObserve(window.__s8GAP, s, window.__s8GAPIds);
+        window.__s8GAP = window.__s8GAPObserve(window.__s8GAP, s);
       } catch (_e) { /* ignore */ }
     }, 200);
   }
@@ -417,9 +449,13 @@ export async function run(ctx) {
   // The honest set for steps 1 and 4 — the honest mesh hosts the
   // stage-default config can reach, excluding `lan1` (browser's own
   // network) and every hostile host. See `honestMeshHosts` above for
-  // the rule.
+  // the rule. The anchor set is the subset the client's config.json
+  // names (every public mesh node) — step 1's baseline requires both
+  // anchors to be in the state's node list.
   const honestHosts = honestMeshHosts(ctx.topology);
   const honestIds = honestHosts.map((h) => identities[h]?.notisId).filter((id) => typeof id === 'string');
+  const anchorHosts = publicMeshHosts(ctx.topology).map(({ name }) => name);
+  const anchorIds = anchorHosts.map((h) => identities[h]?.notisId).filter((id) => typeof id === 'string');
 
   let gapFirewallApplied = false;
   const gapArgs = s8GapFirewallArgs(ctx.topology);
@@ -432,7 +468,11 @@ export async function run(ctx) {
         const m = { reason: 's8 step 1: no honest hosts in topology with mesh and identity' };
         return { verdict: verdictS8NoProofs(m), measurement: m };
       }
-      const expression = buildS8NoProofsExpression(honestIds);
+      if (anchorIds.length === 0) {
+        const m = { reason: 's8 step 1: no public anchors in topology with identity' };
+        return { verdict: verdictS8NoProofs(m), measurement: m };
+      }
+      const expression = buildS8NoProofsExpression(honestIds, anchorIds);
       const value = await cdpPoll(ctx, browserUrl, expression, S8_NOPROOFS_PREDICATE, LONG_WAIT_MS, POLL_MS);
       const r = JSON.parse(value);
       if (r.base === null || r.final === null) {
@@ -541,7 +581,7 @@ export async function run(ctx) {
       // loop and block the firewall apply/remove calls. A spawn lets
       // the tracker page stay open while the scenario does its
       // synchronous nft work.
-      const tracker = spawnCdpPoll(ctx, browserUrl, buildS8GapExpression(honestIds), S8_GAP_PREDICATE, LONG_WAIT_MS, POLL_MS);
+      const tracker = spawnCdpPoll(ctx, browserUrl, buildS8GapExpression(), S8_GAP_PREDICATE, LONG_WAIT_MS, POLL_MS);
       try {
         // Give the page time to load and the tracker time to capture
         // its baseline (first check landing). The baseline settles
@@ -551,34 +591,43 @@ export async function run(ctx) {
         const pubAtFirewall = readPub1Height(ctx, pub1Port);
         // Apply the firewall (log.apply records removal argvs for the
         // scenario's `finally`, so a step throw after this still
-        // undoes it).
+        // undoes it). The firewall drops output to every mesh host,
+        // so the client's tip stops advancing from here on.
         log.apply('browser-gap-add-table', gapArgs.addTable, gapArgs.deleteTable);
         gapFirewallApplied = true;
         log.apply('browser-gap-add-chain', gapArgs.addChain, null);
         for (const { name, argv } of gapArgs.drops) {
           log.apply(`browser-gap-drop-${name}`, argv, null);
         }
-        // Wait until pub1's node is three blocks past the browser's
-        // tip at the moment the firewall landed (a 2-minute deadline).
+        // Wait until pub1 has advanced three blocks past its own
+        // tip at firewall moment — pub1 ≥ pubAtFirewall + 3. Blocks
+        // propagate from pub1 fast, so the client's tip at the firewall
+        // moment is at or within one block of `pubAtFirewall`; a pub1
+        // that advances three past itself is at least three past the
+        // client's tip, the fill the tracker is waiting for. A 2-minute
+        // deadline is far longer than the chain's own ~5 s to move
+        // three blocks on this stage.
         const gapDeadline = Date.now() + 120_000;
         let pubAtRemoval = pubAtFirewall;
         while (Date.now() < gapDeadline) {
           const h = readPub1Height(ctx, pub1Port);
-          if (h !== null && h >= pubAtFirewall + 3) {
+          if (h !== null && pubAtFirewall !== null && h >= pubAtFirewall + 3) {
             pubAtRemoval = h;
             break;
           }
           await sleep(1_000);
         }
-        if (pubAtRemoval < pubAtFirewall + 3) {
+        if (pubAtFirewall === null
+            || pubAtRemoval === null
+            || pubAtRemoval < pubAtFirewall + 3) {
           throw new Error(`s8 step 4: pub1 did not advance 3 blocks within 120 s (${pubAtFirewall} → ${pubAtRemoval})`);
         }
         // Remove the firewall; the client's retry cadence reconnects
         // to the mesh and fills by headers.
         log.remove('browser-gap-add-table');
         gapFirewallApplied = false;
-        // Wait for the tracker to signal catch-up (tip grew by ≥ 3
-        // past its own baseline), capped at 3 minutes.
+        // Wait for the tracker to signal a fill (a tip change of ≥ 3
+        // at once past its baseline), capped at 3 minutes.
         const value = await tracker.promise;
         const r = JSON.parse(value);
         if (r.base === null || r.final === null) {
@@ -591,6 +640,7 @@ export async function run(ctx) {
           proofReadsAfter: r.final.proofReads,
           tipHeightBefore: r.base.tipHeight,
           tipHeightFinal: r.final.tipHeight,
+          jump: r.final.jump,
           pub1HeightFinal,
           pubAtFirewall,
           pubAtRemoval,

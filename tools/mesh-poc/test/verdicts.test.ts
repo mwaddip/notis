@@ -768,17 +768,18 @@ describe('verdictS8Fork — the lagging fork is behind; the client stays on the 
 });
 
 describe('verdictS8Gap — the browser\'s tip catches up by headers with no proof read', () => {
-  // MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for
-  // three blocks and restored, its tip catches up by headers with no
-  // proof read". PASS when the tip moved past the firewalled baseline
-  // (positive evidence; a vacuous "already there" reads FAIL), the
-  // client is now within one block of pub1's current tip, and
-  // proofReads is unchanged across the window.
+  // MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for three
+  // blocks and restored, its tip catches up by headers with no proof
+  // read". PASS when `proofReads` did not move across the window, the
+  // tracker's jump was three or more blocks at once (a fill — gossip
+  // moves the tip one block at a time), and the tip the fill landed on
+  // is within two of pub1's read.
   const PASS = {
     proofReadsBefore: 6,
     proofReadsAfter: 6,
     tipHeightBefore: 100,
     tipHeightFinal: 104,
+    jump: 4,
     pub1HeightFinal: 105,
   };
   it('every pass condition holds → PASS', () => {
@@ -787,17 +788,28 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   it('tip is level with pub1 (within zero) → PASS', () => {
     expect(verdictS8Gap({ ...PASS, tipHeightFinal: 105 })).toBe('PASS');
   });
+  it('tip is two blocks past pub1 (pub1 trailing the client within two) → PASS', () => {
+    expect(verdictS8Gap({ ...PASS, tipHeightFinal: 107, pub1HeightFinal: 105 })).toBe('PASS');
+  });
+  it('jump is exactly three (the smallest fill) → PASS', () => {
+    expect(verdictS8Gap({ ...PASS, jump: 3 })).toBe('PASS');
+  });
   it('proofReads moved during the window → FAIL (a proof was read)', () => {
     expect(verdictS8Gap({ ...PASS, proofReadsAfter: 7 })).toBe('FAIL');
   });
-  it('tip did not catch up — still two blocks behind pub1 → FAIL', () => {
-    expect(verdictS8Gap({ ...PASS, pub1HeightFinal: 110 })).toBe('FAIL');
+  it('jump is two (gossip-paced, not a header fill) → FAIL', () => {
+    expect(verdictS8Gap({ ...PASS, jump: 2 })).toBe('FAIL');
   });
-  it('tipHeightFinal equals tipHeightBefore (vacuous "already there") → FAIL', () => {
-    expect(verdictS8Gap({ ...PASS, tipHeightFinal: 100, pub1HeightFinal: 100 })).toBe('FAIL');
+  it('jump missing → FAIL, never PASS', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['jump'];
+    expect(verdictS8Gap(m)).toBe('FAIL');
   });
-  it('tipHeightFinal below tipHeightBefore (tip moved backwards) → FAIL', () => {
-    expect(verdictS8Gap({ ...PASS, tipHeightFinal: 99, pub1HeightFinal: 99 })).toBe('FAIL');
+  it('pub1 is three past the client (tip not within two) → FAIL', () => {
+    expect(verdictS8Gap({ ...PASS, pub1HeightFinal: 107 })).toBe('FAIL');
+  });
+  it('pub1 is three behind the client (tip not within two) → FAIL', () => {
+    expect(verdictS8Gap({ ...PASS, tipHeightFinal: 108, pub1HeightFinal: 105 })).toBe('FAIL');
   });
   it('pub1HeightFinal missing → FAIL, never PASS', () => {
     const m: Record<string, unknown> = { ...PASS };

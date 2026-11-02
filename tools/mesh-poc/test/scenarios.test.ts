@@ -493,60 +493,241 @@ describe('s8 (prove once, follow by gossip)', () => {
       laggingId: 'c'.repeat(64),
     }))).toBe(true);
   });
-  it('S8_GAP_PREDICATE is true only once the tracker records the catch-up', () => {
+  it('S8_GAP_PREDICATE is true only once the tracker records the fill', () => {
     const fn = buildPredicate(s8.S8_GAP_PREDICATE);
     expect(fn(null)).toBe(false);
-    expect(fn(JSON.stringify({ base: null, cut: null, final: null }))).toBe(false);
-    expect(fn(JSON.stringify({ base: { tipHeight: 100, proofReads: 6 }, cut: null, final: null }))).toBe(false);
-    expect(fn(JSON.stringify({ base: { tipHeight: 100, proofReads: 6 }, cut: { checks: 2 }, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: null, lastTipHeight: null, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: { tipHeight: 100, proofReads: 6 }, lastTipHeight: 100, final: null }))).toBe(false);
     expect(fn(JSON.stringify({
       base: { tipHeight: 100, proofReads: 6 },
-      cut: { checks: 2 },
-      final: { tipHeight: 104, proofReads: 6 },
+      lastTipHeight: 104,
+      final: { tipHeight: 104, proofReads: 6, jump: 4 },
     }))).toBe(true);
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 1's expression carries a pure
+  // observer that reads a snapshot of `#state` and returns the next
+  // tracker state. The observer captures a baseline on the first
+  // state with the chain settled (`checks >= 1`, `proofReads >= 1`)
+  // where every honest node the list HOLDS reads `ok`, `trailing` or
+  // `behind` AND both anchors are held; the final, five completed
+  // checks later, the same rule.
+  const ANCHOR_A = 'a'.repeat(64);
+  const ANCHOR_B = 'b'.repeat(64);
+  const PRIV_1 = 'c'.repeat(64);
+  const PRIV_2 = 'd'.repeat(64);
+  function nodeEntry(id: string, status: string) {
+    return { notisId: id, status };
+  }
+  it('s8NoProofsObserve: baseline captured when checks>=1, proofReads>=1, both anchors held, held honest in range', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 1 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toEqual({ checks: 1, proofReads: 1 });
+    expect(st.final).toBeNull();
+  });
+  it('s8NoProofsObserve: baseline NOT captured if proofReads is 0 (chain not settled)', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 0 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toBeNull();
+  });
+  it('s8NoProofsObserve: baseline NOT captured if one anchor is missing from the list', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 2 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toBeNull();
+  });
+  it('s8NoProofsObserve: baseline NOT captured if a held honest reads retry', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 2 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toBeNull();
+  });
+  it('s8NoProofsObserve: baseline captured when a non-anchor honest is NOT in the list (held subset)', () => {
+    // priv1 and priv2 only come in by DHT; the stage reaches a baseline
+    // once both anchors are held and the honest nodes it DOES hold are
+    // in range — a honest node absent from the list is not asserted.
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 2 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'trailing')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toEqual({ checks: 1, proofReads: 2 });
+  });
+  it('s8NoProofsObserve: final captured at base.checks + 5 when the rule still holds', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const base = {
+      checks: 1,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const final = {
+      checks: 6,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'trailing')],
+    };
+    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, final, honestIds, anchorIds);
+    const fin = st.final;
+    expect(fin).not.toBeNull();
+    expect(fin!.checks).toBe(6);
+    expect(fin!.proofReads).toBe(3);
+    expect(fin!.honestNodeStatuses).toEqual([
+      { notisId: ANCHOR_A, status: 'ok' },
+      { notisId: ANCHOR_B, status: 'trailing' },
+    ]);
+  });
+  it('s8NoProofsObserve: final NOT captured at base.checks + 5 if an anchor was dropped', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const base = {
+      checks: 1,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const atFinalCount = {
+      checks: 6,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok')],
+    };
+    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
+    expect(st.final).toBeNull();
+  });
+  it('s8NoProofsObserve: final NOT captured if a held honest reads retry at the final count', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
+    const base = {
+      checks: 1,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const atFinalCount = {
+      checks: 6,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
+    };
+    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
+    expect(st.final).toBeNull();
+  });
+  it('s8NoProofsObserve: final waits past base.checks + 5 until the rule holds again', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const base = {
+      checks: 1,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const atFive = {
+      checks: 6,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'retry')],
+    };
+    const atSeven = {
+      checks: 8,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, atFive, honestIds, anchorIds);
+    expect(st.final).toBeNull();
+    st = s8.s8NoProofsObserve(st, atSeven, honestIds, anchorIds);
+    const fin = st.final;
+    expect(fin).not.toBeNull();
+    expect(fin!.checks).toBe(8);
   });
   // MESH_INTERFACE → Acceptance 8 — step 4's expression carries a pure
   // observer that reads a snapshot of `#state` and returns the next
   // tracker state. The observer captures a baseline on the first
-  // completed check, marks a cut on a check where no honest node reads
-  // ok or trailing, and records final at the first check after the
-  // cut where every honest node reads ok or trailing. The scenarios
-  // below drive the observer with a sequence of state snapshots and
-  // read the resulting state's `cut` and `final` fields.
-  it('s8GapObserve: a state sequence that never cuts does not end', () => {
-    const honestIds = ['a'.repeat(64), 'b'.repeat(64)];
+  // completed check and records final at the first tip change, after
+  // its baseline, of three or more blocks at once — a fill, since
+  // gossip moves the tip one block at a time.
+  it('s8GapObserve: a tip that advances one at a time (gossip pace) does not end', () => {
     const sequence = [
-      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
-      { checks: 2, tip: { height: 101 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'trailing' }] },
-      { checks: 3, tip: { height: 102 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 102 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } },
     ];
     let st: unknown = null;
-    for (const s of sequence) st = s8.s8GapObserve(st, s, honestIds);
-    expect((st as { cut: unknown }).cut).toBeNull();
+    for (const s of sequence) st = s8.s8GapObserve(st, s);
     expect((st as { final: unknown }).final).toBeNull();
+    expect((st as { lastTipHeight: number }).lastTipHeight).toBe(103);
   });
-  it('s8GapObserve: a sequence that cuts and recovers ends at the recovery check', () => {
-    const honestIds = ['a'.repeat(64), 'b'.repeat(64)];
+  it('s8GapObserve: a tip that jumps three at once records final with the jump', () => {
     const sequence = [
-      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
-      { checks: 2, tip: { height: 100 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'retry' }, { notisId: honestIds[1], status: 'retry' }] },
-      { checks: 3, tip: { height: 104 }, traffic: { proofReads: 5 }, nodes: [{ notisId: honestIds[0], status: 'ok' }, { notisId: honestIds[1], status: 'ok' }] },
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
     ];
     let st: unknown = null;
-    for (const s of sequence) st = s8.s8GapObserve(st, s, honestIds);
-    expect((st as { cut: unknown }).cut).not.toBeNull();
-    expect((st as { final: { tipHeight: number; proofReads: number } }).final.tipHeight).toBe(104);
-    expect((st as { final: { tipHeight: number; proofReads: number } }).final.proofReads).toBe(5);
+    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    expect((st as { final: { tipHeight: number; proofReads: number; jump: number } }).final).toEqual({
+      tipHeight: 105,
+      proofReads: 5,
+      jump: 4,
+    });
+  });
+  it('s8GapObserve: a jump of exactly three (the smallest fill) records final', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 7 } },
+    ];
+    let st: unknown = null;
+    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    expect((st as { final: { jump: number } }).final.jump).toBe(3);
+  });
+  it('s8GapObserve: a jump of two does not record final', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7 } },
+      { checks: 2, tip: { height: 102 }, traffic: { proofReads: 7 } },
+    ];
+    let st: unknown = null;
+    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    expect((st as { final: unknown }).final).toBeNull();
+    expect((st as { lastTipHeight: number }).lastTipHeight).toBe(102);
+  });
+  it('s8GapObserve: baseline NOT captured before the first completed check', () => {
+    const st = s8.s8GapObserve(null, { checks: 0, tip: { height: 100 }, traffic: { proofReads: 0 } });
+    expect((st as { base: unknown }).base).toBeNull();
   });
   // MESH_INTERFACE → Acceptance 8 — the expression-builders substitute
-  // the honest-id set and the lagging node's id into the live page's
-  // tracker; the substitutions use `JSON.stringify` so a notisId with
-  // special characters cannot break the expression. A hex notisId
-  // round-trips through `JSON.stringify` as a quoted string.
-  it('buildS8NoProofsExpression embeds the honestIds as a JSON array', () => {
-    const ids = ['a'.repeat(64), 'b'.repeat(64)];
-    const expr = s8.buildS8NoProofsExpression(ids);
-    expect(expr).toContain(JSON.stringify(ids));
+  // the honest-id set, the anchor set and the lagging node's id into
+  // the live page's tracker; the substitutions use `JSON.stringify` so
+  // a notisId with special characters cannot break the expression. A
+  // hex notisId round-trips through `JSON.stringify` as a quoted
+  // string.
+  it('buildS8NoProofsExpression embeds the honestIds and anchorIds as JSON arrays', () => {
+    const honestIds = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)];
+    const anchorIds = ['a'.repeat(64), 'b'.repeat(64)];
+    const expr = s8.buildS8NoProofsExpression(honestIds, anchorIds);
+    expect(expr).toContain(JSON.stringify(honestIds));
+    expect(expr).toContain(JSON.stringify(anchorIds));
     expect(expr).toContain('__s8NP');
   });
   it('buildS8ForkExpression embeds the laggingId as a JSON string', () => {
@@ -555,11 +736,12 @@ describe('s8 (prove once, follow by gossip)', () => {
     expect(expr).toContain(JSON.stringify(id));
     expect(expr).toContain('__s8F');
   });
-  it('buildS8GapExpression embeds the honestIds as a JSON array', () => {
-    const ids = ['a'.repeat(64), 'b'.repeat(64)];
-    const expr = s8.buildS8GapExpression(ids);
-    expect(expr).toContain(JSON.stringify(ids));
+  it('buildS8GapExpression contains the gap tracker namespace and the observer source', () => {
+    const expr = s8.buildS8GapExpression();
     expect(expr).toContain('__s8GAP');
+    // The observer is inlined by `.toString()` so a browser-side
+    // tracker runs the same transition the Node suite drove.
+    expect(expr).toContain('lastTipHeight');
   });
   // MESH_INTERFACE → Acceptance 8 — step 1 and step 4's baseline reads
   // the honest mesh hosts the stage-default config can reach. A host

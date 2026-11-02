@@ -517,21 +517,21 @@ export function verdictS8Fork(m) {
 
 // MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for three
 // blocks and restored, its tip catches up by headers with no proof
-// read". PASS when the client's tip caught up to within one block of
-// pub1's current tip, the tip actually moved past the firewalled
-// baseline (positive evidence of catch-up — a vacuous "already there"
-// reads FAIL), and `proofReads` did not move across the firewall
-// window.
+// read". PASS when `proofReads` did not move across the window, the
+// tracker's `jump` was three or more blocks at once (a fill: gossip
+// moves the tip one block at a time, so a jump of three names a
+// headers-driven catch-up), and the tip the fill landed on is within
+// two of pub1's read.
 // Measurement:
 //   `{ proofReadsBefore, proofReadsAfter, tipHeightBefore,
-//      tipHeightFinal, pub1HeightFinal }`.
+//      tipHeightFinal, jump, pub1HeightFinal }`.
 export function verdictS8Gap(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.proofReadsBefore !== 'number' || typeof m.proofReadsAfter !== 'number') return 'FAIL';
   if (m.proofReadsAfter !== m.proofReadsBefore) return 'FAIL';
-  if (typeof m.tipHeightBefore !== 'number' || typeof m.tipHeightFinal !== 'number') return 'FAIL';
+  if (typeof m.jump !== 'number' || m.jump < 3) return 'FAIL';
+  if (typeof m.tipHeightFinal !== 'number') return 'FAIL';
   if (typeof m.pub1HeightFinal !== 'number') return 'FAIL';
-  if (m.pub1HeightFinal - m.tipHeightFinal > 1) return 'FAIL';
-  if (m.tipHeightFinal <= m.tipHeightBefore) return 'FAIL';
+  if (Math.abs(m.pub1HeightFinal - m.tipHeightFinal) > 2) return 'FAIL';
   return 'PASS';
 }
