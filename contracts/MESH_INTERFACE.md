@@ -290,6 +290,7 @@ it, with its latest event.
 | `FAST_SET_FACTOR` | `2` | a node is in the fast set within twice the fastest's speed … |
 | `FAST_SET_SLACK_MS` | `50` | … plus 50 ms |
 | `STUN_SERVERS_MAX` | `3` | the most STUN servers a client's ICE configuration names |
+| `BLOCK_READ_BYTES` | `8_388_608` | 8 MiB, the cap on a fill's `GET /blocks/:height` — the header and two 67-byte list entries, a transaction's id and a post's, for every 32 bytes of a body at `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE → Size caps`) stay within it; a block's whole JSON is read for its header, so a fill of full blocks costs more than a proof — `net`'s header sync carries headers alone |
 
 These are a proof of concept's local cadences, chosen 2026-10-29 and argued by nothing yet; local cadences are outside
 the constants register (`CONSTANTS → Scope`).
