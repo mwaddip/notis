@@ -1,0 +1,457 @@
+// MESH_INTERFACE → Block gossip — the client runs gossipsub on
+// `gossipsubOptions(magic)`, subscribes to `blockTopic` and runs
+// net's Stage 1 over every message as a `BlockCheck`. On accept it
+// forwards the message (traffic.forwarded + 1), and either extends
+// its chain (`extended` → state.tip moves) or triggers an immediate
+// check (`fork`, `gap`). A reject with a lie by the propagation
+// source's key blacklists that key with evidence of kind
+// `gossip-block`. A reject that is not a lie — a protocol-version
+// mismatch — records nothing.
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import {
+  computeUtxoTxRoot,
+  encodeOrderingBlock,
+  generateKeyPair,
+  hexToBytes,
+  MAGIC_DEVNET,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
+  PROTOCOL_VERSION,
+  profileFor,
+} from '@dagsocial/types';
+import type {
+  BlockHeader,
+  NetworkProfile,
+  NetworkType,
+  OrderingBlock,
+  UtxoTxTree,
+} from '@dagsocial/types';
+import {
+  asertTargetBits,
+  blockHash,
+  verifyOrderingBlockPoW,
+} from '@dagsocial/validation';
+import { verifierProfile } from '@dagsocial/nipopow-client';
+import { blockTopic } from '../src/gossip-rules.js';
+import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
+import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
+import { makeLinkedChain, makeBlockAt } from './helpers/devnet-block.js';
+
+const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
+const K = 5;
+const MAGIC = MAGIC_DEVNET;
+const TOPIC = blockTopic(MAGIC);
+const MESH_WAIT_MS = 60_000;
+
+interface Started { mesh: MeshNode; id: string; webrtcAddr: string; up: ChainUpstream; dir: string; }
+
+async function startNode(chain: OrderingBlock[]): Promise<Started> {
+  const up = await chainUpstream(chain);
+  const dir = mkdtempSync(join(tmpdir(), 'cg-'));
+  const key = nodeKeyFromKeyPair(generateKeyPair());
+  const mesh = await startMeshNode({
+    key, network: 'devnet', role: 'public',
+    listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+    bootstrap: [], stateDir: dir, upstream: up.base,
+  });
+  const addrs = mesh.multiaddrs();
+  const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
+  if (!webrtcAddr) {
+    await mesh.stop();
+    throw new Error(`no WebRTC-direct listen address: ${JSON.stringify(addrs)}`);
+  }
+  const id = notisIdFromPeerId(mesh.libp2p.peerId);
+  return { mesh, id, webrtcAddr, up, dir };
+}
+
+// The GossipSub implementation exposes `getMeshPeers`; the exported
+// `GossipSub` interface does not. Cast to a narrow query interface.
+interface MeshPeerQuery {
+  getMeshPeers(topic: string): string[];
+  publish(topic: string, data?: Uint8Array): Promise<unknown>;
+}
+
+function pubsubOf(libp2p: unknown): MeshPeerQuery {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (libp2p as any).services.pubsub as MeshPeerQuery;
+}
+
+async function waitMesh(a: MeshPeerQuery, aId: string, b: MeshPeerQuery, bId: string): Promise<void> {
+  await vi.waitFor(() => {
+    expect(a.getMeshPeers(TOPIC)).toContain(bId);
+    expect(b.getMeshPeers(TOPIC)).toContain(aId);
+  }, { timeout: MESH_WAIT_MS, interval: 300 });
+}
+
+/**
+ * A block built on top of `parent`, carrying the schedule asertTargetBits
+ * imposes at parent's height, mined, and signed by a fresh key. Used to
+ * extend a chain the test owns, without the harness's chain mutation
+ * (makeLinkedChain mines a whole chain; this mines one on demand).
+ */
+function makeChildBlock(parent: BlockHeader, t_a: number, profile: NetworkProfile): OrderingBlock {
+  const retarget = verifierProfile(profile, 0).retarget;
+  const scheduled = asertTargetBits(retarget, t_a, { height: parent.height, createdAt: parent.createdAt });
+  const prev = blockHash(parent);
+  if (prev === null) throw new Error('parent header outside the encodable domain');
+  return makeBlockAt(parent.height + 1, PROTOCOL_VERSION, {
+    prevBlockHash: prev,
+    createdAt: parent.createdAt + profile.orderingBlockIdealMs,
+    powTargetBits: scheduled,
+  });
+}
+
+/**
+ * A valid devnet block at an arbitrary height with the given prev hash and
+ * the floor's PoW target bits — the schedule is deliberately not read, so
+ * `scheduledTargetBits` returning something else makes this a scheduled-
+ * target mismatch (ignored in the client's BlockCheck). Where that
+ * mismatch is NOT wanted, pass `scheduled` instead.
+ */
+function makeFloorBlock(height: number, prevHash: string): OrderingBlock {
+  return makeBlockAt(height, PROTOCOL_VERSION, {
+    prevBlockHash: prevHash,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+  });
+}
+
+/** The settlement block with its signature overwritten by random bytes. */
+function withBadSignature(block: OrderingBlock): OrderingBlock {
+  const bad = new Uint8Array(64);
+  for (let i = 0; i < 64; i++) bad[i] = (i * 37 + 11) & 0xff;
+  return { ...block, validatorSignature: bad };
+}
+
+/**
+ * A block with a protocol version the schedule does not cover at the
+ * header's height; valid signature over the altered header. BlockCheck
+ * answers `reject, lie: false` for a version mismatch.
+ */
+function makeWrongVersionBlock(parent: BlockHeader, t_a: number, profile: NetworkProfile, wrongVersion: number): OrderingBlock {
+  const retarget = verifierProfile(profile, 0).retarget;
+  const scheduled = asertTargetBits(retarget, t_a, { height: parent.height, createdAt: parent.createdAt });
+  const prev = blockHash(parent);
+  if (prev === null) throw new Error('parent header outside the encodable domain');
+  const kp = generateKeyPair();
+  const seed = kp.secretKey.subarray(16);
+  const tree: UtxoTxTree = {
+    utxoTxIds: [(parent.height + 1).toString(16).padStart(64, '0')],
+    utxoTxs: [new Uint8Array(96).fill((parent.height + 1) & 0xff)],
+  };
+  const base: BlockHeader = {
+    protocolVersion: wrongVersion,
+    height: parent.height + 1,
+    prevBlockHash: prev,
+    utxoTxRoot: computeUtxoTxRoot(tree),
+    stateRoot: '00'.repeat(33),
+    validatorId: kp.publicKey,
+    powNonce: 0,
+    powTargetBits: scheduled,
+    createdAt: parent.createdAt + profile.orderingBlockIdealMs,
+    interlinkRoot: '00'.repeat(32),
+    adProofsRoot: '00'.repeat(32),
+  };
+  let header = base;
+  for (let n = 0; n < 1_000_000; n++) {
+    const h = { ...base, powNonce: n };
+    if (verifyOrderingBlockPoW(h)) { header = h; break; }
+  }
+  const hash = blockHash(header);
+  const sig = hash === null ? new Uint8Array(64) : ed25519.sign(hexToBytes(hash), seed);
+  return { header, utxoTxTree: tree, validatorSignature: sig };
+}
+
+describe('mesh-client in block gossip', () => {
+  const openNodes: Started[] = [];
+  const openClients: MeshClient[] = [];
+  // Any pending resolve-gate from case 5 is released here so client.stop
+  // (which awaits `checkInProgress`) does not deadlock on a held first
+  // check when the test body threw before releasing itself.
+  const pendingReleases: Array<() => void> = [];
+
+  afterEach(async () => {
+    while (pendingReleases.length > 0) {
+      const r = pendingReleases.pop();
+      if (r) try { r(); } catch { /* already released */ }
+    }
+    for (const c of openClients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
+    for (const n of openNodes.splice(0)) {
+      try { await n.mesh.stop(); } catch { /* already stopped */ }
+      try { await n.up.close(); } catch { /* already closed */ }
+      try { rmSync(n.dir, { recursive: true, force: true }); } catch { /* already removed */ }
+    }
+  });
+
+  it.fails('a block extending the tip moves the tip before the next check and is forwarded', async () => {
+    // Chain of K+1 blocks. The client settles on it. Then a (K+2)th block is
+    // mined on top of the tip and published through the mesh node's own
+    // router; the client's chain.extend answers `extended`, state.tip moves
+    // to K+2 before any new check, and traffic.forwarded is + 1.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const anchorAddr = started.webrtcAddr;
+    const anchorId = started.id;
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: anchorId, addrs: [anchorAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve((url) => url.includes(anchorId) ? chain : 'unreachable', K),
+    });
+    openClients.push(client);
+    await client.check(); // settle
+    expect(client.state().tip?.height).toBe(K + 1);
+
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    );
+
+    const forwardedBefore = client.state().traffic.forwarded;
+    const checksBefore = client.state().checks;
+
+    const next = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    const bytes = encodeOrderingBlock(next);
+    const meshPubsub = pubsubOf(started.mesh.libp2p);
+    await meshPubsub.publish(TOPIC, bytes);
+
+    await vi.waitFor(() => {
+      expect(client.state().tip?.height).toBe(K + 2);
+    }, { timeout: 15_000, interval: 100 });
+
+    const expectedHash = blockHash(next.header);
+    expect(client.state().tip?.hash).toBe(expectedHash);
+    expect(client.state().traffic.forwarded).toBe(forwardedBefore + 1);
+    // No new check was triggered by the extend path.
+    expect(client.state().checks).toBe(checksBefore);
+  }, 180_000);
+
+  it.fails('a block whose parent is held below the tip runs a check at once, own tip first', async () => {
+    // Review Focus 3. The gossiped block has prev = tip's parent (block K),
+    // same height as the tip (K+1), different hash: chain.extend returns
+    // 'fork'; the client triggers an immediate check. We assert `checks`
+    // rises without waiting CHECK_INTERVAL_MS, and that when the triggered
+    // check calls `resolve` its first URL is a node the client's chain
+    // placed at the tip.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+
+    const resolveUrls: string[][] = [];
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, m, k, p, now, httpFetch) => {
+        resolveUrls.push([...urls]);
+        return chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K)(urls, m, k, p, now, httpFetch);
+      },
+    });
+    openClients.push(client);
+    await client.check();
+    const callsAfterSettle = resolveUrls.length;
+    const checksAfterSettle = client.state().checks;
+
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    );
+
+    // A competing block at height K+1 with prev = block K's hash.
+    const parentOfTip = chain[chain.length - 2]!.header;
+    const parentHash = blockHash(parentOfTip);
+    if (parentHash === null) throw new Error('parent hash null');
+    // Build a competing block carrying the schedule bits so it does NOT
+    // fail scheduled-target. parentOfTip is at height K; the next height
+    // is K+1.
+    const competitor = makeChildBlock(parentOfTip, 1_000_000, PROFILE);
+    // Flip some bytes of its utxoTxs to make it a sibling of the real tip
+    // (different hash). Easiest: build with a different key, which
+    // `makeChildBlock` does through `makeBlockAt(generateKeyPair())`. By
+    // chance it will not match the real tip's hash.
+    const competitorHash = blockHash(competitor.header);
+    const realTipHash = blockHash(chain[chain.length - 1]!.header);
+    expect(competitorHash).not.toBe(realTipHash);
+
+    const meshPubsub = pubsubOf(started.mesh.libp2p);
+    await meshPubsub.publish(TOPIC, encodeOrderingBlock(competitor));
+
+    // The immediate check triggered by the fork increments `checks`.
+    await vi.waitFor(() => {
+      expect(client.state().checks).toBeGreaterThan(checksAfterSettle);
+    }, { timeout: 15_000, interval: 50 });
+
+    // If resolve was called by the triggered check, its first URL names
+    // the mesh node that stood at the client's tip. The settled client's
+    // only node IS at its tip, so the first URL contains its id.
+    if (resolveUrls.length > callsAfterSettle) {
+      const firstUrls = resolveUrls[callsAfterSettle]!;
+      expect(firstUrls[0]).toContain(started.id);
+    }
+  }, 180_000);
+
+  it.fails('a block with no held parent runs a check at once', async () => {
+    // chain.extend returns 'gap': the client triggers an immediate check.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+    });
+    openClients.push(client);
+    await client.check();
+    const checksAfterSettle = client.state().checks;
+
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    );
+
+    // A block whose prev is a random hash the client's window does not hold.
+    // Use the floor's bits so `scheduledTargetBits` answering `null` (parent
+    // not held) does not fail — BlockCheck skips the schedule when null.
+    const unknownPrev = 'cc'.repeat(32);
+    const orphan = makeFloorBlock(50, unknownPrev);
+    const meshPubsub = pubsubOf(started.mesh.libp2p);
+    await meshPubsub.publish(TOPIC, encodeOrderingBlock(orphan));
+
+    await vi.waitFor(() => {
+      expect(client.state().checks).toBeGreaterThan(checksAfterSettle);
+    }, { timeout: 15_000, interval: 50 });
+  }, 180_000);
+
+  it.fails('a failing block blacklists the publishing key with its evidence and is not forwarded', async () => {
+    // BlockCheck rejects a block whose validator signature does not verify
+    // with `lie: true`. The client blacklists the propagation source's
+    // notis id and records evidence of kind `gossip-block`; the message is
+    // not forwarded (traffic.forwarded unchanged).
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+    });
+    openClients.push(client);
+    await client.check();
+
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    );
+    const forwardedBefore = client.state().traffic.forwarded;
+
+    const good = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    const bad = withBadSignature(good);
+    const meshPubsub = pubsubOf(started.mesh.libp2p);
+    await meshPubsub.publish(TOPIC, encodeOrderingBlock(bad));
+
+    // The mesh node (publisher) is blacklisted with gossip-block evidence.
+    await vi.waitFor(() => {
+      const entry = client.state().nodes.find((n) => n.notisId === started.id);
+      expect(entry?.status).toBe('blacklisted');
+      expect(entry?.evidence?.kind).toBe('gossip-block');
+    }, { timeout: 15_000, interval: 100 });
+
+    // forwarded is unchanged — a Reject sends nothing on.
+    expect(client.state().traffic.forwarded).toBe(forwardedBefore);
+  }, 180_000);
+
+  it.fails('a block before settlement is forwarded and changes nothing', async () => {
+    // Review Focus 4. The first check is held open (resolve blocks on a
+    // deferred). A valid block arrives through gossip: forwarded + 1,
+    // state.tip stays null, no lie. Then let the first check settle.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const underlying = chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K);
+    let callCount = 0;
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, m, k, p, now, httpFetch) => {
+        callCount += 1;
+        if (callCount === 1) await gate;
+        return underlying(urls, m, k, p, now, httpFetch);
+      },
+    });
+    openClients.push(client);
+    // afterEach releases the gate so client.stop can finish.
+    pendingReleases.push(() => release());
+
+    // Wait until gossip mesh forms (the first check started but is blocked
+    // on `gate`; the libp2p side is up and running).
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    );
+    // State should still be unsettled.
+    expect(client.state().tip).toBeNull();
+
+    const next = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    const meshPubsub = pubsubOf(started.mesh.libp2p);
+    await meshPubsub.publish(TOPIC, encodeOrderingBlock(next));
+
+    // Wait for forwarded to tick up.
+    await vi.waitFor(() => {
+      expect(client.state().traffic.forwarded).toBeGreaterThan(0);
+    }, { timeout: 15_000, interval: 100 });
+
+    // Chain still unsettled: state.tip is null, publisher not blacklisted.
+    expect(client.state().tip).toBeNull();
+    const entry = client.state().nodes.find((n) => n.notisId === started.id);
+    expect(entry?.status).not.toBe('blacklisted');
+
+    // Release the first check; it settles the chain.
+    release();
+    await vi.waitFor(() => {
+      expect(client.state().tip?.height).toBe(K + 1);
+    }, { timeout: 15_000, interval: 100 });
+  }, 180_000);
+
+  it.fails('a version mismatch records nothing', async () => {
+    // A block whose protocolVersion is not the era at its height is a
+    // Transient reject (BlockCheck: `lie: false`). The publisher is not
+    // blacklisted.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+    });
+    openClients.push(client);
+    await client.check();
+
+    await waitMesh(
+      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
+      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    );
+    const forwardedBefore = client.state().traffic.forwarded;
+
+    // devnet schedule covers version PROTOCOL_VERSION only; a wildly higher
+    // version mismatches without crossing any domain bound.
+    const wrong = makeWrongVersionBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE, PROTOCOL_VERSION + 100);
+    const meshPubsub = pubsubOf(started.mesh.libp2p);
+    await meshPubsub.publish(TOPIC, encodeOrderingBlock(wrong));
+
+    // Give the validator time to run and for a would-be blacklist to land.
+    await new Promise((r) => setTimeout(r, 2_000));
+
+    const entry = client.state().nodes.find((n) => n.notisId === started.id);
+    expect(entry?.status).not.toBe('blacklisted');
+    expect(entry?.evidence).toBeNull();
+    // Not forwarded (Reject means no delivery; forwarded unchanged).
+    expect(client.state().traffic.forwarded).toBe(forwardedBefore);
+  }, 180_000);
+});
