@@ -17,12 +17,13 @@ import type { NodeEntry } from '../src/client/node-list.js';
 const NO_ANCHOR_WORDS = 'No anchor reached. Nothing shown here is verified.';
 
 export function render(state: ClientState, root: HTMLElement): void {
-  // MESH_INTERFACE → Acceptance → "No name, no hosted page" — the
-  // stage's CDP reads `<pre id="probe">` for its byte-for-byte check.
-  // The state renderer owns one subtree under `#root` (a `<div
-  // data-role="state-root">`) and the probe owns `<pre id="probe">` as
-  // a sibling; a render replaces its own container's children, leaving
-  // the probe in place.
+  // MESH_INTERFACE → Acceptance 1 — the mesh's answers equal the
+  // node's direct HTTP answers byte for byte, and the stage's CDP
+  // reads `<pre id="probe">` for that byte-for-byte check. The state
+  // renderer owns one subtree under `#root` (a `<div
+  // data-role="state-root">`) and the probe owns `<pre id="probe">`
+  // as a sibling; a render replaces its own container's children,
+  // leaving the probe in place.
   let container = root.querySelector(':scope > [data-role="state-root"]') as HTMLElement | null;
   if (container === null) {
     container = document.createElement('div');
@@ -36,7 +37,7 @@ export function render(state: ClientState, root: HTMLElement): void {
 
   // MESH_INTERFACE → No anchor reached → "The agreement counts" —
   // sits above the no-anchor words; before the first check
-  // (`agreement === null`) it reads `Agreeing: —`.
+  // (`agreement === null`) it reads `On this chain: —`.
   container.appendChild(renderAgreement(state));
 
   if (!state.anchorReached) {
@@ -49,6 +50,7 @@ export function render(state: ClientState, root: HTMLElement): void {
   container.appendChild(renderInUse(state));
   container.appendChild(renderLastLeft(state));
   container.appendChild(renderTip(state));
+  container.appendChild(renderTraffic(state));
   container.appendChild(renderNodes(state));
 
   // MESH_INTERFACE → Acceptance — the stage reads `#state`, no global.
@@ -59,18 +61,19 @@ export function render(state: ClientState, root: HTMLElement): void {
 }
 
 function renderAgreement(state: ClientState): HTMLElement {
-  // MESH_INTERFACE → No anchor reached → "The agreement counts" —
-  // "the page says `not on the tip's last 20 blocks`"; before the
-  // first check it reads `Agreeing: —`.
+  // MESH_INTERFACE → No anchor reached → "The agreement counts" — the
+  // page shows `On this chain` and `Not on this chain's last 20
+  // blocks` after each check; before the first check it reads `On
+  // this chain: —`.
   const div = document.createElement('div');
   div.setAttribute('data-role', 'agreement');
   if (state.agreement === null) {
-    div.textContent = 'Agreeing: —';
+    div.textContent = 'On this chain: —';
   } else {
-    const { agreeing, agreeingAnchors, notAgreeing } = state.agreement;
+    const { onChain, onChainAnchors, offChain } = state.agreement;
     div.textContent =
-      `Agreeing: ${String(agreeing)} (${String(agreeingAnchors)} anchors)`
-      + ` · not on the tip's last 20 blocks: ${String(notAgreeing)}`;
+      `On this chain: ${String(onChain)} (anchors: ${String(onChainAnchors)})`
+      + ` · Not on this chain's last 20 blocks: ${String(offChain)}`;
   }
   return div;
 }
@@ -132,6 +135,30 @@ function renderTip(state: ClientState): HTMLElement {
   // The hash is `null` at the genesis marker (MESH_INTERFACE → The node
   // endpoint); render it as the word so a reader sees the shape.
   appendPair(dl, 'hash', state.tip.hash ?? 'null');
+  section.appendChild(dl);
+  return section;
+}
+
+function renderTraffic(state: ClientState): HTMLElement {
+  // MESH_INTERFACE → Block gossip → "A refused block is evidence as
+  // `net` weighs it" / The client's node list — the counts the client
+  // keeps per check: how many nipopow proofs were read; the bytes it
+  // read for the tip, each header, each proof and each gossip
+  // message; and the number of blocks it forwarded on delivery.
+  const section = document.createElement('section');
+  section.setAttribute('data-role', 'traffic');
+  const h = document.createElement('h2');
+  h.textContent = 'Traffic';
+  section.appendChild(h);
+  const dl = document.createElement('dl');
+  dl.className = 'in-use';
+  const t = state.traffic;
+  appendPair(dl, 'Proofs read', String(t.proofReads));
+  appendPair(dl, 'tip', String(t.tipBytes));
+  appendPair(dl, 'header', String(t.headerBytes));
+  appendPair(dl, 'proof', String(t.proofBytes));
+  appendPair(dl, 'gossip', String(t.gossipBytes));
+  appendPair(dl, 'forwarded', String(t.forwarded));
   section.appendChild(dl);
   return section;
 }

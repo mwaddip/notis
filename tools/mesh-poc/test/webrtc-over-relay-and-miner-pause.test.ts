@@ -116,7 +116,7 @@ describe('config-variants picks the /webrtc form of a private node\'s announced 
 describe('up.mjs passes MESH_STUN_SERVERS to each private mesh node', () => {
   // The private mesh node's WebRTC transport needs ICE servers (STUN)
   // to gather its own candidates — the ICE servers are the public
-  // mesh nodes' STUN by IP (`MESH_INTERFACE → NAT` — "every STUN
+  // mesh nodes' STUN by IP (`MESH_INTERFACE → NAT` — "Every STUN
   // server is a mesh node named by IP").
   it('every private mesh spawn carries MESH_STUN_SERVERS naming the public STUNs by IP', () => {
     const src = readFileSync(SRC_UP, 'utf8');

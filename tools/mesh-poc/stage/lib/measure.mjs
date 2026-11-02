@@ -255,8 +255,8 @@ export function signal(pid, sig) {
  * recorded `logPath`. Returns the new `pid`. Mirrors `CommandLog.spawn`'s
  * exec path, so a scenario's restart matches `up`'s own first spawn.
  *
- * MESH_INTERFACE → Acceptance — "Record every restart's PID in pids.json
- * in place of the old one". When `pidsPath` is given, the matching
+ * MESH_INTERFACE → Acceptance — a restart records its PID in pids.json
+ * in place of the old one. When `pidsPath` is given, the matching
  * entry on disk is rewritten so a later `stage:down` reads the LIVE
  * pid, not a stale one.
  */

@@ -74,12 +74,13 @@ export function meshFetch(
 
 /**
  * MESH_INTERFACE → The client's node list → "A read opens no connection"
- * — "Every read the client makes over a mesh URL ... opens its stream on
- * a connection the client already holds to that key: an open one, a
- * direct one first, never a limited one. With none, the read fails as a
- * transport failure." The `pick` names which connection to open the
- * stream on for a given `notisId`; a `null` return rejects as
- * `MeshFetchError` of kind `transport` without any dial.
+ * — "Every read the client makes over a mesh URL … opens its stream on a
+ * connection the client already holds to that key: an open one, a direct
+ * one first, a relayed one when that is all there is, never a limited
+ * one … With none, the read fails as a transport failure." The `pick`
+ * names which connection to open the stream on for a given `notisId`; a
+ * `null` return rejects as `MeshFetchError` of kind `transport` without
+ * any dial.
  */
 export function meshFetchOverConnection(
   pick: (notisId: string) => Connection | null,

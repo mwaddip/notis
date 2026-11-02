@@ -1,9 +1,10 @@
 // MESH_INTERFACE → The client's node list / Acceptance 4 — three more
 // guards: `withPeerId` rewrites the LAST `/p2p/<id>` component (the
 // target), never the first one (which may be a relay); s4 step 1
-// accepts both "connected through another node" and "stays on the cut
-// node over WSS"; every scenario writes `config.json` before opening a
-// page so none inherits a previous scenario's variant.
+// accepts both a client that connects through another node and one
+// that stays on the cut node over the secure WebSocket; every
+// scenario writes `config.json` before opening a page so none inherits
+// a previous scenario's variant.
 
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';

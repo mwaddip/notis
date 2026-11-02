@@ -10,6 +10,13 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+// MESH_INTERFACE → Acceptance 6 — "A node naming a tip of its own
+// that answers malformed proofs, and one that answers failing proofs,
+// are blacklisted with their evidence". The hostile upstream's
+// `/blocks/current` substitutes a 64-hex lie for the hash so the two
+// liars name a tip no chain holds. The body builder is pure.
+// eslint-disable-next-line import/extensions
+import { blocksCurrentBody, LIE_HASH } from '../stage/hostile-upstream.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, '..', 'stage', 'hostile-upstream.mjs');
@@ -68,4 +75,22 @@ describe('stage/hostile-upstream.mjs — entry point', () => {
       await upstream.close();
     }
   }, 15_000);
+});
+
+describe('blocksCurrentBody — the hostile tip body', () => {
+  it('substitutes a 64-hex lie for the hash and keeps every other field', () => {
+    const upstream = { height: 123, hash: 'a'.repeat(64), timestampMs: 1_700_000_000_000 };
+    const body = blocksCurrentBody(upstream);
+    expect(body.height).toBe(123);
+    expect(body.timestampMs).toBe(1_700_000_000_000);
+    expect(body.hash).toBe(LIE_HASH);
+    expect(LIE_HASH).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.hash).not.toBe(upstream.hash);
+  });
+  it('a null hash on the upstream is replaced too (the stage has no genesis-marker branch)', () => {
+    const upstream = { height: 7, hash: null };
+    const body = blocksCurrentBody(upstream);
+    expect(body.hash).toBe(LIE_HASH);
+    expect(body.height).toBe(7);
+  });
 });

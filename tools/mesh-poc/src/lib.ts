@@ -11,17 +11,17 @@ export { MeshFetchError, meshFetch, meshFetchOverConnection } from './http-fetch
 
 export { MeshConfigError, assertNoDns } from './config.js';
 
-export { tipEvents } from './client/tip-events.js';
+export { tipEvent } from './client/tip-events.js';
 export type { TipEvent } from './client/tip-events.js';
 
 export { agreementCounts } from './client/agreement.js';
-export type { AgreementCounts } from './client/agreement.js';
+export type { AgreementCounts, AgreementEntry } from './client/agreement.js';
 
 export { pickServer } from './client/server-pick.js';
 export type { ReadNeed, PickCandidate } from './client/server-pick.js';
 
-export { startMeshClient, assertClientConfig } from './client/mesh-client.js';
-export type { MeshClient, ClientState } from './client/mesh-client.js';
+export { startMeshClient, assertClientConfig, emptyTraffic } from './client/mesh-client.js';
+export type { MeshClient, ClientState, ClientTraffic } from './client/mesh-client.js';
 
 export { NodeList } from './client/node-list.js';
 export type {
@@ -31,6 +31,14 @@ export type {
   NodeStatus,
   NodeEntry,
 } from './client/node-list.js';
+
+export { BlockCheck } from './block-check.js';
+export type { BlockVerdict, BlockCheckContext } from './block-check.js';
+
+export { headerFromJson } from './client/header-json.js';
+
+export { HeldChain } from './client/held-chain.js';
+export type { Placement } from './client/held-chain.js';
 
 export {
   dhtProtocol,

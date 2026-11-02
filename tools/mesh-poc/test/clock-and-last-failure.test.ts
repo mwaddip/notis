@@ -1,9 +1,11 @@
-// MESH_INTERFACE → "Two clocks" + "a proof refused by the clock check
-// alone is a failure, never a lie" + "An entry keeps its last failure's
-// kind and message".
+// MESH_INTERFACE → "Two clocks"; the clock row of the client's
+// node-list table — a proof refused by the client's clock check alone
+// is `retry`, never a lie; and the rule that an entry keeps its last
+// failure's kind and message for the page to show while the node is
+// in `retry`.
 //
 // Cases:
-//   - `tipEvents` maps `refuseCode: 'invalid'` with `verifyResult.reason
+//   - `tipEvent` maps `refuseCode: 'invalid'` with `verifyResult.reason
 //     === 'clock'` to a `failure` with `FailureKind: 'clock'`, not a lie.
 //   - `NodeList.failure(id, kind, message)` writes `lastFailure`;
 //     `success(id)` clears it.
@@ -13,13 +15,13 @@
 
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
-import { tipEvents } from '../src/client/tip-events.js';
+import { tipEvent, type TipEvent } from '../src/client/tip-events.js';
+import { idOfMeshUrl } from '../src/mesh-url.js';
 import { NodeList } from '../src/client/node-list.js';
 import type { NodeEntry } from '../src/client/node-list.js';
 import { render } from '../page/render.js';
 import type { ClientState } from '../src/client/mesh-client.js';
-import { startMeshClient } from '../src/client/mesh-client.js';
-import { profileFor } from '@dagsocial/types';
+import { emptyTraffic } from '../src/client/mesh-client.js';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
 function fakeTipResult(nodes: NodeTipResult[], winnerIndex = -1): TipResult {
@@ -64,15 +66,21 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     tip: over.tip ?? null,
     agreement: over.agreement ?? null,
     checks: over.checks ?? 0,
+    traffic: over.traffic ?? emptyTraffic(),
     nodes: over.nodes ?? [],
   };
 }
 
-describe('tipEvents — clock refusal is a failure, not a lie', () => {
+// One event per node, each through `tipEvent`.
+function eventsOf(r: TipResult, nowMs: number): TipEvent[] {
+  return r.nodes.map((n) => tipEvent(idOfMeshUrl(n.url), n, nowMs));
+}
+
+describe('tipEvent — clock refusal is a failure, not a lie', () => {
   const id = 'a'.repeat(64);
   const url = `notis-mesh://${id}`;
   it('refuseCode "invalid" + verifyResult.reason "clock" → failure, kind clock', () => {
-    const events = tipEvents(fakeTipResult([{
+    const events = eventsOf(fakeTipResult([{
       url,
       verified: false,
       proof: null,
@@ -89,7 +97,7 @@ describe('tipEvents — clock refusal is a failure, not a lie', () => {
     expect(ev.ev === 'failure' ? ev.message : null).toContain('clock');
   });
   it('refuseCode "invalid" + verifyResult.reason "pow" (not clock) → lie, kind proof-invalid', () => {
-    const events = tipEvents(fakeTipResult([{
+    const events = eventsOf(fakeTipResult([{
       url,
       verified: false,
       proof: { prefix: [], suffixHead: null, suffixTail: [] } as unknown as NonNullable<NodeTipResult['proof']>,
@@ -182,40 +190,8 @@ describe('page/render — lastFailure under a retry entry', () => {
   });
 });
 
-describe('startMeshClient — wallClock is handed to the resolve seam', () => {
-  it('the resolve seam receives a wall-clock now (reads > 1e12 ms)', async () => {
-    // happy-dom lives in this file, so we need a minimal libp2p-less
-    // start: `resolve` is a stub that captures the `now` argument the
-    // client passes.
-    const anchors = [{
-      notisId: 'a'.repeat(64),
-      addrs: ['/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/A/p2p/PA'],
-    }];
-    let capturedNow: (() => number) | null = null;
-    // The real resolveTip takes (urls, m, k, profile, now, fetch).
-    const resolveStub = (async (_urls: unknown, _m: unknown, _k: unknown, _profile: unknown, now: () => number) => {
-      capturedNow = now;
-      return { winnerIndex: -1, nodes: [] };
-    }) as unknown as Parameters<typeof startMeshClient>[0]['resolve'];
-    // The client's `clock` default is monotonic (`performance.now`,
-    // which happy-dom supports); scenarios inject a fake monotonic
-    // clock. We skip injecting one and only check wallClock.
-    const client = await startMeshClient({
-      anchors,
-      network: 'devnet',
-      profile: profileFor('devnet'),
-      resolve: resolveStub,
-      // Explicitly set wallClock to a fake that is clearly wall-clock
-      // (ms since epoch >> 1e12).
-      wallClock: () => 1_900_000_000_000,
-    });
-    try {
-      // Force a check so the resolve stub runs.
-      await client.check();
-      expect(capturedNow, 'resolve was called').not.toBeNull();
-      expect(capturedNow!(), 'wallClock reads > 1e12 ms').toBeGreaterThan(1e12);
-    } finally {
-      await client.stop();
-    }
-  });
-});
+// MESH_INTERFACE → "Two clocks" — `startMeshClient` hands its
+// `wallClock` to the resolve seam, not the retry clock. The guard
+// lives in `test/mesh-client.test.ts`, where libp2p's WebRTC-direct
+// dial reaches a real mesh node (`@vitest-environment happy-dom` here
+// prevents libp2p from binding).

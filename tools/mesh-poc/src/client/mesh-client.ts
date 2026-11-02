@@ -20,6 +20,8 @@ import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { kadDHT } from '@libp2p/kad-dht';
+import { gossipsub, TopicValidatorResult } from '@libp2p/gossipsub';
+import type { GossipSub } from '@libp2p/gossipsub';
 import { UnexpectedPeerError } from '@libp2p/interface';
 import type { Connection, PeerId } from '@libp2p/interface';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
@@ -31,15 +33,20 @@ import {
   circuitRelayAddressesLast,
 } from '@libp2p/utils';
 import { peerIdFromString } from '@libp2p/peer-id';
-import { generateKeyPair } from '@dagsocial/types';
-import type { NetworkProfile } from '@dagsocial/types';
+import { decodeOrderingBlock, generateKeyPair } from '@dagsocial/types';
+import type { NetworkProfile, OrderingBlock } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
-import type { TipResult } from '@dagsocial/nipopow-client';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { isNonNegSafeInt } from '@dagsocial/node-reads';
 import { isHex64 } from '@dagsocial/types';
-import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
+import type { BlockHeader } from '@dagsocial/types';
+import { blockHash } from '@dagsocial/validation';
+import { HeldChain, type Placement } from './held-chain.js';
+import { headerFromJson } from './header-json.js';
+import { blockTopic, gossipsubOptions } from '../gossip-rules.js';
+import { BlockCheck, type BlockVerdict } from '../block-check.js';
+import { MeshKeyError, nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
 import { meshBaseUrl, idOfMeshUrl } from '../mesh-url.js';
 import { meshFetchOverConnection, MeshFetchError } from '../http-fetch.js';
 import { MeshConfigError, assertNoDns } from '../config.js';
@@ -49,9 +56,9 @@ import {
   type FailureKind,
   type NodeEntry,
 } from './node-list.js';
-import { tipEvents, type TipEvent } from './tip-events.js';
+import { tipEvent, type TipEvent } from './tip-events.js';
 import { pickServer, type ReadNeed } from './server-pick.js';
-import { agreementCounts, type AgreementCounts } from './agreement.js';
+import { agreementCounts, type AgreementCounts, type AgreementEntry } from './agreement.js';
 import { stunServersFor } from './stun-list.js';
 import {
   dhtProtocol,
@@ -59,6 +66,7 @@ import {
   DIAL_TIMEOUT_MS,
   PEER_DIAL_MIN_MS,
   STUN_SERVERS_MAX,
+  BLOCK_READ_BYTES,
   type NetworkName,
 } from '../protocols.js';
 export type { ReadNeed } from './server-pick.js';
@@ -225,6 +233,33 @@ function isValidPort(s: string): boolean {
   return n >= 0 && n <= 65_535;
 }
 
+/**
+ * MESH_INTERFACE → The client's node list → "A check" — the cumulative
+ * byte totals the timed fetch records by path over the life of the
+ * client: `/blocks/current` → `tipBytes`, `/blocks/<n>` → `headerBytes`,
+ * `/nipopow/proof/...` → `proofBytes` and one `proofReads` per proof
+ * read. `gossipBytes` and `forwarded` stay `0` here.
+ */
+export interface ClientTraffic {
+  tipBytes: number;
+  proofBytes: number;
+  headerBytes: number;
+  gossipBytes: number;
+  proofReads: number;
+  forwarded: number;
+}
+
+export function emptyTraffic(): ClientTraffic {
+  return {
+    tipBytes: 0,
+    proofBytes: 0,
+    headerBytes: 0,
+    gossipBytes: 0,
+    proofReads: 0,
+    forwarded: 0,
+  };
+}
+
 export interface ClientState {
   nodeId: string | null;
   transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
@@ -247,6 +282,7 @@ export interface ClientState {
    * start; incremented once at the end of each `runCheck`.
    */
   checks: number;
+  traffic: ClientTraffic;
   nodes: NodeEntry[];
 }
 
@@ -266,7 +302,7 @@ export interface MeshClient {
    * itself fails.
    */
   read(path: string, need: ReadNeed): Promise<{ response: Response; nodeId: string }>;
-  check(): Promise<TipResult>;
+  check(): Promise<void>;
   state(): ClientState;
   onState(cb: (s: ClientState) => void): () => void;
   stop(): Promise<void>;
@@ -291,9 +327,9 @@ export interface MeshClient {
    * MESH_INTERFACE → NAT → "A client's STUN list comes from the public
    * nodes it holds" — the ICE configuration the webRTC transport reads
    * at each dial, derived from the client's current node entries. Never
-   * `undefined` `iceServers` (traps file, "The mesh and its stage"):
-   * libp2p falls back to DNS-named defaults when `iceServers` is
-   * absent, so the function always answers `{ iceServers: [...] }`,
+   * `undefined` `iceServers`: libp2p falls back to DNS-named defaults
+   * when `iceServers` is absent, so the function always answers
+   * `{ iceServers: [...] }`,
    * including an empty array when no public node is held.
    */
   iceConfiguration(): { iceServers: RTCIceServer[] };
@@ -412,6 +448,12 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
       identify: identify(),
       ping: ping(),
       dht: kadDHT({ protocol: dhtProtocol(o.network), clientMode: true }),
+      // MESH_INTERFACE → Block gossip → "One router, net's rules" — the
+      // client runs gossipsub on `gossipsubOptions(magic)`, carrying
+      // net's envelope, message id and seen window. The client
+      // subscribes to `blockTopic` alone and reads nothing else off
+      // the router.
+      pubsub: gossipsub(gossipsubOptions(o.profile.magic)),
     },
   });
 
@@ -441,6 +483,28 @@ function iceConfigurations(stunServers: readonly string[]): RTCIceServer[] {
   return stunServers.map((url) => ({ urls: url }));
 }
 
+/**
+ * MESH_INTERFACE → Block gossip → "A refused block is evidence as `net`
+ * weighs it" — a lie is the propagation source's key, "the client
+ * blacklists that key", and no one else's. `lieTarget` answers the key
+ * when all four conditions hold — the verdict is a reject, it is a lie,
+ * the source peer id reads as a Notis key, and the list holds that key
+ * — and `null` otherwise, so a reject that is not a lie, a lie from a
+ * peer id that is not an Ed25519 key, and a lie from a key the list
+ * does not hold all leave the list unchanged.
+ */
+export function lieTarget(
+  verdict: BlockVerdict,
+  sourceNotisId: string | null,
+  held: (id: string) => boolean,
+): string | null {
+  if (verdict.result !== 'reject') return null;
+  if (!verdict.lie) return null;
+  if (sourceNotisId === null) return null;
+  if (!held(sourceNotisId)) return null;
+  return sourceNotisId;
+}
+
 class MeshClientImpl implements MeshClient {
   readonly libp2p: Libp2p;
   private readonly clock: () => number;
@@ -454,12 +518,13 @@ class MeshClientImpl implements MeshClient {
   private readonly wallClock: () => number;
   private readonly random: () => number;
   /**
-   * MESH_INTERFACE → The client's node list → "A check" — "it times
-   * each node's proof read; that time is the node's speed until the
-   * next check." A speed holds until the next check writes a fresh
-   * one, so a check populates a FRESH map while it runs and swaps
-   * references when `resolveTip` answers. A routed read reaching the
-   * live map during the hold sees the previous check's values.
+   * MESH_INTERFACE → The client's node list → "A check" — a check reads
+   * every candidate's tip timed from the request to the end of the
+   * body, and that time is the node's speed until the next check. A
+   * speed holds until the next check writes a fresh one, so a check
+   * populates a FRESH map while it runs and swaps references when
+   * `resolveTip` answers. A routed read reaching the live map during
+   * the hold sees the previous check's values.
    */
   private readMsMap: Map<string, number> = new Map();
   /**
@@ -469,12 +534,36 @@ class MeshClientImpl implements MeshClient {
    * `resolveTip` answers.
    */
   private behindByMap: Map<string, number | null> = new Map();
-  private checkInProgress: Promise<TipResult> | null = null;
+  /**
+   * MESH_INTERFACE → The client's node list → "A tip whose proof
+   * verified and lost keeps its verdict" — per tip hash, the event
+   * `tipEvent` answered and its `behind` from a proof that verified
+   * and lost. A node naming the hash again at the next check takes
+   * that verdict with no proof read; cleared when `chain.settle`
+   * moves to a new winner, and a hash leaves when no node named it
+   * at a check.
+   */
+  private readonly keptVerdicts: Map<string, { event: TipEvent; behind: number | null }> = new Map();
+  private readonly chain: HeldChain;
+  /**
+   * MESH_INTERFACE → Block gossip → "A block is checked before it is
+   * forwarded, and never applied" — net's Stage 1 run over every
+   * gossiped block. The context reads the client's HeldChain for the
+   * schedule and the standing (seen-accepted memory lives inside the
+   * check itself, under `GOSSIP_SEEN_WINDOW_MS`), and the monotonic
+   * clock for that memory.
+   */
+  private readonly blockCheck: BlockCheck;
+  private checkInProgress: Promise<void> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private readonly onDiscovery: (evt: CustomEvent<{ id: PeerId; multiaddrs: Multiaddr[] }>) => void;
   private readonly onConnectionOpen: () => void;
   private readonly onConnectionClose: () => void;
+  // MESH_INTERFACE → Block gossip — the delivery listener, kept as a
+  // bound reference so `removeEventListener` reads the same identity
+  // on stop.
+  private readonly onGossipMessage: (ev: unknown) => void;
 
   constructor(
     node: Libp2p,
@@ -492,12 +581,13 @@ class MeshClientImpl implements MeshClient {
     this.resolveFn = resolveFn;
     this.profile = o.profile;
     this.nodeList = new NodeList(o.anchors, ownId, clock);
-    // MESH_INTERFACE → Discovery → "Seeds" — "a seed is a candidate like any
-    // node the DHT finds". Added before the first check, so a seed is in
-    // the candidates `resolveTip` reads from the start; `NodeList.add`
-    // records them as non-anchor entries, so a seed's success leaves
-    // `anchorReached` false. The client's own key is dropped the same way
-    // an anchor list's own-key entry is.
+    this.chain = new HeldChain(o.profile, DEFAULT_K);
+    // MESH_INTERFACE → Discovery → "Seeds" — a seed is a candidate like
+    // any node the DHT finds. Added before the first check, so a seed
+    // is in the candidates `resolveTip` reads from the start;
+    // `NodeList.add` records them as non-anchor entries, so a seed's
+    // success leaves `anchorReached` false. The client's own key is
+    // dropped the same way an anchor list's own-key entry is.
     if (o.seeds !== undefined) {
       for (const s of o.seeds) {
         if (s.notisId === ownId) continue;
@@ -513,6 +603,7 @@ class MeshClientImpl implements MeshClient {
       tip: null,
       agreement: null,
       checks: 0,
+      traffic: emptyTraffic(),
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
@@ -527,6 +618,17 @@ class MeshClientImpl implements MeshClient {
     this.onDiscovery = (evt): void => this.handleDiscovery(evt.detail);
     this.onConnectionOpen = (): void => this.refreshTransportPathAndEmit();
     this.onConnectionClose = (): void => this.refreshTransportPathAndEmit();
+    // MESH_INTERFACE → Block gossip → "A block is checked before it is
+    // forwarded, and never applied" — the client's HeldChain answers
+    // the schedule and the standing; the clock is the monotonic one
+    // BlockCheck's own seen-accepted memory reads.
+    this.blockCheck = new BlockCheck({
+      profile: o.profile,
+      scheduledTargetBits: (h) => this.chain.scheduledTargetBits(h),
+      standing: (hash, height) => this.chain.standing(hash, height),
+      nowMs: () => this.clock(),
+    });
+    this.onGossipMessage = (ev): void => this.handleGossipMessage(ev);
   }
 
   start(): void {
@@ -536,6 +638,12 @@ class MeshClientImpl implements MeshClient {
     this.libp2p.addEventListener('peer:discovery', this.onDiscovery);
     this.libp2p.addEventListener('connection:open', this.onConnectionOpen);
     this.libp2p.addEventListener('connection:close', this.onConnectionClose);
+    // MESH_INTERFACE → Block gossip — subscribe to the ordering-block
+    // topic alone, set the topic validator (BlockCheck), and attach
+    // the delivery listener. The subscribe comes before the first
+    // check, so a mesh service it reaches finds it already in the
+    // topic's mesh.
+    this.startGossip();
     // The first check runs at start (MESH_INTERFACE → The client's node
     // list → "A check"); a failure here does not take the client down, it
     // is reflected in the state and the next check comes on the ordinary
@@ -543,11 +651,159 @@ class MeshClientImpl implements MeshClient {
     this.scheduleNextCheck(0);
   }
 
+  private getPubsub(): GossipSub & {
+    reportMessageValidationResult(
+      msgId: string,
+      propagationSource: string,
+      acceptance: TopicValidatorResult,
+    ): void;
+  } {
+    return (this.libp2p as unknown as {
+      services: { pubsub: GossipSub & {
+        reportMessageValidationResult(
+          msgId: string,
+          propagationSource: string,
+          acceptance: TopicValidatorResult,
+        ): void;
+      } };
+    }).services.pubsub;
+  }
+
+  private startGossip(): void {
+    const pubsub = this.getPubsub();
+    const topic = blockTopic(this.profile.magic);
+    pubsub.topicValidators.set(topic, (peer, msg) =>
+      this.validateGossipMessage(peer, msg),
+    );
+    pubsub.subscribe(topic);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pubsub as any).addEventListener('gossipsub:message', this.onGossipMessage);
+  }
+
+  /**
+   * MESH_INTERFACE → Block gossip → "A block is checked before it is
+   * forwarded, and never applied" / "A refused block is evidence as
+   * `net` weighs it". The topic validator runs net's Stage 1 as a
+   * `BlockCheck`, counts the message's bytes against
+   * `traffic.gossipBytes`, and maps the verdict to a
+   * `TopicValidatorResult`. A reject with `lie` is the propagation
+   * source's: when its peer id reads as a Notis key and the list
+   * holds that entry, the entry blacklists with evidence of kind
+   * `gossip-block`. A peer whose id is not an Ed25519 key, or whose
+   * key the list does not hold, is refused with no list change.
+   */
+  private validateGossipMessage(
+    peer: PeerId,
+    msg: { topic: string; data: Uint8Array },
+  ): TopicValidatorResult {
+    // Count every message the validator weighs — accept, ignore or reject
+    // (MESH_INTERFACE → Block gossip). The length is from the message's
+    // `data`.
+    this.state_.traffic.gossipBytes += msg.data.length;
+    const data = new Uint8Array(msg.data);
+    const verdict = this.blockCheck.check(data);
+    if (verdict.result === 'ignore') return TopicValidatorResult.Ignore;
+    if (verdict.result === 'reject') {
+      let sourceNotisId: string | null = null;
+      try {
+        sourceNotisId = notisIdFromPeerId(peer);
+      } catch (e) {
+        // MeshKeyError: a peer id that is not an Ed25519 key, or
+        // whose public key is not 32 bytes. Not a Notis peer; the
+        // reject stands with no list change.
+        if (!(e instanceof MeshKeyError)) throw e;
+      }
+      const target = lieTarget(
+        verdict,
+        sourceNotisId,
+        (id) => this.nodeList.entry(id) !== undefined,
+      );
+      if (target !== null) {
+        // `lieTarget` returns a key only when `verdict` is a
+        // `reject` with `lie: true`, so `verdict.detail` is reachable
+        // under this branch.
+        this.nodeList.lie(target, {
+          kind: 'gossip-block',
+          atMs: this.clock(),
+          detail: verdict.detail,
+        });
+        this.latestEventReason.set(target, 'lie: gossip-block');
+        this.emitStateChange();
+      }
+      return TopicValidatorResult.Reject;
+    }
+    return TopicValidatorResult.Accept;
+  }
+
+  /**
+   * MESH_INTERFACE → Block gossip → "A block is checked before it is
+   * forwarded, and never applied" / "The client's chain" — on
+   * delivery (asyncValidation: the message passed the topic
+   * validator), report Accept so the router forwards it, count
+   * `traffic.forwarded`, and either extend the chain (`extended` →
+   * `state.tip` moves) or trigger an immediate check (`fork`, `gap`).
+   * Before the first check settles a chain, the block adds nothing;
+   * it is still counted as forwarded.
+   */
+  private handleGossipMessage(ev: unknown): void {
+    const detail = (ev as { detail?: {
+      msg?: { topic: string; data: Uint8Array };
+      msgId?: string;
+      propagationSource?: { toString(): string };
+    } }).detail;
+    if (!detail) return;
+    const msg = detail.msg;
+    const topic = blockTopic(this.profile.magic);
+    if (!msg || msg.topic !== topic) return;
+    const msgId = detail.msgId;
+    if (msgId === undefined) return;
+    const relayPeerId = detail.propagationSource?.toString() ?? '';
+    const pubsub = this.getPubsub();
+    pubsub.reportMessageValidationResult(
+      msgId,
+      relayPeerId,
+      TopicValidatorResult.Accept,
+    );
+
+    this.state_.traffic.forwarded += 1;
+    // The validator already decoded this block; a re-decode is cheap
+    // and keeps no map parallel to the router's own cache. A throw
+    // here is defensive — a bug upstream, since the validator accepted
+    // these bytes.
+    let block: OrderingBlock | null = null;
+    try {
+      block = decodeOrderingBlock(new Uint8Array(msg.data));
+    } catch { /* already validated — defensive */ }
+
+    if (!this.chain.settled() || block === null) {
+      this.emitStateChange();
+      return;
+    }
+    const r = this.chain.extend(block.header);
+    if (r === 'extended') {
+      const h = blockHash(block.header);
+      this.state_.tip = { height: block.header.height, hash: h };
+      this.emitStateChange();
+      return;
+    }
+    // 'fork' | 'gap' — a check runs at once (MESH_INTERFACE → The
+    // client's node list → "The client's chain").
+    this.emitStateChange();
+    this.triggerImmediateCheck();
+  }
+
   readonly fetch: HttpFetch = (url, init) => this.meshFetchFn(url, init);
 
-  async check(): Promise<TipResult> {
+  async check(): Promise<void> {
     if (this.checkInProgress) return this.checkInProgress;
-    this.checkInProgress = this.runCheck()
+    // MESH_INTERFACE → The client's node list → "A check" — the client
+    // runs one check at a time; a trigger that fires while a check is in
+    // flight is that check. The marker is set before `runCheck`'s own
+    // code runs, so a `triggerImmediateCheck` fired from inside the
+    // check (the routed-tip read finding no node, say) sees the running
+    // check and does not schedule a 0 ms recurrence.
+    this.checkInProgress = Promise.resolve()
+      .then(() => this.runCheck())
       .finally(() => { this.checkInProgress = null; });
     return this.checkInProgress;
   }
@@ -672,14 +928,24 @@ class MeshClientImpl implements MeshClient {
     this.libp2p.removeEventListener('peer:discovery', this.onDiscovery);
     this.libp2p.removeEventListener('connection:open', this.onConnectionOpen);
     this.libp2p.removeEventListener('connection:close', this.onConnectionClose);
+    // MESH_INTERFACE → Block gossip — detach the gossipsub listener
+    // before libp2p.stop so the handler does not run against a
+    // torn-down pubsub. Wrapped: libp2p's own stop fires final events,
+    // but a listener-removal failure must not stop the shutdown.
+    try {
+      const pubsub = this.getPubsub();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pubsub as any).removeEventListener('gossipsub:message', this.onGossipMessage);
+    } catch { /* already torn down */ }
     await this.libp2p.stop();
   }
 
   private triggerImmediateCheck(): void {
     if (this.stopped) return;
-    // MESH_INTERFACE → The client's node list → "A check" — "one check at
-    // a time: a trigger during a check is that check." The ongoing check
-    // is the response; a trigger during it adds no second check.
+    // MESH_INTERFACE → The client's node list → "A check" — the client
+    // runs one check at a time; a trigger that fires while a check is in
+    // flight is that check. The ongoing check is the response; a
+    // trigger during it adds no second check.
     if (this.checkInProgress !== null) return;
     if (this.timer !== null) {
       clearTimeout(this.timer);
@@ -705,7 +971,7 @@ class MeshClientImpl implements MeshClient {
     }, ms);
   }
 
-  private async runCheck(): Promise<TipResult> {
+  private async runCheck(): Promise<void> {
     // Snapshot ok/trailing before the check runs so `lastLeft` names
     // any node that leaves the set — the pre-dial itself may move a
     // node to retry, so the snapshot has to sit before phase 1.
@@ -724,67 +990,317 @@ class MeshClientImpl implements MeshClient {
       await this.dialByAddresses(id);
     }
 
-    // Phase 2: the resolve seam reads whatever candidates remain. A node
-    // whose pre-dial failed has moved to `retry` and will no longer be a
-    // candidate here. The fetch is wrapped per URL so `readMs` is the
-    // duration from fetch call to end of body — a time to headers
-    // alone would miss the transfer. The check's new readings land in
-    // a FRESH map so a routed read in flight reads the previous
-    // check's speeds (MESH_INTERFACE → The client's node list → "A
-    // check"); the swap happens when `resolveTip` answers.
+    // Phase 2: read each candidate's `/blocks/current` through the
+    // timed fetch; its time to the body's end is the node's speed
+    // (`readMsMap`). The new readings land in a FRESH map; the live
+    // one still answers routed reads with the previous check's speeds
+    // until phase 4 finishes (MESH_INTERFACE → The client's node list
+    // → "A check"). A failure is a transport/timeout/refused
+    // failure; a body-level overflow or unparse, or a shape that is
+    // not a tip, is a `malformed` lie — the lie row of
+    // MESH_INTERFACE → The client's node list.
     const afterIds = this.nodeList.candidates();
-    const urls = afterIds.map((id) => meshBaseUrl(id));
     const pendingReadMs = new Map<string, number>();
     const pendingBehindBy = new Map<string, number | null>();
     const timedFetch = this.makeTimedFetch(pendingReadMs);
-    // MESH_INTERFACE → "Two clocks" — the verifier reads the wall clock
-    // (`wallClock`); the node list keeps its monotonic clock for retries.
-    // A header's `createdAt` is wall-clock time, so a client whose own
-    // monotonic clock reads tens of seconds would see every honest
-    // header as decades ahead and refuse the proof under `clock`.
-    const result = await this.resolveFn(
-      urls,
-      DEFAULT_M,
-      DEFAULT_K,
-      this.profile,
-      this.wallClock,
-      timedFetch,
-    );
+    const perNodeVerdict = new Map<string, 'on' | 'off' | 'none'>();
+    for (const id of afterIds) perNodeVerdict.set(id, 'none');
 
-    // Phase 3: each node in the result earns an event through `tipEvents`;
-    // apply them and record their reasons. Record `behind` per node into
-    // the pending map, then swap both maps in at once — the live maps
-    // move only when the check's new values are complete. Every URL
-    // here is a `meshBaseUrl(id)` from phase 2, so `idOfMeshUrl`
-    // throwing would be a bug upstream and the throw propagates.
-    for (const node of result.nodes) {
-      pendingBehindBy.set(idOfMeshUrl(node.url), node.behind);
+    interface TipRead { id: string; height: number; hash: string | null; }
+    const tipReads: TipRead[] = [];
+    for (const id of afterIds) {
+      if (this.stopped) break;
+      const url = meshBaseUrl(id);
+      let response: Response;
+      try {
+        response = await timedFetch(url + '/blocks/current', undefined);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        this.applyEvent({ id, ev: 'failure', kind: 'transport', message });
+        continue;
+      }
+      const cls = await this.classifyTipRead(response, id);
+      if (cls.kind === 'tip') {
+        tipReads.push({ id, height: cls.height, hash: cls.hash });
+      }
+      // `failure` and `lie` events were applied inside classifyTipRead.
     }
+
+    // `above` fills first — highest named height first, each from the
+    // client's tip as it then stands; a node whose tip is placed by an
+    // earlier fill is not read again. A fill reads the serving node's
+    // headers by height from its tip down to the client's, the client's
+    // tip moving when the fill links (MESH_INTERFACE → The client's
+    // node list → "The client's chain"). The sort by height descending
+    // lets the tallest fill move the tip once; lower `above` reads then
+    // place from the extended
+    // chain without a header read of their own.
+    const aboveCandidates = tipReads
+      .filter((r) => r.hash !== null)
+      .slice()
+      .sort((a, b) => b.height - a.height);
+    for (const read of aboveCandidates) {
+      if (this.stopped) break;
+      const chainTipNow = this.chain.tip();
+      if (chainTipNow === null) break; // chain unsettled — all 'above' falls to phase 4
+      const placement = this.chain.place(read.hash!, read.height);
+      if (placement !== 'above') continue; // placed by an earlier fill
+      const gap = read.height - chainTipNow.height;
+      if (gap > DEFAULT_K) continue; // more than k above — stays unplaced for phase 4
+      const headers: BlockHeader[] = [];
+      let fillAborted = false;
+      for (let h = read.height; h > chainTipNow.height; h -= 1) {
+        const result = await this.readHeaderAt(read.id, h, timedFetch);
+        if (result.kind !== 'header') {
+          this.applyHeaderReadFailure(read.id, result);
+          fillAborted = true;
+          break;
+        }
+        headers.push(result.header); // highest-first — chain.link's input shape
+      }
+      if (fillAborted) continue;
+      if (headers.length === 0 || blockHash(headers[0]!) !== read.hash) continue;
+      this.chain.link(headers);
+    }
+
+    // Phase 3b: place EVERY tip read once against the chain as it then
+    // stands; land each event and verdict, and `behindBy` for placed
+    // nodes (0 at the tip, 1 one below, the count below for `below`,
+    // the matched `under`'s distance). `above`, `under` and `unplaced`
+    // (including a hash the window holds but doesn't match) move on
+    // (`under` → phase 3c; the rest → phase 4).
+    const placements = new Map<string, Placement>();
+    const placedAtTip = new Set<string>();
+    for (const read of tipReads) {
+      if (read.hash === null) {
+        this.applyEvent({ id: read.id, ev: 'behind' });
+        // Verdict stays `none`: a null hash places nowhere and reads
+        // no proof.
+        continue;
+      }
+      const placement = this.chain.place(read.hash, read.height);
+      placements.set(read.id, placement);
+      const chainTipAfterFills = this.chain.tip();
+      if (placement === 'tip') {
+        this.applyEvent({ id: read.id, ev: 'success' });
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, 0);
+        placedAtTip.add(read.id);
+      } else if (placement === 'one-below') {
+        this.applyEvent({ id: read.id, ev: 'trailing' });
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, 1);
+      } else if (placement === 'below') {
+        this.applyEvent({ id: read.id, ev: 'behind' });
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, chainTipAfterFills!.height - read.height);
+      }
+    }
+
+    // Phase 3c: `under` — read the chain's own header at that height
+    // from the first node placed `tip` this check; a match reads
+    // `behind` with no proof, a mismatch falls to phase 4.
+    for (const read of tipReads) {
+      if (this.stopped) break;
+      if (placements.get(read.id) !== 'under') continue;
+      const firstAtTip = this.firstNodeAtChainTip(placedAtTip);
+      if (firstAtTip === null) continue;
+      const result = await this.readHeaderAt(firstAtTip, read.height, timedFetch);
+      if (result.kind !== 'header') {
+        this.applyHeaderReadFailure(firstAtTip, result);
+        continue;
+      }
+      if (blockHash(result.header) === read.hash) {
+        this.applyEvent({ id: read.id, ev: 'behind' });
+        perNodeVerdict.set(read.id, 'on');
+        const chainTipNow = this.chain.tip();
+        pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
+      }
+    }
+
+    // Phase 4: proof read per distinct unplaced hash, from the first
+    // node naming it (by candidate rank); while the chain is settled,
+    // prepend the URL of the first node at the client's tip so a tie
+    // keeps the chain. A hash whose proof is refused is asked again
+    // of the next node naming it, in a further `resolveTip` over the
+    // own-tip URL and the replacements, until each hash has a verdict
+    // or no node naming it is left; each refused node its own
+    // evidence. After a switch, every tip this check read is placed
+    // again against the new chain with no new read; a tip still
+    // unplaced and with no proof verdict of its own reads `behind`.
+    const groups = new Map<string, string[]>(); // hash → ids in rank order
+    for (const read of tipReads) {
+      if (read.hash === null) continue;
+      if (perNodeVerdict.get(read.id) === 'on') continue;
+      const entry = this.nodeList.entry(read.id);
+      if (entry && entry.status === 'blacklisted') continue;
+      // MESH_INTERFACE → The client's node list → "A check" — "A tip
+      // whose proof verified and lost keeps its verdict while the
+      // client's chain stands: a node naming it again is placed off
+      // the chain with no proof read".
+      const kept = this.keptVerdicts.get(read.hash);
+      if (kept !== undefined) {
+        this.applyEvent({ ...kept.event, id: read.id });
+        pendingBehindBy.set(read.id, kept.behind);
+        perNodeVerdict.set(read.id, 'off');
+        continue;
+      }
+      let list = groups.get(read.hash);
+      if (list === undefined) { list = []; groups.set(read.hash, list); }
+      list.push(read.id);
+    }
+    const triedPerHash = new Map<string, Set<string>>();
+    for (const h of groups.keys()) triedPerHash.set(h, new Set<string>());
+    const verifiedHashes = new Set<string>();
+    const urlToHash = new Map<string, string>();
+
+    while (!this.stopped) {
+      const passUrls: string[] = [];
+      // The own-tip URL first, while the chain is settled.
+      if (this.chain.settled()) {
+        const firstAtTip = this.firstNodeAtChainTip(placedAtTip);
+        if (firstAtTip !== null) passUrls.push(meshBaseUrl(firstAtTip));
+      }
+      // Next untried node for each hash still without a verified
+      // result.
+      let anyReplacement = false;
+      for (const [hash, ids] of groups) {
+        if (verifiedHashes.has(hash)) continue;
+        const tried = triedPerHash.get(hash)!;
+        const next = ids.find((id) => !tried.has(id));
+        if (next === undefined) continue;
+        tried.add(next);
+        const url = meshBaseUrl(next);
+        passUrls.push(url);
+        urlToHash.set(url, hash);
+        anyReplacement = true;
+      }
+      if (!anyReplacement) break;
+
+      // MESH_INTERFACE → "Two clocks" — the verifier reads the wall
+      // clock (`wallClock`); the node list keeps its monotonic clock
+      // for retries. A header's `createdAt` is wall-clock time.
+      const result = await this.resolveFn(
+        passUrls,
+        DEFAULT_M,
+        DEFAULT_K,
+        this.profile,
+        this.wallClock,
+        timedFetch,
+      );
+
+      const nowMs = this.clock();
+      for (const n of result.nodes) {
+        const nid = idOfMeshUrl(n.url);
+        pendingBehindBy.set(nid, n.behind);
+        const event = tipEvent(nid, n, nowMs);
+        this.applyEvent(event);
+
+        if (n.verified) {
+          const hash = urlToHash.get(n.url);
+          if (hash !== undefined) {
+            verifiedHashes.add(hash);
+            // Propagate the queried node's event to every other id
+            // that named the same hash.
+            const ids = groups.get(hash) ?? [];
+            const verdict: 'on' | 'off' = n.behind !== null ? 'on' : 'off';
+            perNodeVerdict.set(nid, verdict);
+            for (const otherId of ids) {
+              if (otherId === nid) continue;
+              this.applyEvent({ ...event, id: otherId });
+              pendingBehindBy.set(otherId, n.behind);
+              perNodeVerdict.set(otherId, verdict);
+            }
+            // MESH_INTERFACE → The client's node list → "A check" —
+            // a verified proof whose hash is not the winner's is a
+            // lost tip the client keeps the verdict of, so the next
+            // check needs no proof while the chain stands.
+            if (n.behind !== 0) {
+              this.keptVerdicts.set(hash, { event, behind: n.behind });
+            }
+          }
+        }
+      }
+
+      // MESH_INTERFACE → The client's node list → "The client's
+      // chain" — "The tip moves only by a header carrying its work on
+      // the client's chain, never by a node's word". A winner whose
+      // tip is held by the window — the chain's own tip, or a header
+      // below it that the window still keeps, as when gossip extended
+      // the chain while this proof read was in flight — is no switch;
+      // the chain stands. When the hash is not held, settle to the
+      // winner and re-place every tip this check read against the
+      // new chain.
+      if (result.winner !== null && result.tip !== null) {
+        const winnerTipHash = blockHash(result.tip);
+        if (winnerTipHash !== null
+            && this.chain.standing(winnerTipHash, result.tip.height) !== 'held') {
+          const vr = result.winner.verifyResult;
+          const proof = result.winner.proof;
+          if (vr !== null && vr.ok === true && proof !== null) {
+            const suffix: BlockHeader[] = [proof.suffixHead.header, ...proof.suffixTail];
+            this.chain.settle(suffix, vr.headers[0]!);
+            // MESH_INTERFACE → The client's node list → "A check" —
+            // the kept verdicts are dropped when the chain switches.
+            this.keptVerdicts.clear();
+            placedAtTip.clear();
+            for (const read of tipReads) {
+              if (read.hash === null) continue;
+              const newPlacement = this.chain.place(read.hash, read.height);
+              placements.set(read.id, newPlacement);
+              const chainTipNow = this.chain.tip();
+              if (newPlacement === 'tip') {
+                this.applyEvent({ id: read.id, ev: 'success' });
+                perNodeVerdict.set(read.id, 'on');
+                pendingBehindBy.set(read.id, 0);
+                placedAtTip.add(read.id);
+              } else if (newPlacement === 'one-below') {
+                this.applyEvent({ id: read.id, ev: 'trailing' });
+                perNodeVerdict.set(read.id, 'on');
+                pendingBehindBy.set(read.id, 1);
+              } else if (newPlacement === 'below') {
+                this.applyEvent({ id: read.id, ev: 'behind' });
+                perNodeVerdict.set(read.id, 'on');
+                pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
+              } else if (!verifiedHashes.has(read.hash)) {
+                // 'above', 'under' or 'unplaced' with no proof verdict
+                // of its own: reads `behind`.
+                this.applyEvent({ id: read.id, ev: 'behind' });
+                perNodeVerdict.set(read.id, 'off');
+              }
+              // else: hash has a proof verdict — keep its event/verdict.
+            }
+          }
+        }
+      }
+    }
+
     this.readMsMap = pendingReadMs;
     this.behindByMap = pendingBehindBy;
-    const nowMs = this.clock();
-    for (const ev of tipEvents(result, nowMs)) {
-      this.applyEvent(ev);
+
+    // MESH_INTERFACE → The client's node list → "A check" — the
+    // memory never outgrows the tips last seen: a hash leaves when
+    // no node named it at a check.
+    const seenHashes = new Set<string>();
+    for (const read of tipReads) {
+      if (read.hash !== null) seenHashes.add(read.hash);
+    }
+    for (const h of [...this.keptVerdicts.keys()]) {
+      if (!seenHashes.has(h)) this.keptVerdicts.delete(h);
     }
 
-    // Phase 5: the tip read, through the routed-read path. A `tip`
-    // read picks only `ok` nodes; `read` sets `state.nodeId` to the
-    // server on success and triggers a check on failure (a no-op
-    // during this one). `refreshTip`'s classification applies to the
-    // node that read went to.
+    // The routed tip read runs the classification so a failure or a lie
+    // moves the serving node (MESH_INTERFACE → The client's node list);
+    // `state.tip` is the client's chain's (→ "The client's chain"), set
+    // below.
     try {
       const tipRead = await this.read('/blocks/current', 'tip');
       await this.classifyTipRead(tipRead.response, tipRead.nodeId);
     } catch (e) {
-      // Only the read's own rejection — `MeshFetchError`, from a
-      // failed or unroutable read — reads as "no tip this round".
-      // Anything else came from inside classifyTipRead and is a bug;
-      // let it surface instead of hiding under `tip = null`.
-      if (e instanceof MeshFetchError) {
-        this.state_.tip = null;
-      } else {
-        throw e;
-      }
+      // A MeshFetchError (no allowed node, or a fetch failure) is a
+      // no-op here: state.tip comes from the chain. A throw from
+      // classifyTipRead itself is a bug — surface it.
+      if (!(e instanceof MeshFetchError)) throw e;
     }
 
     // After the check: name any node that was ok/trailing before and
@@ -805,13 +1321,26 @@ class MeshClientImpl implements MeshClient {
       };
     }
 
-    // The agreement counts from the latest check: anchors are read
-    // from the current entries so a hand-added trusted node counts.
+    // state.tip from the chain — never from a node's word.
+    const chainTip = this.chain.tip();
+    if (chainTip !== null) {
+      const h = blockHash(chainTip);
+      this.state_.tip = { height: chainTip.height, hash: h };
+    } else {
+      this.state_.tip = null;
+    }
+
+    // Agreement counts off the per-tip verdicts; anchors from the
+    // current entries so a hand-added trusted node counts.
     const anchorIds = new Set<string>();
     for (const e of this.nodeList.entries()) {
       if (e.anchor) anchorIds.add(e.notisId);
     }
-    this.state_.agreement = agreementCounts(result, anchorIds);
+    const entries: AgreementEntry[] = [];
+    for (const [id, verdict] of perNodeVerdict) {
+      entries.push({ verdict, anchor: anchorIds.has(id) });
+    }
+    this.state_.agreement = agreementCounts(entries);
 
     this.state_.anchorReached = this.nodeList.anchorReached();
     // MESH_INTERFACE → The client's node list → "A routed read goes
@@ -821,34 +1350,106 @@ class MeshClientImpl implements MeshClient {
     // that reads `checks > baseline` sees exactly one completed check.
     this.state_.checks += 1;
     this.emitStateChange();
-    return result;
   }
 
   /**
-   * MESH_INTERFACE → The client's node list → "A check" — "it times
-   * each node's proof read; that time is the node's speed until the
-   * next check." The wrapper runs the fetch and reads the body to
-   * its end before recording `readMs`, so a time to headers alone
-   * does not stand in for the transfer. A failed read leaves
-   * `readMs` unset. The target map is passed by the check so a
-   * fresh map holds the new readings while the live one still
-   * answers routed reads with the previous check's speeds.
+   * MESH_INTERFACE → The client's node list → "A check" — read a
+   * single header at `height` from `nodeId` through the timed fetch
+   * (`/blocks/<height>` → `headerBytes`), under the fill's own cap
+   * (`BLOCK_READ_BYTES`, the constants-table row). One of:
+   *   - `{ kind: 'header', header }` — the parsed header;
+   *   - `{ kind: 'failure', failureKind, message? }` — a fetch that
+   *     threw or timed out, or a non-2xx answer (the `retry` row of
+   *     "The client's node list");
+   *   - `{ kind: 'lie', detail }` — a body over the cap or that does
+   *     not parse, a missing `header`, or `headerFromJson` answering
+   *     `null` (the lie row of "The client's node list").
+   * The caller applies the failure or the lie to the serving node;
+   * `readHeaderAt` itself writes no event. The split
+   * `classifyTipRead` makes is shared through `classifyNonOkRead`.
+   */
+  private async readHeaderAt(
+    nodeId: string,
+    height: number,
+    timedFetch: HttpFetch,
+  ): Promise<HeaderReadResult> {
+    const url = meshBaseUrl(nodeId) + `/blocks/${String(height)}`;
+    let response: Response;
+    try {
+      response = await timedFetch(url, undefined);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { kind: 'failure', failureKind: 'transport', message };
+    }
+    const r = await readCappedJson<unknown>(response, BLOCK_READ_BYTES);
+    if (!r.ok) {
+      const c = classifyNonOkRead(r);
+      if (c.kind === 'lie') return { kind: 'lie', detail: c.detail };
+      return { kind: 'failure', failureKind: c.failureKind };
+    }
+    const data = r.data;
+    if (!isRecord(data)) return { kind: 'lie', detail: 'block JSON is not an object' };
+    const header = headerFromJson(data['header']);
+    if (header === null) return { kind: 'lie', detail: 'header shape invalid' };
+    return { kind: 'header', header };
+  }
+
+  /**
+   * The first node (by candidate rank) whose tip read THIS check placed
+   * `tip` against the final chain (MESH_INTERFACE → The client's node
+   * list → "A check"). A node still at the previous check's `ok` would
+   * be stale: the `under` reader and the own-tip prepend both want a
+   * node the chain has just placed at the tip.
+   */
+  private firstNodeAtChainTip(placedAtTip: ReadonlySet<string>): string | null {
+    for (const id of this.nodeList.candidates()) {
+      if (placedAtTip.has(id)) return id;
+    }
+    return null;
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "A check" — a check reads
+   * every candidate's tip, `GET /blocks/current`, timed from the
+   * request to the end of the body, and that time is the node's speed
+   * until the next check. Only a `/blocks/current` read's time ends up
+   * in the `readMs` target — the header reads for `above`/`under` and
+   * the proof reads for an unplaced tip go through the same wrapper
+   * but never overwrite a node's speed. The target map is a fresh one
+   * for each check so a routed read in flight still answers from the
+   * previous check's values until the swap at the end of the check.
+   *
+   * Traffic is cumulative over the client's life: a `/blocks/current`
+   * read's bytes land in `tipBytes`, a `/blocks/<n>` read's in
+   * `headerBytes`, a `/nipopow/proof/...` read's in `proofBytes`, and
+   * one `proofReads` fires at the start of each proof read.
    */
   private makeTimedFetch(target: Map<string, number>): HttpFetch {
     return async (url, init) => {
       const startMs = this.clock();
-      // The URL is a `meshBaseUrl(id)` + path from `resolveTip`'s
-      // candidates — `idOfMeshUrl` throwing here is a bug upstream, so
-      // the throw propagates.
+      // The URL is a `meshBaseUrl(id)` + path — `idOfMeshUrl` and
+      // `pathOfMeshUrl` throwing here is a bug upstream, so the throw
+      // propagates.
       const id = idOfMeshUrl(url);
+      const path = pathOfMeshUrl(url);
+      const bytesBucket: keyof ClientTraffic | null =
+        path === '/blocks/current' ? 'tipBytes'
+        : path.startsWith('/blocks/') ? 'headerBytes'
+        : path.startsWith('/nipopow/proof/') ? 'proofBytes'
+        : null;
+      if (path.startsWith('/nipopow/proof/')) {
+        this.state_.traffic.proofReads += 1;
+      }
+      const recordReadMs = path === '/blocks/current';
       const response = await this.fetch(url, init);
       if (!response.body) {
-        target.set(id, this.clock() - startMs);
+        if (recordReadMs) target.set(id, this.clock() - startMs);
         return response;
       }
       const original = response.body;
       const clock = this.clock;
       const nid = id;
+      const traffic = this.state_.traffic;
       const wrapped = new ReadableStream<Uint8Array>({
         start(controller) {
           const reader = original.getReader();
@@ -857,9 +1458,12 @@ class MeshClientImpl implements MeshClient {
               for (;;) {
                 const r = await reader.read();
                 if (r.done) {
-                  target.set(nid, clock() - startMs);
+                  if (recordReadMs) target.set(nid, clock() - startMs);
                   controller.close();
                   return;
+                }
+                if (bytesBucket !== null && r.value !== undefined) {
+                  traffic[bytesBucket] += r.value.length;
                 }
                 controller.enqueue(r.value);
               }
@@ -1078,27 +1682,29 @@ class MeshClientImpl implements MeshClient {
    * answer whose body does not parse, overflows the cap, or parses but
    * is not a tip moves it by `lie` of kind `malformed` — a malformed
    * answer over a link authenticated to the key is the contract's lie
-   * row. The classification applies to the node the read went to.
+   * row. The classification applies to the node the read went to. The
+   * returned shape tells the caller — the check's phase 2 — the tip
+   * height and hash for placement; the routed tip read discards it,
+   * since `state.tip` is the chain's below.
    */
-  private async classifyTipRead(response: Response, nodeId: string): Promise<void> {
+  private async classifyTipRead(
+    response: Response,
+    nodeId: string,
+  ): Promise<TipClassification> {
     const r = await readCappedJson<unknown>(response, HEIGHT_READ_BYTES);
     const nowMs = this.clock();
     if (!r.ok) {
-      if (isBodyLevelFailure(r)) {
+      const c = classifyNonOkRead(r);
+      if (c.kind === 'lie') {
         this.applyEvent({
           id: nodeId,
           ev: 'lie',
-          evidence: { kind: 'malformed', atMs: nowMs, detail: r.body },
+          evidence: { kind: 'malformed', atMs: nowMs, detail: c.detail },
         });
-        return;
+        return { kind: 'lie' };
       }
-      if (r.status === 0) {
-        const kind: FailureKind = r.timedOut === true ? 'timeout' : 'transport';
-        this.applyEvent({ id: nodeId, ev: 'failure', kind });
-        return;
-      }
-      this.applyEvent({ id: nodeId, ev: 'failure', kind: 'refused' });
-      return;
+      this.applyEvent({ id: nodeId, ev: 'failure', kind: c.failureKind });
+      return { kind: 'failure' };
     }
     if (!isTipShape(r.data)) {
       this.applyEvent({
@@ -1106,9 +1712,31 @@ class MeshClientImpl implements MeshClient {
         ev: 'lie',
         evidence: { kind: 'malformed', atMs: nowMs, detail: 'tip shape invalid' },
       });
-      return;
+      return { kind: 'lie' };
     }
-    this.state_.tip = { height: r.data.height, hash: r.data.hash };
+    return { kind: 'tip', height: r.data.height, hash: r.data.hash };
+  }
+
+  /**
+   * Apply a `readHeaderAt` failure or lie to the serving node: a
+   * failure moves it by `applyEvent({ ev: 'failure', ... })` (the
+   * `retry` row of MESH_INTERFACE → The client's node list), a lie
+   * by a `malformed` evidence (the lie row). The caller leaves the
+   * tip unplaced.
+   */
+  private applyHeaderReadFailure(
+    nodeId: string,
+    result: Extract<HeaderReadResult, { kind: 'failure' } | { kind: 'lie' }>,
+  ): void {
+    if (result.kind === 'failure') {
+      this.applyEvent({ id: nodeId, ev: 'failure', kind: result.failureKind, message: result.message });
+    } else {
+      this.applyEvent({
+        id: nodeId,
+        ev: 'lie',
+        evidence: { kind: 'malformed', atMs: this.clock(), detail: result.detail },
+      });
+    }
   }
 
   private handleDiscovery(detail: { id: PeerId; multiaddrs: Multiaddr[] }): void {
@@ -1143,6 +1771,49 @@ class MeshClientImpl implements MeshClient {
 
 function isBodyLevelFailure(r: NodeError): boolean {
   return r.body.startsWith(BODY_OVER_CAP) || r.body.startsWith(BODY_UNPARSEABLE);
+}
+
+/**
+ * MESH_INTERFACE → The client's node list — the split a non-ok
+ * `NodeResult` reads into: a `malformed` lie (a body over its cap or
+ * that does not parse), or a failure of kind `timeout`, `transport`
+ * or `refused` (the `retry` row of the table). Shared by the two
+ * reads the client makes under this table — `classifyTipRead` and
+ * `readHeaderAt`.
+ */
+function classifyNonOkRead(
+  r: NodeError,
+): { kind: 'lie'; detail: string } | { kind: 'failure'; failureKind: FailureKind } {
+  if (isBodyLevelFailure(r)) return { kind: 'lie', detail: r.body };
+  if (r.status === 0) {
+    return { kind: 'failure', failureKind: r.timedOut === true ? 'timeout' : 'transport' };
+  }
+  return { kind: 'failure', failureKind: 'refused' };
+}
+
+type TipClassification =
+  | { kind: 'tip'; height: number; hash: string | null }
+  | { kind: 'failure' }
+  | { kind: 'lie' };
+
+type HeaderReadResult =
+  | { kind: 'header'; header: BlockHeader }
+  | { kind: 'failure'; failureKind: FailureKind; message?: string }
+  | { kind: 'lie'; detail: string };
+
+/**
+ * The path portion of a mesh URL — everything from the first `/`
+ * after the `notis-mesh://<id>` prefix, or the empty string when
+ * there is no path (`meshBaseUrl(id)` alone). Throws `MeshUrlError`
+ * on anything other than a mesh URL — `idOfMeshUrl` does the same
+ * for the id.
+ */
+function pathOfMeshUrl(url: string): string {
+  const SCHEME = 'notis-mesh://';
+  if (!url.startsWith(SCHEME)) return '';
+  const rest = url.slice(SCHEME.length);
+  const slash = rest.indexOf('/');
+  return slash === -1 ? '' : rest.slice(slash);
 }
 
 /**
@@ -1461,10 +2132,11 @@ export function pickConnectionForLabel(
 
 /**
  * MESH_INTERFACE → The client's node list → "A read opens no
- * connection" — "an open one, a direct one first, never a limited
- * one". The strict read pick: `pickConnectionForLabel`'s result,
- * refused when it is limited. The shared part — open, right peer,
- * direct first, unlimited preferred — lives in the label pick.
+ * connection" — "an open one, a direct one first, a relayed one when
+ * that is all there is, never a limited one". The strict read pick:
+ * `pickConnectionForLabel`'s result, refused when it is limited. The
+ * shared part — open, right peer, direct first, unlimited preferred —
+ * lives in the label pick.
  */
 export function pickConnectionForRead(
   connections: readonly Connection[],

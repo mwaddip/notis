@@ -31,6 +31,12 @@ import { buildPageConfig, buildIdentitiesOut, peerIdStringOf } from './lib/confi
 import { generateStageCerts } from './lib/pebble-certs.mjs';
 import { buildPebbleConfig } from './lib/pebble-config.mjs';
 import { descendantPids } from './lib/measure.mjs';
+import {
+  HOSTILE_FORK_PAIR,
+  partnerOf,
+  notisBootstrapPeersFor,
+  buildPairCutArgs,
+} from './lib/hostile-fork-pair.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -39,8 +45,9 @@ const OUT_DIR = join(HERE, 'out');
 const CACHE_DIR = join(HERE, 'cache');
 const TOPOLOGY_PATH = join(HERE, 'topology.json');
 
-// MESH_INTERFACE → Acceptance — "every stage process ... Node that is
-// running `up`". `process.execPath` is Node 24's absolute path on this
+// MESH_INTERFACE → Acceptance — every stage process spawns on the Node
+// that is running this script, so a dry-run writes the Node binary it
+// will run. `process.execPath` is Node 24's absolute path on this
 // machine; `env` passes it through `sudo -u` without going near sudo's
 // `secure_path` (which would resolve `node` to the host's older binary).
 const NODE_ABS = process.execPath;
@@ -52,9 +59,8 @@ if (!INVOKING_USER) {
 
 // MESH_INTERFACE → Acceptance — Pebble v2.8.0's linux-amd64 release as the
 // tar.gz archive the project publishes; the inner binary is at
-// `pebble-linux-amd64/linux/amd64/pebble`. The SHA-256 was computed by
-// downloading the archive once (see `prompts/mesh-poc-t9-REPORT.md` for
-// the URL and the command).
+// `pebble-linux-amd64/linux/amd64/pebble`. The SHA-256 is the archive's at
+// `PEBBLE_URL`.
 const PEBBLE_VERSION = 'v2.8.0';
 const PEBBLE_URL = `https://github.com/letsencrypt/pebble/releases/download/${PEBBLE_VERSION}/pebble-linux-amd64.tar.gz`;
 const PEBBLE_SHA256 = '34595d915bbc2fc827affb3f58593034824df57e95353b031c8d5185724485ce';
@@ -86,11 +92,12 @@ function assertNoStageNamespaces(dryRun) {
   }
 }
 
-// MESH_INTERFACE → Acceptance — "every stage process ... as the invoking
-// user ... the Node that is running `up`". `userNode(args, env)` is one
-// `sudo -u <user> -- env ...` wrap, so every spawn line in the dry-run says
-// which user and which Node binary; the host's older `/usr/bin/node`, which
-// `secure_path` would resolve to under a plain `sudo node`, never runs.
+// MESH_INTERFACE → Acceptance — every stage process runs as the
+// invoking user, on the Node that is running this script.
+// `userNode(args, env)` is one `sudo -u <user> -- env ...` wrap, so
+// every spawn line in the dry-run says which user and which Node binary;
+// the host's older `/usr/bin/node`, which `secure_path` would resolve
+// to under a plain `sudo node`, never runs.
 function userEnv(env) {
   const out = [];
   for (const [k, v] of Object.entries(env)) out.push(`${k}=${v}`);
@@ -722,6 +729,7 @@ const notisNodeEntry = join(REPO_ROOT, 'packages', 'node', 'dist', 'index.js');
 const minerScript = join(REPO_ROOT, 'packages', 'node', 'scripts', 'miner.mjs');
 const meshNodeEntry = join(PACKAGE_ROOT, 'dist', 'node', 'main.js');
 const hostileUpstreamScript = join(HERE, 'hostile-upstream.mjs');
+const hostileGossipScript = join(HERE, 'hostile-gossip.mjs');
 
 const pub1Host = topology.hosts.pub1;
 const pub1Base = `http://${pub1Host.addr}:${pub1Host.node.httpPort}`;
@@ -733,12 +741,38 @@ const pub1Base = `http://${pub1Host.addr}:${pub1Host.node.httpPort}`;
 // the topology alone.
 const meshIdentityPromises = {};
 
+// MESH_INTERFACE → Acceptance 8 — a node on another chain has its proof
+// read when its tip moves, with the client's own, and the client's tip
+// stays the honest chain's / MINING_INTERFACE → "The peer-readiness
+// gate" — the hostile fork pair (`hostile-lagging`,
+// `hostile-malformed`) grows a chain of its own from genesis. The
+// per-host `lag_cut` is applied here, BEFORE either pair host's Notis
+// node spawns, so the pair's p2p port never sees a packet from an
+// honest host: each host's `lag_cut` accepts the partner's addr + p2p
+// port, and drops everything else on the p2p port, on both the output
+// and input chain. The pair's Notis env below names the partner alone
+// in `BOOTSTRAP_PEERS` (never pub1), so the pair never dials an honest
+// node either.
+const laggingHostCfg = topology.hosts['hostile-lagging'];
+const malformedHostCfg = topology.hosts['hostile-malformed'];
+if (laggingHostCfg && malformedHostCfg) {
+  for (const { argv } of buildPairCutArgs(topology)) {
+    log.shell(argv[0], argv.slice(1), { privileged: true });
+  }
+}
+
 // Notis nodes come first — their p2p port is what the mesh nodes'
 // upstream URL points at (through 127.0.0.1 inside each namespace).
+// MESH_INTERFACE → Acceptance 8 — the hostile fork pair's Notis
+// `BOOTSTRAP_PEERS` names the partner alone (no pub1), so the pair's
+// nodes start from genesis with no path to the honest chain —
+// `notisBootstrapPeersFor` picks the partner for a pair host and
+// `pub1Addr` for every other host.
 for (const [name, host] of Object.entries(topology.hosts)) {
   if (host.node === undefined) continue;
   const ns = nsOf(name);
   const dbPath = join(OUT_DIR, name, 'notis.db');
+  const pub1Addr = `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}`;
   const notisEnv = {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: host.node.role,
@@ -746,7 +780,7 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     ADMIN_PORT: String(host.node.httpPort + 1),
     DB_PATH: dbPath,
     LISTEN_ADDRS: `/ip4/${host.addr}/tcp/${host.node.p2pPort}`,
-    BOOTSTRAP_PEERS: `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}`,
+    BOOTSTRAP_PEERS: notisBootstrapPeersFor(topology, name, pub1Addr),
     MINING_SECRET: 'stage-mining-secret',
   };
   log.spawn(userWrap(ns, notisEnv).concat([notisNodeEntry]), { description: `notis:${name}`, logPath: logPathFor(`notis:${name}`) });
@@ -795,9 +829,9 @@ function startMeshNodeForHost(name, host) {
     const pubPeerId = peerIdStringOf(notisIds[pubName]);
     bootstrapAddrs.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}`);
   }
-  // MESH_INTERFACE → NAT — "A private node ... takes relay
-  // reservations on public nodes". libp2p 3.5's circuit-relay
-  // listener (`@libp2p/circuit-relay-v2/src/transport/listener.ts`)
+  // MESH_INTERFACE → NAT — a private node takes a relay reservation on
+  // each public node it is told of. libp2p 3.5's circuit-relay listener
+  // (`@libp2p/circuit-relay-v2/src/transport/listener.ts`)
   // reserves on a named relay when the listen address names it, and
   // does a non-deterministic RelayDiscovery walk when the listen
   // address is bare `/p2p-circuit`. One specific listen address per
@@ -810,21 +844,36 @@ function startMeshNodeForHost(name, host) {
       if (pubName === name) continue;
       const pubPeerId = peerIdStringOf(notisIds[pubName]);
       circuitListens.push(`/ip4/${pubHost.addr}/tcp/${pubHost.mesh.tcpPort}/p2p/${pubPeerId}/p2p-circuit`);
-      // MESH_INTERFACE → NAT — "every STUN server is a mesh node
-      // named by IP". A private node gathers ICE candidates against
-      // the public mesh nodes' STUN by IP for its WebRTC
-      // reservations.
+      // MESH_INTERFACE → NAT — "Every STUN server is a mesh node named
+      // by IP". A private node gathers ICE candidates against the
+      // public mesh nodes' STUN by IP for its WebRTC reservations.
       if (pubHost.mesh.stunPort !== undefined) {
         stunServers.push(`stun:${pubHost.addr}:${pubHost.mesh.stunPort}`);
       }
     }
   }
+  // MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer
+  // of its own node" — a mesh node beside a Notis node dials its
+  // node's libp2p TCP address, named with no `/p2p/` component. The
+  // pair hostiles (`hostile-lagging`, `hostile-malformed`) are the
+  // one exception: their mesh service carries NO `MESH_NODE_P2P` so
+  // it joins the browser's gossip but never gossips its node's own
+  // blocks — otherwise the pair's chain would reach the browser by
+  // gossip and (through the honest hosts' mesh services) propagate
+  // onto the honest network, contradicting step 3's "a node on
+  // another chain" setup where the client reads the pair's tip only
+  // by proof (MESH_INTERFACE → Block gossip → "A mesh service is a
+  // gossip peer of its own node").
+  const nodeP2p = host.node !== undefined && partnerOf(name) === null
+    ? `/ip4/${host.addr}/tcp/${host.node.p2pPort}`
+    : undefined;
   const meshEnv = {
     MESH_KEY_PATH: meshKeyPath,
     MESH_NETWORK: 'devnet',
     MESH_ROLE: host.mesh.role,
     MESH_STATE_DIR: meshStateDir,
     MESH_UPSTREAM: upstream,
+    ...(nodeP2p !== undefined ? { MESH_NODE_P2P: nodeP2p } : {}),
     // MESH_INTERFACE → NAT — "A public node announces its listen
     // addresses from the start" with concrete-port WebRTC-direct and
     // TCP addresses on its own IP; a private node listens on its own
@@ -852,7 +901,14 @@ function startMeshNodeForHost(name, host) {
     } : {}),
   };
   const meshLogPath = logPathFor(`mesh:${name}`);
-  const meshChild = log.spawn(userWrap(ns, meshEnv).concat([meshNodeEntry]), { description: `mesh:${name}`, logPath: meshLogPath });
+  // MESH_INTERFACE → Acceptance 6 → "A mesh node publishing a block
+  // that fails its checks is blacklisted with its evidence" — a
+  // publisher host runs `hostile-gossip.mjs` instead of the ordinary
+  // mesh node entry; both share the same env shape and identity-line
+  // output, so the stage's identity-reading predicate reaches the
+  // publisher unchanged.
+  const entryScript = host.mesh.publisher === true ? hostileGossipScript : meshNodeEntry;
+  const meshChild = log.spawn(userWrap(ns, meshEnv).concat([entryScript]), { description: `mesh:${name}`, logPath: meshLogPath });
   if (!dryRun) {
     // The mesh node's stdout is a file; tail it until the first JSON
     // identity line that satisfies its role's predicate (a public
@@ -866,9 +922,9 @@ function startMeshNodeForHost(name, host) {
     // node, request a reservation, and wait for the relay to grant
     // one. 120 s covers the slowest of these on the stage.
     const identityTimeoutMs = host.mesh.role === 'private' ? 120_000 : 60_000;
-    // MESH_INTERFACE → NAT — the private node reserves on each
-    // circuit listen address. A timeout here is "none of these
-    // reserved in time"; the error message names the relays the node
+    // MESH_INTERFACE → NAT — the private node reserves on each circuit
+    // listen address. A timeout here means none of its named relays
+    // reserved in time; the error message names the relays the node
     // was told to try so a reader sees what the attempt was.
     const circuitListensSnapshot = [...circuitListens];
     meshIdentityPromises[name] = readMeshIdentityUntil(meshChild, meshLogPath, predicate, { timeoutMs: identityTimeoutMs })
@@ -922,14 +978,15 @@ if (!dryRun) {
 }
 
 // -----------------------------------------------------------------------
-// Phase 8: miner inside pub1, wait for height, cut off hostile-lagging
+// Phase 8: miners inside pub1 and hostile-lagging, wait for height
 // -----------------------------------------------------------------------
 
 // MESH_INTERFACE → Acceptance — the miner reads `pub1`'s HTTP; pub1's HTTP
 // binds pub1's namespace loopback, so the miner runs inside notismesh-pub1.
 // `MINER_PCT=100` while the chain reaches height 50; after the height
 // wait the boot miner is replaced by a `miner-steady` at
-// `MINER_PCT=10`, which keeps the chain growing so `hostile-lagging`
+// `MINER_PCT=2`, a 2 % duty cycle that keeps the chain growing while
+// leaving the stage's checks ample room to measure, so `hostile-lagging`
 // falls further behind without burning a core for the whole run.
 const minerBootChild = log.spawn(userWrap(nsOf('pub1'), {
   NODE_URL: `http://127.0.0.1:${pub1Host.node.httpPort}`,
@@ -937,14 +994,38 @@ const minerBootChild = log.spawn(userWrap(nsOf('pub1'), {
   MINER_PCT: '100',
 }).concat([minerScript]), { description: 'miner-boot', logPath: logPathFor('miner-boot') });
 
+// MESH_INTERFACE → Acceptance 8 — a node on another chain has its
+// proof read when its tip moves, with the client's own, and the
+// client's tip stays the honest chain's. The pair's chain grows from
+// genesis, starting the moment the pair's Notis nodes come up — the
+// pair cut landed BEFORE spawn, so no honest block ever lands on either
+// pair host. `miner-lagging-boot` runs at `MINER_PCT=100` until the
+// pair's node reads height ≥ 50 (as the honest boot does on pub1),
+// then is replaced by `miner-lagging` at `MINER_PCT=1` — half the
+// honest chain's steady duty, so the pair's chain stays lighter
+// however long the run goes.
+const minerLaggingBootChild = laggingHostCfg !== undefined
+  ? log.spawn(userWrap(nsOf('hostile-lagging'), {
+      NODE_URL: `http://127.0.0.1:${laggingHostCfg.node.httpPort}`,
+      MINING_SECRET: 'stage-mining-secret',
+      MINER_PCT: '100',
+    }).concat([minerScript]), { description: 'miner-lagging-boot', logPath: logPathFor('miner-lagging-boot') })
+  : null;
+
 const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2', 'lan1'];
+const pairHeightTargetHost = laggingHostCfg !== undefined ? ['hostile-lagging'] : [];
 recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
+if (pairHeightTargetHost.length > 0) {
+  recordWait(`the pair's node reads /blocks/current.height >= 50: ${pairHeightTargetHost.join(', ')}`);
+}
 if (!dryRun) {
   // Each honest node is polled inside its own namespace as the user —
   // the host has no route into the stage, and the user has no privilege
-  // beyond what `ip netns exec` grants in that namespace.
+  // beyond what `ip netns exec` grants in that namespace. The pair's
+  // own chain is polled alongside: hostile-lagging reads its own
+  // chain's height, which the pair miner is pushing in parallel.
   const HEIGHT_TARGET = 50;
-  await Promise.all(honestHeightTargetHost.map(async (name) => {
+  await Promise.all([...honestHeightTargetHost, ...pairHeightTargetHost].map(async (name) => {
     const host = topology.hosts[name];
     const port = host.node.httpPort;
     let lastHeight = null;
@@ -969,11 +1050,14 @@ if (!dryRun) {
 }
 
 // MESH_INTERFACE → Acceptance — stop the 100 %-duty boot miner and
-// restart at `MINER_PCT=10`, chosen so the chain still grows at ~1
-// block per 10 s on this devnet (the miner script's duty cycle is a
-// percentage of CPU time, so 10 % keeps roughly one block in flight
-// per 10 s on a single core). A seven-hour run at that duty uses
-// ~0.1 cores on average rather than one full core.
+// restart at `MINER_PCT=2`: a 2 % duty cycle keeps the chain growing
+// without burning a core, and leaves blocks spread over seconds, not
+// milliseconds, so each check the stage runs sees a settled view
+// between arrivals. Devnet's difficulty target sits at its ceiling
+// (`orderingBlockPowTargetCeilingBits`), so the duty cycle alone
+// paces the chain. The ratio to `miner-lagging` matters: the honest
+// chain's duty is twice the pair's chain, so the honest tip stays
+// the heavier chain.
 if (!dryRun && minerBootChild !== null) {
   try { process.kill(minerBootChild.pid, 'SIGTERM'); } catch { /* already gone */ }
   // Drop the boot miner's pid from the recorded list so `down` does
@@ -984,23 +1068,30 @@ if (!dryRun && minerBootChild !== null) {
 log.spawn(userWrap(nsOf('pub1'), {
   NODE_URL: `http://127.0.0.1:${pub1Host.node.httpPort}`,
   MINING_SECRET: 'stage-mining-secret',
-  MINER_PCT: '10',
+  MINER_PCT: '2',
 }).concat([minerScript]), { description: 'miner-steady', logPath: logPathFor('miner-steady') });
 
-// MESH_INTERFACE → The client's node list — `hostile-lagging`'s mesh node
-// stays up and reachable; only its Notis node is cut off from the other
-// Notis nodes' p2p port, so scenario 6b's "behind, never blacklisted" sees
-// a mesh node that serves a valid proof of a lighter chain. The cut is
-// applied AFTER the height wait, so the lagging node is behind from a
-// synced start.
-const laggingHost = topology.hosts['hostile-lagging'];
-if (laggingHost) {
-  const laggingP2pPort = laggingHost.node.p2pPort;
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'table', 'ip', 'lag_cut'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'chain', 'ip', 'lag_cut', 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'rule', 'ip', 'lag_cut', 'out', 'tcp', 'dport', String(laggingP2pPort), 'drop'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'chain', 'ip', 'lag_cut', 'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', '}'], { privileged: true });
-  log.shell('sudo', ['ip', 'netns', 'exec', nsOf('hostile-lagging'), 'nft', 'add', 'rule', 'ip', 'lag_cut', 'in', 'tcp', 'sport', String(laggingP2pPort), 'drop'], { privileged: true });
+// MESH_INTERFACE → Acceptance 8 — stop the pair's 100 %-duty boot
+// miner and restart at `MINER_PCT=1`, half the honest chain's steady
+// duty. The pair's chain stays strictly lighter however long the run
+// goes. The two chains share no block, so `compareProofs` answers
+// `incomparable / no-common-ancestor` (NIPOPOW_INTERFACE →
+// compareProofs); `resolveTip` keeps the client's own tip's proof,
+// handed to it first (MESH_INTERFACE → The client's node list →
+// "A check"), and the lagging node's tip, not on the client's chain,
+// reads `behind` (→ The client's node list). `down` ends the recorded
+// tree the same way it ends `miner-steady`.
+if (!dryRun && minerLaggingBootChild !== null) {
+  try { process.kill(minerLaggingBootChild.pid, 'SIGTERM'); } catch { /* already gone */ }
+  const idx = log.pids.findIndex((e) => e.description === 'miner-lagging-boot');
+  if (idx >= 0) log.pids.splice(idx, 1);
+}
+if (laggingHostCfg !== undefined) {
+  log.spawn(userWrap(nsOf('hostile-lagging'), {
+    NODE_URL: `http://127.0.0.1:${laggingHostCfg.node.httpPort}`,
+    MINING_SECRET: 'stage-mining-secret',
+    MINER_PCT: '1',
+  }).concat([minerScript]), { description: 'miner-lagging', logPath: logPathFor('miner-lagging') });
 }
 
 // -----------------------------------------------------------------------
@@ -1081,10 +1172,10 @@ if (!dryRun) {
   mkdirSync(dirname(configPath), { recursive: true });
   const configBody = JSON.stringify(pageConfig, null, 2);
   writeFileSync(configPath, configBody);
-  // MESH_INTERFACE → Acceptance — "Every scenario writes the config
-  // it needs at its start — the stage's default when it needs no
-  // variant — and never reads a previous scenario's". The canonical
-  // default is kept alongside `config.json` so a no-variant scenario
+  // MESH_INTERFACE → Acceptance — every scenario writes the config it
+  // needs at its start — the stage's default when it needs no variant
+  // — and reads no previous scenario's. The canonical default is kept
+  // alongside `config.json` so a no-variant scenario
   // can copy it before opening a page; a variant scenario builds its
   // variant from this same bytes-for-bytes copy.
   writeFileSync(join(dirname(configPath), 'config.default.json'), configBody);
@@ -1176,13 +1267,20 @@ const CHROMIUM_QUIET_FLAGS = [
 // `net::ERR_NAME_NOT_RESOLVED`.
 const internetSubnetPrefix = topology.internet.subnet.replace(/\.0\/\d+$/, '.*');
 const CHROMIUM_HOST_RESOLVER_RULES = `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE ${internetSubnetPrefix}`;
+// MESH_INTERFACE → Block gossip → "A router scores its peers by
+// gossipsub's defaults" — the IP colocation penalty counts every peer
+// behind one NAT address for an hour, so a Chromium start page that
+// loads the stage page keeps a mesh peer alive for the whole run and
+// bends every subsequent scenario's scores. The start page is
+// `about:blank`; scenarios open their own targets at the stage URL
+// through `cdp.mjs`, each closed when the scenario is done with it.
 log.spawn(userWrap(nsOf('browser'), { HOME: browserProfileHome, DISPLAY: process.env.DISPLAY ?? ':0' }, chromiumBin).concat([
   '--headless=new',
   `--user-data-dir=${browserProfileDir}`,
   ...CHROMIUM_QUIET_FLAGS,
   CHROMIUM_HOST_RESOLVER_RULES,
   '--remote-debugging-port=9222',
-  `http://localhost:${browserHost.httpPort}/`,
+  'about:blank',
 ]), { description: 'chromium', logPath: logPathFor('chromium') });
 
 recordWait('chromium CDP answers http://127.0.0.1:9222/json/version');

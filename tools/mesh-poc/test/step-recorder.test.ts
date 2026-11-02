@@ -1,6 +1,7 @@
-// MESH_INTERFACE → Acceptance — "A step that times out or throws is
-// recorded `FAIL` with its last measured value and the error, the
-// scenario's faults are removed, and the run goes on to the next step".
+// MESH_INTERFACE → Acceptance — a step that times out or throws is
+// recorded as a failure with its last measured value and the error,
+// the scenario's faults are removed, and the run goes on to the next
+// step.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StepRecorder } from '../stage/lib/step-recorder.mjs';

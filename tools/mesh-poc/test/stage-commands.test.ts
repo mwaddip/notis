@@ -138,12 +138,12 @@ describe('stage/lib/commands.mjs', () => {
       });
     });
 
-    // MESH_INTERFACE → Acceptance — "up records each process's full
-    // argv and environment in pids.json so a scenario can restart it
-    // as it was". The entry's `argv` carries every element of the
-    // spawn's argvFull; `env` carries only the explicit vars the
-    // spawner passed, so a restart picks up the current process's
-    // PATH and HOME as a fresh `up` would.
+    // MESH_INTERFACE → Acceptance — the stage records each process's
+    // full argv and environment in pids.json so a scenario can
+    // restart it as it was. The entry's `argv` carries every element
+    // of the spawn's argvFull; `env` carries only the explicit vars
+    // the spawner passed, so a restart picks up the current process's
+    // PATH and HOME as the stage's startup would.
     it('records argv and env on each pid entry so a scenario can restart it', () => {
       const log = new CommandLog({ dryRun: false });
       const logPath = join(dir, 'test-argv.log');

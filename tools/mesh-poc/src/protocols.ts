@@ -44,3 +44,11 @@ export const FAST_SET_SLACK_MS: 50 = 50;
  * the constants table.
  */
 export const STUN_SERVERS_MAX: 3 = 3;
+/**
+ * MESH_INTERFACE → The client's node list — "`BLOCK_READ_BYTES`
+ * | `8_388_608` | 8 MiB, the cap on a fill's `GET /blocks/:height`".
+ * The fill reads a block's whole JSON for its header; the body carries
+ * the ordering block's list entries beside it, so the cap is argued
+ * from `MAX_BLOCK_BODY_BYTES` and not from the header's own size.
+ */
+export const BLOCK_READ_BYTES: 8_388_608 = 8_388_608;

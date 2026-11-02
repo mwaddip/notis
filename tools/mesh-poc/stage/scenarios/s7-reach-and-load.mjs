@@ -27,7 +27,7 @@
 //     (c) the same with `trusted: false` — same reach, `anchorReached:
 //       false` (`verdictS7Lan`).
 //   4. the counts — on the stage default after a completed check:
-//     `agreement.agreeing >= 2`, `agreement.agreeingAnchors >= 1`
+//     `agreement.onChain >= 2`, `agreement.onChainAnchors >= 1`
 //     (`verdictS7Counts`).
 //
 // Faults are applied inside `run(ctx)` one at a time and the
@@ -57,7 +57,7 @@ export function describe() {
     'older reads spread across ≥ 2 nodes; tip reads only on ok nodes',
     'pub2 delayed 200ms serves no read',
     'lan1 is never dialled from a seed; by hand it is reached, anchorReached follows the trusted flag',
-    'the agreement counts hold agreeing ≥ 2 and agreeingAnchors ≥ 1',
+    'the agreement counts hold onChain ≥ 2 and onChainAnchors ≥ 1',
   ];
 }
 

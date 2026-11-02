@@ -3,10 +3,8 @@
 // "With no public node held the list is empty, and the ICE
 // configuration names no server." The pure derivation and the
 // client's own ICE configuration both answer the derived list, and
-// the fallback is `{ iceServers: [] }`, never `undefined` (traps file,
-// "The mesh and its stage" → "`webRTCDirect()` with no
-// `rtcConfiguration.iceServers` uses libp2p's DNS-named STUN
-// defaults").
+// the fallback is `{ iceServers: [] }`, never `undefined`, which
+// `webRTCDirect()` reads as libp2p's DNS-named STUN defaults.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { profileFor, generateKeyPair } from '@dagsocial/types';

@@ -5,11 +5,11 @@
 // `unreachable` → failure 'transport'; `http` → failure 'refused';
 // `invalid` with a proof → lie 'proof-invalid'; `invalid` without a proof
 // → lie 'malformed'. An unknown `refuseCode` is a change to read, not to
-// guess: `tipEvents` throws.
+// guess: `tipEvent` throws.
 
 import { describe, it, expect } from 'vitest';
-import { tipEvents, type TipEvent } from '../src/client/tip-events.js';
-import { meshBaseUrl } from '../src/mesh-url.js';
+import { tipEvent, type TipEvent } from '../src/client/tip-events.js';
+import { meshBaseUrl, idOfMeshUrl } from '../src/mesh-url.js';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
 const idA = 'a'.repeat(64);
@@ -41,19 +41,24 @@ function result(nodes: NodeTipResult[], winnerIndex: number): TipResult {
   };
 }
 
-describe('tipEvents', () => {
+// One event per node, each through `tipEvent`.
+function eventsOf(r: TipResult, nowMs: number): TipEvent[] {
+  return r.nodes.map((n) => tipEvent(idOfMeshUrl(n.url), n, nowMs));
+}
+
+describe('tipEvent', () => {
   it('the winner answers success', () => {
     const r = result([node(idA, { verified: true, refuseCode: null, behind: 0 })], 0);
-    const events = tipEvents(r, 100);
+    const events = eventsOf(r, 100);
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'success' }]);
   });
 
   it('a tie with the winner is success, not behind', () => {
-    // MESH_INTERFACE → The client's node list — "A valid proof whose
-    // tip is the tip — the best verified proof's, a tie included"
-    // reads `ok`. `resolveTip` writes `behind === 0` for every
-    // verified node whose tip the winner's suffix carries at distance
-    // 0, winner included.
+    // MESH_INTERFACE → The client's node list — the node-list table's
+    // first row: a tip the client's chain already holds at the tip
+    // reads `ok`, the winner and every verified tie with it.
+    // `resolveTip` writes `behind === 0` for every verified node whose
+    // tip the winner's suffix carries at distance 0, winner included.
     const r = result(
       [
         node(idA, { verified: true, refuseCode: null, behind: 0 }),
@@ -61,7 +66,7 @@ describe('tipEvents', () => {
       ],
       0,
     );
-    const events = tipEvents(r, 100);
+    const events = eventsOf(r, 100);
     expect(events).toEqual<TipEvent[]>([
       { id: idA, ev: 'success' },
       { id: idB, ev: 'success' },
@@ -76,7 +81,7 @@ describe('tipEvents', () => {
       ],
       0,
     );
-    const events = tipEvents(r, 100);
+    const events = eventsOf(r, 100);
     expect(events).toEqual<TipEvent[]>([
       { id: idA, ev: 'success' },
       { id: idB, ev: 'trailing' },
@@ -95,7 +100,7 @@ describe('tipEvents', () => {
       ],
       0,
     );
-    const events = tipEvents(r, 100);
+    const events = eventsOf(r, 100);
     expect(events).toEqual<TipEvent[]>([
       { id: idA, ev: 'success' },
       { id: idB, ev: 'behind' },
@@ -108,7 +113,7 @@ describe('tipEvents', () => {
       [node(idA, { verified: false, refuseCode: 'too-short', refuseReason: 'chain too short' })],
       -1,
     );
-    const events = tipEvents(r, 100);
+    const events = eventsOf(r, 100);
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'behind' }]);
   });
 
@@ -117,7 +122,7 @@ describe('tipEvents', () => {
       [node(idA, { verified: false, refuseCode: 'unreachable', refuseReason: 'unreachable: xyz' })],
       -1,
     );
-    const events = tipEvents(r, 100);
+    const events = eventsOf(r, 100);
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'failure', kind: 'transport', message: 'unreachable: xyz' }]);
   });
 
@@ -126,7 +131,7 @@ describe('tipEvents', () => {
       [node(idA, { verified: false, refuseCode: 'http', refuseReason: 'HTTP 500: x' })],
       -1,
     );
-    const events = tipEvents(r, 100);
+    const events = eventsOf(r, 100);
     expect(events).toEqual<TipEvent[]>([{ id: idA, ev: 'failure', kind: 'refused', message: 'HTTP 500: x' }]);
   });
 
@@ -144,7 +149,7 @@ describe('tipEvents', () => {
       ],
       -1,
     );
-    const events = tipEvents(r, 42);
+    const events = eventsOf(r, 42);
     expect(events).toEqual<TipEvent[]>([
       {
         id: idA,
@@ -166,7 +171,7 @@ describe('tipEvents', () => {
       ],
       -1,
     );
-    const events = tipEvents(r, 55);
+    const events = eventsOf(r, 55);
     expect(events).toEqual<TipEvent[]>([
       {
         id: idA,
@@ -185,7 +190,7 @@ describe('tipEvents', () => {
       ],
       0,
     );
-    const events = tipEvents(r, 1);
+    const events = eventsOf(r, 1);
     expect(events.map((e) => e.id)).toEqual([idA, idB, idC]);
   });
 
@@ -200,6 +205,6 @@ describe('tipEvents', () => {
       ],
       -1,
     );
-    expect(() => tipEvents(r, 0)).toThrow();
+    expect(() => eventsOf(r, 0)).toThrow();
   });
 });

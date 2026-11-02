@@ -110,7 +110,7 @@ function parseWss(
   return { ip: host, port, source };
 }
 
-// MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
+// MESH_INTERFACE → NAT — "Every STUN server is a mesh node named by
 // IP". `MESH_STUN_SERVERS` reads a comma-separated list of
 // `stun:<ip>:<port>` URLs; each is refused if it names a hostname
 // (same rule as the client's `assertClientConfig`). Private-only;
@@ -157,21 +157,55 @@ try {
 }
 const stunServers = parseStunServers(process.env.MESH_STUN_SERVERS);
 const wss = parseWss(process.env.MESH_WSS, stateDir);
+// MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer of its
+// own node" — `MESH_NODE_P2P` names the node's libp2p TCP address, no
+// `/p2p/` or DNS component. A refusal (DNS, `/p2p/`) throws out of
+// `startMeshNode` as a `MeshConfigError`, surfaced below as the other
+// start-time refusals are.
+const nodeP2p = process.env.MESH_NODE_P2P;
 
 const key = await loadOrCreateNodeKey(keyPath);
-const node = await startMeshNode({
-  key,
-  network,
-  role,
-  listen,
-  announce: announce.length > 0 ? announce : undefined,
-  bootstrap,
-  stateDir,
-  upstream,
-  ...(stun ? { stun } : {}),
-  ...(stunServers.length > 0 ? { stunServers } : {}),
-  ...(wss ? { wss } : {}),
-});
+let node: Awaited<ReturnType<typeof startMeshNode>>;
+try {
+  node = await startMeshNode({
+    key,
+    network,
+    role,
+    listen,
+    announce: announce.length > 0 ? announce : undefined,
+    bootstrap,
+    stateDir,
+    upstream,
+    ...(stun ? { stun } : {}),
+    ...(stunServers.length > 0 ? { stunServers } : {}),
+    ...(wss ? { wss } : {}),
+    ...(nodeP2p !== undefined && nodeP2p !== '' ? { nodeP2p } : {}),
+  });
+} catch (e) {
+  if (e instanceof MeshConfigError) {
+    console.error(e.message);
+    process.exit(1);
+  }
+  throw e;
+}
+
+// A signal after `startMeshNode` returns stops the node; the handlers stand
+// before the first identity line is written, so a caller that signals on that
+// line is always answered. A signal before the node exists exits at once.
+let stopped = false;
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (stopped) return;
+  stopped = true;
+  try {
+    await node.stop();
+  } catch (e) {
+    console.error(`stop failed on ${signal}: ${(e as Error).message}`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+process.on('SIGTERM', (sig) => { void shutdown(sig); });
+process.on('SIGINT', (sig) => { void shutdown(sig); });
 
 // MESH_INTERFACE → Discovery — anchors read `(notisId, addrs)`; print one
 // JSON line on stdout so the caller sees the identity and current
@@ -222,18 +256,3 @@ node.libp2p.addEventListener('self:peer:update', () => {
   lastPrinted = sortedKey;
   writeIdentity(current);
 });
-
-let stopped = false;
-async function shutdown(signal: NodeJS.Signals): Promise<void> {
-  if (stopped) return;
-  stopped = true;
-  try {
-    await node.stop();
-  } catch (e) {
-    console.error(`stop failed on ${signal}: ${(e as Error).message}`);
-    process.exit(1);
-  }
-  process.exit(0);
-}
-process.on('SIGTERM', (sig) => { void shutdown(sig); });
-process.on('SIGINT', (sig) => { void shutdown(sig); });

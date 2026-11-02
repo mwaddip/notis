@@ -119,8 +119,9 @@ const TOPOLOGY_PATH = join(PACKAGE_ROOT, 'stage', 'topology.json');
 // --- NAT routers drop unsolicited inbound ----------------------------------
 
 describe('NAT routers drop unsolicited inbound on the outside interface', () => {
-  // MESH_INTERFACE → NAT — "a browser reaches a private node over WebRTC
-  // signalled through the relay". Plain `masquerade` preserves the
+  // MESH_INTERFACE → NAT — "A browser reaches a private node over
+  // WebRTC signalled through the relay". Plain `masquerade` preserves
+  // the
   // source port only when conntrack has not already recorded a tuple for
   // it; an inbound packet to the outside interface that is delivered to
   // the router itself establishes conntrack and causes the next outbound
@@ -721,7 +722,7 @@ describe('the page\'s RTCPeerConnection wrapper installer', () => {
 // --- verdictIceServers reads the record per MESH_INTERFACE → NAT ----------
 
 describe('verdictIceServers reads the record per MESH_INTERFACE → NAT', () => {
-  // MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
+  // MESH_INTERFACE → NAT — "Every STUN server is a mesh node named by
   // IP"; a client refuses a hostname. The verdict:
   //   PASS when at least one PC was recorded AND every URL matches
   //        stun:<IPv4>:<port> or stun:[<IPv6>]:<port>

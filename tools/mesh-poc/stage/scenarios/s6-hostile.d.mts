@@ -4,6 +4,11 @@ export declare function anchorBlockArgs(topology: unknown): {
   addTable: string[]; addChain: string[]; drops: string[][]; deleteTable: string[];
 };
 export declare function applyFaults(log: unknown, topology: unknown): void;
+export declare function otherRejectSourcesIn(
+  outDir: string,
+  honestHosts: readonly string[],
+  publisherPeerIdString: string,
+): Array<{ host: string; peerIdString: string }>;
 export declare function run(ctx: { dryRun: boolean; topology: unknown; [k: string]: unknown }): Promise<{
   scenario: string;
   startedAt: number;

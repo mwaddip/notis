@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsup src/lib.ts src/node/main.ts src/node/mesh-key-tool.ts --format esm --dts",
+    "build": "tsup src/lib.ts src/node/index.ts src/node/main.ts src/node/mesh-key-tool.ts --format esm --dts",
     "page:build": "vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc -p tsconfig.browser.json",
     "test": "vitest run",
@@ -23,15 +23,18 @@
     "stage:report": "node stage/report.mjs"
   },
   "dependencies": {
+    "@dagsocial/net": "workspace:*",
     "@dagsocial/nipopow": "workspace:*",
     "@dagsocial/nipopow-client": "workspace:*",
     "@dagsocial/node-reads": "workspace:*",
     "@dagsocial/types": "workspace:*",
+    "@dagsocial/validation": "workspace:*",
     "@libp2p/autonat-v2": "2.1.8",
     "@libp2p/bootstrap": "12.0.36",
     "@libp2p/circuit-relay-v2": "4.2.17",
     "@libp2p/crypto": "5.2.0",
     "@libp2p/dcutr": "3.0.32",
+    "@libp2p/gossipsub": "17.2.1",
     "@libp2p/http": "2.0.6",
     "@libp2p/http-fetch": "4.0.4",
     "@libp2p/http-utils": "2.0.6",

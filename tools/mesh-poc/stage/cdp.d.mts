@@ -1,3 +1,12 @@
+export interface TerminationRegistry {
+  register(close: () => unknown | Promise<unknown>): () => void;
+  run(sig: 'SIGTERM' | 'SIGINT'): Promise<void>;
+  hasFired(): boolean;
+  size(): number;
+  unbind(): void;
+}
+export declare function createTerminationRegistry(opts?: { exit?: (code: number) => void; bind?: boolean }): TerminationRegistry;
+export declare function registerPageCleanup(close: () => unknown | Promise<unknown>): () => void;
 export declare function listTargets(cdpUrl?: string): Promise<unknown>;
 export declare function openTarget(url: string, cdpUrl?: string): Promise<{ id: string; webSocketDebuggerUrl: string }>;
 export declare function closeTarget(targetId: string, cdpUrl?: string): Promise<void>;

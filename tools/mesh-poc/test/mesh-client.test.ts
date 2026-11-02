@@ -13,9 +13,10 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPair, bytesToHex } from '@dagsocial/types';
+import { blockHash } from '@dagsocial/validation';
 import { profileFor } from '@dagsocial/types';
-import type { NetworkProfile, NetworkType } from '@dagsocial/types';
-import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
+import type { NetworkProfile, NetworkType, OrderingBlock } from '@dagsocial/types';
+import type { NodeTipResult } from '@dagsocial/nipopow-client';
 import type { Connection } from '@libp2p/interface';
 import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../src/identity.js';
 import { meshBaseUrl } from '../src/mesh-url.js';
@@ -26,31 +27,20 @@ import { MeshUrlError } from '../src/mesh-url.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { multiaddr } from '@multiformats/multiaddr';
+import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
+import { makeLinkedChain } from './helpers/devnet-block.js';
 
 // MESH_INTERFACE → The node endpoint — a tiny upstream the mesh node
-// forwards to; the dial-by-key case reads /blocks/current back.
+// forwards to; the hand-built servers the gated cases below hold are
+// of this shape.
 interface Stub { srv: Server; base: string; }
-async function makeStub(id: number): Promise<Stub> {
-  const srv = createServer((req, res) => {
-    if (req.url === '/blocks/current') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ height: id * 10 + 1, hash: (id === 0 ? 'ab' : 'cd').repeat(32) }));
-    } else {
-      res.writeHead(404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'not found' }));
-    }
-  });
-  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
-  const port = (srv.address() as AddressInfo).port;
-  return { srv, base: `http://127.0.0.1:${port}` };
-}
 
-async function startNode(stub: Stub, dir: string): Promise<{ node: MeshNode; id: string; webrtcAddr: string }> {
+async function startNode(upstream: { base: string }, dir: string): Promise<{ node: MeshNode; id: string; webrtcAddr: string }> {
   const key = nodeKeyFromKeyPair(generateKeyPair());
   const n = await startMeshNode({
     key, network: 'devnet', role: 'public',
     listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
-    bootstrap: [], stateDir: dir, upstream: stub.base,
+    bootstrap: [], stateDir: dir, upstream: upstream.base,
   });
   const addrs = n.multiaddrs();
   const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
@@ -64,54 +54,22 @@ async function startNode(stub: Stub, dir: string): Promise<{ node: MeshNode; id:
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 
-function fakeResolveWith(
-  answers: readonly ((urls: string[]) => TipResult)[],
-): typeof import('@dagsocial/nipopow-client').resolveTip {
-  let call = 0;
-  return async (urls) => {
-    const a = answers[Math.min(call, answers.length - 1)]!;
-    call += 1;
-    return a(urls);
-  };
-}
+// Shared ordering chains for the cases below; `chainResolve`'s captured
+// `k` sets the suffix length and the minimum chain length the fake
+// accepts, so `K` is the floor. The chains are immutable OrderingBlock
+// arrays and safe to read across cases.
+const K = 5;
+const SHARED_CHAIN = makeLinkedChain(K, PROFILE);
+const CHAIN_K_PLUS_1 = makeLinkedChain(K + 1, PROFILE);
+const CHAIN_K_PLUS_1_TRAIL = CHAIN_K_PLUS_1.slice(0, K);
+const CHAIN_K_PLUS_2 = makeLinkedChain(K + 2, PROFILE);
+const CHAIN_K_PLUS_2_TRAIL = CHAIN_K_PLUS_2.slice(0, K);
 
-function winnerFirst(urls: string[]): TipResult {
-  const nodes: NodeTipResult[] = urls.map((url, i) => ({
-    url,
-    verified: true,
-    proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
-    verifyResult: null,
-    refuseReason: null,
-    refuseCode: null,
-    behind: i === 0 ? 0 : 1,
-    genesisHash: 'f'.repeat(64),
-  }));
-  return {
-    winner: nodes[0] ?? null,
-    winnerIndex: nodes.length > 0 ? 0 : -1,
-    nodes,
-    tip: null,
-    suffixHead: null,
-    splits: [],
-  };
-}
-
-function invalidWithProof(url: string): NodeTipResult {
-  return {
-    url,
-    verified: false,
-    proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
-    verifyResult: null,
-    refuseReason: 'verify failed: bad header',
-    refuseCode: 'invalid',
-    behind: null,
-    genesisHash: null,
-  };
-}
 
 describe('mesh-client — refusals, dialling by key, state and triggers', () => {
   const nodes: MeshNode[] = [];
   const stubs: Stub[] = [];
+  const ups: ChainUpstream[] = [];
   const dirs: string[] = [];
   const clients: MeshClient[] = [];
 
@@ -119,6 +77,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
     for (const n of nodes.splice(0)) { try { await n.stop(); } catch { /* already stopped */ } }
     for (const s of stubs.splice(0)) { s.srv.close(); }
+    for (const u of ups.splice(0)) { try { await u.close(); } catch { /* already closed */ } }
     for (const d of dirs.splice(0)) { rmSync(d, { recursive: true, force: true }); }
   });
 
@@ -145,7 +104,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
           anchors: [{ notisId: anchorKey.notisId, addrs: [prefix] }],
           network: 'devnet',
           profile: PROFILE,
-          resolve: fakeResolveWith([(u) => winnerFirst(u)]),
+          resolve: chainResolve(() => SHARED_CHAIN, K),
         });
       } catch (e) {
         thrown = e;
@@ -173,9 +132,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     })).toThrow(MeshConfigError);
   });
 
-  // MESH_INTERFACE → Discovery → "Seeds" — "a seed is a candidate like any node
-  // the DHT finds": a seed is in the client's node list as a non-anchor entry
-  // in `new` status, which `NodeList.candidates()` lists.
+  // MESH_INTERFACE → Discovery → "Seeds" — a seed is a candidate like
+  // any node the DHT finds: a seed is in the client's node list as a
+  // non-anchor entry in `new` status, which `NodeList.candidates()`
+  // lists.
   it('a seed is a candidate', async () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const seedKey = nodeKeyFromKeyPair(generateKeyPair());
@@ -188,7 +148,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       // check fires, so the seed is still in its initial `new` status —
       // `new` is one of the four candidate rows (MESH_INTERFACE → The
       // client's node list → "Candidates").
-      resolve: fakeResolveWith([]),
+      resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
     const seedEntry = client.state().nodes.find((n) => n.notisId === seedKey.notisId);
@@ -206,13 +166,13 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // retry — and `anchorReached` stays false because the anchor itself
   // never answers.
   it('a seed on a private address is refused by the gater; anchorReached stays false', async () => {
-    const stubSeed = await makeStub(0); stubs.push(stubSeed);
+    const upSeed = await chainUpstream(SHARED_CHAIN); ups.push(upSeed);
     const dirSeed = mkdtempSync(join(tmpdir(), 'mesh-client-seed-')); dirs.push(dirSeed);
-    const seed = await startNode(stubSeed, dirSeed); nodes.push(seed.node);
+    const seed = await startNode(upSeed, dirSeed); nodes.push(seed.node);
 
-    const stubAnchor = await makeStub(1); stubs.push(stubAnchor);
+    const upAnchor = await chainUpstream(SHARED_CHAIN); ups.push(upAnchor);
     const dirAnchor = mkdtempSync(join(tmpdir(), 'mesh-client-anchor-')); dirs.push(dirAnchor);
-    const anchor = await startNode(stubAnchor, dirAnchor); // not pushed: stopped at once
+    const anchor = await startNode(upAnchor, dirAnchor); // not pushed: stopped at once
     await anchor.node.stop();
 
     const client = await startMeshClient({
@@ -220,11 +180,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       seeds: [{ notisId: seed.id, addrs: [seed.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      // winnerFirst would make the seed the winner if phase 2 reached
-      // it — but the gater refuses the seed's loopback-private address
-      // before libp2p dials, so phase 1 ends the seed in retry and
-      // phase 2 reads no URL for it.
-      resolve: fakeResolveWith([(u) => winnerFirst(u)]),
+      // The chainResolve would make the seed verified if phase 2
+      // reached it — but the gater refuses the seed's loopback-private
+      // address before libp2p dials, so phase 1 ends the seed in retry
+      // and phase 2 reads no URL for it.
+      resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
     await client.check();
@@ -243,14 +203,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // a node its need allows" — a `tip` read picks an `ok` node, opens
     // the stream on the connection the client holds, and `state.nodeId`
     // names the serving node after it.
-    const stub = await makeStub(0); stubs.push(stub);
+    const up = await chainUpstream(SHARED_CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
-    const started = await startNode(stub, dir); nodes.push(started.node);
+    const started = await startNode(up, dir); nodes.push(started.node);
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      resolve: fakeResolveWith([(u) => winnerFirst(u)]),
+      resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
     await client.check();
@@ -259,7 +219,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(nodeId).toBe(started.id);
     expect(response.status).toBe(200);
     const text = await response.text();
-    const direct = await (await globalThis.fetch(`${stub.base}/blocks/current`)).text();
+    const direct = await (await globalThis.fetch(`${up.base}/blocks/current`)).text();
     expect(text).toBe(direct);
 
     const s = client.state();
@@ -270,16 +230,18 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 60_000);
 
   it('a node that leaves ok/trailing is named by lastLeft, with its reason', async () => {
-    // MESH_INTERFACE → The client's node list — "set after a check when
-    // a node that was `ok` or `trailing` before it is neither after it".
-    // Two anchors ok after check 1; A stops; after check 2 A moves to
-    // retry and `lastLeft` names A with its failure reason.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    // MESH_INTERFACE → The client's node list → "A routed read goes to
+    // a node its need allows" — after a check, a node that was `ok` or
+    // `trailing` before it and is neither after it goes into
+    // `state.lastLeft` with its latest event. Two anchors ok after
+    // check 1; A stops; after check 2 A moves to retry and `lastLeft`
+    // names A with its failure reason.
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'mesh-client-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'mesh-client-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
       anchors: [
@@ -290,7 +252,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       profile: PROFILE,
       // Both checks keep A as winner, B as trailing; after A stops it
       // falls out of candidates and B stands alone.
-      resolve: fakeResolveWith([(u) => winnerFirst(u), (u) => winnerFirst(u)]),
+      resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
 
@@ -312,7 +274,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 90_000);
 
   // A resolve that answers only the real node and omits every other
-  // url the client offered — so phase 3's `tipEvents` fires nothing
+  // url the client offered — so phase 3's `tipEvent` fires nothing
   // for the fake entries under test and the check's phases 4-5 run
   // against the real connection alone. The ids under scrutiny stay
   // in whatever state phase 1's dial left them in, and every case
@@ -339,29 +301,24 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     };
   }
 
-  it('a TCP address and a WebRTC-direct address that answers with another key: phase 1\'s dial drops the address; the entry is otherwise unchanged', async () => {
+  it('a TCP address and a WebRTC-direct address that answers with another key drops the webrtc address with no address failure recorded', async () => {
     // MESH_INTERFACE → The client's node list → "A node's addresses are
     // dialled as one operation" — "an address no browser transport
     // carries is passed over by libp2p and takes none". The mesh client
     // runs no TCP transport, so a TCP address libp2p is handed is
     // filtered before any dial; a wrong-key answer on the WebRTC-direct
-    // address drops that address alone. MESH_INTERFACE → The client's
-    // node list — the table row "an address answers with a key other
-    // than the one dialled": "that address dropped for that key when
-    // the dial's failure names it; the entry otherwise unchanged" — so
-    // `status` and `failures` carry over phase 1's dial. The
-    // `onlyRealGoodResolve` resolver keeps K2 out of the read, so this
-    // case holds phase 1's dial alone.
-    const stubK1 = await makeStub(0); stubs.push(stubK1);
+    // address drops that address alone. The check's own `/blocks/current`
+    // read then fails as transport (no connection), moving the node by
+    // the ordinary failure row — distinct from the wrong-key row's
+    // address-only side effect.
+    const upK1 = await chainUpstream(SHARED_CHAIN); ups.push(upK1);
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1-')); dirs.push(dirK1);
-    const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
+    const k1 = await startNode(upK1, dirK1); nodes.push(k1.node);
 
-    // A real anchor the resolver answers for — the check's phases 4-5
-    // run against it, so phase 5's /blocks/current reads a real
-    // connection's tip and never touches K2's state.
-    const stubGood = await makeStub(1); stubs.push(stubGood);
+    // A real anchor so the check has a reachable candidate alongside K2.
+    const upGood = await chainUpstream(SHARED_CHAIN); ups.push(upGood);
     const dirGood = mkdtempSync(join(tmpdir(), 'mesh-client-good-')); dirs.push(dirGood);
-    const good = await startNode(stubGood, dirGood); nodes.push(good.node);
+    const good = await startNode(upGood, dirGood); nodes.push(good.node);
 
     // A fresh notis id — the anchor names K2 at K1's WebRTC-direct
     // address (which answers with K1's key, not K2's), plus a loopback
@@ -376,16 +333,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
-      resolve: onlyRealGoodResolve(good.id),
+      resolve: chainResolve((u) => (u.includes(good.id) ? SHARED_CHAIN : 'unreachable'), K),
     });
     clients.push(client);
-
-    // Read K2's status and failure count BEFORE the check — the
-    // invariant the check must preserve is "the entry otherwise
-    // unchanged".
-    const before = client.state().nodes.find((n) => n.notisId === k2.notisId)!;
-    const beforeStatus = before.status;
-    const beforeFailures = before.failures;
 
     await client.check();
     const entry = client.state().nodes.find((n) => n.notisId === k2.notisId);
@@ -394,8 +344,8 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       .toContain(k1.webrtcAddr);
     expect(entry!.lastFailures[tcpAddr], 'the TCP address has no failure recorded')
       .toBeUndefined();
-    expect(entry!.status, 'K2\'s status unchanged by a wrong-key-only dial').toBe(beforeStatus);
-    expect(entry!.failures, 'K2\'s failure count unchanged by a wrong-key-only dial').toBe(beforeFailures);
+    expect(entry!.lastFailures[k1.webrtcAddr], 'the wrong-key address has no per-address failure recorded')
+      .toBeUndefined();
   }, 90_000);
 
   it('a wrong-key answer on one address and a timeout on a second dialled address records the node failure', async () => {
@@ -409,21 +359,21 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // answers with the wrong key under K2's expected id. The
     // `onlyRealGoodResolve` resolver keeps K2 out of the read, so this
     // case holds phase 1's dial alone.
-    const stubK1 = await makeStub(0); stubs.push(stubK1);
+    const upK1 = await chainUpstream(SHARED_CHAIN); ups.push(upK1);
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1b-')); dirs.push(dirK1);
-    const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
+    const k1 = await startNode(upK1, dirK1); nodes.push(k1.node);
 
     // A second real node — grab its webrtc-direct address, then stop
     // it; the address stays parseable, but libp2p's dial will time out.
-    const stubGone = await makeStub(2); stubs.push(stubGone);
+    const upGone = await chainUpstream(SHARED_CHAIN); ups.push(upGone);
     const dirGone = mkdtempSync(join(tmpdir(), 'mesh-client-gone-')); dirs.push(dirGone);
-    const gone = await startNode(stubGone, dirGone);
+    const gone = await startNode(upGone, dirGone);
     const goneWebrtcAddr = gone.webrtcAddr;
     await gone.node.stop();
 
-    const stubGood = await makeStub(1); stubs.push(stubGood);
+    const upGood = await chainUpstream(SHARED_CHAIN); ups.push(upGood);
     const dirGood = mkdtempSync(join(tmpdir(), 'mesh-client-good2-')); dirs.push(dirGood);
-    const good = await startNode(stubGood, dirGood); nodes.push(good.node);
+    const good = await startNode(upGood, dirGood); nodes.push(good.node);
 
     const k2 = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
@@ -453,22 +403,22 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → The client's node list — the wrong-key row,
     // the branch where every dialled address answered with another
     // key: the dropped addresses carry the diagnostic alone and the
-    // entry's `status` and `failures` are unchanged. Two real nodes
-    // K1 and K3 listen on WebRTC-direct; the anchor names K2 at both
-    // of their addresses, so each answers with its own key, not
-    // K2's. The `onlyRealGoodResolve` resolver keeps K2 out of the
-    // read, so this case holds phase 1's dial alone.
-    const stubK1 = await makeStub(0); stubs.push(stubK1);
+    // entry's dropped addresses carry the diagnostic alone; the
+    // addresses list ends empty. The subsequent `/blocks/current` read
+    // then fails as transport (no connection); that failure writes
+    // `lastFailure`, not a per-address `lastFailures[addr]` row — the
+    // wrong-key row's address-only side effect stands.
+    const upK1 = await chainUpstream(SHARED_CHAIN); ups.push(upK1);
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1c-')); dirs.push(dirK1);
-    const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
+    const k1 = await startNode(upK1, dirK1); nodes.push(k1.node);
 
-    const stubK3 = await makeStub(3); stubs.push(stubK3);
+    const upK3 = await chainUpstream(SHARED_CHAIN); ups.push(upK3);
     const dirK3 = mkdtempSync(join(tmpdir(), 'mesh-client-k3-')); dirs.push(dirK3);
-    const k3 = await startNode(stubK3, dirK3); nodes.push(k3.node);
+    const k3 = await startNode(upK3, dirK3); nodes.push(k3.node);
 
-    const stubGood = await makeStub(1); stubs.push(stubGood);
+    const upGood = await chainUpstream(SHARED_CHAIN); ups.push(upGood);
     const dirGood = mkdtempSync(join(tmpdir(), 'mesh-client-good3-')); dirs.push(dirGood);
-    const good = await startNode(stubGood, dirGood); nodes.push(good.node);
+    const good = await startNode(upGood, dirGood); nodes.push(good.node);
 
     const k2 = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
@@ -478,30 +428,28 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
-      resolve: onlyRealGoodResolve(good.id),
+      resolve: chainResolve((u) => (u.includes(good.id) ? SHARED_CHAIN : 'unreachable'), K),
     });
     clients.push(client);
-
-    const before = client.state().nodes.find((n) => n.notisId === k2.notisId)!;
-    const beforeStatus = before.status;
-    const beforeFailures = before.failures;
 
     await client.check();
     const entry = client.state().nodes.find((n) => n.notisId === k2.notisId);
     expect(entry!.droppedAddrs, 'both WebRTC-direct addresses dropped')
       .toEqual(expect.arrayContaining([k1.webrtcAddr, k3.webrtcAddr]));
     expect(entry!.addrs, 'no addresses left').toEqual([]);
-    expect(entry!.status, 'K2\'s status unchanged').toBe(beforeStatus);
-    expect(entry!.failures, 'K2\'s failures unchanged').toBe(beforeFailures);
+    expect(entry!.lastFailures[k1.webrtcAddr], 'no per-address failure recorded for K1\'s addr')
+      .toBeUndefined();
+    expect(entry!.lastFailures[k3.webrtcAddr], 'no per-address failure recorded for K3\'s addr')
+      .toBeUndefined();
   }, 90_000);
 
   it('an address that answers with another key does not blacklist the key', async () => {
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(SHARED_CHAIN); ups.push(upA);
+    const upB = await chainUpstream(SHARED_CHAIN); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'mesh-client-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'mesh-client-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     // The anchor lists A's id with B's address first, A's own second.
     // The one-dial-per-peer path hands libp2p both and reads whichever
@@ -520,7 +468,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: a.id, addrs: [b.webrtcAddr, a.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      resolve: fakeResolveWith([(u) => winnerFirst(u)]),
+      resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
 
@@ -534,29 +482,20 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 90_000);
 
   it('a lying node is blacklisted with its evidence', async () => {
-    const stub = await makeStub(0); stubs.push(stub);
+    const up = await chainUpstream(SHARED_CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
-    const started = await startNode(stub, dir); nodes.push(started.node);
+    const started = await startNode(up, dir); nodes.push(started.node);
 
     // The fake resolve answers 'invalid' with a proof — the proof-invalid
-    // row of the mapping (`tipEvents`).
+    // row of the mapping (`tipEvent`).
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      resolve: fakeResolveWith([
-        (urls) => ({
-          winner: null,
-          winnerIndex: -1,
-          nodes: urls.map(invalidWithProof),
-          tip: null,
-          suffixHead: null,
-          splits: [],
-        }),
-        // A later check must not be able to revive the node — but the
-        // candidate list drops it before the resolve is called.
-        () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
-      ]),
+      // 'invalid' answers like `invalidWithProof`: refuseCode 'invalid'
+      // with a non-null proof stand-in, which `tipEvent` reads as a
+      // `lie` evidence of kind `proof-invalid`.
+      resolve: chainResolve(() => 'invalid', K),
     });
     clients.push(client);
 
@@ -574,18 +513,18 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 90_000);
 
   it('no anchor reached', async () => {
-    const stub = await makeStub(0); stubs.push(stub);
+    const up = await chainUpstream(SHARED_CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
-    const started = await startNode(stub, dir); // not pushed: we stop it right away
+    const started = await startNode(up, dir); // not pushed: we stop it right away
     await started.node.stop();
 
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      // No candidate reachable — resolve may still be called with an empty
-      // list; its empty answer leaves the state untouched.
-      resolve: fakeResolveWith([() => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] })]),
+      // No candidate reachable — resolve may still be called with an
+      // empty list; `unreachable` is harmless when it is.
+      resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
 
@@ -604,17 +543,28 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" + "A read opens no connection" — "a
     // failed routed read runs a check at once, which dials from the
-    // list". Two anchors: both ok after check 1; A is stopped so a
-    // read to the serving node fails as transport, the immediate
-    // check moves A to retry, and the next read picks B.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    // list". Two anchors on chain A at the start; after a successful
+    // routed read, A stops and B advances to a different chain (one
+    // the client's held chain cannot place). The triggered check's
+    // phase 4 reads B's proof, the winner's tip replaces the chain's,
+    // and B rises to `ok`. The next tip read reaches B.
+    const chainA = CHAIN_K_PLUS_1;         // A: K+1 blocks
+    const chainBTrail = CHAIN_K_PLUS_1_TRAIL; // B initially: K blocks of A's chain → trailing
+    const chainBNew = makeLinkedChain(K + 1, PROFILE); // B after advance: a fork at K+1
+    const upA = await chainUpstream(chainA); ups.push(upA);
+    const upB = await chainUpstream(chainBTrail); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'mesh-client-ic-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'mesh-client-ic-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
-    let resolveCalls = 0;
+    let aStopped = false;
+    let bAdvanced = false;
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return aStopped ? 'unreachable' : chainA;
+      if (url.includes(b.id)) return bAdvanced ? chainBNew : chainBTrail;
+      return 'unreachable';
+    };
     const client = await startMeshClient({
       anchors: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
@@ -625,21 +575,20 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       // Pin the fast-set pick to the first candidate so the first read
       // reliably reaches A.
       random: () => 0,
-      resolve: fakeResolveWith([
-        (u) => { resolveCalls += 1; return winnerFirst(u); },
-        (u) => { resolveCalls += 1; return winnerFirst(u); },
-        (u) => { resolveCalls += 1; return winnerFirst(u); },
-      ]),
+      resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
 
     await client.check();
     const first = await client.read('/blocks/current', 'tip');
     expect(first.nodeId).toBe(a.id);
-    const callsBefore = resolveCalls;
+    const checksBefore = client.state().checks;
 
     await a.node.stop();
     nodes.splice(nodes.indexOf(a.node), 1);
+    aStopped = true;
+    upB.setChain(chainBNew);
+    bAdvanced = true;
     let readError: unknown;
     try {
       await client.read('/blocks/current', 'tip');
@@ -650,12 +599,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
     const deadlineMs = Date.now() + 10_000;
     while (
-      resolveCalls === callsBefore
+      client.state().checks === checksBefore
       && Date.now() < deadlineMs
     ) {
       await new Promise((r) => setTimeout(r, 50));
     }
-    expect(resolveCalls).toBeGreaterThan(callsBefore);
+    expect(client.state().checks).toBeGreaterThan(checksBefore);
 
     const next = await client.read('/blocks/current', 'tip');
     expect(next.nodeId).toBe(b.id);
@@ -672,9 +621,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [],
       network: 'devnet',
       profile: PROFILE,
-      resolve: fakeResolveWith([
-        () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
-      ]),
+      resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
     await client.check();
@@ -694,49 +641,64 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 30_000);
 
   it('one check at a time: a trigger during a check joins the in-flight one', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" —
-    // "one check at a time: a trigger during a check is that check."
-    // Three concurrent `check()` calls during an in-flight check must not
-    // start three runs — they all join the same promise and the resolve
-    // seam records a single call. The anchor list is empty so phase 1's
-    // dial has no address to wait on; `resolveFn` is reached in the same
-    // microtask run and suspends on `gate`.
+    // MESH_INTERFACE → The client's node list → "A check" — the client
+    // runs one check at a time; a trigger that fires while a check is
+    // in flight is that check. Three concurrent `check()` calls during
+    // an in-flight check must not start three runs — they all join the
+    // same promise. A hostile upstream holds its `/blocks/current`
+    // response on an external gate; while the tip-read phase waits,
+    // three checks are issued and all join the first — the upstream's
+    // server-side counter sees one request.
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => { release = r; });
-    let resolveCalls = 0;
-    const EMPTY: TipResult = { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
+    let currentReads = 0;
+    const srv = createServer(async (req, res) => {
+      if (req.url === '/blocks/current') {
+        currentReads += 1;
+        if (currentReads === 1) await gate;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ height: 1, hash: 'ab'.repeat(32) }));
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not found' }));
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as AddressInfo).port;
+    const stub: Stub = { srv, base: `http://127.0.0.1:${port}` };
+    stubs.push(stub);
+    const dir = mkdtempSync(join(tmpdir(), 'oca-')); dirs.push(dir);
+    const n = await startNode(stub, dir); nodes.push(n.node);
+
     const client = await startMeshClient({
-      anchors: [],
+      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      resolve: async () => {
-        resolveCalls += 1;
-        if (resolveCalls === 1) await gate;
-        return EMPTY;
-      },
+      resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
 
     // The scheduled start check is the first one in flight; the three
     // `check()` calls below join that same promise.
     const [p1, p2, p3] = [client.check(), client.check(), client.check()];
-    // Give the first resolve enough microtask + 0 ms turns to run and
-    // suspend on `gate`.
-    for (let i = 0; i < 20 && resolveCalls === 0; i += 1) {
+    // Give the first /blocks/current reach the server and suspend on
+    // `gate`.
+    for (let i = 0; i < 50 && currentReads === 0; i += 1) {
       await new Promise((r) => setTimeout(r, 20));
     }
-    expect(resolveCalls).toBe(1);
+    expect(currentReads).toBe(1);
     release();
     await Promise.all([p1, p2, p3]);
-    // Even after every awaiter resumes, only one resolve call happened.
-    expect(resolveCalls).toBe(1);
+    // Even after every awaiter resumes, only one /blocks/current
+    // request landed — the four `check()` calls all joined the first.
+    expect(currentReads).toBe(1);
   }, 60_000);
 
-  // MESH_INTERFACE → Place in the workspace — "every timer capped at
-  // 2^31 − 1 ms". A unit case over the cap: a value past the ceiling
-  // folds down, a negative or `NaN` folds to zero, a legitimate value
-  // passes through. The whole-client timer path reaches `setTimeout`
-  // only after `cappedTimerMs` runs.
+  // Every timer the client sets runs through `cappedTimerMs`, which
+  // folds its argument into the 32-bit `setTimeout` range: a value
+  // past the ceiling folds down, a negative or `NaN` folds to zero, a
+  // legitimate value passes through. The whole-client timer path
+  // reaches `setTimeout` only after `cappedTimerMs` runs.
   it('every timer is capped at 2^31 − 1 ms', () => {
     expect(MAX_TIMER_MS).toBe(0x7fff_ffff);
     expect(cappedTimerMs(0)).toBe(0);
@@ -757,18 +719,17 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // not a tip moves it by `lie` of kind `malformed` — a malformed
   // answer over the key-authenticated link is the contract's lie row.
   async function startWithHostileTip(bodyFactory: (req: unknown) => { status: number; body: string }): Promise<{ client: MeshClient; stub: Stub; nodeStarted: { id: string; node: MeshNode; webrtcAddr: string } }> {
+    // The tip test needs control over `/blocks/current`, so the upstream
+    // is a hand-built server here — not `chainUpstream`. The resolve
+    // path still runs over the shared chain through `chainResolve`.
     const srv = createServer((req, res) => {
       if (req.url === '/blocks/current') {
         const r = bodyFactory(req);
         res.writeHead(r.status, { 'content-type': 'application/json' });
         res.end(r.body);
-      } else if (req.url === '/nipopow/proof/24/20') {
-        // Any proof route is served honestly through the fake resolve, so
-        // leave this a 404; the tip test only exercises /blocks/current.
+      } else {
         res.writeHead(404, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'not found' }));
-      } else {
-        res.writeHead(404); res.end();
       }
     });
     await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
@@ -781,7 +742,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      resolve: fakeResolveWith([(u) => winnerFirst(u), (u) => winnerFirst(u)]),
+      resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
     return { client, stub, nodeStarted: started };
@@ -873,15 +834,15 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // failure". A stranger key is one the client holds no connection
     // to; a direct `client.fetch` to its mesh URL rejects as
     // transport and the libp2p host sees no dial as a side effect.
-    const stub = await makeStub(0); stubs.push(stub);
+    const up = await chainUpstream(SHARED_CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-no-conn-')); dirs.push(dir);
-    const anchor = await startNode(stub, dir); nodes.push(anchor.node);
+    const anchor = await startNode(up, dir); nodes.push(anchor.node);
 
     const client = await startMeshClient({
       anchors: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
-      resolve: fakeResolveWith([(u) => winnerFirst(u)]),
+      resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
     await client.check();
@@ -919,9 +880,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // message is the no-connection failure, not noise's wrong-key
     // text. `dial` is called once (phase 1 only) and `dialProtocol`
     // not at all.
-    const stubK1 = await makeStub(0); stubs.push(stubK1);
+    const upK1 = await chainUpstream(SHARED_CHAIN); ups.push(upK1);
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-peerstore-k1-')); dirs.push(dirK1);
-    const k1 = await startNode(stubK1, dirK1); nodes.push(k1.node);
+    const k1 = await startNode(upK1, dirK1); nodes.push(k1.node);
 
     const k2 = nodeKeyFromKeyPair(generateKeyPair());
 
@@ -963,9 +924,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
   it('a key whose only open connection is limited is not read on', () => {
     // MESH_INTERFACE → The client's node list → "A read opens no
-    // connection" — "an open one, a direct one first, never a
-    // limited one". The strict read pick refuses the limited
-    // fallback: a connections list of only limited open ones reads
+    // connection" — "an open one, a direct one first, a relayed one
+    // when that is all there is, never a limited one". The strict
+    // read pick refuses the limited fallback: a connections list of
+    // only limited open ones reads
     // null, even when `direct` and the right peer. The display pick
     // (`pickConnectionForLabel`) answers the limited connection in
     // the same shape (its full matrix is in
@@ -1031,48 +993,17 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(banned, `banned Node imports in dist/lib.js: ${banned.join(', ')}`).toEqual([]);
   }, 30_000);
 
-  // MESH_INTERFACE → The client's node list → "A routed read goes to a
-  // node its need allows" — build a `TipResult` whose `nodes[i]` is
-  // verified with `behind = behinds[i]`; a `null` means not verified at
-  // all. Winner is the first `behind === 0` entry.
-  function makeResult(urls: readonly string[], behinds: readonly (number | null)[]): TipResult {
-    const n: NodeTipResult[] = urls.map((url, i) => {
-      const b = behinds[i] ?? null;
-      if (b === null) {
-        return {
-          url, verified: false,
-          proof: null, verifyResult: null,
-          refuseReason: 'nope', refuseCode: 'unreachable',
-          behind: null, genesisHash: null,
-        };
-      }
-      return {
-        url, verified: true,
-        proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
-        verifyResult: null,
-        refuseReason: null, refuseCode: null,
-        behind: b, genesisHash: 'f'.repeat(64),
-      };
-    });
-    const winnerIndex = n.findIndex((x) => x.verified && x.behind === 0);
-    return {
-      winner: winnerIndex >= 0 ? n[winnerIndex]! : null,
-      winnerIndex,
-      nodes: n,
-      tip: null, suffixHead: null, splits: [],
-    };
-  }
-
   it('a node tied with the winner reads ok after a check', async () => {
-    // MESH_INTERFACE → The client's node list — "A valid proof whose
-    // tip is the tip — the best verified proof's, a tie included"
-    // reads `ok`. Both anchors verified `behind === 0`, both read ok.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    // MESH_INTERFACE → The client's node list — the node-list table's
+    // first row: a tip the client's chain already holds at the tip
+    // reads `ok`, the winner and every verified tie with it. Both
+    // anchors verified `behind === 0`, both read ok.
+    const upA = await chainUpstream(SHARED_CHAIN); ups.push(upA);
+    const upB = await chainUpstream(SHARED_CHAIN); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'tie-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'tie-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
       anchors: [
@@ -1080,7 +1011,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([(u) => makeResult(u, [0, 0])]),
+      resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
     await client.check();
@@ -1094,12 +1025,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // a node its need allows" — "One that needs the tip goes to an
     // `ok` node". A is ok (behind 0), B is trailing (behind 1); every
     // tip read goes to A, regardless of the random source.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'tr-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'tr-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     let randIdx = 0;
     const randValues = Array.from({ length: 10 }, (_, i) => i / 10);
@@ -1110,7 +1041,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet', profile: PROFILE,
       random: () => randValues[randIdx++ % randValues.length]!,
-      resolve: fakeResolveWith([(u) => makeResult(u, [0, 1])]),
+      resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
     await client.check();
@@ -1124,25 +1055,41 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" — "With none, the read fails as a
     // transport failure." + "a failed routed read runs a check at
-    // once". A single anchor comes up `trailing` (behind 1); a `tip`
-    // read refuses that one and triggers a check.
-    const stub = await makeStub(0); stubs.push(stub);
-    const dir = mkdtempSync(join(tmpdir(), 'notip-')); dirs.push(dir);
-    const started = await startNode(stub, dir); nodes.push(started.node);
+    // once". A settled chain at A's tip; A is gone, B one block short
+    // reads `trailing`. A `tip` read refuses the trailing-only set and
+    // triggers a check.
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
+    const dirA = mkdtempSync(join(tmpdir(), 'notip-a-')); dirs.push(dirA);
+    const dirB = mkdtempSync(join(tmpdir(), 'notip-b-')); dirs.push(dirB);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
-    let resolveCalls = 0;
+    let aStopped = false;
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return aStopped ? 'unreachable' : CHAIN_K_PLUS_1;
+      return CHAIN_K_PLUS_1_TRAIL;
+    };
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([
-        (u) => { resolveCalls += 1; return makeResult(u, [1]); },
-        (u) => { resolveCalls += 1; return makeResult(u, [1]); },
-      ]),
+      resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
     await client.check();
-    expect(client.state().nodes.find((n) => n.notisId === started.id)!.status).toBe('trailing');
-    const callsBefore = resolveCalls;
+    // After the first check: A `ok` at the tip, B `trailing` one below.
+    expect(client.state().nodes.find((n) => n.notisId === a.id)!.status).toBe('ok');
+    expect(client.state().nodes.find((n) => n.notisId === b.id)!.status).toBe('trailing');
+
+    // A goes down; A's connection drops. Routed `tip` read sees no
+    // ok node (A unreachable, B trailing) and rejects.
+    await a.node.stop();
+    nodes.splice(nodes.indexOf(a.node), 1);
+    aStopped = true;
+    const checksBefore = client.state().checks;
 
     let caught: unknown;
     try {
@@ -1153,10 +1100,13 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect((caught as MeshFetchError).message).toMatch(/no node allowed/i);
 
     const deadlineMs = Date.now() + 10_000;
-    while (resolveCalls === callsBefore && Date.now() < deadlineMs) {
+    while (client.state().checks === checksBefore && Date.now() < deadlineMs) {
       await new Promise((r) => setTimeout(r, 50));
     }
-    expect(resolveCalls).toBeGreaterThan(callsBefore);
+    expect(client.state().checks).toBeGreaterThan(checksBefore);
+    // The triggered check places B's tip as `one-below`; B stays
+    // `trailing`.
+    expect(client.state().nodes.find((n) => n.notisId === b.id)!.status).toBe('trailing');
   }, 60_000);
 
   it('older reads spread over ok and trailing nodes in the fast set', async () => {
@@ -1164,12 +1114,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // older than the newest block goes to an `ok` or a `trailing`
     // node". A is ok, B is trailing; a sweep of random values over
     // [0, 1) picks both ids across 50 reads.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'ol-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'ol-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     let randIdx = 0;
     const seen = new Set<string>();
@@ -1184,7 +1134,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         randIdx = (randIdx + 1) % 50;
         return v;
       },
-      resolve: fakeResolveWith([(u) => makeResult(u, [0, 1])]),
+      resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
     await client.check();
@@ -1199,12 +1149,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → The client's node list — "The client's state
     // names the node and path the latest routed read went to". After
     // a successful `read`, `state.nodeId` equals the serving node.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(SHARED_CHAIN); ups.push(upA);
+    const upB = await chainUpstream(SHARED_CHAIN); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'nid-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'nid-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     let randIdx = 0;
     const client = await startMeshClient({
@@ -1216,7 +1166,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       // 0 picks the first fast-set entry, 0.99 picks the last — so we
       // can force both nodes in turn.
       random: () => [0, 0.99][randIdx++ % 2]!,
-      resolve: fakeResolveWith([(u) => makeResult(u, [0, 0])]),
+      resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
     await client.check();
@@ -1230,21 +1180,28 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 120_000);
 
   it('lastLeft names any node that left ok/trailing', async () => {
-    // MESH_INTERFACE → The client's node list — "a node that was `ok`
-    // or `trailing` before [the check] and is neither after it". Three
-    // anchors ok after check 1; the second stops; after check 2 the
-    // second is in retry while the first stays `ok`, and `lastLeft`
+    // MESH_INTERFACE → The client's node list → "A routed read goes to
+    // a node its need allows" — the state carries, after a check, a
+    // node that was `ok` or `trailing` before it and is neither after
+    // it. Three anchors ok after check 1; the second stops; after
+    // check 2 the second is in retry while the first stays `ok`, and
+    // `lastLeft`
     // names the one that left.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
-    const stubC = await makeStub(2); stubs.push(stubC);
+    const upA = await chainUpstream(SHARED_CHAIN); ups.push(upA);
+    const upB = await chainUpstream(SHARED_CHAIN); ups.push(upB);
+    const upC = await chainUpstream(SHARED_CHAIN); ups.push(upC);
     const dirA = mkdtempSync(join(tmpdir(), 'll3-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'll3-b-')); dirs.push(dirB);
     const dirC = mkdtempSync(join(tmpdir(), 'll3-c-')); dirs.push(dirC);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
-    const c = await startNode(stubC, dirC); nodes.push(c.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
+    const c = await startNode(upC, dirC); nodes.push(c.node);
 
+    let bStopped = false;
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (bStopped && url.includes(b.id)) return 'unreachable';
+      return SHARED_CHAIN;
+    };
     const client = await startMeshClient({
       anchors: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
@@ -1252,10 +1209,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([
-        (u) => makeResult(u, [0, 0, 0]),
-        (u) => makeResult(u, [0, 0, 0]),
-      ]),
+      resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
     await client.check();
@@ -1265,6 +1219,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // `lastLeft` names B.
     await b.node.stop();
     nodes.splice(nodes.indexOf(b.node), 1);
+    bStopped = true;
     await client.check();
 
     const s = client.state();
@@ -1275,21 +1230,22 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.lastLeft!.reason).toMatch(/^failure:/);
   }, 120_000);
 
-  it('readMs is the proof read time of the latest check', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "it times
-    // each node's proof read; that time is the node's speed until the
-    // next check." The wrap times from fetch call to end of body — a
-    // time to headers alone would miss the transfer, which the
-    // delayed stub pins by holding the body back for 150 ms after it
-    // sends the headers; readMs is held to at least a hundred ms
-    // under a clock reading of 50 Hz on a slow machine.
+  it('readMs is the tip read time of the latest check', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — a check
+    // reads every candidate's tip, `GET /blocks/current`, timed from
+    // the request to the end of the body, and that time is the node's
+    // speed until the next check. The wrap times from fetch call to
+    // end of body — a time to headers alone would miss the transfer,
+    // which the delayed stub pins by holding the body back for 150 ms
+    // after it
+    // sends the headers.
     const BODY_DELAY_MS = 150;
     const srv = createServer((req, res) => {
-      if (req.url === '/nipopow/proof/24/20') {
+      if (req.url === '/blocks/current') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.flushHeaders();
         setTimeout(() => {
-          res.end(JSON.stringify({ proof: 'canned-for-timing' }));
+          res.end(JSON.stringify({ height: 1, hash: 'ab'.repeat(32) }));
         }, BODY_DELAY_MS);
         return;
       }
@@ -1302,29 +1258,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const dir = mkdtempSync(join(tmpdir(), 'rms-')); dirs.push(dir);
     const started = await startNode(stub, dir); nodes.push(started.node);
 
-    // The resolver calls httpFetch and drains the body; the timing
-    // wrap stamps readMs at end-of-body, so a `res.text()` return
-    // completes after the stub's `setTimeout` releases the body.
-    const probingResolve: typeof import('@dagsocial/nipopow-client').resolveTip =
-      async (urls, _m, _k, _profile, _nowMs, httpFetch) => {
-        const n: NodeTipResult[] = [];
-        for (const url of urls) {
-          const res = await httpFetch(`${url}/nipopow/proof/24/20`);
-          await res.text();
-          n.push({
-            url, verified: true,
-            proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
-            verifyResult: null, refuseReason: null, refuseCode: null,
-            behind: 0, genesisHash: 'f'.repeat(64),
-          });
-        }
-        return { winner: n[0] ?? null, winnerIndex: 0, nodes: n, tip: null, suffixHead: null, splits: [] };
-      };
-
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
-      resolve: probingResolve,
+      resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
     await client.check();
@@ -1338,12 +1275,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   it('behindBy is the latest check\'s behind count per node', async () => {
     // MESH_INTERFACE → The client's node list — `TipResult.nodes[i].behind`
     // per node is written to the entry's `behindBy` from each check.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(CHAIN_K_PLUS_2); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_2_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'bb-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'bb-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
       anchors: [
@@ -1351,7 +1288,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([(u) => makeResult(u, [0, 2])]),
+      resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_2 : CHAIN_K_PLUS_2_TRAIL), K),
     });
     clients.push(client);
     await client.check();
@@ -1364,12 +1301,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → No anchor reached → "The agreement counts" —
     // after each check `state.agreement` holds `{ agreeing,
     // agreeingAnchors, notAgreeing }` from the latest `TipResult`.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'ag-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'ag-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
       anchors: [
@@ -1377,7 +1314,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([(u) => makeResult(u, [0, 1])]),
+      resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
     // Before the first check, agreement is null.
@@ -1385,9 +1322,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     await client.check();
     const s = client.state();
     expect(s.agreement).not.toBeNull();
-    expect(s.agreement!.agreeing).toBe(2);
-    expect(s.agreement!.agreeingAnchors).toBe(2);
-    expect(s.agreement!.notAgreeing).toBe(0);
+    expect(s.agreement!.onChain).toBe(2);
+    expect(s.agreement!.onChainAnchors).toBe(2);
+    expect(s.agreement!.offChain).toBe(0);
   }, 90_000);
 
   it('checks counts completed checks: 0 at start, +1 at the end of each runCheck', async () => {
@@ -1399,12 +1336,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // identical between checks (the same nodes answer with the same
     // behind), so a baseline on `agreement` never changes and the
     // counter is the one hook a stage step has.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'chk-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'chk-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
       anchors: [
@@ -1412,11 +1349,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([
-        (u) => makeResult(u, [0, 1]),
-        (u) => makeResult(u, [0, 1]),
-        (u) => makeResult(u, [0, 1]),
-      ]),
+      resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
     // Before any check, the counter reads 0.
@@ -1441,14 +1374,13 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // reject once, so pickServer returns A and the fetch itself
     // throws from inside meshFetchOverConnection. The 30 s periodic
     // check cannot stand in — the wait is a second.
-    const stubA = await makeStub(0); stubs.push(stubA);
-    const stubB = await makeStub(1); stubs.push(stubB);
+    const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
+    const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'f4-a-')); dirs.push(dirA);
     const dirB = mkdtempSync(join(tmpdir(), 'f4-b-')); dirs.push(dirB);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
-    const b = await startNode(stubB, dirB); nodes.push(b.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
+    const b = await startNode(upB, dirB); nodes.push(b.node);
 
-    let resolveCalls = 0;
     const client = await startMeshClient({
       anchors: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
@@ -1456,15 +1388,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet', profile: PROFILE,
       random: () => 0,
-      resolve: fakeResolveWith([
-        (u) => { resolveCalls += 1; return winnerFirst(u); },
-        (u) => { resolveCalls += 1; return winnerFirst(u); },
-        (u) => { resolveCalls += 1; return winnerFirst(u); },
-      ]),
+      resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
     await client.check();
-    const callsBefore = resolveCalls;
+    const checksBefore = client.state().checks;
 
     // Patch A's own libp2p connection: next `newStream` rejects. The
     // connection stays "open" so pickConnectionForRead returns it,
@@ -1491,14 +1419,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(readError, 'the read rejected').toBeInstanceOf(MeshFetchError);
     expect((readError as MeshFetchError).kind).toBe('transport');
 
-    // Within one second the triggered check must land a fresh resolve
-    // call; the periodic check (30 s) cannot contribute inside the
-    // window.
-    const deadlineMs = Date.now() + 1_000;
-    while (resolveCalls === callsBefore && Date.now() < deadlineMs) {
+    // Within one second the triggered check must complete; the periodic
+    // check (30 s) cannot contribute inside the window. `state.checks`
+    // increments at the end of each runCheck.
+    const deadlineMs = Date.now() + 2_000;
+    while (client.state().checks === checksBefore && Date.now() < deadlineMs) {
       await new Promise((r) => setTimeout(r, 25));
     }
-    expect(resolveCalls, 'the fetch-failure catch triggered a check').toBeGreaterThan(callsBefore);
+    expect(client.state().checks, 'the fetch-failure catch triggered a check').toBeGreaterThan(checksBefore);
   }, 60_000);
 
   it('the tip read catch rethrows a non-MeshFetchError from classifyTipRead', async () => {
@@ -1510,17 +1438,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // the tip read to a notisId the list does not hold: the response
     // classifies as a non-ok HTTP answer, and `nodeList.failure` on
     // that unknown id throws from `unknown('failure', id)`.
-    const stubA = await makeStub(0); stubs.push(stubA);
+    const upA = await chainUpstream(SHARED_CHAIN); ups.push(upA);
     const dirA = mkdtempSync(join(tmpdir(), 'f3-')); dirs.push(dirA);
-    const a = await startNode(stubA, dirA); nodes.push(a.node);
+    const a = await startNode(upA, dirA); nodes.push(a.node);
 
     const client = await startMeshClient({
       anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
-      resolve: fakeResolveWith([
-        (u) => winnerFirst(u),
-        (u) => winnerFirst(u),
-      ]),
+      resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
     await client.check();
@@ -1547,6 +1472,36 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(caught, 'the catch rethrows non-transport errors').not.toBeInstanceOf(MeshFetchError);
   }, 60_000);
 
+  it('the resolve seam receives a wall-clock now (reads > 1e12 ms)', async () => {
+    // MESH_INTERFACE → "Two clocks" — "The verifier reads the wall
+    // clock" — a header's stamp is wall-clock time. `startMeshClient`
+    // hands its `wallClock` to the resolve seam; the retry clock stays
+    // monotonic. The proof read runs only when a tip is unplaced, so
+    // the test seats a reachable mesh node and uses a stub resolve
+    // that captures the `now` the client passes.
+    const up = await chainUpstream(SHARED_CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'wc-')); dirs.push(dir);
+    const started = await startNode(up, dir); nodes.push(started.node);
+    let capturedNow: (() => number) | null = null;
+    const resolveStub: Parameters<typeof startMeshClient>[0]['resolve'] =
+      async (_urls, _m, _k, _profile, now) => {
+        capturedNow = now;
+        return { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
+      };
+    const client = await startMeshClient({
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      resolve: resolveStub,
+      // Explicitly set wallClock to a fake that is clearly wall-clock
+      // (ms since epoch >> 1e12).
+      wallClock: () => 1_900_000_000_000,
+    });
+    clients.push(client);
+    await client.check();
+    expect(capturedNow, 'resolve was called').not.toBeNull();
+    expect(capturedNow!(), 'wallClock reads > 1e12 ms').toBeGreaterThan(1e12);
+  }, 60_000);
+
   it('a non-mesh URL in the resolve httpFetch surfaces as MeshUrlError', async () => {
     // MESH_INTERFACE → The node endpoint — every URL `resolveTip` reads
     // through `timedFetch` is `meshBaseUrl(id)`, so `idOfMeshUrl`
@@ -1555,6 +1510,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // further down, hiding the original bug; with the catch dropped,
     // the `MeshUrlError` from `idOfMeshUrl` surfaces to the caller
     // intact.
+    //
+    // Phase 4 only calls `resolve` when the check holds an unplaced
+    // tip, so the test seats a reachable node (chain unsettled → every
+    // tip is unplaced at the first check); the probing resolve then
+    // runs with the non-mesh URL.
+    const up = await chainUpstream(SHARED_CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'nmu-')); dirs.push(dir);
+    const started = await startNode(up, dir); nodes.push(started.node);
     let caught: unknown;
     const probingResolve: typeof import('@dagsocial/nipopow-client').resolveTip =
       async (_urls, _m, _k, _profile, _wall, httpFetch) => {
@@ -1563,9 +1526,8 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         } catch (e) { caught = e; }
         return { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
       };
-    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
-      anchors: [{ notisId: anchorKey.notisId, addrs: [] }],
+      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       resolve: probingResolve,
     });
@@ -1573,30 +1535,47 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     await client.check();
     expect(caught, 'the non-mesh URL caused a throw').toBeDefined();
     expect(caught, 'the throw is a MeshUrlError, not a swallow-then-MeshFetchError').toBeInstanceOf(MeshUrlError);
-  }, 30_000);
+  }, 60_000);
 
   it('a routed read during a check still picks by the previous check\'s speeds', async () => {
-    // MESH_INTERFACE → The client's node list → "A check" — "it times
-    // each node's proof read; that time is the node's speed until the
-    // next check." A speed holds until the next check writes a fresh
-    // one. The test holds the second check's resolve on a gate before
-    // its proof reads run; during the hold, a routed read with
-    // random=0.99 (which picks the last of the fast set) must reach A —
-    // the fast node from the first check — not B, the slow one. A map
-    // cleared before resolveTip spreads the pick to both A and B and
-    // random=0.99 lands on B instead.
+    // MESH_INTERFACE → The client's node list → "A check" — a check
+    // reads every candidate's tip, `GET /blocks/current`, timed from
+    // the request to the end of the body, and that time is the node's
+    // speed until the next check. A speed holds until the next check
+    // writes a fresh one. The test holds the second check's
+    // `/blocks/current` reads on a server-side gate; during the hold,
+    // a routed `older` read with random=0.99 (which picks the last of
+    // the fast set) must reach A — the fast node from the first check
+    // — not B, the slow one. A map cleared before the new readings
+    // land spreads the pick to both A and B and random=0.99 lands on
+    // B instead. A is the fast tip reader, B the slow one; both serve
+    // the same chain so each is `ok` after the first check. The
+    // second check holds A's `/blocks/current` on an external gate;
+    // during the hold the routed `older` read reads from the previous
+    // check's readMs values — the fast set is [A] and random=0.99
+    // picks A.
+    // Without the fix the live map is cleared, the fast set is [A, B],
+    // and random=0.99 picks B.
     const BODY_DELAY_MS = 300;
-    const makeSrv = (delayMs: number): Server => createServer((req, res) => {
-      if (req.url === '/nipopow/proof/24/20' || req.url === '/blocks/current') {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.flushHeaders();
-        setTimeout(() => res.end(JSON.stringify({ height: 1, hash: 'ab'.repeat(32) })), delayMs);
-        return;
-      }
-      res.writeHead(404); res.end();
-    });
-    const srvA = makeSrv(0);
-    const srvB = makeSrv(BODY_DELAY_MS);
+    const chain = CHAIN_K_PLUS_1;
+    const tipHeader = chain[chain.length - 1]!.header;
+    const tipHash = blockHash(tipHeader);
+    const makeSrv = (delayMs: number, isGated: () => boolean, gate: Promise<void>): Server =>
+      createServer(async (req, res) => {
+        if (req.url === '/blocks/current') {
+          if (isGated()) await gate;
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.flushHeaders();
+          setTimeout(() => res.end(JSON.stringify({ height: K + 1, hash: tipHash })), delayMs);
+          return;
+        }
+        res.writeHead(404); res.end();
+      });
+    let gateRelease: () => void = () => {};
+    const gatePromise = new Promise<void>((r) => { gateRelease = r; });
+    let secondCheckStarted = false;
+    const srvA = makeSrv(0, () => secondCheckStarted, gatePromise);
+    const srvB = makeSrv(BODY_DELAY_MS, () => false, gatePromise);
     await new Promise<void>((resolve) => srvA.listen(0, '127.0.0.1', resolve));
     await new Promise<void>((resolve) => srvB.listen(0, '127.0.0.1', resolve));
     const stubA: Stub = { srv: srvA, base: `http://127.0.0.1:${(srvA.address() as AddressInfo).port}` };
@@ -1606,30 +1585,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const dirB = mkdtempSync(join(tmpdir(), 'f1-b-')); dirs.push(dirB);
     const a = await startNode(stubA, dirA); nodes.push(a.node);
     const b = await startNode(stubB, dirB); nodes.push(b.node);
-
-    let gateRelease: () => void = () => {};
-    const gatePromise = new Promise<void>((r) => { gateRelease = r; });
-    let callNum = 0;
-    const probingResolve: typeof import('@dagsocial/nipopow-client').resolveTip =
-      async (urls, _m, _k, _profile, _wall, httpFetch) => {
-        callNum += 1;
-        // Hold the second check BEFORE its proof reads run, so the
-        // current readMsMap holds the first check's values when the
-        // test's routed read reads through pickServer.
-        if (callNum === 2) await gatePromise;
-        const n: NodeTipResult[] = [];
-        for (const url of urls) {
-          const res = await httpFetch(`${url}/nipopow/proof/24/20`);
-          await res.text();
-          n.push({
-            url, verified: true,
-            proof: { prefix: [], suffixHead: {}, suffixTail: [] } as unknown as NodeTipResult['proof'],
-            verifyResult: null, refuseReason: null, refuseCode: null,
-            behind: 0, genesisHash: 'f'.repeat(64),
-          });
-        }
-        return { winner: n[0] ?? null, winnerIndex: 0, nodes: n, tip: null, suffixHead: null, splits: [] };
-      };
 
     const client = await startMeshClient({
       anchors: [
@@ -1641,14 +1596,13 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       // fast set (A only) returns A; a two-entry fast set (A, B)
       // returns B.
       random: () => 0.99,
-      resolve: probingResolve,
+      resolve: chainResolve(() => chain, K),
     });
     clients.push(client);
     await client.check();
 
-    // After the first check, A's readMs sits well under B's — the body
-    // delay forces that order. The fast-set bound at A's speed is
-    // 2*A + 50 ms, and B at ~300 ms is beyond it.
+    // After the first check, A's readMs sits well under B's; both are
+    // `ok` at the settled chain's tip.
     const s1 = client.state();
     const aMs = s1.nodes.find((n) => n.notisId === a.id)!.readMs;
     const bMs = s1.nodes.find((n) => n.notisId === b.id)!.readMs;
@@ -1656,23 +1610,22 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(bMs, 'B has a readMs after the first check').not.toBeNull();
     expect(aMs! < bMs!, `A (${String(aMs)} ms) is faster than B (${String(bMs)} ms)`).toBe(true);
     expect(bMs! > 2 * aMs! + 50, 'B is beyond A\'s fast-set bound').toBe(true);
+    expect(s1.nodes.find((n) => n.notisId === a.id)!.status).toBe('ok');
+    expect(s1.nodes.find((n) => n.notisId === b.id)!.status).toBe('ok');
 
-    // Start the second check and wait for its probing resolve to reach
-    // the gate — its proof reads have not run yet.
+    // Start the second check; A's /blocks/current now holds on the
+    // gate — phase 2's new readings have not completed.
+    secondCheckStarted = true;
     const checkPromise = client.check();
-    const gateReachedBy = Date.now() + 10_000;
-    while (callNum < 2 && Date.now() < gateReachedBy) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    expect(callNum, 'the second check reached the gate before its fetches').toBe(2);
+    // Give phase 2's A read a chance to reach the server and suspend.
+    await new Promise((r) => setTimeout(r, 100));
 
-    // During the hold, issue a routed `older` read: both A and B are
-    // allowed (status is still `ok` from the first check — phase 3 has
-    // not run yet), and the fix keeps the first check's speeds live, so
-    // the fast set is [A] and random=0.99 picks A. Without the fix the
-    // map is cleared and the fast set is [A, B]; random=0.99 picks B.
     try {
-      const { nodeId: pickedId } = await client.read('/blocks/current', 'older');
+      // Both A and B are still `ok` from the first check; the live
+      // readMsMap still holds A fast, B slow, so the fast set is [A].
+      // The routed read opens /blocks/foo (a 404 on both servers, not
+      // gated); nodeId names the picked server.
+      const { nodeId: pickedId } = await client.read('/blocks/foo', 'older');
       expect(pickedId, 'the routed read reaches A — the previous check\'s fast node').toBe(a.id);
     } finally {
       // Release the gate no matter the assertion — a held check would

@@ -12,6 +12,7 @@ import * as s4 from '../stage/scenarios/s4-transport-cut.mjs';
 import * as s5 from '../stage/scenarios/s5-impersonation.mjs';
 import * as s6 from '../stage/scenarios/s6-hostile.mjs';
 import * as s7 from '../stage/scenarios/s7-reach-and-load.mjs';
+import * as s8 from '../stage/scenarios/s8-prove-once.mjs';
 
 const TOPOLOGY = {
   network: 'devnet',
@@ -123,7 +124,7 @@ describe('s3 (node goes away)', () => {
     const fn = buildPredicate(s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
     const stateAt = (checks: number): string => JSON.stringify({
       checks,
-      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
     });
     expect(fn(stateAt(3))).toBe(false);
     expect(fn(stateAt(3))).toBe(false);
@@ -132,7 +133,7 @@ describe('s3 (node goes away)', () => {
   it('S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE never ends when `checks` is missing (old `agreement` stamp)', () => {
     const fn = buildPredicate(s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
     const stateNoChecks = JSON.stringify({
-      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
     });
     expect(fn(stateNoChecks)).toBe(false);
     expect(fn(stateNoChecks)).toBe(false);
@@ -249,11 +250,12 @@ describe('s5 (impersonation)', () => {
 });
 
 describe('s6 (hostile)', () => {
-  it('describe() lists two steps: anchors unreachable, hostile seeds judged', () => {
+  it('describe() lists three steps: anchors unreachable, hostile seeds judged, publisher blacklisted', () => {
     const names = s6.describe();
-    expect(names.length).toBe(2);
+    expect(names.length).toBe(3);
     expect(names[0]).toMatch(/anchors unreachable/);
     expect(names[1]).toMatch(/hostile seeds/);
+    expect(names[2]).toMatch(/publisher/);
   });
   it('anchorBlockArgs builds an add-table + add-chain + per-anchor drop rule', () => {
     const a = s6.anchorBlockArgs(TOPOLOGY);
@@ -270,12 +272,37 @@ describe('s6 (hostile)', () => {
   it('run({dryRun:true}) emits the block table + drop rules + one delete', async () => {
     const r = await s6.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s6');
-    expect(r.steps.length).toBe(2);
+    expect(r.steps.length).toBe(3);
     for (const step of r.steps) expect(step.verdict).toBe('skipped');
     const adds = r.faults.filter((f) => / nft add /.test(f) && !f.includes('[fault:remove'));
     const dels = r.faults.filter((f) => /\[fault:remove/.test(f));
     expect(adds.length, 'one table + one chain + one drop per public mesh host').toBeGreaterThanOrEqual(3);
     expect(dels.length, 'one table delete').toBe(1);
+  });
+  // MESH_INTERFACE → Block gossip → "A refused block is evidence as
+  // `net` weighs it" — `otherRejectSourcesIn` reads each honest mesh
+  // log for rejection lines and keeps those whose source is not the
+  // publisher's peer id. The function is pure; mkdtempSync feeds it
+  // a controlled log tree.
+  it('otherRejectSourcesIn drops rejections sourced from the publisher and keeps every other', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'notismesh-s6-'));
+    try {
+      const pubId = '12D3KooWPublisher';
+      const browserId = '12D3KooWBrowser';
+      mkdirSync(join(dir, 'pub1'), { recursive: true });
+      writeFileSync(join(dir, 'pub1', 'mesh:pub1.log'),
+        `[mesh] start\n[mesh] ordering block rejected from ${pubId}: malformed ordering block header: ...\n[mesh] peer:connect\n`);
+      mkdirSync(join(dir, 'pub2'), { recursive: true });
+      writeFileSync(join(dir, 'pub2', 'mesh:pub2.log'),
+        `[mesh] start\n[mesh] ordering block rejected from ${browserId}: malformed ordering block header: ...\n`);
+      const sources = s6.otherRejectSourcesIn(dir, ['pub1', 'pub2', 'priv1'], pubId);
+      expect(sources).toEqual([{ host: 'pub2', peerIdString: browserId }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -307,7 +334,7 @@ describe('s7 (reach and load)', () => {
     const fn = buildPredicate(s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
     const stateAt = (checks: number): string => JSON.stringify({
       checks,
-      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
     });
     // First poll: baseline captured, predicate false.
     expect(fn(stateAt(5))).toBe(false);
@@ -319,7 +346,7 @@ describe('s7 (reach and load)', () => {
   it('S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE never ends on `agreement` alone when `checks` is missing', () => {
     const fn = buildPredicate(s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
     const stateNoChecks = JSON.stringify({
-      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
     });
     expect(fn(stateNoChecks)).toBe(false);
     expect(fn(stateNoChecks)).toBe(false);
@@ -336,7 +363,7 @@ describe('s7 (reach and load)', () => {
     expect(fn(JSON.stringify({ checks: 0, agreement: null }))).toBe(false);
     expect(fn(JSON.stringify({
       checks: 1,
-      agreement: { agreeing: 2, agreeingAnchors: 2, notAgreeing: 1 },
+      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
     }))).toBe(true);
   });
   // MESH_INTERFACE → Discovery → "A node added by hand" / "Seeds" —
@@ -389,5 +416,738 @@ describe('s7 (reach and load)', () => {
     const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / tc qdisc del /.test(f));
     expect(adds.length, 'one netem add').toBe(1);
     expect(dels.length, 'one netem del').toBe(1);
+  });
+});
+
+describe('s8 (prove once, follow by gossip)', () => {
+  it('describe() lists four steps: no proof, gossip delivery, fork, gap filled by headers', () => {
+    const names = s8.describe();
+    expect(names.length).toBe(4);
+    expect(names[0]).toMatch(/no proof/);
+    expect(names[1]).toMatch(/gossip/);
+    expect(names[2]).toMatch(/lagging/);
+    expect(names[3]).toMatch(/catches up by headers|gap/);
+  });
+  it('s8GapFirewallArgs builds a table + chain + per-mesh-host drop + delete-table inside the browser namespace', () => {
+    const a = s8.s8GapFirewallArgs(TOPOLOGY);
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    // The test TOPOLOGY carries pub1 and pub2 — both have `mesh` and
+    // an `addr`, so two drops are built.
+    expect(a.drops.length, 'one drop per mesh host with an addr').toBe(2);
+    for (const { name, argv } of a.drops) {
+      expect(typeof name).toBe('string');
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+      expect(argv.join(' ')).toMatch(/nft add rule ip s8_gap out ip daddr \d+\.\d+\.\d+\.\d+ drop/);
+    }
+    expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_gap');
+  });
+  it('run({dryRun:true}) emits step 1 hostile firewall + step 4 hostile firewall + gap firewall + their deletes', async () => {
+    const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
+    expect(r.scenario).toBe('s8');
+    expect(r.steps.length).toBe(4);
+    for (const step of r.steps) expect(step.verdict).toBe('skipped');
+    const adds = r.faults.filter((f: string) => / nft add /.test(f) && !f.includes('[fault:remove'));
+    const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / nft delete table /.test(f));
+    expect(adds.length, 'three tables + three chains + per-host drops for each').toBeGreaterThanOrEqual(8);
+    // Three table deletes — one for s8_step1_hostile, one for
+    // s8_step4_hostile, one for s8_gap.
+    expect(dels.length, 'one table delete per firewall (removes every drop)').toBe(3);
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 1 firewalls the browser from
+  // every hostile host so the first check reads no hostile proof.
+  it('s8Step1HostileFirewallArgs builds a table + chain + per-hostile-host drop + delete-table inside the browser namespace', () => {
+    const topologyWithHostile = {
+      hosts: {
+        pub1: { role: 'public', addr: '11.100.0.11', mesh: { role: 'public' } },
+        pub2: { role: 'public', addr: '11.100.0.12', mesh: { role: 'public' } },
+        'hostile-malformed': { role: 'hostile', addr: '11.100.0.31', mesh: { role: 'public' } },
+        'hostile-invalid': { role: 'hostile', addr: '11.100.0.32', mesh: { role: 'public' } },
+        'hostile-lagging': { role: 'hostile', addr: '11.100.0.33', mesh: { role: 'public' } },
+        'hostile-publisher': { role: 'hostile', addr: '11.100.0.34', mesh: { role: 'public' } },
+      },
+    };
+    const a = s8.s8Step1HostileFirewallArgs(topologyWithHostile);
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    expect(a.drops.length, 'one drop per hostile host').toBe(4);
+    const dropNames = a.drops.map((d) => d.name).sort();
+    expect(dropNames).toEqual(['hostile-invalid', 'hostile-lagging', 'hostile-malformed', 'hostile-publisher']);
+    for (const { argv } of a.drops) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+      expect(argv.join(' ')).toMatch(/nft add rule ip s8_step1_hostile out ip daddr 11\.100\.0\.\d+ drop/);
+    }
+    expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_step1_hostile');
+    // Honest hosts are not dropped — a drop to pub1 would break the
+    // step's baseline (no anchor reached).
+    for (const { argv } of a.drops) {
+      expect(argv.join(' ')).not.toContain('11.100.0.11');
+      expect(argv.join(' ')).not.toContain('11.100.0.12');
+    }
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 1's hostile firewall is a
+  // FaultLog fault scoped to the step: the drops land once at step
+  // start and the table deletion removes them at step end. The
+  // dry-run run already asserts the table + delete count above; here
+  // we assert the fault NAMES carry the step-1 marker so a reader of
+  // `stage/out/scenarios/s8.json`'s `faults` sees which firewall
+  // belonged to which step.
+  it('run({dryRun:true}) prefixes every step-1 hostile fault with [fault:s8:browser-step1-hostile-', async () => {
+    const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
+    const step1 = r.faults.filter((f: string) =>
+      /\[fault:s8:browser-step1-hostile-/.test(f) || /\[fault:remove:s8:browser-step1-hostile-/.test(f),
+    );
+    expect(step1.length, 'at least one apply + one remove').toBeGreaterThanOrEqual(2);
+    const gap = r.faults.filter((f: string) =>
+      /\[fault:s8:browser-gap-/.test(f) || /\[fault:remove:s8:browser-gap-/.test(f),
+    );
+    expect(gap.length, 'at least one apply + one remove').toBeGreaterThanOrEqual(2);
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 4 firewalls the browser from
+  // every hostile host for its whole duration, beside the gap cut.
+  // Without it the client's DHT walk reaches each hostile mesh node
+  // and reads its proof at a check, moving `proofReads` beyond the
+  // fill (one per hostile host). Same rules as step 1 (a `FaultLog`
+  // fault, removed in `finally`).
+  it('s8Step4HostileFirewallArgs builds a table + chain + per-hostile-host drop + delete-table inside the browser namespace', () => {
+    const topologyWithHostile = {
+      hosts: {
+        pub1: { role: 'public', addr: '11.100.0.11', mesh: { role: 'public' } },
+        pub2: { role: 'public', addr: '11.100.0.12', mesh: { role: 'public' } },
+        'hostile-malformed': { role: 'hostile', addr: '11.100.0.31', mesh: { role: 'public' } },
+        'hostile-invalid': { role: 'hostile', addr: '11.100.0.32', mesh: { role: 'public' } },
+        'hostile-lagging': { role: 'hostile', addr: '11.100.0.33', mesh: { role: 'public' } },
+        'hostile-publisher': { role: 'hostile', addr: '11.100.0.34', mesh: { role: 'public' } },
+      },
+    };
+    const a = s8.s8Step4HostileFirewallArgs(topologyWithHostile);
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    expect(a.drops.length, 'one drop per hostile host').toBe(4);
+    const dropNames = a.drops.map((d) => d.name).sort();
+    expect(dropNames).toEqual(['hostile-invalid', 'hostile-lagging', 'hostile-malformed', 'hostile-publisher']);
+    for (const { argv } of a.drops) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+      expect(argv.join(' ')).toMatch(/nft add rule ip s8_step4_hostile out ip daddr 11\.100\.0\.\d+ drop/);
+    }
+    expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_step4_hostile');
+    // Honest hosts are not dropped — a drop to pub1 would break the
+    // step's baseline, as a drop to a mesh anchor would in step 1.
+    for (const { argv } of a.drops) {
+      expect(argv.join(' ')).not.toContain('11.100.0.11');
+      expect(argv.join(' ')).not.toContain('11.100.0.12');
+    }
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 4's fault list carries two
+  // firewalls at once: the step-4 hostile firewall (whole-step) and
+  // the gap cut (removed before the fill). A reader of
+  // `stage/out/scenarios/s8.json`'s `faults` sees both appliers and
+  // both removers.
+  it('run({dryRun:true}) step 4\'s fault list carries both the step-4 hostile firewall and the gap cut (apply + remove each)', async () => {
+    const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
+    const step4Hostile = r.faults.filter((f: string) =>
+      /\[fault:s8:browser-step4-hostile-/.test(f) || /\[fault:remove:s8:browser-step4-hostile-/.test(f),
+    );
+    expect(step4Hostile.length, 'step-4 hostile apply + remove').toBeGreaterThanOrEqual(2);
+    const step4HostileRemove = r.faults.filter((f: string) =>
+      /\[fault:remove:s8:browser-step4-hostile-/.test(f),
+    );
+    expect(step4HostileRemove.length, 'step-4 hostile remove present').toBeGreaterThanOrEqual(1);
+    const gap = r.faults.filter((f: string) =>
+      /\[fault:s8:browser-gap-/.test(f) || /\[fault:remove:s8:browser-gap-/.test(f),
+    );
+    expect(gap.length, 'gap apply + remove').toBeGreaterThanOrEqual(2);
+    const gapRemove = r.faults.filter((f: string) =>
+      /\[fault:remove:s8:browser-gap-/.test(f),
+    );
+    expect(gapRemove.length, 'gap remove present').toBeGreaterThanOrEqual(1);
+  });
+  // MESH_INTERFACE → Acceptance 8 — steps 1 and 4 poll a page where
+  // the client dials hostile hosts the stage DHT names and whose
+  // packets drop at the browser's own namespace. A dropped packet is
+  // no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s, in
+  // `src/protocols.ts`) per hostile dial until the retry back-off
+  // takes those nodes out of the candidates. The cap at 600 s is the
+  // deadline a step's poll holds under this cost, not a bound on the
+  // stage's own pace.
+  it('BLACK_HOLE_WAIT_MS caps steps 1 and 4\'s polls at 600 s (argued by one dial deadline per candidate)', () => {
+    expect(s8.BLACK_HOLE_WAIT_MS).toBe(600_000);
+  });
+  // MESH_INTERFACE → Acceptance 8 — the four tracker predicates and
+  // their expression-builders run under the live cdp.mjs runtime
+  // (`buildPredicate`, no `window` in scope), so a case holds the
+  // same JSON shape the live stage would carry on `#state`.
+  it('S8_GOSSIP_PREDICATE (via buildPredicate) is false until the tracker has four tip records', () => {
+    const fn = buildPredicate(s8.S8_GOSSIP_PREDICATE);
+    expect(fn(null)).toBe(false);
+    expect(fn(JSON.stringify([]))).toBe(false);
+    expect(fn(JSON.stringify([{ height: 1, atMs: 0, checks: 1 }, { height: 2, atMs: 1, checks: 1 }, { height: 3, atMs: 2, checks: 1 }]))).toBe(false);
+    expect(fn(JSON.stringify([
+      { height: 1, atMs: 0, checks: 1 },
+      { height: 2, atMs: 1_000, checks: 1 },
+      { height: 3, atMs: 2_000, checks: 1 },
+      { height: 4, atMs: 3_000, checks: 1 },
+    ]))).toBe(true);
+  });
+  it('S8_NOPROOFS_PREDICATE is true only once the tracker\'s final record is written', () => {
+    const fn = buildPredicate(s8.S8_NOPROOFS_PREDICATE);
+    expect(fn(null)).toBe(false);
+    expect(fn(JSON.stringify({ base: null, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: { checks: 2, proofReads: 4 }, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({
+      base: { checks: 2, proofReads: 4 },
+      final: { checks: 7, proofReads: 4, honestNodeStatuses: [{ notisId: 'a'.repeat(64), status: 'ok' }] },
+    }))).toBe(true);
+  });
+  it('S8_FORK_PREDICATE is true only once the tracker records the two-proof check', () => {
+    const fn = buildPredicate(s8.S8_FORK_PREDICATE);
+    expect(fn(null)).toBe(false);
+    expect(fn(JSON.stringify({ base: null, final: null, laggingId: 'c'.repeat(64) }))).toBe(false);
+    expect(fn(JSON.stringify({
+      base: { checks: 3, proofReads: 10 },
+      final: {
+        laggingStatus: 'behind', laggingBehindBy: 2,
+        clientTipHash: 'ab'.repeat(32), clientTipHeight: 42,
+        proofReadsDeltaAtCheck: 2,
+      },
+      laggingId: 'c'.repeat(64),
+    }))).toBe(true);
+  });
+  it('S8_GAP_PREDICATE is true only once the tracker records the fill', () => {
+    const fn = buildPredicate(s8.S8_GAP_PREDICATE);
+    expect(fn(null)).toBe(false);
+    expect(fn(JSON.stringify({ base: null, lastTipHeight: null, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: { tipHeight: 100, proofReads: 6 }, lastTipHeight: 100, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({
+      base: { tipHeight: 100, proofReads: 6 },
+      lastTipHeight: 104,
+      final: { tipHeight: 104, proofReads: 6, jump: 4 },
+    }))).toBe(true);
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 1's expression carries a pure
+  // observer that reads a snapshot of `#state` and returns the next
+  // tracker state. The observer captures a baseline on the first
+  // state with the chain settled (`checks >= 1`, `proofReads >= 1`)
+  // where every honest node the list HOLDS reads `ok`, `trailing` or
+  // `behind` AND both anchors are held; the final, five completed
+  // checks later, the same rule.
+  const ANCHOR_A = 'a'.repeat(64);
+  const ANCHOR_B = 'b'.repeat(64);
+  const PRIV_1 = 'c'.repeat(64);
+  const PRIV_2 = 'd'.repeat(64);
+  function nodeEntry(id: string, status: string) {
+    return { notisId: id, status };
+  }
+  it('s8NoProofsObserve: baseline captured when checks>=1, proofReads>=1, both anchors held, held honest in range', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 1 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toEqual({ checks: 1, proofReads: 1 });
+    expect(st.final).toBeNull();
+  });
+  it('s8NoProofsObserve: baseline NOT captured if proofReads is 0 (chain not settled)', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 0 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toBeNull();
+  });
+  it('s8NoProofsObserve: baseline NOT captured if one anchor is missing from the list', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 2 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toBeNull();
+  });
+  it('s8NoProofsObserve: baseline NOT captured if a held honest reads retry', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 2 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toBeNull();
+  });
+  it('s8NoProofsObserve: baseline captured when a non-anchor honest is NOT in the list (held subset)', () => {
+    // priv1 and priv2 only come in by DHT; the stage reaches a baseline
+    // once both anchors are held and the honest nodes it DOES hold are
+    // in range — a honest node absent from the list is not asserted.
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
+    const s = {
+      checks: 1,
+      traffic: { proofReads: 2 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'trailing')],
+    };
+    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    expect(st.base).toEqual({ checks: 1, proofReads: 2 });
+  });
+  it('s8NoProofsObserve: final captured at base.checks + 5 when the rule still holds', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const base = {
+      checks: 1,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const final = {
+      checks: 6,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'trailing')],
+    };
+    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, final, honestIds, anchorIds);
+    const fin = st.final;
+    expect(fin).not.toBeNull();
+    expect(fin!.checks).toBe(6);
+    expect(fin!.proofReads).toBe(3);
+    expect(fin!.honestNodeStatuses).toEqual([
+      { notisId: ANCHOR_A, status: 'ok' },
+      { notisId: ANCHOR_B, status: 'trailing' },
+    ]);
+  });
+  it('s8NoProofsObserve: final captured at base.checks + 5 even if an anchor was dropped (status \'absent\' goes into the measurement)', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const base = {
+      checks: 1,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const atFinalCount = {
+      checks: 6,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok')],
+    };
+    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
+    const fin = st.final;
+    expect(fin).not.toBeNull();
+    expect(fin!.checks).toBe(6);
+    expect(fin!.honestNodeStatuses).toEqual([
+      { notisId: ANCHOR_A, status: 'ok' },
+      { notisId: ANCHOR_B, status: 'absent' },
+    ]);
+  });
+  it('s8NoProofsObserve: final captured at base.checks + 5 even if a held honest reads retry (status \'retry\' goes into the measurement)', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
+    const base = {
+      checks: 1,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'ok')],
+    };
+    const atFinalCount = {
+      checks: 6,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
+    };
+    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
+    const fin = st.final;
+    expect(fin).not.toBeNull();
+    expect(fin!.checks).toBe(6);
+    expect(fin!.honestNodeStatuses).toEqual([
+      { notisId: ANCHOR_A, status: 'ok' },
+      { notisId: ANCHOR_B, status: 'ok' },
+      { notisId: PRIV_1, status: 'retry' },
+    ]);
+  });
+  it('s8NoProofsObserve: final captured at exactly base.checks + 5 whatever the statuses are afterward', () => {
+    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const base = {
+      checks: 1,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    const atFive = {
+      checks: 6,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'retry')],
+    };
+    const atSeven = {
+      checks: 8,
+      traffic: { proofReads: 3 },
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+    };
+    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, atFive, honestIds, anchorIds);
+    const fin = st.final;
+    expect(fin).not.toBeNull();
+    expect(fin!.checks).toBe(6);
+    expect(fin!.honestNodeStatuses).toEqual([
+      { notisId: ANCHOR_A, status: 'ok' },
+      { notisId: ANCHOR_B, status: 'retry' },
+    ]);
+    // The later state does not re-record a final.
+    st = s8.s8NoProofsObserve(st, atSeven, honestIds, anchorIds);
+    expect(st.final).toBe(fin);
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 4's expression carries a pure
+  // observer that reads a snapshot of `#state` and returns the next
+  // tracker state. The observer captures a baseline on the first
+  // completed check, waits for a fill (a jump of three or more at
+  // once) and then for one more tip change (gossip extending the tip
+  // past the fill — the client is at the head). `final` is captured
+  // at the one-block-after-fill point; `jump` keeps the fill's size
+  // so `verdictS8Gap` reads `jump >= 3`.
+  it('s8GapObserve: a tip that advances one at a time (gossip pace) does not end', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 102 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } },
+    ];
+    let st: unknown = null;
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
+    expect((st as { final: unknown }).final).toBeNull();
+    expect((st as { lastTipHeight: number }).lastTipHeight).toBe(103);
+    expect((st as { fillJump: unknown }).fillJump).toBeNull();
+  });
+  it('s8GapObserve: a jump of three or more alone records the fill, final still null (waiting for one-block-after)', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
+    ];
+    let st: unknown = null;
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
+    expect((st as { final: unknown }).final).toBeNull();
+    expect((st as { fillJump: number }).fillJump).toBe(4);
+    expect((st as { lastTipHeight: number }).lastTipHeight).toBe(105);
+  });
+  it('s8GapObserve: fill then one more tip change records final at the head, jump from the fill', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 106 }, traffic: { proofReads: 5 } },
+    ];
+    let st: unknown = null;
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
+    expect((st as { final: { tipHeight: number; proofReads: number; jump: number } }).final).toEqual({
+      tipHeight: 106,
+      proofReads: 5,
+      jump: 4,
+    });
+  });
+  it('s8GapObserve: fill then one-block-after at any size records final (even a jump of two post-fill)', () => {
+    // Once the fill lands, the tracker ends at the FIRST tip change
+    // past it — gossip moves one at a time, so the usual post-fill
+    // jump is 1; a race between the end of the gap and gossip's own
+    // batching may deliver 2 at once, and `final` lands either way.
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
+    ];
+    let st: unknown = null;
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
+    expect((st as { final: { tipHeight: number; jump: number } }).final).toEqual({
+      tipHeight: 105,
+      proofReads: 5,
+      jump: 3,
+    });
+  });
+  it('s8GapObserve: a jump of exactly three (the smallest fill) + one more records final with jump=3', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 7 } },
+      { checks: 2, tip: { height: 104 }, traffic: { proofReads: 7 } },
+    ];
+    let st: unknown = null;
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
+    expect((st as { final: { jump: number; tipHeight: number } }).final).toEqual({
+      tipHeight: 104,
+      proofReads: 7,
+      jump: 3,
+    });
+  });
+  it('s8GapObserve: a jump of two does not record a fill (still phase A, final null)', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7 } },
+      { checks: 2, tip: { height: 102 }, traffic: { proofReads: 7 } },
+    ];
+    let st: unknown = null;
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
+    expect((st as { final: unknown }).final).toBeNull();
+    expect((st as { fillJump: unknown }).fillJump).toBeNull();
+    expect((st as { lastTipHeight: number }).lastTipHeight).toBe(102);
+  });
+  it('s8GapObserve: baseline NOT captured before the first completed check', () => {
+    const st = s8.s8GapObserve(null, { checks: 0, tip: { height: 100 }, traffic: { proofReads: 0 } }, 1_000);
+    expect((st as { base: unknown }).base).toBeNull();
+  });
+  it('s8GapObserve: tipHist records every tip change after the baseline, carrying height, atMs, checks and proofReads', () => {
+    // The tracker keeps the full sequence so a run shows every tip
+    // change past the baseline — a fill of three, then a tip that
+    // went back by one, shows both moves.
+    const sequence = [
+      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } }, nowMs: 1_000 }, // baseline
+      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } }, nowMs: 1_100 }, // same height — no record
+      { snap: { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } }, nowMs: 1_200 }, // fill
+      { snap: { checks: 2, tip: { height: 102 }, traffic: { proofReads: 5 } }, nowMs: 1_300 }, // one more change — tip went back
+      { snap: { checks: 2, tip: { height: 104 }, traffic: { proofReads: 6 } }, nowMs: 1_400 }, // past final — no record
+    ];
+    let st: unknown = null;
+    for (const r of sequence) st = s8.s8GapObserve(st, r.snap, r.nowMs);
+    const tipHist = (st as { tipHist: Array<{ height: number; atMs: number; checks: number; proofReads: number }> }).tipHist;
+    expect(tipHist).toEqual([
+      { height: 103, atMs: 1_200, checks: 2, proofReads: 5 },
+      { height: 102, atMs: 1_300, checks: 2, proofReads: 5 },
+    ]);
+    // The end condition is unchanged: a fill of three then one more
+    // tip change — regardless of direction — locks final with the
+    // fill's jump.
+    expect((st as { final: { jump: number; tipHeight: number; proofReads: number } }).final).toEqual({
+      tipHeight: 102,
+      proofReads: 5,
+      jump: 3,
+    });
+  });
+  // MESH_INTERFACE → Acceptance 8 — the expression-builders substitute
+  // the honest-id set, the anchor set and the lagging node's id into
+  // the live page's tracker; the substitutions use `JSON.stringify` so
+  // a notisId with special characters cannot break the expression. A
+  // hex notisId round-trips through `JSON.stringify` as a quoted
+  // string.
+  it('buildS8NoProofsExpression embeds the honestIds and anchorIds as JSON arrays', () => {
+    const honestIds = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)];
+    const anchorIds = ['a'.repeat(64), 'b'.repeat(64)];
+    const expr = s8.buildS8NoProofsExpression(honestIds, anchorIds);
+    expect(expr).toContain(JSON.stringify(honestIds));
+    expect(expr).toContain(JSON.stringify(anchorIds));
+    expect(expr).toContain('__s8NP');
+  });
+  it('buildS8ForkExpression embeds the laggingId as a JSON string', () => {
+    const id = 'c'.repeat(64);
+    const expr = s8.buildS8ForkExpression(id);
+    expect(expr).toContain(JSON.stringify(id));
+    expect(expr).toContain('__s8F');
+  });
+  it('buildS8GapExpression contains the gap tracker namespace and the observer source', () => {
+    const expr = s8.buildS8GapExpression();
+    expect(expr).toContain('__s8GAP');
+    // The observer is inlined by `.toString()` so a browser-side
+    // tracker runs the same transition the Node suite drove.
+    expect(expr).toContain('lastTipHeight');
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 1 and step 4's baseline reads
+  // the honest mesh hosts the stage-default config can reach. A host
+  // the stage-default never dials — lan1 (browser's own network, s7
+  // joins it by hand), every hostile host — is left out, so the base
+  // of each tracker is not held forever by an entry that never
+  // answers.
+  it('honestMeshHosts picks pub/private mesh hosts, excludes lan1 (browser-net) and hostile hosts', () => {
+    const topology = {
+      hosts: {
+        browser: { role: 'browser', parent: 'natC', addr: '10.103.0.11' },
+        pub1: { role: 'public', addr: '11.100.0.11', mesh: { role: 'public' } },
+        pub2: { role: 'public', addr: '11.100.0.12', mesh: { role: 'public' } },
+        priv1: { role: 'private', parent: 'natA', addr: '10.101.0.11', mesh: { role: 'private' } },
+        priv2: { role: 'private', parent: 'natB', addr: '10.102.0.11', mesh: { role: 'private' } },
+        lan1: { role: 'private', parent: 'natC', addr: '10.103.0.21', mesh: { role: 'private' } },
+        'hostile-publisher': { role: 'hostile', addr: '11.100.0.34', mesh: { role: 'public', publisher: true } },
+        'hostile-lagging': { role: 'hostile', addr: '11.100.0.33', mesh: { role: 'public' } },
+      },
+    };
+    expect(s8.honestMeshHosts(topology)).toEqual(['pub1', 'pub2', 'priv1', 'priv2']);
+  });
+  it('honestMeshHosts: a host without a mesh config is left out even if its role is public or private', () => {
+    const topology = {
+      hosts: {
+        browser: { role: 'browser', parent: 'natC', addr: '10.103.0.11' },
+        pub1: { role: 'public', addr: '11.100.0.11', mesh: { role: 'public' } },
+        'pub-no-mesh': { role: 'public', addr: '11.100.0.13' },
+      },
+    };
+    expect(s8.honestMeshHosts(topology)).toEqual(['pub1']);
+  });
+  // MESH_INTERFACE → Acceptance 8 — the pure delivery read: given the
+  // tracker's clientHist (tip-change records) and the scenario's
+  // pub1Hist (first-seen atMs per height), computeDeliveries pairs
+  // each pub1 height past the baseline with the client's first atMs
+  // at or above it. Three deliveries, each under 1 s, checksMoved
+  // false — the shape the step reads when the tracker value is parsed
+  // as an array.
+  it('computeDeliveries over clientHist (parsed) and pub1Hist arrays answers three deliveries, each under 1 s, checksMoved false', () => {
+    const clientHist = [
+      { height: 2132, atMs: 1793623452426, checks: 1 },
+      { height: 2133, atMs: 1793623453726, checks: 1 },
+      { height: 2134, atMs: 1793623456726, checks: 1 },
+      { height: 2135, atMs: 1793623458726, checks: 1 },
+    ];
+    const pub1Hist = [
+      { height: 2132, atMs: 1793623452004 },
+      { height: 2133, atMs: 1793623453110 },
+      { height: 2134, atMs: 1793623456364 },
+      { height: 2135, atMs: 1793623458345 },
+    ];
+    const deliveries = s8.computeDeliveries(clientHist, pub1Hist);
+    expect(deliveries).toEqual([
+      { height: 2133, delayMs: 616, checksMoved: false },
+      { height: 2134, delayMs: 362, checksMoved: false },
+      { height: 2135, delayMs: 381, checksMoved: false },
+    ]);
+    for (const d of deliveries) {
+      expect(d.delayMs).toBeLessThan(1_000);
+      expect(d.checksMoved).toBe(false);
+    }
+  });
+  it('computeDeliveries over a string clientHist answers an empty list (the shape `clientHist` carries on the wire)', () => {
+    // `clientHist` crosses as a JSON string — `cdp.mjs`'s stdout is
+    // `JSON.stringify(result)` where the expression's `result` is
+    // itself the `JSON.stringify(...)` of the tracker. One
+    // `JSON.parse` leaves a string; the step parses it to an array
+    // before calling `computeDeliveries`.
+    const clientHistString = '[{"height":2132,"atMs":1793623452426,"checks":1},{"height":2133,"atMs":1793623453726,"checks":1}]';
+    const pub1Hist = [{ height: 2132, atMs: 1793623452004 }, { height: 2133, atMs: 1793623453110 }];
+    expect(s8.computeDeliveries(clientHistString, pub1Hist)).toEqual([]);
+  });
+  it('computeDeliveries over a non-array pub1Hist answers an empty list', () => {
+    const clientHist = [{ height: 2132, atMs: 1793623452426, checks: 1 }];
+    expect(s8.computeDeliveries(clientHist, 'not-an-array')).toEqual([]);
+    expect(s8.computeDeliveries(clientHist, null)).toEqual([]);
+  });
+
+  // MESH_INTERFACE → Acceptance 8 — one delivery per client tip
+  // change past the baseline: each new client height is paired with
+  // pub1's first record at or above it, so a pub1 height the poll's
+  // 250 ms cadence misses does not drop the client's own change. The
+  // three client changes below land as three deliveries, each within
+  // the 5 s bound and with `checksMoved` false, when pub1 records
+  // only two of three adjacent heights (921 and 923, not 922, 2 s
+  // apart).
+  it('computeDeliveries over a clientHist and a pub1Hist missing one height answers one delivery per client change past baseline', () => {
+    const clientHist = [
+      { height: 920, atMs: 1793631574361, checks: 1 },
+      { height: 921, atMs: 1793631579468, checks: 1 },
+      { height: 922, atMs: 1793631582561, checks: 1 },
+      { height: 923, atMs: 1793631582661, checks: 1 },
+    ];
+    const pub1Hist = [
+      { height: 920, atMs: 1793631574011 },
+      { height: 921, atMs: 1793631579690 },
+      { height: 923, atMs: 1793631582672 },
+    ];
+    const deliveries = s8.computeDeliveries(clientHist, pub1Hist);
+    expect(deliveries).toEqual([
+      { height: 921, delayMs: -222, checksMoved: false },
+      { height: 922, delayMs: -111, checksMoved: false },
+      { height: 923, delayMs: -11, checksMoved: false },
+    ]);
+    for (const d of deliveries) {
+      expect(d.delayMs).toBeLessThanOrEqual(5_000);
+      expect(d.checksMoved).toBe(false);
+    }
+  });
+
+  // MESH_INTERFACE → Acceptance 8 — `checksMoved === true` when the
+  // client's `checks` advanced between pub1's atMs for the delivery's
+  // height (or the first pub1 record at or above it) and the client's
+  // own tip-change atMs. A check that ran mid-window carried the block
+  // by proof, not gossip; `verdictS8Gossip` reads this field.
+  it('computeDeliveries marks checksMoved true when a check ran between pub1\'s atMs and the client\'s tip change', () => {
+    const clientHist = [
+      { height: 100, atMs: 1_000, checks: 5 },
+      { height: 101, atMs: 2_000, checks: 6 }, // pub1 saw 101 at 1_500; checks went 5 → 6
+    ];
+    const pub1Hist = [{ height: 101, atMs: 1_500 }];
+    const deliveries = s8.computeDeliveries(clientHist, pub1Hist);
+    expect(deliveries).toEqual([
+      { height: 101, delayMs: 500, checksMoved: true },
+    ]);
+  });
+
+  // MESH_INTERFACE → Acceptance 8 — the step reads the FIRST three
+  // deliveries past the baseline. A fourth client change does not
+  // enter the verdict's read; `verdictS8Gossip` keyed on
+  // `deliveries.length === 3`.
+  it('computeDeliveries caps at three deliveries', () => {
+    const clientHist = [
+      { height: 10, atMs: 0, checks: 0 },
+      { height: 11, atMs: 100, checks: 0 },
+      { height: 12, atMs: 200, checks: 0 },
+      { height: 13, atMs: 300, checks: 0 },
+      { height: 14, atMs: 400, checks: 0 },
+    ];
+    const pub1Hist = [
+      { height: 11, atMs: 50 },
+      { height: 12, atMs: 150 },
+      { height: 13, atMs: 250 },
+      { height: 14, atMs: 350 },
+    ];
+    const deliveries = s8.computeDeliveries(clientHist, pub1Hist);
+    expect(deliveries.length).toBe(3);
+    expect(deliveries.map((d) => d.height)).toEqual([11, 12, 13]);
+  });
+});
+
+// MESH_INTERFACE → Acceptance 8 — `cdp.mjs poll`'s stdout is
+// `JSON.stringify(result)` where `result` is itself the expression's
+// `JSON.stringify(window.__s8GAP)`: one JSON.parse unwraps the
+// stdout to a JSON STRING of the inner payload, a second parse reads
+// it as an object. `parseTrackerValue` is the shared parser the
+// steps call; a single parse leaves a string and reading its fields
+// throws. The case below pins a double-encoded payload against the
+// shared parser.
+describe("s8 — parseTrackerValue reads cdp.mjs' double-encoded stdout", () => {
+  it('parses a double-encoded tracker value as the inner object', () => {
+    const inner = { base: { tipHeight: 100, proofReads: 1 }, lastTipHeight: 103, final: { tipHeight: 103, proofReads: 1, jump: 3 } };
+    const stdout = JSON.stringify(JSON.stringify(inner));
+    const r = s8.parseTrackerValue(stdout);
+    expect(r).toEqual(inner);
+    // The run's throw: a single JSON.parse of the double-encoded
+    // stdout returns a string; dereferencing `.base.proofReads` throws
+    // the "undefined" message the saved run holds.
+    const once = JSON.parse(stdout);
+    expect(typeof once).toBe('string');
+    expect(() => once.base.proofReads).toThrow(/Cannot read properties of undefined/);
+    // Confirming the shape of the thrown message so a reader of the
+    // saved run finds the match the test asserts.
+    try { void (once as any).base.proofReads; }
+    catch (err) {
+      expect((err as Error).message).toContain("reading 'proofReads'");
+    }
+  });
+
+  it('parses a once-encoded tracker value as the inner object (idempotent)', () => {
+    // The scenario's cdpPoll helper does one parse before resolving;
+    // the shared parser is safe to call on both an already-parsed
+    // object and a once-encoded string.
+    const inner = { base: null, final: null };
+    const r1 = s8.parseTrackerValue(JSON.stringify(inner));
+    expect(r1).toEqual(inner);
+  });
+
+  it('answers null on a non-string input', () => {
+    expect(s8.parseTrackerValue(null)).toBeNull();
+    expect(s8.parseTrackerValue(42 as any)).toBeNull();
+    expect(s8.parseTrackerValue({} as any)).toBeNull();
   });
 });

@@ -1,5 +1,9 @@
 export function malformedBody(): { proof: string };
 export function invalidBody(validProofHex: string): { proof: string };
+export function blocksCurrentBody(
+  upstreamJson: Record<string, unknown>,
+): Record<string, unknown> & { hash: string };
+export const LIE_HASH: string;
 export function startHostileUpstream(opts: {
   port: number;
   mode: 'malformed' | 'invalid';

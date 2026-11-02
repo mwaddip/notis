@@ -1,7 +1,7 @@
-// MESH_INTERFACE → Acceptance — "A step that times out or throws is
-// recorded `FAIL` with its last measured value and the error, the
-// scenario's faults are removed, and the run goes on to the next step
-// or scenario". The scenario wraps each step in `recorder.step(name,
+// MESH_INTERFACE → Acceptance — a step that times out or throws is
+// recorded as a failure with its last measured value and the error,
+// the scenario's faults are removed, and the run goes on to the next
+// step or scenario. The scenario wraps each step in `recorder.step(name,
 // fn)`; `fn` returns `{ verdict, measurement }`; a throw lands as a
 // `FAIL` with `{ error: <message> }` and the next `recorder.step`
 // still runs.

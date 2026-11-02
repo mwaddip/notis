@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// MESH_INTERFACE → Acceptance — the entry point for the seven
-// scenarios. `stage:run [s1 ... s7]` runs the named scenarios in the
-// order given (default: all seven, in order). Each scenario writes
+// MESH_INTERFACE → Acceptance — the entry point for the eight
+// scenarios. `stage:run [s1 ... s8]` runs the named scenarios in the
+// order given (default: all eight, in order). Each scenario writes
 // `stage/out/scenarios/<name>.json` with every step's verdict and the
 // measurement it rests on, and a per-scenario fault log. `--dry-run`
 // prints every fault each scenario would apply inside `notismesh-*`
@@ -24,6 +24,7 @@ import * as s4 from './scenarios/s4-transport-cut.mjs';
 import * as s5 from './scenarios/s5-impersonation.mjs';
 import * as s6 from './scenarios/s6-hostile.mjs';
 import * as s7 from './scenarios/s7-reach-and-load.mjs';
+import * as s8 from './scenarios/s8-prove-once.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -33,14 +34,24 @@ const SCENARIOS_OUT_DIR = join(OUT_DIR, 'scenarios');
 const TOPOLOGY_PATH = join(HERE, 'topology.json');
 const PIDS_PATH = join(OUT_DIR, 'pids.json');
 
+// MESH_INTERFACE → Block gossip → "A router scores its peers by
+// gossipsub's defaults" — the IP colocation penalty is kept an hour,
+// so every browser peer this run opens from the one NAT address
+// counts against every other for the rest of the run. s6 is where
+// the publisher's view of the browser's peer id matters: the client
+// has to be the only peer at the browser's address when it joins the
+// mesh, or the publisher's score for it is already past the ignore
+// threshold and the client never sees a block. Running s6 first keeps
+// its mesh unseeded by every other scenario's pages.
 const SCENARIOS = {
+  s6,
   s1,
   s2,
   s3,
   s4,
   s5,
-  s6,
   s7,
+  s8,
 };
 
 function parseArgs(argv) {
@@ -85,14 +96,13 @@ async function main(argv) {
 
   const cdpScript = join(HERE, 'cdp.mjs');
 
-  // MESH_INTERFACE → Acceptance — "A step that times out or throws is
-  // recorded FAIL with its last measured value and the error, the
-  // scenario's faults are removed, and the run goes on to the next
+  // MESH_INTERFACE → Acceptance — a step that times out or throws is
+  // recorded as a failure with its last measured value and the error,
+  // the scenario's faults are removed, and the run goes on to the next
   // step or scenario; the run's exit code is non-zero if any step
-  // failed." Scenarios catch per-step throws with their own
-  // `StepRecorder` helper (`stage/lib/step-recorder.mjs`); the
-  // orchestrator still catches a scenario-level throw so one bad
-  // scenario cannot abort the run.
+  // failed. Scenarios catch per-step throws with their own
+  // `StepRecorder` helper; the orchestrator still catches a
+  // scenario-level throw so one bad scenario cannot abort the run.
   let hadFailure = false;
   for (const name of toRun) {
     const scenario = SCENARIOS[name];

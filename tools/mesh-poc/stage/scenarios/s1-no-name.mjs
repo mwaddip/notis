@@ -132,9 +132,9 @@ export async function run(ctx) {
         "if (v === null) return false; try { return JSON.parse(v).nodeId !== null; } catch (_e) { return false; }",
         60_000, 500,
       );
-      // MESH_INTERFACE → Acceptance 1 — "the client reads a node's API
-      // by key from anchors alone, over WebRTC-direct". `transport`
-      // and `path` are read from the same `#state` payload so the
+      // MESH_INTERFACE → Acceptance 1 — "The client reads a node's API
+      // by key from anchors alone, over WebRTC-direct". `transport` and
+      // `path` are read from the same `#state` payload so the
       // measurement names the link reached inside the 60 s window.
       const state = JSON.parse(stateJson);
       anchorNodeId = state.nodeId;
@@ -195,10 +195,11 @@ export async function run(ctx) {
     await rec.step(describe()[3], async () => {
       const dnsLinesEnd = readLineCount(dnsLogPath);
       const nftCounterEnd = readNftCounterSum('notismesh-browser', 'dns_witness');
-      // MESH_INTERFACE → Acceptance 1 — "no DNS traffic" is PASS only
-      // on positive evidence that the page connected. A page that never
-      // reached a node has no DNS traffic vacuously. `anchorNodeId` is
-      // the nodeId Step 1 found (null if step 1 FAILed).
+      // MESH_INTERFACE → Acceptance 1 — the browser host's DNS log
+      // holds no query; this is PASS only on positive evidence that the
+      // page connected. A page that never reached a node has no DNS
+      // traffic vacuously. `anchorNodeId` is the nodeId Step 1 found
+      // (null if step 1 FAILed).
       const m = {
         dnsLines: dnsLinesEnd - dnsLinesStart,
         nftCounterPackets: nftCounterEnd - nftCounterStart,
@@ -207,13 +208,13 @@ export async function run(ctx) {
       return { verdict: verdictS1DnsSilent(m), measurement: m };
     });
 
-    // MESH_INTERFACE → NAT — "every STUN server is a mesh node named by
-    // IP ... Only the relayed WebRTC path uses STUN; WebRTC-direct to
-    // a public address needs none." s1's path is WebRTC-direct, so the
-    // record is expected to be either empty-URL buckets or stun:ip:port
-    // URLs — never a host name. Chromium's own `--host-resolver-rules`
-    // hides a host-named ICE server from the DNS witness, so the record
-    // is where the stage sees it.
+    // MESH_INTERFACE → NAT — "Every STUN server is a mesh node named by
+    // IP"; only the relayed WebRTC path uses STUN, and WebRTC-direct
+    // to a public address needs none. s1's path is WebRTC-direct, so
+    // the record is expected to be either empty-URL buckets or
+    // stun:ip:port URLs — never a host name. Chromium's own
+    // `--host-resolver-rules` hides a host-named ICE server from the
+    // DNS witness, so the record is where the stage sees it.
     await rec.step(describe()[4], async () => {
       const { value, iceRecord } = await cdpPollIce(ctx, browserUrl,
         "document.getElementById('state')?.textContent ?? null",

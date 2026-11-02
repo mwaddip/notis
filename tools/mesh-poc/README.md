@@ -3,7 +3,7 @@
 A browser page reaches a Notis node's HTTP API **by the node's Ed25519 key**, over libp2p, from a
 handful of anchors and **no DNS name**, with mesh nodes sitting beside unmodified devnet
 `@dagsocial/node`s — the client's answer is the node's own, byte for byte. The stage runs the whole
-machinery inside Linux network namespaces on one host and the seven scenarios in
+machinery inside Linux network namespaces on one host and the eight scenarios in
 `MESH_INTERFACE → Acceptance` drive it from the browser's side.
 
 ## Threat model
@@ -64,9 +64,10 @@ symmetric sub-segments (`stage/topology.json`):
 | pub2 | public mesh node + Notis node | `11.100.0.12` |
 | pebble | ACME test server | `11.100.0.21` |
 | dns-log | REFUSED resolver + DNS witness | `11.100.0.22` |
-| hostile-malformed | mesh node forwarding a non-hex `proof` | `11.100.0.31` |
-| hostile-invalid | mesh node forwarding a `verifyProof`-refusing proof | `11.100.0.32` |
-| hostile-lagging | mesh node whose Notis p2p port is cut post-sync | `11.100.0.33` |
+| hostile-malformed | mesh node forwarding a non-hex `proof` and a tip of its own; its Notis p2p port peers only with hostile-lagging from before start, on the pair's own chain from genesis; its mesh service carries no `MESH_NODE_P2P` so block gossip never carries the pair's chain | `11.100.0.31` |
+| hostile-invalid | mesh node forwarding a `verifyProof`-refusing proof and a tip of its own | `11.100.0.32` |
+| hostile-lagging | mesh node whose Notis p2p port peers only with hostile-malformed from before start; a 100 % boot miner then a 1 % miner on its node grows the pair's own chain from genesis; its mesh service carries no `MESH_NODE_P2P` for the same reason as the partner's | `11.100.0.33` |
+| hostile-publisher | mesh node publishing malformed ordering blocks on the gossip topic | `11.100.0.34` |
 | natA | endpoint-independent NAT router (public `11.100.0.101`, inside `10.101.0.0/24`) | — |
 | priv1 | private mesh node + Notis node behind natA | `10.101.0.11` |
 | natB | symmetric NAT router (public `11.100.0.102`, inside `10.102.0.0/24`) | — |
@@ -110,7 +111,7 @@ timeout 10m  pnpm -r build
 timeout  5m  pnpm --filter @dagsocial/mesh-poc page:build
 
 timeout 20m  pnpm --filter @dagsocial/mesh-poc stage:up
-timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # or stage:run s1 s2 ... s7
+timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # default order: s6 s1 s2 s3 s4 s5 s7 s8
 timeout  1m  pnpm --filter @dagsocial/mesh-poc stage:report
 timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
 ```
@@ -124,11 +125,16 @@ timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
   every namespace and NAT rule, lifts `net.ipv4.ip_unprivileged_port_start=0` in the browser,
   dns-log and pub1 namespaces, writes `/etc/netns/notismesh-browser/resolv.conf` with the dns-log
   address, creates each mesh node's `mesh.key` (PKCS8 Ed25519 seed, 48 bytes, mode `0600`),
-  downloads Pebble and generates a stage CA + Pebble server cert, starts the dns-log server, each
-  Notis node, each mesh node (public first; private second — their relay reservations land on the
-  publics that are up), the miner inside pub1 at `MINER_PCT=100` until every honest node reads
-  `/blocks/current.height >= 50`, then the steady miner at `MINER_PCT=10`, cuts hostile-lagging's
-  Notis p2p port from the rest, writes `stage/out/browser/config.json` and
+  downloads Pebble and generates a stage CA + Pebble server cert, starts the dns-log server, cuts
+  hostile-lagging's and hostile-malformed's Notis p2p port from everything but each other BEFORE
+  starting their Notis nodes (so the pair grows its own chain from genesis, each pair host naming
+  the partner alone in `BOOTSTRAP_PEERS` and neither pair mesh service carrying `MESH_NODE_P2P`),
+  starts each Notis node, each mesh node (public first; private second — their relay reservations
+  land on the publics that are up), the miner inside pub1 at `MINER_PCT=100` alongside the
+  miner-lagging-boot inside hostile-lagging at `MINER_PCT=100`, waits until every honest node AND
+  the pair's node (hostile-lagging) reads `/blocks/current.height >= 50`, swaps the honest miner
+  to `MINER_PCT=2` and the pair's miner to `MINER_PCT=1`, writes
+  `stage/out/browser/config.json` and
   `stage/out/browser/config.default.json` from the mesh nodes' printed multiaddrs, writes
   `stage/out/identities.json`, installs Pebble's root into Chromium's NSS db under
   `stage/out/browser/home/.pki/nssdb` with trust flag `C,,`, starts the page server on
@@ -138,13 +144,16 @@ timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
   `stage up: <N> processes, <M> namespaces`. On failure it rolls back exactly what it created
   (SIGTERMs each recorded PID, deletes each namespace in reverse order, removes
   `/etc/netns/notismesh-*`).
-- **`stage:run [s1 ... s7]`** runs the named scenarios in the order given (default: all seven).
-  Writes `stage/out/scenarios/<name>.json` per scenario: `{ scenario, startedAt, endedAt, steps,
-  faults }`, each step `{ name, verdict, measurement, timeMs }`. **A step that times out or throws
-  is `FAIL`; the scenario's faults are removed and the run goes on. A step that did not run reads
-  `skipped`, never a pass.** Each scenario writes its own `config.json` variant at start, so the
-  previous scenario's variant does not leak; the scenario's `finally` restores
-  `config.default.json`. Non-zero exit when any step is `FAIL`.
+- **`stage:run [<name>...]`** runs the named scenarios in the order given (default: all eight,
+  `s6 s1 s2 s3 s4 s5 s7 s8` — `MESH_INTERFACE → Block gossip → "A router scores its peers by
+  gossipsub's defaults"` kicks in past ten peers from one NAT address and keeps the penalty an
+  hour, so s6's publisher reads the client's score as zero when the client has to be the only
+  browser peer at that address). Writes `stage/out/scenarios/<name>.json` per scenario:
+  `{ scenario, startedAt, endedAt, steps, faults }`, each step `{ name, verdict, measurement,
+  timeMs }`. **A step that times out or throws is `FAIL`; the scenario's faults are removed and
+  the run goes on. A step that did not run reads `skipped`, never a pass.** Each scenario writes
+  its own `config.json` variant at start, so the previous scenario's variant does not leak; the
+  scenario's `finally` restores `config.default.json`. Non-zero exit when any step is `FAIL`.
 - **`stage:report`** reads `stage/out/scenarios/*.json` and writes `stage/out/summary.md`: one
   section per scenario, every step's verdict, time and measurement; a Firefox block is left for the
   hand pass, marked as such.
@@ -185,7 +194,7 @@ only `stage/out/pids.json`** — every other file under `stage/out/` stays, for 
 over after a run; the next `stage:up` rotates the whole `stage/out/` directory to
 `stage/out.prev/` (replacing any older `.prev`) at its start.
 
-## The seven scenarios
+## The eight scenarios
 
 Each scenario's step list is `verdicts.mjs`'s rules in order. A `PASS` requires **positive
 evidence**: a vacuous read (no connection, no measurement) is never a pass. A step reads `skipped`
@@ -283,16 +292,23 @@ The anchor's address is dropped for that key; the anchor keeps its status.
 
 ### s6 — Hostile nodes (`MESH_INTERFACE → Acceptance 6`)
 
-Two sub-steps.
+Three sub-steps.
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
 | 1 | `anchors unreachable: anchorReached is false, page shows the contract words` | nft rules in the browser namespace drop every anchor address; `state.anchorReached === false`; the page's `[data-role="banner"]` reads `No anchor reached. Nothing shown here is verified.` byte for byte; **at least one hostile seed** reached a terminal status (`ok` / `behind` / `blacklisted`) — positive evidence the page connected to something. | A different banner text; `anchorReached: true`; no seed left `new`. |
-| 2 | `anchors reachable, hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted` | `hostile-malformed` → `blacklisted`, evidence `malformed`; `hostile-invalid` → `blacklisted`, evidence `proof-invalid`; `hostile-lagging` → `behind`, never `blacklisted`. | Any of those three not landing. |
+| 2 | `anchors reachable, hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted` | `hostile-malformed` → `blacklisted`, evidence `malformed`; `hostile-invalid` → `blacklisted`, evidence `proof-invalid`; `hostile-lagging` → `behind`, never `blacklisted` — the pair runs its own chain from genesis, no block shared with the honest one; devnet pins no `genesisId`, so `compareProofs` answers `incomparable / no-common-ancestor` (`NIPOPOW_INTERFACE → compareProofs`), `resolveTip` keeps the client's own tip's proof handed to it first (`MESH_INTERFACE → The client's node list → "A check"`), and the pair's tip, not on the winner's suffix, reads `behind: null` which `tipEvent` turns into `behind`. | Any of those three not landing. |
+| 3 | `the publisher is blacklisted for gossip-block; the client forwarded nothing` | `hostile-publisher` → `blacklisted`, evidence `gossip-block`; every honest mesh node's log holds no `[mesh] ordering block rejected from <X>` line where `X` is anything but the publisher's peer id (the client refused the bad block, so no honest mesh ever sourced it from the browser). | Publisher not blacklisted or evidence of a different kind; one honest mesh log named a reject source other than the publisher. |
 
 **What a tester reports even on PASS:** the hostile-lagging node at `blacklisted` at any point —
 a timeout, a refused connection, a dropped link or a non-2xx is `retry`, and a valid proof of a
 lighter chain is `behind`; neither is `blacklisted` (`MESH_INTERFACE → The client's node list`).
+
+**The traffic the page shows.** Every page carries a `[data-role="traffic"]` section with the
+counts the client keeps per check: `Proofs read`, the byte counts for `tip`, `header`, `proof`
+and `gossip`, and `forwarded` (how many blocks the client's gossipsub handler delivered — a
+rejected block never increments this). A tester reads `forwarded` during s6 step 3 to see at a
+glance that the browser dropped the publisher's bad block (`MESH_INTERFACE → Block gossip`).
 
 ### s7 — Reach and load (`MESH_INTERFACE → Acceptance 7`)
 
@@ -316,6 +332,36 @@ refused.
 public node runs a STUN server on `STUN_PORT` at the IP of its first WebRTC-direct listen
 address unless its operator names another or turns it off; the client's ICE list is derived
 from the public nodes it holds.
+
+### s8 — Prove once, follow by gossip (`MESH_INTERFACE → Acceptance 8`)
+
+Four sub-steps that drive the "After the first check, no proof is read" rule across settled
+checks, gossip delivery, a lighter fork from a hostile neighbour, and recovery after a gossip
+cut.
+
+| # | Step | Pass condition | What breaks it |
+|---|---|---|---|
+| 1 | `no proof read across five completed checks on the stage default` | A step-scoped firewall drops the browser's output to every hostile host for the step's duration (a `FaultLog` fault, removed in a `finally` inside the step), so the stage-default's DHT walk never reaches a hostile mesh node whose tip-of-its-own would be read on the first check. The baseline is the first state with the chain settled (`checks >= 1`, `proofReads >= 1`) where every honest node the list HOLDS reads `ok`, `trailing` or `behind` and both anchors are held — a honest node absent from the list is not asserted, so a node the browser reaches only by DHT does not stall the baseline. Across the five completed checks past it, `state.traffic.proofReads` is unchanged, both anchors are still held, and every held honest node still reads `ok`, `trailing` or `behind`. | A `proofReads` that moved; an anchor dropped from the list; a held honest node at `retry` or `blacklisted`; fewer than five checks past the baseline. |
+| 2 | `three new blocks reach the browser by gossip within 5 s each` | One page kept open across the three deliveries, so the client's gossip subscription survives. The page's tracker pushes `{height, atMs, checks}` on each tip change; the scenario polls pub1's `/blocks/current` every 250 ms inside pub1's namespace and keeps the first `atMs` it sees each height. For the first three client tip changes past the baseline, `delayMs` is the client's `atMs` for that change minus pub1's first `atMs` at or above that height (a negative delay says gossip beat the 250 ms poll — a delivery within the bound), and `checksMoved` is whether the client's `checks` advanced in that window. At least two of three carry `delayMs ≤ 5000` and `checksMoved === false`. | A delivery delayed past 5 s; a delivery whose `checks` moved in the window (a check ran meanwhile — carried the block by proof, not gossip). |
+| 3 | `the lagging fork reads behind, client tip stays on pub1's chain, exactly two proofs that check` | Hostile-seeds variant with `hostile-lagging` and `hostile-malformed` on the pair's own chain from genesis, each pair host peered only with the partner since `up`'s pre-spawn cut; `miner-lagging` grows the pair's chain at `MINER_PCT=1` against the honest chain's `MINER_PCT=2`. The pair's chain shares no block with the honest one; devnet pins no `genesisId`, so the lagging node's proof verifies and `compareProofs` answers `incomparable / no-common-ancestor` (`NIPOPOW_INTERFACE → compareProofs`); `resolveTip` keeps the client's own tip's proof handed to it first (`MESH_INTERFACE → The client's node list → "A check"`), and the lagging tip, not on the winner's suffix, reads `behind: null` which `tipEvent` turns into `behind`. The step waits for a completed check cycle in which `traffic.proofReads` rose by exactly two — the new lagging tip's proof plus the client's own tip proof, the one shape "one per distinct tip, and the client's own" takes when every other node names the chain's tip (hostile-malformed's mesh service answers `LIE_HASH` and non-hex proofs, so it is `blacklisted`, no proof read after the first evidence). PASS: `hostile-lagging.status === 'behind'`, `state.tip.hash` equals pub1's node's block hash at that height, and the delta is exactly two. | Lagging `blacklisted` or any status other than `behind`; the client's tip hash differs from pub1's at that height (the pair's chain won); a check whose delta was 1 (lagging never read) or 3 (another off-chain tip too). |
+| 4 | `the browser's gossip cut for three blocks and restored: tip catches up by headers, no proof read` | On the stage default: a page kept open across the window. The scenario firewalls the browser from every mesh host, waits until pub1 has advanced three blocks past the moment the firewall landed, removes the firewall, and awaits the tracker (3-min deadline). The cut is short — gossip moves the tip one block at a time, so no check sees it. The tracker ends at the first one-block tip change AFTER its first jump of three or more (the fill, then gossip extending the tip past it — the client is at the head), recording `proofReads` and the tip at that one-block-after point; the scenario then reads pub1. PASS: `proofReadsAfter === proofReadsBefore`, `jump >= 3` (fill size), and the tip is within two of pub1's read. | A `proofReads` that moved during the window; a fill jump smaller than three (gossip-paced, not a header fill); a tip at the head that landed more than two off pub1's read. |
+
+**No proof after the first** (`MESH_INTERFACE → The client's node list → "A check"`): a check that
+places every tip on the client's chain reads no proof. After the first check settles the chain,
+further checks name the same tips in the same place; the client stays with its chain and does not
+re-read anybody's proof.
+
+**One page across the window** (step 2 and step 4): a fresh page runs its initial check at startup,
+which reads the latest tip by proof — if step 2 opened a fresh page for each delivery the
+measurement would be of the first-check latency, not the gossip latency; if step 4 did, the fresh
+page's first-check proof would mask the "no proof read" conclusion. Both steps spawn `cdp.mjs poll`
+non-blocking so the scenario can run its own work beside the tracker — step 2 reads pub1's height
+on 250 ms cadence to build the pub1-side timeline, step 4 applies and removes the nftables rules.
+
+**The traffic the page shows during s8.** The `[data-role="traffic"]` section (`Proofs read`, byte
+counts for `tip`/`header`/`proof`/`gossip`, and `forwarded`) is what step 1 and step 4 both
+measure through `state.traffic.proofReads`: `Proofs read` is the field a tester reads at a glance
+to confirm the "no proof read" claim.
 
 ## Firefox by hand
 
