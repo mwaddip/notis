@@ -143,13 +143,15 @@ export class HeldChain {
   link(headers: BlockHeader[]): 'linked' | 'failed' {
     if (!this.block1 || this.window.length === 0) return 'failed';
     if (headers.length === 0 || headers.length > this.k) return 'failed';
-    const lowest = headers[headers.length - 1]!;
-    // The chain grows only from its tip: the lowest's parent must be the
-    // tip's hash. Anything else is a fork or a divergence.
     const tip = this.window[this.window.length - 1]!;
-    const tipHash = blockHash(tip);
-    if (tipHash === null || lowest.prevBlockHash !== tipHash) return 'failed';
     let parent: BlockHeader = tip;
+    // The chain grows only from its tip: at i = headers.length − 1 the
+    // lowest header's parent is the held tip, so the loop's own link check
+    // (`cur.prevBlockHash !== parentHash`) answers "failed" when the
+    // lowest links to anything else — a held header below the tip (a
+    // fork), block 1 (a divergence from the whole chain), or nothing held.
+    // The fork case `HeldChain — link: "the fill links to a held header
+    // below the tip (a fork), the window unchanged"` holds it.
     // Bottom-up: lowest → highest, each with its parent.
     for (let i = headers.length - 1; i >= 0; i--) {
       const cur = headers[i]!;
