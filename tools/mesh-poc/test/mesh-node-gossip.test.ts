@@ -210,9 +210,9 @@ describe('mesh node — the block router', () => {
     const stub = await makeStub(); stubs.push(stub);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-gossip-')); dirs.push(dir);
     // Assign to a variable so the excess-property check runs through a named
-    // binding; the `nodeP2p` field is `MeshNodeOptions.nodeP2p` once the
-    // service grows it (Task 7). The cast below is the one bridge between
-    // `startBasicMesh` and `startMeshNode`'s current signature.
+    // binding; `startBasicMesh` carries a `nodeP2p` field the service's
+    // options type does not. The cast below is the one bridge between
+    // `startBasicMesh` and `startMeshNode`'s signature.
     const options = {
       key: freshKey(),
       network: 'devnet' as const,
@@ -383,8 +383,8 @@ describe('mesh node — the block router', () => {
       let started: MeshNode | null = null;
       let thrown: unknown = null;
       // Options bound to a variable so excess-property checks run on a named
-      // binding; the `nodeP2p` field is `MeshNodeOptions.nodeP2p` once the
-      // service grows it (Task 7).
+      // binding; `nodeP2p` is a field the service's options type does not
+      // carry.
       const options = {
         key: freshKey(),
         network: 'devnet' as const,

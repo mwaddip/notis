@@ -271,7 +271,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 90_000);
 
   // A resolve that answers only the real node and omits every other
-  // url the client offered — so phase 3's `tipEvents` fires nothing
+  // url the client offered — so phase 3's `tipEvent` fires nothing
   // for the fake entries under test and the check's phases 4-5 run
   // against the real connection alone. The ids under scrutiny stay
   // in whatever state phase 1's dial left them in, and every case
@@ -484,13 +484,13 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const started = await startNode(up, dir); nodes.push(started.node);
 
     // The fake resolve answers 'invalid' with a proof — the proof-invalid
-    // row of the mapping (`tipEvents`).
+    // row of the mapping (`tipEvent`).
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       // 'invalid' answers like `invalidWithProof`: refuseCode 'invalid'
-      // with a non-null proof stand-in, which `tipEvents` reads as a
+      // with a non-null proof stand-in, which `tipEvent` reads as a
       // `lie` evidence of kind `proof-invalid`.
       resolve: chainResolve(() => 'invalid', K),
     });

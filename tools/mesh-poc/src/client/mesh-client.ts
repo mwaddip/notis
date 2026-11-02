@@ -696,8 +696,8 @@ class MeshClientImpl implements MeshClient {
     msg: { topic: string; data: Uint8Array },
   ): TopicValidatorResult {
     // Count every message the validator weighs — accept, ignore or reject
-    // (MESH_INTERFACE → Block gossip, the brief). The length is from
-    // the message's `data`.
+    // (MESH_INTERFACE → Block gossip). The length is from the message's
+    // `data`.
     this.state_.traffic.gossipBytes += msg.data.length;
     const data = new Uint8Array(msg.data);
     const verdict = this.blockCheck.check(data);
@@ -1285,10 +1285,10 @@ class MeshClientImpl implements MeshClient {
       if (!seenHashes.has(h)) this.keptVerdicts.delete(h);
     }
 
-    // Phase 6: the routed tip read goes through the routed-read path.
-    // The classification still runs so a failure or a lie moves the
-    // serving node; `state.tip` no longer rides this read — it is
-    // the client's chain's below.
+    // Phase 6: the routed tip read runs the classification so a failure
+    // or a lie moves the serving node (MESH_INTERFACE → The client's
+    // node list → "The client's chain"); `state.tip` is the client's
+    // chain's, set below.
     try {
       const tipRead = await this.read('/blocks/current', 'tip');
       await this.classifyTipRead(tipRead.response, tipRead.nodeId);
