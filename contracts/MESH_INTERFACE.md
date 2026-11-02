@@ -252,8 +252,9 @@ above — filled (→ "The client's chain"), the client's tip moving when the fi
 to the client's own header at that height, read from a node at its tip. **It reads proofs only for what that cannot
 place**: at the first check every tip, and after it a tip no rule places — one proof per distinct tip, from the node the
 list ranks first among those naming it, the next asked in the same check when that proof is refused; and, while the
-client holds a chain, its own tip's proof from a node at its tip, handed to `resolveTip` first so a tie keeps the chain.
-Every node naming a tip takes that tip's verdict. **A tip whose proof verified and lost keeps its verdict** while the
+client holds a chain, its own tip's proof from a node at its tip, handed to `resolveTip` first so a tie keeps the chain,
+as does a proof that shares no block with it — `incomparable`, which only a network pinning no `genesisId` reaches
+(`NIPOPOW_INTERFACE → compareProofs`). Every node naming a tip takes that tip's verdict. **A tip whose proof verified and lost keeps its verdict** while the
 client's chain stands: a node naming it again is placed off the chain with no proof read, until it names another tip or
 the chain switches. A check that places every tip reads no proof.
 
