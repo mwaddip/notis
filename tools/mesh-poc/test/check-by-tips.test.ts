@@ -1093,6 +1093,134 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(urlCount() - urlsBeforeMove).toBe(2);
   }, 240_000);
 
+  it('a kept verdict is forgotten once no node names its tip', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — "a hash
+    // leaves when no node named it at a check". A node on a lighter
+    // fork names H1 (read, kept), then names H2 for a check (so H1
+    // leaves at the end-of-check sweep), then names H1 again — H1's
+    // proof is read anew, from the node naming it and the client's
+    // own. Without the sweep, the stale kept[H1] would short-circuit
+    // B on the return and no proof would be read.
+    const chainMain = makeLinkedChain(K + 5, PROFILE);
+    const chainFork1 = makeLinkedChain(K + 2, PROFILE);
+    const chainFork2 = makeLinkedChain(K + 3, PROFILE); // different hashes from Fork1
+    const upA = await chainUpstream(chainMain); ups.push(upA);
+    const upB = await chainUpstream(chainFork1); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[] } = {
+      a: chainMain,
+      b: chainFork1,
+    };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      return 'unreachable';
+    };
+    const underlying = chainResolve(chainOf, K);
+    const resolveUrls: string[][] = [];
+    const urlCount = (): number => resolveUrls.reduce((s, p) => s + p.length, 0);
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
+    });
+    clients.push(client);
+    await client.check(); // settle at chainMain
+    await client.check(); // first after settle — H1 kept
+
+    // B moves to a different fork — H2 — so H1 is no longer named this check.
+    upB.setChain(chainFork2);
+    chainsNow.b = chainFork2;
+    await client.check(); // H2's proof read and kept; the end-of-check sweep drops H1
+    const urlsBeforeReturn = urlCount();
+
+    // B returns to H1. The sweep removed kept[H1], so the proof is read anew
+    // from B and the client's own tip. Without the sweep, kept[H1] would
+    // still be there and B would be short-circuited (resolve never called).
+    upB.setChain(chainFork1);
+    chainsNow.b = chainFork1;
+    await client.check();
+    expect(urlCount() - urlsBeforeReturn).toBe(2);
+  }, 240_000);
+
+  it('a refused proof is never kept', async () => {
+    // MESH_INTERFACE → The client's node list → "A check" — "A tip
+    // whose proof verified and lost keeps its verdict" is conditional
+    // on `n.verified`; a refused proof is never kept. After settle,
+    // L moves to chainFork and lies (resolve answers 'invalid') —
+    // blacklisted. The honest node C then moves to chainFork so C
+    // names the same hash H; chainUpstream's /blocks/current reports
+    // the chain's tip, so pointing C at chainFork makes C name L's
+    // old H. The chainResolve harness answers 'invalid' per URL
+    // regardless of the tip the upstream serves, so L and C's roles
+    // ride two independent flags (`chainsNow.l` and `chainsNow.c`).
+    // With the `n.verified` guard intact, kept has no entry for H,
+    // so C's proof is read and C reads `behind`; a refused-proof
+    // keep would short-circuit C to `blacklisted` on the kept lie
+    // and skip the resolve pass for C's URL.
+    const chainMain = makeLinkedChain(K + 5, PROFILE);
+    const chainFork = makeLinkedChain(K + 2, PROFILE);
+    const upA = await chainUpstream(chainMain); ups.push(upA);
+    const upL = await chainUpstream(chainMain); ups.push(upL); // L starts on main
+    const upC = await chainUpstream(chainMain); ups.push(upC);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dL = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dL);
+    const dC = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dC);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const l = await startNode(upL, dL); nodes.push(l.node);
+    const c = await startNode(upC, dC); nodes.push(c.node);
+
+    const chainsNow: { a: OrderingBlock[]; l: OrderingBlock[] | 'invalid'; c: OrderingBlock[] } = {
+      a: chainMain,
+      l: chainMain,
+      c: chainMain,
+    };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(l.id)) return chainsNow.l;
+      if (url.includes(c.id)) return chainsNow.c;
+      return 'unreachable';
+    };
+    const underlying = chainResolve(chainOf, K);
+    const resolveUrls: string[][] = [];
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: l.id, addrs: [l.webrtcAddr] },
+        { notisId: c.id, addrs: [c.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
+    });
+    clients.push(client);
+    await client.check(); // settle at chainMain; every node reads ok
+
+    // L switches to chainFork so L names H, and chainsNow.l flips to
+    // 'invalid' so the resolver refuses L's proof — L is blacklisted.
+    // No chain switch runs here (A still wins the chain's own hash),
+    // so the end-of-check sweep is the only path that could remove
+    // keptVerdicts[H] — and the correct code never put one there.
+    upL.setChain(chainFork);
+    chainsNow.l = 'invalid';
+    await client.check();
+    expect(client.state().nodes.find((n) => n.notisId === l.id)!.status).toBe('blacklisted');
+
+    // C's upstream moves to chainFork so C now names H.
+    upC.setChain(chainFork);
+    chainsNow.c = chainFork;
+    await client.check();
+    expect(client.state().nodes.find((n) => n.notisId === c.id)!.status).toBe('behind');
+    // C's URL was in the resolve pass — a kept lie would have shortcut it.
+    expect(resolveUrls[resolveUrls.length - 1]!.some((u) => u.includes(c.id))).toBe(true);
+  }, 240_000);
+
   it('a switch drops the kept verdicts', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "the kept
     // verdicts are dropped when the chain switches". After a heavier
