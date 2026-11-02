@@ -443,15 +443,66 @@ describe('s8 (prove once, follow by gossip)', () => {
     }
     expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_gap');
   });
-  it('run({dryRun:true}) emits the gap table + per-host drops + the one delete and four skipped steps', async () => {
+  it('run({dryRun:true}) emits step 1 hostile firewall + gap firewall + their deletes', async () => {
     const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s8');
     expect(r.steps.length).toBe(4);
     for (const step of r.steps) expect(step.verdict).toBe('skipped');
     const adds = r.faults.filter((f: string) => / nft add /.test(f) && !f.includes('[fault:remove'));
     const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / nft delete table /.test(f));
-    expect(adds.length, 'one table + one chain + one drop per mesh host').toBeGreaterThanOrEqual(3);
-    expect(dels.length, 'one table delete (removes every drop)').toBe(1);
+    expect(adds.length, 'two tables + two chains + per-host drops for each').toBeGreaterThanOrEqual(6);
+    // Two table deletes — one for s8_step1_hostile, one for s8_gap.
+    expect(dels.length, 'one table delete per firewall (removes every drop)').toBe(2);
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 1 firewalls the browser from
+  // every hostile host so the first check reads no hostile proof.
+  it('s8Step1HostileFirewallArgs builds a table + chain + per-hostile-host drop + delete-table inside the browser namespace', () => {
+    const topologyWithHostile = {
+      hosts: {
+        pub1: { role: 'public', addr: '11.100.0.11', mesh: { role: 'public' } },
+        pub2: { role: 'public', addr: '11.100.0.12', mesh: { role: 'public' } },
+        'hostile-malformed': { role: 'hostile', addr: '11.100.0.31', mesh: { role: 'public' } },
+        'hostile-invalid': { role: 'hostile', addr: '11.100.0.32', mesh: { role: 'public' } },
+        'hostile-lagging': { role: 'hostile', addr: '11.100.0.33', mesh: { role: 'public' } },
+        'hostile-publisher': { role: 'hostile', addr: '11.100.0.34', mesh: { role: 'public' } },
+      },
+    };
+    const a = s8.s8Step1HostileFirewallArgs(topologyWithHostile);
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    expect(a.drops.length, 'one drop per hostile host').toBe(4);
+    const dropNames = a.drops.map((d) => d.name).sort();
+    expect(dropNames).toEqual(['hostile-invalid', 'hostile-lagging', 'hostile-malformed', 'hostile-publisher']);
+    for (const { argv } of a.drops) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+      expect(argv.join(' ')).toMatch(/nft add rule ip s8_step1_hostile out ip daddr 11\.100\.0\.\d+ drop/);
+    }
+    expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_step1_hostile');
+    // Honest hosts are not dropped — a drop to pub1 would break the
+    // step's baseline (no anchor reached).
+    for (const { argv } of a.drops) {
+      expect(argv.join(' ')).not.toContain('11.100.0.11');
+      expect(argv.join(' ')).not.toContain('11.100.0.12');
+    }
+  });
+  // MESH_INTERFACE → Acceptance 8 — step 1's hostile firewall is a
+  // FaultLog fault scoped to the step: the drops land once at step
+  // start and the table deletion removes them at step end. The
+  // dry-run run already asserts the table + delete count above; here
+  // we assert the fault NAMES carry the step-1 marker so a reader of
+  // `stage/out/scenarios/s8.json`'s `faults` sees which firewall
+  // belonged to which step.
+  it('run({dryRun:true}) prefixes every step-1 hostile fault with [fault:s8:browser-step1-hostile-', async () => {
+    const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
+    const step1 = r.faults.filter((f: string) =>
+      /\[fault:s8:browser-step1-hostile-/.test(f) || /\[fault:remove:s8:browser-step1-hostile-/.test(f),
+    );
+    expect(step1.length, 'at least one apply + one remove').toBeGreaterThanOrEqual(2);
+    const gap = r.faults.filter((f: string) =>
+      /\[fault:s8:browser-gap-/.test(f) || /\[fault:remove:s8:browser-gap-/.test(f),
+    );
+    expect(gap.length, 'at least one apply + one remove').toBeGreaterThanOrEqual(2);
   });
   // MESH_INTERFACE → Acceptance 8 — the four tracker predicates and
   // their expression-builders run under the live cdp.mjs runtime
@@ -664,9 +715,11 @@ describe('s8 (prove once, follow by gossip)', () => {
   // MESH_INTERFACE → Acceptance 8 — step 4's expression carries a pure
   // observer that reads a snapshot of `#state` and returns the next
   // tracker state. The observer captures a baseline on the first
-  // completed check and records final at the first tip change, after
-  // its baseline, of three or more blocks at once — a fill, since
-  // gossip moves the tip one block at a time.
+  // completed check, waits for a fill (a jump of three or more at
+  // once) and then for one more tip change (gossip extending the tip
+  // past the fill — the client is at the head). `final` is captured
+  // at the one-block-after-fill point; `jump` keeps the fill's size
+  // so `verdictS8Gap` reads `jump >= 3`.
   it('s8GapObserve: a tip that advances one at a time (gossip pace) does not end', () => {
     const sequence = [
       { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
@@ -678,8 +731,9 @@ describe('s8 (prove once, follow by gossip)', () => {
     for (const s of sequence) st = s8.s8GapObserve(st, s);
     expect((st as { final: unknown }).final).toBeNull();
     expect((st as { lastTipHeight: number }).lastTipHeight).toBe(103);
+    expect((st as { fillJump: unknown }).fillJump).toBeNull();
   });
-  it('s8GapObserve: a tip that jumps three at once records final with the jump', () => {
+  it('s8GapObserve: a jump of three or more alone records the fill, final still null (waiting for one-block-after)', () => {
     const sequence = [
       { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
       { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
@@ -687,22 +741,58 @@ describe('s8 (prove once, follow by gossip)', () => {
     ];
     let st: unknown = null;
     for (const s of sequence) st = s8.s8GapObserve(st, s);
+    expect((st as { final: unknown }).final).toBeNull();
+    expect((st as { fillJump: number }).fillJump).toBe(4);
+    expect((st as { lastTipHeight: number }).lastTipHeight).toBe(105);
+  });
+  it('s8GapObserve: fill then one more tip change records final at the head, jump from the fill', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 106 }, traffic: { proofReads: 5 } },
+    ];
+    let st: unknown = null;
+    for (const s of sequence) st = s8.s8GapObserve(st, s);
     expect((st as { final: { tipHeight: number; proofReads: number; jump: number } }).final).toEqual({
-      tipHeight: 105,
+      tipHeight: 106,
       proofReads: 5,
       jump: 4,
     });
   });
-  it('s8GapObserve: a jump of exactly three (the smallest fill) records final', () => {
+  it('s8GapObserve: fill then one-block-after at any size records final (even a jump of two post-fill)', () => {
+    // Once the fill lands, the tracker ends at the FIRST tip change
+    // past it — gossip moves one at a time, so the usual post-fill
+    // jump is 1; a race between the end of the gap and gossip's own
+    // batching may deliver 2 at once, and `final` lands either way.
     const sequence = [
-      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7 } },
-      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 7 } },
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } },
+      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
     ];
     let st: unknown = null;
     for (const s of sequence) st = s8.s8GapObserve(st, s);
-    expect((st as { final: { jump: number } }).final.jump).toBe(3);
+    expect((st as { final: { tipHeight: number; jump: number } }).final).toEqual({
+      tipHeight: 105,
+      proofReads: 5,
+      jump: 3,
+    });
   });
-  it('s8GapObserve: a jump of two does not record final', () => {
+  it('s8GapObserve: a jump of exactly three (the smallest fill) + one more records final with jump=3', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 7 } },
+      { checks: 2, tip: { height: 104 }, traffic: { proofReads: 7 } },
+    ];
+    let st: unknown = null;
+    for (const s of sequence) st = s8.s8GapObserve(st, s);
+    expect((st as { final: { jump: number; tipHeight: number } }).final).toEqual({
+      tipHeight: 104,
+      proofReads: 7,
+      jump: 3,
+    });
+  });
+  it('s8GapObserve: a jump of two does not record a fill (still phase A, final null)', () => {
     const sequence = [
       { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7 } },
       { checks: 2, tip: { height: 102 }, traffic: { proofReads: 7 } },
@@ -710,6 +800,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     let st: unknown = null;
     for (const s of sequence) st = s8.s8GapObserve(st, s);
     expect((st as { final: unknown }).final).toBeNull();
+    expect((st as { fillJump: unknown }).fillJump).toBeNull();
     expect((st as { lastTipHeight: number }).lastTipHeight).toBe(102);
   });
   it('s8GapObserve: baseline NOT captured before the first completed check', () => {

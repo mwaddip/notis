@@ -9,15 +9,19 @@
 // headers with no proof read."
 //
 // Four sub-steps, in order:
-//   1. No proof after the first — stage default: the baseline is the
-//      first state with the chain settled (`checks >= 1`,
-//      `proofReads >= 1`) where every honest node the list HOLDS
-//      reads `ok`, `trailing` or `behind` and both anchors are held;
-//      the final, five completed checks later, the same rule — a
-//      honest node absent from the list is not asserted, so a node
-//      the browser only reaches by DHT does not stall the baseline.
-//      `verdictS8NoProofs`: PASS when `proofReads` did not move and
-//      every held honest node read `ok`, `trailing` or `behind`.
+//   1. No proof after the first — stage default + a step-scoped
+//      firewall from the browser to every hostile host (a `FaultLog`
+//      fault, removed in a `finally` inside the step). The firewall
+//      keeps "every node names a tip on the client's chain" true: a
+//      hostile mesh node discovered through the DHT names a tip of
+//      its own and its proof would be read on the first check,
+//      moving `proofReads`. The baseline is the first state with the
+//      chain settled (`checks >= 1`, `proofReads >= 1`) where every
+//      honest node the list HOLDS reads `ok`, `trailing` or `behind`
+//      and both anchors are held; the final, five completed checks
+//      later, the same rule. `verdictS8NoProofs`: PASS when
+//      `proofReads` did not move and every held honest node read
+//      `ok`, `trailing` or `behind`.
 //   2. A block by gossip — the held-page tracker records
 //      `{ height, atMs, checks }` at each client tip change; beside
 //      it the scenario reads pub1's `/blocks/current` inside its
@@ -32,31 +36,47 @@
 //      `Date.now()` and Node's). `verdictS8Gossip`: PASS when ≥ 2 of
 //      3 reached the client within 5 s with `checks` unchanged.
 //   3. Another chain — the hostile-seed variant with `hostile-lagging`
-//      mining its own lighter fork since `up`. The step finds a check
-//      where the lagging node's tip was the one tip not on the chain
-//      by waiting for a check cycle in which `traffic.proofReads`
-//      rose by exactly two — the lagging node's proof plus the
-//      client's own tip proof, the one shape "one per distinct tip,
-//      and the client's own" produces when every other node names
-//      the chain's tip. `verdictS8Fork`: PASS when lagging reads
-//      `behind`, the client's tip hash equals pub1's node's block
-//      hash at that height, and the delta is exactly two.
+//      and `hostile-malformed` on the pair's own chain from genesis.
+//      The step finds a check where the lagging node's tip was the
+//      one tip not on the chain by waiting for a check cycle in which
+//      `traffic.proofReads` rose by exactly two — the lagging node's
+//      proof plus the client's own tip proof, the one shape "one per
+//      distinct tip, and the client's own" produces when every other
+//      node names the chain's tip. The pair's chain shares no block
+//      with the honest one; devnet pins no `genesisId` (TYPES_INTERFACE
+//      → `profileFor`), so the lagging node's proof verifies and
+//      `compareProofs` picks the heavier (honest) chain by work.
+//      `resolveTip` then measures each verified node's tip against the
+//      winner's suffix (`tools/nipopow-client/src/tip.ts →
+//      behindOnWinnerSuffix`): a node whose tip is not in the winner's
+//      suffix reads `behind: null`, and `tipEvent` (`src/client/
+//      tip-events.ts`) turns `node.verified && node.behind === null`
+//      into `{ ev: 'behind' }`. The client's tip is the winner's —
+//      pub1's. `splits` records only when `compareProofs` returns
+//      `incomparable`; for a strict work winner the result is `a` or
+//      `b`, splits stays empty, and the lagging node still reads
+//      `behind`. `verdictS8Fork`: PASS when lagging reads `behind`,
+//      the client's tip hash equals pub1's node's block hash at that
+//      height, and the delta is exactly two.
 //   4. A gap filled by headers — stage default: firewall the browser
 //      from every mesh node (a `FaultLog` fault, removed in `finally`)
 //      until pub1's node is three blocks past the client's tip at the
 //      moment the firewall landed; remove it; wait for the tracker to
-//      signal a fill. The cut is short — gossip moves the tip one
-//      block at a time, so the firewall ends before any check sees
-//      it. The tracker ends at the first tip change, after its
-//      baseline, of three or more blocks at once (a fill), recording
-//      `proofReads` and the tip there; the scenario then reads pub1.
-//      `verdictS8Gap`: PASS when `proofReads` did not move, the jump
-//      was three or more, and the tip is within two of pub1's read.
-//      The step keeps one page open through a non-blocking spawn of
-//      `cdp.mjs poll`; a fresh page's first check reads a proof, which
-//      would mask the "no proof" conclusion. The pure `s8GapObserve`
-//      carries the state transition; `buildS8GapExpression` inlines
-//      it so the live tracker and the Node tests run the same logic.
+//      signal a fill followed by one more gossip-paced tip change.
+//      The cut is short — gossip moves the tip one block at a time,
+//      so the firewall ends before any check sees it. The tracker
+//      ends at the first one-block tip change AFTER its first jump
+//      of three or more (the fill, then gossip extending the tip it
+//      reached — the client is at the head), recording `proofReads`
+//      and the tip at that one-block-after point; the scenario then
+//      reads pub1. `verdictS8Gap`: PASS when `proofReads` did not
+//      move, the fill `jump` was three or more, and the tip is within
+//      two of pub1's read. The step keeps one page open through a
+//      non-blocking spawn of `cdp.mjs poll`; a fresh page's first
+//      check reads a proof, which would mask the "no proof"
+//      conclusion. The pure `s8GapObserve` carries the state
+//      transition; `buildS8GapExpression` inlines it so the live
+//      tracker and the Node tests run the same logic.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -79,6 +99,7 @@ export const NAME = 's8';
 const POLL_MS = 500;
 const LONG_WAIT_MS = 240_000;
 const GAP_TABLE = 's8_gap';
+const STEP1_HOSTILE_TABLE = 's8_step1_hostile';
 
 export function describe() {
   return [
@@ -87,6 +108,35 @@ export function describe() {
     'the lagging fork reads behind, client tip stays on pub1\'s chain, exactly two proofs that check',
     'the browser\'s gossip cut for three blocks and restored: tip catches up by headers, no proof read',
   ];
+}
+
+// MESH_INTERFACE → Acceptance 8 — step 1 keeps "every node names a
+// tip on the client's chain" true by firewalling the browser from
+// every hostile host for the step's duration. Without the firewall
+// the client's DHT walk reaches each hostile mesh node, each of
+// which names a tip of its own (`hostile-lagging` on the pair's
+// chain, `hostile-malformed` / `hostile-invalid` with lies, the
+// publisher likewise), and the first check reads their proofs —
+// moving `proofReads` and breaking "no proof read across five
+// completed checks". The firewall is a `FaultLog` fault, applied at
+// step start and removed in the step's own `finally`, so the firewall
+// does not spill into step 2.
+export function s8Step1HostileFirewallArgs(topology) {
+  const ns = 'notismesh-browser';
+  const hostileHosts = [];
+  for (const [host, hostConfig] of Object.entries(topology.hosts)) {
+    if (hostConfig?.role !== 'hostile') continue;
+    if (typeof hostConfig.addr !== 'string') continue;
+    hostileHosts.push({ name: host, addr: hostConfig.addr });
+  }
+  const addTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', STEP1_HOSTILE_TABLE];
+  const addChain = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', STEP1_HOSTILE_TABLE, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'];
+  const drops = hostileHosts.map(({ name, addr }) => ({
+    name,
+    argv: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', STEP1_HOSTILE_TABLE, 'out', 'ip', 'daddr', addr, 'drop'],
+  }));
+  const deleteTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', STEP1_HOSTILE_TABLE];
+  return { addTable, addChain, drops, deleteTable };
 }
 
 // MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for
@@ -113,6 +163,16 @@ export function s8GapFirewallArgs(topology) {
 }
 
 export function applyFaults(log, topology) {
+  const h = s8Step1HostileFirewallArgs(topology);
+  log.apply('browser-step1-hostile-add-table', h.addTable, h.deleteTable);
+  log.apply('browser-step1-hostile-add-chain', h.addChain, null);
+  for (const { name, argv } of h.drops) {
+    log.apply(`browser-step1-hostile-drop-${name}`, argv, null);
+  }
+  // The step-scoped firewall is removed inside step 1's own finally
+  // (log.remove('browser-step1-hostile-add-table')), but dry-run never
+  // runs a step: the scenario-wide removeAll in run() still writes a
+  // record for every applied fault, which is what this listing is for.
   const f = s8GapFirewallArgs(topology);
   log.apply('browser-gap-add-table', f.addTable, f.deleteTable);
   log.apply('browser-gap-add-chain', f.addChain, null);
@@ -408,14 +468,20 @@ export const S8_FORK_PREDICATE = `if (v === null) return false;
   try { return JSON.parse(v).final !== null; } catch (_e) { return false; }`;
 
 // MESH_INTERFACE → Acceptance 8 — step 4's tracker captures a baseline
-// on the first completed check and records final at the first tip
-// change, after the baseline, of three or more blocks at once (a
-// fill: gossip moves the tip one block at a time, so a jump of three
-// names a headers-driven catch-up). `s8GapObserve` is pure (no DOM,
-// no clock, no `window` access) so the Node suite drives it with a
-// sequence of simulated `#state` snapshots and reads the resulting
-// state's `final` field — `tipHeight`, `proofReads` and `jump` are
-// the fields `verdictS8Gap`'s rule reads.
+// on the first completed check, then waits for a fill (a tip change
+// of three or more blocks at once, since gossip moves the tip one
+// block at a time) followed by one more tip change (the client is at
+// the head: gossip extends past the fill as pub1 keeps mining).
+// `final` is captured at that one-block-after-fill point, so the
+// measurement reads `proofReads` and `tipHeight` at the head — not at
+// the moment the fill landed, when pub1 is still ahead by the chain's
+// own pace. `jump` keeps the fill's size (`verdictS8Gap` reads
+// `jump >= 3`); `fillJump` is the intermediate the state carries
+// between the fill and the next tip change.
+//
+// `s8GapObserve` is pure (no DOM, no clock, no `window` access) so
+// the Node suite drives it with a sequence of simulated `#state`
+// snapshots and reads the resulting state's `final` field.
 export function s8GapObserve(prev, s) {
   if (s === null || typeof s !== 'object') return prev;
   if (typeof s.checks !== 'number') return prev;
@@ -423,8 +489,8 @@ export function s8GapObserve(prev, s) {
   if (typeof s.traffic.proofReads !== 'number') return prev;
   if (s.tip === null || typeof s.tip !== 'object' || typeof s.tip.height !== 'number') return prev;
   var next = prev === null || typeof prev !== 'object'
-    ? { base: null, lastTipHeight: null, final: null }
-    : { base: prev.base, lastTipHeight: prev.lastTipHeight, final: prev.final };
+    ? { base: null, lastTipHeight: null, fillJump: null, final: null }
+    : { base: prev.base, lastTipHeight: prev.lastTipHeight, fillJump: prev.fillJump, final: prev.final };
   if (next.base === null && s.checks >= 1) {
     next.base = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads };
     next.lastTipHeight = s.tip.height;
@@ -432,13 +498,18 @@ export function s8GapObserve(prev, s) {
   }
   if (next.base === null) return next;
   if (next.final !== null) return next;
-  if (s.tip.height !== next.lastTipHeight) {
-    var jump = s.tip.height - next.lastTipHeight;
-    next.lastTipHeight = s.tip.height;
-    if (jump >= 3) {
-      next.final = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads, jump: jump };
-    }
+  if (s.tip.height === next.lastTipHeight) return next;
+  var jump = s.tip.height - next.lastTipHeight;
+  next.lastTipHeight = s.tip.height;
+  if (next.fillJump === null) {
+    // Phase A: waiting for the fill — a tip change of three or more
+    // at once names the headers-driven catch-up.
+    if (jump >= 3) next.fillJump = jump;
+    return next;
   }
+  // Phase B: fill reached, waiting for one more tip change — gossip
+  // extending the tip past the fill. The client is at the head.
+  next.final = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads, jump: next.fillJump };
   return next;
 }
 
@@ -516,21 +587,39 @@ export async function run(ctx) {
         const m = { reason: 's8 step 1: no public anchors in topology with identity' };
         return { verdict: verdictS8NoProofs(m), measurement: m };
       }
-      const expression = buildS8NoProofsExpression(honestIds, anchorIds);
-      const value = await cdpPoll(ctx, browserUrl, expression, S8_NOPROOFS_PREDICATE, LONG_WAIT_MS, POLL_MS);
-      const r = JSON.parse(value);
-      if (r.base === null || r.final === null) {
-        const m = { reason: 's8 step 1: tracker returned without base or final', state: r };
-        return { verdict: verdictS8NoProofs(m), measurement: m };
+      // MESH_INTERFACE → Acceptance 8 — "every node names a tip on the
+      // client's chain". The stage DHT names every hostile mesh node,
+      // and each one's first-check proof would move `proofReads`
+      // before the baseline settles. Firewall the browser from every
+      // hostile host for the step; remove the firewall in this step's
+      // own `finally` so step 2's gossip read is not blocked. The
+      // delete-table alone removes every drop (nftables cascades on
+      // table delete).
+      const hostileArgs = s8Step1HostileFirewallArgs(ctx.topology);
+      log.apply('browser-step1-hostile-add-table', hostileArgs.addTable, hostileArgs.deleteTable);
+      log.apply('browser-step1-hostile-add-chain', hostileArgs.addChain, null);
+      for (const { name, argv } of hostileArgs.drops) {
+        log.apply(`browser-step1-hostile-drop-${name}`, argv, null);
       }
-      const m = {
-        proofReadsBaseline: r.base.proofReads,
-        proofReadsFinal: r.final.proofReads,
-        checksBaseline: r.base.checks,
-        checksFinal: r.final.checks,
-        honestNodeStatuses: r.final.honestNodeStatuses,
-      };
-      return { verdict: verdictS8NoProofs(m), measurement: m };
+      try {
+        const expression = buildS8NoProofsExpression(honestIds, anchorIds);
+        const value = await cdpPoll(ctx, browserUrl, expression, S8_NOPROOFS_PREDICATE, LONG_WAIT_MS, POLL_MS);
+        const r = JSON.parse(value);
+        if (r.base === null || r.final === null) {
+          const m = { reason: 's8 step 1: tracker returned without base or final', state: r };
+          return { verdict: verdictS8NoProofs(m), measurement: m };
+        }
+        const m = {
+          proofReadsBaseline: r.base.proofReads,
+          proofReadsFinal: r.final.proofReads,
+          checksBaseline: r.base.checks,
+          checksFinal: r.final.checks,
+          honestNodeStatuses: r.final.honestNodeStatuses,
+        };
+        return { verdict: verdictS8NoProofs(m), measurement: m };
+      } finally {
+        log.remove('browser-step1-hostile-add-table');
+      }
     });
 
     // --- Step 2: a block by gossip ---

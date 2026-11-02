@@ -1,5 +1,11 @@
 export declare const NAME: 's8';
 export declare function describe(): string[];
+export declare function s8Step1HostileFirewallArgs(topology: unknown): {
+  addTable: string[];
+  addChain: string[];
+  drops: Array<{ name: string; argv: string[] }>;
+  deleteTable: string[];
+};
 export declare function s8GapFirewallArgs(topology: unknown): {
   addTable: string[];
   addChain: string[];
@@ -36,6 +42,7 @@ export declare function buildS8GapExpression(): string;
 export declare function s8GapObserve(prev: unknown, s: unknown): {
   base: null | { tipHeight: number; proofReads: number };
   lastTipHeight: null | number;
+  fillJump: null | number;
   final: null | { tipHeight: number; proofReads: number; jump: number };
 };
 export declare const S8_GAP_PREDICATE: string;
