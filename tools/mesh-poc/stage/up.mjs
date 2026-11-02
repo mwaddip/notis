@@ -33,8 +33,8 @@ import { buildPebbleConfig } from './lib/pebble-config.mjs';
 import { descendantPids } from './lib/measure.mjs';
 import {
   HOSTILE_FORK_PAIR,
-  joinBootstrapPeers,
-  pairBootstrapAddr,
+  partnerOf,
+  notisBootstrapPeersFor,
   buildPairCutArgs,
 } from './lib/hostile-fork-pair.mjs';
 
@@ -740,19 +740,39 @@ const pub1Base = `http://${pub1Host.addr}:${pub1Host.node.httpPort}`;
 // the topology alone.
 const meshIdentityPromises = {};
 
+// MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
+// proof read at the next check — one per distinct tip, and the
+// client's own — and the heavier chain is the client's" /
+// MINING_INTERFACE → "The peer-readiness gate" — the hostile fork
+// pair (`hostile-lagging`, `hostile-malformed`) grows a chain of its
+// own from genesis. The per-host `lag_cut` is applied here, BEFORE
+// either pair host's Notis node spawns, so the pair's p2p port never
+// sees a packet from an honest host: each host's `lag_cut` accepts
+// the partner's addr + p2p port, and drops everything else on the
+// p2p port, on both the output and input chain. The pair's Notis env
+// below names the partner alone in `BOOTSTRAP_PEERS` (never pub1), so
+// the pair never dials an honest node either. See
+// `stage/lib/hostile-fork-pair.mjs` for the pair's rules.
+const laggingHostCfg = topology.hosts['hostile-lagging'];
+const malformedHostCfg = topology.hosts['hostile-malformed'];
+if (laggingHostCfg && malformedHostCfg) {
+  for (const { argv } of buildPairCutArgs(topology)) {
+    log.shell(argv[0], argv.slice(1), { privileged: true });
+  }
+}
+
 // Notis nodes come first — their p2p port is what the mesh nodes'
 // upstream URL points at (through 127.0.0.1 inside each namespace).
-// MESH_INTERFACE → Acceptance 8 — the hostile fork pair
-// (`hostile-lagging`, `hostile-malformed`) name each other in
-// `BOOTSTRAP_PEERS` beside pub1 so the cut applied after the height
-// wait leaves each node one Active peer: the partner. See
-// `stage/lib/hostile-fork-pair.mjs` for the pair's rules.
+// MESH_INTERFACE → Acceptance 8 — the hostile fork pair's Notis
+// `BOOTSTRAP_PEERS` names the partner alone (no pub1), so the pair's
+// nodes start from genesis with no path to the honest chain —
+// `notisBootstrapPeersFor` picks the partner for a pair host and
+// `pub1Addr` for every other host.
 for (const [name, host] of Object.entries(topology.hosts)) {
   if (host.node === undefined) continue;
   const ns = nsOf(name);
   const dbPath = join(OUT_DIR, name, 'notis.db');
   const pub1Addr = `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}`;
-  const partnerAddr = pairBootstrapAddr(topology, name);
   const notisEnv = {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: host.node.role,
@@ -760,7 +780,7 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     ADMIN_PORT: String(host.node.httpPort + 1),
     DB_PATH: dbPath,
     LISTEN_ADDRS: `/ip4/${host.addr}/tcp/${host.node.p2pPort}`,
-    BOOTSTRAP_PEERS: joinBootstrapPeers(pub1Addr, partnerAddr === null ? [] : [partnerAddr]),
+    BOOTSTRAP_PEERS: notisBootstrapPeersFor(topology, name, pub1Addr),
     MINING_SECRET: 'stage-mining-secret',
   };
   log.spawn(userWrap(ns, notisEnv).concat([notisNodeEntry]), { description: `notis:${name}`, logPath: logPathFor(`notis:${name}`) });
@@ -836,11 +856,16 @@ function startMeshNodeForHost(name, host) {
   // MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer
   // of its own node" — a mesh node beside a Notis node dials its
   // node's libp2p TCP address, named with no `/p2p/` component. The
-  // lagging host's p2p port is cut after sync (Phase 8's `lag_cut`
-  // table), so its mesh service's dial fails on every try and it
-  // holds no node peer — the entry stays set so a reader sees the
-  // address the dial would use.
-  const nodeP2p = host.node !== undefined
+  // pair hostiles (`hostile-lagging`, `hostile-malformed`) are the
+  // one exception: their mesh service carries NO `MESH_NODE_P2P` so
+  // it joins the browser's gossip but never gossips its node's own
+  // blocks — otherwise the pair's chain would reach the browser by
+  // gossip and (through the honest hosts' mesh services) propagate
+  // onto the honest network, contradicting step 3's "a node on
+  // another chain" setup where the client reads the pair's tip only
+  // by proof (MESH_INTERFACE → Block gossip → "A mesh service is a
+  // gossip peer of its own node").
+  const nodeP2p = host.node !== undefined && partnerOf(name) === null
     ? `/ip4/${host.addr}/tcp/${host.node.p2pPort}`
     : undefined;
   const meshEnv = {
@@ -954,7 +979,7 @@ if (!dryRun) {
 }
 
 // -----------------------------------------------------------------------
-// Phase 8: miner inside pub1, wait for height, cut off hostile-lagging
+// Phase 8: miners inside pub1 and hostile-lagging, wait for height
 // -----------------------------------------------------------------------
 
 // MESH_INTERFACE → Acceptance — the miner reads `pub1`'s HTTP; pub1's HTTP
@@ -970,14 +995,38 @@ const minerBootChild = log.spawn(userWrap(nsOf('pub1'), {
   MINER_PCT: '100',
 }).concat([minerScript]), { description: 'miner-boot', logPath: logPathFor('miner-boot') });
 
+// MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
+// proof read at the next check — one per distinct tip, and the
+// client's own — and the heavier chain is the client's". The pair's
+// chain grows from genesis, starting the moment the pair's Notis
+// nodes come up — the pair cut landed BEFORE spawn, so no honest
+// block ever lands on either pair host. `miner-lagging-boot` runs at
+// `MINER_PCT=100` until the pair's node reads height ≥ 50 (as the
+// honest boot does on pub1), then is replaced by `miner-lagging` at
+// `MINER_PCT=1` — half the honest chain's steady duty, so the pair's
+// chain stays lighter however long the run goes.
+const minerLaggingBootChild = laggingHostCfg !== undefined
+  ? log.spawn(userWrap(nsOf('hostile-lagging'), {
+      NODE_URL: `http://127.0.0.1:${laggingHostCfg.node.httpPort}`,
+      MINING_SECRET: 'stage-mining-secret',
+      MINER_PCT: '100',
+    }).concat([minerScript]), { description: 'miner-lagging-boot', logPath: logPathFor('miner-lagging-boot') })
+  : null;
+
 const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2', 'lan1'];
+const pairHeightTargetHost = laggingHostCfg !== undefined ? ['hostile-lagging'] : [];
 recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
+if (pairHeightTargetHost.length > 0) {
+  recordWait(`the pair's node reads /blocks/current.height >= 50: ${pairHeightTargetHost.join(', ')}`);
+}
 if (!dryRun) {
   // Each honest node is polled inside its own namespace as the user —
   // the host has no route into the stage, and the user has no privilege
-  // beyond what `ip netns exec` grants in that namespace.
+  // beyond what `ip netns exec` grants in that namespace. The pair's
+  // own chain is polled alongside: hostile-lagging reads its own
+  // chain's height, which the pair miner is pushing in parallel.
   const HEIGHT_TARGET = 50;
-  await Promise.all(honestHeightTargetHost.map(async (name) => {
+  await Promise.all([...honestHeightTargetHost, ...pairHeightTargetHost].map(async (name) => {
     const host = topology.hosts[name];
     const port = host.node.httpPort;
     let lastHeight = null;
@@ -1008,7 +1057,7 @@ if (!dryRun) {
 // between arrivals. Devnet's difficulty target sits at its ceiling
 // (`orderingBlockPowTargetCeilingBits`), so the duty cycle alone
 // paces the chain. The ratio to `miner-lagging` matters: the honest
-// chain's duty is twice the lagging fork's, so the honest tip stays
+// chain's duty is twice the pair's chain, so the honest tip stays
 // the heavier chain.
 if (!dryRun && minerBootChild !== null) {
   try { process.kill(minerBootChild.pid, 'SIGTERM'); } catch { /* already gone */ }
@@ -1023,40 +1072,22 @@ log.spawn(userWrap(nsOf('pub1'), {
   MINER_PCT: '2',
 }).concat([minerScript]), { description: 'miner-steady', logPath: logPathFor('miner-steady') });
 
-// MESH_INTERFACE → Acceptance 8 — "a node on another chain has its
-// proof read at the next check — one per distinct tip, and the
-// client's own — and the heavier chain is the client's" /
-// MINING_INTERFACE → "The peer-readiness gate" — a lone node with no
-// Active peer withholds its template. The fork pair
-// (`hostile-lagging` and `hostile-malformed`) peers with each other
-// alone after the cut: each one's `lag_cut` accepts the partner's
-// address + Notis p2p port and drops everything else on the p2p port,
-// so each stays one Active peer short of none. Mesh service ports
-// (`mesh.tcpPort`, `mesh.webrtcPort`) and HTTP are left untouched: the
-// browser still reads each hostile mesh node's state and proof.
-// `hostile-malformed`'s chain reaches no browser — its mesh service's
-// upstream swaps `/blocks/current.hash` for `LIE_HASH` and answers
-// non-hex to the proof route, so the browser blacklists it — while
-// `hostile-lagging`'s mesh serves its own fork tip and the browser
-// places it `behind`.
-const laggingHost = topology.hosts['hostile-lagging'];
-const malformedHost = topology.hosts['hostile-malformed'];
-if (laggingHost && malformedHost) {
-  for (const { argv } of buildPairCutArgs(topology)) {
-    log.shell(argv[0], argv.slice(1), { privileged: true });
-  }
-
-  // MESH_INTERFACE → Acceptance 8 — "a block mined on a node reaches
-  // the browser by gossip through a mesh service and moves the
-  // client's tip before its next check" / Acceptance — "a node on a
-  // lighter chain is `behind`". After the cut, a low-duty miner inside the lagging
-  // namespace against its own node mines on top of the pair's synced
-  // chain — the partner link lets `miner-lagging` build templates, the
-  // honest chain's miner-steady runs at twice this duty so the pair's
-  // fork stays lighter however long the run goes. `down` ends the
-  // recorded tree the same way it ends `miner-steady`.
+// MESH_INTERFACE → Acceptance 8 — stop the pair's 100 %-duty boot
+// miner and restart at `MINER_PCT=1`, half the honest chain's steady
+// duty. The pair's chain stays strictly lighter however long the run
+// goes, so the client's `compareProofs` keeps picking the honest
+// chain by work and the lagging node reads `behind`
+// (`tools/nipopow-client/src/tip.ts → behindOnWinnerSuffix`,
+// `src/client/tip-events.ts`). `down` ends the recorded tree the
+// same way it ends `miner-steady`.
+if (!dryRun && minerLaggingBootChild !== null) {
+  try { process.kill(minerLaggingBootChild.pid, 'SIGTERM'); } catch { /* already gone */ }
+  const idx = log.pids.findIndex((e) => e.description === 'miner-lagging-boot');
+  if (idx >= 0) log.pids.splice(idx, 1);
+}
+if (laggingHostCfg !== undefined) {
   log.spawn(userWrap(nsOf('hostile-lagging'), {
-    NODE_URL: `http://127.0.0.1:${laggingHost.node.httpPort}`,
+    NODE_URL: `http://127.0.0.1:${laggingHostCfg.node.httpPort}`,
     MINING_SECRET: 'stage-mining-secret',
     MINER_PCT: '1',
   }).concat([minerScript]), { description: 'miner-lagging', logPath: logPathFor('miner-lagging') });

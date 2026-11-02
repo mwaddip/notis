@@ -23,6 +23,7 @@ import {
   pairBootstrapAddr,
   buildHostCutArgs,
   buildPairCutArgs,
+  notisBootstrapPeersFor,
 } from '../stage/lib/hostile-fork-pair.mjs';
 import { assertClientConfig } from '../src/client/mesh-client.js';
 
@@ -382,6 +383,30 @@ describe('the hostile fork pair bootstrap and cut builders', () => {
     const topo = fakeTopology();
     expect(() => buildHostCutArgs(topo, 'pub1')).toThrow(/HOSTILE_FORK_PAIR/);
   });
+
+  // MESH_INTERFACE → Acceptance 8 — the pair's Notis BOOTSTRAP_PEERS
+  // names the partner alone (no pub1), so each pair host starts from
+  // genesis with no path to the honest chain; every other host names
+  // pub1 alone.
+  it('notisBootstrapPeersFor: a pair host answers the partner addr; every other host answers pub1', () => {
+    const topo = fakeTopology();
+    const pub1Addr = '/ip4/11.100.0.11/tcp/9100';
+    expect(notisBootstrapPeersFor(topo, 'hostile-lagging', pub1Addr)).toBe('/ip4/11.100.0.31/tcp/9100');
+    expect(notisBootstrapPeersFor(topo, 'hostile-malformed', pub1Addr)).toBe('/ip4/11.100.0.33/tcp/9100');
+    expect(notisBootstrapPeersFor(topo, 'pub1', pub1Addr)).toBe(pub1Addr);
+    expect(notisBootstrapPeersFor(topo, 'pub2' as string, pub1Addr)).toBe(pub1Addr);
+  });
+
+  // The pair's BOOTSTRAP_PEERS answer must NOT carry pub1 — a mutation
+  // that joins pub1 beside the partner would restore the honest chain's
+  // reach into the pair and the pair would sync up on genesis.
+  it('notisBootstrapPeersFor: a pair host\'s answer does not contain pub1\'s addr', () => {
+    const topo = fakeTopology();
+    const pub1Addr = '/ip4/11.100.0.11/tcp/9100';
+    for (const pair of HOSTILE_FORK_PAIR) {
+      expect(notisBootstrapPeersFor(topo, pair, pub1Addr)).not.toContain('11.100.0.11');
+    }
+  });
 });
 
 describe('stage up --dry-run', () => {
@@ -506,8 +531,9 @@ describe('stage up --dry-run', () => {
 
   // MESH_INTERFACE → Acceptance — the miner reads its node's HTTP; a
   // node's HTTP binds its namespace loopback. The honest miner (boot
-  // + steady) runs inside `notismesh-pub1`; the lagging miner (fork
-  // on a lighter chain) runs inside `notismesh-hostile-lagging`.
+  // + steady) runs inside `notismesh-pub1`; the pair's miner
+  // (lagging boot + lagging steady) runs inside
+  // `notismesh-hostile-lagging`.
   it('each miner spawn runs inside its node\'s namespace', () => {
     runDryOnce();
     const minerLines = out.split('\n').filter((l) => l.startsWith('[spawn:miner'));
@@ -515,8 +541,8 @@ describe('stage up --dry-run', () => {
     const pub1Ns = 'ip netns exec notismesh-pub1';
     const laggingNs = 'ip netns exec notismesh-hostile-lagging';
     for (const minerLine of minerLines) {
-      if (minerLine.startsWith('[spawn:miner-lagging]')) {
-        expect(minerLine, `miner-lagging inside hostile-lagging namespace: ${minerLine}`).toContain(laggingNs);
+      if (minerLine.startsWith('[spawn:miner-lagging-boot]') || minerLine.startsWith('[spawn:miner-lagging]')) {
+        expect(minerLine, `miner-lagging* inside hostile-lagging namespace: ${minerLine}`).toContain(laggingNs);
       } else {
         expect(minerLine, `miner inside pub1 namespace: ${minerLine}`).toContain(pub1Ns);
       }
@@ -564,12 +590,11 @@ describe('stage up --dry-run', () => {
   // proof read at the next check — one per distinct tip, and the
   // client's own — and the heavier chain is the client's" /
   // MINING_INTERFACE → "The peer-readiness gate" — the hostile fork
-  // pair's node bootstrap list names the other hostile beside pub1,
-  // so each pair member starts with a path to its partner. Every
-  // other node's `BOOTSTRAP_PEERS` carries pub1 alone — no stray
-  // address, no comma-separated fork peer that would make an honest
-  // node dial a hostile.
-  it('the pair hostiles\' Notis BOOTSTRAP_PEERS names pub1 and the partner; every other Notis BOOTSTRAP_PEERS carries pub1 alone', () => {
+  // pair grows a chain of its own from genesis: each pair host names
+  // the partner ALONE in `BOOTSTRAP_PEERS` (no pub1), so the pair
+  // never dials an honest node and never sees the honest chain's
+  // blocks. Every other node's `BOOTSTRAP_PEERS` carries pub1 alone.
+  it("the pair hostiles' Notis BOOTSTRAP_PEERS names the partner alone (no pub1); every other Notis BOOTSTRAP_PEERS carries pub1 alone", () => {
     runDryOnce();
     const spawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:notis:'));
     expect(spawnLines.length, 'at least one notis spawn').toBeGreaterThan(0);
@@ -586,10 +611,41 @@ describe('stage up --dry-run', () => {
       const value = m![1]!;
       if (Object.hasOwn(pairAddrs, name)) {
         const partner = pairAddrs[name]!;
-        expect(value, `${name} names pub1`).toContain('/ip4/11.100.0.11/tcp/9100');
-        expect(value, `${name} names partner ${partner}`).toContain(partner);
+        expect(value, `${name} names the partner alone`).toBe(partner);
+        expect(value, `${name} does NOT name pub1`).not.toContain('/ip4/11.100.0.11/');
       } else {
         expect(value, `${name} names pub1 alone`).toBe('/ip4/11.100.0.11/tcp/9100');
+      }
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer
+  // of its own node" — the pair hostiles are the exception: their
+  // mesh services carry NO `MESH_NODE_P2P`, so block gossip on the
+  // ordering-block topic never carries the pair's own chain to the
+  // browser (or, through the honest hosts' mesh services, onto the
+  // honest network). Every other mesh service names its node's p2p
+  // addr.
+  it("the pair hostiles' mesh env carries NO MESH_NODE_P2P; every other mesh env names its node's p2p addr", () => {
+    runDryOnce();
+    const meshLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
+    expect(meshLines.length, 'at least one mesh spawn').toBeGreaterThan(0);
+    const pairHosts = new Set(['hostile-lagging', 'hostile-malformed']);
+    for (const line of meshLines) {
+      const n = /\[spawn:mesh:([^\]]+)\]/.exec(line);
+      expect(n, line).not.toBeNull();
+      const name = n![1]!;
+      if (pairHosts.has(name)) {
+        expect(line, `${name}: no MESH_NODE_P2P`).not.toMatch(/\bMESH_NODE_P2P=/);
+      } else {
+        // Only hosts with their own `node` config carry MESH_NODE_P2P
+        // in up.mjs; a mesh service without a node (pebble has one
+        // but no mesh) is not in this listing to begin with. Hosts
+        // whose `node` is present pass this assertion.
+        // The current topology gives every mesh host (other than the
+        // pair) its own node, so every non-pair mesh spawn carries
+        // the env.
+        expect(line, `${name}: has MESH_NODE_P2P`).toMatch(/\bMESH_NODE_P2P=\/ip4\/\d/);
       }
     }
   }, 30_000);
@@ -703,6 +759,27 @@ describe('stage up --dry-run', () => {
     expect(line, 'chromium disables OptimizationHints, MediaRouter and Translate').toMatch(/--disable-features=[A-Za-z0-9,]*OptimizationHints/);
     expect(line).toMatch(/--disable-features=[A-Za-z0-9,]*MediaRouter/);
     expect(line).toMatch(/--disable-features=[A-Za-z0-9,]*Translate/);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance 8 — the pair's chain grows from
+  // genesis, so `miner-lagging` has its own boot phase at
+  // `MINER_PCT=100` on `hostile-lagging` (as the honest boot does
+  // on pub1), swapped to `MINER_PCT=1` after the pair's node reads
+  // height ≥ 50. The pair's duty is HALF the honest chain's steady,
+  // so the pair's chain stays lighter.
+  it('the pair carries its own boot miner at 100 %, then miner-lagging at 1 %, with a pair height wait between', () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const laggingBootIdx = lines.findIndex((l) => l.startsWith('[spawn:miner-lagging-boot]') && /MINER_PCT=100\b/.test(l));
+    const pairWaitIdx = lines.findIndex((l) => l.startsWith('[wait]') && /pair's node/.test(l) && /\/blocks\/current.height/.test(l) && />=\s*50/.test(l));
+    const laggingSteadyIdx = lines.findIndex((l, i) =>
+      i > pairWaitIdx &&
+      l.startsWith('[spawn:miner-lagging]') &&
+      /MINER_PCT=1\b/.test(l),
+    );
+    expect(laggingBootIdx, 'miner-lagging-boot at 100 % is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(pairWaitIdx, 'pair height wait is in the dry-run').toBeGreaterThan(laggingBootIdx);
+    expect(laggingSteadyIdx, 'miner-lagging at 1 % follows the pair height wait').toBeGreaterThan(pairWaitIdx);
   }, 30_000);
 
   // MESH_INTERFACE → Acceptance — a sustained 100 % duty on `pub1`'s
@@ -820,14 +897,19 @@ describe('stage up --dry-run', () => {
     expect(chmodIdx, 'chmod 0755 on the Pebble binary appears after sha256sum').toBeGreaterThan(shaIdx);
   }, 30_000);
 
-  it('the hostile-lagging cut appears after the height wait', () => {
+  // MESH_INTERFACE → Acceptance 8 — the pair cut runs BEFORE either
+  // pair host's Notis node spawns, so the pair's p2p port never sees
+  // a packet from an honest host and the pair grows its own chain
+  // from genesis.
+  it('the pair cut appears BEFORE every pair Notis node spawn', () => {
     runDryOnce();
     const lines = out.split('\n');
-    const waitIdx = lines.findIndex((l) => l.startsWith('[wait]') && l.includes('/blocks/current.height'));
-    const cutIdx = lines.findIndex((l) => l.includes('lag_cut'));
-    expect(waitIdx, 'height wait is in the dry-run').toBeGreaterThanOrEqual(0);
-    expect(cutIdx, 'lag cut is in the dry-run').toBeGreaterThanOrEqual(0);
-    expect(cutIdx, 'cut comes after the wait').toBeGreaterThan(waitIdx);
+    const firstCutIdx = lines.findIndex((l) => l.includes('lag_cut'));
+    const pairLagging = lines.findIndex((l) => l.startsWith('[spawn:notis:hostile-lagging]'));
+    const pairMalformed = lines.findIndex((l) => l.startsWith('[spawn:notis:hostile-malformed]'));
+    expect(firstCutIdx, 'pair cut is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(pairLagging, 'pair notis spawn (lagging) is in the dry-run').toBeGreaterThan(firstCutIdx);
+    expect(pairMalformed, 'pair notis spawn (malformed) is in the dry-run').toBeGreaterThan(firstCutIdx);
   }, 30_000);
 
   // MESH_INTERFACE → The IP certificate — the Pebble root fetch has to reach

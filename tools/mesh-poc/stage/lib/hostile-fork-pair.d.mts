@@ -15,3 +15,8 @@ export function buildPairCutArgs(
   topology: unknown,
   options?: { table?: string },
 ): NftRule[];
+export function notisBootstrapPeersFor(
+  topology: unknown,
+  name: string,
+  pub1Addr: string,
+): string;

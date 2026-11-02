@@ -3,25 +3,25 @@
 // client's own — and the heavier chain is the client's" and
 // MINING_INTERFACE → "The peer-readiness gate" — `hostile-lagging`'s
 // miner only produces templates when the node holds at least one
-// Active peer. The cut that leaves it alone behind the honest chain
-// stalls `miner-lagging` with no template.
+// Active peer.
 //
 // The remedy: pair `hostile-lagging` with `hostile-malformed` as each
-// other's one Active peer. Both bootstrap from pub1 before the height
-// wait so each starts synced to the honest chain, and each also names
-// the other in `BOOTSTRAP_PEERS`. After the height wait, a per-host
-// `lag_cut` drops every TCP packet on the Notis p2p port except the
-// pair's own traffic — an accept rule for the partner's address and
-// p2p port is written ahead of the drop in both the output and the
-// input chain, on both hosts.
+// other's one Active peer, on a chain of their own from genesis. Each
+// pair host names the partner alone in `BOOTSTRAP_PEERS` (never pub1,
+// so the pair never sees the honest chain's blocks and starts from
+// genesis), and the per-host `lag_cut` runs BEFORE the Notis node
+// spawns, so every TCP packet on the Notis p2p port is dropped from
+// the first second except for the pair's own traffic — an accept rule
+// for the partner's address and p2p port is written ahead of the drop
+// in both the output and the input chain, on both hosts.
 //
 // A live run shows the pair-up in `stage/out/notis:<host>.log`:
 //   `[net] peer:connect <partner peerId> (total=1)`
 //   `[net] outbound handshake with <partner peerId>: ok=true ...`
 // (or an inbound handshake on the other side), and NO
-// `[net] peer:disconnect <partner peerId>` after the cut; the honest
-// nodes' peerIds disappear from both logs. The dry-run only prints the
-// nft argument lists this builder writes.
+// `[net] peer:disconnect <partner peerId>` after boot; the honest
+// nodes' peerIds never appear in either log. The dry-run only prints
+// the nft argument lists this builder writes.
 
 /**
  * The pair of hostile hosts that form the lighter fork — `[lagging,
@@ -155,9 +155,9 @@ export function buildHostCutArgs(topology, name, { table = 'lag_cut' } = {}) {
 
 /**
  * `buildHostCutArgs` for every host in `HOSTILE_FORK_PAIR`, concatenated
- * in pair order. The stage applies this list after the height wait on
- * both hosts, so each one's cut lands as a whole ruleset: table,
- * chains, accepts, drops.
+ * in pair order. The stage applies this list BEFORE spawning either
+ * pair host's Notis node, so each one's p2p port never sees traffic
+ * from an honest host — the pair grows its own chain from genesis.
  */
 export function buildPairCutArgs(topology, options) {
   const out = [];
@@ -165,4 +165,21 @@ export function buildPairCutArgs(topology, options) {
     out.push(...buildHostCutArgs(topology, name, options));
   }
   return out;
+}
+
+/**
+ * The Notis `BOOTSTRAP_PEERS` value for `name`:
+ *   - a pair host names the partner's p2p address ALONE (no pub1), so
+ *     the pair starts from genesis with no path to the honest chain
+ *     and grows its own chain by the miner on `hostile-lagging` alone;
+ *   - every other host names `pub1Addr` alone — the honest nodes'
+ *     bootstrap stays unchanged.
+ *
+ * Returned as a single comma-separated string (one addr for every
+ * host today), ready for the Notis node's env.
+ */
+export function notisBootstrapPeersFor(topology, name, pub1Addr) {
+  const partner = pairBootstrapAddr(topology, name);
+  if (partner !== null) return partner;
+  return pub1Addr;
 }
