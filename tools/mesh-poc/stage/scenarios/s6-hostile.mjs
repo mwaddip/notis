@@ -1,11 +1,14 @@
 // MESH_INTERFACE → Acceptance 6 — "Hostile nodes. With every anchor out
 // of reach, `anchorReached` is false and the page says so. A node
-// answering malformed proofs and one answering failing proofs are
-// blacklisted with their evidence; a node serving a valid proof of a
-// lighter chain is `behind`."
+// naming a tip of its own that answers malformed proofs, and one that
+// answers failing proofs, are blacklisted with their evidence; a node
+// naming the chain's tip is placed there and its proof is never read;
+// a node on a lighter chain is `behind`. A mesh node publishing a
+// block that fails its checks is blacklisted with its evidence, and
+// the client does not forward it."
 //
-// Two sub-steps:
-//   (a) Config variant: pub1 + pub2 as anchors + three hostile seeds.
+// Three sub-steps:
+//   (a) Config variant: pub1 + pub2 as anchors + hostile seeds.
 //       Browser firewalled from both anchor IPs. Expected:
 //       `anchorReached === false` and the page's banner reads the
 //       contract's words exactly.
@@ -13,11 +16,17 @@
 //       - hostile-malformed → `blacklisted` with evidence `malformed`
 //       - hostile-invalid → `blacklisted` with evidence `proof-invalid`
 //       - hostile-lagging → `behind`, never blacklisted
+//   (c) The gossip publisher: hostile-publisher's bad blocks reach the
+//       client, which blacklists it for `gossip-block` and forwards
+//       nothing. The honest mesh nodes' logs name only the publisher
+//       as the reject source — no line sources the block from the
+//       browser's peer id, so `the client forwarded nothing it
+//       refused` holds.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
-import { verdictS6NoAnchor, verdictS6Hostile } from '../lib/verdicts.mjs';
+import { verdictS6NoAnchor, verdictS6Hostile, verdictS6Publisher } from '../lib/verdicts.mjs';
 import { execIn, nftApply, pollUntil } from '../lib/measure.mjs';
 import { publicMeshHosts } from '../lib/topology.mjs';
 import { buildWithHostileSeedsVariant, buildHostileSeeds } from '../lib/config-variants.mjs';
@@ -28,12 +37,41 @@ import { StepRecorder } from '../lib/step-recorder.mjs';
 export const NAME = 's6';
 const BLOCK_TABLE = 's6_block';
 const NO_ANCHOR_WORDS = 'No anchor reached. Nothing shown here is verified.';
+// MESH_INTERFACE → Block gossip → "A refused block is evidence as
+// `net` weighs it" — honest mesh nodes log a rejected block as
+// `[mesh] ordering block rejected from <peer id>: <detail>`.
+const MESH_REJECT_RE = /\[mesh\] ordering block rejected from ([^:]+):/;
 
 export function describe() {
   return [
     'anchors unreachable: anchorReached is false, page shows the contract words',
     'anchors reachable, hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted',
+    'the publisher is blacklisted for gossip-block; the client forwarded nothing',
   ];
+}
+
+/**
+ * MESH_INTERFACE → Block gossip — read every honest mesh log line
+ * naming a reject source peer id and keep those whose source is not
+ * the publisher. A log file that does not exist contributes no
+ * sources; its name reads in the measurement as `missing-log`.
+ */
+export function otherRejectSourcesIn(outDir, honestHosts, publisherPeerIdString) {
+  const out = [];
+  for (const host of honestHosts) {
+    const logPath = join(outDir, host, `mesh:${host}.log`);
+    if (!existsSync(logPath)) continue;
+    const body = readFileSync(logPath, 'utf8');
+    const lines = body.split('\n');
+    for (const line of lines) {
+      const m = MESH_REJECT_RE.exec(line);
+      if (m === null) continue;
+      const source = m[1];
+      if (source === publisherPeerIdString) continue;
+      out.push({ host, peerIdString: source });
+    }
+  }
+  return out;
 }
 
 export function anchorBlockArgs(topology) {
@@ -202,6 +240,57 @@ export async function run(ctx) {
         lagging: lN !== null ? { status: lN.status, blacklisted: lN.status === 'blacklisted' } : null,
       };
       return { verdict: verdictS6Hostile(m), measurement: m };
+    });
+
+    await rec.step(describe()[2], async () => {
+      // MESH_INTERFACE → Acceptance 6 → "A mesh node publishing a
+      // block that fails its checks is blacklisted with its evidence,
+      // and the client does not forward it." Wait for the publisher's
+      // entry to reach `blacklisted` with evidence `gossip-block`
+      // (the client's topic validator rejects a bad block from the
+      // publisher), then read the honest mesh logs: every reject
+      // source they named is the publisher's peer id — the browser
+      // forwarded nothing it refused, so no honest mesh ever heard
+      // the bad block from the browser.
+      const publisherId = seedsByHost['hostile-publisher'];
+      if (typeof publisherId !== 'string') {
+        const measurement = { reason: 'no hostile-publisher identity in identities.json' };
+        return { verdict: verdictS6Publisher(measurement), measurement };
+      }
+      const publisherPeerIdString = peerIdStringOf(publisherId);
+      const stateC = await cdpPoll(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(publisherId)});
+           return e !== undefined && e.status === 'blacklisted' && e.evidence?.kind === 'gossip-block';
+         } catch (_e) { return false; }`,
+        180_000, 2000,
+      );
+      const state = JSON.parse(stateC);
+      const pubEntry = state.nodes?.find((n) => n.notisId === publisherId) ?? null;
+      // MESH_INTERFACE → Block gossip → "A refused block is evidence
+      // as `net` weighs it" — read the honest mesh logs for the
+      // rejection lines each wrote. Honest hosts are every mesh host
+      // with role `public` or `private` that is not a hostile host.
+      const honestHosts = [];
+      for (const [host, hostConfig] of Object.entries(ctx.topology.hosts)) {
+        if (hostConfig?.role !== 'public' && hostConfig?.role !== 'private') continue;
+        if (hostConfig?.mesh === undefined) continue;
+        honestHosts.push(host);
+      }
+      const otherRejectSources = otherRejectSourcesIn(
+        ctx.outDir, honestHosts, publisherPeerIdString,
+      );
+      const measurement = {
+        publisher: pubEntry !== null
+          ? { status: pubEntry.status, evidenceKind: pubEntry.evidence?.kind ?? null }
+          : null,
+        publisherPeerIdString,
+        otherRejectSources,
+      };
+      return { verdict: verdictS6Publisher(measurement), measurement };
     });
   } finally {
     // Teardown: remove any applied nft table, restore the stage

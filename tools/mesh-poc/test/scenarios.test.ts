@@ -249,11 +249,12 @@ describe('s5 (impersonation)', () => {
 });
 
 describe('s6 (hostile)', () => {
-  it('describe() lists two steps: anchors unreachable, hostile seeds judged', () => {
+  it('describe() lists three steps: anchors unreachable, hostile seeds judged, publisher blacklisted', () => {
     const names = s6.describe();
-    expect(names.length).toBe(2);
+    expect(names.length).toBe(3);
     expect(names[0]).toMatch(/anchors unreachable/);
     expect(names[1]).toMatch(/hostile seeds/);
+    expect(names[2]).toMatch(/publisher/);
   });
   it('anchorBlockArgs builds an add-table + add-chain + per-anchor drop rule', () => {
     const a = s6.anchorBlockArgs(TOPOLOGY);
@@ -270,12 +271,37 @@ describe('s6 (hostile)', () => {
   it('run({dryRun:true}) emits the block table + drop rules + one delete', async () => {
     const r = await s6.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s6');
-    expect(r.steps.length).toBe(2);
+    expect(r.steps.length).toBe(3);
     for (const step of r.steps) expect(step.verdict).toBe('skipped');
     const adds = r.faults.filter((f) => / nft add /.test(f) && !f.includes('[fault:remove'));
     const dels = r.faults.filter((f) => /\[fault:remove/.test(f));
     expect(adds.length, 'one table + one chain + one drop per public mesh host').toBeGreaterThanOrEqual(3);
     expect(dels.length, 'one table delete').toBe(1);
+  });
+  // MESH_INTERFACE → Block gossip → "A refused block is evidence as
+  // `net` weighs it" — `otherRejectSourcesIn` reads each honest mesh
+  // log for rejection lines and keeps those whose source is not the
+  // publisher's peer id. The function is pure; mkdtempSync feeds it
+  // a controlled log tree.
+  it('otherRejectSourcesIn drops rejections sourced from the publisher and keeps every other', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'notismesh-s6-'));
+    try {
+      const pubId = '12D3KooWPublisher';
+      const browserId = '12D3KooWBrowser';
+      mkdirSync(join(dir, 'pub1'), { recursive: true });
+      writeFileSync(join(dir, 'pub1', 'mesh:pub1.log'),
+        `[mesh] start\n[mesh] ordering block rejected from ${pubId}: malformed ordering block header: ...\n[mesh] peer:connect\n`);
+      mkdirSync(join(dir, 'pub2'), { recursive: true });
+      writeFileSync(join(dir, 'pub2', 'mesh:pub2.log'),
+        `[mesh] start\n[mesh] ordering block rejected from ${browserId}: malformed ordering block header: ...\n`);
+      const sources = s6.otherRejectSourcesIn(dir, ['pub1', 'pub2', 'priv1'], pubId);
+      expect(sources).toEqual([{ host: 'pub2', peerIdString: browserId }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

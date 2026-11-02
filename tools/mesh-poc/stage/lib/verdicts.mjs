@@ -321,6 +321,31 @@ export function verdictS6Hostile(m) {
   return 'PASS';
 }
 
+// MESH_INTERFACE → Acceptance 6 — "A mesh node publishing a block that
+// fails its checks is blacklisted with its evidence, and the client
+// does not forward it." PASS when the publisher's entry is
+// `blacklisted` with evidence `gossip-block` AND every honest mesh
+// node's log holds no `[mesh] ordering block rejected from <X>` line
+// where X is not the publisher's peer id (the client forwarded nothing
+// it refused, so the only source an honest mesh sees for the rejected
+// block is the publisher itself).
+// Measurement:
+//   `{ publisher: { status, evidenceKind },
+//      publisherPeerIdString: string,
+//      otherRejectSources: Array<{ host: string, peerIdString: string }> }`.
+export function verdictS6Publisher(m) {
+  if (missing(m)) return 'skipped';
+  if (m.publisher?.status !== 'blacklisted') return 'FAIL';
+  if (m.publisher?.evidenceKind !== 'gossip-block') return 'FAIL';
+  if (typeof m.publisherPeerIdString !== 'string' || m.publisherPeerIdString.length === 0) return 'FAIL';
+  if (!Array.isArray(m.otherRejectSources)) return 'FAIL';
+  // Every honest mesh log's rejection sources are the publisher's peer
+  // id alone — any other source means the browser forwarded the bad
+  // block, which the contract refuses.
+  if (m.otherRejectSources.length !== 0) return 'FAIL';
+  return 'PASS';
+}
+
 // MESH_INTERFACE → Acceptance 4 — "A transport is cut" step 4: "record
 // what still answers" after the inter-node Notis-p2p TCP is cut. The
 // browser's state is read after a check cycle fires on the cut, and the

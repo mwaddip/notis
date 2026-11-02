@@ -19,6 +19,7 @@ import {
   verdictS5,
   verdictS6NoAnchor,
   verdictS6Hostile,
+  verdictS6Publisher,
   verdictS7Spread,
   verdictS7Fastest,
   verdictS7Lan,
@@ -43,6 +44,7 @@ describe('skipped — missing measurement', () => {
     ['verdictS5', verdictS5],
     ['verdictS6NoAnchor', verdictS6NoAnchor],
     ['verdictS6Hostile', verdictS6Hostile],
+    ['verdictS6Publisher', verdictS6Publisher],
     ['verdictS7Spread', verdictS7Spread],
     ['verdictS7Fastest', verdictS7Fastest],
     ['verdictS7Lan', verdictS7Lan],
@@ -437,6 +439,35 @@ describe('verdictS6Hostile — malformed + invalid blacklisted; lagging behind, 
   });
   it('lagging also blacklisted → FAIL', () => {
     expect(verdictS6Hostile({ ...PASS, lagging: { status: 'behind', blacklisted: true } })).toBe('FAIL');
+  });
+});
+
+describe('verdictS6Publisher — publisher blacklisted for gossip-block; the client forwarded nothing', () => {
+  const PASS = {
+    publisher: { status: 'blacklisted', evidenceKind: 'gossip-block' },
+    publisherPeerIdString: '12D3KooWPublisher',
+    otherRejectSources: [],
+  };
+  it('publisher blacklisted with gossip-block evidence and no other reject source → PASS', () => {
+    expect(verdictS6Publisher(PASS)).toBe('PASS');
+  });
+  it('publisher not blacklisted → FAIL', () => {
+    expect(verdictS6Publisher({ ...PASS, publisher: { status: 'retry', evidenceKind: 'gossip-block' } })).toBe('FAIL');
+  });
+  it('publisher evidence is not gossip-block → FAIL', () => {
+    expect(verdictS6Publisher({ ...PASS, publisher: { status: 'blacklisted', evidenceKind: 'malformed' } })).toBe('FAIL');
+  });
+  it('one honest mesh log named a reject source that is not the publisher → FAIL', () => {
+    expect(verdictS6Publisher({
+      ...PASS,
+      otherRejectSources: [{ host: 'pub1', peerIdString: '12D3KooWBrowser' }],
+    })).toBe('FAIL');
+  });
+  it('a missing publisherPeerIdString → FAIL', () => {
+    expect(verdictS6Publisher({ ...PASS, publisherPeerIdString: '' })).toBe('FAIL');
+  });
+  it('otherRejectSources is not an array → FAIL', () => {
+    expect(verdictS6Publisher({ ...PASS, otherRejectSources: null })).toBe('FAIL');
   });
 });
 
