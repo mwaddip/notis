@@ -97,7 +97,7 @@ describe('stage:run --dry-run', () => {
   // scenario JSON under `stage/out/scenarios/`.
   it('the dry-run complete marker is in the output', () => {
     runDryOnce();
-    expect(out, 'dry-run complete marker').toMatch(/\[dry-run complete\] 7 scenario\(s\)/);
+    expect(out, 'dry-run complete marker').toMatch(/\[dry-run complete\] 8 scenario\(s\)/);
   }, 30_000);
 });
 
