@@ -509,9 +509,8 @@ describe('s8 (prove once, follow by gossip)', () => {
   // every hostile host for its whole duration, beside the gap cut.
   // Without it the client's DHT walk reaches each hostile mesh node
   // and reads its proof at a check, moving `proofReads` beyond the
-  // fill — the saved run on `ef19ed10` recorded five proof reads at
-  // the check after the cut was removed, which is the hostile set.
-  // Same rules as step 1 (a `FaultLog` fault, removed in `finally`).
+  // fill (one per hostile host). Same rules as step 1 (a `FaultLog`
+  // fault, removed in `finally`).
   it('s8Step4HostileFirewallArgs builds a table + chain + per-hostile-host drop + delete-table inside the browser namespace', () => {
     const topologyWithHostile = {
       hosts: {
@@ -569,11 +568,11 @@ describe('s8 (prove once, follow by gossip)', () => {
   // MESH_INTERFACE → Acceptance 8 — steps 1 and 4 poll a page where
   // the client dials hostile hosts the stage DHT names and whose
   // packets drop at the browser's own namespace. A dropped packet is
-  // no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s, `src/protocols.ts`)
-  // per hostile dial until the retry back-off takes those nodes out of
-  // the candidates. The cap at 600 s is the deadline a step's poll
-  // holds under this cost, not a bound on the stage's own pace. 240 s
-  // was the cap before and step 1 timed out at it on `ef19ed10`.
+  // no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s, in
+  // `src/protocols.ts`) per hostile dial until the retry back-off
+  // takes those nodes out of the candidates. The cap at 600 s is the
+  // deadline a step's poll holds under this cost, not a bound on the
+  // stage's own pace.
   it('BLACK_HOLE_WAIT_MS caps steps 1 and 4\'s polls at 600 s (argued by one dial deadline per candidate)', () => {
     expect(s8.BLACK_HOLE_WAIT_MS).toBe(600_000);
   });
@@ -994,9 +993,9 @@ describe('s8 (prove once, follow by gossip)', () => {
   // pub1Hist (first-seen atMs per height), computeDeliveries pairs
   // each pub1 height past the baseline with the client's first atMs
   // at or above it. Three deliveries, each under 1 s, checksMoved
-  // false — the data the saved run on `af9541f8` carried, had step 2
-  // parsed its tracker value as an array instead of a string.
-  it('computeDeliveries over the saved run\'s clientHist (parsed) and pub1Hist arrays answers three deliveries, each under 1 s, checksMoved false', () => {
+  // false — the shape the step reads when the tracker value is parsed
+  // as an array.
+  it('computeDeliveries over clientHist (parsed) and pub1Hist arrays answers three deliveries, each under 1 s, checksMoved false', () => {
     const clientHist = [
       { height: 2132, atMs: 1793623452426, checks: 1 },
       { height: 2133, atMs: 1793623453726, checks: 1 },
@@ -1020,12 +1019,12 @@ describe('s8 (prove once, follow by gossip)', () => {
       expect(d.checksMoved).toBe(false);
     }
   });
-  it('computeDeliveries over a string clientHist answers an empty list (the shape saved as `clientHist` in the run)', () => {
-    // The saved run on `af9541f8` recorded `clientHist` as a JSON
-    // string — cdp.mjs' stdout is `JSON.stringify(result)` where the
-    // expression's `result` is itself the `JSON.stringify(...)` of
-    // the tracker. One `JSON.parse` leaves a string; the step must
-    // parse it to an array before calling `computeDeliveries`.
+  it('computeDeliveries over a string clientHist answers an empty list (the shape `clientHist` carries on the wire)', () => {
+    // `clientHist` crosses as a JSON string — `cdp.mjs`'s stdout is
+    // `JSON.stringify(result)` where the expression's `result` is
+    // itself the `JSON.stringify(...)` of the tracker. One
+    // `JSON.parse` leaves a string; the step parses it to an array
+    // before calling `computeDeliveries`.
     const clientHistString = '[{"height":2132,"atMs":1793623452426,"checks":1},{"height":2133,"atMs":1793623453726,"checks":1}]';
     const pub1Hist = [{ height: 2132, atMs: 1793623452004 }, { height: 2133, atMs: 1793623453110 }];
     expect(s8.computeDeliveries(clientHistString, pub1Hist)).toEqual([]);
@@ -1036,18 +1035,15 @@ describe('s8 (prove once, follow by gossip)', () => {
     expect(s8.computeDeliveries(clientHist, null)).toEqual([]);
   });
 
-  // MESH_INTERFACE → Acceptance 8 — the earlier `af9541f8` test paired
-  // pub1 heights with the client's; a run with pub1 missing one of the
-  // three heights (the poll's 250 ms cadence skipped it) returned two
-  // deliveries, verdict FAIL. The rule the brief states — "one delivery
-  // per client tip change after its baseline" — pairs each new client
-  // height with pub1's first record AT OR ABOVE it, so a pub1 height
-  // the poll missed does not drop the client's own change. The data
-  // below is pasted whole from a saved run on `41de7dc4` where pub1
-  // never saw height 922 (921 and 923 only, 2 s apart); the three
-  // client changes still land as three deliveries, each within the
-  // 5 s bound and with `checksMoved` false.
-  it("computeDeliveries over a run's clientHist and pub1Hist with pub1 missing one height answers one delivery per client change past baseline", () => {
+  // MESH_INTERFACE → Acceptance 8 — one delivery per client tip
+  // change past the baseline: each new client height is paired with
+  // pub1's first record at or above it, so a pub1 height the poll's
+  // 250 ms cadence misses does not drop the client's own change. The
+  // three client changes below land as three deliveries, each within
+  // the 5 s bound and with `checksMoved` false, when pub1 records
+  // only two of three adjacent heights (921 and 923, not 922, 2 s
+  // apart).
+  it('computeDeliveries over a clientHist and a pub1Hist missing one height answers one delivery per client change past baseline', () => {
     const clientHist = [
       { height: 920, atMs: 1793631574361, checks: 1 },
       { height: 921, atMs: 1793631579468, checks: 1 },
@@ -1112,18 +1108,14 @@ describe('s8 (prove once, follow by gossip)', () => {
   });
 });
 
-// MESH_INTERFACE → Acceptance 8 — step 4's tracker exits with the
-// first tip jump of three or more and the gossip-poll scenario writes
-// a report on its own clock. `cdp.mjs poll`'s stdout is
+// MESH_INTERFACE → Acceptance 8 — `cdp.mjs poll`'s stdout is
 // `JSON.stringify(result)` where `result` is itself the expression's
-// `JSON.stringify(window.__s8GAP)`: one JSON.parse unwraps the stdout
-// to a JSON STRING of the inner payload, a second parse reads it as
-// an object. Step 2 has done the double parse for weeks; step 4's
-// single parse left `r` a string and `r.base.proofReads` threw
-// `Cannot read properties of undefined (reading 'proofReads')`.
-// `parseTrackerValue` is the shared parser extracted from the step; the
-// case below reproduces the throw against a single parse and asserts
-// the shared parser answers an object.
+// `JSON.stringify(window.__s8GAP)`: one JSON.parse unwraps the
+// stdout to a JSON STRING of the inner payload, a second parse reads
+// it as an object. `parseTrackerValue` is the shared parser the
+// steps call; a single parse leaves a string and reading its fields
+// throws. The case below pins a double-encoded payload against the
+// shared parser.
 describe("s8 — parseTrackerValue reads cdp.mjs' double-encoded stdout", () => {
   it('parses a double-encoded tracker value as the inner object', () => {
     const inner = { base: { tipHeight: 100, proofReads: 1 }, lastTipHeight: 103, final: { tipHeight: 103, proofReads: 1, jump: 3 } };

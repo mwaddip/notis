@@ -46,26 +46,25 @@
 //      with the honest one; devnet pins no `genesisId` (TYPES_INTERFACE
 //      → `profileFor`), so the lagging node's proof verifies and
 //      `compareProofs` picks the heavier (honest) chain by work.
-//      `resolveTip` then measures each verified node's tip against the
-//      winner's suffix (`tools/nipopow-client/src/tip.ts →
-//      behindOnWinnerSuffix`): a node whose tip is not in the winner's
-//      suffix reads `behind: null`, and `tipEvent` (`src/client/
-//      tip-events.ts`) turns `node.verified && node.behind === null`
-//      into `{ ev: 'behind' }`. The client's tip is the winner's —
-//      pub1's. `splits` records only when `compareProofs` returns
-//      `incomparable`; for a strict work winner the result is `a` or
-//      `b`, splits stays empty, and the lagging node still reads
-//      `behind`. `verdictS8Fork`: PASS when lagging reads `behind`,
-//      the client's tip hash equals pub1's node's block hash at that
-//      height, and the delta is exactly two.
+//      `resolveTip` then measures each verified node's tip against
+//      the winner's suffix (MESH_INTERFACE → The client's node list →
+//      "A check"): a node whose tip is not in the winner's suffix
+//      reads `behind: null`, and `tipEvent` turns `node.verified &&
+//      node.behind === null` into `{ ev: 'behind' }`. The client's
+//      tip is the winner's — pub1's. `splits` records only when
+//      `compareProofs` returns `incomparable`; for a strict work
+//      winner the result is `a` or `b`, splits stays empty, and the
+//      lagging node still reads `behind`. `verdictS8Fork`: PASS when
+//      lagging reads `behind`, the client's tip hash equals pub1's
+//      node's block hash at that height, and the delta is exactly
+//      two.
 //   4. A gap filled by headers — stage default plus a step-scoped
 //      hostile firewall from the browser to every hostile host
 //      (same rule as step 1, a `FaultLog` fault, removed in `finally`).
 //      The hostile firewall keeps the gap-fill measurement honest:
 //      without it the client's DHT walk reaches each hostile mesh
-//      node and its proof is read at a check — the saved run on
-//      `ef19ed10` recorded five proof reads at the check after the
-//      cut was removed, which is the hostile set. Beside the hostile
+//      node and its proof is read at a check — one proof read per
+//      hostile host, which would mask the fill. Beside the hostile
 //      firewall, the gap cut: firewall the browser from every mesh
 //      node until pub1's node is three blocks past the client's tip
 //      at the moment the cut landed; remove the cut; wait for the
@@ -138,7 +137,7 @@ export function describe() {
 // the publisher likewise), and the first check reads their proofs
 // — moving `proofReads` and breaking "no proof read across five
 // completed checks" (step 1) or masking the gap's own fill with
-// hostile reads (step 4, as on `ef19ed10`). The firewall is a
+// hostile reads (step 4). The firewall is a
 // `FaultLog` fault, applied at step start and removed in the step's
 // own `finally`, so the firewall does not spill into the next step.
 // `tableName` is each step's own table (`s8_step1_hostile`,
@@ -777,8 +776,8 @@ export async function run(ctx) {
       // MESH_INTERFACE → Acceptance 8 — "every node names a tip on
       // the client's chain". Without this firewall the client's DHT
       // walk reaches each hostile mesh node, and a check reads its
-      // proof — moving `proofReads` beyond the fill, as on
-      // `ef19ed10`. Same rule as step 1: a `FaultLog` fault, applied
+      // proof — moving `proofReads` beyond the fill (one per hostile
+      // host). Same rule as step 1: a `FaultLog` fault, applied
       // at step start and removed in this step's own `finally`, so
       // it does not spill out. The delete-table alone removes every
       // drop (nftables cascades on table delete).

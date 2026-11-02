@@ -1076,10 +1076,9 @@ log.spawn(userWrap(nsOf('pub1'), {
 // miner and restart at `MINER_PCT=1`, half the honest chain's steady
 // duty. The pair's chain stays strictly lighter however long the run
 // goes, so the client's `compareProofs` keeps picking the honest
-// chain by work and the lagging node reads `behind`
-// (`tools/nipopow-client/src/tip.ts → behindOnWinnerSuffix`,
-// `src/client/tip-events.ts`). `down` ends the recorded tree the
-// same way it ends `miner-steady`.
+// chain by work and the lagging node reads `behind` (MESH_INTERFACE →
+// The client's node list → "The client's chain"). `down` ends the
+// recorded tree the same way it ends `miner-steady`.
 if (!dryRun && minerLaggingBootChild !== null) {
   try { process.kill(minerLaggingBootChild.pid, 'SIGTERM'); } catch { /* already gone */ }
   const idx = log.pids.findIndex((e) => e.description === 'miner-lagging-boot');

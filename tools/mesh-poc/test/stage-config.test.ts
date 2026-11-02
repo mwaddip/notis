@@ -199,9 +199,10 @@ describe('the hostile upstream', () => {
     const body = malformedBody();
     expect(body.proof).toBe('not-hex');
     // The client reads `/nipopow/proof/:m/:k` as hex before decoding; a
-    // non-hex string fails that step. `nipopow-client/src/tip.ts` turns
-    // this into `refuseCode: 'invalid'` without a proof, which the mesh
-    // client reads as `lie` of kind `malformed`.
+    // non-hex string fails that step. `resolveTip` turns this into
+    // `refuseCode: 'invalid'` without a proof, which the mesh client
+    // reads as `lie` of kind `malformed`
+    // (MESH_INTERFACE → The client's node list).
     expect(() => hexToBytes(body.proof)).toThrow();
   });
 
