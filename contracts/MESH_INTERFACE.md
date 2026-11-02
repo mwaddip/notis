@@ -260,7 +260,9 @@ to the client's own header at that height, read from a node at its tip. **It rea
 place**: at the first check every tip, and after it a tip no rule places — one proof per distinct tip, from the node the
 list ranks first among those naming it, the next asked in the same check when that proof is refused; and, while the
 client holds a chain, its own tip's proof from a node at its tip, handed to `resolveTip` first so a tie keeps the chain.
-Every node naming a tip takes that tip's verdict. A check that places every tip reads no proof.
+Every node naming a tip takes that tip's verdict. **A tip whose proof verified and lost keeps its verdict** while the
+client's chain stands: a node naming it again is placed off the chain with no proof read, until it names another tip or
+the chain switches. A check that places every tip reads no proof.
 
 > ⚠ **AHEAD OF CODE (2026-11-02).** a check is `resolveTip` over every candidate, timing each node's proof read
 > (`runCheck`, `makeTimedFetch` in `src/client/mesh-client.ts`).
