@@ -19,7 +19,15 @@ export interface Anchor {
 export type FailureKind = 'timeout' | 'refused' | 'dropped' | 'transport' | 'clock';
 
 export interface LieEvidence {
-  kind: 'malformed' | 'proof-invalid';
+  /**
+   * MESH_INTERFACE → The client's node list — the lie row names three
+   * kinds of body-level failure authenticated to the key: a malformed
+   * answer, a proof that fails verification, and a gossiped block the
+   * block check rejects as a lie (→ Block gossip → "A refused block is
+   * evidence as `net` weighs it"). Each is permanent, the evidence
+   * kept, and tied to the key the link was authenticated for.
+   */
+  kind: 'malformed' | 'proof-invalid' | 'gossip-block';
   atMs: number;
   detail: string;
 }

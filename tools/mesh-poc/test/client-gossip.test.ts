@@ -188,7 +188,7 @@ describe('mesh-client in block gossip', () => {
     }
   });
 
-  it.fails('a block extending the tip moves the tip before the next check and is forwarded', async () => {
+  it('a block extending the tip moves the tip before the next check and is forwarded', async () => {
     // Chain of K+1 blocks. The client settles on it. Then a (K+2)th block is
     // mined on top of the tip and published through the mesh node's own
     // router; the client's chain.extend answers `extended`, state.tip moves
@@ -231,7 +231,7 @@ describe('mesh-client in block gossip', () => {
     expect(client.state().checks).toBe(checksBefore);
   }, 180_000);
 
-  it.fails('a block whose parent is held below the tip runs a check at once, own tip first', async () => {
+  it('a block whose parent is held below the tip runs a check at once, own tip first', async () => {
     // Review Focus 3. The gossiped block has prev = tip's parent (block K),
     // same height as the tip (K+1), different hash: chain.extend returns
     // 'fork'; the client triggers an immediate check. We assert `checks`
@@ -293,7 +293,7 @@ describe('mesh-client in block gossip', () => {
     }
   }, 180_000);
 
-  it.fails('a block with no held parent runs a check at once', async () => {
+  it('a block with no held parent runs a check at once', async () => {
     // chain.extend returns 'gap': the client triggers an immediate check.
     const chain = makeLinkedChain(K + 1, PROFILE);
     const started = await startNode(chain); openNodes.push(started);
@@ -325,7 +325,7 @@ describe('mesh-client in block gossip', () => {
     }, { timeout: 15_000, interval: 50 });
   }, 180_000);
 
-  it.fails('a failing block blacklists the publishing key with its evidence and is not forwarded', async () => {
+  it('a failing block blacklists the publishing key with its evidence and is not forwarded', async () => {
     // BlockCheck rejects a block whose validator signature does not verify
     // with `lie: true`. The client blacklists the propagation source's
     // notis id and records evidence of kind `gossip-block`; the message is
@@ -363,7 +363,7 @@ describe('mesh-client in block gossip', () => {
     expect(client.state().traffic.forwarded).toBe(forwardedBefore);
   }, 180_000);
 
-  it.fails('a block before settlement is forwarded and changes nothing', async () => {
+  it('a block before settlement is forwarded and changes nothing', async () => {
     // Review Focus 4. The first check is held open (resolve blocks on a
     // deferred). A valid block arrives through gossip: forwarded + 1,
     // state.tip stays null, no lie. Then let the first check settle.
@@ -418,7 +418,7 @@ describe('mesh-client in block gossip', () => {
     }, { timeout: 15_000, interval: 100 });
   }, 180_000);
 
-  it.fails('a version mismatch records nothing', async () => {
+  it('a version mismatch records nothing', async () => {
     // A block whose protocolVersion is not the era at its height is a
     // Transient reject (BlockCheck: `lie: false`). The publisher is not
     // blacklisted.

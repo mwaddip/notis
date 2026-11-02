@@ -20,6 +20,8 @@ import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { kadDHT } from '@libp2p/kad-dht';
+import { gossipsub, TopicValidatorResult } from '@libp2p/gossipsub';
+import type { GossipSub } from '@libp2p/gossipsub';
 import { UnexpectedPeerError } from '@libp2p/interface';
 import type { Connection, PeerId } from '@libp2p/interface';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
@@ -31,8 +33,8 @@ import {
   circuitRelayAddressesLast,
 } from '@libp2p/utils';
 import { peerIdFromString } from '@libp2p/peer-id';
-import { generateKeyPair } from '@dagsocial/types';
-import type { NetworkProfile } from '@dagsocial/types';
+import { decodeOrderingBlock, generateKeyPair } from '@dagsocial/types';
+import type { NetworkProfile, OrderingBlock } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
@@ -42,7 +44,9 @@ import type { BlockHeader } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import { HeldChain, type Placement } from './held-chain.js';
 import { headerFromJson } from './header-json.js';
-import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
+import { blockTopic, gossipsubOptions } from '../gossip-rules.js';
+import { BlockCheck } from '../block-check.js';
+import { MeshKeyError, nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
 import { meshBaseUrl, idOfMeshUrl } from '../mesh-url.js';
 import { meshFetchOverConnection, MeshFetchError } from '../http-fetch.js';
 import { MeshConfigError, assertNoDns } from '../config.js';
@@ -443,6 +447,12 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
       identify: identify(),
       ping: ping(),
       dht: kadDHT({ protocol: dhtProtocol(o.network), clientMode: true }),
+      // MESH_INTERFACE → Block gossip → "One router, net's rules" — the
+      // client runs gossipsub on `gossipsubOptions(magic)`, carrying
+      // net's envelope, message id and seen window. The client
+      // subscribes to `blockTopic` alone and reads nothing else off
+      // the router.
+      pubsub: gossipsub(gossipsubOptions(o.profile.magic)),
     },
   });
 
@@ -501,12 +511,25 @@ class MeshClientImpl implements MeshClient {
    */
   private behindByMap: Map<string, number | null> = new Map();
   private readonly chain: HeldChain;
+  /**
+   * MESH_INTERFACE → Block gossip → "A block is checked before it is
+   * forwarded, and never applied" — net's Stage 1 run over every
+   * gossiped block. The context reads the client's HeldChain for the
+   * schedule and the standing (seen-accepted memory lives inside the
+   * check itself, under `GOSSIP_SEEN_WINDOW_MS`), and the monotonic
+   * clock for that memory.
+   */
+  private readonly blockCheck: BlockCheck;
   private checkInProgress: Promise<void> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private readonly onDiscovery: (evt: CustomEvent<{ id: PeerId; multiaddrs: Multiaddr[] }>) => void;
   private readonly onConnectionOpen: () => void;
   private readonly onConnectionClose: () => void;
+  // MESH_INTERFACE → Block gossip — the delivery listener, kept as a
+  // bound reference so `removeEventListener` reads the same identity
+  // on stop.
+  private readonly onGossipMessage: (ev: unknown) => void;
 
   constructor(
     node: Libp2p,
@@ -561,6 +584,17 @@ class MeshClientImpl implements MeshClient {
     this.onDiscovery = (evt): void => this.handleDiscovery(evt.detail);
     this.onConnectionOpen = (): void => this.refreshTransportPathAndEmit();
     this.onConnectionClose = (): void => this.refreshTransportPathAndEmit();
+    // MESH_INTERFACE → Block gossip → "A block is checked before it is
+    // forwarded" — the client's HeldChain answers the schedule and the
+    // standing; the clock is the monotonic one BlockCheck's own
+    // seen-accepted memory reads.
+    this.blockCheck = new BlockCheck({
+      profile: o.profile,
+      scheduledTargetBits: (h) => this.chain.scheduledTargetBits(h),
+      standing: (hash, height) => this.chain.standing(hash, height),
+      nowMs: () => this.clock(),
+    });
+    this.onGossipMessage = (ev): void => this.handleGossipMessage(ev);
   }
 
   start(): void {
@@ -570,11 +604,152 @@ class MeshClientImpl implements MeshClient {
     this.libp2p.addEventListener('peer:discovery', this.onDiscovery);
     this.libp2p.addEventListener('connection:open', this.onConnectionOpen);
     this.libp2p.addEventListener('connection:close', this.onConnectionClose);
+    // MESH_INTERFACE → Block gossip — subscribe to the ordering-block
+    // topic alone, set the topic validator (BlockCheck), and attach
+    // the delivery listener. The subscribe comes before the first
+    // check, so a mesh service it reaches finds it already in the
+    // topic's mesh.
+    this.startGossip();
     // The first check runs at start (MESH_INTERFACE → The client's node
     // list → "A check"); a failure here does not take the client down, it
     // is reflected in the state and the next check comes on the ordinary
     // cadence.
     this.scheduleNextCheck(0);
+  }
+
+  private getPubsub(): GossipSub & {
+    reportMessageValidationResult(
+      msgId: string,
+      propagationSource: string,
+      acceptance: TopicValidatorResult,
+    ): void;
+  } {
+    return (this.libp2p as unknown as {
+      services: { pubsub: GossipSub & {
+        reportMessageValidationResult(
+          msgId: string,
+          propagationSource: string,
+          acceptance: TopicValidatorResult,
+        ): void;
+      } };
+    }).services.pubsub;
+  }
+
+  private startGossip(): void {
+    const pubsub = this.getPubsub();
+    const topic = blockTopic(this.profile.magic);
+    pubsub.topicValidators.set(topic, (peer, msg) =>
+      this.validateGossipMessage(peer, msg),
+    );
+    pubsub.subscribe(topic);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pubsub as any).addEventListener('gossipsub:message', this.onGossipMessage);
+  }
+
+  /**
+   * MESH_INTERFACE → Block gossip → "A block is checked before it is
+   * forwarded, and never applied" / "A refused block is evidence as
+   * `net` weighs it". The topic validator runs net's Stage 1 as a
+   * `BlockCheck`, counts the message's bytes against
+   * `traffic.gossipBytes`, and maps the verdict to a
+   * `TopicValidatorResult`. A reject with `lie` is the propagation
+   * source's: when its peer id reads as a Notis key and the list
+   * holds that entry, the entry blacklists with evidence of kind
+   * `gossip-block`. A peer whose id is not an Ed25519 key, or whose
+   * key the list does not hold, is refused with no list change.
+   */
+  private validateGossipMessage(
+    peer: PeerId,
+    msg: { topic: string; data: Uint8Array },
+  ): TopicValidatorResult {
+    // Count every message the validator weighs — accept, ignore or reject
+    // (MESH_INTERFACE → Block gossip, the brief). The length is from
+    // the message's `data`.
+    this.state_.traffic.gossipBytes += msg.data.length;
+    const data = new Uint8Array(msg.data);
+    const verdict = this.blockCheck.check(data);
+    if (verdict.result === 'ignore') return TopicValidatorResult.Ignore;
+    if (verdict.result === 'reject') {
+      if (verdict.lie) {
+        let notisId: string | null = null;
+        try {
+          notisId = notisIdFromPeerId(peer);
+        } catch (e) {
+          // MeshKeyError: a peer id that is not an Ed25519 key, or
+          // whose public key is not 32 bytes. Not a Notis peer; the
+          // reject stands with no list change.
+          if (!(e instanceof MeshKeyError)) throw e;
+        }
+        if (notisId !== null && this.nodeList.entry(notisId) !== undefined) {
+          this.nodeList.lie(notisId, {
+            kind: 'gossip-block',
+            atMs: this.clock(),
+            detail: verdict.detail,
+          });
+          this.latestEventReason.set(notisId, 'lie: gossip-block');
+          this.emitStateChange();
+        }
+      }
+      return TopicValidatorResult.Reject;
+    }
+    return TopicValidatorResult.Accept;
+  }
+
+  /**
+   * MESH_INTERFACE → Block gossip → "A block is checked before it is
+   * forwarded, and never applied" / "The client's chain" — on
+   * delivery (asyncValidation: the message passed the topic
+   * validator), report Accept so the router forwards it, count
+   * `traffic.forwarded`, and either extend the chain (`extended` →
+   * `state.tip` moves) or trigger an immediate check (`fork`, `gap`).
+   * Before the first check settles a chain, the block adds nothing;
+   * it is still counted as forwarded.
+   */
+  private handleGossipMessage(ev: unknown): void {
+    const detail = (ev as { detail?: {
+      msg?: { topic: string; data: Uint8Array };
+      msgId?: string;
+      propagationSource?: { toString(): string };
+    } }).detail;
+    if (!detail) return;
+    const msg = detail.msg;
+    const topic = blockTopic(this.profile.magic);
+    if (!msg || msg.topic !== topic) return;
+    const msgId = detail.msgId;
+    if (msgId === undefined) return;
+    const relayPeerId = detail.propagationSource?.toString() ?? '';
+    const pubsub = this.getPubsub();
+    pubsub.reportMessageValidationResult(
+      msgId,
+      relayPeerId,
+      TopicValidatorResult.Accept,
+    );
+
+    this.state_.traffic.forwarded += 1;
+    // The validator already decoded this block; a re-decode is cheap
+    // and keeps no map parallel to the router's own cache. A throw
+    // here is defensive — a bug upstream, since the validator accepted
+    // these bytes.
+    let block: OrderingBlock | null = null;
+    try {
+      block = decodeOrderingBlock(new Uint8Array(msg.data));
+    } catch { /* already validated — defensive */ }
+
+    if (!this.chain.settled() || block === null) {
+      this.emitStateChange();
+      return;
+    }
+    const r = this.chain.extend(block.header);
+    if (r === 'extended') {
+      const h = blockHash(block.header);
+      this.state_.tip = { height: block.header.height, hash: h };
+      this.emitStateChange();
+      return;
+    }
+    // 'fork' | 'gap' — a check runs at once (MESH_INTERFACE → The
+    // client's node list → "The client's chain").
+    this.emitStateChange();
+    this.triggerImmediateCheck();
   }
 
   readonly fetch: HttpFetch = (url, init) => this.meshFetchFn(url, init);
@@ -706,6 +881,15 @@ class MeshClientImpl implements MeshClient {
     this.libp2p.removeEventListener('peer:discovery', this.onDiscovery);
     this.libp2p.removeEventListener('connection:open', this.onConnectionOpen);
     this.libp2p.removeEventListener('connection:close', this.onConnectionClose);
+    // MESH_INTERFACE → Block gossip — detach the gossipsub listener
+    // before libp2p.stop so the handler does not run against a
+    // torn-down pubsub. Wrapped: libp2p's own stop fires final events,
+    // but a listener-removal failure must not stop the shutdown.
+    try {
+      const pubsub = this.getPubsub();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pubsub as any).removeEventListener('gossipsub:message', this.onGossipMessage);
+    } catch { /* already torn down */ }
     await this.libp2p.stop();
   }
 
