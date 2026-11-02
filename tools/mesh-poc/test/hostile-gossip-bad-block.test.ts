@@ -1,4 +1,4 @@
-// MESH_INTERFACE → Acceptance 6 → "A mesh node publishing a block
+// MESH_INTERFACE → Acceptance 6 — "A mesh node publishing a block
 // that fails its checks is blacklisted with its evidence, and the
 // client does not forward it." The hostile gossip publisher's bad
 // block is a pure byte builder — a tiny payload whose

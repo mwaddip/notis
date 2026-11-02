@@ -10,9 +10,9 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-// MESH_INTERFACE → Acceptance 6 → "A node naming a tip of its own
+// MESH_INTERFACE → Acceptance 6 — "A node naming a tip of its own
 // that answers malformed proofs, and one that answers failing proofs,
-// are blacklisted with their evidence" — the hostile upstream's
+// are blacklisted with their evidence". The hostile upstream's
 // `/blocks/current` substitutes a 64-hex lie for the hash so the two
 // liars name a tip no chain holds. The body builder is pure.
 // eslint-disable-next-line import/extensions
