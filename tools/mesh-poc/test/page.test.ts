@@ -404,33 +404,34 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
 
 // ---------------------------------------------------------------------------
 // MESH_INTERFACE → No anchor reached → "The agreement counts" — the page
-// shows how many nodes verified a proof on the tip's chain within its
-// last `k` headers, how many of those are anchors, and how many
-// verified off those headers; before the first check, the line reads
-// `Agreeing: —`, and in every state it sits above the no-anchor words.
+// shows how many nodes name a tip on the client's chain within its last
+// `k` headers, how many of those are anchors, and how many name one off
+// those headers; before the first check, the line reads
+// `On this chain: —`, and in every state it sits above the no-anchor
+// words.
 
 describe('page/render.ts agreement line', () => {
-  it('reads "Agreeing: —" before the first check (agreement === null)', () => {
+  it('reads "On this chain: —" before the first check (agreement === null)', () => {
     const root = document.createElement('div');
     render(emptyState({ anchorReached: false, agreement: null }), root);
     const line = root.querySelector('[data-role="agreement"]');
     expect(line, 'the agreement line is required').not.toBeNull();
-    expect(line!.textContent).toBe('Agreeing: —');
+    expect(line!.textContent).toBe('On this chain: —');
   });
 
-  it('reads "Agreeing: <n> (<a> anchors) · not on the tip\'s last 20 blocks: <m>" after a check', () => {
+  it('reads "On this chain: <n> (anchors: <m>) · Not on this chain\'s last 20 blocks: <p>" after a check', () => {
     const root = document.createElement('div');
     render(
       emptyState({
         anchorReached: true,
-        agreement: { agreeing: 3, agreeingAnchors: 1, notAgreeing: 2 },
+        agreement: { onChain: 3, onChainAnchors: 1, offChain: 2 },
       }),
       root,
     );
     const line = root.querySelector('[data-role="agreement"]');
     expect(line).not.toBeNull();
     expect(line!.textContent).toBe(
-      "Agreeing: 3 (1 anchors) · not on the tip's last 20 blocks: 2",
+      "On this chain: 3 (anchors: 1) · Not on this chain's last 20 blocks: 2",
     );
   });
 
@@ -439,7 +440,7 @@ describe('page/render.ts agreement line', () => {
     render(
       emptyState({
         anchorReached: false,
-        agreement: { agreeing: 0, agreeingAnchors: 0, notAgreeing: 1 },
+        agreement: { onChain: 0, onChainAnchors: 0, offChain: 1 },
       }),
       root,
     );
@@ -735,7 +736,7 @@ describe('page/reads.ts', () => {
     const idA = 'a'.repeat(64);
     const idB = 'b'.repeat(64);
     const fake = buildFakeClient({
-      agreement: { agreeing: 2, agreeingAnchors: 1, notAgreeing: 0 },
+      agreement: { onChain: 2, onChainAnchors: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok'), entryAt(idB, 'trailing')],
       readAnswers: [{ nodeId: idA }, { nodeId: idB }, { nodeId: idA }],
     });
@@ -762,7 +763,7 @@ describe('page/reads.ts', () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
-      agreement: { agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 },
+      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
       readAnswers: [{ nodeId: idA }],
     });
@@ -788,7 +789,7 @@ describe('page/reads.ts', () => {
     expect(fake.calls.read, 'no reads fire before agreement !== null').toEqual([]);
     expect(root.querySelector('pre#reads'), 'nothing is written before the check').toBeNull();
     // Now emit a completed check: the driver proceeds.
-    fake.emit({ agreement: { agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 } });
+    fake.emit({ agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 } });
     await started;
     expect(fake.calls.read).toEqual([{ path: '/blocks/1', need: 'older' }]);
     const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
@@ -799,7 +800,7 @@ describe('page/reads.ts', () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
-      agreement: { agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 },
+      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
       readAnswers: [{ nodeId: idA }, { error: 'no node allowed for a tip read' }, { nodeId: idA }],
     });
@@ -818,7 +819,7 @@ describe('page/reads.ts', () => {
   it('n outside 1–100 writes nothing', async () => {
     const root = document.createElement('div');
     const fake = buildFakeClient({
-      agreement: { agreeing: 0, agreeingAnchors: 0, notAgreeing: 0 },
+      agreement: { onChain: 0, onChainAnchors: 0, offChain: 0 },
     });
     for (const n of [0, 101, -1, Number.NaN]) {
       await runReads({ client: fake.client, n, need: 'older', root });
@@ -840,7 +841,7 @@ describe('page/reads.ts', () => {
     ];
     const kept = bodies.slice();
     const fake = buildFakeClient({
-      agreement: { agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 },
+      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
     });
     (fake.client as unknown as { read: (p: string, n: ReadNeed) => Promise<{ response: Response; nodeId: string }> }).read =
@@ -861,7 +862,7 @@ describe('page/reads.ts', () => {
     const good = new Response(new TextEncoder().encode('ok-body'));
     const bodies: Response[] = [failing, good];
     const fake = buildFakeClient({
-      agreement: { agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 },
+      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
     });
     (fake.client as unknown as { read: (p: string, n: ReadNeed) => Promise<{ response: Response; nodeId: string }> }).read =
@@ -878,7 +879,7 @@ describe('page/reads.ts sibling pattern', () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
-      agreement: { agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 },
+      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
       readAnswers: [{ nodeId: idA }],
     });
@@ -903,7 +904,7 @@ describe('probe and reads coexist', () => {
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
       nodeId: idA,
-      agreement: { agreeing: 1, agreeingAnchors: 1, notAgreeing: 0 },
+      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
       readAnswers: [{ nodeId: idA }],
     });

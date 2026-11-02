@@ -36,7 +36,7 @@ export function render(state: ClientState, root: HTMLElement): void {
 
   // MESH_INTERFACE → No anchor reached → "The agreement counts" —
   // sits above the no-anchor words; before the first check
-  // (`agreement === null`) it reads `Agreeing: —`.
+  // (`agreement === null`) it reads `On this chain: —`.
   container.appendChild(renderAgreement(state));
 
   if (!state.anchorReached) {
@@ -60,17 +60,17 @@ export function render(state: ClientState, root: HTMLElement): void {
 
 function renderAgreement(state: ClientState): HTMLElement {
   // MESH_INTERFACE → No anchor reached → "The agreement counts" —
-  // "the page says `not on the tip's last 20 blocks`"; before the
-  // first check it reads `Agreeing: —`.
+  // "the page says `On this chain` … `Not on this chain's last 20
+  // blocks`"; before the first check it reads `On this chain: —`.
   const div = document.createElement('div');
   div.setAttribute('data-role', 'agreement');
   if (state.agreement === null) {
-    div.textContent = 'Agreeing: —';
+    div.textContent = 'On this chain: —';
   } else {
-    const { agreeing, agreeingAnchors, notAgreeing } = state.agreement;
+    const { onChain, onChainAnchors, offChain } = state.agreement;
     div.textContent =
-      `Agreeing: ${String(agreeing)} (${String(agreeingAnchors)} anchors)`
-      + ` · not on the tip's last 20 blocks: ${String(notAgreeing)}`;
+      `On this chain: ${String(onChain)} (anchors: ${String(onChainAnchors)})`
+      + ` · Not on this chain's last 20 blocks: ${String(offChain)}`;
   }
   return div;
 }

@@ -15,7 +15,7 @@ export { tipEvents } from './client/tip-events.js';
 export type { TipEvent } from './client/tip-events.js';
 
 export { agreementCounts } from './client/agreement.js';
-export type { AgreementCounts } from './client/agreement.js';
+export type { AgreementCounts, AgreementEntry } from './client/agreement.js';
 
 export { pickServer } from './client/server-pick.js';
 export type { ReadNeed, PickCandidate } from './client/server-pick.js';

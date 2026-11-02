@@ -72,7 +72,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     for (const d of dirs.splice(0)) { rmSync(d, { recursive: true, force: true }); }
   });
 
-  it.fails('the first check reads one proof per distinct tip', async () => {
+  it('the first check reads one proof per distinct tip', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "one proof
     // per distinct tip, from the node the list ranks first among those
     // naming it". Three nodes on chain A, one on fork B: resolve is
@@ -130,7 +130,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s.nodes.find((n) => n.notisId === b.id)!.status).toBe('behind');
   }, 120_000);
 
-  it.fails('a check with every tip placed reads no proof', async () => {
+  it('a check with every tip placed reads no proof', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "A check
     // that places every tip reads no proof". After settlement, five
     // checks with nodes at the tip, one below, two below: `proofReads`
@@ -178,7 +178,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s.nodes.find((n) => n.notisId === c.id)!.status).toBe('behind');
   }, 180_000);
 
-  it.fails('a tip above the client\'s is read down and linked', async () => {
+  it('a tip above the client\'s is read down and linked', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "above —
     // read down to a held header as a fill is, the client's tip moving
     // when they link". One node advances one block, another three;
@@ -327,7 +327,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(lastUrls.some((u) => u.includes(b.id))).toBe(true);
   }, 180_000);
 
-  it.fails('a null hash places nowhere and reads no proof', async () => {
+  it('a null hash places nowhere and reads no proof', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "a tip
     // answered with no hash" is behind; no proof read.
     const built = await handBuilt((req, res) => {
@@ -361,7 +361,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(client.state().traffic.proofReads).toBe(0);
   }, 60_000);
 
-  it.fails('a header that does not read is the serving node\'s lie', async () => {
+  it('a header that does not read is the serving node\'s lie', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "A header
     // that does not read is the serving node's `malformed` lie".
     const base = makeLinkedChain(K + 2, PROFILE);
@@ -422,7 +422,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(hostileEntry.evidence?.kind).toBe('malformed');
   }, 180_000);
 
-  it.fails('speed is the tip read\'s time', async () => {
+  it('speed is the tip read\'s time', async () => {
     // MESH_INTERFACE → The client's node list → "A check" — "it times
     // each node's tip read; that time is the node's speed until the
     // next check". `readMs` is set from `/blocks/current` through the
