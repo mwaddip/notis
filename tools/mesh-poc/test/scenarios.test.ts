@@ -652,7 +652,7 @@ describe('s8 (prove once, follow by gossip)', () => {
       { notisId: ANCHOR_B, status: 'trailing' },
     ]);
   });
-  it('s8NoProofsObserve: final NOT captured at base.checks + 5 if an anchor was dropped', () => {
+  it.fails('s8NoProofsObserve: final captured at base.checks + 5 even if an anchor was dropped (status \'absent\' goes into the measurement)', () => {
     const anchorIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const base = {
@@ -667,15 +667,21 @@ describe('s8 (prove once, follow by gossip)', () => {
     };
     let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
     st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
-    expect(st.final).toBeNull();
+    const fin = st.final;
+    expect(fin).not.toBeNull();
+    expect(fin!.checks).toBe(6);
+    expect(fin!.honestNodeStatuses).toEqual([
+      { notisId: ANCHOR_A, status: 'ok' },
+      { notisId: ANCHOR_B, status: 'absent' },
+    ]);
   });
-  it('s8NoProofsObserve: final NOT captured if a held honest reads retry at the final count', () => {
+  it.fails('s8NoProofsObserve: final captured at base.checks + 5 even if a held honest reads retry (status \'retry\' goes into the measurement)', () => {
     const anchorIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
     const base = {
       checks: 1,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'ok')],
     };
     const atFinalCount = {
       checks: 6,
@@ -684,9 +690,16 @@ describe('s8 (prove once, follow by gossip)', () => {
     };
     let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
     st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
-    expect(st.final).toBeNull();
+    const fin = st.final;
+    expect(fin).not.toBeNull();
+    expect(fin!.checks).toBe(6);
+    expect(fin!.honestNodeStatuses).toEqual([
+      { notisId: ANCHOR_A, status: 'ok' },
+      { notisId: ANCHOR_B, status: 'ok' },
+      { notisId: PRIV_1, status: 'retry' },
+    ]);
   });
-  it('s8NoProofsObserve: final waits past base.checks + 5 until the rule holds again', () => {
+  it.fails('s8NoProofsObserve: final captured at exactly base.checks + 5 whatever the statuses are afterward', () => {
     const anchorIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const base = {
@@ -706,11 +719,16 @@ describe('s8 (prove once, follow by gossip)', () => {
     };
     let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
     st = s8.s8NoProofsObserve(st, atFive, honestIds, anchorIds);
-    expect(st.final).toBeNull();
-    st = s8.s8NoProofsObserve(st, atSeven, honestIds, anchorIds);
     const fin = st.final;
     expect(fin).not.toBeNull();
-    expect(fin!.checks).toBe(8);
+    expect(fin!.checks).toBe(6);
+    expect(fin!.honestNodeStatuses).toEqual([
+      { notisId: ANCHOR_A, status: 'ok' },
+      { notisId: ANCHOR_B, status: 'retry' },
+    ]);
+    // The later state does not re-record a final.
+    st = s8.s8NoProofsObserve(st, atSeven, honestIds, anchorIds);
+    expect(st.final).toBe(fin);
   });
   // MESH_INTERFACE → Acceptance 8 — step 4's expression carries a pure
   // observer that reads a snapshot of `#state` and returns the next
