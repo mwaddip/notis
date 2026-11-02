@@ -35,6 +35,11 @@ export type {
 export { BlockCheck } from './block-check.js';
 export type { BlockVerdict, BlockCheckContext } from './block-check.js';
 
+export { headerFromJson } from './client/header-json.js';
+
+export { HeldChain } from './client/held-chain.js';
+export type { Placement } from './client/held-chain.js';
+
 export {
   dhtProtocol,
   RETRY_BASE_MS,

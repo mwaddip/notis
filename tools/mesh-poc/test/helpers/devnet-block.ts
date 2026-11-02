@@ -4,9 +4,11 @@ import {
   generateKeyPair,
   hexToBytes,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { BlockHeader, OrderingBlock, UtxoTxTree } from '@dagsocial/types';
-import { blockHash, verifyOrderingBlockPoW } from '@dagsocial/validation';
+import type { BlockHeader, NetworkProfile, OrderingBlock, UtxoTxTree } from '@dagsocial/types';
+import { asertTargetBits, blockHash, verifyOrderingBlockPoW } from '@dagsocial/validation';
+import { verifierProfile } from '@dagsocial/nipopow-client';
 
 /**
  * A valid mined devnet ordering block at the network's floor
@@ -75,4 +77,52 @@ export function makeBlockAt(
       ? new Uint8Array(64)
       : ed25519.sign(hexToBytes(hash), seed);
   return { header, utxoTxTree, validatorSignature };
+}
+
+/**
+ * A linked devnet chain of `n` ordering blocks starting at block 1, each
+ * header mined under the scheduled target
+ * (`MINING_INTERFACE → Difficulty Schedule`,
+ * `VALIDATION_INTERFACE → asertTargetBits`): block 1 carries the retarget's
+ * `anchorBits`, every later block carries
+ * `asertTargetBits(retarget, t_a, parent)` with `t_a` = block 1's `createdAt`
+ * and `parent` the block below. The `createdAt` stamps step by
+ * `orderingBlockIdealMs`, so the delta is zero and the bits stay at the
+ * anchor for the whole chain — the schedule's shape, cheapest to mine.
+ */
+export function makeLinkedChain(
+  n: number,
+  profile: NetworkProfile,
+): OrderingBlock[] {
+  if (n < 1) return [];
+  const retarget = verifierProfile(profile, 0).retarget;
+  const ideal = profile.orderingBlockIdealMs;
+  const t_a = 1_000_000;
+  const chain: OrderingBlock[] = [];
+  // Block 1 — anchor bits, no previous.
+  chain.push(
+    makeBlockAt(1, PROTOCOL_VERSION, {
+      createdAt: t_a,
+      powTargetBits: retarget.anchorBits,
+    }),
+  );
+  for (let h = 2; h <= n; h++) {
+    const parent = chain[h - 2]!.header;
+    const parentHash = blockHash(parent);
+    if (parentHash === null) {
+      throw new Error('makeLinkedChain: parent header outside the encodable domain');
+    }
+    const scheduled = asertTargetBits(retarget, t_a, {
+      height: parent.height,
+      createdAt: parent.createdAt,
+    });
+    chain.push(
+      makeBlockAt(h, PROTOCOL_VERSION, {
+        prevBlockHash: parentHash,
+        createdAt: t_a + (h - 1) * ideal,
+        powTargetBits: scheduled,
+      }),
+    );
+  }
+  return chain;
 }
