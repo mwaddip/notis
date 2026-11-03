@@ -51,7 +51,7 @@ vi.mock('acme-client', () => ({
 import { acmeSource } from '../src/node/acme.js';
 
 async function selfSignedPem(): Promise<string> {
-  const keys = await webcrypto.subtle.generateKey(
+  const keys = await crypto.subtle.generateKey(
     { name: 'ECDSA', namedCurve: 'P-256' },
     true,
     ['sign', 'verify'],
