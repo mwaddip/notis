@@ -2974,15 +2974,16 @@ a positive safe integer is refused at load (`NODE_INTERFACE → Configuration`).
 schedule may end at an earlier version than testnet's under one build.
 
 **`bootstrapPeers` is the network's known nodes, per network.** Testnet's is
-`['/dns4/notis.fun/tcp/9733/p2p/<peer id>']`; mainnet's and devnet's are `[]` (a devnet mesh is spawned with
-explicit addresses). **A profile's seed names its node's peer id.** A node's key persists
-(`NET_INTERFACE → The node key`), so the id holds across the node's restarts, and libp2p's handshake holds whoever
-answers at the address to it: a dial that reaches another key fails. A wipe of a seed node's store keeps its key
-file. `BOOTSTRAP_PEERS` in the environment replaces the list when set (`NODE_INTERFACE → Configuration`). Identity,
-not a tunable — not a register row (`CONSTANTS → Excluded`); each profile states its own literal, never a spread.
+`['/dns4/notis.fun/tcp/9733/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa']` — the peer id of notis.fun's
+node key, whose public key is `68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09`, written on the box
+2026-11-03; mainnet's and devnet's are `[]` (a devnet mesh is spawned with explicit addresses). **A profile's seed
+names its node's peer id.** A node's key persists (`NET_INTERFACE → The node key`), so the id holds across the
+node's restarts, and libp2p's handshake holds whoever answers at the address to it: a dial that reaches another key
+fails. A wipe of a seed node's store keeps its key file. `BOOTSTRAP_PEERS` in the environment replaces the list when
+set (`NODE_INTERFACE → Configuration`). Identity, not a tunable — not a register row (`CONSTANTS → Excluded`); each
+profile states its own literal, never a spread.
 
-> ⚠ **AHEAD OF CODE (2026-11-03).** The peer id lands with notis.fun's key file, written on the box before this
-> unit's pull request; `network.ts` holds the bare address until then.
+> ⚠ **AHEAD OF CODE (2026-11-03).** `network.ts` holds the bare address `/dns4/notis.fun/tcp/9733`.
 
 **This is the sole definition of the network magics.** `@dagsocial/wire` exported duplicates
 until P2-A phase 5 deleted them. They live here rather than `NetworkType` living in wire
