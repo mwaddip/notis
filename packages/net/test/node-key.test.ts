@@ -301,8 +301,10 @@ describe('NET_INTERFACE → The node key: loadNodeKey', () => {
 });
 
 describe('NET_INTERFACE → The node key: NetConfig.nodeKey through start()', () => {
-  // Generous bound for a libp2p start on loopback.
-  const TIMEOUT = 25_000;
+  // Generous bound for a libp2p start on loopback. The control's own
+  // deadline polls `peers()` for the dial to settle, so the test timeout
+  // sits above it with margin for the two nodes' start and stop.
+  const TIMEOUT = 30_000;
 
   // NET_INTERFACE → The node key → "`net` runs under the key its caller hands it"
   it('peerId() answers the libp2p peer id of the config key', async () => {
@@ -367,18 +369,22 @@ describe('NET_INTERFACE → The node key: NetConfig.nodeKey through start()', ()
 
   // NET_INTERFACE → libp2p Stack. libp2p's handshake checks the remote peer id
   // against the id named in the dial address, so a bootstrap address naming a
-  // third key cannot resolve to the listener behind it. The control that the
-  // dial would have reached A under A's own peer id runs beside the negative,
-  // under the same bounded wait: net exposes no public signal for a settled
-  // outbound bootstrap dial — `peers()` only sees a peer whose connection
-  // upgraded, and `syncPhase` stays `idle` until a peer's claim settles —
-  // so both the positive and the negative read `peers()` at the same wall
-  // moment after start, and the control's peer id in `peers()` proves the
-  // negative's absence is not a `peers()` that never fired.
-  const SETTLE_WAIT_MS = 2_000;
+  // third key cannot resolve to the listener behind it. The control dials A
+  // under A's own peer id and polls `peers()` until it holds A, under a
+  // generous deadline — so the arrangement is shown to dial and connect at all
+  // without racing a loaded runner. The negative waits a short bounded moment
+  // and reads `peers()` once: net exposes no public settle signal for a failing
+  // outbound dial (`peers()` only sees a peer whose connection upgraded, and
+  // `syncPhase` stays `idle` until a peer's claim settles), and the control's
+  // success proves the negative's absence is a dial that was refused rather
+  // than one that never ran.
+  const CONTROL_POLL_DEADLINE_MS = 20_000;
+  const CONTROL_POLL_INTERVAL_MS = 50;
+  const NEGATIVE_WAIT_MS = 2_000;
 
   async function dialOutcomeFromB(
     seedPeerIdOfA: (aPeerId: string) => string,
+    waitForB: (nodeB: NetNode, aPeerId: string) => Promise<void>,
   ): Promise<{ aPeerId: string; bPeers: string[] }> {
     const nodeA = new NetNode(
       makeConfig({ listenAddrs: '/ip4/127.0.0.1/tcp/0' }),
@@ -400,7 +406,7 @@ describe('NET_INTERFACE → The node key: NetConfig.nodeKey through start()', ()
         validators,
       );
       await nodeB.start();
-      await sleep(SETTLE_WAIT_MS);
+      await waitForB(nodeB, aPeerId);
       const bPeers = nodeB.peers().map((p) => p.id);
       return { aPeerId, bPeers };
     } finally {
@@ -409,14 +415,29 @@ describe('NET_INTERFACE → The node key: NetConfig.nodeKey through start()', ()
     }
   }
 
-  it("a bootstrap address naming A's own peer id connects B to A within the bounded wait", async () => {
-    const { aPeerId, bPeers } = await dialOutcomeFromB((aId) => aId);
+  it("a bootstrap address naming A's own peer id connects B to A", async () => {
+    const { aPeerId, bPeers } = await dialOutcomeFromB(
+      (aId) => aId,
+      async (nodeB, aPeerIdWanted) => {
+        const deadline = Date.now() + CONTROL_POLL_DEADLINE_MS;
+        while (Date.now() < deadline) {
+          if (nodeB.peers().some((p) => p.id === aPeerIdWanted)) return;
+          await sleep(CONTROL_POLL_INTERVAL_MS);
+        }
+        throw new Error(
+          `B's peers() did not hold A within ${CONTROL_POLL_DEADLINE_MS}ms`,
+        );
+      },
+    );
     expect(bPeers).toContain(aPeerId);
   }, TIMEOUT);
 
   it('a bootstrap address naming a third key never connects to the listener behind it', async () => {
     const third = generateKeyPair();
-    const { aPeerId, bPeers } = await dialOutcomeFromB(() => peerIdOf(third.publicKey));
+    const { aPeerId, bPeers } = await dialOutcomeFromB(
+      () => peerIdOf(third.publicKey),
+      async () => { await sleep(NEGATIVE_WAIT_MS); },
+    );
     expect(bPeers).not.toContain(aPeerId);
   }, TIMEOUT);
 });
