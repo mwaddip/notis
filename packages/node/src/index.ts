@@ -143,9 +143,9 @@ try {
 // process"; NET_INTERFACE → Config).
 const net = new NetNode(
   {
-    // NET_INTERFACE → The node key → "`net` runs under the key its caller
-    // hands it". Required in NetConfig; libp2p runs under it and refuses a
-    // `KeyPair` whose `publicKey` does not match its seed.
+    // NET_INTERFACE → The node key → "`net` runs under the key its caller hands it".
+    // Required in NetConfig; libp2p runs under it and refuses a `KeyPair`
+    // whose `publicKey` does not match its seed.
     nodeKey,
     // The profile's wire magic. Required in NetConfig — net has no fallback of
     // its own (NET_INTERFACE → "Magic Bytes").

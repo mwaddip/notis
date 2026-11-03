@@ -541,8 +541,8 @@ function assertMiningAuthConfigured(cfg: Config): void {
  * appended, and the leading `./` on a relative path is normalized away.
  * A set empty value is refused at load naming the setting, the shape every
  * refusal of a set-but-refused setting takes
- * (NODE_INTERFACE → Configuration → "Every whole-number setting is read by
- * one reader, and a set value it refuses stops the node at load").
+ * (NODE_INTERFACE → Configuration →
+ * "Every whole-number setting is read by one reader, and a set value it refuses stops the node at load").
  */
 function parseNodeKeyPath(raw: string | undefined, dbPath: string): string {
   if (raw === undefined) {

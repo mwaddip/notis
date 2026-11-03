@@ -1146,8 +1146,8 @@ describe('config', () => {
 
     // 18c — a set empty value is refused at load naming the setting, the
     // shape every refusal of a set-but-refused setting takes
-    // (NODE_INTERFACE → Configuration → "Every whole-number setting is read
-    // by one reader, and a set value it refuses stops the node at load").
+    // (NODE_INTERFACE → Configuration →
+    // "Every whole-number setting is read by one reader, and a set value it refuses stops the node at load").
     describe('18c. a set empty NODE_KEY_PATH is refused naming the setting', () => {
       it('NODE_KEY_PATH="" throws, the message naming NODE_KEY_PATH', async () => {
         process.env['NODE_KEY_PATH'] = '';
