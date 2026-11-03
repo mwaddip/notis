@@ -69,8 +69,7 @@ const validators: NetValidators = {
 
 function makeNetConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   // Each call gets a fresh `nodeKey`, so every test node is a distinct peer
-  // (`NET_INTERFACE → The node key → "`net` runs under the key its caller
-  // hands it"`).
+  // (`NET_INTERFACE → The node key → "`net` runs under the key its caller hands it"`).
   return {
     nodeKey: generateKeyPair(),
     magic: MAGIC_DEVNET,

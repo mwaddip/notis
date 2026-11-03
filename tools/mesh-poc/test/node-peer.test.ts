@@ -72,8 +72,7 @@ function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   // Devnet magic matches the mesh client's own default (`MESH_INTERFACE → The
   // mesh URL`), and the floor is types' `ORDERING_BLOCK_POW_TARGET_FLOOR`.
   // Each call gets a fresh `nodeKey`, so every test node is a distinct peer
-  // (`NET_INTERFACE → The node key → "`net` runs under the key its caller
-  // hands it"`).
+  // (`NET_INTERFACE → The node key → "`net` runs under the key its caller hands it"`).
   return {
     nodeKey: generateKeyPair(),
     magic: MAGIC_DEVNET,

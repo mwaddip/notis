@@ -22,8 +22,8 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(key.notisId + '\n');
     return 0;
   } catch (err) {
-    // `NodeKeyError` names the key file on refusal (`NET_INTERFACE → The
-    // node key → "`net` runs under the key its caller hands it"`);
+    // `NodeKeyError` names the key file on refusal
+    // (`NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`"`);
     // `MeshKeyError` names a mesh-side refusal of the key's own fields
     // (`MESH_INTERFACE → Identity → "One key, two spellings"`).
     if (err instanceof NodeKeyError || err instanceof MeshKeyError) {

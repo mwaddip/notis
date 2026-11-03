@@ -962,8 +962,8 @@ describe('page/build output', () => {
   // and the bundle scan reads from `dist-page/`. The scan does NOT look for
   // `/dns4/`, `/dns6/`, `/dnsaddr/` string literals — `NETWORK_PROFILES`
   // legitimately carries testnet's bootstrap address for the node's own
-  // gossip net (`TYPES_INTERFACE → "bootstrapPeers is the network's known
-  // nodes, per network"`), and a string in the bundle is not a DNS lookup.
+  // gossip net
+  // (`TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"`), and a string in the bundle is not a DNS lookup.
   // The browser never dials a DNS anchor — that is held at runtime by
   // `assertClientConfig` on every anchor, and `src/config.ts`'s DNS guard
   // names the three prefixes in the source itself.
