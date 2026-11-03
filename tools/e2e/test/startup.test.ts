@@ -20,8 +20,8 @@ import {
 import { assertDistFresh, NODE_LOADS } from '../src/dist-freshness.js';
 import { p2pPort } from '../src/ports.js';
 
-// NET_INTERFACE → The node key → "The key file holds the key's
-// `KeyPair.secretKey`". The 48-byte secretKey is RFC 8410 PKCS8 DER; Node's
+// NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`".
+// The 48-byte secretKey is RFC 8410 PKCS8 DER; Node's
 // `createPrivateKey` reads it, `createPublicKey(...).export({ format: 'der',
 // type: 'spki' })` writes 12 bytes of SPKI prefix then the 32-byte raw public
 // key.
@@ -213,9 +213,9 @@ describe('startup', () => {
     expect(output).toMatch(new RegExp(expectedHex));
   });
 
-  // NET_INTERFACE → The node key → "A node runs under one key, and the key
-  // persists": a restart on the same store keeps the key file, and the peer
-  // id's identity multihash the start line prints does not change.
+  // NET_INTERFACE → The node key → "A node runs under one key, and the key persists":
+  // a restart on the same store keeps the key file, and the peer id's
+  // identity multihash the start line prints does not change.
   it('a node restarted on its store keeps its peer id', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
@@ -278,11 +278,10 @@ describe('startup', () => {
     expect(peerIdA).not.toBe(peerIdB);
   });
 
-  // NET_INTERFACE → The node key → "The key file holds the key's
-  // `KeyPair.secretKey`": a file of any other length than 48 is refused with
-  // `NodeKeyError` naming the path. The node writes one line carrying the
-  // error's message and exits non-zero (NODE_INTERFACE → Configuration →
-  // "The key file is named for the store").
+  // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`":
+  // a file of any other length than 48 is refused with `NodeKeyError` naming
+  // the path. The node writes one line carrying the error's message and exits
+  // non-zero (NODE_INTERFACE → Configuration → "The key file is named for the store").
   it('a refused key file stops the node, naming the path, and the file is left as it is', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
