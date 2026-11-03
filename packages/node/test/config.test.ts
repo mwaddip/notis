@@ -1112,7 +1112,7 @@ describe('config', () => {
     describe('18a. the default is the store path with .key', () => {
       // DB_PATH unset reaches the default `dagsocial.db`, which the derivation
       // then rewrites to `dagsocial.key`.
-      it.fails('DB_PATH unset → nodeKeyPath === "dagsocial.key"', async () => {
+      it('DB_PATH unset → nodeKeyPath === "dagsocial.key"', async () => {
         const { loadConfig } = await import('../src/config.js');
         const cfg = loadConfig();
         expect((cfg as unknown as Record<string, unknown>)['nodeKeyPath']).toBe('dagsocial.key');
@@ -1124,7 +1124,7 @@ describe('config', () => {
         ['mystore',                            'mystore.key'],
       ];
       for (const [dbPath, expected] of CASES) {
-        it.fails(`DB_PATH=${JSON.stringify(dbPath)} → nodeKeyPath === ${JSON.stringify(expected)}`, async () => {
+        it(`DB_PATH=${JSON.stringify(dbPath)} → nodeKeyPath === ${JSON.stringify(expected)}`, async () => {
           process.env['DB_PATH'] = dbPath;
           const { loadConfig } = await import('../src/config.js');
           const cfg = loadConfig();
@@ -1136,7 +1136,7 @@ describe('config', () => {
     // 18b — a set NODE_KEY_PATH names the file as it stands; it is not
     // derived from DB_PATH.
     describe('18b. a set NODE_KEY_PATH is taken as it is', () => {
-      it.fails('NODE_KEY_PATH="/srv/dagsocial/alt.key" → nodeKeyPath === "/srv/dagsocial/alt.key"', async () => {
+      it('NODE_KEY_PATH="/srv/dagsocial/alt.key" → nodeKeyPath === "/srv/dagsocial/alt.key"', async () => {
         process.env['NODE_KEY_PATH'] = '/srv/dagsocial/alt.key';
         const { loadConfig } = await import('../src/config.js');
         const cfg = loadConfig();
@@ -1149,7 +1149,7 @@ describe('config', () => {
     // (NODE_INTERFACE → Configuration → "Every whole-number setting is read
     // by one reader, and a set value it refuses stops the node at load").
     describe('18c. a set empty NODE_KEY_PATH is refused naming the setting', () => {
-      it.fails('NODE_KEY_PATH="" throws, the message naming NODE_KEY_PATH', async () => {
+      it('NODE_KEY_PATH="" throws, the message naming NODE_KEY_PATH', async () => {
         process.env['NODE_KEY_PATH'] = '';
         await expect(import('../src/config.js')).rejects.toThrow(/NODE_KEY_PATH/);
       });
