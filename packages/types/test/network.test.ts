@@ -683,7 +683,7 @@ describe('invite bond caps per network', () => {
  * (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network").
  */
 describe('bootstrap peers per network', () => {
-  it.fails("testnet names notis.fun under its peer id; mainnet and devnet name none", () => {
+  it("testnet names notis.fun under its peer id; mainnet and devnet name none", () => {
     expect(NETWORK_PROFILES.mainnet.bootstrapPeers).toEqual([]);
     expect(NETWORK_PROFILES.devnet.bootstrapPeers).toEqual([]);
     expect(NETWORK_PROFILES.testnet.bootstrapPeers).toEqual([
@@ -706,7 +706,7 @@ describe('bootstrap peers per network', () => {
   // over a 32-byte Ed25519 public key, encoded base58btc, 52 characters opening `12D3KooW`
   // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network";
   //  NET_INTERFACE → The node key).
-  it.fails("every profile's seed names its node's peer id", () => {
+  it("every profile's seed names its node's peer id", () => {
     for (const profile of Object.values(NETWORK_PROFILES)) {
       for (const addr of profile.bootstrapPeers) {
         expect(addr, profile.networkType).toMatch(
@@ -724,7 +724,7 @@ describe('bootstrap peers per network', () => {
   // key written on the box, which the node's key file holds across restarts
   // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network";
   //  NET_INTERFACE → The node key).
-  it.fails("testnet's seed peer id is notis.fun's node key", () => {
+  it("testnet's seed peer id is notis.fun's node key", () => {
     const addrs = NETWORK_PROFILES.testnet.bootstrapPeers;
     expect(addrs).toHaveLength(1);
     const addr = addrs[0]!;

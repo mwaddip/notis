@@ -283,11 +283,14 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   networkType: 'testnet',
   magic: MAGIC_TESTNET,
 
-  // Overridden explicitly: the spread above would hand testnet mainnet's empty list, and testnet is
-  // the one network with a known node to dial
-  // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"). A bare multiaddr:
-  // no `/p2p/`, so libp2p learns the peer id from the handshake and no pinned id rots across a restart.
-  bootstrapPeers: Object.freeze(['/dns4/notis.fun/tcp/9733']),
+  // Overridden explicitly: the spread above would hand testnet mainnet's empty list, and testnet
+  // is the one network with a known node to dial. The seed names notis.fun's peer id — the libp2p
+  // identity multihash over its node key's Ed25519 public key, which the key file holds across
+  // restarts (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network";
+  //  NET_INTERFACE → The node key).
+  bootstrapPeers: Object.freeze([
+    '/dns4/notis.fun/tcp/9733/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa',
+  ]),
 
   // Generated 2026-08-18. The secret is NOT in this repo; it is deployed to the
   // faucet service as a config value.
