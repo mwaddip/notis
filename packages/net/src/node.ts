@@ -676,7 +676,7 @@ export class NetNode {
     }
     // `@libp2p/crypto` reads a 64-byte Ed25519 raw private key as seed ‖ publicKey;
     // its 32-byte form is read as secp256k1, so the length disambiguates the key
-    // type (NET_INTERFACE → libp2p Stack).
+    // type.
     const rawPrivate = new Uint8Array(64);
     rawPrivate.set(seed, 0);
     rawPrivate.set(nodeKey.publicKey, 32);
