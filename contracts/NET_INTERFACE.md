@@ -1268,10 +1268,29 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 | Stream multiplexing | yamux or mplex |
 | Encryption | Noise (with libp2p-noise) |
 | PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all |
-| Peer identity | libp2p peer ID (Ed25519 or secp256k1 keypair) |
+| Peer identity | the node key's libp2p peer id — Ed25519 alone (→ The node key) |
 
-The libp2p peer identity is separate from DAGsocial account identity. A
-node operator may choose to link them (same keypair) or keep them separate.
+### The node key
+
+> ⚠ **AHEAD OF CODE (2026-11-03).** `loadNodeKey`, `NodeKeyError` and `NetConfig.nodeKey` lead the code: `start`
+> creates libp2p with no key today, so a node is a new peer at every start.
+
+**A node runs under one key, and the key persists.** The node's libp2p identity is an Ed25519 key in the form a Notis
+identity takes (`TYPES_INTERFACE → Identity`), its peer id libp2p's identity multihash over it — the key a mesh client
+dials the node by (`MESH_INTERFACE → Identity`). A node that restarts keeps its peer id. The key is no account:
+nothing about it touches the chain.
+
+**The key file holds the key's `KeyPair.secretKey`** — the RFC 8410 PKCS8 prefix `ED25519_PKCS8_PREFIX` and the
+32-byte seed, 48 bytes. `loadNodeKey(path)` reads it and answers the `KeyPair`, its `publicKey` derived from the
+seed. Where no file is at the path it writes a fresh key from `generateKeyPair()` there, with mode `0600`, opened
+exclusively so it never replaces a file. A file of any other length, or one that does not open with the prefix, is
+refused with `NodeKeyError` and left as it is: a node that took a new key would be a stranger to every node that
+knows it by its key. On Windows the mode sets no permission; the file takes its directory's.
+
+**`net` runs under the key its caller hands it.** `NetConfig.nodeKey` is required, and `start` hands it to libp2p,
+refusing a `KeyPair` whose `publicKey` is not its seed's; `net` reads no file at start. `loadNodeKey` is the one
+reader of a key file — the node calls it on `NODE_KEY_PATH` (`NODE_INTERFACE → Configuration`), a mesh service on
+its own key file (`MESH_INTERFACE → Identity`).
 
 ---
 
@@ -1559,7 +1578,8 @@ first hop.
 |----------|-----------|-------------|
 | `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **A start that throws stops what it started** — the libp2p node and the scheduler — before the error leaves it, so a caller that continues without networking runs none of it |
 | `stop()` | `() => Promise<void>` | Graceful shutdown. **A stopped node starts again whole**: the next `start()` registers both protocols on the libp2p node it creates |
-| `peerId()` | `() => string` | This node's libp2p peer ID |
+| `peerId()` | `() => string` | This node's libp2p peer ID — the node key's (→ The node key) |
+| `loadNodeKey(path)` | `(string) => Promise<KeyPair>` | Read the node key file at `path`, or write a fresh key there; `NodeKeyError` on a file it refuses (→ The node key) |
 | `peers()` | `() => Peer[]` | Connected peers with metadata, at any peer state; never this node itself (→ Handshake) |
 | `getConnectedPeers()` | `() => string[]` | Peer IDs of the Active peers — the DAGsocial handshake completed; never this node's own (→ Handshake) |
 | `tipApplied(height)` | `(number) => void` | The node reports each applied tip — every successful apply and the tip a reorg leaves, at the seam where it stamps `dag_tip_height`. When `protocolVersionAt(schedule, height + 1)` is above the era last in force, the boundary sweep runs (→ Post-Handshake Routing); inside an era it does nothing |
@@ -1708,6 +1728,9 @@ Every field is required; net holds a default for none of them (→ Outbound Mana
 
 ```typescript
 interface NetConfig {
+  // Identity
+  nodeKey: KeyPair                 // the node key — libp2p's identity (→ The node key)
+
   // Transport
   bootstrapPeers: string[]
   listenAddrs: string
