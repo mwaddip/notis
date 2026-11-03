@@ -244,12 +244,10 @@ describe('NET_INTERFACE → The node key: loadNodeKey', () => {
     });
   });
 
-  // NET_INTERFACE → The node key → "Where no file is at the path it writes a
-  // fresh key from `generateKeyPair()` there, with mode `0600`, opened
-  // exclusively so it never replaces a file". Sixteen concurrent calls on an
-  // empty path race through the ENOENT branch; `wx` opens one of them as the
-  // only writer and leaves the losers with the key already on disk, so every
-  // fulfilled answer agrees with the file's bytes.
+  // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`".
+  // Sixteen concurrent calls on an empty path race through the ENOENT branch;
+  // `wx` opens one of them as the only writer and leaves the losers with the
+  // key already on disk, so every fulfilled answer agrees with the file's bytes.
   it('16 concurrent loadNodeKey calls on an empty path agree with the file', async () => {
     const kpPath = join(dir, 'nodekey');
     const n = 16;
@@ -369,38 +367,56 @@ describe('NET_INTERFACE → The node key: NetConfig.nodeKey through start()', ()
 
   // NET_INTERFACE → libp2p Stack. libp2p's handshake checks the remote peer id
   // against the id named in the dial address, so a bootstrap address naming a
-  // third key cannot resolve to the listener behind it.
-  it('a bootstrap address naming a third key never connects to the listener behind it', async () => {
+  // third key cannot resolve to the listener behind it. The control that the
+  // dial would have reached A under A's own peer id runs beside the negative,
+  // under the same bounded wait: net exposes no public signal for a settled
+  // outbound bootstrap dial — `peers()` only sees a peer whose connection
+  // upgraded, and `syncPhase` stays `idle` until a peer's claim settles —
+  // so both the positive and the negative read `peers()` at the same wall
+  // moment after start, and the control's peer id in `peers()` proves the
+  // negative's absence is not a `peers()` that never fired.
+  const SETTLE_WAIT_MS = 2_000;
+
+  async function dialOutcomeFromB(
+    seedPeerIdOfA: (aPeerId: string) => string,
+  ): Promise<{ aPeerId: string; bPeers: string[] }> {
     const nodeA = new NetNode(
       makeConfig({ listenAddrs: '/ip4/127.0.0.1/tcp/0' }),
       validators,
     );
     let nodeB: NetNode | null = null;
-    let aPeerId = '';
-    let bPeers: string[] = [];
     try {
       await nodeA.start();
-      aPeerId = nodeA.peerId();
+      const aPeerId = nodeA.peerId();
       const addrs = nodeA.libp2pNode!.getMultiaddrs();
       const bareAddr = addrs[0]!.toString().replace(/\/p2p\/[^/]+$/, '');
-      const third = generateKeyPair();
-      const bogus = `${bareAddr}/p2p/${peerIdOf(third.publicKey)}`;
+      const seed = `${bareAddr}/p2p/${seedPeerIdOfA(aPeerId)}`;
       nodeB = new NetNode(
         makeConfig({
           listenAddrs: '/ip4/127.0.0.1/tcp/0',
-          bootstrapPeers: [bogus],
+          bootstrapPeers: [seed],
           minPeers: 0,
         }),
         validators,
       );
       await nodeB.start();
-      // A few seconds for the dial to settle (succeed or fail at identity check).
-      await sleep(3_000);
-      bPeers = nodeB.peers().map((p) => p.id);
+      await sleep(SETTLE_WAIT_MS);
+      const bPeers = nodeB.peers().map((p) => p.id);
+      return { aPeerId, bPeers };
     } finally {
       await nodeB?.stop();
       await nodeA.stop();
     }
+  }
+
+  it("a bootstrap address naming A's own peer id connects B to A within the bounded wait", async () => {
+    const { aPeerId, bPeers } = await dialOutcomeFromB((aId) => aId);
+    expect(bPeers).toContain(aPeerId);
+  }, TIMEOUT);
+
+  it('a bootstrap address naming a third key never connects to the listener behind it', async () => {
+    const third = generateKeyPair();
+    const { aPeerId, bPeers } = await dialOutcomeFromB(() => peerIdOf(third.publicKey));
     expect(bPeers).not.toContain(aPeerId);
   }, TIMEOUT);
 });
