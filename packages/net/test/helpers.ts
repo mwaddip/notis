@@ -1,3 +1,4 @@
+import { generateKeyPair } from '@dagsocial/types';
 import type { NetConfig } from '../src/types.js';
 import { MAGIC_TESTNET } from '../src/frame.js';
 
@@ -5,10 +6,13 @@ import { MAGIC_TESTNET } from '../src/frame.js';
  * A NetConfig for tests — the values a plain node runs with. Pass `overrides`
  * for the few a case needs to differ (a distinct schedule, a smaller maxPeers,
  * a loopback listen address). One definition of the shape: a new NetConfig
- * field lands here, not in every test file.
+ * field lands here, not in every test file. Each call gets a fresh `nodeKey`
+ * (NET_INTERFACE → The node key → "`net` runs under the key its caller hands it"),
+ * so every test node is a distinct peer unless the override says otherwise.
  */
 export function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   return {
+    nodeKey: generateKeyPair(),
     magic: MAGIC_TESTNET,
     protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     orderingBlockPowTargetFloorBits: 2304,

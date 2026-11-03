@@ -238,7 +238,7 @@ describe('NET_INTERFACE → The node key: NetConfig.nodeKey through start()', ()
   const TIMEOUT = 25_000;
 
   // NET_INTERFACE → The node key → "`net` runs under the key its caller hands it"
-  it.fails('peerId() answers the libp2p peer id of the config key', async () => {
+  it('peerId() answers the libp2p peer id of the config key', async () => {
     const kp = generateKeyPair();
     const expected = peerIdOf(kp.publicKey);
     const net = new NetNode(
@@ -256,7 +256,7 @@ describe('NET_INTERFACE → The node key: NetConfig.nodeKey through start()', ()
   }, TIMEOUT);
 
   // NET_INTERFACE → The node key → "A node runs under one key, and the key persists"
-  it.fails('a stopped node starts again with the same peer id', async () => {
+  it('a stopped node starts again with the same peer id', async () => {
     const kp = generateKeyPair();
     const net = new NetNode(
       makeConfig({ nodeKey: kp, listenAddrs: '/ip4/127.0.0.1/tcp/0' }),
@@ -279,7 +279,7 @@ describe('NET_INTERFACE → The node key: NetConfig.nodeKey through start()', ()
   // NET_INTERFACE → The node key → "`net` runs under the key its caller hands it"
   // (and NET_INTERFACE → Node Lifecycle, which binds `start` to the throw-stops
   // rule).
-  it.fails('a crossed key pair is refused at start, with nothing listening behind the error', async () => {
+  it('a crossed key pair is refused at start, with nothing listening behind the error', async () => {
     const kp = generateKeyPair();
     const other = generateKeyPair();
     const crossed: KeyPair = { publicKey: other.publicKey, secretKey: kp.secretKey };

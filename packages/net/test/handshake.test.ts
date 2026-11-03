@@ -25,6 +25,7 @@ import type { HandshakeMsg, NetConfig } from '@dagsocial/net';
 import {
   ByteWriter,
   encodeStruct,
+  generateKeyPair,
   writeArr,
   writeLpUtf8,
   writeOpt,
@@ -164,6 +165,7 @@ describe('handshake', () => {
 
     function makeMgr(): PeerManager {
       const config: NetConfig = {
+        nodeKey: generateKeyPair(),
         magic: 0x54444147,
         protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
         orderingBlockPowTargetFloorBits: 2304,

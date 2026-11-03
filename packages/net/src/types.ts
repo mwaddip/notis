@@ -125,7 +125,7 @@ export interface PeerRecord {
 
 export interface NetConfig {
   // NET_INTERFACE → The node key → "`net` runs under the key its caller hands it".
-  nodeKey?: KeyPair;
+  nodeKey: KeyPair;
   // All three supplied by the node from its resolved network profile. Net
   // receives these values, it never resolves them — no NetworkProfile import,
   // no env read, no default (NET_INTERFACE → Consensus parameters net enforces).
