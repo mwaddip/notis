@@ -5735,9 +5735,6 @@ beside `node-2.db` — hold a key each with no setting of their own, and a wipe 
 **The node names its key at start.** Its start line prints the node key's peer id and its 64-hex spelling, for an
 operator to hand to whoever lists the node.
 
-> ⚠ **AHEAD OF CODE (2026-11-03).** `NODE_KEY_PATH` and the start line lead the code: the node hands `net` no key
-> today and prints a peer id that changes at every start.
-
 > ⚠ **Every "at 60 seconds" duration annotation is nominal in the short run and exact in the long
 > run.** The block time is an *emergent* property of the target and hashrate — there is no producer
 > timer — and the ASERT schedule tracks it toward `orderingBlockIdealMs` with an absolute anchor, so

@@ -2983,8 +2983,6 @@ fails. A wipe of a seed node's store keeps its key file. `BOOTSTRAP_PEERS` in th
 set (`NODE_INTERFACE → Configuration`). Identity, not a tunable — not a register row (`CONSTANTS → Excluded`); each
 profile states its own literal, never a spread.
 
-> ⚠ **AHEAD OF CODE (2026-11-03).** `network.ts` holds the bare address `/dns4/notis.fun/tcp/9733`.
-
 **This is the sole definition of the network magics.** `@dagsocial/wire` exported duplicates
 until P2-A phase 5 deleted them. They live here rather than `NetworkType` living in wire
 because **wire has zero runtime dependencies and keeps them**: `@dagsocial/types` cannot

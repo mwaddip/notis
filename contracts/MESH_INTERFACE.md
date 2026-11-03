@@ -41,9 +41,6 @@ Each converts to the other. A peer id of any other key type, and any spelling bu
 (`NET_INTERFACE → The node key`): created on first start, never overwritten, a file of any other form refused and
 left as it is. A node that restarts keeps its peer id.
 
-> ⚠ **AHEAD OF CODE (2026-11-03).** The mesh service reads its key file through `loadNodeKey`; today it reads it
-> through its own `loadOrCreateNodeKey` (`tools/mesh-poc/src/node/key-store.ts`).
-
 Nothing about a mesh key touches the chain.
 
 ## The mesh URL

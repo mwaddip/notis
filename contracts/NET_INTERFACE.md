@@ -1272,9 +1272,6 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 
 ### The node key
 
-> ⚠ **AHEAD OF CODE (2026-11-03).** `loadNodeKey`, `NodeKeyError` and `NetConfig.nodeKey` lead the code: `start`
-> creates libp2p with no key today, so a node is a new peer at every start.
-
 **A node runs under one key, and the key persists.** The node's libp2p identity is an Ed25519 key in the form a Notis
 identity takes (`TYPES_INTERFACE → Identity`), its peer id libp2p's identity multihash over it — the key a mesh client
 dials the node by (`MESH_INTERFACE → Identity`). A node that restarts keeps its peer id. The key is no account:
@@ -1285,10 +1282,12 @@ nothing about it touches the chain.
 seed. Where no file is at the path it writes a fresh key from `generateKeyPair()` there, with mode `0600`, opened
 exclusively so it never replaces a file. A file of any other length, one that does not open with the prefix, or a
 path it cannot read or write is refused with `NodeKeyError` naming the path, and a file is left as it is: a node that
-took a new key would be a stranger to every node that knows it by its key. On Windows the mode sets no permission; the file takes its directory's.
+took a new key would be a stranger to every node that knows it by its key. On Windows the mode sets no permission;
+the file takes its directory's.
 
 **`net` runs under the key its caller hands it.** `NetConfig.nodeKey` is required, and `start` hands it to libp2p,
-refusing a `KeyPair` whose `publicKey` is not its seed's; `net` reads no file at start. `loadNodeKey` is the one
+refusing with `NodeKeyError` a `KeyPair` whose `secretKey` is not of the key file's form or whose `publicKey` is not
+its seed's; `net` reads no file at start. `loadNodeKey` is the one
 reader of a key file — the node calls it on `NODE_KEY_PATH` (`NODE_INTERFACE → Configuration`), a mesh service on
 its own key file (`MESH_INTERFACE → Identity`).
 

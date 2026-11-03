@@ -1562,10 +1562,11 @@ chain or owed one:
 | **the handshake** (2026-10-19) | **no committed byte and no consensus verdict** — the handshake body: `sessionMagic` retires (NET_INTERFACE → Handshake Body), so a node on it completes no handshake with a node on 0.3.1. **Rides the 0.4.0 reset**, with no era row |
 | **the pool's output rows** (2026-10-22) | **no committed byte and no consensus verdict** — `mempool_outputs` carries each output's owner, type and value under an owner index (MEMPOOL_INTERFACE → Schema), and the store adds no column to a standing table, so a store written before them is not one this build opens: `initDb` refuses the owner index over a table that lacks its columns (measured 2026-10-22: `no such column: owner`). **Rides the 0.4.0 reset** |
 | **the decay window and the paid squaring** (2026-10-28) | the verdict and the effects of every block that squares an identity (NODE_INTERFACE → Karma decay): the window's end starts the clock, a squaring writes the height it settles through, every owner the settlement pays is squared before the payment lands, and every squaring writes its clock however little the floor lets it burn — so the settlement's decay leg, the pool's inflow, `lastDecayBlock`, every `stateRoot` from the first such block, and the `adProofsRoot` of every block whose settlement pays an owner (the squared set's reads); the effective karma every valuation answers past a window's end. **Owes the reset**, and rides the 0.4.0 reset |
+| **the node key** (2026-11-03) | **no committed byte and no consensus verdict** — a node's libp2p identity persists in its key file (NET_INTERFACE → The node key), and testnet's seed names notis.fun's peer id (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"): a node on this build reaches its seed only where notis.fun answers under that key, so notis.fun deploys first, its key file already on the box at `/var/lib/dagsocial/dagsocial.key`. **Owes no reset** |
 
-**Outstanding against the live node: nothing.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
-whose block 1 the profile pins as `genesisId` (§What varies per network); every reset row is in it, and the usernames
-row owes none.
+**Outstanding against the live node: the node key**, which owes no reset and deploys onto the running chain,
+notis.fun first. Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release, whose block 1 the profile pins as
+`genesisId` (§What varies per network); every reset row is in it, and the usernames row owes none.
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
