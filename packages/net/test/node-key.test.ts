@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { peerIdFromPublicKey } from '@libp2p/peer-id';
 import { publicKeyFromRaw } from '@libp2p/crypto/keys';
 import type { Ed25519PublicKey } from '@libp2p/interface';
-import { generateKeyPair } from '@dagsocial/types';
+import { generateKeyPair, ED25519_PKCS8_PREFIX, hexToBytes } from '@dagsocial/types';
 import type { KeyPair } from '@dagsocial/types';
 import { loadNodeKey, NodeKeyError } from '../src/node-key.js';
 import { NetNode } from '../src/node.js';
@@ -159,6 +159,45 @@ describe('NET_INTERFACE → The node key: loadNodeKey', () => {
       const afterMtime = mtimeOrNull(kpPath);
       // The call throws a NodeKeyError whose message names the path, and the
       // file's bytes and mtime are unchanged.
+      expect({
+        isNodeKeyError: caught instanceof NodeKeyError,
+        messageNamesPath: caught instanceof Error ? caught.message.includes(kpPath) : false,
+        bytes: afterBytes ? hex(afterBytes) : null,
+        mtime: afterMtime,
+      }).toEqual({
+        isNodeKeyError: true,
+        messageNamesPath: true,
+        bytes: hex(original),
+        mtime: beforeMtime,
+      });
+    });
+  }
+
+  // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`".
+  // A file whose first 16 bytes form the PKCS8 prefix but whose length is not
+  // 48 — 47 and 49 bytes — holds the length guard that the all-`0x42` cases
+  // leave the prefix guard to catch.
+  for (const extraSeedBytes of [31, 33]) {
+    const totalLen = 16 + extraSeedBytes;
+    it(`a ${totalLen}-byte file with a valid prefix is refused and left untouched`, async () => {
+      const kpPath = join(dir, 'nodekey');
+      const original = new Uint8Array(totalLen);
+      const prefix = hexToBytes(ED25519_PKCS8_PREFIX);
+      original.set(prefix, 0);
+      for (let i = prefix.length; i < totalLen; i++) original[i] = (i * 7) & 0xff;
+      writeFileSync(kpPath, original);
+      const beforeMtime = mtimeOrNull(kpPath);
+      await sleep(25);
+
+      let caught: unknown = null;
+      try {
+        await loadNodeKey(kpPath);
+      } catch (e) {
+        caught = e;
+      }
+
+      const afterBytes = await readBytesOrNull(kpPath);
+      const afterMtime = mtimeOrNull(kpPath);
       expect({
         isNodeKeyError: caught instanceof NodeKeyError,
         messageNamesPath: caught instanceof Error ? caught.message.includes(kpPath) : false,
