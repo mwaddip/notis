@@ -23,7 +23,7 @@ ordinary transactions with an ordinary key, and every rule it must satisfy is al
 ## What Notis is
 An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** and a **UTXO
 ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
-withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
+withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 24.
 
 ## This package (`@dagsocial/faucet`)
 A small HTTP service that holds an Ed25519 owner key and does what any member can do — invite someone,

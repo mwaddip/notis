@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "@noble/curves": "2.2.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.19.2",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"

@@ -16,7 +16,7 @@ standing context — read it and the linked docs before touching code.
 An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** (author-sovereign)
 and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and withdrawal
 is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post. Consensus is
-single-phase PoW over validator-produced ordering blocks. TypeScript, pnpm workspaces, Node.js ≥ 22.
+single-phase PoW over validator-produced ordering blocks. TypeScript, pnpm workspaces, Node.js ≥ 24.
 
 ## This package (`@dagsocial/avltree`)
 The authenticated AVL+ tree as Notis uses it: `@ergots/avltree` — a port of Ergo's AVL+ tree — plus the

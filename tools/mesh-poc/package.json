@@ -58,7 +58,7 @@
   },
   "devDependencies": {
     "@peculiar/x509": "^2.2.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.19.2",
     "happy-dom": "^20.13.2",
     "reflect-metadata": "^0.2.2",
     "tsup": "^8.0.0",

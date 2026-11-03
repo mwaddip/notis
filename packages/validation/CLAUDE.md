@@ -16,7 +16,7 @@ standing context — read it and the linked docs before touching code.
 ## What Notis is
 An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** (author-sovereign)
 and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and withdrawal
-is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node.js ≥ 22.
+is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node.js ≥ 24.
 
 ## This package (`@dagsocial/validation`)
 **Pure, stateless validation** — the Stage-1 checks that run before an object enters the store or is

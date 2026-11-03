@@ -23,7 +23,7 @@ An invite-only decentralized notice board on a **dual-ledger** design: a **Posts
 content) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post,
 like and withdrawal is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post.
 Consensus is single-phase PoW — validator-produced ordering blocks; posts and likes ride
-them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
+them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 24.
 
 ## This package (`@dagsocial/node`)
 The full node: Express HTTP API, PoW verifier, SQLite store, block creator + application, invites/vouch,

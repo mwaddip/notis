@@ -35,7 +35,7 @@ workaround written into this tool.**
 ## What Notis is
 An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** and a **UTXO
 ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
-withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
+withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 24.
 
 ## This package (`@dagsocial/nipopow-client`)
 A headless light client — a CLI, no server. Given N node URLs and a network profile it fetches a
