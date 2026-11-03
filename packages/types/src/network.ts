@@ -287,7 +287,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // is the one network with a known node to dial. The seed names notis.fun's peer id — the libp2p
   // identity multihash over its node key's Ed25519 public key, which the key file holds across
   // restarts (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network";
-  //  NET_INTERFACE → The node key).
+  // NET_INTERFACE → The node key).
   bootstrapPeers: Object.freeze([
     '/dns4/notis.fun/tcp/9733/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa',
   ]),
