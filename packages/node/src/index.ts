@@ -66,8 +66,9 @@ emitServerStarting('1.0.0', config.networkType);
 // opened nothing. `loadNodeKey` reads the 48-byte secretKey at
 // `nodeKeyPath` and answers the `KeyPair`, or writes a fresh one there,
 // or throws `NodeKeyError` naming the path (NET_INTERFACE → The node key;
-// NODE_INTERFACE → Configuration → the `NODE_KEY_PATH` row). The error's
-// message names the path, so the one line here carries it as it stands.
+// NODE_INTERFACE → Configuration → "The key file is named for the store").
+// The error's message names the path, so the one line here carries it as
+// it stands.
 let nodeKey;
 try {
   nodeKey = await loadNodeKey(config.nodeKeyPath);

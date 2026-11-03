@@ -31,8 +31,8 @@ function nodeKeyPubHexFromFile(path: string): string {
   return Buffer.from(spki).subarray(12).toString('hex');
 }
 
-// NET_INTERFACE → The node key → "The node names its key at start": the start
-// line prints `Net node started, peer ID: <peer id>, key: <64 hex>`.
+// NODE_INTERFACE → Configuration → "The node names its key at start": the
+// start line prints `Net node started, peer ID: <peer id>, key: <64 hex>`.
 function peerIdFromStartLine(logs: string[]): string {
   for (const line of logs) {
     const m = line.match(/Net node started, peer ID: (\S+?)(?:,|$)/);
@@ -213,7 +213,7 @@ describe('startup', () => {
     expect(output).toMatch(new RegExp(expectedHex));
   });
 
-  // NODE_INTERFACE → Configuration → "A node runs under one key, and the key
+  // NET_INTERFACE → The node key → "A node runs under one key, and the key
   // persists": a restart on the same store keeps the key file, and the peer
   // id's identity multihash the start line prints does not change.
   it('a node restarted on its store keeps its peer id', async () => {
@@ -282,7 +282,7 @@ describe('startup', () => {
   // `KeyPair.secretKey`": a file of any other length than 48 is refused with
   // `NodeKeyError` naming the path. The node writes one line carrying the
   // error's message and exits non-zero (NODE_INTERFACE → Configuration →
-  // the `NODE_KEY_PATH` row).
+  // "The key file is named for the store").
   it('a refused key file stops the node, naming the path, and the file is left as it is', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
@@ -308,8 +308,8 @@ describe('startup', () => {
     expect(Buffer.compare(bytesAfter, planted)).toBe(0);
   });
 
-  // NODE_INTERFACE → Configuration → the `NODE_KEY_PATH` row: a set
-  // `NODE_KEY_PATH` names the file the node uses, and no file at the
+  // NODE_INTERFACE → Configuration → "The key file is named for the store":
+  // a set `NODE_KEY_PATH` names the file the node uses, and no file at the
   // store-named default is written.
   it('a set NODE_KEY_PATH names the file the node uses', async () => {
     assertDistFresh(NODE_LOADS);
