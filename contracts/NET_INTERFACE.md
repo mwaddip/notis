@@ -1283,9 +1283,9 @@ nothing about it touches the chain.
 **The key file holds the key's `KeyPair.secretKey`** — the RFC 8410 PKCS8 prefix `ED25519_PKCS8_PREFIX` and the
 32-byte seed, 48 bytes. `loadNodeKey(path)` reads it and answers the `KeyPair`, its `publicKey` derived from the
 seed. Where no file is at the path it writes a fresh key from `generateKeyPair()` there, with mode `0600`, opened
-exclusively so it never replaces a file. A file of any other length, or one that does not open with the prefix, is
-refused with `NodeKeyError` and left as it is: a node that took a new key would be a stranger to every node that
-knows it by its key. On Windows the mode sets no permission; the file takes its directory's.
+exclusively so it never replaces a file. A file of any other length, one that does not open with the prefix, or a
+path it cannot read or write is refused with `NodeKeyError` naming the path, and a file is left as it is: a node that
+took a new key would be a stranger to every node that knows it by its key. On Windows the mode sets no permission; the file takes its directory's.
 
 **`net` runs under the key its caller hands it.** `NetConfig.nodeKey` is required, and `start` hands it to libp2p,
 refusing a `KeyPair` whose `publicKey` is not its seed's; `net` reads no file at start. `loadNodeKey` is the one
