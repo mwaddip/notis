@@ -244,6 +244,36 @@ describe('NET_INTERFACE → The node key: loadNodeKey', () => {
     });
   });
 
+  // NET_INTERFACE → The node key → "Where no file is at the path it writes a
+  // fresh key from `generateKeyPair()` there, with mode `0600`, opened
+  // exclusively so it never replaces a file". Sixteen concurrent calls on an
+  // empty path race through the ENOENT branch; `wx` opens one of them as the
+  // only writer and leaves the losers with the key already on disk, so every
+  // fulfilled answer agrees with the file's bytes.
+  it('16 concurrent loadNodeKey calls on an empty path agree with the file', async () => {
+    const kpPath = join(dir, 'nodekey');
+    const n = 16;
+    const results = await Promise.allSettled(
+      Array.from({ length: n }, () => loadNodeKey(kpPath)),
+    );
+    const fulfilled: KeyPair[] = [];
+    for (const r of results) {
+      if (r.status === 'fulfilled') fulfilled.push(r.value);
+    }
+    // At least one call fulfils — one writer wins the exclusive-create race,
+    // and losers that read after the win answer from the file.
+    expect(fulfilled.length).toBeGreaterThanOrEqual(1);
+    const fileBytes = await readBytesOrNull(kpPath);
+    // The file exists with the 48-byte secretKey the one writer wrote.
+    expect(fileBytes?.length).toBe(48);
+    // Every fulfilled answer's secretKey equals the file's bytes.
+    const fileHex = hex(fileBytes!);
+    const mismatches = fulfilled
+      .map((kp) => hex(kp.secretKey))
+      .filter((h) => h !== fileHex);
+    expect(mismatches).toEqual([]);
+  });
+
   // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`".
   // The path names an existing directory, which cannot be read as a file and
   // cannot be written as a file either.
