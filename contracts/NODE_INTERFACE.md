@@ -5720,13 +5720,17 @@ its actual reach.
 | `ADMIN_PORT` | `operational` | `3001` | Admin listener port |
 | `ADMIN_BIND_ADDRESS` | `operational` | `127.0.0.1` | Admin listener bind address. ⚠ The admin listener is **unauthenticated**; binding it off loopback exposes it |
 | `DB_PATH` | `operational` | `dagsocial.db` | SQLite database path |
-| `NODE_KEY_PATH` | `operational` | `node.key` in `DB_PATH`'s directory | The node key's file, read or written by `loadNodeKey` (`NET_INTERFACE → The node key`); a file it refuses stops the node at startup, naming the path |
+| `NODE_KEY_PATH` | `operational` | `DB_PATH` with its extension replaced by `.key` — `dagsocial.db` → `dagsocial.key`; a name with no extension takes `.key` appended | The node key's file, read or written by `loadNodeKey` (`NET_INTERFACE → The node key`). A set empty value is refused at load; a file `loadNodeKey` refuses stops the node at startup, naming the path |
 | `NODE_ROLE` | `operational` | `server` | `server` (applies peer blocks) or `miner` (produces blocks) |
 | ~~`MINING_MODE`~~ | **removed** | ~~`internal`~~ | The node has no in-process solver. A miner node serves templates; that is the only production model |
 | `MINING_SECRET` | `operational` | `""` | Mining auth secret — **required when `NODE_ROLE=miner`**; startup asserts it is set |
 | `BOOTSTRAP_PEERS` | `operational` | the profile's `bootstrapPeers` — testnet notis.fun's address under its node's peer id, mainnet and devnet none (`TYPES_INTERFACE → Network profiles`) | Comma-separated libp2p multiaddrs; a set variable **replaces** the profile's list, it does not add to it |
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `WEB_SHELL_PATH` | `operational` | `""` | Path of the web client's `index.html`; empty means `GET /shell/:id` answers 404 (→ Link previews) |
+
+**The key file is named for the store.** Nodes whose stores share a directory — a mesh of test nodes, `node-1.db`
+beside `node-2.db` — hold a key each with no setting of their own, and a wipe that removes the store's files,
+`dagsocial.db*`, leaves its key.
 
 **The node names its key at start.** Its start line prints the node key's peer id and its 64-hex spelling, for an
 operator to hand to whoever lists the node.
