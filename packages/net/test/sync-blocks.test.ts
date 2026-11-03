@@ -4,6 +4,7 @@ import {
   PROTOCOL_VERSION,
   computeUtxoTxRoot,
   encodeStruct,
+  generateKeyPair,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
@@ -40,6 +41,7 @@ import { makeConfig } from './helpers.js';
 const MAGIC = 0x54444147;
 
 const testConfig: NetConfig = {
+  nodeKey: generateKeyPair(),
   magic: MAGIC,
   protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   orderingBlockPowTargetFloorBits: 2304,

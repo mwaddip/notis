@@ -17,7 +17,8 @@ import {
   emitPeerPenalised,
   emitSyncComplete,
 } from './journal.js';
-import { NetNode } from '@dagsocial/net';
+import { NetNode, loadNodeKey } from '@dagsocial/net';
+import { bytesToHex } from '@dagsocial/types';
 import { netValidators } from './services/signature-memo.js';
 import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
@@ -58,6 +59,23 @@ process.on('unhandledRejection', handleUnhandledRejection);
 // 0. Journal
 initJournal();
 emitServerStarting('1.0.0', config.networkType);
+
+// 0a. Node key
+//
+// Ahead of the store opening so a refused key file stops a node that has
+// opened nothing. `loadNodeKey` reads the 48-byte secretKey at
+// `nodeKeyPath` and answers the `KeyPair`, or writes a fresh one there,
+// or throws `NodeKeyError` naming the path (NET_INTERFACE → The node key;
+// NODE_INTERFACE → Configuration → "The key file is named for the store").
+// The error's message names the path, so the one line here carries it as
+// it stands.
+let nodeKey;
+try {
+  nodeKey = await loadNodeKey(config.nodeKeyPath);
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
 
 // 1. Init DB
 initDb(config.dbPath);
@@ -125,6 +143,11 @@ try {
 // process"; NET_INTERFACE → Config).
 const net = new NetNode(
   {
+    // NET_INTERFACE → The node key → "`net` runs under the key its caller hands it".
+    // Required in NetConfig; `start` refuses with `NodeKeyError` a `KeyPair`
+    // whose `secretKey` is not of the key file's form or whose `publicKey`
+    // is not its seed's.
+    nodeKey,
     // The profile's wire magic. Required in NetConfig — net has no fallback of
     // its own (NET_INTERFACE → "Magic Bytes").
     magic: config.profile.magic,
@@ -222,7 +245,11 @@ initBackfill({
 // the process's end listens or starts the block creator.
 try {
   await net.start();
-  console.log(`Net node started, peer ID: ${net.peerId()}`);
+  // NODE_INTERFACE → Configuration → "The node names its key at start":
+  // the start line prints the node key's peer id and its 64-hex spelling.
+  console.log(
+    `Net node started, peer ID: ${net.peerId()}, key: ${bytesToHex(nodeKey.publicKey)}`,
+  );
 } catch (err) {
   console.error(
     `net.start() threw: ${err instanceof Error ? err.message : String(err)}`,

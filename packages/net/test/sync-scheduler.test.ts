@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { encodeStruct, GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
+import { encodeStruct, GENESIS_PREV_BLOCK_HASH, generateKeyPair } from '@dagsocial/types';
 import type { BlockHeader } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
@@ -34,6 +34,7 @@ import { makeConfig } from './helpers.js';
 const MAGIC = 0x54444147;
 
 const testConfig: NetConfig = {
+  nodeKey: generateKeyPair(),
   magic: MAGIC,
   protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   orderingBlockPowTargetFloorBits: 2304,

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { encodeStruct, GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
+import { encodeStruct, GENESIS_PREV_BLOCK_HASH, generateKeyPair } from '@dagsocial/types';
 import { syncInfoCodec } from '../src/sync-codec.js';
 import { SyncMachine } from '../src/sync-machine.js';
 import type { SyncStore } from '../src/sync-machine.js';
@@ -26,6 +26,7 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
 }
 
 const testConfig: NetConfig = {
+  nodeKey: generateKeyPair(),
   magic: 0x54444147,
   protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   orderingBlockPowTargetFloorBits: 2304,

@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { generateKeyPair } from '@dagsocial/types';
 import { OutboundManager, PeerDb } from '@dagsocial/net';
 import type { NetConfig } from '@dagsocial/net';
 
 const testConfig: NetConfig = {
+  nodeKey: generateKeyPair(),
   magic: 0x54444147,
   protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   orderingBlockPowTargetFloorBits: 2304,

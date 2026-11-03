@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { generateKeyPair } from '@dagsocial/types';
 import type { NetConfig } from '../src/types.js';
 import { MAGIC_TESTNET } from '../src/frame.js';
 
@@ -7,8 +8,11 @@ import { MAGIC_TESTNET } from '../src/frame.js';
 // NetConfig; net holds no default for any of them. A @ts-expect-error on a
 // literal that leaves one out is only honoured when the field is required —
 // an optional field makes the directive unused, which `tsc --noEmit` reports.
+// NET_INTERFACE → The node key → "`net` runs under the key its caller hands it":
+// `nodeKey` sits in `base` so each directive below names one missing field.
 
 const base = {
+  nodeKey: generateKeyPair(),
   magic: MAGIC_TESTNET,
   protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   orderingBlockPowTargetFloorBits: 2304,
@@ -33,5 +37,21 @@ describe('NetConfig requires each of the three peer-discovery knobs', () => {
     // Values exist at runtime so the compile-time directives above drive
     // the gate; this assertion keeps the literals from being flagged unused.
     expect([missingMinPeers, missingPeerDbCap, missingRedialCooldown].every(c => c.maxPeers === 10)).toBe(true);
+  });
+});
+
+// NET_INTERFACE → The node key → "`net` runs under the key its caller hands it":
+// nodeKey is required; a literal that leaves it out does not satisfy NetConfig.
+describe('NetConfig requires nodeKey', () => {
+  it('tsc catches a literal that leaves nodeKey out', () => {
+    const { nodeKey: _ignored, ...withoutNodeKey } = base;
+    // @ts-expect-error nodeKey is required
+    const missingNodeKey: NetConfig = {
+      ...withoutNodeKey,
+      minPeers: 3,
+      peerDbCap: 1_000,
+      outboundRedialCooldownMs: 60_000,
+    };
+    expect(missingNodeKey.maxPeers).toBe(10);
   });
 });

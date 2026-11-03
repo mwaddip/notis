@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { encodeStruct } from '@dagsocial/types';
+import { encodeStruct, generateKeyPair } from '@dagsocial/types';
 import { SyncMachine } from '../src/sync-machine.js';
 import type { SyncStore } from '../src/sync-machine.js';
 import { syncInfoCodec } from '../src/sync-codec.js';
@@ -16,6 +16,7 @@ import type { NetConfig } from '../src/types.js';
 const MAGIC = 0x54444147;
 
 const testConfig: NetConfig = {
+  nodeKey: generateKeyPair(),
   magic: MAGIC,
   protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   orderingBlockPowTargetFloorBits: 2304,

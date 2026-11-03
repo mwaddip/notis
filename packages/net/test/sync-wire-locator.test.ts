@@ -3,6 +3,7 @@ import {
   ByteWriter,
   GENESIS_PREV_BLOCK_HASH,
   encodeStruct,
+  generateKeyPair,
   writeHexNOrThrow,
   writeVlqU,
 } from '@dagsocial/types';
@@ -52,6 +53,7 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
 }
 
 const machineConfig: NetConfig = {
+  nodeKey: generateKeyPair(),
   magic: MAGIC,
   protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   orderingBlockPowTargetFloorBits: 2304,

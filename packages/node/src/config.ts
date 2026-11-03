@@ -1,3 +1,4 @@
+import { parse as parsePath, join as joinPath } from 'node:path';
 import {
   MIN_FEE_RATE_PER_BYTE,
   TREE_KEY_LENGTH,
@@ -17,6 +18,14 @@ export interface Config {
   adminPort: number;
   adminBindAddress: string;
   dbPath: string;
+  /**
+   * The node key's file, read or written by `loadNodeKey`
+   * (NET_INTERFACE → The node key; NODE_INTERFACE → Configuration →
+   * "The key file is named for the store"). An unset `NODE_KEY_PATH`
+   * derives the path from `dbPath` by replacing its extension with `.key`;
+   * a set empty value is refused at load.
+   */
+  nodeKeyPath: string;
   /**
    * The network this node is on. Class `network-identity` — the only environment
    * variable that may change a consensus parameter, and it changes every one of
@@ -171,11 +180,14 @@ export function loadConfig(): Readonly<Config> {
   // universal constants (TYPES_INTERFACE → Identity record and karma valuation).
   const decay = decayCfgFor(profile);
 
+  const dbPath = process.env['DB_PATH'] ?? 'dagsocial.db';
+
   const cfg: Config = {
     port: readWholeNumber('PORT', 3000, { floor: 0, port: true }),
     adminPort: readWholeNumber('ADMIN_PORT', 3001, { floor: 0, port: true }),
     adminBindAddress: process.env['ADMIN_BIND_ADDRESS'] ?? '127.0.0.1',
-    dbPath: process.env['DB_PATH'] ?? 'dagsocial.db',
+    dbPath,
+    nodeKeyPath: parseNodeKeyPath(process.env['NODE_KEY_PATH'], dbPath),
     networkType: profile.networkType,
     profile,
     nodeRole: parseNodeRole(process.env['NODE_ROLE'] ?? 'server'),
@@ -517,6 +529,33 @@ function assertMiningAuthConfigured(cfg: Config): void {
         'the mining API has no unauthenticated mode',
     );
   }
+}
+
+/**
+ * `NODE_KEY_PATH`, the file `loadNodeKey` reads or writes
+ * (NODE_INTERFACE → Configuration → "The key file is named for the store").
+ * Unset derives the path from `dbPath` by replacing its extension with
+ * `.key`: `node:path`'s `parse` picks the directory and the base name,
+ * `join` recombines them with `.key`, so `dagsocial.db` lands at
+ * `dagsocial.key` beside the store, a name with no extension takes `.key`
+ * appended, and the leading `./` on a relative path is normalized away.
+ * A set empty value is refused at load naming the setting, the shape every
+ * refusal of a set-but-refused setting takes
+ * (NODE_INTERFACE → Configuration →
+ * "Every whole-number setting is read by one reader, and a set value it refuses stops the node at load").
+ */
+function parseNodeKeyPath(raw: string | undefined, dbPath: string): string {
+  if (raw === undefined) {
+    const parsed = parsePath(dbPath);
+    return joinPath(parsed.dir, parsed.name + '.key');
+  }
+  if (raw === '') {
+    throw new Error(
+      'Invalid NODE_KEY_PATH "" — the empty string names no file; unset ' +
+        'NODE_KEY_PATH to default to the store path with its extension replaced by .key',
+    );
+  }
+  return raw;
 }
 
 /**

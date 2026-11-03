@@ -5,11 +5,13 @@ import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { gossipsub } from '@libp2p/gossipsub';
+import { privateKeyFromRaw } from '@libp2p/crypto/keys';
 import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from '@libp2p/interface';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
 import { PROTOCOL_VERSION, protocolVersionAt, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
+import { derivePublicKeyFromSeed, seedOfSecretKey, NodeKeyError } from './node-key.js';
 import { ReaderError } from '@dagsocial/wire';
 import type {
   NetConfig, NetValidators, Peer, PeerEntryMsg,
@@ -661,7 +663,27 @@ export class NetNode {
     this.topics = gossipTopics(this.config.magic);
     const topics = this.topics;
 
+    // NET_INTERFACE → The node key → "`net` runs under the key its caller hands it".
+    // The pair's `publicKey` must be its seed's; a cross-wired pair would build
+    // a libp2p identity the private key cannot sign for. The throw lands before
+    // `createLibp2p`, so nothing listens behind it (NET_INTERFACE → Node Lifecycle).
+    const nodeKey = this.config.nodeKey;
+    const seed = seedOfSecretKey(nodeKey.secretKey);
+    const derivedPub = await derivePublicKeyFromSeed(seed);
+    if (derivedPub.length !== nodeKey.publicKey.length
+        || !derivedPub.every((b, i) => b === nodeKey.publicKey[i])) {
+      throw new NodeKeyError("nodeKey.publicKey does not match the seed of nodeKey.secretKey");
+    }
+    // `@libp2p/crypto` reads a 64-byte Ed25519 raw private key as seed ‖ publicKey;
+    // its 32-byte form is read as secp256k1, so the length disambiguates the key
+    // type.
+    const rawPrivate = new Uint8Array(64);
+    rawPrivate.set(seed, 0);
+    rawPrivate.set(nodeKey.publicKey, 32);
+    const libp2pPrivateKey = privateKeyFromRaw(rawPrivate);
+
     const libp2p = await createLibp2p({
+      privateKey: libp2pPrivateKey,
       addresses: {
         listen: [this.config.listenAddrs],
       },

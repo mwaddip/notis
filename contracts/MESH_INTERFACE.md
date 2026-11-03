@@ -37,9 +37,9 @@ an upgrade that moves one fails its case.
 
 Each converts to the other. A peer id of any other key type, and any spelling but 64 lowercase hex, is refused.
 
-**The key persists.** A node's key file holds `KeyPair.secretKey`, the seed's PKCS8 DER, 48 bytes. It is created on
-first start with mode `0600` and never overwritten; a file of any other length is refused, never replaced. A node
-that restarts keeps its peer id.
+**The key persists.** A mesh service's key file is a node key file, read by `net`'s `loadNodeKey` under its rule
+(`NET_INTERFACE → The node key`): created on first start, never overwritten, a file of any other form refused and
+left as it is. A node that restarts keeps its peer id.
 
 Nothing about a mesh key touches the chain.
 

@@ -343,9 +343,10 @@ environment is not merely discouraged, it has no effect.
 | `ADMIN_PORT` | `3001` | The admin listener (`/health`, `/stats`). **Unauthenticated** — keep it on loopback |
 | `ADMIN_BIND_ADDRESS` | `127.0.0.1` | Admin listener bind address |
 | `DB_PATH` | `dagsocial.db` | SQLite database path |
+| `NODE_KEY_PATH` | the store's name with `.key` — `dagsocial.key` | The node's libp2p key: written on first start (48 bytes, mode `0600`), read at every start after it, so the node keeps its peer id; a file of any other form stops the node. The start line prints the peer id and the key's 64-hex spelling |
 | `NODE_ROLE` | `server` | `server` (applies peer blocks) or `miner` (produces blocks) |
 | `MINING_SECRET` | — | Bearer token for the mining API. Required non-empty when `NODE_ROLE=miner` — startup fails without it. Unused on a server node |
-| `BOOTSTRAP_PEERS` | the profile's (testnet: `/dns4/notis.fun/tcp/9733`) | Comma-separated libp2p multiaddrs; when set, replaces the profile's list |
+| `BOOTSTRAP_PEERS` | the profile's (testnet: notis.fun, `/dns4/notis.fun/tcp/9733/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa`) | Comma-separated libp2p multiaddrs; when set, replaces the profile's list |
 | `LISTEN_ADDRS` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `WEB_SHELL_PATH` | — | Path of the web client's `index.html`; empty means `GET /shell/:id` answers 404 |
 | `BLOCK_BODY_BUDGET_BYTES` | the protocol cap | Body bytes this node fills the blocks **it produces** to; clamped to the cap |

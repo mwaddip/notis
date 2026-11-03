@@ -29,6 +29,7 @@ const TEST_KEYS = [
   'MINING_SECRET',
   'NODE_ROLE',
   'BOOTSTRAP_PEERS',
+  'NODE_KEY_PATH',
   // Dead: consensus values are selected by NETWORK_TYPE, never set
   // individually. Section 7 sets these to prove they are ignored.
   //
@@ -1094,6 +1095,63 @@ describe('config', () => {
       it('MAX_PEERS=0 is refused naming MAX_PEERS', async () => {
         process.env['MAX_PEERS'] = '0';
         await expect(import('../src/config.js')).rejects.toThrow(/MAX_PEERS/);
+      });
+    });
+  });
+
+  // NODE_INTERFACE → Configuration → "The key file is named for the store".
+  // `nodeKeyPath` names the file `loadNodeKey` reads or writes
+  // (NET_INTERFACE → The node key). An unset variable derives the path from
+  // `dbPath` by replacing its extension with `.key`; a set empty value is
+  // refused at load naming the setting; a set non-empty value is taken as
+  // the file to use.
+  describe('18. NODE_KEY_PATH', () => {
+    // 18a — the unset default is the store path with its extension replaced
+    // by `.key`; `node:path`'s `parse` + `join` normalize a `./` away, which
+    // is why `./data/notis.db` lands at `data/notis.key`.
+    describe('18a. the default is the store path with .key', () => {
+      // DB_PATH unset reaches the default `dagsocial.db`, which the derivation
+      // then rewrites to `dagsocial.key`.
+      it('DB_PATH unset → nodeKeyPath === "dagsocial.key"', async () => {
+        const { loadConfig } = await import('../src/config.js');
+        const cfg = loadConfig();
+        expect((cfg as unknown as Record<string, unknown>)['nodeKeyPath']).toBe('dagsocial.key');
+      });
+      const CASES: ReadonlyArray<readonly [string, string]> = [
+        ['dagsocial.db',                       'dagsocial.key'],
+        ['/var/lib/dagsocial/dagsocial.db',    '/var/lib/dagsocial/dagsocial.key'],
+        ['./data/notis.db',                    'data/notis.key'],
+        ['mystore',                            'mystore.key'],
+      ];
+      for (const [dbPath, expected] of CASES) {
+        it(`DB_PATH=${JSON.stringify(dbPath)} → nodeKeyPath === ${JSON.stringify(expected)}`, async () => {
+          process.env['DB_PATH'] = dbPath;
+          const { loadConfig } = await import('../src/config.js');
+          const cfg = loadConfig();
+          expect((cfg as unknown as Record<string, unknown>)['nodeKeyPath']).toBe(expected);
+        });
+      }
+    });
+
+    // 18b — a set NODE_KEY_PATH names the file as it stands; it is not
+    // derived from DB_PATH.
+    describe('18b. a set NODE_KEY_PATH is taken as it is', () => {
+      it('NODE_KEY_PATH="/srv/dagsocial/alt.key" → nodeKeyPath === "/srv/dagsocial/alt.key"', async () => {
+        process.env['NODE_KEY_PATH'] = '/srv/dagsocial/alt.key';
+        const { loadConfig } = await import('../src/config.js');
+        const cfg = loadConfig();
+        expect((cfg as unknown as Record<string, unknown>)['nodeKeyPath']).toBe('/srv/dagsocial/alt.key');
+      });
+    });
+
+    // 18c — a set empty value is refused at load naming the setting, the
+    // shape every refusal of a set-but-refused setting takes
+    // (NODE_INTERFACE → Configuration →
+    // "Every whole-number setting is read by one reader, and a set value it refuses stops the node at load").
+    describe('18c. a set empty NODE_KEY_PATH is refused naming the setting', () => {
+      it('NODE_KEY_PATH="" throws, the message naming NODE_KEY_PATH', async () => {
+        process.env['NODE_KEY_PATH'] = '';
+        await expect(import('../src/config.js')).rejects.toThrow(/NODE_KEY_PATH/);
       });
     });
   });

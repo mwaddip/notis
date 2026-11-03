@@ -8,6 +8,7 @@ import {
   writeVlqU,
   computeUtxoTxRoot,
   encodeOrderingBlock,
+  generateKeyPair,
   ByteReader,
   decodeStruct,
   ReaderError,
@@ -851,6 +852,7 @@ describe('chain query round-trip', () => {
 // ---------------------------------------------------------------------------
 
 const registrationConfig: NetConfig = {
+  nodeKey: generateKeyPair(),
   magic: MAGIC,
   protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   orderingBlockPowTargetFloorBits: 2304,

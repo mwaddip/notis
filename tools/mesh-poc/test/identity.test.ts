@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPair as libp2pGenerateKeyPair } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { generateKeyPair } from '@dagsocial/types';
+import { ED25519_PKCS8_PREFIX, generateKeyPair, hexToBytes } from '@dagsocial/types';
 import { bytesToHex } from '@dagsocial/types';
+import { NodeKeyError } from '@dagsocial/net';
 import {
   MeshKeyError,
   nodeKeyFromKeyPair,
@@ -71,9 +72,32 @@ describe('identity', () => {
       const before = new Uint8Array(47);
       for (let i = 0; i < 47; i++) before[i] = i;
       writeFileSync(p, before, { mode: 0o600 });
-      await expect(loadOrCreateNodeKey(p)).rejects.toThrow(MeshKeyError);
+      await expect(loadOrCreateNodeKey(p)).rejects.toThrow(NodeKeyError);
       const after = readFileSync(p);
       expect(after.length).toBe(47);
+      expect(Array.from(after)).toEqual(Array.from(before));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a 48-byte file without the prefix is refused and left as it is', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-poc-key-'));
+    try {
+      const p = join(dir, 'node.key');
+      // 48 bytes whose first 16 do not equal the RFC 8410 PKCS8 prefix the
+      // secretKey carries (`TYPES_INTERFACE → Identity`).
+      const prefix = hexToBytes(ED25519_PKCS8_PREFIX);
+      const before = new Uint8Array(48);
+      for (let i = 0; i < 48; i++) before[i] = i;
+      // Make sure the first 16 bytes differ from the prefix at some byte.
+      let diff = false;
+      for (let i = 0; i < prefix.length; i++) if (before[i] !== prefix[i]) { diff = true; break; }
+      expect(diff).toBe(true);
+      writeFileSync(p, before, { mode: 0o600 });
+      await expect(loadOrCreateNodeKey(p)).rejects.toThrow(NodeKeyError);
+      const after = readFileSync(p);
+      expect(after.length).toBe(48);
       expect(Array.from(after)).toEqual(Array.from(before));
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -71,6 +71,9 @@ importers:
       '@dagsocial/wire':
         specifier: workspace:*
         version: link:../wire
+      '@libp2p/crypto':
+        specifier: ^5.2.0
+        version: 5.2.0
       '@libp2p/gossipsub':
         specifier: ^17.0.0
         version: 17.2.1
@@ -99,6 +102,9 @@ importers:
         specifier: ^3.5.1
         version: 3.5.1
     devDependencies:
+      '@libp2p/peer-id':
+        specifier: ^6.0.18
+        version: 6.0.18
       '@noble/curves':
         specifier: 2.2.0
         version: 2.2.0

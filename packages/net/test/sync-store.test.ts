@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { generateKeyPair } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -90,6 +91,7 @@ describe('LazySyncStore.heightByBlockId — provider read', () => {
 // ---------------------------------------------------------------------------
 
 const config: NetConfig = {
+  nodeKey: generateKeyPair(),
   magic: 0x54444147,
   protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   orderingBlockPowTargetFloorBits: 2304,

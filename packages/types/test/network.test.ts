@@ -74,6 +74,37 @@ function asciiOfMagic(magic: number): string {
   );
 }
 
+// Minimal base58btc decoder — the alphabet is Bitcoin's, and the function is here rather
+// than on a dependency because `@dagsocial/types` runs in the browser and depends on no
+// libp2p package (ARCHITECTURE → Package boundaries).
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58btcDecode(s: string): Uint8Array {
+  const bytes: number[] = [];
+  for (const c of s) {
+    const value = BASE58_ALPHABET.indexOf(c);
+    if (value < 0) throw new Error(`invalid base58btc character ${JSON.stringify(c)}`);
+    let carry = value;
+    for (let i = 0; i < bytes.length; i++) {
+      carry += bytes[i]! * 58;
+      bytes[i] = carry & 0xff;
+      carry >>>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>>= 8;
+    }
+  }
+  // Each leading '1' is a leading zero byte.
+  for (let i = 0; i < s.length && s[i] === '1'; i++) bytes.push(0);
+  return new Uint8Array(bytes.reverse());
+}
+
+function bytesHex(bytes: Uint8Array): string {
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
 describe('network magics', () => {
   it('spell MDAG / TDAG / DDAG', () => {
     expect(asciiOfMagic(MAGIC_MAINNET)).toBe('MDAG');
@@ -652,10 +683,12 @@ describe('invite bond caps per network', () => {
  * (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network").
  */
 describe('bootstrap peers per network', () => {
-  it('testnet names notis.fun; mainnet and devnet name none', () => {
-    expect(NETWORK_PROFILES.testnet.bootstrapPeers).toEqual(['/dns4/notis.fun/tcp/9733']);
+  it("testnet names notis.fun under its peer id; mainnet and devnet name none", () => {
     expect(NETWORK_PROFILES.mainnet.bootstrapPeers).toEqual([]);
     expect(NETWORK_PROFILES.devnet.bootstrapPeers).toEqual([]);
+    expect(NETWORK_PROFILES.testnet.bootstrapPeers).toEqual([
+      '/dns4/notis.fun/tcp/9733/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa',
+    ]);
   });
 
   it('every profile freezes its own bootstrapPeers array', () => {
@@ -669,15 +702,38 @@ describe('bootstrap peers per network', () => {
     expect(new Set(arrays).size).toBe(3);
   });
 
-  // A bare multiaddr the node can dial — `/dns4/<host>/tcp/<port>`, no `/p2p/`. libp2p learns the
-  // peer id from the handshake, and the node's identity is not persisted across restarts, so a
-  // pinned peer id is exactly what the contract forbids
-  // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network").
-  it('the testnet entry is a dialable multiaddr with no pinned peer id', () => {
-    for (const addr of NETWORK_PROFILES.testnet.bootstrapPeers) {
-      expect(addr).toMatch(/^\/dns4\/[^\/]+\/tcp\/\d+$/);
-      expect(addr).not.toContain('/p2p/');
+  // Every address in every profile's list carries a peer id — the libp2p identity multihash
+  // over a 32-byte Ed25519 public key, encoded base58btc, 52 characters opening `12D3KooW`
+  // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network";
+  //  NET_INTERFACE → The node key).
+  it("every profile's seed names its node's peer id", () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      for (const addr of profile.bootstrapPeers) {
+        expect(addr, profile.networkType).toMatch(
+          /^\/dns4\/[^/]+\/tcp\/\d+\/p2p\/12D3KooW[1-9A-HJ-NP-Za-km-z]{44}$/,
+        );
+        const peerId = addr.slice(addr.lastIndexOf('/') + 1);
+        const decoded = base58btcDecode(peerId);
+        expect(decoded.length, profile.networkType).toBe(38);
+        expect(bytesHex(decoded.subarray(0, 6)), profile.networkType).toBe('002408011220');
+      }
     }
+  });
+
+  // The peer id in testnet's seed decodes to notis.fun's node key — the 32-byte Ed25519 public
+  // key written on the box, which the node's key file holds across restarts
+  // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network";
+  //  NET_INTERFACE → The node key).
+  it("testnet's seed peer id is notis.fun's node key", () => {
+    const addrs = NETWORK_PROFILES.testnet.bootstrapPeers;
+    expect(addrs).toHaveLength(1);
+    const addr = addrs[0]!;
+    const peerId = addr.slice(addr.lastIndexOf('/') + 1);
+    const decoded = base58btcDecode(peerId);
+    expect(decoded).toHaveLength(38);
+    expect(bytesHex(decoded.subarray(6))).toBe(
+      '68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09',
+    );
   });
 });
 
