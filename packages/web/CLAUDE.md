@@ -20,7 +20,7 @@ infer weights from a neighbouring package's.
 ## What Notis is
 An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** and a **UTXO
 ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
-withdrawal is the author's only act over a post. TypeScript, pnpm workspaces, Node ≥ 22.
+withdrawal is the author's only act over a post. TypeScript, pnpm workspaces, Node ≥ 24.
 
 ## This package (`@dagsocial/web`)
 The **browser client**. Built in slices: the **read surface** (the feed, threads, a tiling workspace of

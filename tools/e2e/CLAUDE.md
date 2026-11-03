@@ -31,7 +31,7 @@ FINDING to report to main — never a workaround written into a test.**
 ## What Notis is
 An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** and a **UTXO
 ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
-withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
+withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 24.
 
 ## This package (`@dagsocial/e2e`)
 The end-to-end suite: it spawns a **mesh of real, built nodes** (`packages/node/dist/index.js`, real

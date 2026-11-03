@@ -25,7 +25,7 @@ tolerance written in here.**
 ## What Notis is
 An invite-only decentralized notice board on a **dual-ledger** design: a **Posts DAG** and a **UTXO ledger** (karma
 + credits); every post, like and withdrawal is a transaction on the UTXO ledger. TypeScript, pnpm workspaces,
-Node ≥ 22.
+Node ≥ 24.
 
 ## This package (`@dagsocial/node-reads`)
 **What every client of the node's HTTP API reads through** — the web client in both its builds, the light client

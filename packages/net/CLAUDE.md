@@ -19,7 +19,7 @@ An invite-only decentralized notice board on a **dual-ledger** design: a **Posts
 ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
 withdrawal is the author's only act over a post. Consensus is single-phase PoW — validator-produced
 ordering blocks, gossiped and synced peer-to-peer; posts and likes ride them as ordinary
-transactions. TypeScript, pnpm workspaces, Node ≥ 22.
+transactions. TypeScript, pnpm workspaces, Node ≥ 24.
 
 ## This package (`@dagsocial/net`)
 The **libp2p networking layer**: gossip (ordering blocks, UTXO txs), the framed

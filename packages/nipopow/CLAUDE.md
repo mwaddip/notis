@@ -22,7 +22,7 @@ An invite-only decentralized notice board on a **dual-ledger** design: a **Posts
 and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and withdrawal
 is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post.
 Consensus is single-phase PoW over validator-produced ordering blocks. TypeScript, pnpm workspaces,
-Node.js ≥ 22.
+Node.js ≥ 24.
 
 ## This package (`@dagsocial/nipopow`)
 Non-interactive proofs of proof-of-work over ordering-block headers (KMZ17 superblock proofs): the
