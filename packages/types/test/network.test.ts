@@ -76,7 +76,7 @@ function asciiOfMagic(magic: number): string {
 
 // Minimal base58btc decoder — the alphabet is Bitcoin's, and the function is here rather
 // than on a dependency because `@dagsocial/types` runs in the browser and depends on no
-// libp2p package (TYPES_INTERFACE → Package boundaries).
+// libp2p package (ARCHITECTURE → Package boundaries).
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 function base58btcDecode(s: string): Uint8Array {
   const bytes: number[] = [];
