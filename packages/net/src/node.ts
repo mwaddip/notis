@@ -10,8 +10,8 @@ import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from '@libp2p/interface';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION, protocolVersionAt, encodeOrderingBlock, decodePostBody, encodePostBody, ED25519_PKCS8_PREFIX, hexToBytes } from '@dagsocial/types';
-import { derivePublicKeyFromSeed } from './node-key.js';
+import { PROTOCOL_VERSION, protocolVersionAt, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
+import { derivePublicKeyFromSeed, seedOfSecretKey, NodeKeyError } from './node-key.js';
 import { ReaderError } from '@dagsocial/wire';
 import type {
   NetConfig, NetValidators, Peer, PeerEntryMsg,
@@ -668,17 +668,11 @@ export class NetNode {
     // a libp2p identity the private key cannot sign for. The throw lands before
     // `createLibp2p`, so nothing listens behind it (NET_INTERFACE → Node Lifecycle).
     const nodeKey = this.config.nodeKey;
-    const pkcs8Prefix = hexToBytes(ED25519_PKCS8_PREFIX);
-    if (nodeKey.secretKey.length !== pkcs8Prefix.length + 32) {
-      throw new Error(
-        `nodeKey.secretKey length ${nodeKey.secretKey.length}, must be ${pkcs8Prefix.length + 32}`,
-      );
-    }
-    const seed = nodeKey.secretKey.subarray(pkcs8Prefix.length);
+    const seed = seedOfSecretKey(nodeKey.secretKey);
     const derivedPub = await derivePublicKeyFromSeed(seed);
     if (derivedPub.length !== nodeKey.publicKey.length
         || !derivedPub.every((b, i) => b === nodeKey.publicKey[i])) {
-      throw new Error("nodeKey.publicKey does not match the seed of nodeKey.secretKey");
+      throw new NodeKeyError("nodeKey.publicKey does not match the seed of nodeKey.secretKey");
     }
     // `@libp2p/crypto` reads a 64-byte Ed25519 raw private key as seed ‖ publicKey;
     // its 32-byte form is read as secp256k1, so the length disambiguates the key

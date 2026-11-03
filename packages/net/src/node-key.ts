@@ -27,6 +27,26 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
+/**
+ * NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`".
+ * Reads a secretKey's seed, throwing `NodeKeyError` on a wrong length or a
+ * missing/mismatched RFC 8410 PKCS8 prefix. The message is bare — a caller
+ * that holds a path wraps the throw to name it.
+ */
+export function seedOfSecretKey(secretKey: Uint8Array): Uint8Array {
+  if (secretKey.length !== SECRET_KEY_LEN) {
+    throw new NodeKeyError(
+      `secretKey length ${secretKey.length}, must be ${SECRET_KEY_LEN}`,
+    );
+  }
+  if (!bytesEqual(secretKey.subarray(0, PKCS8_PREFIX_LEN), PKCS8_PREFIX_BYTES)) {
+    throw new NodeKeyError(
+      'secretKey does not carry the RFC 8410 PKCS8 prefix',
+    );
+  }
+  return secretKey.subarray(PKCS8_PREFIX_LEN);
+}
+
 // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`":
 // the key file is the 48-byte secretKey; the publicKey is derived from its seed.
 export async function derivePublicKeyFromSeed(seed: Uint8Array): Promise<Uint8Array> {
@@ -60,17 +80,15 @@ export async function loadNodeKey(path: string): Promise<KeyPair> {
     }
     throw new NodeKeyError(`${path}: ${(err as Error).message}`);
   }
-  if (secretKey.length !== SECRET_KEY_LEN) {
-    throw new NodeKeyError(
-      `${path}: secretKey length ${secretKey.length}, must be ${SECRET_KEY_LEN}`,
-    );
+  let seed: Uint8Array;
+  try {
+    seed = seedOfSecretKey(secretKey);
+  } catch (err) {
+    if (err instanceof NodeKeyError) {
+      throw new NodeKeyError(`${path}: ${err.message}`);
+    }
+    throw err;
   }
-  if (!bytesEqual(secretKey.subarray(0, PKCS8_PREFIX_LEN), PKCS8_PREFIX_BYTES)) {
-    throw new NodeKeyError(
-      `${path}: secretKey does not carry the RFC 8410 PKCS8 prefix`,
-    );
-  }
-  const seed = secretKey.subarray(PKCS8_PREFIX_LEN);
   const publicKey = await derivePublicKeyFromSeed(seed);
   return { publicKey, secretKey };
 }
