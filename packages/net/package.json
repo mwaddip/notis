@@ -21,6 +21,7 @@
     "@dagsocial/types": "workspace:*",
     "@dagsocial/validation": "workspace:*",
     "@dagsocial/wire": "workspace:*",
+    "@libp2p/crypto": "^5.2.0",
     "@libp2p/gossipsub": "^17.0.0",
     "@libp2p/identify": "^4.0.0",
     "@libp2p/interface": "^3.4.0",
@@ -32,6 +33,7 @@
     "libp2p": "^3.5.1"
   },
   "devDependencies": {
+    "@libp2p/peer-id": "^6.0.18",
     "@noble/curves": "2.2.0",
     "@noble/hashes": "2.2.0",
     "@types/node": "^22.0.0",
