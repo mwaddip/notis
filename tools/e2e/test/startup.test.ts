@@ -190,7 +190,7 @@ describe('startup', () => {
   // A fresh store on `<dir>/node.db` writes `<dir>/node.key` with mode 0600;
   // the start line names the key's 64-hex public spelling
   // (NODE_INTERFACE → Configuration → "The node names its key at start").
-  it.fails('a fresh store writes its key file named for the store, and the start line names that key', async () => {
+  it('a fresh store writes its key file named for the store, and the start line names that key', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
     dbDirs.push(dbDir);
@@ -216,7 +216,7 @@ describe('startup', () => {
   // NODE_INTERFACE → Configuration → "A node runs under one key, and the key
   // persists": a restart on the same store keeps the key file, and the peer
   // id's identity multihash the start line prints does not change.
-  it.fails('a node restarted on its store keeps its peer id', async () => {
+  it('a node restarted on its store keeps its peer id', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
     dbDirs.push(dbDir);
@@ -251,7 +251,7 @@ describe('startup', () => {
   // NODE_INTERFACE → Configuration → "The key file is named for the store":
   // two nodes whose stores sit beside each other each hold a key named for
   // its own store, so their start lines report different peer ids.
-  it.fails('two nodes whose stores share a directory run under two keys', async () => {
+  it('two nodes whose stores share a directory run under two keys', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
     dbDirs.push(dbDir);
@@ -283,7 +283,7 @@ describe('startup', () => {
   // `NodeKeyError` naming the path. The node writes one line carrying the
   // error's message and exits non-zero (NODE_INTERFACE → Configuration →
   // the `NODE_KEY_PATH` row).
-  it.fails('a refused key file stops the node, naming the path, and the file is left as it is', async () => {
+  it('a refused key file stops the node, naming the path, and the file is left as it is', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
     dbDirs.push(dbDir);
@@ -311,7 +311,7 @@ describe('startup', () => {
   // NODE_INTERFACE → Configuration → the `NODE_KEY_PATH` row: a set
   // `NODE_KEY_PATH` names the file the node uses, and no file at the
   // store-named default is written.
-  it.fails('a set NODE_KEY_PATH names the file the node uses', async () => {
+  it('a set NODE_KEY_PATH names the file the node uses', async () => {
     assertDistFresh(NODE_LOADS);
     const dbDir = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-startup-'));
     dbDirs.push(dbDir);
