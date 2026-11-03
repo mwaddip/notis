@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createServer } from 'node:net';
 import {
   encodeOrderingBlock,
+  generateKeyPair,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAGIC_DEVNET,
   PROTOCOL_VERSION,
@@ -70,7 +71,11 @@ const validators: NetValidators = {
 function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   // Devnet magic matches the mesh client's own default (`MESH_INTERFACE → The
   // mesh URL`), and the floor is types' `ORDERING_BLOCK_POW_TARGET_FLOOR`.
+  // Each call gets a fresh `nodeKey`, so every test node is a distinct peer
+  // (`NET_INTERFACE → The node key → "`net` runs under the key its caller
+  // hands it"`).
   return {
+    nodeKey: generateKeyPair(),
     magic: MAGIC_DEVNET,
     protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     orderingBlockPowTargetFloorBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
