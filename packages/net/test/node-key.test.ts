@@ -95,7 +95,7 @@ describe('NET_INTERFACE → The node key: loadNodeKey', () => {
   });
 
   // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`"
-  it.fails('writes a fresh key file at mode 0600 when the path is empty', async () => {
+  it('writes a fresh key file at mode 0600 when the path is empty', async () => {
     const kpPath = join(dir, 'nodekey');
     const before = await readBytesOrNull(kpPath);
     expect(before).toBeNull();
@@ -111,7 +111,7 @@ describe('NET_INTERFACE → The node key: loadNodeKey', () => {
   });
 
   // NET_INTERFACE → The node key → "A node runs under one key, and the key persists"
-  it.fails('reads an existing key file twice without rewriting it', async () => {
+  it('reads an existing key file twice without rewriting it', async () => {
     const kpPath = join(dir, 'nodekey');
     const written = generateKeyPair();
     writeFileSync(kpPath, written.secretKey);
@@ -141,7 +141,7 @@ describe('NET_INTERFACE → The node key: loadNodeKey', () => {
 
   // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`"
   for (const length of [0, 47, 49]) {
-    it.fails(`a file of ${length} bytes is refused with NodeKeyError, and left untouched`, async () => {
+    it(`a file of ${length} bytes is refused with NodeKeyError, and left untouched`, async () => {
       const kpPath = join(dir, 'nodekey');
       const original = new Uint8Array(length).fill(0x42);
       writeFileSync(kpPath, original);
@@ -174,7 +174,7 @@ describe('NET_INTERFACE → The node key: loadNodeKey', () => {
   }
 
   // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`"
-  it.fails('a 48-byte file without the PKCS8 prefix is refused and left untouched', async () => {
+  it('a 48-byte file without the PKCS8 prefix is refused and left untouched', async () => {
     const kpPath = join(dir, 'nodekey');
     const good = generateKeyPair();
     const bad = new Uint8Array(good.secretKey);
@@ -208,7 +208,7 @@ describe('NET_INTERFACE → The node key: loadNodeKey', () => {
   // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`".
   // The path names an existing directory, which cannot be read as a file and
   // cannot be written as a file either.
-  it.fails('a path that names a directory is refused with NodeKeyError', async () => {
+  it('a path that names a directory is refused with NodeKeyError', async () => {
     const dirAsKey = join(dir, 'subdir');
     // Make the path a directory so neither read nor write-create reaches a file.
     rmSync(dirAsKey, { recursive: true, force: true });
