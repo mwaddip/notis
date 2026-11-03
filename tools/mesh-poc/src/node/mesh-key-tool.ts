@@ -6,6 +6,7 @@
 
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { NodeKeyError } from '@dagsocial/net';
 import { loadOrCreateNodeKey } from './key-store.js';
 import { MeshKeyError } from '../identity.js';
 
@@ -21,7 +22,11 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(key.notisId + '\n');
     return 0;
   } catch (err) {
-    if (err instanceof MeshKeyError) {
+    // `NodeKeyError` names the key file on refusal (`NET_INTERFACE → The
+    // node key → "`net` runs under the key its caller hands it"`);
+    // `MeshKeyError` names a mesh-side refusal of the key's own fields
+    // (`MESH_INTERFACE → Identity → "One key, two spellings"`).
+    if (err instanceof NodeKeyError || err instanceof MeshKeyError) {
       process.stderr.write(`mesh-key-tool: ${err.message}\n`);
       return 1;
     }

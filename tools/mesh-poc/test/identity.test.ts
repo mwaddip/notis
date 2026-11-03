@@ -65,7 +65,7 @@ describe('identity', () => {
     }
   });
 
-  it.fails('a key file of the wrong length is refused, never replaced', async () => {
+  it('a key file of the wrong length is refused, never replaced', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-poc-key-'));
     try {
       const p = join(dir, 'node.key');
@@ -81,7 +81,7 @@ describe('identity', () => {
     }
   });
 
-  it.fails('a 48-byte file without the prefix is refused and left as it is', async () => {
+  it('a 48-byte file without the prefix is refused and left as it is', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mesh-poc-key-'));
     try {
       const p = join(dir, 'node.key');
