@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { buildPageConfig } from '../stage/lib/config.mjs';
+import { buildPageConfig, peerIdStringOf } from '../stage/lib/config.mjs';
 import { readTopology } from '../stage/lib/topology.mjs';
 import {
   verdictS1DnsSilent,
@@ -72,13 +72,18 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
       pub1: 'a'.repeat(64),
       pub2: 'b'.repeat(64),
     };
+    // Every `/p2p/<id>` must be the peer id of the entry's notisId
+    // (MESH_INTERFACE → Discovery / Identity — `buildPageConfig` refuses
+    // another key's id).
+    const pA = peerIdStringOf(notisIds.pub1!);
+    const pB = peerIdStringOf(notisIds.pub2!);
     const printed = {
       pub1: [
-        '/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAREAL1/p2p/PA',
-        '/ip4/11.100.0.11/tcp/443/tls/ws/p2p/PA',
+        `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAREAL1/p2p/${pA}`,
+        `/ip4/11.100.0.11/tcp/443/tls/ws/p2p/${pA}`,
       ],
       pub2: [
-        '/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/uEiAREAL2/p2p/PB',
+        `/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/uEiAREAL2/p2p/${pB}`,
       ],
     };
     const config = buildPageConfig(topology, notisIds, printed);

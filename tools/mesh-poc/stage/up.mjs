@@ -742,9 +742,9 @@ const hostileGossipScript = join(HERE, 'hostile-gossip.mjs');
 const pub1Host = topology.hosts.pub1;
 
 // Capture identity lines from each host's `notis.log` (the node's one JSON
-// line with a `notisId` key, reprinted on change). For a publisher host
-// the identity comes from `hostile-gossip.mjs` instead — the node on that
-// host runs no mesh, so it prints no identity line.
+// line with a `notisId` key, reprinted on change). The publisher host
+// runs no Notis node — its identity line comes from `hostile-gossip.mjs`
+// instead, reading the same `node.key`.
 const meshIdentityPromises = {};
 
 // MESH_INTERFACE → Acceptance — "a hostile host's lie outside the node
@@ -803,10 +803,11 @@ if (laggingHostCfg && malformedHostCfg) {
 // Spawn one Notis node per host. For every non-pair mesh host the env
 // carries the `MESH_*` settings the node reads at load
 // (`NODE_INTERFACE → Configuration`). The one exception is `hostile-publisher`:
-// its mesh entity is `hostile-gossip.mjs` (a libp2p host built from
+// its one mesh entity is `hostile-gossip.mjs` (a libp2p host built from
 // `@dagsocial/net`'s pieces, publishing bad blocks on the gossip topic),
-// so the publisher host's Notis node runs with no `MESH_*` env and the
-// publisher's identity comes from `hostile-gossip.mjs` instead.
+// so no Notis node runs on that host — nothing there needs a chain or
+// its HTTP API. The publisher reads the host's `node.key` directly, so
+// the identity under `notisIds[name]` matches the addresses it announces.
 function spawnNotisForHost(name, host) {
   const ns = nsOf(name);
   const dbPath = join(OUT_DIR, name, 'notis.db');
@@ -936,25 +937,34 @@ for (const name of serialNotisOrder) {
   }
 }
 
-// Every remaining node seeds from the publics (or carries no MESH_* env
-// at all, the publisher host's Notis node); the publics are now up, so
-// their spawns dial a listener that is live.
+// Every remaining node seeds from the publics; the publics are now up,
+// so their spawns dial a listener that is live. The publisher host is
+// skipped: its one mesh entity is `hostile-gossip.mjs`, spawned below —
+// nothing on that host needs a chain or an HTTP API, so a Notis node
+// beside the publisher would hold a SECOND identity on one host (two
+// keys, two peer ids, the shape that broke s6 step 3 in 2026-11-04's
+// run — the page config carried one key's notisId under the other key's
+// addresses).
 for (const [name, host] of Object.entries(topology.hosts)) {
   if (host.node === undefined) continue;
   if (serialNotisOrder.includes(name)) continue;
+  if (host.mesh?.publisher === true) continue;
   spawnNotisForHost(name, host);
 }
 
 // MESH_INTERFACE → Acceptance 6 → "A mesh node publishing a block that
 // fails its checks is blacklisted with its evidence" — the publisher host
-// runs `hostile-gossip.mjs` as its mesh entity (a libp2p host built from
-// `@dagsocial/net`'s pieces). The node on this host runs with no
-// `MESH_*` env, so the publisher's libp2p alone listens on the mesh ports.
+// runs `hostile-gossip.mjs` as its one mesh entity (a libp2p host built
+// from `@dagsocial/net`'s pieces). No Notis node runs on this host, so
+// the publisher's libp2p alone listens on the mesh ports.
 for (const [name, host] of Object.entries(topology.hosts)) {
   if (host.mesh?.publisher !== true) continue;
   const ns = nsOf(name);
-  const meshStateDir = join(OUT_DIR, name);
-  const meshKeyPath = join(meshStateDir, 'mesh.key');
+  // ONE identity per host — the publisher reads the same `node.key`
+  // Phase 4 populated, so `notisIds[name]` (from `node.key`) matches
+  // the peer id in every address this process announces. A second
+  // file name (the retired `mesh.key`) would put two keys on one host.
+  const meshKeyPath = join(OUT_DIR, name, 'node.key');
   const bootstrapAddrs = [];
   for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {
     if (pubName === name) continue;
@@ -965,8 +975,6 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     MESH_KEY_PATH: meshKeyPath,
     MESH_NETWORK: 'devnet',
     MESH_ROLE: host.mesh.role,
-    MESH_STATE_DIR: meshStateDir,
-    MESH_UPSTREAM: `http://127.0.0.1:${host.node.httpPort}`,
     MESH_LISTEN: [
       `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct`,
       `/ip4/${host.addr}/tcp/${host.mesh.tcpPort}`,
