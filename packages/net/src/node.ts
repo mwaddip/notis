@@ -65,7 +65,7 @@ import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
 import { OutboundManager } from './outbound-mgr.js';
-import { NODE_CAPABILITIES } from './capabilities.js';
+import { NODE_CAPABILITIES, servesChain, declares } from './capabilities.js';
 import { decodeFrame, KNOWN_FRAME_MAGICS } from './frame.js';
 import {
   buildHandshakeFrame,
@@ -485,11 +485,13 @@ export function intakePeersBody(
 }
 
 /**
- * Which peers are due a GetPeers this tick: Active state, and no send within
- * the last GET_PEERS_INTERVAL_MS. Stamps `lastSentMs` for every returned id,
- * so a peer is never picked twice inside one interval. A peer with no stamp
+ * Which peers are due a GetPeers this tick: Active state, `servesChain` of
+ * its declared capabilities, and no send within the last
+ * GET_PEERS_INTERVAL_MS. Stamps `lastSentMs` for every returned id, so a
+ * peer is never picked twice inside one interval. A peer with no stamp
  * (fresh handshake) is due immediately — the bootstrap flow sends GetPeers
- * right after handshake, not two minutes later.
+ * right after handshake, not two minutes later. NET_INTERFACE → Readers —
+ * "A reader is never asked for chain data": readers are skipped.
  */
 export function duePeerExchange(
   peerMgr: PeerManager,
@@ -499,6 +501,8 @@ export function duePeerExchange(
   const due: string[] = [];
   for (const peer of peerMgr.getPeers()) {
     if (!peerMgr.isPeerActive(peer.id)) continue;
+    const caps = peer.capabilities;
+    if (!caps || !servesChain(caps)) continue;
     const last = lastSentMs.get(peer.id);
     if (last !== undefined && nowMs - last < GET_PEERS_INTERVAL_MS) continue;
     lastSentMs.set(peer.id, nowMs);
@@ -840,15 +844,25 @@ export class NetNode {
       libp2p.addEventListener('peer:disconnect', (evt: any) => {
         const peerId = evt.detail?.toString() ?? 'unknown';
         console.log(`[net] peer:disconnect ${peerId} (total=${Math.max(0, this.peerMgr.getPeerCount() - 1)})`);
+        // NET_INTERFACE → Readers → "`onPeerDisconnected` fires for
+        // chain-serving peers alone": read the peer's declared capabilities
+        // from the metadata before `removePeer` drops it.
+        const meta = this.peerMgr.getPeerMetadata(peerId);
+        const wasChainServing =
+          meta?.state === PeerState.Active
+          && meta.capabilities !== null
+          && servesChain(meta.capabilities);
         this.peerMgr.removePeer(peerId);
         this.lastGetPeersSentMs.delete(peerId);
         // NET_INTERFACE → Stream Protocols → "A peer's sync streams are served one at a time":
         // per-peer state goes when the peer does.
         this.peerStreamQueues.delete(peerId);
         this.syncMachine?.onPeerDisconnect(peerId);
-        for (const cb of this.peerDisconnectedHandlers) {
-          try { cb(peerId, ''); } catch (err) {
-            console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+        if (wasChainServing) {
+          for (const cb of this.peerDisconnectedHandlers) {
+            try { cb(peerId, ''); } catch (err) {
+              console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+            }
           }
         }
       });
@@ -1124,6 +1138,7 @@ export class NetNode {
           // NET_INTERFACE → Handshake → "A peer becomes Active once": a
           // handshake that completes for a peer already Active records and
           // raises nothing.
+          const peerServesChain = servesChain(result.peerCapabilities);
           if (!this.peerMgr.isPeerActive(remote)) {
             this.peerMgr.setPeerState(remote, PeerState.Active);
             this.peerMgr.setPeerAddress(remote, addr);
@@ -1131,6 +1146,7 @@ export class NetNode {
             // not ours — it is what the boundary sweep reads
             // (NET_INTERFACE → PeerDb; → Post-Handshake Routing).
             this.peerMgr.setPeerVersion(remote, result.msg.protocolVersion);
+            this.peerMgr.setPeerCapabilities(remote, result.peerCapabilities);
             this.peerDb?.record({
               address: addr,
               lastSeenMs: Date.now(),
@@ -1139,10 +1155,15 @@ export class NetNode {
               protocolVersion: result.msg.protocolVersion,
               capabilities: result.peerCapabilities,
             });
-            this.syncMachine?.onPeerActive(remote, result.peerHeight, dir);
-            for (const cb of this.peerActiveHandlers) {
-              try { cb(remote, dir); } catch (err) {
-                console.warn(`[net] peerActive handler error: ${String(err)}`);
+            // NET_INTERFACE → Readers → "A reader is never asked for chain
+            // data": the scheduler and the peerActive handlers fire for a
+            // chain-serving peer alone.
+            if (peerServesChain) {
+              this.syncMachine?.onPeerActive(remote, result.peerHeight, dir);
+              for (const cb of this.peerActiveHandlers) {
+                try { cb(remote, dir); } catch (err) {
+                  console.warn(`[net] peerActive handler error: ${String(err)}`);
+                }
               }
             }
           }
@@ -1345,20 +1366,25 @@ export class NetNode {
         // NET_INTERFACE → Handshake → "A peer becomes Active once": a
         // handshake that completes for a peer already Active is answered
         // when this node is the listener, and records and raises nothing.
+        const peerServesChain = servesChain(msg.capabilities);
         if (!this.peerMgr.isPeerActive(peerId)) {
           // The metadata keeps the peer's declared version, not ours — it
           // is what the boundary sweep reads
           // (NET_INTERFACE → Post-Handshake Routing).
           this.peerMgr.setPeerVersion(peerId, msg.protocolVersion);
+          this.peerMgr.setPeerCapabilities(peerId, msg.capabilities);
           // NET_INTERFACE → Handshake →
           // "A declared address is hearsay until a dial names it": the
           // listener records the dialler's declared address only when it
           // is no bogus address and its `/p2p/` component names the peer
           // id the connection proved, at lastSeenMs 0; a handshake that
-          // declares no address records none.
+          // declares no address records none. NET_INTERFACE → Readers —
+          // "a reader declares no address, so it never enters `PeerDb`":
+          // only a chain-serving peer's declared address is kept.
           const declared = msg.declaredAddress;
           if (
-            declared !== undefined
+            peerServesChain
+            && declared !== undefined
             && !isBogusAddress(declared, this.config.magic)
             && peerIdOfAddress(declared) === peerId
           ) {
@@ -1375,10 +1401,15 @@ export class NetNode {
 
           this.peerMgr.setPeerState(peerId, PeerState.Active);
           const dir = (connection.direction ?? 'inbound') as 'inbound' | 'outbound';
-          this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
-          for (const cb of this.peerActiveHandlers) {
-            try { cb(peerId, dir); } catch (err) {
-              console.warn(`[net] peerActive handler error: ${String(err)}`);
+          // NET_INTERFACE → Readers → "A reader is never asked for chain
+          // data": the scheduler and the peerActive handlers fire for a
+          // chain-serving peer alone.
+          if (peerServesChain) {
+            this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
+            for (const cb of this.peerActiveHandlers) {
+              try { cb(peerId, dir); } catch (err) {
+                console.warn(`[net] peerActive handler error: ${String(err)}`);
+              }
             }
           }
         }
@@ -1790,19 +1821,37 @@ export class NetNode {
     return this.peerMgr.getPeers();
   }
 
-  /** Return the peer IDs of all currently Active peers. */
+  /**
+   * NET_INTERFACE → API → Node Lifecycle → `getConnectedPeers`: the peer ids
+   * of the Active chain-serving peers — the handshake completed and
+   * `servesChain` of its capabilities (NET_INTERFACE → Readers).
+   */
   getConnectedPeers(): string[] {
-    return this.peerMgr.getPeers()
-      .filter(p => this.peerMgr.isPeerActive(p.id))
-      .map(p => p.id);
+    const out: string[] = [];
+    for (const peer of this.peerMgr.getPeers()) {
+      if (!this.peerMgr.isPeerActive(peer.id)) continue;
+      const caps = peer.capabilities;
+      if (!caps || !servesChain(caps)) continue;
+      out.push(peer.id);
+    }
+    return out;
   }
 
   /**
    * NET_INTERFACE → API → Node Lifecycle → `getConnectedReaders`: the peer
-   * ids of the Active readers (NET_INTERFACE → Readers).
+   * ids of the Active readers (NET_INTERFACE → Readers → "A peer whose
+   * handshake does not `servesChain` is a reader").
    */
   getConnectedReaders(): string[] {
-    return [];
+    const out: string[] = [];
+    for (const peer of this.peerMgr.getPeers()) {
+      if (!this.peerMgr.isPeerActive(peer.id)) continue;
+      const caps = peer.capabilities;
+      if (!caps) continue;
+      if (servesChain(caps)) continue;
+      out.push(peer.id);
+    }
+    return out;
   }
 
   /**
@@ -1811,8 +1860,8 @@ export class NetNode {
    * not Active.
    */
   peerCapabilities(peerId: string): readonly number[] | null {
-    void peerId;
-    return null;
+    if (!this.peerMgr.isPeerActive(peerId)) return null;
+    return this.peerMgr.getPeerMetadata(peerId)?.capabilities ?? null;
   }
 
   /**
@@ -2090,6 +2139,13 @@ export class NetNode {
     peerId: string,
   ): Promise<{ id: string; content: string }[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
+    // NET_INTERFACE → Readers → "A peer is asked for a code only if it
+    // declares it": a caller's list of peers may be stale (a reader
+    // selected by a caller that filtered on the wrong moment); the guard
+    // refuses rather than open a stream against a peer that would close
+    // it unanswered.
+    const caps = this.peerMgr.getPeerMetadata(peerId)?.capabilities ?? null;
+    if (caps === null || !declares(caps, MSG_MODIFIER_REQUEST)) return [];
     const libp2p = this.libp2p;
     const peer = connectedPeer(libp2p, peerId);
 

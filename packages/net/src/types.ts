@@ -111,6 +111,14 @@ export interface PeerMetadata {
    * not handshaken and is not Active, so it is never the sweep's.
    */
   protocolVersion: number | null;
+  /**
+   * The peer's declared capabilities (the handshake's), or null until the
+   * handshake reveals them. NET_INTERFACE → Readers — `getConnectedPeers`
+   * and `getConnectedReaders` filter on this: a peer whose capabilities
+   * `servesChain` stands in the chain list, one that does not stands in the
+   * reader list.
+   */
+  capabilities: readonly number[] | null;
 }
 
 // ---------------------------------------------------------------------------

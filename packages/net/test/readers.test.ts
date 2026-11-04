@@ -175,7 +175,7 @@ describe('NET_INTERFACE → Readers', () => {
   });
 
   // Case 1 — "A reader is a reader, not a peer."
-  it.fails('a reader is a reader, not a peer', async () => {
+  it('a reader is a reader, not a peer', async () => {
     const nodeA = new NetNode(makeConfig(), validators);
     nodes.push(nodeA);
     await nodeA.start();
@@ -198,7 +198,7 @@ describe('NET_INTERFACE → Readers', () => {
   }, TIMEOUT);
 
   // Case 2 — "A reader is never asked for chain data."
-  it.fails('a reader is never asked for chain data', async () => {
+  it('a reader is never asked for chain data', async () => {
     const nodeA = new NetNode(makeConfig(), validators);
     nodes.push(nodeA);
     await nodeA.start();
@@ -313,7 +313,7 @@ describe('NET_INTERFACE → Readers', () => {
   }, TIMEOUT);
 
   // Case 5 — "A miner's readiness never sees a reader."
-  it.fails("onPeerActive handlers never fire for a reader", async () => {
+  it("onPeerActive handlers never fire for a reader", async () => {
     const nodeA = new NetNode(makeConfig(), validators);
     nodes.push(nodeA);
     await nodeA.start();

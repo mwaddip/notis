@@ -118,6 +118,7 @@ export class PeerManager {
         address: null,
         declaredAddress: null,
         protocolVersion: null,
+        capabilities: null,
       });
     }
   }
@@ -153,6 +154,19 @@ export class PeerManager {
   setPeerVersion(peerId: string, protocolVersion: number): void {
     const meta = this.metadata.get(peerId);
     if (meta) meta.protocolVersion = protocolVersion;
+  }
+
+  /**
+   * NET_INTERFACE → Readers — record the peer's declared capabilities once
+   * the handshake reveals them; both the metadata (for `peerCapabilities`)
+   * and the Peer (for `peers()`) carry them. No-op for an untracked peer,
+   * like `setPeerAddress`.
+   */
+  setPeerCapabilities(peerId: string, capabilities: readonly number[]): void {
+    const meta = this.metadata.get(peerId);
+    if (meta) meta.capabilities = capabilities;
+    const entry = this.peers.get(peerId);
+    if (entry) entry.peer.capabilities = capabilities;
   }
 
   /**

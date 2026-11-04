@@ -18,6 +18,7 @@ import {
 import { NetNode } from '../src/node.js';
 import { HANDSHAKE_PROTOCOL } from '../src/sync.js';
 import { buildHandshakeFrame, decodeHandshakeBody, validateHandshake } from '../src/handshake.js';
+import { NODE_CAPABILITIES } from '../src/capabilities.js';
 import type { HandshakeResult } from '../src/handshake.js';
 import { decodeFrame } from '../src/frame.js';
 import { PeerState, PenaltyKind } from '../src/types.js';
@@ -213,7 +214,7 @@ function validHandshakeFrame(): Uint8Array {
     protocolVersion: PROTOCOL_VERSION,
     nodeName: 'peer',
     chainHeight: 7,
-    capabilities: [],
+    capabilities: [...NODE_CAPABILITIES],
   });
 }
 
@@ -460,7 +461,7 @@ describe('inbound handshake handler — frame-tier rejection', () => {
       protocolVersion: PROTOCOL_VERSION,
       nodeName: 'peer',
       chainHeight: 7,
-      capabilities: [],
+      capabilities: [...NODE_CAPABILITIES],
     });
     const written = await send(raw);
 
@@ -501,7 +502,7 @@ function peerHandshakeFrame(version: number, declaredAddress?: string): Uint8Arr
     nodeName: 'peer',
     chainHeight: 7,
     ...(declaredAddress ? { declaredAddress } : {}),
-    capabilities: [],
+    capabilities: [...NODE_CAPABILITIES],
   });
 }
 
@@ -692,7 +693,7 @@ describe('inbound handshake handler — every return path closes the connection'
       protocolVersion: PROTOCOL_VERSION,
       nodeName: 'peer',
       chainHeight: 7,
-      capabilities: [],
+      capabilities: [...NODE_CAPABILITIES],
     });
     await send(raw, { connectionId: 'conn-frame' });
 
