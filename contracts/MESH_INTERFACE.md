@@ -10,9 +10,6 @@ already runs. The client is a reader in the nodes' own block gossip, under `net`
 `@dagsocial/mesh-poc` holds the client's reasoning about nodes, the page and the stage; what the stage has to show is →
 Acceptance.
 
-> ⚠ **AHEAD OF CODE (2026-11-04).** `NetConfig.mesh` and the node's `MESH_*` settings, the client on `@dagsocial/net/browser`; the
-> mesh service beside each node, and the client's own copies of `net`'s pieces, until then.
-
 It carries Notis's own traffic and nothing else: no exit to the wider network, no IP tunnel.
 
 ## Place in the workspace
@@ -21,7 +18,7 @@ It carries Notis's own traffic and nothing else: no exit to the wider network, n
 `MESH_*` settings (`NODE_INTERFACE → Configuration`). **The browser half is `@dagsocial/net/browser`**: the reader's
 handshake, the gossip rules, the block check, the reader's libp2p options and the mesh fetch, importing no Node
 built-in and reading no Node global. `tools/mesh-poc` is a member under `tools/`: it depends on `@dagsocial/types`,
-`@dagsocial/validation`, `@dagsocial/node-reads`, `@dagsocial/nipopow-client` and `@dagsocial/net`, and `src/lib.ts`
+`@dagsocial/validation`, `@dagsocial/node-reads`, `@dagsocial/nipopow`, `@dagsocial/nipopow-client` and `@dagsocial/net`, and `src/lib.ts`
 and everything it reaches runs in the browser as written. No WASM. One native module, `node-datachannel` under
 `@libp2p/webrtc`, serves WebRTC on Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
 
@@ -34,8 +31,6 @@ packages carry a patch until a release carries the fix**, each held by a case an
 `@libp2p/webrtc`, whose certificate renewal timer re-arms past Node's timer limit (→ Transports → "The WebRTC-direct
 certificate persists"), and `@libp2p/http-utils`, whose Node-side server adapter is kept out of the browser's import
 path. A patch goes when the pin moves to a release that carries its fix.
-
-> ⚠ **AHEAD OF CODE (2026-11-04).** `net`'s mesh, `net/browser` and the two patches; `tools/mesh-poc`'s own `src/node/` until then.
 
 ## Identity
 
@@ -84,9 +79,6 @@ timer re-arming in steps under Node's 2 147 483 647 ms limit, so a lifespan past
 changed — at a restart or at a renewal — would leave every anchor naming the node unreachable. **A state directory
 whose certificate cannot be read stops the node at start**, naming the directory, and is left as it is, as a key file
 of another form is.
-
-> ⚠ **AHEAD OF CODE (2026-11-04).** the lifespan, the patched timer and the refusal at start; `@libp2p/webrtc`'s 14-day
-> default, renewed a day early, until then.
 
 **A client dials a private address only when its own configuration names it.** libp2p's default connection gater in a
 browser refuses every address in a private or reserved range (`10.0.0.0/8`, `100.64.0.0/10`, `192.168.0.0/16`, the
@@ -152,11 +144,6 @@ unsigned, named by `hash32(lpUtf8(topic) ‖ data)`, heard once in `GOSSIP_SEEN_
 `net/browser`'s, the one copy. A node's router holds its node peers and its readers; a client's, every node it holds a
 connection to; nothing dials for gossip's sake.
 
-> ⚠ **AHEAD OF CODE (2026-11-04).** the reader's handshake and `net/browser`'s router; until then the client asks no
-> handshake of the mesh services it reads, and the rule the mesh service's code holds stands: **A mesh service is a
-> gossip peer of its own node.** It dials its node's libp2p TCP address and runs `net`'s handshake as the dialler,
-> declaring no address and no capability, subscribed to the ordering-block topic alone.
-
 **A block is checked before it is forwarded, and never applied.** A receiver runs the ordering-block topic's checks of
 `NET_INTERFACE → Stage 1`, in their order, through `net`'s `BlockCheck`, and forwards a block that passes them
 (`NET_INTERFACE → Forwarding Rule`). The client checks the schedule where its chain holds the parent (→ The client's
@@ -166,7 +153,8 @@ node list → "The client's chain"). A client applies no block and forwards no t
 its field domains, the network's floor, its work, its validator signature, its structure or its body's root, is a lie of
 the key that sent it: the client blacklists that key, the evidence kept. A version mismatch, a scheduled-target mismatch
 and a header the receiver knows record nothing. A node weighs the sender by `net`'s ban policy (`NET_INTERFACE →
-Handshake → "Ban policy"`) and logs each refusal with the sender's peer id.
+Handshake → "Ban policy"`), and each penalty it records reaches its journal as a `peer_penalised` event naming the
+sender's peer id.
 
 **A router scores its peers by gossipsub's defaults.** A node's router and a client's keep libp2p
 gossipsub's default peer scores, its IP colocation penalty among them: past ten peers a router has seen from one IP
@@ -208,8 +196,6 @@ HTTP holds over the mesh the same, `HTTP_BODY_MAX_BYTES` among them.
 
 The client's side is an `HttpFetch` over the mesh URL: `GET` and `POST`, ending at `REQUEST_TIMEOUT_MS` as every read
 does (`CONSTANTS → Client reads`). Every cap a reader holds an answer to over HTTP holds over the mesh the same.
-
-> ⚠ **AHEAD OF CODE (2026-11-04).** the node's own endpoint and `POST`; the mesh service's `GET`-only forward until then.
 
 **The client checks what it can with the extension's verifier**: `resolveTip` over the mesh URLs of the nodes a check
 reads proofs from (→ The client's node list → "A check"), each proof held to the client's network profile
@@ -351,8 +337,6 @@ one behind a symmetric NAT, a browser behind NAT, a node on the browser's own ne
 nodes — each host one devnet `@dagsocial/node` run with a mesh role, a hostile host's lie outside the node it runs.
 The mesh holds when every step of the eight scenarios passes on what it measured; a step that did not run reads
 `skipped`, never a pass.
-
-> ⚠ **AHEAD OF CODE (2026-11-04).** one node per host; a node and a mesh service per host until then.
 
 1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, over WebRTC-direct, with the
    browser's own resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte

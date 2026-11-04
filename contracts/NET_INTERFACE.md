@@ -574,10 +574,6 @@ nothing; the next tick dials another.
 **The ban policy holds for a reader as for a node** (→ Handshake → "Ban policy"): the deadline, the era check and every
 penalty a peer earns, a reader earns the same.
 
-> ⚠ **AHEAD OF CODE (2026-11-04).** `NODE_CAPABILITIES`, `READER_CAPABILITIES`, `servesChain`,
-> `getConnectedReaders`, `maxReaders` and the closes; every node declares `capabilities: []` and every Active peer is
-> asked for chain data until then.
-
 ### Post-Handshake Routing
 
 | Condition | Action |
@@ -1365,9 +1361,6 @@ persists"`). `meshIdentity()` answers the node's mesh identity — its Notis spe
 announces and its local WebRTC-direct addresses — once they are announced, `null` with no mesh; `onMeshAddresses`
 reports each change of the announced set.
 
-> ⚠ **AHEAD OF CODE (2026-11-04).** `NetConfig.mesh` and everything above; `tools/mesh-poc`'s mesh service runs it until
-> then.
-
 ---
 
 ## Stream Protocols
@@ -1688,9 +1681,6 @@ hands it `node:crypto`'s `createHash('blake2b512')`, the browser entry `@dagsoci
 (`TYPES_INTERFACE → The protocol hash`), held equal by a case. The node frames block-sized answers, where `hash32` costs
 some 23 times `createHash` (8 MiB: 173 ms against 7.4 ms, measured 2026-11-04 on Node 24); a browser frames handshakes
 alone, under 1 KB.
-
-> ⚠ **AHEAD OF CODE (2026-11-04).** `./browser`, `BlockCheck` in `net` and the codec with its checksum handed in;
-> the client holds its own copies until then.
 
 **A broadcast that sends nothing still resolves.** Each publishes on the node's own topic for its
 payload. Before `start()`, with no peer on the topic, or with the bytes already seen on the topic inside

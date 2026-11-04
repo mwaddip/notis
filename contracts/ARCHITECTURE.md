@@ -2586,8 +2586,6 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   checksum through `hash32` (`NET_INTERFACE → The browser entry`), the gossip rules, `BlockCheck`, the reader's handshake, libp2p options and mesh fetch
   (`NET_INTERFACE → The browser entry`) — held by its own `tsconfig.browser.json` and by a build of it that refuses any
   Node built-in.
-
-> ⚠ **AHEAD OF CODE (2026-11-04).** `./browser`; `net` is Node.js alone until then.
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in

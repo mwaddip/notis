@@ -5756,9 +5756,6 @@ anchor names.
 `{ "notisId", "peerId", "multiaddrs", "localAddrs" }` — the addresses an anchor lists and, for a private node, the
 local WebRTC-direct addresses its operator hands over (`MESH_INTERFACE → Discovery → "A node added by hand"`).
 
-> ⚠ **AHEAD OF CODE (2026-11-04).** `MAX_READERS`, the `MESH_*` settings, the state directory, the loopback forward and the
-> identity line; a node runs no mesh until then.
-
 > ⚠ **Every "at 60 seconds" duration annotation is nominal in the short run and exact in the long
 > run.** The block time is an *emergent* property of the target and hashrate — there is no producer
 > timer — and the ASERT schedule tracks it toward `orderingBlockIdealMs` with an absolute anchor, so
