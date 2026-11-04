@@ -27,10 +27,11 @@ They reach places libp2p does not promise to keep — its `components` object, f
 secure WebSocket, a private node's relay listens) and for the listener addresses a private node prints; the dial
 queue's `dial-queue:calculated-addresses` progress event and its `AggregateError` order, for per-address attribution
 — and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Two pinned
-packages carry a patch until a release carries the fix**, each held by a case and each fix offered upstream:
-`@libp2p/webrtc`, whose certificate renewal timer re-arms past Node's timer limit (→ Transports → "The WebRTC-direct
-certificate persists"), and `@libp2p/http-utils`, whose Node-side server adapter is kept out of the browser's import
-path. A patch goes when the pin moves to a release that carries its fix.
+packages carry local patches** (pnpm's `patchedDependencies`, the diffs under `patches/`), each held by a case against
+the patched package: `@libp2p/webrtc`, whose certificate renewal timer re-arms past Node's timer limit (→ Transports →
+"The WebRTC-direct certificate persists"), and `@libp2p/http-utils`, whose `readHeaders` hands a request's body back to
+its stream and whose Node-side server adapter is kept out of the browser's import path. A pin that moves carries its
+patch to the new version, the cases deciding that it still applies and still holds.
 
 ## Identity
 
