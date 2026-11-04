@@ -29,7 +29,7 @@ import {
   verifyUtxoTxRoot,
   verifyPostBody,
 } from '@dagsocial/validation';
-import { NetNode } from '../src/node.js';
+import { NetNode, duePeerExchange } from '../src/node.js';
 import { buildHandshakeFrame, decodeHandshakeBody } from '../src/handshake.js';
 import { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from '../src/sync.js';
 import { decodeFrame, MAGIC_TESTNET } from '../src/frame.js';
@@ -363,6 +363,101 @@ describe('NET_INTERFACE → Readers', () => {
     // GetBlocks (16) (NET_INTERFACE → Readers → "A full node declares
     // `NODE_CAPABILITIES`").
     expect(body!.capabilities).toEqual([2, 4, 8, 14, 16]);
+  }, TIMEOUT);
+
+  // Case 8 — `duePeerExchange` holds the reader filter. The scheduler's
+  // GetPeers cadence rides the outbound tick; its 30 s interval is too long
+  // to wait, so the test drives `duePeerExchange` directly against the live
+  // `peerMgr`, with nodeB and the reader both Active.
+  it("duePeerExchange picks a chain-serving peer alone", async () => {
+    const nodeA = new NetNode(makeConfig(), validators);
+    nodes.push(nodeA);
+    await nodeA.start();
+
+    const addrA = nodeTcpAddress(nodeA);
+    const nodeB = new NetNode(makeConfig({ bootstrapPeers: [addrA] }), validators);
+    nodes.push(nodeB);
+    await nodeB.start();
+
+    const reader = await makeReaderLibp2p(MAGIC_TESTNET);
+    hosts.push(reader);
+    await runReaderHandshake(reader, addrA, MAGIC_TESTNET);
+    await sleep(2_000);
+
+    // control: both are held (the reader as a reader, nodeB as a peer).
+    expect(nodeA.getConnectedReaders()).toContain(reader.peerId.toString());
+    expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+
+    // last: duePeerExchange picks the chain-serving peer alone.
+    const peerMgr = (nodeA as unknown as { peerMgr: import('../src/peer-mgr.js').PeerManager }).peerMgr;
+    const due = duePeerExchange(peerMgr, new Map(), Date.now());
+    expect(due).toEqual([nodeB.peerId()]);
+  }, TIMEOUT);
+
+  // Case 9 — the outbound `maxPeers` close. nodeB (maxPeers 1) dials nodeA
+  // first; its second dial (to nodeC) is driven manually so a tick's 30 s
+  // isn't in the way.
+  it('an outbound chain-serving peer past maxPeers is closed', async () => {
+    const nodeA = new NetNode(makeConfig(), validators);
+    nodes.push(nodeA);
+    await nodeA.start();
+
+    const nodeC = new NetNode(makeConfig(), validators);
+    nodes.push(nodeC);
+    await nodeC.start();
+
+    const addrA = nodeTcpAddress(nodeA);
+    const addrC = nodeTcpAddress(nodeC);
+    const nodeB = new NetNode(
+      makeConfig({ maxPeers: 1, minPeers: 1, bootstrapPeers: [addrA] }),
+      validators,
+    );
+    nodes.push(nodeB);
+    await nodeB.start();
+    await sleep(2_000);
+
+    // control: nodeB holds nodeA as its one chain-serving peer.
+    expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+
+    // Drive a second outbound dial by hand.
+    const internals = nodeB as unknown as {
+      dialAndHandshake: (addr: string, source: 'seed' | 'candidate') => Promise<boolean>;
+    };
+    const ok = await internals.dialAndHandshake(addrC, 'candidate');
+
+    // last: the outbound handshake with nodeC was closed past maxPeers.
+    expect(ok).toBe(false);
+    expect(nodeB.getConnectedPeers()).toHaveLength(1);
+    expect(nodeB.getConnectedPeers()).not.toContain(nodeC.peerId());
+  }, TIMEOUT);
+
+  // Case 10 — `requestPostBodies` refuses a peer that does not declare
+  // `MSG_MODIFIER_REQUEST`. A reader's capability list is empty, so the
+  // caller's list being stale (naming a reader) is refused before any sync
+  // stream opens. The guard is defensive: the normal caller picks from
+  // `getConnectedPeers`, which excludes readers (NET_INTERFACE → Readers →
+  // "A peer is asked for a code only if it declares it").
+  it('requestPostBodies refuses a reader', async () => {
+    const nodeA = new NetNode(makeConfig(), validators);
+    nodes.push(nodeA);
+    await nodeA.start();
+
+    const reader = await makeReaderLibp2p(MAGIC_TESTNET);
+    hosts.push(reader);
+    const readerStreams = registerSyncStreamCounter(reader);
+    const addrA = nodeTcpAddress(nodeA);
+    await runReaderHandshake(reader, addrA, MAGIC_TESTNET);
+    await sleep(500);
+
+    const readerId = reader.peerId.toString();
+    // control: the reader is Active.
+    expect(nodeA.getConnectedReaders()).toContain(readerId);
+
+    // last: the request answers empty and opens no sync stream.
+    const fakeHash = new Uint8Array(32);
+    const got = await nodeA.requestPostBodies([{ id: 'aa'.repeat(32), contentHash: fakeHash }], readerId);
+    expect(got).toEqual([]);
+    expect(readerStreams.count()).toBe(0);
   }, TIMEOUT);
 
   // Case 7 — "A chain-serving peer past `maxPeers` is closed." Plain `it`:
