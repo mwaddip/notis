@@ -1116,24 +1116,14 @@ export class NetNode {
         // "Every connection this node dialled carries its handshake,
         // whoever within the node dialled it": libp2p opens outbound
         // connections on the node's behalf outside the dial funnel — a
-        // relay reservation, a DHT query, AutoNAT's dial-back. The open
-        // hook runs the outbound handshake on every one as it opens.
-        // `ensureOutboundAdmission` is idempotent on `conn.id`, so the
-        // funnel's own and this one are the same handshake, never two.
-        //
-        // Scheduled through `setImmediate` so the funnel's own continuation
-        // of `await libp2p.dial(...)` — which runs its self-check and
-        // banned-check and only then claims the admission — runs first:
-        // the funnel's claim wins for a funnel dial, this one wins for a
-        // service dial (relay reservation, DHT, AutoNAT) that no funnel
-        // claims. `setImmediate` is unref'd so a late-firing admission
-        // never holds the process open.
+        // relay reservation, a DHT query, AutoNAT's dial-back. Whichever
+        // reaches the connection first — this open hook, or the funnel's
+        // own continuation of `await libp2p.dial(...)` — runs the handshake
+        // through `ensureOutboundAdmission`, and the other awaits that one.
+        // The admission carries its own self-check and banned-check, so
+        // correctness is not tied to which side claims first.
         if (direction === 'outbound' && typeof conn?.id === 'string') {
-          const im = setImmediate(() => {
-            if (this.outboundAdmissions.has(conn.id)) return;
-            void this.ensureOutboundAdmission(conn);
-          });
-          im.unref();
+          void this.ensureOutboundAdmission(conn);
         }
       });
 
@@ -1527,14 +1517,13 @@ export class NetNode {
     }
 
     // NET_INTERFACE → "A banned peer's handshake is refused unread": a
-    // dial that resolved to a banned peer is closed with the dialled
-    // address joining the peer's ban. The funnel's own check at
-    // `dialAndHandshake` covers a funnel dial; this one covers a service
-    // dial libp2p opens outside the funnel.
+    // connection that resolved to a banned peer is closed with the
+    // address joining the peer's ban. The one log for this close, on
+    // either path (funnel or service dial), lives here.
     if (this.peerMgr.isBanned(peerId)) {
-      console.log(`[net] outbound admission: banned peer ${peerId} — closing`);
-      await conn.close().catch(() => { /* already gone */ });
       const remoteAddr = conn.remoteAddr?.toString();
+      console.log(`[net] dial resolved to banned peer ${peerId} — closing`);
+      await conn.close().catch(() => { /* already gone */ });
       if (remoteAddr) this.peerMgr.extendBan(peerId, remoteAddr);
       return { ok: false };
     }
@@ -1662,14 +1651,14 @@ export class NetNode {
         return false;
       }
 
-      // NET_INTERFACE → "A banned peer's handshake is refused unread": the
-      // funnel checks the peer id the dial resolved to next, before
-      // recordSeedPeer and before the handshake stream opens — closed,
-      // unrecorded, and the dialled address joins the peer's ban (→
-      // "A ban carries every address its peer has been tied to").
+      // NET_INTERFACE → "A banned peer's handshake is refused unread":
+      // the admission's own banned-check closes the connection and logs
+      // the one line. The funnel's duty here is its source-specific
+      // bookkeeping — extend the ban to the dialled address, settle the
+      // seed — with no second log and no redial cooldown (a ban is
+      // stronger than a cooldown).
       const remote = conn.remotePeer.toString();
       if (this.peerMgr.isBanned(remote)) {
-        console.log(`[net] dial to ${addr} resolved to banned peer ${remote} — closing`);
         await conn.close().catch(() => { /* already gone */ });
         this.peerMgr.extendBan(remote, addr);
         if (source === 'seed') this.markBootstrapSettled(addr);
@@ -1751,6 +1740,17 @@ export class NetNode {
           this.markBootstrapSettled(addr);
         }
         else this.peerDb?.forgetSelf(addr);
+        return false;
+      }
+      // NET_INTERFACE → "A banned peer's handshake is refused unread":
+      // the admission's banned-check runs on `connection:open` and closes
+      // the connection before libp2p's dial resolves, so libp2p throws
+      // "Remote closed connection during opening" here. A ban is stronger
+      // than a dial cooldown — the floor keeps listing a banned seed by
+      // design (NET_INTERFACE → Outbound Manager, Floor phase), so an
+      // addr the admission just banned takes no `recordDialResult`.
+      if (this.peerDb?.isBanned(addr) === true) {
+        if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       }
       console.warn(`[net] dial FAILED: ${addr} — ${err?.message ?? err}`);

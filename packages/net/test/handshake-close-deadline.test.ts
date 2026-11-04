@@ -21,6 +21,7 @@ import type { PeerDb } from '../src/peerdb.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 import type { OutboundManager } from '../src/outbound-mgr.js';
 import { multiaddr } from '@multiformats/multiaddr';
+import { HANDSHAKE_PROTOCOL } from '../src/sync.js';
 
 // ---------------------------------------------------------------------------
 // NET_INTERFACE → Handshake → "A handshake that does not complete ends its
@@ -304,6 +305,65 @@ describe('a handshaken connection outlives the deadline', () => {
     // Wait past 3 × syncRequestTimeoutMs; the deadline sees a completed
     // connection and does nothing.
     await new Promise((r) => setTimeout(r, 3_000));
+    expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+    expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+  }, 25_000);
+});
+
+describe('a funnel dial runs exactly one handshake on its connection', () => {
+  let nodeA: NetNode | null = null;
+  let nodeB: NetNode | null = null;
+
+  afterEach(async () => {
+    await nodeA?.stop();
+    await nodeB?.stop();
+    nodeA = null;
+    nodeB = null;
+  });
+
+  // NET_INTERFACE → Handshake →
+  // "Every connection this node dialled carries its handshake, whoever within the node dialled it":
+  // the funnel's own and the open hook's are the same handshake — the
+  // ownership mark keyed on the connection id makes whichever side
+  // reaches the connection first run it, and the other waits on that
+  // one. The remote's handler is invoked exactly once per outbound
+  // connection the funnel dialled.
+  it('the remote receives exactly one handshake stream per funnel-dialled connection', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aAddr).toBeTruthy();
+
+    nodeB = new NetNode(makeConfig(), validators);
+    await nodeB.start();
+
+    // Intercept A's inbound handshake handler through the registrar: the
+    // wrapper counts each invocation and delegates to the original. One
+    // handler invocation per inbound handshake stream, so the count
+    // measures the streams the remote received.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const aLibp2p = nodeA.libp2pNode as any;
+    const registrar = aLibp2p.components.registrar;
+    const original = registrar.getHandler(HANDSHAKE_PROTOCOL);
+    let handshakeStreams = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const wrappedHandler = (stream: any, connection: any): any => {
+      handshakeStreams += 1;
+      return original.handler(stream, connection);
+    };
+    await aLibp2p.unhandle(HANDSHAKE_PROTOCOL);
+    await aLibp2p.handle(HANDSHAKE_PROTOCOL, wrappedHandler, original.options);
+
+    // B dials A through B's funnel.
+    const internalsB = nodeB as unknown as Internals;
+    const ok = await internalsB.dialAndHandshake(aAddr!, 'candidate');
+    expect(ok).toBe(true);
+
+    // Give any stray second stream a window to arrive and be counted.
+    await new Promise((r) => setTimeout(r, 500));
+
+    // The remote received exactly one handshake stream per connection.
+    expect(handshakeStreams).toBe(1);
     expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
     expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
   }, 25_000);

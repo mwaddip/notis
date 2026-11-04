@@ -267,3 +267,87 @@ describe('a private NetNode with an unreachable seed starts, then reserves once 
     ).toBe(true);
   }, 30_000);
 });
+
+// NET_INTERFACE → Handshake →
+// "Every connection this node dialled carries its handshake, whoever within the node dialled it":
+// the stage's churn before the fix — a second TCP connection to the relay,
+// opened by libp2p outside the funnel (a relay reservation retry, a DHT
+// query, an AutoNAT dial-back), carried no handshake and died at the
+// deadline, taking the reservation riding it with it. The fix runs the
+// outbound handshake on every such connection; its reservation then holds
+// past two deadlines.
+
+describe('a private NetNode\'s service-opened connection to the relay stands past two deadlines', () => {
+  let nodes: NetNode[] = [];
+  let dirs: string[] = [];
+
+  afterEach(async () => {
+    for (const n of nodes) { try { await n.stop(); } catch { /* already stopped */ } }
+    for (const d of dirs) { try { rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ } }
+    nodes = []; dirs = [];
+  });
+
+  it('a second TCP connection libp2p opens to the relay handshakes and outlives two deadlines', async () => {
+    // A short `syncRequestTimeoutMs` makes two deadlines fit in the test
+    // (`HANDSHAKE_DEADLINE_FACTOR` × 1 000 ms = 3 s per deadline, so two
+    // deadlines in 6 s and the suite still inside its 30 s timeout).
+    const relayDir = mkdtempSync(join(tmpdir(), 'net-mesh-service-dial-relay-'));
+    dirs.push(relayDir);
+    const relay = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      bootstrapPeers: [],
+      syncRequestTimeoutMs: 1_000,
+      mesh: publicMeshOn(relayDir),
+    }), validators);
+    await relay.start();
+    nodes.push(relay);
+    const relayLibp2p = (relay as unknown as { libp2p: Libp2p }).libp2p;
+    const relayPeerId = relayLibp2p.peerId.toString();
+    const relayAddr = await waitFor(
+      () => relayLibp2p.getMultiaddrs().map((a) => a.toString()).find((s) => /\/tcp\/\d+\/p2p\//.test(s)),
+      5_000,
+      "relay's TCP multiaddr with /p2p/",
+    );
+
+    const dir = mkdtempSync(join(tmpdir(), 'net-mesh-service-dial-priv-'));
+    dirs.push(dir);
+    // The private node starts with no bootstrap peers, so the funnel
+    // never dials the relay. The only path from the private node to the
+    // relay is the direct libp2p dial below — a service dial, the shape
+    // of a relay reservation retry's own `transportManager.listen`.
+    const priv = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      bootstrapPeers: [],
+      syncRequestTimeoutMs: 1_000,
+      mesh: privateMeshOn(dir),
+    }), validators);
+    await priv.start();
+    nodes.push(priv);
+    const privLibp2p = (priv as unknown as { libp2p: Libp2p }).libp2p;
+
+    // Service dial — directly through libp2p, bypassing the funnel. Open
+    // hook runs the outbound handshake on the resulting connection.
+    const { multiaddr: toMultiaddr } = await import('@multiformats/multiaddr');
+    await privLibp2p.dial(toMultiaddr(relayAddr));
+
+    // The handshake completes under the deadline: the relay lists the
+    // private node Active.
+    await waitFor(
+      () => (relay.getConnectedPeers().includes(privLibp2p.peerId.toString()) ? true : null),
+      5_000,
+      'handshake completes — relay lists private Active',
+    );
+
+    // Wait past two handshake deadlines (2 × 3 × syncRequestTimeoutMs =
+    // 6 s). The deadline closes only a connection whose handshake truly
+    // failed, so the TCP connection the service dial opened stands.
+    await new Promise((r) => setTimeout(r, 7_000));
+    const stillConnected = privLibp2p.getConnections()
+      .filter((c) => c.remotePeer.toString() === relayPeerId);
+    expect(stillConnected.length,
+      `connection to relay after two deadlines`).toBeGreaterThan(0);
+    expect(relay.getConnectedPeers()).toContain(privLibp2p.peerId.toString());
+  }, 30_000);
+});
