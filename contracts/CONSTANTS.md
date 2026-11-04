@@ -338,12 +338,6 @@ under → Size caps.
 | `MISBEHAVIOR_SCORE` | `100` | the score one `Misbehavior` penalty accrues — five at one instant ban, one more for each decay interval they spread across | policy | one fifth of the ban threshold, and the decay a peer sheds per `PENALTY_DECAY_INTERVAL_MS`, pro rata, so the break-even is one invalid message per interval; none stated for the number | CHOSEN | `NET_INTERFACE → Peer Penalty System` |
 | `TRANSIENT_SCORE` | `50` | the score one `Transient` penalty accrues — half a misbehavior | policy | a compatibility mismatch or a refuted claim weighs half an invalid message; none stated for the number | CHOSEN | `NET_INTERFACE → Peer Penalty System` |
 
-> ⚠ **AHEAD OF CODE (2026-11-04).** the readers' budget (`NET_INTERFACE → Readers`) and the mesh's numbers land with their code, a row
-> each in this table: `MAX_READERS`, argued by a measurement of a held reader's memory and CPU on a node at node02's
-> size; `HANDSHAKE_SLACK`, the connections above `maxPeers + maxReaders` libp2p admits before a handshake names their
-> kind; `WEBRTC_CERT_LIFESPAN_MS`, the WebRTC-direct certificate's lifespan (`MESH_INTERFACE → Transports → "The
-> WebRTC-direct certificate persists"`).
-
 ### node
 
 `packages/node` — its literals, outside the drift test (→ The drift test).

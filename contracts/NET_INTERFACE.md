@@ -551,11 +551,21 @@ goes to a reader. `getConnectedPeers()` answers the chain-serving peers alone �
 every caller of it draw from them — and `getConnectedReaders()` the readers. A reader is in gossip like any peer
 (→ Gossip Topics) and may query this node as any peer may.
 
+**A peer is asked for a code only if it declares it.** The scheduler, the peer exchange and `requestPostBodies` send a
+request to a peer only where its capabilities name the request's code; a caller's peer id that does not is refused
+before a stream opens.
+
+**The peer hooks see chain-serving peers alone.** `onPeerActive` and `onPeerDisconnected` fire for a peer that serves
+the chain and never for a reader — the node's miner readiness and its post-body backfill read them, and a browser tab
+must never stand for a peer there.
+
 **Readers have a budget of their own.** At most `maxReaders` readers are held at once; one past it is closed after its
 handshake. Readers never count toward `maxPeers`, the outbound floor or the fill (→ Outbound Manager), and a reader
 declares no address, so it never enters `PeerDb` or a `Peers` answer. libp2p's connection ceiling is `maxPeers +
 maxReaders + HANDSHAKE_SLACK`, so a connection is counted by the kind its handshake declares; a chain-serving peer past
-`maxPeers` is closed after its handshake as well.
+`maxPeers` is closed after its handshake as well. `HANDSHAKE_SLACK` is 16: the connections libp2p admits above both
+budgets while their handshakes run, each held at most `HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs`. libp2p
+refuses an inbound connection past its ceiling at the upgrade, before any handler runs.
 
 **A peer dialled for chain service that declares none is closed.** An outbound connection whose handshake declares no
 chain service — a reader, or a node whose build declares nothing — is closed after its handshake and counted toward
