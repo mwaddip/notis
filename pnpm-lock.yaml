@@ -146,9 +146,6 @@ importers:
       '@noble/hashes':
         specifier: 2.2.0
         version: 2.2.0
-      '@peculiar/x509':
-        specifier: ^2.2.0
-        version: 2.2.0
       '@types/node':
         specifier: ^24.19.2
         version: 24.19.2
