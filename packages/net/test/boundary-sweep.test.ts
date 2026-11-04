@@ -14,6 +14,7 @@ import {
 import type { ProtocolEra } from '@dagsocial/types';
 import { NetNode } from '../src/node.js';
 import { buildHandshakeFrame } from '../src/handshake.js';
+import { NODE_CAPABILITIES } from '../src/capabilities.js';
 import { PeerDb } from '../src/peerdb.js';
 import { PeerState } from '../src/types.js';
 import type { NetValidators } from '../src/types.js';
@@ -126,7 +127,7 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
       protocolVersion: version,
       nodeName: 'peer',
       chainHeight: 7,
-      capabilities: [],
+      capabilities: [...NODE_CAPABILITIES],
     });
   }
 

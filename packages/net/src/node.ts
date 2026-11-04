@@ -1148,12 +1148,22 @@ export class NetNode {
           // handshake that completes for a peer already Active records and
           // raises nothing.
           const peerServesChain = servesChain(result.peerCapabilities);
+          // NET_INTERFACE → Readers → "A peer dialled for chain service
+          // that declares none is closed": a reader on the dial side, or
+          // a build that declares nothing, is a seed misconfigured. Close
+          // the connection with nothing recorded — no peerDb entry, no
+          // dial cooldown — and the next tick dials another.
+          if (!peerServesChain) {
+            console.log(`[net] outbound handshake with ${remote} declares no chain service — closing`);
+            await conn.close().catch(() => { /* already gone */ });
+            if (source === 'seed') this.markBootstrapSettled(addr);
+            return false;
+          }
           // NET_INTERFACE → Readers — "a chain-serving peer past `maxPeers`
           // is closed after its handshake as well". An outbound that lands
           // past the budget is closed with nothing recorded.
           if (
-            peerServesChain
-            && !this.peerMgr.isPeerActive(remote)
+            !this.peerMgr.isPeerActive(remote)
             && this.getConnectedPeers().length >= this.config.maxPeers
           ) {
             console.log(`[net] outbound handshake with ${remote} past maxPeers — closing`);
@@ -1179,13 +1189,12 @@ export class NetNode {
             });
             // NET_INTERFACE → Readers → "A reader is never asked for chain
             // data": the scheduler and the peerActive handlers fire for a
-            // chain-serving peer alone.
-            if (peerServesChain) {
-              this.syncMachine?.onPeerActive(remote, result.peerHeight, dir);
-              for (const cb of this.peerActiveHandlers) {
-                try { cb(remote, dir); } catch (err) {
-                  console.warn(`[net] peerActive handler error: ${String(err)}`);
-                }
+            // chain-serving peer alone. A non-chain outbound was closed
+            // above, so this path is reached for a chain-serving peer.
+            this.syncMachine?.onPeerActive(remote, result.peerHeight, dir);
+            for (const cb of this.peerActiveHandlers) {
+              try { cb(remote, dir); } catch (err) {
+                console.warn(`[net] peerActive handler error: ${String(err)}`);
               }
             }
           }

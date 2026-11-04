@@ -257,7 +257,7 @@ describe('NET_INTERFACE → Readers', () => {
 
   // Case 4 — "A dialled peer declaring no chain service is closed and not
   // counted."
-  it.fails('a dialled peer declaring no chain service is closed, not counted', async () => {
+  it('a dialled peer declaring no chain service is closed, not counted', async () => {
     // The fake seed is a libp2p host that answers the handshake with its
     // own handshake carrying empty capabilities — a reader's answer.
     const seed = await createLibp2p({
