@@ -229,6 +229,79 @@ describe('mesh — the node endpoint', () => {
     expect(await r.text()).toBe('too big');
   }, 30_000);
 
+  // MESH_INTERFACE → The node endpoint — the endpoint's upstream
+  // `fetch` runs under a deadline the operator names (`MeshConfig.upstreamTimeoutMs`);
+  // on expiry the endpoint aborts the libp2p stream. The server's
+  // `/http/1.1` stream count drops to 0 within the budget; without
+  // the guard it would stay open for the hung upstream's lifetime.
+  it('a hung upstream aborts the mesh stream within upstreamTimeoutMs', async () => {
+    const UPSTREAM_TIMEOUT_MS = 500;
+    const WAIT_BUFFER_MS = 2_000;
+    // A stub that accepts and never answers — the connection stays
+    // open on the loopback TCP, the response is never written.
+    const received: Array<{ method: string; path: string }> = [];
+    const server = createServer((req) => {
+      received.push({ method: req.method ?? '', path: req.url ?? '' });
+      // Intentionally do not write a response.
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    stub = { server, base: `http://127.0.0.1:${port}`, received: received as unknown as Rec[] };
+    dir = mkdtempSync(join(tmpdir(), 'net-endpoint-'));
+    node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+        stateDir: dir,
+        httpBase: stub.base,
+        upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
+        stun: null,
+      },
+    }), validators);
+    await node.start();
+    client = await makeClient();
+    const addr = await firstTcpAddr(node);
+    await client.dial(multiaddr(addr));
+    const srvLibp2p = (node as unknown as { libp2p: Libp2p }).libp2p;
+    const serverPeerId = srvLibp2p.peerId.toString();
+
+    function openHttpStreams(): number {
+      let n = 0;
+      for (const conn of srvLibp2p.getConnections()) {
+        for (const s of conn.streams as Array<{ protocol?: string; timeline?: { close?: number } }>) {
+          if (s.protocol === '/http/1.1' && s.timeline?.close == null) n++;
+        }
+      }
+      return n;
+    }
+
+    // Fire the mesh fetch and let it hang — `@libp2p/http-fetch`'s
+    // `readResponse` waits on `message` / `remoteCloseWrite` events
+    // that a reset does not raise, so the client-side promise is
+    // unreachable here. The server's observable effect is what we
+    // test.
+    const resource = `/p2p/${serverPeerId}/http-path/${encodeURIComponent('tx')}`;
+    void client!.services.http.fetch(resource, { method: 'GET' }).catch(() => undefined);
+
+    // Wait for the server to see one `/http/1.1` stream open.
+    const sawOpenDeadline = Date.now() + WAIT_BUFFER_MS;
+    while (openHttpStreams() === 0 && Date.now() < sawOpenDeadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(openHttpStreams()).toBe(1);
+
+    // Within `upstreamTimeoutMs + a buffer` the endpoint has aborted
+    // and the server's stream count drops to 0.
+    const abortDeadline = Date.now() + UPSTREAM_TIMEOUT_MS + WAIT_BUFFER_MS;
+    while (openHttpStreams() > 0 && Date.now() < abortDeadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(openHttpStreams()).toBe(0);
+  }, 15_000);
+
   it('a POST body at HTTP_BODY_MAX_BYTES is forwarded byte for byte', async () => {
     const { meshFetch } = await bringUp((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });

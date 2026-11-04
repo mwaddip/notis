@@ -8,7 +8,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { X509Certificate } from 'node:crypto';
+import { Key } from 'interface-datastore';
 import { generateKeyPair } from '@dagsocial/types';
+import { openMeshDatastore } from '../../src/mesh/state-dir.js';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -84,6 +87,33 @@ describe('mesh — public cases ported from the PoC', () => {
       expect(p).not.toMatch(/\/ipfs\/kad\//);
       expect(p).not.toMatch(/\/kad\//);
     }
+  }, 30_000);
+
+  // MESH_INTERFACE → Transports → "The WebRTC-direct certificate persists"
+  // — the WebRTC-direct certificate's `notAfter` sits well past any
+  // operator horizon, so the certhash an anchor lists stays steady
+  // across restarts within one release cycle. The guard is
+  // `certificateLifespan: WEBRTC_CERT_LIFESPAN_MS` in
+  // `meshWebRTCDirectTransport`; without it the webrtc default of 14
+  // days applies and the assertion below fails.
+  it('the WebRTC-direct certificate notAfter is well past the operator horizon', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'net-mesh-notafter-'));
+    dirs.push(dir);
+    const node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: meshOn(dir),
+    }), validators);
+    await node.start();
+    nodes.push(node);
+
+    const ds = openMeshDatastore(dir);
+    // `@libp2p/webrtc@7.0.2`'s datastore key for the PEM certificate.
+    const certBytes = await ds.get(new Key('/libp2p/webrtc-direct/certificate'));
+    const cert = new X509Certificate(Buffer.from(certBytes));
+    const notAfterMs = Date.parse(cert.validTo);
+    expect(Number.isFinite(notAfterMs)).toBe(true);
+    expect(notAfterMs).toBeGreaterThan(Date.now() + 25 * 24 * 60 * 60 * 1000);
   }, 30_000);
 
   it('the WebRTC-direct certhash persists across restarts', async () => {

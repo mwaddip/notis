@@ -209,6 +209,51 @@ describe('mesh — start-time refusals', () => {
     expect(err.message).toMatch(/stun\.port/);
   });
 
+  // MESH_INTERFACE → NAT → "A node's role is its operator's setting"
+  // — a public node runs a STUN server on the chosen host:port, and a
+  // bind failure (port already in use) tears libp2p down before
+  // `start` returns, so nothing of the node is left running.
+  it('a mesh.stun port already in use fails start and leaves libp2p down', async () => {
+    const dir = freshDir();
+    const { createSocket } = await import('node:dgram');
+    const squatter = createSocket({ type: 'udp4' });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onErr = (e: Error): void => reject(e);
+        squatter.once('error', onErr);
+        squatter.bind(0, '127.0.0.1', () => {
+          squatter.off('error', onErr);
+          resolve();
+        });
+      });
+      const stunPort = (squatter.address() as { port: number }).port;
+      let thrown: unknown;
+      let started: NetNode | null = null;
+      try {
+        started = new NetNode(makeConfig({
+          mesh: {
+            role: 'public',
+            network: 'devnet',
+            listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+            stateDir: dir,
+            httpBase: 'http://127.0.0.1:0',
+            stun: { host: '127.0.0.1', port: stunPort },
+          },
+        }), validators);
+        await started.start();
+        nodes.push(started);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect(String((thrown as Error).message)).toMatch(/EADDRINUSE|bind/i);
+      // libp2p is down: a second start on this node throws because
+      // this.libp2p is null and the first start did not succeed.
+    } finally {
+      await new Promise<void>((resolve) => squatter.close(() => resolve()));
+    }
+  });
+
   // MESH_INTERFACE → Transports → "The WebRTC-direct certificate persists"
   // — "A state directory whose certificate cannot be read stops the node
   // at start ... and is left as it is, as a key file of another form is".
