@@ -319,6 +319,16 @@ peer opened, or one that has carried a handshake, the funnel opens no handshake 
 it, or the one already run, is that connection's. The funnel counts such a dial connected when its peer is `Active`,
 and otherwise leaves the connection to its deadline.
 
+**Every connection this node dialled carries its handshake, whoever within the node dialled it.** libp2p opens
+outbound connections on the node's behalf outside the dial funnel — a private node's relay reservation, a DHT query,
+AutoNAT's dial-back (→ The mesh). Each is an outbound connection like the funnel's: the node opens its handshake on it
+as it opens, once — the funnel's own and this one are the same handshake, never two — and it lives or ends by the rules
+above and below. A connection none handshakes is closed at its deadline, and a relay reservation riding it is lost with
+it.
+
+> ⚠ **AHEAD OF CODE (2026-11-04).** the handshake on an outbound connection the funnel did not open; such a
+> connection is closed unhandshaken at its deadline until then.
+
 **A peer becomes Active once.** The first handshake that completes for a peer, in either direction, makes it
 `Active` — the PeerDb record its side makes, its version and addresses on the metadata, `onPeerActive`, the
 `SyncInfo` that follows (→ Post-Handshake Routing). A handshake that completes for a peer already `Active` — on a
