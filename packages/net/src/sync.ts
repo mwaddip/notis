@@ -13,7 +13,7 @@ import {
 import { decodeFrame } from './frame.js';
 import { MAX_STREAM_BYTES } from './msg-guards.js';
 
-export const HANDSHAKE_PROTOCOL = '/dagsocial/handshake/1';
+export { HANDSHAKE_PROTOCOL } from './handshake-codec.js';
 export const SYNC_PROTOCOL = '/dagsocial/sync/1';
 
 // ---------------------------------------------------------------------------

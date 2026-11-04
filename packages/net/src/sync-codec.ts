@@ -27,7 +27,7 @@ import {
   writeU8OrThrow,
   writeVlqU,
 } from '@dagsocial/types';
-import type { ByteReader, BlockHeader, OrderingBlock, StructCodec } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock, StructCodec } from '@dagsocial/types';
 import { MAX_HEADER_BYTES, MAX_ORDERING_BLOCK_BYTES } from '@dagsocial/types';
 import {
   isBoundedInt,
@@ -39,43 +39,13 @@ import {
   MAX_INV_IDS,
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
-  MAX_CAPABILITY_ENTRIES,
 } from './msg-guards.js';
 
-// ---------------------------------------------------------------------------
-// Shared read helpers — byte-capped lpUtf8 and count-checked arrays
-// ---------------------------------------------------------------------------
-
-export function readBoundedLpUtf8(r: ByteReader, maxBytes: number, name: string): string {
-  const len = readVlqU(r);
-  if (len > maxBytes) {
-    throw new ReaderError(`${name}: ${len} bytes exceeds ${maxBytes}`, 'out-of-domain');
-  }
-  const bytes = r.readBytes(len);
-  let str: string;
-  try {
-    str = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    throw new ReaderError(`${name}: invalid UTF-8`, 'out-of-domain');
-  }
-  return str;
-}
-
-export function readBoundedCapabilities(r: ByteReader, name: string): number[] {
-  const count = readVlqU(r);
-  if (count > MAX_CAPABILITY_ENTRIES) {
-    throw new ReaderError(`${name}: ${count} capabilities exceeds ${MAX_CAPABILITY_ENTRIES}`, 'array-too-large');
-  }
-  const caps: number[] = [];
-  for (let i = 0; i < count; i++) {
-    const c = readVlqU(r);
-    if (!isBoundedInt(c, MAX_CAPABILITY_CODE)) {
-      throw new ReaderError(`${name}: capability ${c} out of domain`, 'out-of-domain');
-    }
-    caps.push(c);
-  }
-  return caps;
-}
+// The byte-capped lpUtf8 and count-checked capability readers live in
+// `./codec-helpers.js` (browser-safe) and are re-exported here so the
+// stream codecs continue to pick them up at the one import site.
+export { readBoundedLpUtf8, readBoundedCapabilities } from './codec-helpers.js';
+import { readBoundedLpUtf8, readBoundedCapabilities } from './codec-helpers.js';
 
 // ---------------------------------------------------------------------------
 // SyncInfo (2) — NET_INTERFACE → SyncInfo (code 2)

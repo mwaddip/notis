@@ -14,10 +14,7 @@ import { refuseNodeBuiltins } from '../../../packages/web/scripts/refuse-node-bu
 // sits above the repo and resolves undeclared imports, so the plugin's
 // refusal — not the lockfile — is the proof here.
 describe("@dagsocial/net/browser builds without reaching a Node built-in", () => {
-  // AHEAD OF CODE: the browser entry re-exports the Node binding, which
-  // imports `crypto`; refuseNodeBuiltins fails the build. The rule steps in
-  // and the case flips.
-  it.fails('vite build succeeds', async () => {
+  it('vite build succeeds', async () => {
     const outDir = mkdtempSync(join(tmpdir(), 'net-browser-entry-'));
     try {
       await build({
