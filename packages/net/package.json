@@ -42,6 +42,7 @@
     "datastore-core": "^12.0.1",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
+    "vite": "^5.4.0",
     "vitest": "^1.6.0"
   }
 }
