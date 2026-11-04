@@ -5628,7 +5628,7 @@ derived here — for the funnel, the creator and the pipeline's admission (→ D
 
 All config via environment variables with defaults. **Every whole-number setting is read by one reader, and a set
 value it refuses stops the node at load.** `loadConfig` reads `PORT`, `ADMIN_PORT`, `BLOCK_BODY_BUDGET_BYTES`,
-`MAX_MEMPOOL_ENTRIES`, `MAX_PEERS`, `MIN_PEERS`, `PEER_DB_CAP`, `OUTBOUND_REDIAL_COOLDOWN_MS`,
+`MAX_MEMPOOL_ENTRIES`, `MAX_PEERS`, `MAX_READERS`, `MIN_PEERS`, `PEER_DB_CAP`, `OUTBOUND_REDIAL_COOLDOWN_MS`,
 `PENALTY_SCORE_THRESHOLD`, `TEMPORAL_BAN_DURATION_MS`, `PENALTY_DECAY_INTERVAL_MS`, `SYNC_REQUEST_TIMEOUT_MS`,
 `MAX_PROOF_HISTORY`, `PROOF_RETENTION_BLOCKS`, `PROOF_RETENTION_BYTES`, `PROOF_WINDOW_BLOCKS` and `PROOF_WINDOW_NODES`
 through it: decimal digits and nothing else, a safe integer, at or above the setting's floor — 1 for
