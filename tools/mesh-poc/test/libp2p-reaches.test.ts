@@ -24,14 +24,12 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { createServer, type Server as NetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { generateKeyPair } from '@dagsocial/types';
-import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { privateKeyFromRaw } from '@libp2p/crypto/keys';
+import { nodeKeyFromKeyPair } from '@dagsocial/net/browser';
 import {
   attributeAggregateDialErrors,
   createDialProgressRecorder,
   unwrapAggregate,
 } from '../src/client/mesh-client.js';
-import { seedOfSecretKey } from '../src/identity.js';
 
 /**
  * Bind a TCP server on a kernel-chosen loopback port and keep it open
@@ -97,9 +95,7 @@ describe('libp2p-reaches — attribution against real libp2p', () => {
     // One target key — two addresses for the same peer id. libp2p
     // dedups equal addresses, so the two ports differ.
     const kp = generateKeyPair();
-    const seed = seedOfSecretKey(kp.secretKey);
-    const privateKey = privateKeyFromRaw(seed);
-    const targetPeerId = peerIdFromPrivateKey(privateKey).toString();
+    const targetPeerId = nodeKeyFromKeyPair(kp).peerId.toString();
     const addr1 = `/ip4/127.0.0.1/tcp/${port1}/p2p/${targetPeerId}`;
     const addr2 = `/ip4/127.0.0.1/tcp/${port2}/p2p/${targetPeerId}`;
 

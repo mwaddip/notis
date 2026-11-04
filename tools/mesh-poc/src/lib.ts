@@ -2,12 +2,21 @@
 // Browser-safe exports only; anything that reads a file is kept out of this
 // module's reach (`MESH_INTERFACE → Place in the workspace`).
 
-export { MeshKeyError, nodeKeyFromKeyPair, peerIdFromNotisId, notisIdFromPeerId } from './identity.js';
-export type { NodeKey } from './identity.js';
+// MESH_INTERFACE → Place in the workspace — "`@dagsocial/net/browser`
+// is the one copy": identity, the mesh URL, the mesh fetch, BlockCheck
+// and the gossip rules are read from it. `src/lib.ts` carries only the
+// re-exports external callers reach.
+export {
+  MeshKeyError,
+  nodeKeyFromKeyPair,
+  peerIdFromNotisId,
+  notisIdFromPeerId,
+} from '@dagsocial/net/browser';
+export type { NodeKey } from '@dagsocial/net/browser';
 
-export { MeshUrlError, meshBaseUrl, parseMeshUrl } from './mesh-url.js';
+export { MeshUrlError, meshBaseUrl, parseMeshUrl } from '@dagsocial/net/browser';
 
-export { MeshFetchError, meshFetch, meshFetchOverConnection } from './http-fetch.js';
+export { MeshFetchError, meshFetch, meshFetchOverConnection } from '@dagsocial/net/browser';
 
 export { MeshConfigError, assertNoDns } from './config.js';
 
@@ -32,8 +41,12 @@ export type {
   NodeEntry,
 } from './client/node-list.js';
 
-export { BlockCheck } from './block-check.js';
-export type { BlockVerdict, BlockCheckContext } from './block-check.js';
+export { BlockCheck } from '@dagsocial/net/browser';
+export type {
+  BlockVerdict,
+  BlockValidators,
+  BlockCheckContext,
+} from '@dagsocial/net/browser';
 
 export { headerFromJson } from './client/header-json.js';
 

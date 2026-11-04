@@ -10,8 +10,18 @@
 import { describe, expect, it } from 'vitest';
 // eslint-disable-next-line import/extensions
 import { badBlockBytes, scoresLine, buildResponderFrame } from '../stage/hostile-gossip.mjs';
-import { BlockCheck } from '../src/block-check.js';
+import { BlockCheck } from '@dagsocial/net/browser';
+import type { BlockValidators } from '@dagsocial/net/browser';
 import { profileFor, PROTOCOL_VERSION } from '@dagsocial/types';
+import {
+  blockHash,
+  verifyHeaderFieldDomains,
+  verifyOrderingBlockPoW,
+  verifyOrderingBlockStructure,
+  verifyProtocolVersion,
+  verifyUtxoTxRoot,
+  verifyValidatorSignature,
+} from '@dagsocial/validation';
 import {
   decodeFrame,
   decodeHandshakeBody,
@@ -19,6 +29,19 @@ import {
   servesChain,
   MAGIC_DEVNET,
 } from '@dagsocial/net';
+
+// NET_INTERFACE → The browser entry — BlockCheck's one copy of
+// Stage 1's checks. The validators are `@dagsocial/validation`'s
+// functions, as the client passes them.
+const validators: BlockValidators = {
+  verifyHeaderFieldDomains,
+  verifyProtocolVersion,
+  verifyOrderingBlockPoW,
+  verifyValidatorSignature,
+  verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
+  blockHash,
+};
 
 describe('badBlockBytes — the publisher\'s block', () => {
   it('is a Uint8Array under MAX_ORDERING_BLOCK_BYTES', () => {
@@ -30,8 +53,9 @@ describe('badBlockBytes — the publisher\'s block', () => {
   it('BlockCheck.check reads it as reject with lie: true', () => {
     const bytes = badBlockBytes(1);
     const profile = profileFor('devnet');
-    const check = new BlockCheck({
-      profile,
+    const check = new BlockCheck(validators, {
+      schedule: profile.protocolVersionSchedule,
+      floorBits: profile.orderingBlockPowTargetFloorBits,
       scheduledTargetBits: () => null,
       standing: () => null,
       nowMs: () => Date.now(),
@@ -62,8 +86,9 @@ describe('badBlockBytes — the publisher\'s block', () => {
   it('BlockCheck.check reads badBlockBytes(2) as reject with lie: true (every counter is a lie)', () => {
     const bytes = badBlockBytes(2);
     const profile = profileFor('devnet');
-    const check = new BlockCheck({
-      profile,
+    const check = new BlockCheck(validators, {
+      schedule: profile.protocolVersionSchedule,
+      floorBits: profile.orderingBlockPowTargetFloorBits,
       scheduledTargetBits: () => null,
       standing: () => null,
       nowMs: () => Date.now(),

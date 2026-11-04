@@ -20,8 +20,6 @@ import { tcp } from '@libp2p/tcp';
 import { noise } from '@libp2p/noise';
 import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
-import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { privateKeyFromRaw } from '@libp2p/crypto/keys';
 import { bytesToHex, generateKeyPair, profileFor } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
 import {
@@ -31,7 +29,7 @@ import {
   type MeshClient,
 } from '../src/client/mesh-client.js';
 import { MeshConfigError } from '../src/config.js';
-import { peerIdFromNotisId, seedOfSecretKey } from '../src/identity.js';
+import { peerIdFromNotisId, nodeKeyFromKeyPair } from '@dagsocial/net/browser';
 import { NetNode } from '@dagsocial/net';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { chainUpstream, chainResolve, type ChainUpstream } from './helpers/chain-harness.js';
@@ -160,8 +158,7 @@ describe('clientDenyDialMultiaddr — libp2p calls it with the full dial multiad
 
     // A valid-but-unresponsive target key.
     const kp = generateKeyPair();
-    const privateKey = privateKeyFromRaw(seedOfSecretKey(kp.secretKey));
-    const peerId = peerIdFromPrivateKey(privateKey);
+    const { peerId } = nodeKeyFromKeyPair(kp);
     const addr = `/ip4/127.0.0.1/tcp/9999/p2p/${peerId.toString()}`;
 
     const recorder = createDialProgressRecorder();

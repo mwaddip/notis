@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { profileFor, generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
-import { nodeKeyFromKeyPair } from '../src/identity.js';
+import { nodeKeyFromKeyPair } from '@dagsocial/net/browser';
 import { stunServersFor } from '../src/client/stun-list.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import type { NodeEntry, NodeStatus } from '../src/client/node-list.js';

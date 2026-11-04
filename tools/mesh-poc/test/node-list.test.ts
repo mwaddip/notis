@@ -13,7 +13,7 @@ import {
   type FailureKind,
   type LieEvidence,
 } from '../src/client/node-list.js';
-import { MeshKeyError } from '../src/identity.js';
+import { MeshKeyError } from '@dagsocial/net/browser';
 import { RETRY_BASE_MS, RETRY_CAP_MS } from '../src/protocols.js';
 
 const idA = 'a'.repeat(64);

@@ -18,7 +18,7 @@ import {
 import type { BlockHeader, NetworkProfile, NetworkType, OrderingBlock } from '@dagsocial/types';
 import { asertTargetBits, blockHash } from '@dagsocial/validation';
 import { verifierProfile } from '@dagsocial/nipopow-client';
-import { blockTopic } from '../src/gossip-rules.js';
+import { gossipTopics } from '@dagsocial/net/browser';
 import { NetNode } from '@dagsocial/net';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
@@ -1559,7 +1559,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(client.state().tip?.height).toBe(K + 1);
 
     // Gossipsub mesh with A so the inside-resolve publish propagates.
-    const TOPIC = blockTopic(MAGIC_DEVNET);
+    const TOPIC = gossipTopics(MAGIC_DEVNET).orderingBlock;
     await vi.waitFor(() => {
       expect(pubsubOf(client.libp2p).getMeshPeers(TOPIC))
         .toContain(a.libp2p.peerId.toString());

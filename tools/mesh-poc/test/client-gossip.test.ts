@@ -1,6 +1,6 @@
 // MESH_INTERFACE → Block gossip — the client runs gossipsub on
-// `gossipsubOptions(magic)`, subscribes to `blockTopic` and runs
-// net's Stage 1 over every message as a `BlockCheck`. On accept it
+// `gossipsubOptions(magic, topics)`, subscribes to the ordering-block
+// topic and runs net's Stage 1 over every message as a `BlockCheck`. On accept it
 // forwards the message (traffic.forwarded + 1), and either extends
 // its chain (`extended` → state.tip moves) or triggers an immediate
 // check (`fork`, `gap`). A reject with a lie by the propagation
@@ -36,7 +36,7 @@ import {
   verifyOrderingBlockPoW,
 } from '@dagsocial/validation';
 import { verifierProfile } from '@dagsocial/nipopow-client';
-import { blockTopic } from '../src/gossip-rules.js';
+import { gossipTopics } from '@dagsocial/net/browser';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { lieTarget, startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import type { BlockVerdict } from '@dagsocial/net/browser';
@@ -46,7 +46,7 @@ import { makeLinkedChain, makeBlockAt } from './helpers/devnet-block.js';
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 const K = 5;
 const MAGIC = MAGIC_DEVNET;
-const TOPIC = blockTopic(MAGIC);
+const TOPIC = gossipTopics(MAGIC).orderingBlock;
 const MESH_WAIT_MS = 60_000;
 
 interface Started { mesh: NetMeshNode; id: string; webrtcAddr: string; up: ChainUpstream; dir: string; }

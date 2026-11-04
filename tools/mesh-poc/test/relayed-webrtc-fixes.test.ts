@@ -97,7 +97,7 @@ vi.mock('../stage/lib/measure.mjs', async (importOriginal) => {
 });
 
 import { classifyConnectionAddr, decorateEntries, pickConnectionForLabel } from '../src/client/mesh-client.js';
-import { peerIdFromNotisId } from '../src/identity.js';
+import { peerIdFromNotisId } from '@dagsocial/net/browser';
 import type { Connection } from '@libp2p/interface';
 import type { NodeEntry } from '../src/client/node-list.js';
 import { verdictIceServers, verdictS2Priv1, verdictS2Priv2 } from '../stage/lib/verdicts.mjs';
