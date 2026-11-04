@@ -42,16 +42,14 @@ import {
   decodeFrame,
   decodeHandshakeBody,
   gossipTopics,
-  gossipsubOptions,
   loadNodeKey,
   READER_CAPABILITIES,
   MAX_HANDSHAKE_FRAME_BYTES,
 } from '@dagsocial/net';
-// The one function here from the browser entry: a KeyPair → NodeKey
-// helper that computes peer id and notisId. Node-safe (no DOM, no
-// Web API), and keeps the publisher out of `@dagsocial/net`'s node
-// index — the node entry carries no identity helpers of its own.
-import { nodeKeyFromKeyPair } from '@dagsocial/net/browser';
+// From the browser entry: `gossipsubOptions`, and a KeyPair → NodeKey
+// helper that computes peer id and notisId. Both are Node-safe (no DOM,
+// no Web API); the node entry exports neither.
+import { gossipsubOptions, nodeKeyFromKeyPair } from '@dagsocial/net/browser';
 
 const PUBLISH_INTERVAL_MS = 2_000;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
