@@ -19,6 +19,7 @@ const base = {
   bootstrapPeers: [],
   listenAddrs: '/ip4/0.0.0.0/tcp/0',
   maxPeers: 10,
+  maxReaders: 100,
   penaltyScoreThreshold: 500,
   temporalBanDurationMs: 3_600_000,
   penaltyDecayIntervalMs: 120_000,
@@ -53,5 +54,21 @@ describe('NetConfig requires nodeKey', () => {
       outboundRedialCooldownMs: 60_000,
     };
     expect(missingNodeKey.maxPeers).toBe(10);
+  });
+});
+
+// NET_INTERFACE → Readers → "Readers have a budget of their own": maxReaders
+// is required; a literal that leaves it out does not satisfy NetConfig.
+describe('NetConfig requires maxReaders', () => {
+  it('tsc catches a literal that leaves maxReaders out', () => {
+    const { maxReaders: _ignored, ...withoutMaxReaders } = base;
+    // @ts-expect-error maxReaders is required
+    const missingMaxReaders: NetConfig = {
+      ...withoutMaxReaders,
+      minPeers: 3,
+      peerDbCap: 1_000,
+      outboundRedialCooldownMs: 60_000,
+    };
+    expect(missingMaxReaders.maxPeers).toBe(10);
   });
 });

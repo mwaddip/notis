@@ -36,6 +36,7 @@ import { makeConfig as makeBaseConfig } from './helpers.js';
 function makeConfig(): NetConfig {
   return makeBaseConfig({
     maxPeers: 8,
+    maxReaders: 100,
     listenAddrs: '/ip4/127.0.0.1/tcp/0',
     syncRequestTimeoutMs: 30_000,
   });

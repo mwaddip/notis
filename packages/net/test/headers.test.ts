@@ -859,6 +859,7 @@ const registrationConfig: NetConfig = {
   bootstrapPeers: [],
   listenAddrs: '/ip4/0.0.0.0/tcp/0',
   maxPeers: 10,
+  maxReaders: 100,
   minPeers: 3,
   peerDbCap: 100,
   outboundRedialCooldownMs: 60_000,

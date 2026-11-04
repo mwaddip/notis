@@ -1796,6 +1796,24 @@ export class NetNode {
   }
 
   /**
+   * NET_INTERFACE → API → Node Lifecycle → `getConnectedReaders`: the peer
+   * ids of the Active readers (NET_INTERFACE → Readers).
+   */
+  getConnectedReaders(): string[] {
+    return [];
+  }
+
+  /**
+   * NET_INTERFACE → API → Node Lifecycle → `peerCapabilities`: the
+   * capabilities an Active peer's handshake declared; `null` for a peer
+   * not Active.
+   */
+  peerCapabilities(peerId: string): readonly number[] | null {
+    void peerId;
+    return null;
+  }
+
+  /**
    * The node reports each applied tip — every successful apply and the tip a
    * reorg leaves (NET_INTERFACE → API → Node Lifecycle). When the era at the
    * next height rises above the era in force, the boundary sweep drops every

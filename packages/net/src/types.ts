@@ -33,6 +33,13 @@ export interface Peer {
   multiaddrs: string[];
   protocols: string[];
   connectedAt: number;
+  /**
+   * NET_INTERFACE → Readers → "A peer's capabilities say what it serves". The
+   * declared codes a peer's handshake carries; absent until the handshake
+   * completes, `[]` for a reader (NET_INTERFACE → Readers →
+   * "a reader declares `READER_CAPABILITIES`, none").
+   */
+  capabilities?: readonly number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +150,9 @@ export interface NetConfig {
   bootstrapPeers: string[];
   listenAddrs: string;
   maxPeers: number;
+  // NET_INTERFACE → Readers → "Readers have a budget of their own": at most
+  // this many readers are held at once.
+  maxReaders: number;
   // All three required — net holds no default (NET_INTERFACE → Outbound Manager).
   minPeers: number;
   peerDbCap: number;
