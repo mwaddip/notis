@@ -180,10 +180,10 @@ describe('NAT routers drop unsolicited inbound on the outside interface', () => 
 // --- WebRTC-direct names no ICE server ------------------------------------
 
 describe('WebRTC-direct names no ICE server; the relayed WebRTC path keeps STUN', () => {
-  // NET_INTERFACE → The browser entry — "`readerLibp2pOptions` is the
-  // libp2p options a reader hands to `createLibp2p`"; the mesh node
-  // still builds its own transports, so the two source regexes below
-  // are the client's `readerLibp2pOptions` call and the mesh node's
+  // NET_INTERFACE → The browser entry — the client takes its libp2p
+  // options from `readerLibp2pOptions`; the mesh node still builds
+  // its own transports, so the two source regexes below are the
+  // client's `readerLibp2pOptions` call and the mesh node's
   // `webRTCDirect`/`webRTC` calls.
 
   it('the client builds its libp2p from readerLibp2pOptions', () => {

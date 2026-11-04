@@ -121,8 +121,9 @@ describe('mesh-client — the reader handshake', () => {
     await client.check();
     const entry = client.state().nodes.find((e) => e.notisId === n.id);
     expect(entry, 'anchor entry exists').toBeTruthy();
-    // MESH_INTERFACE → Block gossip → "A node whose handshake fails
-    // is retry, the handshake named, never a lie".
+    // MESH_INTERFACE → Block gossip → "A client is a reader of every
+    // node it holds a connection to" — a failed handshake is retry,
+    // the handshake named, never a lie.
     expect(entry!.status).toBe('retry');
     expect(entry!.lastFailure?.message ?? '').toMatch(/^handshake:/);
   }, 60_000);
