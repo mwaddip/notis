@@ -9,6 +9,11 @@ overrides:
   qs@<6.16.0: ^6.16.0
   proxy-addr@<2.0.8: ^2.0.8
 
+patchedDependencies:
+  '@libp2p/webrtc@7.0.2':
+    hash: 2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24
+    path: patches/@libp2p__webrtc@7.0.2.patch
+
 importers:
 
   .: {}
@@ -94,7 +99,7 @@ importers:
         version: 11.0.32
       '@libp2p/webrtc':
         specifier: 7.0.2
-        version: 7.0.2
+        version: 7.0.2(patch_hash=2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24)
       '@libp2p/yamux':
         specifier: ^8.0.0
         version: 8.0.7
@@ -469,7 +474,7 @@ importers:
         version: 7.4.5
       '@libp2p/webrtc':
         specifier: 7.0.2
-        version: 7.0.2
+        version: 7.0.2(patch_hash=2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24)
       '@libp2p/websockets':
         specifier: 10.1.25
         version: 10.1.25
@@ -4417,7 +4422,7 @@ snapshots:
       uint8arraylist: 3.0.2
       uint8arrays: 6.1.1
 
-  '@libp2p/webrtc@7.0.2':
+  '@libp2p/webrtc@7.0.2(patch_hash=2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24)':
     dependencies:
       '@chainsafe/is-ip': 2.1.0
       '@libp2p/crypto': 5.2.0

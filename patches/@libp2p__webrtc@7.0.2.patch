@@ -1,0 +1,137 @@
+diff --git a/dist/src/private-to-public/transport.js b/dist/src/private-to-public/transport.js
+index 72526c0fb695fabbd7f943ca214aeab9c5866ae5..cc776d85721ef055e7926ba267eb5e6640fe0035 100644
+--- a/dist/src/private-to-public/transport.js
++++ b/dist/src/private-to-public/transport.js
+@@ -129,24 +129,43 @@ export class WebRTCDirectTransport extends WebRTCDirectBrowserTransport {
+             cert = await this.createCertificate(dsKey, keyPair);
+         }
+         // set timeout to renew certificate
+-        let renewTime = (cert.notAfter.getTime() - (this.certInit.certificateRenewalThreshold ?? DEFAULT_CERTIFICATE_RENEWAL_THRESHOLD)) - Date.now();
+-        if (renewTime < 0) {
+-            renewTime = 100;
+-        }
+-        this.log('will renew TLS certificate after %d ms', renewTime);
+-        this.renewCertificateTask = setTimeout(() => {
+-            this.log('renewing TLS certificate');
+-            this.getCertificate(true)
+-                .then(cert => {
+-                this.certificate = cert;
+-                this.emitter.safeDispatchEvent('certificate:renew', {
+-                    detail: cert
+-                });
+-            })
+-                .catch(err => {
+-                this.log.error('could not renew certificate - %e', err);
+-            });
+-        }, renewTime);
++        //
++        // Node clamps a `setTimeout` delay past 2^31 - 1 ms to 1 ms
++        // (`TimeoutOverflowWarning`), firing the handler at once, so a
++        // certificate lifespan past ~24.85 days would renew immediately -
++        // and the new certificate, with the same lifespan, again. Re-arm
++        // the timer in bounded steps until the renewal target is within
++        // one step; each step reassigns `this.renewCertificateTask` so
++        // `stop()`'s `clearTimeout` cancels whichever step is pending.
++        const MAX_SET_TIMEOUT_MS = 2147483647;
++        const renewAt = cert.notAfter.getTime() - (this.certInit.certificateRenewalThreshold ?? DEFAULT_CERTIFICATE_RENEWAL_THRESHOLD);
++        const scheduleRenew = () => {
++            let remaining = renewAt - Date.now();
++            if (remaining < 0) {
++                remaining = 100;
++            }
++            if (remaining <= MAX_SET_TIMEOUT_MS) {
++                this.log('will renew TLS certificate after %d ms', remaining);
++                this.renewCertificateTask = setTimeout(() => {
++                    this.log('renewing TLS certificate');
++                    this.renewCertificateTask = undefined;
++                    this.getCertificate(true)
++                        .then(cert => {
++                        this.certificate = cert;
++                        this.emitter.safeDispatchEvent('certificate:renew', {
++                            detail: cert
++                        });
++                    })
++                        .catch(err => {
++                        this.log.error('could not renew certificate - %e', err);
++                    });
++                }, remaining);
++                return;
++            }
++            this.log('will renew TLS certificate after %d ms (next step in %d ms)', remaining, MAX_SET_TIMEOUT_MS);
++            this.renewCertificateTask = setTimeout(scheduleRenew, MAX_SET_TIMEOUT_MS);
++        };
++        scheduleRenew();
+         return {
+             pem: cert.toString('pem'),
+             certhash: base64url.encode((await sha256.digest(new Uint8Array(cert.rawData))).bytes)
+diff --git a/src/private-to-public/transport.ts b/src/private-to-public/transport.ts
+index 329733188e07a09d7c1b58230227cce53f228236..2098b96977807bcc51b874f1b62f8ea1e8d41e53 100644
+--- a/src/private-to-public/transport.ts
++++ b/src/private-to-public/transport.ts
+@@ -215,27 +215,48 @@ export class WebRTCDirectTransport extends WebRTCDirectBrowserTransport implemen
+     }
+ 
+     // set timeout to renew certificate
+-    let renewTime = (cert.notAfter.getTime() - (this.certInit.certificateRenewalThreshold ?? DEFAULT_CERTIFICATE_RENEWAL_THRESHOLD)) - Date.now()
++    //
++    // Node clamps a `setTimeout` delay past 2^31 - 1 ms to 1 ms
++    // (`TimeoutOverflowWarning`), firing the handler at once, so a
++    // certificate lifespan past ~24.85 days would renew immediately -
++    // and the new certificate, with the same lifespan, again. Re-arm
++    // the timer in bounded steps until the renewal target is within
++    // one step; each step reassigns `this.renewCertificateTask` so
++    // `stop()`'s `clearTimeout` cancels whichever step is pending.
++    const MAX_SET_TIMEOUT_MS = 2_147_483_647
++    const renewAt = cert.notAfter.getTime() - (this.certInit.certificateRenewalThreshold ?? DEFAULT_CERTIFICATE_RENEWAL_THRESHOLD)
++
++    const scheduleRenew = (): void => {
++      let remaining = renewAt - Date.now()
++
++      if (remaining < 0) {
++        remaining = 100
++      }
++
++      if (remaining <= MAX_SET_TIMEOUT_MS) {
++        this.log('will renew TLS certificate after %d ms', remaining)
++        this.renewCertificateTask = setTimeout(() => {
++          this.log('renewing TLS certificate')
++          this.renewCertificateTask = undefined
++          this.getCertificate(true)
++            .then(cert => {
++              this.certificate = cert
++              this.emitter.safeDispatchEvent('certificate:renew', {
++                detail: cert
++              })
++            })
++            .catch(err => {
++              this.log.error('could not renew certificate - %e', err)
++            })
++        }, remaining)
++        return
++      }
+ 
+-    if (renewTime < 0) {
+-      renewTime = 100
++      this.log('will renew TLS certificate after %d ms (next step in %d ms)', remaining, MAX_SET_TIMEOUT_MS)
++      this.renewCertificateTask = setTimeout(scheduleRenew, MAX_SET_TIMEOUT_MS)
+     }
+ 
+-    this.log('will renew TLS certificate after %d ms', renewTime)
+-
+-    this.renewCertificateTask = setTimeout(() => {
+-      this.log('renewing TLS certificate')
+-      this.getCertificate(true)
+-        .then(cert => {
+-          this.certificate = cert
+-          this.emitter.safeDispatchEvent('certificate:renew', {
+-            detail: cert
+-          })
+-        })
+-        .catch(err => {
+-          this.log.error('could not renew certificate - %e', err)
+-        })
+-    }, renewTime)
++    scheduleRenew()
+ 
+     return {
+       pem: cert.toString('pem'),

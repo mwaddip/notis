@@ -124,7 +124,7 @@ function buildTransport(components: Components, lifespan = WEBRTC_CERT_LIFESPAN_
 }
 
 describe('@libp2p/webrtc — the WebRTC-direct certificate renewal timer, patched', () => {
-  it.fails(
+  it(
     '1. a certificate past Node\'s timer limit is not renewed at start',
     async () => {
       // Real timers. Node's own `setTimeout` clamps a delay past
@@ -154,10 +154,9 @@ describe('@libp2p/webrtc — the WebRTC-direct certificate renewal timer, patche
 
       await transport.stop();
     },
-    30000,
   );
 
-  it.fails(
+  it(
     '2. the certificate renews once, at notAfter − renewalThreshold',
     async () => {
       vi.useFakeTimers();
@@ -209,7 +208,6 @@ describe('@libp2p/webrtc — the WebRTC-direct certificate renewal timer, patche
         vi.useRealTimers();
       }
     },
-    30000,
   );
 
   it('3. a stored long-lived certificate loads and keeps its hash across a restart', async () => {

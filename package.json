@@ -13,6 +13,9 @@
       "body-parser@<1.20.9": "^1.20.9",
       "qs@<6.16.0": "^6.16.0",
       "proxy-addr@<2.0.8": "^2.0.8"
+    },
+    "patchedDependencies": {
+      "@libp2p/webrtc@7.0.2": "patches/@libp2p__webrtc@7.0.2.patch"
     }
   }
 }
