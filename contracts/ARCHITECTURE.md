@@ -2126,7 +2126,7 @@ no object check compares against it and no producer stamps it.
   compute is `@dagsocial/types`' `hash32`**, over `@noble/hashes` — one implementation for the node and the browser
   (`TYPES_INTERFACE → The protocol hash`; the packages: → Package boundaries). Node-only code hashes with
   `node:crypto`'s `createHash('blake2b512')`, which answers the same bytes: the node's network, name and holder record
-  keys, the miner script (`MINING_INTERFACE → Miner Script`) and the e2e suite's own miner and
+  keys, net's frame checksum on its Node entry, the miner script (`MINING_INTERFACE → Miner Script`) and the e2e suite's own miner and
   test identities
 - Signatures: raw Ed25519 (64 bytes). **Two encodings carry a signature, and base64 is not one of
   them:** raw bytes in the positional encodings (all consensus structures), and **lowercase hex**
@@ -2582,12 +2582,12 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   a compile error; `@dagsocial/consensus`' suite builds `applyBlock` for a browser and runs it with browser globals
   alone (`CONSENSUS_INTERFACE → Tests`). A test running under Node proves none of it — Node supplies both.
 - **`@dagsocial/net` has two entries.** `@dagsocial/net` runs on Node.js — TCP, the file-backed datastore, STUN, the
-  ACME client; **`@dagsocial/net/browser` runs in the browser as written** — the handshake codec and the frame checksum
-  through `hash32`, the gossip rules, `BlockCheck`, the reader's handshake, libp2p options and mesh fetch
+  ACME client; **`@dagsocial/net/browser` runs in the browser as written** — the handshake codec with its frame
+  checksum through `hash32` (`NET_INTERFACE → The browser entry`), the gossip rules, `BlockCheck`, the reader's handshake, libp2p options and mesh fetch
   (`NET_INTERFACE → The browser entry`) — held by its own `tsconfig.browser.json` and by a build of it that refuses any
   Node built-in.
 
-> ⚠ **AHEAD OF CODE (2026-11-04).** `./browser`; `net` is Node.js alone, and the frame checksum `node:crypto`'s, until then.
+> ⚠ **AHEAD OF CODE (2026-11-04).** `./browser`; `net` is Node.js alone until then.
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in

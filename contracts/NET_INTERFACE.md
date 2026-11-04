@@ -1667,11 +1667,14 @@ the gossip rules (`gossipTopics`, `gossipMessageId`, `GOSSIP_SEEN_WINDOW_MS`, `g
 ordering-block topic's checks of → Stage 1 — the one copy, which the node's own validator calls; the handshake codec,
 `NODE_CAPABILITIES`, `READER_CAPABILITIES` and `servesChain`; and the reader's side — `readerHandshake`,
 `readerLibp2pOptions`, `meshFetch` and `meshFetchOverConnection` (`GET` and `POST`), the mesh URL and the key's two
-spellings (`MESH_INTERFACE → Identity`). The frame checksum is `hash32` (`TYPES_INTERFACE → The protocol hash`), so the
-codec is the same code on both sides.
+spellings (`MESH_INTERFACE → Identity`). **The frame codec is one code with its checksum handed in**: the Node entry
+hands it `node:crypto`'s `createHash('blake2b512')`, the browser entry `@dagsocial/types`' `hash32` — the same 32 bytes
+(`TYPES_INTERFACE → The protocol hash`), held equal by a case. The node frames block-sized answers, where `hash32` costs
+some 23 times `createHash` (8 MiB: 173 ms against 7.4 ms, measured 2026-11-04 on Node 24); a browser frames handshakes
+alone, under 1 KB.
 
-> ⚠ **AHEAD OF CODE (2026-11-04).** `./browser`, `BlockCheck` in `net` and the checksum through `hash32`; the frame
-> checksum is `node:crypto`'s `createHash('blake2b512')` and the client holds its own copies until then.
+> ⚠ **AHEAD OF CODE (2026-11-04).** `./browser`, `BlockCheck` in `net` and the codec with its checksum handed in;
+> the client holds its own copies until then.
 
 **A broadcast that sends nothing still resolves.** Each publishes on the node's own topic for its
 payload. Before `start()`, with no peer on the topic, or with the bytes already seen on the topic inside
