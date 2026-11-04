@@ -9,7 +9,7 @@
 
 import 'reflect-metadata';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as x509 from '@peculiar/x509';
@@ -131,5 +131,28 @@ describe('acmeSource — account URL persistence', () => {
       acmeCalls.constructorOpts[0]?.accountUrl,
       'second client is constructed with accountUrl',
     ).toBe('https://acme.test/account/42');
+  });
+
+  // `MESH_INTERFACE → The IP certificate` — "the two keys mode
+  // `0600`". The account key and the cert+key file land under
+  // `<stateDir>/acme/` with world-unreadable permissions. The
+  // account URL rides alongside.
+  it('writes account.key, account-url.txt and wss-cert.json mode 0600', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'net-acme-modes-'));
+    dirs.push(stateDir);
+    const src = acmeSource({
+      directoryUrl: 'https://acme.test/dir',
+      ip: '127.0.0.1',
+      stateDir,
+      challengePort: 0,
+    });
+
+    await src.obtain();
+    const acmeDir = join(stateDir, 'acme');
+    for (const name of ['account.key', 'account-url.txt', 'wss-cert.json']) {
+      const p = join(acmeDir, name);
+      const mode = statSync(p).mode & 0o777;
+      expect(mode, `${name} mode is 0600`).toBe(0o600);
+    }
   });
 });
