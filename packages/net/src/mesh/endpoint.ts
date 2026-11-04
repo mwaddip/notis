@@ -10,6 +10,7 @@
 // service (`MESH_INTERFACE → Place in the workspace`).
 
 import type { WebServer } from '@libp2p/http';
+import type { HeaderInfo } from '@libp2p/http-utils';
 import {
   responseToStream,
   Response as HttpResponse,
@@ -38,13 +39,6 @@ export function meshEndpoint(
           signal: AbortSignal.timeout(upstreamTimeoutMs),
         };
         if (method === 'POST') {
-          // Read the request body straight off the libp2p stream, bounded
-          // by `content-length`. `@libp2p/http-utils@2.0.6`'s
-          // `streamToRequest` wraps the body as a WHATWG ReadableStream,
-          // but a Request's body must be consumed to read it — and
-          // consuming before the client's body bytes have arrived yields
-          // zero. Reading directly off the libp2p stream iterator avoids
-          // the wrapper's timing.
           const cl = info.headers.get('content-length');
           const bytes = cl == null ? NaN : Number.parseInt(cl, 10);
           if (!Number.isFinite(bytes) || bytes < 0) {
@@ -52,7 +46,7 @@ export function meshEndpoint(
             await stream.close().catch(() => undefined);
             return;
           }
-          const body = await readBoundedBody(stream, bytes);
+          const body = await readBody(info, stream, bytes);
           // A Blob wraps the bytes so Node's fetch reads a known-length
           // body; a plain Uint8Array is not a `BodyInit` in the DOM
           // lib's types. The slice copies into a fresh `ArrayBuffer`
@@ -104,17 +98,38 @@ export function meshEndpoint(
 }
 
 /**
- * Read `expected` bytes off the libp2p stream through its `'message'`
- * event (the same shape `readHeaders` uses, which plays nicely with
- * the stream's internal readBuffer). Any bytes past `expected` are
- * pushed back onto the stream so the next reader (none, in a
- * one-request-one-stream world) does not lose them.
+ * Read the request body. `@libp2p/http-utils@2.0.6`'s `readHeaders`
+ * runs its HTTPParser with only `kOnHeadersComplete` set — its default
+ * `kOnBody` is a no-op, and when a single incoming buffer carries
+ * headers *and* body, the parser's `BODY_SIZED` state consumes the
+ * body bytes through that no-op and `parser.execute` returns the full
+ * buffer length. The pushback branch `read < buf.byteLength` never
+ * fires, so the body bytes never land back on the stream's read
+ * buffer. The same bytes are reachable through `info.raw` — the
+ * `Uint8ArrayList` `earlyData` that `readHeaders` appends to after
+ * every `execute` call, which `HeaderInfo.raw` references. Any
+ * content-length not already in `info.raw` comes off the stream's
+ * `'message'` events as usual.
  */
-async function readBoundedBody(
+async function readBody(
+  info: HeaderInfo,
   stream: unknown,
-  expected: number,
+  bytes: number,
 ): Promise<Uint8Array> {
-  if (expected === 0) return new Uint8Array();
+  if (bytes === 0) return new Uint8Array();
+  const out = new Uint8Array(bytes);
+  let n = 0;
+  // The parser-eaten tail of `info.raw` is everything after the
+  // `\r\n\r\n` headers terminator.
+  const raw = info.raw;
+  const headerEnd = findHeadersEnd(raw);
+  const fromRawLen = Math.min(bytes, raw.byteLength - headerEnd);
+  if (fromRawLen > 0) {
+    out.set(raw.subarray(headerEnd, headerEnd + fromRawLen), 0);
+    n = fromRawLen;
+  }
+  if (n === bytes) return out;
+  // Read the remainder straight off the stream's `'message'` events.
   const s = stream as {
     addEventListener(
       type: string,
@@ -122,20 +137,17 @@ async function readBoundedBody(
     ): void;
     removeEventListener(type: string, cb: unknown): void;
     push(bytes: Uint8Array): void;
-    onRemoteCloseRead?: unknown;
   };
   return new Promise<Uint8Array>((resolve, reject) => {
-    const out = new Uint8Array(expected);
-    let n = 0;
     let settled = false;
     const onMessage = (ev: { data: { subarray(start?: number, end?: number): Uint8Array } }): void => {
       if (settled) return;
       const buf = ev.data.subarray();
-      const need = expected - n;
+      const need = bytes - n;
       if (buf.byteLength <= need) {
         out.set(buf, n);
         n += buf.byteLength;
-        if (n === expected) {
+        if (n === bytes) {
           settled = true;
           s.removeEventListener('message', onMessage);
           s.removeEventListener('end', onEnd);
@@ -144,7 +156,7 @@ async function readBoundedBody(
         }
       } else {
         out.set(buf.subarray(0, need), n);
-        n = expected;
+        n = bytes;
         settled = true;
         s.removeEventListener('message', onMessage);
         s.removeEventListener('end', onEnd);
@@ -159,10 +171,31 @@ async function readBoundedBody(
       s.removeEventListener('message', onMessage);
       s.removeEventListener('end', onEnd);
       s.removeEventListener('close', onEnd);
-      reject(new Error(`request body ended at ${n} of ${expected} bytes`));
+      reject(new Error(`request body ended at ${n} of ${bytes} bytes`));
     };
     s.addEventListener('message', onMessage);
     s.addEventListener('end', onEnd);
     s.addEventListener('close', onEnd);
   });
 }
+
+/**
+ * Find the offset of the first byte past the `\r\n\r\n` headers
+ * terminator in `raw`. The HTTPParser only sets `kOnHeadersComplete`
+ * after it has consumed the terminator, so `raw` always contains it.
+ */
+function findHeadersEnd(raw: {
+  byteLength: number;
+  indexOf(search: Uint8Array): number;
+}): number {
+  const idx = raw.indexOf(CRLF_CRLF);
+  if (idx < 0) {
+    // A `readHeaders` that returned without the terminator is a
+    // library invariant break — treat `info.raw` as containing only
+    // headers so body reading falls through to the stream.
+    return raw.byteLength;
+  }
+  return idx + CRLF_CRLF.byteLength;
+}
+
+const CRLF_CRLF = new Uint8Array([13, 10, 13, 10]);

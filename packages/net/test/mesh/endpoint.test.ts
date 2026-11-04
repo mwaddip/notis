@@ -3,7 +3,10 @@
 // own public HTTP API on loopback. Any other method answers 405. The
 // endpoint is transport-blind: the libp2p stream carries any payload
 // shape its underlying transport can carry. These cases use TCP for
-// simplicity (the mesh node also runs TCP beside WebRTC-direct).
+// simplicity (the mesh node also runs TCP beside WebRTC-direct) and
+// drive requests through `services.http.fetch` — the same
+// `@libp2p/http-fetch` path a browser uses, headers and body sent
+// back-to-back from the client's `Promise.all`.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -48,7 +51,7 @@ const validators: NetValidators = {
   verifyPostBody,
 };
 
-type Rec = { method: string; path: string; contentType: string | null; body: string };
+type Rec = { method: string; path: string; contentType: string | null; body: Buffer };
 
 interface Stub {
   server: Server;
@@ -59,14 +62,14 @@ interface Stub {
 async function makeStub(handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<Stub> {
   const received: Rec[] = [];
   const server = createServer((req, res) => {
-    let data = '';
-    req.on('data', (c) => { data += c.toString('utf8'); });
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => { chunks.push(c); });
     req.on('end', () => {
       received.push({
         method: req.method ?? '',
         path: req.url ?? '',
         contentType: req.headers['content-type'] ?? null,
-        body: data,
+        body: Buffer.concat(chunks),
       });
       handler(req, res);
     });
@@ -110,9 +113,13 @@ describe('mesh — the node endpoint', () => {
     client = null; node = null; stub = null; dir = null;
   });
 
+  // The `FetchInit` type `@libp2p/http` takes is `RequestInit` with a
+  // non-null `signal` — narrow to that shape here.
+  type MeshFetchInit = Omit<RequestInit, 'signal'> & { signal?: AbortSignal };
+
   async function bringUp(
     handler: (req: IncomingMessage, res: ServerResponse) => void,
-  ): Promise<{ meshFetch: (path: string, init?: RequestInit) => Promise<Response> }> {
+  ): Promise<{ meshFetch: (path: string, init?: MeshFetchInit) => Promise<Response> }> {
     stub = await makeStub(handler);
     dir = mkdtempSync(join(tmpdir(), 'net-endpoint-'));
     node = new NetNode(makeConfig({
@@ -134,79 +141,16 @@ describe('mesh — the node endpoint', () => {
     const serverPeerId = libp2p.peerId.toString();
     const c = client!;
     return {
-      async meshFetch(path: string, init?: RequestInit): Promise<Response> {
-        // Drive the endpoint over a raw libp2p stream to the `/http/1.1`
-        // protocol: write a fully-formed HTTP/1.1 request, read the
-        // response, parse it. `@libp2p/http@2.0.6`'s client-side
-        // `services.http.fetch` runs its body send over a code path
-        // whose stream delivery the server's `@libp2p/http-utils`
-        // `readHeaders` does not line up with, so a POST hangs before
-        // the body message lands on the server. The raw path exercises
-        // the endpoint contract directly.
-        const method = init?.method ?? 'GET';
-        const bodyStr = init?.body == null
-          ? ''
-          : (typeof init.body === 'string' ? init.body : new TextDecoder().decode(init.body as Uint8Array));
-        const rawHeaders: string[] = [];
-        rawHeaders.push(`${method} ${path} HTTP/1.1`);
-        rawHeaders.push('host: mesh');
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const h = new Headers(init?.headers as any);
-        const ctIn = h.get('content-type');
-        if (ctIn) rawHeaders.push(`content-type: ${ctIn}`);
-        rawHeaders.push(`content-length: ${bodyStr.length}`);
-        const reqBytes = new TextEncoder().encode(rawHeaders.join('\r\n') + '\r\n\r\n' + bodyStr);
-        const connMgr = (c as unknown as {
-          components: { connectionManager: { openConnection(a: unknown): Promise<unknown> } };
-        }).components.connectionManager;
-        const conn = await connMgr.openConnection(multiaddr(`/p2p/${serverPeerId}`)) as {
-          newStream(p: string): Promise<unknown>;
-        };
-        const stream = await conn.newStream('/http/1.1') as {
-          send(b: Uint8Array): boolean;
-          close(opts?: { signal?: AbortSignal }): Promise<void>;
-          addEventListener(t: string, cb: (ev: { data: { subarray(): Uint8Array } }) => void): void;
-          removeEventListener(t: string, cb: unknown): void;
-        };
-        return new Promise<Response>((resolve, reject) => {
-          const chunks: Uint8Array[] = [];
-          const onMessage = (ev: { data: { subarray(): Uint8Array } }): void => {
-            chunks.push(ev.data.subarray());
-          };
-          const onEnd = (): void => {
-            cleanup();
-            const all = Buffer.concat(chunks);
-            // Split headers from body
-            const sep = all.indexOf(Buffer.from('\r\n\r\n'));
-            if (sep < 0) {
-              reject(new Error('response has no header terminator'));
-              return;
-            }
-            const headerText = all.subarray(0, sep).toString('utf8');
-            const body = all.subarray(sep + 4);
-            const [statusLine, ...headerLines] = headerText.split('\r\n');
-            const m = /^HTTP\/1\.1 (\d{3})/.exec(statusLine ?? '');
-            const status = m ? Number(m[1]) : 0;
-            const respHeaders = new Headers();
-            for (const line of headerLines) {
-              const i = line.indexOf(':');
-              if (i > 0) respHeaders.set(line.slice(0, i).trim().toLowerCase(), line.slice(i + 1).trim());
-            }
-            resolve(new Response(body, { status, headers: respHeaders }));
-          };
-          function cleanup(): void {
-            stream.removeEventListener('message', onMessage);
-            stream.removeEventListener('end', onEnd);
-            stream.removeEventListener('close', onEnd);
-            stream.removeEventListener('remoteCloseWrite', onEnd);
-          }
-          stream.addEventListener('message', onMessage);
-          stream.addEventListener('end', onEnd);
-          stream.addEventListener('close', onEnd);
-          stream.addEventListener('remoteCloseWrite', onEnd);
-          stream.send(reqBytes);
-          void stream.close();
-        });
+      async meshFetch(path: string, init?: MeshFetchInit): Promise<Response> {
+        // `services.http.fetch` wraps `@libp2p/http-fetch`'s `fetch`,
+        // which runs `Promise.all([readResponse, sendRequest])` —
+        // the browser's write path. The `/http-path/…` multiaddr
+        // tuple's value carries the path with its leading slash
+        // stripped (`@libp2p/http-utils`' `toResource` writes it that
+        // way), and `@libp2p/http`'s `sendRequest` prepends it with
+        // one slash as it builds the HTTP request line.
+        const resource = `/p2p/${serverPeerId}/http-path/${encodeURIComponent(path.slice(1))}`;
+        return await c.services.http.fetch(resource, init);
       },
     };
   }
@@ -225,24 +169,19 @@ describe('mesh — the node endpoint', () => {
     expect(stub!.received[0]!.path).toBe('/blocks/current');
   }, 30_000);
 
-  // POST paths: the endpoint's server-side body read works against the
-  // stream's `'message'` event — but a POST that drives the full
-  // `services.http.fetch` path is held open by an unresolved pair of
-  // promises in `@libp2p/http-fetch@4.0.4`'s `fetch`, which closes the
-  // write side before the server's body read lands. These cases exercise
-  // the endpoint's POST intent (the rule the brief names) and skip for
-  // now until a client driver that lets the body land is available in
-  // the test harness.
-  it.skip('a POST with a JSON body is forwarded', async () => {
+  it('a POST with a JSON body is forwarded, body bytes byte for byte', async () => {
     const { meshFetch } = await bringUp((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"accepted":1}');
     });
-    const body = '{"hello":"world"}';
+    const bodyBytes = new TextEncoder().encode('{"hello":"world"}');
     const r = await meshFetch('/tx', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body,
+      // A Blob carries its type through `@libp2p/http-fetch`'s
+      // `normalizeContent` — a string body would be rewritten to
+      // `text/plain; charset="UTF-8"` by `stringBody`
+      // (`@libp2p/http-fetch@4.0.4/dist/src/body/string.js`).
+      body: new Blob([bodyBytes], { type: 'application/json' }),
     });
     expect(r.status).toBe(200);
     expect(await r.text()).toBe('{"accepted":1}');
@@ -250,19 +189,24 @@ describe('mesh — the node endpoint', () => {
     expect(stub!.received[0]!.method).toBe('POST');
     expect(stub!.received[0]!.path).toBe('/tx');
     expect(stub!.received[0]!.contentType).toBe('application/json');
-    expect(stub!.received[0]!.body).toBe(body);
+    expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bodyBytes))).toBe(0);
   }, 30_000);
 
-  it.skip('a POST without a content-type is forwarded without one', async () => {
+  it('a POST without a content-type is forwarded as application/octet-stream', async () => {
     const { meshFetch } = await bringUp((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/plain' });
       res.end('ok');
     });
-    const r = await meshFetch('/raw', { method: 'POST', body: 'opaque' });
+    // A Blob with no type lands on the wire as the default
+    // `application/octet-stream` that `blobBody` sets when the blob
+    // carries no type (`@libp2p/http-fetch@4.0.4/dist/src/body/blob.js`);
+    // the endpoint forwards whatever the client sent.
+    const bytes = new TextEncoder().encode('opaque');
+    const r = await meshFetch('/raw', { method: 'POST', body: new Blob([bytes]) });
     expect(r.status).toBe(200);
     expect(stub!.received).toHaveLength(1);
-    expect(stub!.received[0]!.body).toBe('opaque');
-    expect(stub!.received[0]!.contentType).toBeFalsy();
+    expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bytes))).toBe(0);
+    expect(stub!.received[0]!.contentType).toBe('application/octet-stream');
   }, 30_000);
 
   it('a PUT answers 405 and never calls the upstream', async () => {
@@ -272,13 +216,35 @@ describe('mesh — the node endpoint', () => {
     expect(stub!.received).toHaveLength(0);
   }, 30_000);
 
-  it.skip('an upstream answering 413 forwards the status', async () => {
+  it('an upstream answering 413 forwards the status and body', async () => {
     const { meshFetch } = await bringUp((_req, res) => {
       res.writeHead(413, { 'content-type': 'text/plain' });
       res.end('too big');
     });
-    const r = await meshFetch('/x', { method: 'POST', body: 'x' });
+    const r = await meshFetch('/x', {
+      method: 'POST',
+      body: new Blob([new TextEncoder().encode('x')], { type: 'application/json' }),
+    });
     expect(r.status).toBe(413);
     expect(await r.text()).toBe('too big');
+  }, 30_000);
+
+  it('a POST body at HTTP_BODY_MAX_BYTES is forwarded byte for byte', async () => {
+    const { meshFetch } = await bringUp((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"accepted":1}');
+    });
+    // 64 KiB — the node's `HTTP_BODY_MAX_BYTES`, the largest body a
+    // public write carries.
+    const bodyBytes = new Uint8Array(65_536);
+    for (let i = 0; i < bodyBytes.byteLength; i++) bodyBytes[i] = i & 0xff;
+    const r = await meshFetch('/tx', {
+      method: 'POST',
+      body: new Blob([bodyBytes], { type: 'application/octet-stream' }),
+    });
+    expect(r.status).toBe(200);
+    expect(stub!.received).toHaveLength(1);
+    expect(stub!.received[0]!.body.byteLength).toBe(bodyBytes.byteLength);
+    expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bodyBytes))).toBe(0);
   }, 30_000);
 });
