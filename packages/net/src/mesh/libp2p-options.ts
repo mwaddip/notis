@@ -4,8 +4,7 @@
 // for a public node), AutoNAT v2, the circuit-relay server (with no
 // default reservation limit), and `@libp2p/http` serving the endpoint.
 // Without `mesh`, nothing of these is added — the plain options stand
-// byte-for-byte as they did (`NET_INTERFACE → The mesh → "Without
-// `mesh`, the options are today's"`).
+// byte-for-byte as they did (`NET_INTERFACE → The mesh`).
 
 import { webRTCDirect } from '@libp2p/webrtc';
 import { autoNATv2 } from '@libp2p/autonat-v2';
@@ -49,7 +48,9 @@ export function meshServices(mesh: MeshConfig, _datastore: Datastore): {
   // relays with no circuit limit; `applyDefaultLimit: false` drops
   // libp2p's default 128 KiB / 2-minute reservation limit.
   return {
-    http: httpService({ server: meshEndpoint(mesh.httpBase) }),
+    http: httpService({
+      server: meshEndpoint(mesh.httpBase, { upstreamTimeoutMs: mesh.upstreamTimeoutMs }),
+    }),
     keychain: keychain(),
     dht: kadDHT({
       protocol: dhtProtocol(mesh.network as MeshNetworkName),
@@ -64,9 +65,9 @@ export function meshServices(mesh: MeshConfig, _datastore: Datastore): {
  * The mesh's transports — WebRTC-direct beside TCP. The empty
  * `iceServers` list disables libp2p's `DEFAULT_ICE_SERVERS` fallback
  * (`@libp2p/webrtc@7.0.2/src/constants.ts:12`); WebRTC-direct to a
- * public address needs none (`MESH_INTERFACE → NAT → "Only the
- * relayed WebRTC path uses STUN"`). The lifespan is pinned past any
- * operator horizon, holding the certhash an anchor lists steady
+ * public address needs none (`MESH_INTERFACE → NAT → "Every STUN
+ * server is a mesh node named by IP"`). The lifespan is pinned past
+ * any operator horizon, holding the certhash an anchor lists steady
  * across restarts (`MESH_INTERFACE → Transports → "The WebRTC-direct
  * certificate persists"`).
  */

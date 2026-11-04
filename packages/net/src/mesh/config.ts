@@ -1,12 +1,12 @@
-// MESH_INTERFACE → The mesh — `MeshConfig` makes a `NetNode` a mesh node.
+// NET_INTERFACE → The mesh — `MeshConfig` makes a `NetNode` a mesh node.
 // This run builds the public role alone; a `role: 'private'` or a `wss`
 // is refused at `start` with `MeshConfigError` naming what is not built
-// yet (`NET_INTERFACE → The mesh → "AHEAD OF CODE"`).
+// yet.
 
 import type { MeshNetworkName } from './constants.js';
 
 /**
- * `MESH_INTERFACE → The mesh` — every refusal here is `MeshConfigError`,
+ * `NET_INTERFACE → The mesh` — every refusal here is `MeshConfigError`,
  * thrown by `start` before any socket opens.
  */
 export class MeshConfigError extends Error {
@@ -23,7 +23,7 @@ export class MeshStateError extends Error {
 }
 
 /**
- * `MESH_INTERFACE → The mesh` — the configuration a mesh node runs
+ * `NET_INTERFACE → The mesh` — the configuration a mesh node runs
  * with. The public role alone is built here; the private role and the
  * secure WebSocket land in later runs.
  */
@@ -57,10 +57,17 @@ export interface MeshConfig {
    */
   readonly httpBase: string;
   /**
-   * `MESH_INTERFACE → NAT` — a public node's STUN server. Absent, the
-   * server binds at the IP of the first `/ip4/.../webrtc-direct` listen
-   * address on `STUN_PORT` (the PoC's `stunSettingFor` rule). Explicit
-   * `null` turns the server off.
+   * `MESH_INTERFACE → The node endpoint` — the deadline the endpoint's
+   * upstream `fetch` runs under; the client learns of the abort at its
+   * own deadline. Absent, `@dagsocial/node-reads`' `REQUEST_TIMEOUT_MS`.
+   */
+  readonly upstreamTimeoutMs?: number;
+  /**
+   * `MESH_INTERFACE → NAT → "A node's role is its operator's setting"`
+   * — a public node runs a STUN server at the IP of its first
+   * WebRTC-direct listen address on `STUN_PORT`, unless its operator
+   * names another or turns it off. Explicit `null` turns the server
+   * off.
    */
   readonly stun?: { host: string; port: number } | null;
   /**
