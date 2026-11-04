@@ -125,12 +125,18 @@ describe('mesh — the node endpoint', () => {
     node = new NetNode(makeConfig({
       nodeKey: generateKeyPair(),
       listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      // `MESH_INTERFACE → NAT → "Every STUN server is a mesh node named
+      // by IP"` — these endpoint cases forward HTTP; STUN is not under
+      // test, so the server is off. `stun: null` keeps the default
+      // `STUN_PORT` (3478) unbound, so this file never races another
+      // mesh case under vitest's forks pool.
       mesh: {
         role: 'public',
         network: 'devnet',
         listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
         stateDir: dir,
         httpBase: stub.base,
+        stun: null,
       },
     }), validators);
     await node.start();

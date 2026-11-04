@@ -43,12 +43,18 @@ const validators: NetValidators = {
 };
 
 function meshFor(stateDir: string): MeshConfig {
+  // `MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by
+  // IP"` — this case tests the state directory, not STUN, so the server
+  // is off. `stun: null` keeps the default `STUN_PORT` (3478) unbound,
+  // so this file never races another mesh case under vitest's forks
+  // pool (`MeshConfig.stun`: `null` encodes "off").
   return {
     role: 'public',
     network: 'devnet',
     listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
     stateDir,
     httpBase: 'http://127.0.0.1:0',
+    stun: null,
   };
 }
 
