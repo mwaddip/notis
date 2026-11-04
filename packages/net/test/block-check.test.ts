@@ -188,6 +188,23 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     });
   });
 
+  it("blockHash null on a valid-domain header → ignore with a fault, not a lie", () => {
+    // NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's" —
+    // `verifyHeaderFieldDomains` answered valid, so a `null` from
+    // `blockHash` is this receiver's own invariant violated, logged and
+    // Ignored with no penalty.
+    const block = makeBlockAt(1, PROTOCOL_VERSION);
+    const raw = encodeOrderingBlock(block);
+    const verdict = new BlockCheck(
+      { ...validators, blockHash: () => null },
+      makeCtx(),
+    ).check(raw);
+    expect(verdict).toEqual({
+      result: 'ignore',
+      fault: expect.stringContaining('blockHash null'),
+    });
+  });
+
   it('scheduledTargetBits null → the schedule is not checked', () => {
     const block = makeBlockAt(1, PROTOCOL_VERSION);
     const raw = encodeOrderingBlock(block);
