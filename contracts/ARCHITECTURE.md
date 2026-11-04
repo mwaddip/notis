@@ -1565,10 +1565,9 @@ chain or owed one:
 | **the mesh** (2026-11-04) | **no committed byte and no consensus verdict** — a node run with `MESH_ROLE` is a mesh node (`MESH_INTERFACE`), and every connection's handshake declares its capabilities (`NET_INTERFACE → Readers`): a node of an earlier build declares none and reads as a reader to an upgraded one, so both boxes are deployed in one window, notis.fun first. On each box: `MESH_ROLE=public` and a WebRTC-direct listen address on `udp/9733` (open already) in `node.env`, `3478/udp` opened for STUN, the state directory `/var/lib/dagsocial/dagsocial.mesh` kept by a wipe as the key file is. The secure WebSocket stays off (nginx holds port 80 on notis.fun). The Windows bundle carries `node-datachannel`'s `win32-x64-msvc` prebuild, proven at the next release's Windows job |
 | **the node key** (2026-11-03) | **no committed byte and no consensus verdict** — a node's libp2p identity persists in its key file (NET_INTERFACE → The node key), and testnet's seed names notis.fun's peer id (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"): a node on this build reaches its seed only where notis.fun answers under that key, so notis.fun deploys first, its key file already on the box at `/var/lib/dagsocial/dagsocial.key`. **Owes no reset** |
 
-**Outstanding against the live node: the mesh**, which owes no reset and deploys onto the running chain, both boxes
-in one window, notis.fun first. Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release, whose block 1 the
-profile pins as `genesisId` (§What varies per network); every reset row is in it, the usernames row owes none, and the
-node key row is deployed (2026-11-03).
+**Outstanding against the live node: nothing.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
+whose block 1 the profile pins as `genesisId` (§What varies per network); every reset row is in it, the usernames
+row owes none, the node key row is deployed (2026-11-03), and so is the mesh row (2026-11-04).
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
