@@ -66,10 +66,9 @@ export function describe() {
  * block refusal (`BlockCheck`'s reject paths), and keep those whose
  * source is not the publisher. **A log file that does not exist throws
  * naming the file** — the step measurements rest on these logs, so a
- * missing log is a stage defect, not an empty answer
- * (the retired `stage/out/<host>/mesh:<host>.log` path passed a vacuous
- * empty list on no file). A log line that does not parse as JSON is
- * skipped; a parsed event whose shape is not `peer_penalised` is
+ * missing log is a stage defect, not an empty answer. A log line that
+ * does not parse as JSON is skipped; a parsed event whose shape is not
+ * `peer_penalised` is
  * skipped; a `peer_penalised` whose detail does not match the
  * ordering-block phrase is skipped (handshake and tx refusals land on
  * the same journal with their own detail strings).

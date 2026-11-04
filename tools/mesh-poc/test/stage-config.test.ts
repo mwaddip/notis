@@ -876,15 +876,13 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance 6 — a later phase or step reads a chain
   // from every honest node AND from each hostile-upstream host (the
   // interposer reads its own node's `/nipopow/proof/*` and
-  // `/blocks/current`). The height gate has to hold the whole set, each
-  // on its own chain: `hostile-invalid` on the honest chain (its
+  // `/blocks/current`). The height gate holds the whole set, each on
+  // its own chain: `hostile-invalid` on the honest chain (its
   // `BOOTSTRAP_PEERS` names the publics); `hostile-malformed` on the
   // pair chain (`BOOTSTRAP_PEERS` names `hostile-lagging` alone, the
-  // pair runs its own chain from genesis). Without them, the live
-  // check in phase 9 lands on a host whose `/blocks/current` the gate
-  // never confirmed — the shape that read `hostile-upstream:hostile-invalid
-  // did not answer http://127.0.0.1:7000/nipopow/proof/24/20` in the
-  // 2026-11-04 stage.
+  // pair runs its own chain from genesis). Without the hostile-upstream
+  // hosts in the gate, the live check in phase 9 would land on a host
+  // whose `/blocks/current` the gate never confirmed.
   it("the height gate names hostile-invalid on the honest chain and hostile-malformed on the pair chain", () => {
     runDryOnce();
     const lines = out.split('\n');
@@ -1251,12 +1249,12 @@ describe('stage up --dry-run', () => {
 
 // MESH_INTERFACE → Acceptance — "each host one devnet `@dagsocial/node` run
 // with a mesh role, a hostile host's lie outside the node it runs". The
-// mesh service collapses into the node: every `[spawn:mesh:*]` goes away,
-// the node reads the mapped `MESH_*` settings (`NODE_INTERFACE →
-// Configuration`), and a hostile host's lie sits outside the node — an
-// interposer in the ns at `127.0.0.1:7000`, an nft `nat output` redirect
-// rule the node's own loopback forward lands on.
-describe('stage up --dry-run — one node per host, no mesh service', () => {
+// dry-run shows one `[spawn:notis:*]` per mesh host and no `[spawn:mesh:*]`
+// line; the node reads the `MESH_*` env (`NODE_INTERFACE → Configuration`);
+// and a hostile host's lie sits outside the node — an interposer in the ns
+// at `127.0.0.1:7000`, an nft `nat output` redirect rule the node's own
+// loopback forward lands on.
+describe('stage up --dry-run — one node per host', () => {
   let out = '';
   function runDryOnce(): void {
     if (out !== '') return;
@@ -1269,10 +1267,9 @@ describe('stage up --dry-run — one node per host, no mesh service', () => {
   }
 
   // NODE_INTERFACE → Configuration → "A mesh node prints its identity line" —
-  // the mesh service's spawn line is retired because the node is the mesh
-  // node. A `[spawn:mesh:*]` line means phase 7 still runs the separate
-  // service.
-  it('no [spawn:mesh:*] line appears — the mesh service collapses into the node', () => {
+  // the node is the mesh node, so phase 7 spawns `notis:<host>` alone and
+  // no separate `[spawn:mesh:*]` line stands beside it.
+  it('no [spawn:mesh:*] line appears — the node is the mesh node', () => {
     runDryOnce();
     // Control: the dry-run produced output and at least one notis spawn.
     expect(out.length, 'stdout non-empty (control)').toBeGreaterThan(0);
@@ -1280,7 +1277,7 @@ describe('stage up --dry-run — one node per host, no mesh service', () => {
     expect(notisLines.length, 'at least one [spawn:notis:*] (control)').toBeGreaterThan(0);
     // The target shape.
     const meshLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
-    expect(meshLines, `mesh service spawns remain: ${meshLines.join('\n')}`).toEqual([]);
+    expect(meshLines, `a [spawn:mesh:*] stands beside the node: ${meshLines.join('\n')}`).toEqual([]);
   }, 30_000);
 
   // NODE_INTERFACE → Configuration — "`MESH_ROLE` … `public` or `private`;

@@ -62,9 +62,9 @@ describe('every mesh host listens on its own segment IP with concrete ports', ()
     });
     expect(res.status, `exit (stderr: ${res.stderr})`).toBe(0);
     const topology = readTopology(TOPOLOGY_PATH);
-    // One node per host now: the node reads the `MESH_*` settings the
-    // mesh service used to. The check runs on every `[spawn:notis:*]`
-    // line that carries `MESH_LISTEN` — the mesh hosts' notis spawns.
+    // One node per host: each node reads its mesh role from `MESH_*`
+    // env. The check runs on every `[spawn:notis:*]` line that carries
+    // `MESH_LISTEN` — the mesh hosts' notis spawns.
     const notisSpawns = res.stdout.split('\n').filter((l) => l.startsWith('[spawn:notis:') && /\bMESH_LISTEN=/.test(l));
     expect(notisSpawns.length, 'at least one notis spawn with MESH_LISTEN').toBeGreaterThan(0);
     const bad: string[] = [];

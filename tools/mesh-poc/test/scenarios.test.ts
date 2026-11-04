@@ -230,8 +230,7 @@ describe('s5 (impersonation)', () => {
     expect(spawnLine!).toContain('/ip4/10.100.0.11/udp/4001/webrtc-direct');
     expect(spawnLine!).toContain('MESH_LISTEN=');
     expect(spawnLine!).toContain('NODE_KEY_PATH=');
-    // The impostor spawns the integrated notis binary, not a mesh
-    // service main.
+    // The impostor spawns the notis binary.
     expect(spawnLine!).toContain('packages/node/dist/index.js');
   });
   it('writeFreshMeshKey writes 48 bytes (PKCS8 Ed25519) and returns a 64-hex notisId', () => {
@@ -329,9 +328,7 @@ describe('s6 (hostile)', () => {
   });
   // MESH_INTERFACE → Block gossip — a missing honest notis.log is a
   // stage defect, not a vacuous answer: `otherRejectSourcesIn` throws
-  // naming the file, so the step records FAIL with that message (the
-  // retired `mesh:<host>.log` path returned an empty list from no
-  // file and passed on nothing).
+  // naming the file, so the step records FAIL with that message.
   it('otherRejectSourcesIn throws naming the file when a honest notis.log is missing', async () => {
     const { mkdtempSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');

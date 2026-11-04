@@ -1,9 +1,9 @@
 // NET_INTERFACE → The mesh — a `NetNode` running a public mesh,
-// shaped for the PoC's client-side cases. The mesh endpoint forwards
-// each GET and POST to `upstream.base`, so the client-side cases drive
-// it with the chain harness and hostile-upstream stubs they hold. The
-// node answers `net`'s reader handshake itself with `NODE_CAPABILITIES`,
-// so cases need no handshake responder on the side.
+// shaped for this package's client-side cases. The mesh endpoint
+// forwards each GET and POST to `upstream.base`, so the cases drive it
+// with the chain harness and hostile-upstream stubs they hold. The node
+// answers `net`'s reader handshake itself with `NODE_CAPABILITIES`, so
+// cases need no handshake responder on the side.
 //
 // `MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by
 // IP"` — these cases never exercise STUN, so `stun: null` keeps
@@ -60,10 +60,10 @@ export interface NetMeshNodeOptions {
 
 /**
  * Start a `NetNode` whose mesh is a public role forwarding to
- * `options.upstream` — the shape the PoC's client-side cases drive
- * against. The returned `webrtcAddr` is the first `/webrtc-direct/`
- * multiaddr `getMultiaddrs` returns, with the node's `/p2p/<peerId>`
- * trailing.
+ * `options.upstream` — the shape this package's client-side cases
+ * drive against. The returned `webrtcAddr` is the first
+ * `/webrtc-direct/` multiaddr `getMultiaddrs` returns, with the node's
+ * `/p2p/<peerId>` trailing.
  */
 export async function startNetPublicMesh(options: NetMeshNodeOptions): Promise<NetMeshNode> {
   const network: NetworkType = options.network ?? 'devnet';

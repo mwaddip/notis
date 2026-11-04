@@ -34,8 +34,7 @@ import { StepRecorder } from '../lib/step-recorder.mjs';
 export const NAME = 's5';
 const TARGET_HOST = 'pub1';
 // MESH_INTERFACE → Acceptance 5 — the stop target is the one integrated
-// `notis:<host>` process that `up.mjs` spawns; the mesh entity is no
-// more.
+// `notis:<host>` process that `up.mjs` spawns.
 const TARGET_NOTIS_DESC = `notis:${TARGET_HOST}`;
 // RFC 8410 PKCS8 Ed25519 private-key wrapper for a 32-byte seed.
 const PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');

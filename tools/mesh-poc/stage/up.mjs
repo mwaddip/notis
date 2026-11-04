@@ -728,12 +728,11 @@ if (dnsLogHost) {
 // -----------------------------------------------------------------------
 
 // NODE_INTERFACE → Configuration → "A mesh node prints its identity line" —
-// one node per host: the node reads the `MESH_*` settings the mesh service
-// used to, mapped onto its own env; its `.mesh` state directory sits beside
-// `DB_PATH`, its mesh endpoint forwards to `http://127.0.0.1:<PORT>`, its
-// identity line is one JSON object on stdout with `{notisId, peerId,
-// multiaddrs, localAddrs}` reprinted on change. `pids.json` keys
-// `notis:<host>` alone — no `mesh:<host>` spawn.
+// one node per host: the node reads its `MESH_*` env for the mesh role; its
+// `.mesh` state directory sits beside `DB_PATH`, its mesh endpoint forwards
+// to `http://127.0.0.1:<PORT>`, its identity line is one JSON object on
+// stdout with `{notisId, peerId, multiaddrs, localAddrs}` reprinted on
+// change. `pids.json` keys `notis:<host>` alone.
 const notisNodeEntry = join(REPO_ROOT, 'packages', 'node', 'dist', 'index.js');
 const minerScript = join(REPO_ROOT, 'packages', 'node', 'scripts', 'miner.mjs');
 const hostileUpstreamScript = join(HERE, 'hostile-upstream.mjs');
@@ -937,14 +936,13 @@ for (const name of serialNotisOrder) {
   }
 }
 
-// Every remaining node seeds from the publics; the publics are now up,
-// so their spawns dial a listener that is live. The publisher host is
-// skipped: its one mesh entity is `hostile-gossip.mjs`, spawned below —
-// nothing on that host needs a chain or an HTTP API, so a Notis node
-// beside the publisher would hold a SECOND identity on one host (two
-// keys, two peer ids, the shape that broke s6 step 3 in 2026-11-04's
-// run — the page config carried one key's notisId under the other key's
-// addresses).
+// Every remaining node seeds from the publics; the publics are up by
+// this point, so their spawns dial a listener that is live. The publisher
+// host is skipped: its one mesh entity is `hostile-gossip.mjs`, spawned
+// below — nothing on that host needs a chain or an HTTP API, so a Notis
+// node beside the publisher would hold a SECOND identity on one host
+// (two keys, two peer ids; the page config entry's `notisId` would be
+// one key's and its addresses the other key's).
 for (const [name, host] of Object.entries(topology.hosts)) {
   if (host.node === undefined) continue;
   if (serialNotisOrder.includes(name)) continue;
@@ -962,8 +960,7 @@ for (const [name, host] of Object.entries(topology.hosts)) {
   const ns = nsOf(name);
   // ONE identity per host — the publisher reads the same `node.key`
   // Phase 4 populated, so `notisIds[name]` (from `node.key`) matches
-  // the peer id in every address this process announces. A second
-  // file name (the retired `mesh.key`) would put two keys on one host.
+  // the peer id in every address this process announces.
   const meshKeyPath = join(OUT_DIR, name, 'node.key');
   const bootstrapAddrs = [];
   for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {

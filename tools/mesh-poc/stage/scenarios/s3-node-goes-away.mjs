@@ -42,8 +42,7 @@ export const NAME = 's3';
 const FW_TABLE = 's3_fw';
 const TARGET_HOST = 'pub1';
 // MESH_INTERFACE → Acceptance 3 — the target per host is the one
-// `notis:<host>` process `stage/up.mjs` spawns, not the retired
-// `mesh:<host>` entity.
+// `notis:<host>` process `stage/up.mjs` spawns.
 const TARGET_NOTIS_DESC = `notis:${TARGET_HOST}`;
 const CHECK_INTERVAL_MS = 30_000;
 const RETRY_WAIT_MS = 2 * CHECK_INTERVAL_MS + 10_000; // 2 checks + slack

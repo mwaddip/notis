@@ -205,10 +205,10 @@ function list(name) {
 }
 
 async function main() {
-  // Handlers stand before the first line a caller can act on
-  // (TRAPS → "A process that prints its identity line before it
-  // registers SIGTERM dies by the default action"). `stopped` and the
-  // signal handlers are installed before any libp2p state exists.
+  // Handlers stand before the first line a caller can act on: a
+  // process that prints its identity line before it registers SIGTERM
+  // dies by the default action. `stopped` and the signal handlers are
+  // installed before any libp2p state exists.
   let node = null;
   let stopped = false;
   let timer = null;
