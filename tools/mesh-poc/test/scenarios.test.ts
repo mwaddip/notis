@@ -216,17 +216,20 @@ describe('s5 (impersonation)', () => {
   it('describe() lists one step', () => {
     expect(s5.describe()).toEqual(['impostor on pub1 address: refused at the link, address dropped, anchor not blacklisted']);
   });
-  it('run({dryRun:true}) prints the stop + impostor spawn with pub1 bind addr', async () => {
+  it('run({dryRun:true}) prints the stop + impostor notis spawn with pub1 bind addr', async () => {
     const r = await s5.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s5');
     expect(r.steps.length).toBe(1);
-    const stopLine = r.faults.find((f) => f.includes('stop-pub1-mesh'));
-    expect(stopLine, 'stop line').toBeDefined();
-    const spawnLine = r.faults.find((f) => f.includes('impostor-mesh'));
+    const stopLine = r.faults.find((f) => f.includes('stop-pub1-notis'));
+    expect(stopLine, 'stop line names the notis target').toBeDefined();
+    const spawnLine = r.faults.find((f) => f.includes('impostor-notis'));
     expect(spawnLine, 'impostor spawn line').toBeDefined();
     expect(spawnLine!).toContain('/ip4/10.100.0.11/udp/4001/webrtc-direct');
     expect(spawnLine!).toContain('MESH_LISTEN=');
-    expect(spawnLine!).toContain('MESH_KEY_PATH=');
+    expect(spawnLine!).toContain('NODE_KEY_PATH=');
+    // The impostor spawns the integrated notis binary, not a mesh
+    // service main.
+    expect(spawnLine!).toContain('packages/node/dist/index.js');
   });
   it('writeFreshMeshKey writes 48 bytes (PKCS8 Ed25519) and returns a 64-hex notisId', () => {
     const { mkdtempSync, rmSync, readFileSync } = require('node:fs');
@@ -280,11 +283,12 @@ describe('s6 (hostile)', () => {
     expect(dels.length, 'one table delete').toBe(1);
   });
   // MESH_INTERFACE → Block gossip → "A refused block is evidence as
-  // `net` weighs it" — `otherRejectSourcesIn` reads each honest mesh
-  // log for rejection lines and keeps those whose source is not the
-  // publisher's peer id. The function is pure; mkdtempSync feeds it
-  // a controlled log tree.
-  it('otherRejectSourcesIn drops rejections sourced from the publisher and keeps every other', async () => {
+  // `net` weighs it" — `otherRejectSourcesIn` reads each honest node's
+  // `stage/out/<host>/notis.log` for JSON `peer_penalised` events whose
+  // detail names an ordering-block refusal (`BlockCheck`'s reject
+  // paths) and keeps those whose source is not the publisher. The
+  // function is pure; mkdtempSync feeds it a controlled log tree.
+  it('otherRejectSourcesIn drops rejections sourced from the publisher and keeps every other (reads notis.log)', async () => {
     const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
@@ -292,14 +296,47 @@ describe('s6 (hostile)', () => {
     try {
       const pubId = '12D3KooWPublisher';
       const browserId = '12D3KooWBrowser';
+      const line = (peerId: string, detail: string): string => JSON.stringify({
+        timestamp: '2026-11-04T00:00:00.000Z',
+        event: 'peer_penalised',
+        level: 'WARN',
+        peer_id: peerId,
+        kind: 'protocol_violation',
+        detail,
+      });
       mkdirSync(join(dir, 'pub1'), { recursive: true });
-      writeFileSync(join(dir, 'pub1', 'mesh:pub1.log'),
-        `[mesh] start\n[mesh] ordering block rejected from ${pubId}: malformed ordering block header: ...\n[mesh] peer:connect\n`);
+      writeFileSync(join(dir, 'pub1', 'notis.log'),
+        `${JSON.stringify({ event: 'server_starting', level: 'INFO' })}\n${line(pubId, 'malformed ordering block header: ReaderError: ...')}\n${JSON.stringify({ event: 'peer_connected', level: 'INFO', peer_id: pubId })}\n`);
       mkdirSync(join(dir, 'pub2'), { recursive: true });
-      writeFileSync(join(dir, 'pub2', 'mesh:pub2.log'),
-        `[mesh] start\n[mesh] ordering block rejected from ${browserId}: malformed ordering block header: ...\n`);
+      // One ordering-block refusal by the browser AND one tx refusal
+      // by the same browser (shares its detail with a handshake path
+      // on a different peer). Only the ordering-block one is kept —
+      // the regex excludes `handshake:` and `malformed tx:` details.
+      writeFileSync(join(dir, 'pub2', 'notis.log'),
+        `${JSON.stringify({ event: 'server_starting', level: 'INFO' })}\n${line(browserId, 'ordering block PoW invalid')}\n${line(browserId, 'malformed tx: ReaderError: ...')}\n${line('12D3KooWOther', 'handshake: unsupported protocol version 0; era 1')}\n`);
+      // priv1 has a notis.log but no peer_penalised events — covered.
+      mkdirSync(join(dir, 'priv1'), { recursive: true });
+      writeFileSync(join(dir, 'priv1', 'notis.log'),
+        `${JSON.stringify({ event: 'server_starting', level: 'INFO' })}\n`);
       const sources = s6.otherRejectSourcesIn(dir, ['pub1', 'pub2', 'priv1'], pubId);
       expect(sources).toEqual([{ host: 'pub2', peerIdString: browserId }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  // MESH_INTERFACE → Block gossip — a missing honest notis.log is a
+  // stage defect, not a vacuous answer: `otherRejectSourcesIn` throws
+  // naming the file, so the step records FAIL with that message (the
+  // retired `mesh:<host>.log` path returned an empty list from no
+  // file and passed on nothing).
+  it('otherRejectSourcesIn throws naming the file when a honest notis.log is missing', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'notismesh-s6-missing-'));
+    try {
+      expect(() => s6.otherRejectSourcesIn(dir, ['pub1'], '12D3KooWPublisher'))
+        .toThrow(/pub1\/notis\.log/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

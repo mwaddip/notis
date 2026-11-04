@@ -37,10 +37,20 @@ import { StepRecorder } from '../lib/step-recorder.mjs';
 export const NAME = 's6';
 const BLOCK_TABLE = 's6_block';
 const NO_ANCHOR_WORDS = 'No anchor reached. Nothing shown here is verified.';
-// MESH_INTERFACE → Block gossip → "A refused block is evidence as
-// `net` weighs it" — honest mesh nodes log a rejected block as
-// `[mesh] ordering block rejected from <peer id>: <detail>`.
-const MESH_REJECT_RE = /\[mesh\] ordering block rejected from ([^:]+):/;
+// MESH_INTERFACE → Block gossip → "A refused block is evidence as `net`
+// weighs it" — the node's journal writes one JSON line per penalty,
+// shape { event: peer_penalised, peer_id, kind, detail }
+// (JOURNAL_EVENTS → peer_penalised; the handler sits in
+// `packages/node/src/index.ts` on `net.onPeerPenalised`, emitted
+// through `packages/node/src/journal.ts` `emitPeerPenalised`).
+// `BlockCheck` builds every ordering-block refusal detail with the
+// phrase `ordering block` in it (`packages/net/src/block-check.ts`'s
+// eight reject paths: malformed header, invalid header, below floor,
+// PoW invalid, validator signature invalid, malformed body, invalid
+// structure, body not committed; a Transient scheduled-target mismatch
+// records no penalty). Handshake and tx penalties never carry the
+// phrase, so matching on it isolates ordering-block refusals.
+const ORDERING_BLOCK_DETAIL_RE = /ordering block/;
 
 export function describe() {
   return [
@@ -51,24 +61,39 @@ export function describe() {
 }
 
 /**
- * MESH_INTERFACE → Block gossip — read every honest mesh log line
- * naming a reject source peer id and keep those whose source is not
- * the publisher. A log file that does not exist contributes no
- * sources; its name reads in the measurement as `missing-log`.
+ * MESH_INTERFACE → Block gossip — read every honest notis-log line
+ * carrying a `peer_penalised` event whose detail names an ordering
+ * block refusal (`BlockCheck`'s reject paths), and keep those whose
+ * source is not the publisher. **A log file that does not exist throws
+ * naming the file** — the step measurements rest on these logs, so a
+ * missing log is a stage defect, not an empty answer
+ * (the retired `stage/out/<host>/mesh:<host>.log` path passed a vacuous
+ * empty list on no file). A log line that does not parse as JSON is
+ * skipped; a parsed event whose shape is not `peer_penalised` is
+ * skipped; a `peer_penalised` whose detail does not match the
+ * ordering-block phrase is skipped (handshake and tx refusals land on
+ * the same journal with their own detail strings).
  */
 export function otherRejectSourcesIn(outDir, honestHosts, publisherPeerIdString) {
   const out = [];
   for (const host of honestHosts) {
-    const logPath = join(outDir, host, `mesh:${host}.log`);
-    if (!existsSync(logPath)) continue;
+    const logPath = join(outDir, host, 'notis.log');
+    if (!existsSync(logPath)) {
+      throw new Error(`s6: honest notis.log missing — ${logPath}`);
+    }
     const body = readFileSync(logPath, 'utf8');
     const lines = body.split('\n');
     for (const line of lines) {
-      const m = MESH_REJECT_RE.exec(line);
-      if (m === null) continue;
-      const source = m[1];
-      if (source === publisherPeerIdString) continue;
-      out.push({ host, peerIdString: source });
+      const trimmed = line.trim();
+      if (trimmed === '' || trimmed[0] !== '{') continue;
+      let event;
+      try { event = JSON.parse(trimmed); } catch { continue; }
+      if (event?.event !== 'peer_penalised') continue;
+      if (typeof event.peer_id !== 'string' || event.peer_id === '') continue;
+      if (typeof event.detail !== 'string') continue;
+      if (!ORDERING_BLOCK_DETAIL_RE.test(event.detail)) continue;
+      if (event.peer_id === publisherPeerIdString) continue;
+      out.push({ host, peerIdString: event.peer_id });
     }
   }
   return out;

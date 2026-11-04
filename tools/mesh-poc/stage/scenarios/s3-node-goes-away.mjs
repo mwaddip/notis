@@ -5,18 +5,22 @@
 // tip — `ok` at the tip, `trailing` one block short."
 //
 // Four sub-steps, in order:
-//   1. stop pub1's mesh node (`kill -TERM` the recorded PID);
+//   1. stop pub1's notis node (`kill -TERM` the recorded PID of
+//      `notis:pub1`; a mesh host carries its mesh functionality inside
+//      the node, NODE_INTERFACE → Configuration);
 //      poll until the client's `state.nodes[pub1].status === 'retry'`
 //      AND, if pub1 was last named by a routed read,
 //      `state.nodeId !== pub1`.
-//   2. restart pub1's mesh node from the recorded `argv` and `env`;
+//   2. restart pub1's notis node from the recorded `argv` and `env`
+//      (it restarts on its own store and its `.mesh` directory,
+//      NODE_INTERFACE → Configuration);
 //      wait until pub1's own `/blocks/current`, read inside its
 //      namespace, is within one block of pub2's; then read the
 //      client's state at the next completed check (`agreement`
 //      changes), and measure `{ nodeId, status, behindBy,
 //      recoveryTimeMs }`.
 //   3. apply the firewall rules in pub1's namespace (`s3_fw`) that
-//      drop UDP/TCP to pub1's mesh listener; poll same as step 1.
+//      drop UDP/TCP to pub1's mesh listener ports; poll same as step 1.
 //   4. remove `s3_fw`; wait same as step 2.
 //
 // Faults are applied inside `run(ctx)` one at a time between the
@@ -37,7 +41,10 @@ import { StepRecorder } from '../lib/step-recorder.mjs';
 export const NAME = 's3';
 const FW_TABLE = 's3_fw';
 const TARGET_HOST = 'pub1';
-const TARGET_MESH_DESC = `mesh:${TARGET_HOST}`;
+// MESH_INTERFACE → Acceptance 3 — the target per host is the one
+// `notis:<host>` process `stage/up.mjs` spawns, not the retired
+// `mesh:<host>` entity.
+const TARGET_NOTIS_DESC = `notis:${TARGET_HOST}`;
 const CHECK_INTERVAL_MS = 30_000;
 const RETRY_WAIT_MS = 2 * CHECK_INTERVAL_MS + 10_000; // 2 checks + slack
 
@@ -103,8 +110,8 @@ export async function run(ctx) {
   const pub1Row = identities?.[TARGET_HOST];
   if (!pub1Row) throw new Error(`s3: identities.json has no ${TARGET_HOST} row`);
   const pub1Id = pub1Row.notisId;
-  const pub1Entry = findPid(ctx.pids?.pids, TARGET_MESH_DESC);
-  if (!pub1Entry) throw new Error(`s3: pids.json has no ${TARGET_MESH_DESC} entry`);
+  const pub1Entry = findPid(ctx.pids?.pids, TARGET_NOTIS_DESC);
+  if (!pub1Entry) throw new Error(`s3: pids.json has no ${TARGET_NOTIS_DESC} entry`);
 
   const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
   const findEntry = (state, id) => state?.nodes?.find((n) => n.notisId === id) ?? null;
@@ -155,7 +162,7 @@ export async function run(ctx) {
       const checksBefore = typeof stateBefore.checks === 'number' ? stateBefore.checks : 0;
       const stopResult = sigterm(pub1Entry.pid);
       pub1Stopped = stopResult.sent;
-      log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM ${pub1Entry.pid}`);
+      log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-notis] kill -TERM ${pub1Entry.pid}`);
       const afterStop = await pollStateUntil(
         `if (v === null) return false;
          let s;
@@ -260,7 +267,7 @@ export async function run(ctx) {
         const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
         pub1Entry.pid = newPid;
       } catch (err) {
-        process.stderr.write(`[s3 teardown] failed to restart ${TARGET_MESH_DESC}: ${err?.message ?? err}\n`);
+        process.stderr.write(`[s3 teardown] failed to restart ${TARGET_NOTIS_DESC}: ${err?.message ?? err}\n`);
       }
     }
     if (firewallApplied) {
