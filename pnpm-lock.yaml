@@ -475,54 +475,30 @@ importers:
       '@dagsocial/validation':
         specifier: workspace:*
         version: link:../../packages/validation
-      '@libp2p/autonat-v2':
-        specifier: 2.1.8
-        version: 2.1.8
       '@libp2p/bootstrap':
         specifier: 12.0.36
         version: 12.0.36
-      '@libp2p/circuit-relay-v2':
-        specifier: 4.2.17
-        version: 4.2.17
       '@libp2p/crypto':
         specifier: 5.2.0
         version: 5.2.0
-      '@libp2p/dcutr':
-        specifier: 3.0.32
-        version: 3.0.32
       '@libp2p/gossipsub':
         specifier: 17.2.1
         version: 17.2.1
-      '@libp2p/http':
-        specifier: 2.0.6
-        version: 2.0.6
       '@libp2p/http-fetch':
         specifier: 4.0.4
         version: 4.0.4
-      '@libp2p/http-utils':
-        specifier: 2.0.6
-        version: 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/identify':
         specifier: 4.1.18
         version: 4.1.18
       '@libp2p/interface':
         specifier: 3.4.0
         version: 3.4.0
-      '@libp2p/kad-dht':
-        specifier: 16.4.9
-        version: 16.4.9
-      '@libp2p/keychain':
-        specifier: 6.1.10
-        version: 6.1.10
       '@libp2p/noise':
         specifier: 17.0.7
         version: 17.0.7
       '@libp2p/peer-id':
         specifier: 6.0.18
         version: 6.0.18
-      '@libp2p/ping':
-        specifier: 3.1.17
-        version: 3.1.17
       '@libp2p/tcp':
         specifier: 11.0.32
         version: 11.0.32
@@ -532,9 +508,6 @@ importers:
       '@libp2p/webrtc':
         specifier: 7.0.2
         version: 7.0.2(patch_hash=2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24)
-      '@libp2p/websockets':
-        specifier: 10.1.25
-        version: 10.1.25
       '@libp2p/yamux':
         specifier: 8.0.7
         version: 8.0.7
@@ -544,12 +517,6 @@ importers:
       '@noble/curves':
         specifier: 2.2.0
         version: 2.2.0
-      acme-client:
-        specifier: ^5.4.0
-        version: 5.4.0
-      datastore-fs:
-        specifier: ^12.0.1
-        version: 12.0.1
       libp2p:
         specifier: 3.5.1
         version: 3.5.1

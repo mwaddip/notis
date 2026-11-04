@@ -113,7 +113,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
 const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
 const SRC_MESH_CLIENT = join(PACKAGE_ROOT, 'src', 'client', 'mesh-client.ts');
-const SRC_MESH_NODE = join(PACKAGE_ROOT, 'src', 'node', 'mesh-node.ts');
 const TOPOLOGY_PATH = join(PACKAGE_ROOT, 'stage', 'topology.json');
 
 // --- NAT routers drop unsolicited inbound ----------------------------------
@@ -206,20 +205,6 @@ describe('WebRTC-direct names no ICE server; the relayed WebRTC path keeps STUN'
     );
   });
 
-  it('the mesh node calls webRTCDirect with an empty iceServers list', () => {
-    const src = readFileSync(SRC_MESH_NODE, 'utf8');
-    expect(
-      src,
-      'webRTCDirect({ rtcConfiguration: { iceServers: [] } })',
-    ).toMatch(/\bwebRTCDirect\s*\(\s*\{\s*rtcConfiguration\s*:\s*\{\s*iceServers\s*:\s*\[\s*\]\s*\}\s*\}\s*\)/);
-  });
-
-  it('a private mesh node passes the configured STUN list to webRTC()', () => {
-    const src = readFileSync(SRC_MESH_NODE, 'utf8');
-    expect(src, 'webRTC() passes stunServers.map(...)').toMatch(
-      /\bwebRTC\s*\(\s*\{\s*rtcConfiguration\s*:\s*\{\s*iceServers\s*:\s*stunServers\.map/,
-    );
-  });
 });
 
 // --- classifyConnectionAddr ------------------------------------------------

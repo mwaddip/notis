@@ -7,7 +7,7 @@
 // responder over net's codec — `HANDSHAKE_PROTOCOL`, `decodeFrame`,
 // `decodeHandshakeBody`, `buildHandshakeFrame`), publishing a malformed
 // ordering block on `gossipTopics(magic).orderingBlock` every
-// `PUBLISH_INTERVAL_MS`. It imports nothing from `src/node/`.
+// `PUBLISH_INTERVAL_MS`.
 //
 // The responder answers a dialling reader's handshake with
 // `READER_CAPABILITIES` so `servesChain(capabilities)` reads false at

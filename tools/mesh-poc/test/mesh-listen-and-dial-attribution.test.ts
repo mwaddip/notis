@@ -24,7 +24,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
 const TOPOLOGY_PATH = join(PACKAGE_ROOT, 'stage', 'topology.json');
 const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
-const SRC_MESH_MAIN = join(PACKAGE_ROOT, 'src', 'node', 'main.ts');
 const SRC_S4 = join(PACKAGE_ROOT, 'stage', 'scenarios', 's4-transport-cut.mjs');
 
 describe('every mesh host listens on its own segment IP with concrete ports', () => {
@@ -92,22 +91,6 @@ describe('a private mesh node reprints its identity line when a /p2p-circuit lan
   // mesh node prints: the client's config.json carried only the
   // loopback address and s2 failed with "AggregateError: All multiaddr
   // dials failed" on both private hosts.
-
-  it('mesh main.ts registers a listener on self:peer:update that reprints the identity line', () => {
-    const src = readFileSync(SRC_MESH_MAIN, 'utf8');
-    // The listener registration lives at the top of a line (no leading
-    // `//` or `/*` comment prefix) — a commented-out line reads the
-    // event's name but does nothing on dispatch. Each source line is
-    // checked rather than the whole file so a comment higher up cannot
-    // satisfy the match.
-    const lines = src.split('\n');
-    const idx = lines.findIndex((l) => /^\s*node\.libp2p\.addEventListener\(['"]self:peer:update['"]/.test(l));
-    expect(idx, 'main.ts has an uncommented addEventListener for self:peer:update').toBeGreaterThanOrEqual(0);
-    // The listener body (within ~40 lines of the registration) writes a
-    // fresh identity line through `writeIdentity`.
-    const window = lines.slice(idx, Math.min(lines.length, idx + 40)).join('\n');
-    expect(window, 'the listener body writes a fresh identity line').toContain('writeIdentity(');
-  });
 
   it('stage:up --dry-run names a wait for each private mesh node\'s /p2p-circuit announcement', () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {

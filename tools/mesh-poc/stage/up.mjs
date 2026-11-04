@@ -198,9 +198,9 @@ async function waitWithTail(description, check, logPath, options) {
 
 /**
  * Read the LATEST JSON identity line from `logPath` that satisfies
- * `predicate(parsed)`. The mesh node (`src/node/main.ts`) writes one
- * line to stdout when it starts listening, and reprints the line on
- * every `self:peer:update` — a public role's listen address verifies,
+ * `predicate(parsed)`. The integrated Notis node writes one JSON
+ * line to stdout when its mesh starts listening, and reprints the line
+ * on every `self:peer:update` — a public role's listen address verifies,
  * a private role's circuit-relay reservation lands. The predicate
  * picks the first line that carries what the stage needs: for a public
  * role, any identity; for a private role, an identity whose

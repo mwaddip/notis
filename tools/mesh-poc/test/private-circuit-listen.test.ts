@@ -13,14 +13,12 @@ import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { readTopology, publicMeshHosts } from '../stage/lib/topology.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
 const TOPOLOGY_PATH = join(PACKAGE_ROOT, 'stage', 'topology.json');
 const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
-const SRC_MESH_NODE = join(PACKAGE_ROOT, 'src', 'node', 'mesh-node.ts');
 
 describe('a private mesh node listens on a /p2p-circuit per public relay it bootstraps from', () => {
   const topology = readTopology(TOPOLOGY_PATH);
@@ -79,14 +77,3 @@ describe('a private mesh node listens on a /p2p-circuit per public relay it boot
   }
 });
 
-describe('mesh-node.ts does not auto-append a bare /p2p-circuit for private role', () => {
-  // The caller (`up.mjs`) supplies specific `/ip4/<relay>/tcp/.../p2p-circuit`
-  // listen addresses per public relay. The auto-append in
-  // `startMeshNode` (previously `if (role === 'private') listen.push('/p2p-circuit')`)
-  // would re-introduce the non-deterministic discovery path, so it must
-  // be gone.
-  it('src/node/mesh-node.ts has no listen.push(\'/p2p-circuit\')', () => {
-    const src = readFileSync(SRC_MESH_NODE, 'utf8');
-    expect(src, 'mesh-node.ts does not auto-push /p2p-circuit').not.toMatch(/listen\.push\(\s*['"]\/p2p-circuit['"]/);
-  });
-});

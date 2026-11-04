@@ -1,10 +1,9 @@
 // NET_INTERFACE → The mesh — a `NetNode` running a public mesh,
 // shaped for the PoC's client-side cases. The mesh endpoint forwards
-// each GET and POST to `upstream.base`, which lets the client-side
-// cases keep the chain harness and hostile-upstream stubs they held
-// against `startMeshNode`. The node answers `net`'s reader handshake
-// itself with `NODE_CAPABILITIES`, so cases need no handshake
-// responder on the side.
+// each GET and POST to `upstream.base`, so the client-side cases drive
+// it with the chain harness and hostile-upstream stubs they hold. The
+// node answers `net`'s reader handshake itself with `NODE_CAPABILITIES`,
+// so cases need no handshake responder on the side.
 //
 // `MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by
 // IP"` — these cases never exercise STUN, so `stun: null` keeps
