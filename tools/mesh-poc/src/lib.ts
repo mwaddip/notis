@@ -2,8 +2,8 @@
 // Browser-safe exports only; anything that reads a file is kept out of this
 // module's reach (`MESH_INTERFACE → Place in the workspace`).
 
-// MESH_INTERFACE → Place in the workspace — "`@dagsocial/net/browser`
-// is the one copy": identity, the mesh URL, the mesh fetch, BlockCheck
+// MESH_INTERFACE → Place in the workspace — the browser half is
+// `@dagsocial/net/browser`, the one copy: identity, the mesh URL, the mesh fetch, BlockCheck
 // and the gossip rules are read from it. `src/lib.ts` carries only the
 // re-exports external callers reach.
 export {
