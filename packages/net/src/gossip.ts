@@ -1,4 +1,5 @@
 import {
+  bytesToHex,
   decodeOrderingBlock,
   decodeTxPacket,
   encodeOrderingBlock,
@@ -249,7 +250,7 @@ export function subscribeTopics(
       // because it is what a caller reaching this gate without a decode would
       // land on, and that failure would otherwise be silent.
       if (tx.post !== undefined) {
-        const author = Buffer.from(tx.post.author).toString('hex');
+        const author = bytesToHex(tx.post.author);
         if (!karmaMembers.has(author)) {
           return TopicValidatorResult.Reject;
         }

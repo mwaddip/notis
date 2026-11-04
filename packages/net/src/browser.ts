@@ -1,11 +1,11 @@
 // NET_INTERFACE → The browser entry — the half a browser runs, imports no
 // Node built-in and reads no Node global; held equal by a build of it that
 // refuses any Node built-in (WEB_INTERFACE → "A Node built-in fails every
-// build"). AHEAD OF CODE: the entry exports the frame codec and the
-// handshake codec through `hash32`, but still exports from `./handshake.js`,
-// which imports `./frame.js` (crypto). The refusal is what
-// `browser-entry.test.ts` asserts its last line on; the entry's
-// handshake-side re-exports move off `./handshake.js` next.
+// build"). The frame codec is parameterized in `./frame-codec.js`; the
+// checksum this entry hands in is `hash32` (TYPES_INTERFACE → The protocol
+// hash → "Truncated BLAKE2b-512, never BLAKE2b-256"), the same 32 bytes
+// the Node entry's `createHash('blake2b512')` answers — so the two entries
+// produce one frame on the wire.
 import { hash32 } from '@dagsocial/types';
 import {
   encodeFrame as encodeFrameWithHash,
@@ -15,10 +15,8 @@ import type { HashFn } from './frame-codec.js';
 import { buildHandshakeFrameWithHash } from './handshake-codec.js';
 import type { HandshakeMsg } from './handshake-codec.js';
 
-// NET_INTERFACE → The browser entry → "The frame codec is one code with its
-// checksum handed in" — the browser's checksum is `hash32`, a fresh HashFn
-// per call so the codec module holds no module-level state
-// (TYPES_INTERFACE → The protocol hash).
+// A fresh HashFn per call so this module holds no state; the cost of the
+// closure is negligible against the hash it wraps.
 function browserHashFn(): HashFn {
   return (data) => hash32(data);
 }
@@ -38,12 +36,15 @@ export function buildHandshakeFrame(magic: number, msg: HandshakeMsg): Uint8Arra
   return buildHandshakeFrameWithHash(magic, msg, browserHashFn());
 }
 
+// NET_INTERFACE → Frame Format — the magics.
 export {
   MAGIC_MAINNET,
   MAGIC_TESTNET,
   MAGIC_DEVNET,
   KNOWN_FRAME_MAGICS,
 } from './frame-codec.js';
+
+// NET_INTERFACE → Handshake.
 export {
   HANDSHAKE_PROTOCOL,
   handshakeCodec,
@@ -56,3 +57,37 @@ export type {
   HandshakeRejection,
   HandshakeResult,
 } from './handshake-codec.js';
+
+// NET_INTERFACE → Gossip Topics.
+export {
+  GOSSIP_SEEN_WINDOW_MS,
+  gossipTopics,
+  gossipMessageId,
+  gossipsubOptions,
+} from './gossip-rules.js';
+export type { GossipTopics, GossipsubOptions } from './gossip-rules.js';
+
+// NET_INTERFACE → The browser entry — BlockCheck is the one copy of the
+// ordering-block topic's checks of NET_INTERFACE → Stage 1.
+export { BlockCheck } from './block-check.js';
+export type {
+  BlockVerdict,
+  BlockValidators,
+  BlockCheckContext,
+} from './block-check.js';
+
+// NET_INTERFACE → Message Codes, NET_INTERFACE → Handshake Body.
+export {
+  MSG_HANDSHAKE,
+  MSG_SYNC_INFO,
+  MSG_MODIFIER_REQUEST,
+  MSG_MODIFIER_RESPONSE,
+  MSG_GET_PEERS,
+  MSG_PEERS,
+  MSG_GET_HEADERS,
+  MSG_HEADERS,
+  MSG_GET_BLOCKS,
+  MSG_BLOCKS,
+  MODIFIER_POST_BODY,
+} from './types.js';
+export { MAX_HANDSHAKE_FRAME_BYTES } from './msg-guards.js';
