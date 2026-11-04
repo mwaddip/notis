@@ -84,6 +84,32 @@ export type {
   BlockCheckContext,
 } from './block-check.js';
 
+// MESH_INTERFACE → Identity — "One key, two spellings". The browser
+// reads these for a mesh URL and for `localAddrsFor`.
+export {
+  peerIdFromNotisId,
+  notisIdFromPeerId,
+  nodeMeshKeyFromKeyPair,
+  MeshKeyError,
+  localAddrsFor,
+} from './mesh/identity.js';
+export type { NodeMeshKey } from './mesh/identity.js';
+// MESH_INTERFACE → Discovery / NAT / The IP certificate — the numbers
+// the client reads (its retry cadence, its STUN port, the certificate
+// lifespan). The register's drift test keys off these; a new number
+// added here is a `contracts/CONSTANTS.md` row (`CLAUDE.md →
+// Platform constraint`).
+export {
+  WEBRTC_CERT_LIFESPAN_MS,
+  STUN_PORT,
+  RETRY_BASE_MS,
+  RETRY_CAP_MS,
+  RELAY_LISTEN_TIMEOUT_MS,
+  CERT_RETRY_MS,
+  dhtProtocol,
+} from './mesh/constants.js';
+export type { MeshNetworkName } from './mesh/constants.js';
+
 // NET_INTERFACE → Message Codes, NET_INTERFACE → Handshake Body.
 export {
   MSG_HANDSHAKE,
