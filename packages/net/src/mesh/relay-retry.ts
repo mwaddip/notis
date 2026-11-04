@@ -37,7 +37,7 @@ export interface RelayRetry {
 export function startRelayRetry(
   node: Libp2p,
   addrString: string,
-  opts: { baseMs: number; capMs: number },
+  opts: { baseMs: number; capMs: number; listenTimeoutMs?: number },
 ): RelayRetry {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -45,6 +45,10 @@ export function startRelayRetry(
   let reserved = false;
 
   const addr = multiaddr(addrString);
+  const listenTimeoutMs =
+    typeof opts.listenTimeoutMs === 'number' && opts.listenTimeoutMs > 0
+      ? opts.listenTimeoutMs
+      : RELAY_LISTEN_TIMEOUT_MS;
 
   const hasReservation = (): boolean => {
     const circuitTail = addrString.slice(0, addrString.indexOf('/p2p-circuit'));
@@ -82,8 +86,8 @@ export function startRelayRetry(
       let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
       const deadlinePromise = new Promise<never>((_, reject) => {
         deadlineTimer = setTimeout(
-          () => reject(new Error(`listen deadline (${RELAY_LISTEN_TIMEOUT_MS} ms)`)),
-          RELAY_LISTEN_TIMEOUT_MS,
+          () => reject(new Error(`listen deadline (${listenTimeoutMs} ms)`)),
+          listenTimeoutMs,
         );
       });
       try {

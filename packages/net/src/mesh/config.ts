@@ -86,6 +86,14 @@ export interface MeshConfig {
   readonly relayRetryBaseMs?: number;
   readonly relayRetryCapMs?: number;
   /**
+   * `MESH_INTERFACE → NAT → "every attempt under `RELAY_LISTEN_TIMEOUT_MS`"`
+   * — the deadline one `transportManager.listen([<relay>/p2p-circuit])`
+   * attempt runs under. Absent, the contract's `RELAY_LISTEN_TIMEOUT_MS`
+   * stands. Tests inject small values to land the timeout path
+   * inside the suite timeout.
+   */
+  readonly relayListenTimeoutMs?: number;
+  /**
    * `MESH_INTERFACE → The IP certificate` — the secure WebSocket
    * fallback. Not built by this run; a set value is refused with
    * `MeshConfigError` naming the later run's subject.

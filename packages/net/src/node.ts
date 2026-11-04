@@ -1139,8 +1139,11 @@ export class NetNode {
       if (mesh !== undefined && mesh.role === 'private') {
         const baseMs = mesh.relayRetryBaseMs ?? RETRY_BASE_MS;
         const capMs = mesh.relayRetryCapMs ?? RETRY_CAP_MS;
+        const listenTimeoutMs = mesh.relayListenTimeoutMs;
         for (const addr of this.config.bootstrapPeers) {
-          this.relayRetries.push(startRelayRetry(libp2p, `${addr}/p2p-circuit`, { baseMs, capMs }));
+          this.relayRetries.push(startRelayRetry(libp2p, `${addr}/p2p-circuit`, {
+            baseMs, capMs, listenTimeoutMs,
+          }));
         }
       }
 
