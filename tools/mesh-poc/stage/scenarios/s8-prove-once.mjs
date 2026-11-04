@@ -1,11 +1,11 @@
 // MESH_INTERFACE → Acceptance 8 — "After the first check, no proof is
 // read across five checks while every node names a tip on the client's
-// chain; a block mined on a node reaches the browser by gossip through
-// a mesh service and moves the client's tip before its next check; a
-// node on another chain … has its proof read when its tip moves, with
-// the client's own, and the client's tip stays the honest chain's; the
-// browser's gossip cut for three blocks and restored, its tip catches
-// up by headers with no proof read."
+// chain; a block mined on a node reaches the browser by gossip and
+// moves the client's tip before its next check; a node on another
+// chain … has its proof read when its tip moves, with the client's
+// own, and the client's tip stays the honest chain's; the browser's
+// gossip cut for three blocks and restored, its tip catches up by
+// headers with no proof read."
 //
 // Four sub-steps, in order:
 //   1. No proof after the first — stage default + a step-scoped

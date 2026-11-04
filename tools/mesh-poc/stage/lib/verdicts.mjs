@@ -479,8 +479,8 @@ export function verdictS8NoProofs(m) {
 }
 
 // MESH_INTERFACE → Acceptance 8 — "a block mined on a node reaches
-// the browser by gossip through a mesh service and moves the client's
-// tip before its next check". PASS when at least two of the three
+// the browser by gossip and moves the client's tip before its next
+// check". PASS when at least two of the three
 // consecutive new blocks reached the client within 5 s with the check
 // counter unchanged over the delivery window (a check every 30 s
 // cannot carry a block that short; one delivery that coincides with a
