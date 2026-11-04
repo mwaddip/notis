@@ -159,6 +159,7 @@ const net = new NetNode(
     bootstrapPeers: config.bootstrapPeers,
     listenAddrs: config.listenAddrs,
     maxPeers: config.maxPeers,
+    maxReaders: config.maxReaders,
     minPeers: config.minPeers,
     peerDbCap: config.peerDbCap,
     outboundRedialCooldownMs: config.outboundRedialCooldownMs,

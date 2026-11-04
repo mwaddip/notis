@@ -155,12 +155,13 @@ export interface Config {
    * `proofRetentionBlocks`.
    */
   proofRetentionBytes: number;
-  // Net settings — the seven whole-number knobs reach `NetNode` from the one
+  // Net settings — the whole-number knobs reach `NetNode` from the one
   // loaded `config`; semantics `NET_INTERFACE → Config` and
   // `NET_INTERFACE → Outbound Manager`.
   bootstrapPeers: string[];
   listenAddrs: string;
   maxPeers: number;
+  maxReaders: number;
   minPeers: number;
   peerDbCap: number;
   outboundRedialCooldownMs: number;
@@ -247,6 +248,7 @@ export function loadConfig(): Readonly<Config> {
     bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',
     maxPeers: readWholeNumber('MAX_PEERS', 50, { floor: 1 }),
+    maxReaders: readWholeNumber('MAX_READERS', 64, { floor: 0 }),
     minPeers: readWholeNumber('MIN_PEERS', 3, { floor: 0 }),
     peerDbCap: readWholeNumber('PEER_DB_CAP', 1000, { floor: 0 }),
     outboundRedialCooldownMs: readWholeNumber('OUTBOUND_REDIAL_COOLDOWN_MS', 60_000, { floor: 0 }),

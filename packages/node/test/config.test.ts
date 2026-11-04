@@ -18,6 +18,7 @@ const TEST_KEYS = [
   'BLOCK_BODY_BUDGET_BYTES',
   'MAX_MEMPOOL_ENTRIES',
   'MAX_PEERS',
+  'MAX_READERS',
   'MIN_PEERS',
   'PEER_DB_CAP',
   'OUTBOUND_REDIAL_COOLDOWN_MS',
@@ -1096,6 +1097,26 @@ describe('config', () => {
         process.env['MAX_PEERS'] = '0';
         await expect(import('../src/config.js')).rejects.toThrow(/MAX_PEERS/);
       });
+    });
+
+    // 17h — MAX_READERS: floor 0, default 64 (NODE_INTERFACE → Configuration,
+    // the `MAX_READERS` row; NET_INTERFACE → Readers).
+    describe('17h. MAX_READERS', () => {
+      it('MAX_READERS unset → config.maxReaders === 64', async () => {
+        const { loadConfig } = await import('../src/config.js');
+        expect(loadConfig().maxReaders).toBe(64);
+      });
+      it('MAX_READERS=0 loads as config.maxReaders === 0', async () => {
+        process.env['MAX_READERS'] = '0';
+        const { loadConfig } = await import('../src/config.js');
+        expect(loadConfig().maxReaders).toBe(0);
+      });
+      for (const bad of ['abc', '2.5', '-1']) {
+        it(`MAX_READERS=${JSON.stringify(bad)} is refused naming MAX_READERS`, async () => {
+          process.env['MAX_READERS'] = bad;
+          await expect(import('../src/config.js')).rejects.toThrow(/MAX_READERS/);
+        });
+      }
     });
   });
 
