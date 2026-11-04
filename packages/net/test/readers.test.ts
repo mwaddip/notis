@@ -360,8 +360,8 @@ describe('NET_INTERFACE → Readers', () => {
 
     // last: the node's declared capabilities are the five chain codes —
     // SyncInfo (2), ModifierRequest (4), GetPeers (8), GetHeaders (14),
-    // GetBlocks (16) (NET_INTERFACE → Readers → "A full node declares
-    // `NODE_CAPABILITIES`").
+    // GetBlocks (16) (NET_INTERFACE → Readers → "A peer's capabilities say
+    // what it serves").
     expect(body!.capabilities).toEqual([2, 4, 8, 14, 16]);
   }, TIMEOUT);
 

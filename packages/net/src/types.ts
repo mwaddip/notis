@@ -34,10 +34,9 @@ export interface Peer {
   protocols: string[];
   connectedAt: number;
   /**
-   * NET_INTERFACE → Readers → "A peer's capabilities say what it serves". The
-   * declared codes a peer's handshake carries; absent until the handshake
-   * completes, `[]` for a reader (NET_INTERFACE → Readers →
-   * "a reader declares `READER_CAPABILITIES`, none").
+   * NET_INTERFACE → Readers → "A peer's capabilities say what it serves".
+   * The declared codes a peer's handshake carries; absent until the
+   * handshake completes, `[]` for a reader.
    */
   capabilities?: readonly number[];
 }

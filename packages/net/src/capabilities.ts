@@ -11,9 +11,10 @@ import {
 } from './types.js';
 
 /**
- * NET_INTERFACE → Readers → "A full node declares `NODE_CAPABILITIES`, the
- * request codes it answers — `SyncInfo` (2), `ModifierRequest` (4),
- * `GetPeers` (8), `GetHeaders` (14), `GetBlocks` (16)".
+ * NET_INTERFACE → Readers → "A peer's capabilities say what it serves":
+ * the request codes a full node answers — `SyncInfo` (2),
+ * `ModifierRequest` (4), `GetPeers` (8), `GetHeaders` (14), `GetBlocks`
+ * (16).
  */
 export const NODE_CAPABILITIES: readonly number[] = [
   MSG_SYNC_INFO,
@@ -24,15 +25,13 @@ export const NODE_CAPABILITIES: readonly number[] = [
 ];
 
 /**
- * NET_INTERFACE → Readers → "a reader declares `READER_CAPABILITIES`,
- * none".
+ * NET_INTERFACE → Readers → "A peer's capabilities say what it serves":
+ * a reader declares no capability.
  */
 export const READER_CAPABILITIES: readonly number[] = [];
 
 /**
- * NET_INTERFACE → Readers → "A peer's capabilities say what it serves. A
- * peer whose handshake declares `GetHeaders` (14) and `GetBlocks` (16)
- * serves the chain — a node; one that declares neither is a reader".
+ * NET_INTERFACE → Readers → "A peer's capabilities say what it serves".
  */
 export function servesChain(caps: readonly number[]): boolean {
   let hasHeaders = false;

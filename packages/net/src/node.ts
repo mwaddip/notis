@@ -721,14 +721,14 @@ export class NetNode {
           this.peerMgr.isBanned(peerId.toString()),
       },
       connectionManager: {
-        // NET_INTERFACE → Readers → "libp2p's connection ceiling is
-        // `maxPeers + maxReaders + HANDSHAKE_SLACK`": a connection is
-        // counted by the kind its handshake declares; the slack holds the
-        // connections still handshaking, which libp2p's connection manager
-        // refuses when the ceiling is reached (`libp2p@3.5.1`,
-        // `src/connection-manager/index.ts:688` —
+        // NET_INTERFACE → Readers → "Readers have a budget of their own":
+        // libp2p's connection ceiling is `maxPeers + maxReaders +
+        // HANDSHAKE_SLACK`, so a connection is counted by the kind its
+        // handshake declares and libp2p refuses an inbound past the
+        // ceiling at the upgrade before any handler runs (verified in
+        // `libp2p@3.5.1`, `src/connection-manager/index.ts:688` —
         // `getConnections().length < maxConnections` admits, otherwise the
-        // inbound is refused at `maConnection()` before any handler runs).
+        // inbound is refused at `maConnection()`).
         maxConnections: this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK,
       },
       // Disable the built-in connection monitor heartbeat.  When enabled it
@@ -853,9 +853,10 @@ export class NetNode {
       libp2p.addEventListener('peer:disconnect', (evt: any) => {
         const peerId = evt.detail?.toString() ?? 'unknown';
         console.log(`[net] peer:disconnect ${peerId} (total=${Math.max(0, this.peerMgr.getPeerCount() - 1)})`);
-        // NET_INTERFACE → Readers → "`onPeerDisconnected` fires for
-        // chain-serving peers alone": read the peer's declared capabilities
-        // from the metadata before `removePeer` drops it.
+        // NET_INTERFACE → Readers → "The peer hooks see chain-serving peers
+        // alone": read the peer's declared capabilities from the metadata
+        // before `removePeer` drops it so the chain-serving check still has
+        // something to answer.
         const meta = this.peerMgr.getPeerMetadata(peerId);
         const wasChainServing =
           meta?.state === PeerState.Active
@@ -1398,11 +1399,11 @@ export class NetNode {
         // handshake that completes for a peer already Active is answered
         // when this node is the listener, and records and raises nothing.
         const peerServesChain = servesChain(msg.capabilities);
-        // NET_INTERFACE → Readers → "At most `maxReaders` readers are held
-        // at once; one past it is closed after its handshake"; "a
-        // chain-serving peer past `maxPeers` is closed after its handshake
-        // as well". Checked before the state transitions so the budgets
-        // count the held peers, not the one arriving.
+        // NET_INTERFACE → Readers → "Readers have a budget of their own": a
+        // reader past `maxReaders` is closed after its handshake, and so
+        // is a chain-serving peer past `maxPeers`. Checked before the
+        // state transitions so the budgets count the held peers, not the
+        // one arriving.
         let closeAfterReply = false;
         if (!this.peerMgr.isPeerActive(peerId)) {
           if (peerServesChain) {
@@ -1760,7 +1761,8 @@ export class NetNode {
       declaredAddress: (this.libp2p?.getMultiaddrs() ?? [])
         .map((a) => a.toString())
         .find((a) => !isLoopbackAddress(a)),
-      // NET_INTERFACE → Readers → "A full node declares `NODE_CAPABILITIES`".
+      // NET_INTERFACE → Readers → "A peer's capabilities say what it
+      // serves": the request codes a full node answers.
       capabilities: [...NODE_CAPABILITIES],
     };
   }
@@ -1896,8 +1898,9 @@ export class NetNode {
 
   /**
    * NET_INTERFACE → API → Node Lifecycle → `getConnectedReaders`: the peer
-   * ids of the Active readers (NET_INTERFACE → Readers → "A peer whose
-   * handshake does not `servesChain` is a reader").
+   * ids of the Active readers (NET_INTERFACE → Readers → "A peer's
+   * capabilities say what it serves" — a peer that is not chain-serving is
+   * a reader).
    */
   getConnectedReaders(): string[] {
     const out: string[] = [];
