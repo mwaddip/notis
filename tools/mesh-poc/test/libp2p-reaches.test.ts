@@ -6,13 +6,11 @@
 //     attribution (`mesh-client.ts`).
 // Each reach is held by a case against the real libp2p so an upgrade
 // that moves it fails its case. The WSS listener's reach
-// (`wss.ts:resolveInternals`), the private node's relay listen after
-// start (`mesh-node.ts`), and the `node:stream` shim (`vite.config.ts`
-// alias, `page/shims/node-stream.ts`) are held elsewhere: the first by
+// (`wss.ts:resolveInternals`) and the private node's relay listen
+// after start (`mesh-node.ts`) are held elsewhere: the first by
 // `wss.test.ts` ('a client reaches the node by key over WSS'), the
 // second by `private-relay-retry.test.ts` ('starts with ECONNREFUSED
-// on the relay listen, then reserves once the relay comes up'), the
-// third by `page.test.ts`'s 'page/build output', which builds the page.
+// on the relay listen, then reserves once the relay comes up').
 //
 // In-process, Node.js, TCP only, no root.
 
