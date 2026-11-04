@@ -99,6 +99,7 @@ import {
   meshPrivateWebRTCTransport,
   meshWebRTCDirectTransport,
   privateAnnounceFilter,
+  effectiveAnnounce,
 } from './mesh/libp2p-options.js';
 import { startRelayRetry, type RelayRetry } from './mesh/relay-retry.js';
 import { RETRY_BASE_MS, RETRY_CAP_MS } from './mesh/constants.js';
@@ -917,10 +918,18 @@ export class NetNode {
             }),
           );
         }
+        // `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
+        // — the public role's announce holds every listen address
+        // with a concrete port; the WSS listen is appended above
+        // when the initial certificate is held, so it rides along.
+        const publicAnnounce = effectiveAnnounce(publicListen, mesh);
         libp2p = await createLibp2p({
           privateKey: libp2pPrivateKey,
           datastore: meshDatastore,
-          addresses: { listen: publicListen },
+          addresses: {
+            listen: publicListen,
+            ...(publicAnnounce !== undefined ? { announce: publicAnnounce } : {}),
+          },
           transports: publicTransports as never,
           connectionEncrypters: [noise()],
           streamMuxers,

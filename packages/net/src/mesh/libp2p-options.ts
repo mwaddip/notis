@@ -60,6 +60,36 @@ export function privateAnnounceFilter(mas: Multiaddr[]): Multiaddr[] {
 }
 
 /**
+ * `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
+ * — the public role's `addresses.announce`. With an explicit
+ * `mesh.announce`, that list is announced verbatim; otherwise every
+ * entry in `listen` with a concrete port is announced, so libp2p
+ * 3.5's `AddressManager` returns the listen addresses as verified
+ * from the start (`libp2p/src/address-manager/transport-addresses.ts`
+ * would otherwise hold a public IP out until AutoNAT confirms). An
+ * entry with `/tcp/0` or `/udp/0` is dropped: the kernel picks the
+ * port at bind, so announcing it would be a lie; libp2p 3.5's
+ * WebRTC-direct listener splices `/certhash/` onto every announced
+ * WebRTC-direct address at read time
+ * (`@libp2p/webrtc@7.0.2/src/private-to-public/listener.ts`
+ * `updateAnnounceAddrs`, called by `AddressManager.getAddressesWithMetadata`).
+ * A `private` role returns `undefined` — `privateAnnounceFilter`
+ * carries the private rule, announcing its relay reservations alone.
+ */
+export function effectiveAnnounce(
+  listen: readonly string[],
+  mesh: MeshConfig,
+): string[] | undefined {
+  if (mesh.announce !== undefined && mesh.announce.length > 0) {
+    return [...mesh.announce];
+  }
+  if (mesh.role !== 'public') return undefined;
+  const concrete = listen.filter((a) => !/\/(tcp|udp)\/0(?:\/|$)/.test(a));
+  if (concrete.length === 0) return undefined;
+  return concrete;
+}
+
+/**
  * A public mesh node's service map addition. The caller spreads this
  * beside its `pubsub`, `identify`, `ping` entries at `createLibp2p`.
  */
@@ -86,9 +116,6 @@ export function meshPublicServices(mesh: MeshConfig, _datastore: Datastore): {
     circuitRelay: circuitRelayServer({ reservations: { applyDefaultLimit: false } }),
   };
 }
-
-/** Compatibility alias so callers that import `meshServices` keep working. */
-export const meshServices = meshPublicServices;
 
 /**
  * A private mesh node's service map addition. The DHT runs in client
