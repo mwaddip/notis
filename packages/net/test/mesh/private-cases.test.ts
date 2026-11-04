@@ -87,7 +87,7 @@ describe('mesh — a private NetNode', () => {
   // node runs the DHT in CLIENT mode, so it does not register the
   // server-side handlers for Notis's `/kad/` protocol; it still walks
   // the DHT as a client.
-  it.fails('a private node runs the DHT as a client', async () => {
+  it('a private node runs the DHT as a client', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-dht-'));
     dirs.push(dir);
     const node = new NetNode(makeConfig({
@@ -109,7 +109,7 @@ describe('mesh — a private NetNode', () => {
   // private node. The node starts on its own addresses alone". With no
   // bootstrap peer the private node holds no reservation and lists no
   // circuit address, yet `start` returns and the node is up.
-  it.fails('with bootstrapPeers: [] starts and takes no reservation', async () => {
+  it('with bootstrapPeers: [] starts and takes no reservation', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-no-boot-'));
     dirs.push(dir);
     const node = new NetNode(makeConfig({
@@ -239,7 +239,7 @@ describe('mesh — a private NetNode', () => {
   // operator to hand over". `meshIdentity().localAddrs` carries each
   // WebRTC-direct listen address with `/certhash/` and `/p2p/<peer>`,
   // and nothing else.
-  it.fails("meshIdentity().localAddrs lists the private node's local WebRTC-direct address with certhash", async () => {
+  it("meshIdentity().localAddrs lists the private node's local WebRTC-direct address with certhash", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-ident-'));
     dirs.push(dir);
     const node = new NetNode(makeConfig({

@@ -86,14 +86,19 @@ import {
   MODIFIER_POST_BODY,
 } from './types.js';
 import type { ModifierRequest, ModifierResponse } from './sync-types.js';
+import { FaultTolerance } from '@libp2p/interface';
 import { assertMeshConfig } from './mesh/config.js';
 import { assertStateDirIntegrity, openMeshDatastore } from './mesh/state-dir.js';
 import { stunSettingFor } from './mesh/stun-setting.js';
 import { startStunServer } from './mesh/stun.js';
 import {
   meshListenAddrs,
-  meshServices,
+  meshPublicServices,
+  meshPrivateServices,
+  meshPrivateCircuitTransport,
+  meshPrivateWebRTCTransport,
   meshWebRTCDirectTransport,
+  privateAnnounceFilter,
 } from './mesh/libp2p-options.js';
 import {
   notisIdFromPeerId,
@@ -819,21 +824,56 @@ export class NetNode {
     if (mesh !== undefined && meshDatastore !== null) {
       // NET_INTERFACE → The mesh — the public role adds WebRTC-direct
       // beside TCP, the keychain, the Notis DHT, AutoNAT v2, the
-      // circuit-relay server and `@libp2p/http`. `addresses.listen`
-      // prepends the plain listen so an existing TCP sync peer still
-      // reaches the node by its plain address.
-      libp2p = await createLibp2p({
-        privateKey: libp2pPrivateKey,
-        datastore: meshDatastore,
-        addresses: { listen: meshListenAddrs(this.config.listenAddrs, mesh) },
-        transports: [tcp(), meshWebRTCDirectTransport()],
-        connectionEncrypters: [noise()],
-        streamMuxers,
-        services: { ...plainServices, ...meshServices(mesh, meshDatastore) },
-        connectionGater,
-        connectionManager,
-        connectionMonitor,
-      }) as Libp2p;
+      // circuit-relay server and `@libp2p/http`; the private role adds
+      // WebRTC and the circuit-relay transport, DCUtR, and runs the
+      // DHT in client mode. `addresses.listen` prepends the plain
+      // listen so an existing TCP sync peer still reaches the node by
+      // its plain address.
+      if (mesh.role === 'public') {
+        libp2p = await createLibp2p({
+          privateKey: libp2pPrivateKey,
+          datastore: meshDatastore,
+          addresses: { listen: meshListenAddrs(this.config.listenAddrs, mesh) },
+          transports: [tcp(), meshWebRTCDirectTransport()],
+          connectionEncrypters: [noise()],
+          streamMuxers,
+          services: { ...plainServices, ...meshPublicServices(mesh, meshDatastore) },
+          connectionGater,
+          connectionManager,
+          connectionMonitor,
+        }) as Libp2p;
+      } else {
+        // `MESH_INTERFACE → NAT → "A relay that does not answer never
+        // stops a private node"` — the initial listen has no circuit
+        // entries (they come from `bootstrapPeers` through
+        // `startRelayRetry` after start). The announce filter keeps
+        // `/p2p-circuit`-bearing addresses alone. `faultTolerance:
+        // NO_FATAL` is a defence in depth for a listener that fails
+        // after start — the private role must never take libp2p down.
+        const relayCount = Math.max(1, this.config.bootstrapPeers.length);
+        const stunServers = mesh.stunServers ?? [];
+        libp2p = await createLibp2p({
+          privateKey: libp2pPrivateKey,
+          datastore: meshDatastore,
+          addresses: {
+            listen: meshListenAddrs(this.config.listenAddrs, mesh),
+            announceFilter: privateAnnounceFilter,
+          },
+          transports: [
+            tcp(),
+            meshWebRTCDirectTransport(),
+            meshPrivateWebRTCTransport(stunServers),
+            meshPrivateCircuitTransport(relayCount),
+          ],
+          connectionEncrypters: [noise()],
+          streamMuxers,
+          services: { ...plainServices, ...meshPrivateServices(mesh, meshDatastore) },
+          connectionGater,
+          connectionManager,
+          connectionMonitor,
+          transportManager: { faultTolerance: FaultTolerance.NO_FATAL },
+        }) as Libp2p;
+      }
     } else {
       libp2p = await createLibp2p({
         privateKey: libp2pPrivateKey,

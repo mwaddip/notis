@@ -1,7 +1,6 @@
 // NET_INTERFACE → The mesh — `MeshConfig` makes a `NetNode` a mesh node.
-// This run builds the public role alone; a `role: 'private'` or a `wss`
-// is refused at `start` with `MeshConfigError` naming what is not built
-// yet.
+// A `wss` is refused at `start` with `MeshConfigError` naming what is
+// not built yet.
 
 import type { MeshNetworkName } from './constants.js';
 
@@ -24,14 +23,14 @@ export class MeshStateError extends Error {
 
 /**
  * `NET_INTERFACE → The mesh` — the configuration a mesh node runs
- * with. The public role alone is built here; the private role and the
- * secure WebSocket land in later runs.
+ * with. The secure WebSocket lands in a later run.
  */
 export interface MeshConfig {
   /**
    * `MESH_INTERFACE → NAT → "A node's role is its operator's setting"`.
-   * `'private'` is refused by this run with `MeshConfigError` naming
-   * the later run's subject.
+   * A `public` node runs a circuit relay v2 server, AutoNAT v2 and a
+   * STUN server; a `private` node takes a relay reservation on each of
+   * its bootstrap peers and is reached through them.
    */
   readonly role: 'public' | 'private';
   /** `MESH_INTERFACE → Discovery → "The DHT is Notis's own"`. */
@@ -67,9 +66,25 @@ export interface MeshConfig {
    * — a public node runs a STUN server at the IP of its first
    * WebRTC-direct listen address on `STUN_PORT`, unless its operator
    * names another or turns it off. Explicit `null` turns the server
-   * off.
+   * off. A private node with `stun` set is refused.
    */
   readonly stun?: { host: string; port: number } | null;
+  /**
+   * `MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by
+   * IP"` — the `stun:<ip>:<port>` list a private node's WebRTC
+   * transport gathers ICE candidates against. Each entry is held to
+   * the same rule as the client's; a hostname entry is refused.
+   */
+  readonly stunServers?: readonly string[];
+  /**
+   * `MESH_INTERFACE → NAT → "A relay that does not answer never stops
+   * a private node ... is tried again on the node list's retry cadence
+   * (`RETRY_BASE_MS` doubling to `RETRY_CAP_MS`)"`. Absent, the
+   * contract's `RETRY_BASE_MS` and `RETRY_CAP_MS` stand. Tests inject
+   * small values to land reservations inside the suite timeout.
+   */
+  readonly relayRetryBaseMs?: number;
+  readonly relayRetryCapMs?: number;
   /**
    * `MESH_INTERFACE → The IP certificate` — the secure WebSocket
    * fallback. Not built by this run; a set value is refused with
@@ -80,6 +95,10 @@ export interface MeshConfig {
 
 const DNS_RE = /\/dns4\/|\/dns6\/|\/dnsaddr\//;
 const WEBRTC_DIRECT_RE = /\/webrtc-direct(?:\/|$)/;
+// `MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by
+// IP"` — `stun:<ipv4>:<port>` or `stun:[<ipv6>]:<port>`. The port is
+// a 1..5-digit integer; the strict 0..65535 check lands below.
+const STUN_URL_RE = /^stun:(?:(\d{1,3}(?:\.\d{1,3}){3})|\[([0-9a-fA-F:]+)\]):(\d+)$/;
 
 /**
  * `MESH_INTERFACE → Discovery → "An address is a hint"` — refuse an
@@ -95,18 +114,13 @@ export function assertNoDns(label: string, addrs: readonly string[]): void {
 }
 
 /**
- * `MESH_INTERFACE → Transports / NAT` — the start-time refusals this
- * run's public role meets, before any socket opens. Private role and
- * the secure WebSocket are later runs.
+ * `MESH_INTERFACE → Transports / NAT` — the start-time refusals a
+ * `MeshConfig` meets, before any socket opens. The secure WebSocket
+ * lands in a later run.
  */
 export function assertMeshConfig(mesh: MeshConfig): void {
-  if (mesh.role === 'private') {
-    throw new MeshConfigError(
-      "mesh.role 'private' refused: the private role is not built yet (NET_INTERFACE → The mesh)",
-    );
-  }
-  if (mesh.role !== 'public') {
-    throw new MeshConfigError(`mesh.role refused: ${JSON.stringify(mesh.role)} is not 'public'`);
+  if (mesh.role !== 'public' && mesh.role !== 'private') {
+    throw new MeshConfigError(`mesh.role refused: ${JSON.stringify(mesh.role)} is not 'public' or 'private'`);
   }
   if (mesh.wss !== undefined) {
     throw new MeshConfigError(
@@ -119,21 +133,27 @@ export function assertMeshConfig(mesh: MeshConfig): void {
   // addresses from the start" — a public node without a WebRTC-direct
   // listen is unreachable by any browser, which is what a public node
   // exists for; refused at start naming the setting.
-  let hasWebrtcDirect = false;
-  for (const a of mesh.listen) {
-    if (WEBRTC_DIRECT_RE.test(a)) { hasWebrtcDirect = true; break; }
+  if (mesh.role === 'public') {
+    let hasWebrtcDirect = false;
+    for (const a of mesh.listen) {
+      if (WEBRTC_DIRECT_RE.test(a)) { hasWebrtcDirect = true; break; }
+    }
+    if (!hasWebrtcDirect) {
+      throw new MeshConfigError(
+        'mesh.listen refused: a public node has no /webrtc-direct listen address',
+      );
+    }
   }
-  if (!hasWebrtcDirect) {
-    throw new MeshConfigError(
-      'mesh.listen refused: a public node has no /webrtc-direct listen address',
-    );
+  // MESH_INTERFACE → NAT — "STUN serves from a public address". A
+  // private node with `stun` set is a config error at start, named
+  // here; `stunSettingFor` catches it at its seam too.
+  if (mesh.role === 'private' && mesh.stun !== undefined && mesh.stun !== null) {
+    throw new MeshConfigError('mesh.stun refused: a private node does not serve STUN');
   }
   if (mesh.stun !== undefined && mesh.stun !== null) {
     const host = mesh.stun.host;
-    // Reuse the DNS regex's spirit: a host that is neither an IPv4 nor
-    // an IPv6 literal is a hostname, and a STUN hostname is never
-    // legitimate (`MESH_INTERFACE → NAT → "Every STUN server is a mesh
-    // node named by IP"`).
+    // `MESH_INTERFACE → NAT → "Every STUN server is a mesh node named
+    // by IP"` — a host that is neither IPv4 nor IPv6 is a hostname.
     if (!isIpLiteral(host)) {
       throw new MeshConfigError(
         `mesh.stun.host refused: ${JSON.stringify(host)} is not an IP literal`,
@@ -143,6 +163,25 @@ export function assertMeshConfig(mesh: MeshConfig): void {
       throw new MeshConfigError(
         `mesh.stun.port refused: ${mesh.stun.port} is not a 0..65535 integer`,
       );
+    }
+  }
+  // `MESH_INTERFACE → NAT → "Every STUN server is a mesh node named
+  // by IP"` — each `stunServers` entry is `stun:<ip>:<port>`, port
+  // in 0..65535. A hostname entry is refused.
+  if (mesh.stunServers) {
+    for (const url of mesh.stunServers) {
+      const m = STUN_URL_RE.exec(url);
+      if (!m) {
+        throw new MeshConfigError(
+          `mesh.stunServers refused: ${JSON.stringify(url)} is not stun:<ip>:<port>`,
+        );
+      }
+      const port = Number(m[3]);
+      if (!Number.isInteger(port) || port < 0 || port > 65535) {
+        throw new MeshConfigError(
+          `mesh.stunServers refused: ${JSON.stringify(url)}: port ${port} is not a 0..65535 integer`,
+        );
+      }
     }
   }
 }

@@ -88,6 +88,9 @@ importers:
       '@libp2p/crypto':
         specifier: 5.2.0
         version: 5.2.0
+      '@libp2p/dcutr':
+        specifier: 3.0.32
+        version: 3.0.32
       '@libp2p/gossipsub':
         specifier: 17.2.1
         version: 17.2.1
