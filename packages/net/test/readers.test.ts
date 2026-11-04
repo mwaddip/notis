@@ -5,7 +5,7 @@
 // [topics.orderingBlock]))) that dials the node and runs the handshake as
 // the dialler with `READER_CAPABILITIES`, no declared address, empty
 // nodeName. The handshake frame is built through `net`'s own
-// `buildHandshakeFrame`, the same code the mesh service uses
+// `buildHandshakeFrame`, net's one path for the handshake body
 // (NET_INTERFACE → Handshake Body).
 import { describe, it, expect, afterEach } from 'vitest';
 import type { Connection, Libp2p, Stream } from '@libp2p/interface';

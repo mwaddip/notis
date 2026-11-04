@@ -1,8 +1,7 @@
-// NET_INTERFACE → The mesh — the public cases ported from the PoC's
-// `tools/mesh-poc/test/mesh-node.test.ts`: the DHT speaks only Notis's
-// protocol, the WebRTC-direct certificate persists across restarts,
-// and (indirectly) a public node announces every listen address with a
-// concrete port.
+// NET_INTERFACE → The mesh — the public-role cases: the DHT speaks
+// only Notis's protocol, the WebRTC-direct certificate persists
+// across restarts, and (indirectly) a public node announces every
+// listen address with a concrete port.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -65,7 +64,7 @@ function certhashOf(ma: string): string | null {
   return m ? m[1]! : null;
 }
 
-describe('mesh — public cases ported from the PoC', () => {
+describe('mesh — public-role cases', () => {
   let nodes: NetNode[] = [];
   let dirs: string[] = [];
   afterEach(async () => {

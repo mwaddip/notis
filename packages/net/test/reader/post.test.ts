@@ -1,9 +1,7 @@
 // MESH_INTERFACE → The node endpoint — the client's side admits `GET`
 // and `POST`; any other method is refused before any dial. These
 // cases drive `meshFetchOverConnection` against a `NetNode` with a
-// public mesh, over the node's TCP listener for speed; the endpoint
-// is transport-blind (`mesh/endpoint.test.ts`), and the POST path is
-// what this unit's patch unblocks.
+// public mesh, over the node's TCP listener for speed.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';

@@ -1,8 +1,8 @@
 // NET_INTERFACE → The mesh — the start-time refusals a `MeshConfig`
 // meets, before any socket opens or state directory is written to.
-// Each refusal is `MeshConfigError` and names what is not built yet
-// (private role, wss) or the setting the operator passed (listen
-// without /webrtc-direct, a DNS announce).
+// Each refusal is `MeshConfigError` and names the setting the
+// operator passed (role, listen, announce, stun, stunServers, wss)
+// that `MeshConfig` refuses.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';

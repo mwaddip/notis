@@ -2,8 +2,7 @@
 // `meshFetch`: its signal and timeout composition, its handling of
 // unreachable peers, bad URLs, stalled answers, and that it leaves
 // no `/http/1.1` stream behind in every ending the client sees.
-// Ported from the PoC's `http-over-libp2p.test.ts`; the endpoint is
-// a real `NetNode`'s public mesh.
+// The endpoint is a real `NetNode`'s public mesh.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';

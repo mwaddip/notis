@@ -1437,8 +1437,8 @@ export class NetNode {
       // NET_INTERFACE → Handshake →
       // "A connection handshakes within its deadline, or is closed": the
       // close names the peer and that the handshake did not complete, so
-      // the churn a silent close used to hide (the service-opened
-      // connection without a handshake) is audible.
+      // a service-opened connection that never handshakes is audible to
+      // the operator.
       const peerId = conn.remotePeer?.toString() ?? 'unknown';
       console.log(`[net] handshake deadline: closing connection to ${peerId} — handshake did not complete in time`);
       // The close hangs the connection up. The connection:close event the
@@ -2454,9 +2454,7 @@ export class NetNode {
     // Private role lists its local WebRTC-direct listen with certhash
     // and the peer id (`MESH_INTERFACE → Discovery → "A node added by
     // hand"`); public lists none (announces its listen addresses
-    // already). The private role is not built by this run, but the
-    // branching is kept so a later run adding it needs only the
-    // listener-address source.
+    // already).
     const localAddrs = localAddrsFor(mesh.role, listenerAddrsOf(node), peerId);
     return { notisId, peerId, multiaddrs, localAddrs };
   }

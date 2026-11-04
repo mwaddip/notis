@@ -434,8 +434,8 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     const dir = freshDir();
     // `now` is sampled AFTER the ACME source is captured so the
     // 3 s lifetime starts counting from the moment the node begins
-    // to start — `NetNode.start()` is heavier than the PoC's
-    // `startMeshNode`, and a short-enough lifetime would be past
+    // to start — `NetNode.start()` takes long enough under vitest's
+    // forks pool that a short-enough lifetime would be past
     // `notAfter` before `wssPortOf` could read the listener.
     const source: CertificateSource = {
       // eslint-disable-next-line @typescript-eslint/no-use-before-define

@@ -1,4 +1,4 @@
-// MESH_INTERFACE → The node endpoint — the mesh service answers HTTP
+// MESH_INTERFACE → The node endpoint — a public mesh node answers HTTP
 // over libp2p (`@libp2p/http`) by forwarding each GET and POST to its
 // own public HTTP API on loopback. Any other method answers 405. The
 // endpoint is transport-blind: the libp2p stream carries any payload

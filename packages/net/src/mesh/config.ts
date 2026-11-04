@@ -23,7 +23,7 @@ export class MeshStateError extends Error {
 
 /**
  * `NET_INTERFACE → The mesh` — the configuration a mesh node runs
- * with. The secure WebSocket lands in a later run.
+ * with.
  */
 export interface MeshConfig {
   /**
@@ -139,8 +139,7 @@ export function assertNoDns(label: string, addrs: readonly string[]): void {
 
 /**
  * `MESH_INTERFACE → Transports / NAT` — the start-time refusals a
- * `MeshConfig` meets, before any socket opens. The secure WebSocket
- * lands in a later run.
+ * `MeshConfig` meets, before any socket opens.
  */
 export function assertMeshConfig(mesh: MeshConfig): void {
   if (mesh.role !== 'public' && mesh.role !== 'private') {
