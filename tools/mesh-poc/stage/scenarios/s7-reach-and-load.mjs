@@ -45,8 +45,22 @@ import {
   verdictS7Counts,
 } from '../lib/verdicts.mjs';
 import { execIn } from '../lib/measure.mjs';
+import { readFileSize, readSince } from '../lib/log-watch.mjs';
 import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
+
+// MESH_INTERFACE → Discovery → "Seeds" — step 3a reads lan1's mesh
+// log for a `connection:close` line naming an inbound from the
+// browser's address. The read is scoped to bytes added during the
+// seed phase: the step records the log's size before the phase and
+// slices past it (`stage/lib/log-watch.mjs`). An old inbound line
+// written by a previous run of s7 is before the offset and never
+// matches.
+const LAN1_INBOUND_PATTERN = /\[net\] connection:close[^\n]*addr=\/ip4\/10\.103\.0\.11\/[^\n]*dir=inbound/;
+
+export function lan1InboundLoggedSince(logPath, startOffset) {
+  return LAN1_INBOUND_PATTERN.test(readSince(logPath, startOffset));
+}
 
 export const NAME = 's7';
 const POLL_MS = 1_000;
@@ -159,6 +173,15 @@ export async function run(ctx) {
       // seed-dial logic — not from a fresh page whose nodes list is
       // still empty, which would read `lan1EverConnected: false`
       // vacuously. (Same shape as step 4's defect.)
+      //
+      // The log read is scoped to the seed phase alone: the step
+      // records the log's byte size before the config variant is
+      // written and the browser polled, and `lan1InboundLoggedSince`
+      // tests the pattern against bytes added past that offset. An
+      // old inbound line written by a previous run of s7 against the
+      // same stage is before the offset and never matches.
+      const lan1NotisLog = join(ctx.outDir, 'lan1', 'notis.log');
+      const seedPhaseLogOffset = readFileSize(lan1NotisLog) ?? 0;
       const seedVariant = buildSeedOnlyLanVariant(baseConfig, lan1Row);
       writeConfigVariant(ctx.outDir, seedVariant);
       const seedState = await waitStateWithCompletedChecks(ctx, browserUrl, 2);
@@ -177,10 +200,7 @@ export async function run(ctx) {
       // line that carries it. A connection that landed but did not
       // close in the window is still caught by the client-side
       // signal `lan1EverConnected` (above).
-      const lan1NotisLog = join(ctx.outDir, 'lan1', 'notis.log');
-      const lan1InboundLogged = existsSync(lan1NotisLog)
-        && /\[net\] connection:close[^\n]*addr=\/ip4\/10\.103\.0\.11\/[^\n]*dir=inbound/
-          .test(readFileSync(lan1NotisLog, 'utf8'));
+      const lan1InboundLogged = lan1InboundLoggedSince(lan1NotisLog, seedPhaseLogOffset);
       const seedPhase = { lan1EverConnected, lan1InboundLogged };
 
       // (b) trusted hand phase — no anchors, byHand=[lan1, trusted:true].

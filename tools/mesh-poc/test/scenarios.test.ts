@@ -4,6 +4,9 @@
 // on the real stage (not here).
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildPredicate } from '../stage/cdp.mjs';
 import * as s1 from '../stage/scenarios/s1-no-name.mjs';
 import * as s2 from '../stage/scenarios/s2-nat.mjs';
@@ -453,6 +456,45 @@ describe('s7 (reach and load)', () => {
     const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / tc qdisc del /.test(f));
     expect(adds.length, 'one netem add').toBe(1);
     expect(dels.length, 'one netem del').toBe(1);
+  });
+
+  // MESH_INTERFACE → Discovery → "Seeds" — step 3a's `seedPhase.lan1InboundLogged`
+  // reads only bytes added to lan1's notis log during the seed phase: the step
+  // records the log's size at the phase start and tests the pattern against
+  // bytes past that offset. An old inbound line from a previous run of s7
+  // against the same stage is before the offset and never matches.
+  it('lan1InboundLoggedSince: an old inbound line before the offset reads as never dialled; a new line reads as dialled', () => {
+    // A node-fs tmp dir, a log that already holds an inbound close line
+    // from a previous run — the offset captured at phase start equals the
+    // current size, so a slice from there reads no bytes and the match
+    // fails.
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-s7-lan1-'));
+    try {
+      const log = join(dir, 'notis.log');
+      const oldLine =
+        '[net] connection:close peer=12D3KooWOld addr=/ip4/10.103.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/12D3KooWOld dir=inbound durationMs=12\n';
+      writeFileSync(log, oldLine);
+      const offset = statSync(log).size;
+
+      // No new line during the phase — the match must read false.
+      expect(s7.lan1InboundLoggedSince(log, offset)).toBe(false);
+
+      // A new inbound line arrives during the phase — the match reads true.
+      const newLine =
+        '[net] connection:close peer=12D3KooWNew addr=/ip4/10.103.0.11/udp/4001/webrtc-direct/certhash/uEiB/p2p/12D3KooWNew dir=inbound durationMs=34\n';
+      appendFileSync(log, newLine);
+      expect(s7.lan1InboundLoggedSince(log, offset)).toBe(true);
+
+      // A line past the offset that names another address does not match.
+      const dir2 = mkdtempSync(join(tmpdir(), 'mesh-s7-lan1-'));
+      const log2 = join(dir2, 'notis.log');
+      writeFileSync(log2, '');
+      const offset2 = 0;
+      appendFileSync(log2,
+        '[net] connection:close peer=12D3KooWOther addr=/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiC/p2p/12D3KooWOther dir=inbound durationMs=56\n');
+      expect(s7.lan1InboundLoggedSince(log2, offset2)).toBe(false);
+      rmSync(dir2, { recursive: true, force: true });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
 
