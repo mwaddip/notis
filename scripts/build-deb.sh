@@ -103,6 +103,27 @@ DB_PATH=/var/lib/dagsocial/dagsocial.db
 # unrecognised value stops the node at startup.
 NETWORK_TYPE=testnet
 LISTEN_ADDRS=/ip4/0.0.0.0/tcp/9733
+# MESH_ROLE makes the node a mesh node — "public" or "private" (NODE_INTERFACE
+# → Configuration). A fresh install runs no mesh; uncomment to opt in.
+#MESH_ROLE=public
+# Comma-separated mesh listen multiaddrs; a public node's must hold a
+# /webrtc-direct address.
+#MESH_LISTEN=/ip4/0.0.0.0/udp/9734/webrtc-direct
+# Comma-separated multiaddrs a public node announces in place of its listen
+# addresses.
+#MESH_ANNOUNCE=
+# A public node's STUN server, <ip>:<port> or off; unset, the IP of the first
+# WebRTC-direct listen address on the default STUN port.
+#MESH_STUN=
+# A private node's ICE servers, comma-separated stun:<ip>:<port>.
+#MESH_STUN_SERVERS=
+# A public node's opt-in secure WebSocket, <ip>:<port>; requires
+# MESH_ACME_DIRECTORY (NODE_INTERFACE → Configuration).
+#MESH_WSS=
+# The ACME directory URL the IP certificate is obtained from.
+#MESH_ACME_DIRECTORY=
+# The port the node answers the http-01 challenge on — default 80.
+#MESH_ACME_CHALLENGE_PORT=80
 # The web client's index.html; set, GET /shell/:id answers that shell with a
 # post's preview tags.
 #WEB_SHELL_PATH=/var/www/notis.fun/web/index.html
