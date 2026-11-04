@@ -1350,6 +1350,7 @@ interface MeshConfig {
   wss?: { ip: string; port: number; acmeDirectory: string; challengePort: number }  // public alone
   relayRetryBaseMs?: number
   relayRetryCapMs?: number
+  upstreamTimeoutMs?: number      // the endpoint's wait on httpBase; REQUEST_TIMEOUT_MS when absent
 }
 ```
 
