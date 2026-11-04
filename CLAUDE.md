@@ -59,7 +59,10 @@ Ten packages, in dependency order:
   built-in or global, no I/O; state reaches it through a `StateView` its caller answers.
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
 - `@dagsocial/net` — libp2p + Gossipsub relay, the headers-first sync scheduler (whom to ask for what: headers by
-  locator, blocks by id), peer management.
+  locator, blocks by id), peer management, readers apart from peers by the codes a handshake declares, and the mesh: with
+  `NetConfig.mesh` a node is reachable by key over WebRTC-direct, a relay or the opt-in secure WebSocket, its HTTP API
+  answered over libp2p. `@dagsocial/net/browser` is the half a browser runs — the handshake, the gossip rules, the block
+  check, the reader's libp2p options and mesh fetch.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator, and the header
   pipeline — the one place a chain is chosen, by verified work; it runs `consensus`'s rules over its store.
 - `@dagsocial/web` — the browser client, built with vite. The **read surface** — feed, threads, a
@@ -85,10 +88,10 @@ Four tools live under `tools/` — in the workspace by the `tools/*` glob, so in
   then proves what a key holds — each ledger's range, read whole — against the verified `stateRoot`, and checks a post
   row against the transaction that created it. A command line, and a library the web client's extension build imports
   for its tip, figures, names and posts verifiers.
-- `@dagsocial/mesh-poc` — the mesh proof of concept: a browser page reaches a node's HTTP API by the node's key over
-  libp2p, with no DNS name. A mesh service beside each unmodified node, the client and its node list, a page, and a
-  stage of network namespaces that runs `MESH_INTERFACE → Acceptance`'s eight scenarios — the stage needs root and is
-  run by hand; its unit checks run in `pnpm -r test`.
+- `@dagsocial/mesh-poc` — the mesh's client and its stage: a browser page reaches a node's HTTP API by the node's key
+  over libp2p, with no DNS name. The client and its node list, a page, and a stage of network namespaces — one node run
+  with `MESH_ROLE` per host — that runs `MESH_INTERFACE → Acceptance`'s eight scenarios; the stage needs root and is run
+  by hand; its unit checks run in `pnpm -r test`.
 
 ## Design by Contract
 
@@ -105,8 +108,8 @@ contract first, then implement against it, never the reverse.
 - `contracts/AVLTREE_INTERFACE.md` — the tree package: neighbor lookups, the strict verifier, lazy nodes
 - `contracts/MEMPOOL_INTERFACE.md` · `contracts/MINING_INTERFACE.md` · `contracts/JOURNAL_EVENTS.md`
 - `contracts/WEB_INTERFACE.md` — web client
-- `contracts/MESH_INTERFACE.md` — the mesh proof of concept: identity, transports, NAT, discovery, the client's node
-  list, the IP certificate, acceptance
+- `contracts/MESH_INTERFACE.md` — the mesh: identity, transports, NAT, block gossip, discovery, the node endpoint, the
+  client's node list, the IP certificate, acceptance
 - `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice
 - `contracts/SPECIAL.md` — per-subsystem attention weights
 - `contracts/CONSTANTS.md` — every protocol number in one place, with what argues it and its standing
