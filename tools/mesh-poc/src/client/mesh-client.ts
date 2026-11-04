@@ -12,15 +12,7 @@
 // `MAX_TIMER_MS` (2^31 − 1).
 
 import { createLibp2p, type Libp2p } from 'libp2p';
-import { webRTC, webRTCDirect } from '@libp2p/webrtc';
-import { webSockets } from '@libp2p/websockets';
-import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
-import { noise } from '@libp2p/noise';
-import { yamux } from '@libp2p/yamux';
-import { identify } from '@libp2p/identify';
-import { ping } from '@libp2p/ping';
-import { kadDHT } from '@libp2p/kad-dht';
-import { gossipsub, TopicValidatorResult } from '@libp2p/gossipsub';
+import { TopicValidatorResult } from '@libp2p/gossipsub';
 import type { GossipSub } from '@libp2p/gossipsub';
 import { UnexpectedPeerError } from '@libp2p/interface';
 import type { Connection, PeerId } from '@libp2p/interface';
@@ -54,7 +46,6 @@ import {
   BlockCheck,
   type BlockVerdict,
   gossipTopics,
-  gossipsubOptions,
   MeshKeyError,
   nodeKeyFromKeyPair,
   notisIdFromPeerId,
@@ -63,8 +54,7 @@ import {
   idOfMeshUrl,
   meshFetchOverConnection,
   MeshFetchError,
-  dhtProtocol,
-  STUN_PORT as _STUN_PORT_UNUSED,
+  readerLibp2pOptions,
 } from '@dagsocial/net/browser';
 import { HeldChain, type Placement } from './held-chain.js';
 import { headerFromJson } from './header-json.js';
@@ -87,7 +77,6 @@ import {
   BLOCK_READ_BYTES,
   type NetworkName,
 } from '../protocols.js';
-void _STUN_PORT_UNUSED;
 export type { ReadNeed } from './server-pick.js';
 
 /**
@@ -409,74 +398,44 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // Place in the workspace` names `generateKeyPair()` + `nodeKeyFromKeyPair`.
   const key = nodeKeyFromKeyPair(generateKeyPair());
 
-  // MESH_INTERFACE → NAT — "Only the relayed WebRTC path uses STUN;
-  // WebRTC-direct to a public address needs none". `webRTCDirect` is
-  // built with an empty iceServers list so js-libp2p does not fall
-  // back to its DEFAULT_ICE_SERVERS (`@libp2p/webrtc@7.0.2`'s
-  // `src/constants.ts:12`, which `src/private-to-public/utils/
-  // get-rtcpeerconnection.ts:147` reads when `rtcConfiguration.
-  // iceServers` is undefined).
-  //
   // MESH_INTERFACE → NAT → "A client's STUN list comes from the public
-  // nodes it holds" — `webRTC`'s `rtcConfiguration` is a function the
-  // transport reads on every dial (`@libp2p/webrtc@7.0.2`'s
-  // `src/private-to-private/transport.js:100` and `:143`), so the
-  // derived list flows into every new peer connection. The holder is
-  // reassigned once the client exists; before then, `webRTC` is built
-  // but no dial has run, and the fallback `{ iceServers: [] }` keeps
-  // libp2p off its DNS-named defaults.
-  const iceHolder: { current: () => { iceServers: RTCIceServer[] } } = {
-    current: () => ({ iceServers: [] }),
+  // nodes it holds" — the ICE list reaches `readerLibp2pOptions` as a
+  // function the WebRTC transport reads on every dial, so the derived
+  // list flows into every new peer connection. The holder is
+  // reassigned once the client exists; before then, no dial has run,
+  // and the fallback `[]` keeps libp2p off its DNS-named defaults.
+  const iceHolder: { current: () => RTCIceServer[] } = {
+    current: () => [],
   };
-  const transports = [
-    webRTCDirect({ rtcConfiguration: { iceServers: [] } }),
-    webRTC({ rtcConfiguration: () => iceHolder.current() }),
-    circuitRelayTransport(),
-    webSockets(),
-  ];
 
   // MESH_INTERFACE → Transports → "A client dials a private address
   // only when its own configuration names it" — the client's own
-  // `denyDialMultiaddr`, passed in every runtime so the rule is the
-  // same in Node and in a browser. The reader of configured addresses
-  // is a holder reassigned once the client (and so its node list)
-  // exists; before then, libp2p's start-time code does not call the
-  // gater (which fires only inside the dial queue), and the fallback
-  // reader answers no key.
+  // `denyDialMultiaddr`, passed through `readerLibp2pOptions` so the
+  // rule is the same in Node and in a browser. The reader of
+  // configured addresses is a holder reassigned once the client (and
+  // so its node list) exists; before then, libp2p's start-time code
+  // does not call the gater (which fires only inside the dial queue),
+  // and the fallback reader answers no key.
   const configuredHolder: { current: (notisId: string) => readonly string[] } = {
     current: () => [],
   };
   const denyDialMultiaddr = (ma: Multiaddr): boolean =>
     clientDenyDialMultiaddr(ma, configuredHolder.current);
 
-  // `MESH_INTERFACE → Discovery` — the client runs the DHT as a client on
-  // `/notis/<network>/kad/1.0.0`. `clientMode: true` keeps it off the
-  // server side of the handler registration.
-  // `MESH_INTERFACE → The client's node list → "The secure WebSocket is
-  // the fallback"` — the client gives libp2p its one address order
-  // through the dial queue's `addressSorter`; attribution reads the
-  // list libp2p reports it dialled, never a re-derivation.
-  const node = await createLibp2p({
+  // NET_INTERFACE → The browser entry — `readerLibp2pOptions` carries
+  // the browser transports, Noise, yamux, `identify`, `ping`, the
+  // Notis DHT in client mode and gossipsub with `net`'s options for
+  // the ordering-block topic; the client adds the dial queue's
+  // `addressSorter` for its one address order (MESH_INTERFACE → The
+  // client's node list → "The secure WebSocket is the fallback").
+  const node = await createLibp2p(readerLibp2pOptions({
     privateKey: key.privateKey,
-    transports,
-    connectionEncrypters: [noise()],
-    streamMuxers: [yamux()],
-    connectionManager: { addressSorter: notisAddressSorter },
-    connectionGater: { denyDialMultiaddr },
-    services: {
-      identify: identify(),
-      ping: ping(),
-      dht: kadDHT({ protocol: dhtProtocol(o.network), clientMode: true }),
-      // MESH_INTERFACE → Block gossip → "One router, net's rules" — the
-      // client runs gossipsub on net's `gossipsubOptions`, carrying
-      // net's envelope, message id and seen window. The client
-      // subscribes to the ordering-block topic alone and reads nothing
-      // else off the router.
-      pubsub: gossipsub(
-        gossipsubOptions(o.profile.magic, [gossipTopics(o.profile.magic).orderingBlock]),
-      ),
-    },
-  });
+    magic: o.profile.magic,
+    network: o.network,
+    iceServers: () => iceHolder.current(),
+    denyDialMultiaddr,
+    addressSorter: notisAddressSorter,
+  }));
 
   const random = o.random ?? Math.random;
   const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, random, resolveFn);
@@ -484,7 +443,7 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // public nodes it holds" — the client holds its node list, so
   // the holder derives the ICE configuration from it. `webRTC` reads
   // the function on every dial, so the next dial sees the live list.
-  iceHolder.current = () => client.iceConfiguration();
+  iceHolder.current = () => client.iceConfiguration().iceServers;
   // MESH_INTERFACE → Transports → "A client dials a private address
   // only when its own configuration names it" — the gater reads the
   // live node list, so a hand-add or an anchor update is visible

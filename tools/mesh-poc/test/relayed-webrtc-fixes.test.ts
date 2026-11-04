@@ -180,37 +180,29 @@ describe('NAT routers drop unsolicited inbound on the outside interface', () => 
 // --- WebRTC-direct names no ICE server ------------------------------------
 
 describe('WebRTC-direct names no ICE server; the relayed WebRTC path keeps STUN', () => {
-  // MESH_INTERFACE → NAT — "Only the relayed WebRTC path uses STUN;
-  // WebRTC-direct to a public address needs none." The client and the
-  // mesh node both build `webRTCDirect({ rtcConfiguration: { iceServers:
-  // [] } })`; `webRTC(...)` keeps the configured servers.
-  //
-  // Choice: a source regex rather than a `vi.mock('@libp2p/webrtc', ...)`
-  // + startMeshClient / startMeshNode, because that would spin up three
-  // libp2p nodes (one client, one public and one private mesh node) for
-  // one assertion per node and the existing scenario suites already
-  // exercise end-to-end startup. The regex matches the whole call
-  // shape — `webRTCDirect({ rtcConfiguration: { iceServers: [] } })` —
-  // so a wrapper that reads the string in a comment but builds the
-  // transport differently fails it.
+  // NET_INTERFACE → The browser entry — "`readerLibp2pOptions` is the
+  // libp2p options a reader hands to `createLibp2p`"; the mesh node
+  // still builds its own transports, so the two source regexes below
+  // are the client's `readerLibp2pOptions` call and the mesh node's
+  // `webRTCDirect`/`webRTC` calls.
 
-  it('the client calls webRTCDirect with an empty iceServers list', () => {
+  it('the client builds its libp2p from readerLibp2pOptions', () => {
     const src = readFileSync(SRC_MESH_CLIENT, 'utf8');
     expect(
       src,
-      'webRTCDirect({ rtcConfiguration: { iceServers: [] } })',
-    ).toMatch(/\bwebRTCDirect\s*\(\s*\{\s*rtcConfiguration\s*:\s*\{\s*iceServers\s*:\s*\[\s*\]\s*\}\s*\}\s*\)/);
+      'createLibp2p(readerLibp2pOptions({ ... }))',
+    ).toMatch(/createLibp2p\s*\(\s*readerLibp2pOptions\s*\(/);
   });
 
-  it('the client passes a function to webRTC() rtcConfiguration', () => {
+  it('the client passes a function to readerLibp2pOptions iceServers', () => {
     // MESH_INTERFACE → NAT → "A client's STUN list comes from the
-    // public nodes it holds" — rtcConfiguration is a function the
-    // webRTC transport reads at every dial (@libp2p/webrtc@7.0.2's
-    // private-to-private/transport.js:100, :143), so the derived
-    // list reaches each new peer connection.
+    // public nodes it holds" — the ICE list reaches
+    // `readerLibp2pOptions` as a function the WebRTC transport reads
+    // at every dial, so the derived list flows into every new peer
+    // connection.
     const src = readFileSync(SRC_MESH_CLIENT, 'utf8');
-    expect(src, 'webRTC({ rtcConfiguration: () => ... })').toMatch(
-      /\bwebRTC\s*\(\s*\{\s*rtcConfiguration\s*:\s*\(\s*\)\s*=>/,
+    expect(src, 'iceServers: () => iceHolder.current()').toMatch(
+      /\biceServers\s*:\s*\(\s*\)\s*=>/,
     );
   });
 
