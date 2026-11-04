@@ -31,6 +31,7 @@ import type { NetValidators, MeshConfig } from '../../src/index.js';
 import { nodeKeyFromKeyPair } from '../../src/mesh/identity.js';
 import { readerHandshake } from '../../src/mesh/reader-handshake.js';
 import { readerLibp2pOptions } from '../../src/mesh/reader-options.js';
+import { dhtProtocol } from '../../src/mesh/constants.js';
 import { MAGIC_TESTNET } from '../../src/frame.js';
 import { makeConfig } from '../helpers.js';
 
@@ -137,5 +138,13 @@ describe('NET_INTERFACE → The browser entry — reader handshake', () => {
     const readerId = reader.peerId.toString();
     expect(node.getConnectedReaders()).toContain(readerId);
     expect(node.getConnectedPeers()).not.toContain(readerId);
+
+    // MESH_INTERFACE → Discovery → "The DHT is Notis's own" — private
+    // nodes and browsers run the Notis DHT as clients; a reader
+    // handles the DHT's protocol only in server mode. `clientMode:
+    // true` in `readerLibp2pOptions` keeps that handler off the
+    // reader's registrar, so `getProtocols()` lacks the Notis DHT
+    // protocol.
+    expect(reader.getProtocols()).not.toContain(dhtProtocol('testnet'));
   }, 60_000);
 });
