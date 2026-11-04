@@ -1218,11 +1218,11 @@ export class NetNode {
         await this.dialAndHandshake(addr, 'seed');
       }
 
-      // `MESH_INTERFACE → NAT → "A private node ... takes a relay
-      // reservation on each public node it is told of — its bootstrap
-      // peers, by address and id, over the connection `net` holds to
-      // each, never by searching"`. Each bootstrap peer becomes a
-      // `<entry>/p2p-circuit` listen address added after start; a
+      // `MESH_INTERFACE → NAT → "A node's role is its operator's setting"`
+      // — a private node takes a relay reservation on each of its
+      // bootstrap peers over the connection `net` already holds to
+      // that peer, never by searching. Each bootstrap entry becomes
+      // a `<entry>/p2p-circuit` listen address added after start; a
       // reservation that cannot complete is tried again on the retry
       // cadence. A private node with `bootstrapPeers: []` asks no
       // relay and starts on its own addresses alone.

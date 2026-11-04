@@ -77,20 +77,20 @@ export interface MeshConfig {
    */
   readonly stunServers?: readonly string[];
   /**
-   * `MESH_INTERFACE → NAT → "A relay that does not answer never stops
-   * a private node ... is tried again on the node list's retry cadence
-   * (`RETRY_BASE_MS` doubling to `RETRY_CAP_MS`)"`. Absent, the
-   * contract's `RETRY_BASE_MS` and `RETRY_CAP_MS` stand. Tests inject
-   * small values to land reservations inside the suite timeout.
+   * `MESH_INTERFACE → NAT → "A relay that does not answer never stops a private node"`
+   * — the retry's exponential schedule: `RETRY_BASE_MS` doubled to a
+   * cap at `RETRY_CAP_MS`. Absent, the contract's constants stand.
+   * Tests inject small values to land reservations inside the suite
+   * timeout.
    */
   readonly relayRetryBaseMs?: number;
   readonly relayRetryCapMs?: number;
   /**
-   * `MESH_INTERFACE → NAT → "every attempt under `RELAY_LISTEN_TIMEOUT_MS`"`
+   * `MESH_INTERFACE → NAT → "A relay that does not answer never stops a private node"`
    * — the deadline one `transportManager.listen([<relay>/p2p-circuit])`
-   * attempt runs under. Absent, the contract's `RELAY_LISTEN_TIMEOUT_MS`
-   * stands. Tests inject small values to land the timeout path
-   * inside the suite timeout.
+   * attempt runs under, past which the attempt is a failure. Absent,
+   * the contract's `RELAY_LISTEN_TIMEOUT_MS` stands. Tests inject
+   * small values to land the timeout path inside the suite timeout.
    */
   readonly relayListenTimeoutMs?: number;
   /**

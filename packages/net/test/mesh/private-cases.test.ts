@@ -1,11 +1,11 @@
 // NET_INTERFACE → The mesh — a private `NetNode` runs the circuit-relay
 // transport, the WebRTC transport, DCUtR, the DHT in client mode, and
-// publishes its reservations alone (`MESH_INTERFACE → NAT → "A private
-// node … takes a relay reservation on each public node it is told of
-// … is reached through them"`; `→ Discovery → "The DHT is Notis's
-// own"`; `→ NAT → "A private node announces its relay reservations
-// alone"`). The reservations ride the TCP connection `net` opened to
-// each seed in `bootstrapPeers`, never a second one.
+// publishes its reservations alone (`MESH_INTERFACE → NAT → "A node's
+// role is its operator's setting"`; `→ Discovery → "The DHT is Notis's
+// own"`; `→ NAT → "A public node announces its listen addresses from
+// the start"` — the same paragraph's close holds the private role to
+// its reservations alone). The reservations ride the TCP connection
+// `net` opened to each seed in `bootstrapPeers`, never a second one.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -105,10 +105,10 @@ describe('mesh — a private NetNode', () => {
     expect(protos).not.toContain(dhtProtocol('devnet'));
   }, 30_000);
 
-  // MESH_INTERFACE → NAT — "A relay that does not answer never stops a
-  // private node. The node starts on its own addresses alone". With no
-  // bootstrap peer the private node holds no reservation and lists no
-  // circuit address, yet `start` returns and the node is up.
+  // `MESH_INTERFACE → NAT → "A relay that does not answer never stops a private node"`
+  // — with no bootstrap peer the private node holds no reservation
+  // and lists no circuit address, yet `start` returns and the node
+  // is up.
   it('with bootstrapPeers: [] starts and takes no reservation', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-no-boot-'));
     dirs.push(dir);
@@ -127,12 +127,12 @@ describe('mesh — a private NetNode', () => {
       `addrs = ${mas.join(', ')}`).toBe(false);
   }, 30_000);
 
-  // MESH_INTERFACE → NAT — "takes a relay reservation on each public
-  // node it is told of — its bootstrap peers, by address and id, over
-  // the connection `net` holds to each, never by searching". The
-  // bootstrap address is a plain TCP multiaddr with `/p2p/<peer>`; the
-  // private node reserves on each through the TCP connection the
-  // outbound floor opened.
+  // `MESH_INTERFACE → NAT → "A node's role is its operator's setting"`
+  // — a private node takes a relay reservation on each of its
+  // bootstrap peers over the connection `net` holds to that peer,
+  // never by searching. The bootstrap address is a plain TCP
+  // multiaddr with `/p2p/<peer>`; the private node reserves on each
+  // through the TCP connection the outbound floor opened.
   it('reserves on its TCP seed and the reservation rides the floor-opened TCP connection', async () => {
     // A plain libp2p circuit-relay server on loopback TCP — the
     // minimal shape of a public mesh node's relay surface.
@@ -184,11 +184,12 @@ describe('mesh — a private NetNode', () => {
     ).toBe(1);
   }, 30_000);
 
-  // MESH_INTERFACE → NAT → "A `private` node announces its relay
-  // reservations alone". Even with a `/webrtc-direct` listen of its
-  // own (for the local-address path, `→ Discovery → "A node added by
-  // hand"`), `getMultiaddrs()` carries circuit entries alone — every
-  // address names `/p2p-circuit`.
+  // `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
+  // — the same paragraph's close holds a private node to its
+  // reservation addresses alone. Even with a `/webrtc-direct` listen
+  // of its own (for the local-address path, `→ Discovery → "A node added by hand"`),
+  // `getMultiaddrs()` carries circuit entries alone — every address
+  // names `/p2p-circuit`.
   it('a private node announces its relay reservations alone (announceFilter)', async () => {
     const relayKey = await libp2pGenerate('Ed25519');
     const relayPeer = peerIdFromPrivateKey(relayKey);

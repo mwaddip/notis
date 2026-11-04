@@ -47,12 +47,13 @@ export function meshListenAddrs(
 }
 
 /**
- * `MESH_INTERFACE → NAT → "A `private` node announces its relay
- * reservations alone"` — libp2p 3.5's `AddressManager` runs this
- * filter over every address it would otherwise announce
- * (`libp2p/src/address-manager/index.js` `getAddresses()`). A private
- * node has no listen address worth announcing on its own, so the
- * filter keeps `/p2p-circuit`-bearing addresses and drops the rest.
+ * `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
+ * — the same paragraph's close names the private role: a private
+ * node announces its relay reservations alone. libp2p 3.5's
+ * `AddressManager` runs this filter over every address it would
+ * otherwise announce (`libp2p/src/address-manager/index.js`
+ * `getAddresses()`), and this filter keeps `/p2p-circuit`-bearing
+ * addresses and drops the rest.
  */
 export function privateAnnounceFilter(mas: Multiaddr[]): Multiaddr[] {
   return mas.filter((ma) => ma.toString().includes('/p2p-circuit'));
@@ -119,11 +120,11 @@ export function meshPrivateServices(mesh: MeshConfig, _datastore: Datastore): {
  * The mesh's WebRTC-direct transport — public and private alike. The
  * empty `iceServers` list disables libp2p's `DEFAULT_ICE_SERVERS`
  * fallback (`@libp2p/webrtc@7.0.2/src/constants.ts:12`); WebRTC-direct
- * to a public address needs none (`MESH_INTERFACE → NAT → "Only the
- * relayed WebRTC path uses STUN"`). The lifespan is pinned past any
- * operator horizon, holding the certhash an anchor lists steady
- * across restarts (`MESH_INTERFACE → Transports → "The WebRTC-direct
- * certificate persists"`).
+ * to a public address needs none, since STUN carries the relayed
+ * WebRTC path alone (`MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by IP"`).
+ * The lifespan is pinned past any operator horizon, holding the
+ * certhash an anchor lists steady across restarts
+ * (`MESH_INTERFACE → Transports → "The WebRTC-direct certificate persists"`).
  */
 export function meshWebRTCDirectTransport(): ReturnType<typeof webRTCDirect> {
   return webRTCDirect({

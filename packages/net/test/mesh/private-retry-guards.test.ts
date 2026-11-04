@@ -1,17 +1,14 @@
 // NET_INTERFACE → The mesh — two guards on the private role's relay
-// retry that end-to-end cases do not hold by themselves:
+// retry that end-to-end cases do not hold by themselves. Both ride
+// `MESH_INTERFACE → NAT → "A relay that does not answer never stops a private node"`:
 //   1. A relay that accepts the connection and never answers the HOP
-//      reservation: the private node's attempt ends at the per-attempt
-//      timeout and the next attempt is scheduled on the retry cadence
-//      (MESH_INTERFACE → NAT → "every attempt under
-//      `RELAY_LISTEN_TIMEOUT_MS`"); without the timeout, the attempt
-//      never ends.
+//      reservation: the private node's attempt ends at the per-
+//      attempt timeout and the next attempt is scheduled on the
+//      retry cadence; without the timeout, the attempt never ends.
 //   2. A private node with `bootstrapPeers: []` schedules no retry
 //      and never dials its own transport manager for a circuit
-//      address (MESH_INTERFACE → NAT → "A relay that does not answer
-//      never stops a private node. The node starts on its own
-//      addresses alone"); a retry started regardless of bootstrap
-//      would show up as a `transportManager.listen` call.
+//      address; a retry started regardless of bootstrap would show
+//      up as a `transportManager.listen` call.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -90,7 +87,7 @@ describe('mesh — private role retry guards', () => {
     nodes = []; toStop = []; dirs = [];
   });
 
-  // MESH_INTERFACE → NAT → "every attempt under `RELAY_LISTEN_TIMEOUT_MS`"
+  // `MESH_INTERFACE → NAT → "A relay that does not answer never stops a private node"`
   // — a relay that accepts the TCP connection and registers the HOP
   // protocol but never writes a response holds the private node's
   // reservation stream open forever. The per-attempt deadline must
@@ -191,9 +188,8 @@ describe('mesh — private role retry guards', () => {
       `no reservation while HOP stalls: ${announced.join(', ')}`).toBe(false);
   }, 20_000);
 
-  // MESH_INTERFACE → NAT → "A relay that does not answer never stops
-  // a private node. The node starts on its own addresses alone" —
-  // with `bootstrapPeers: []`, the private role starts no retry at
+  // `MESH_INTERFACE → NAT → "A relay that does not answer never stops a private node"`
+  // — with `bootstrapPeers: []`, the private role starts no retry at
   // all. The observable: no `transportManager.listen` call for a
   // circuit address, and `meshIdentity()` carries no `/p2p-circuit`.
   it('with bootstrapPeers: [] starts no retry (no transportManager.listen for a circuit)', async () => {

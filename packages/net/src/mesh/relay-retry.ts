@@ -1,7 +1,5 @@
-// MESH_INTERFACE → NAT → "A relay that does not answer never stops a
-// private node ... is tried again on the node list's retry cadence
-// (`RETRY_BASE_MS` doubling to `RETRY_CAP_MS`)". `failures` counts
-// failed attempts so far; the schedule is
+// MESH_INTERFACE → NAT → "A relay that does not answer never stops a private node".
+// `failures` counts failed attempts so far; the schedule is
 // `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(failures−1))`. Pure. Zero or
 // negative count reads 0.
 
@@ -17,14 +15,14 @@ export function retryIntervalMs(failures: number, base?: number, cap?: number): 
 }
 
 /**
- * MESH_INTERFACE → NAT → "A relay that does not answer never stops a
- * private node" — hold a private node's `/p2p-circuit` listen
- * reserved. Each attempt calls `transportManager.listen([addr])`
- * under `RELAY_LISTEN_TIMEOUT_MS`; on success, the circuit listener
- * dials the relay (reusing the TCP connection libp2p already holds
- * through the mesh node's floor dial) and reserves. A reservation
- * that is later removed (`self:peer:update` drops the circuit entry)
- * starts a fresh retry.
+ * `MESH_INTERFACE → NAT → "A relay that does not answer never stops a private node"`
+ * — hold a private node's `/p2p-circuit` listen reserved. Each
+ * attempt calls `transportManager.listen([addr])` under
+ * `RELAY_LISTEN_TIMEOUT_MS`; on success, the circuit listener dials
+ * the relay (reusing the TCP connection libp2p already holds through
+ * the mesh node's floor dial) and reserves. A reservation that is
+ * later removed (`self:peer:update` drops the circuit entry) starts
+ * a fresh retry.
  *
  * `components.transportManager` is public on the libp2p instance
  * (`libp2p@3.5.1/src/libp2p.ts:40` "public components"); the typed
