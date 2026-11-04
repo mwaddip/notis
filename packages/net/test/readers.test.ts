@@ -223,7 +223,7 @@ describe('NET_INTERFACE → Readers', () => {
   }, TIMEOUT);
 
   // Case 3 — "Readers past `maxReaders` are closed; a node still gets in."
-  it.fails('readers past maxReaders are closed; a node still gets in', async () => {
+  it('readers past maxReaders are closed; a node still gets in', async () => {
     const nodeA = new NetNode(makeConfig({ maxReaders: 2 }), validators);
     nodes.push(nodeA);
     await nodeA.start();

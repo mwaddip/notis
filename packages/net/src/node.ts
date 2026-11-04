@@ -52,6 +52,7 @@ import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
 import { readStreamBounded, sinkWithDeadline, addressWithoutPeerId, peerIdOfAddress } from './util.js';
 import {
   HANDSHAKE_DEADLINE_FACTOR,
+  HANDSHAKE_SLACK,
   MAX_CHAIN_RESPONSE_ITEMS,
   MAX_HANDSHAKE_FRAME_BYTES,
   MAX_INBOUND_HANDSHAKE_STREAMS,
@@ -720,7 +721,15 @@ export class NetNode {
           this.peerMgr.isBanned(peerId.toString()),
       },
       connectionManager: {
-        maxConnections: this.config.maxPeers,
+        // NET_INTERFACE → Readers → "libp2p's connection ceiling is
+        // `maxPeers + maxReaders + HANDSHAKE_SLACK`": a connection is
+        // counted by the kind its handshake declares; the slack holds the
+        // connections still handshaking, which libp2p's connection manager
+        // refuses when the ceiling is reached (`libp2p@3.5.1`,
+        // `src/connection-manager/index.ts:688` —
+        // `getConnections().length < maxConnections` admits, otherwise the
+        // inbound is refused at `maConnection()` before any handler runs).
+        maxConnections: this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK,
       },
       // Disable the built-in connection monitor heartbeat.  When enabled it
       // pings peers every 10 s via /ipfs/ping/1.0.0 and aborts the connection
@@ -1139,6 +1148,19 @@ export class NetNode {
           // handshake that completes for a peer already Active records and
           // raises nothing.
           const peerServesChain = servesChain(result.peerCapabilities);
+          // NET_INTERFACE → Readers — "a chain-serving peer past `maxPeers`
+          // is closed after its handshake as well". An outbound that lands
+          // past the budget is closed with nothing recorded.
+          if (
+            peerServesChain
+            && !this.peerMgr.isPeerActive(remote)
+            && this.getConnectedPeers().length >= this.config.maxPeers
+          ) {
+            console.log(`[net] outbound handshake with ${remote} past maxPeers — closing`);
+            await conn.close().catch(() => { /* already gone */ });
+            if (source === 'seed') this.markBootstrapSettled(addr);
+            return false;
+          }
           if (!this.peerMgr.isPeerActive(remote)) {
             this.peerMgr.setPeerState(remote, PeerState.Active);
             this.peerMgr.setPeerAddress(remote, addr);
@@ -1367,7 +1389,25 @@ export class NetNode {
         // handshake that completes for a peer already Active is answered
         // when this node is the listener, and records and raises nothing.
         const peerServesChain = servesChain(msg.capabilities);
+        // NET_INTERFACE → Readers → "At most `maxReaders` readers are held
+        // at once; one past it is closed after its handshake"; "a
+        // chain-serving peer past `maxPeers` is closed after its handshake
+        // as well". Checked before the state transitions so the budgets
+        // count the held peers, not the one arriving.
+        let closeAfterReply = false;
         if (!this.peerMgr.isPeerActive(peerId)) {
+          if (peerServesChain) {
+            if (this.getConnectedPeers().length >= this.config.maxPeers) {
+              closeAfterReply = true;
+            }
+          } else {
+            if (this.getConnectedReaders().length >= this.config.maxReaders) {
+              closeAfterReply = true;
+            }
+          }
+        }
+
+        if (!closeAfterReply && !this.peerMgr.isPeerActive(peerId)) {
           // The metadata keeps the peer's declared version, not ours — it
           // is what the boundary sweep reads
           // (NET_INTERFACE → Post-Handshake Routing).
@@ -1432,6 +1472,14 @@ export class NetNode {
         // the listener's handshake has completed on this connection; the
         // deadline leaves it alone.
         if (typeof connId === 'string') this.completedConnections.add(connId);
+        if (closeAfterReply) {
+          // NET_INTERFACE → Readers — "a reader past `maxReaders` is
+          // closed after its handshake", "a chain-serving peer past
+          // `maxPeers` is closed after its handshake as well".
+          const kind = peerServesChain ? 'chain peer past maxPeers' : 'reader past maxReaders';
+          console.log(`[net] inbound handshake ${peerId}: ${kind} — closing`);
+          await endConnection();
+        }
       } catch (err) {
         // The empty frame is all we can say to a peer whose handshake did not
         // complete; the log is what separates that from a peer that never

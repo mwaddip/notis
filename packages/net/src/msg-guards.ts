@@ -49,6 +49,20 @@ export const MAX_INBOUND_HANDSHAKE_STREAMS = 1;
  */
 export const HANDSHAKE_DEADLINE_FACTOR = 3;
 
+/**
+ * NET_INTERFACE → Readers — "libp2p's connection ceiling is `maxPeers +
+ * maxReaders + HANDSHAKE_SLACK`". The slack admits connections libp2p has
+ * upgraded but whose handshake has not yet named their kind: a dialled
+ * inbound that has not sent its frame, an outbound whose answer has not
+ * come back, both counting toward libp2p's `maxConnections` before either
+ * budget is charged. 16 matches `MAX_INBOUND_SYNC_STREAMS`' shape (one
+ * waiting stream's worth per concurrent handshake) and is above libp2p
+ * 3.x's `maxIncomingPendingConnections` default of 10, so an honest
+ * inbound cannot be refused on pending alone before the slack closes it.
+ * Unexported — the ceiling is an internal argument, not a protocol number.
+ */
+export const HANDSHAKE_SLACK = 16;
+
 // ---------------------------------------------------------------------------
 // Resource limits (untrusted counts and sizes)
 //
