@@ -5704,6 +5704,7 @@ its actual reach.
 | `MAX_MEMPOOL_ENTRIES` | `local` | `10000` | Mempool capacity |
 | `MIN_FEE_RATE_PER_BYTE` | `local` | `MIN_FEE_RATE_PER_BYTE` (`0n`) | Relay fee floor in base units per in-block byte — admission policy, not consensus (MEMPOOL_INTERFACE → Fee floor) |
 | `MAX_PEERS` | `local` | `50` | Max connected libp2p peers |
+| `MAX_READERS` | `local` | `MAX_READERS` (`CONSTANTS → net`) | The readers — browsers and other clients that serve no chain — held at once, never counted in `MAX_PEERS` — semantics `NET_INTERFACE → Readers` |
 | `MIN_PEERS` | `local` | `3` | Outbound fill floor — semantics `NET_INTERFACE → Config` |
 | `PEER_DB_CAP` | `local` | `1000` | Soft cap on PeerDb entries — semantics `NET_INTERFACE → Config` |
 | `OUTBOUND_REDIAL_COOLDOWN_MS` | `local` | `60000` | Redial cooldown per failed outbound target — semantics `NET_INTERFACE → Config` |
@@ -5727,6 +5728,14 @@ its actual reach.
 | `BOOTSTRAP_PEERS` | `operational` | the profile's `bootstrapPeers` — testnet notis.fun's address under its node's peer id, mainnet and devnet none (`TYPES_INTERFACE → Network profiles`) | Comma-separated libp2p multiaddrs; a set variable **replaces** the profile's list, it does not add to it |
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `WEB_SHELL_PATH` | `operational` | `""` | Path of the web client's `index.html`; empty means `GET /shell/:id` answers 404 (→ Link previews) |
+| `MESH_ROLE` | `operational` | unset | `public` or `private`; unset, the node runs no mesh (`MESH_INTERFACE → NAT → "A node's role is its operator's setting"`). Independent of `NODE_ROLE` |
+| `MESH_LISTEN` | `operational` | `""` | Comma-separated mesh listen multiaddrs, refused with a DNS component; a `public` node's must hold a `/webrtc-direct` address |
+| `MESH_ANNOUNCE` | `operational` | `""` | Comma-separated multiaddrs a `public` node announces in place of its listen addresses, refused with a DNS component |
+| `MESH_STUN` | `operational` | the IP of the first WebRTC-direct listen address, at `STUN_PORT` | A `public` node's STUN server, `<ip>:<port>` or `off`; refused on a `private` node (`MESH_INTERFACE → NAT`) |
+| `MESH_STUN_SERVERS` | `operational` | `""` | A `private` node's ICE servers, comma-separated `stun:<ip>:<port>`; a hostname refused |
+| `MESH_WSS` | `operational` | `""` | `<ip>:<port>` of a `public` node's opt-in secure WebSocket (`MESH_INTERFACE → The IP certificate`); requires `MESH_ACME_DIRECTORY` |
+| `MESH_ACME_DIRECTORY` | `operational` | `""` | The ACME directory URL the IP certificate is obtained from |
+| `MESH_ACME_CHALLENGE_PORT` | `operational` | `80` | The port the node answers the `http-01` challenge on — behind the operator's own server where that server holds port 80 |
 
 **The key file is named for the store.** Nodes whose stores share a directory — a mesh of test nodes, `node-1.db`
 beside `node-2.db` — hold a key each with no setting of their own, and a wipe that removes the store's files,
@@ -5734,6 +5743,21 @@ beside `node-2.db` — hold a key each with no setting of their own, and a wipe 
 
 **The node names its key at start.** Its start line prints the node key's peer id and its 64-hex spelling, for an
 operator to hand to whoever lists the node.
+
+**The mesh state directory is named for the store**, as the key file is: `DB_PATH` with its extension replaced by
+`.mesh` — `dagsocial.db` → `dagsocial.mesh` — holding the WebRTC-direct certificate's datastore and the ACME account and
+certificate (`NET_INTERFACE → The mesh`). A wipe that removes `dagsocial.db*` leaves it, and with it the addresses an
+anchor names.
+
+**The node's mesh endpoint forwards to its own public listener**: `httpBase` is `http://127.0.0.1:<PORT>`, never
+`ADMIN_PORT`'s listener, and no setting names another (`MESH_INTERFACE → The node endpoint`).
+
+**A mesh node prints its identity line** once its addresses are announced and at every change of them: one JSON line,
+`{ "notisId", "peerId", "multiaddrs", "localAddrs" }` — the addresses an anchor lists and, for a private node, the
+local WebRTC-direct addresses its operator hands over (`MESH_INTERFACE → Discovery → "A node added by hand"`).
+
+> ⚠ **AHEAD OF CODE (2026-11-04).** `MAX_READERS`, the `MESH_*` settings, the state directory, the loopback forward and the
+> identity line; a node runs no mesh until then.
 
 > ⚠ **Every "at 60 seconds" duration annotation is nominal in the short run and exact in the long
 > run.** The block time is an *emergent* property of the target and hashrate — there is no producer

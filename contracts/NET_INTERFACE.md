@@ -367,7 +367,7 @@ opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability))
 | `nodeName` | ≤ `MAX_NAME_BYTES` bytes; operator-configured, human-readable, may be empty |
 | `chainHeight` | ≤ `MAX_ADVERTISED_HEIGHT`; tip height of this node's chain |
 | `declaredAddress` | optional (`opt`), ≤ `MAX_ADDRESS_BYTES` (255) bytes; the multiaddr this node advertises — **its first listen address that is not loopback**, absent when every listen address is loopback. A loopback address advertised to a peer is one no peer can dial |
-| `capabilities` | count ≤ `MAX_CAPABILITY_ENTRIES` (64), each ≤ `MAX_CAPABILITY_CODE`; message codes this node can handle. Always present — an empty list is a peer that declares nothing |
+| `capabilities` | count ≤ `MAX_CAPABILITY_ENTRIES` (64), each ≤ `MAX_CAPABILITY_CODE`; message codes this node can handle. Always present — an empty list is a peer that declares nothing. A full node declares `NODE_CAPABILITIES`, a reader `READER_CAPABILITIES` (→ Readers) |
 
 Every rule is enforced inside the codec's `read`: a violation is a `ReaderError`, and the decode
 boundary collapses it to `null` → `malformed` (Ban policy below). The version-support check runs
@@ -538,11 +538,41 @@ body defects as deliberate:
   partition the network, and the peer may upgrade. The same tier applies to every version mismatch
   after the handshake (→ Peer Penalty System).
 
+### Readers
+
+**A peer's capabilities say what it serves.** A peer whose handshake declares `GetHeaders` (14) and `GetBlocks` (16)
+serves the chain — a node; one that declares neither is a **reader**: a browser, or any client that holds no chain to
+serve. `servesChain(capabilities)` answers which. A full node declares `NODE_CAPABILITIES`, the request codes it
+answers — `SyncInfo` (2), `ModifierRequest` (4), `GetPeers` (8), `GetHeaders` (14), `GetBlocks` (16); a reader
+declares `READER_CAPABILITIES`, none.
+
+**A reader is never asked for chain data.** No `SyncInfo`, `GetHeaders`, `GetBlocks`, `ModifierRequest` or `GetPeers`
+goes to a reader. `getConnectedPeers()` answers the chain-serving peers alone — the scheduler, the peer exchange and
+every caller of it draw from them — and `getConnectedReaders()` the readers. A reader is in gossip like any peer
+(→ Gossip Topics) and may query this node as any peer may.
+
+**Readers have a budget of their own.** At most `maxReaders` readers are held at once; one past it is closed after its
+handshake. Readers never count toward `maxPeers`, the outbound floor or the fill (→ Outbound Manager), and a reader
+declares no address, so it never enters `PeerDb` or a `Peers` answer. libp2p's connection ceiling is `maxPeers +
+maxReaders + HANDSHAKE_SLACK`, so a connection is counted by the kind its handshake declares; a chain-serving peer past
+`maxPeers` is closed after its handshake as well.
+
+**A peer dialled for chain service that declares none is closed.** An outbound connection whose handshake declares no
+chain service — a reader, or a node whose build declares nothing — is closed after its handshake and counted toward
+nothing; the next tick dials another.
+
+**The ban policy holds for a reader as for a node** (→ Handshake → "Ban policy"): the deadline, the era check and every
+penalty a peer earns, a reader earns the same.
+
+> ⚠ **AHEAD OF CODE (2026-11-04).** `NODE_CAPABILITIES`, `READER_CAPABILITIES`, `servesChain`,
+> `getConnectedReaders`, `maxReaders` and the closes; every node declares `capabilities: []` and every Active peer is
+> asked for chain data until then.
+
 ### Post-Handshake Routing
 
 | Condition | Action |
 |-----------|--------|
-| The peer becomes Active | Send it our `SyncInfo` (→ Sync State Machine) |
+| A chain-serving peer becomes Active | Send it our `SyncInfo` (→ Sync State Machine) |
 | Its claim is a hash our header tree lacks | Ask it for headers (→ Sync State Machine → "A claim the tree lacks is a header request") |
 | Its claim is one we hold | Nothing — the claim is settled; gossip flows, and the peer asks us for what it lacks |
 
@@ -993,7 +1023,7 @@ fails its dial.
 
 Two phases:
 
-Both phases are driven by the count of **outbound** connections, never
+Both phases are driven by the count of **outbound** connections to chain-serving peers (→ Readers), never
 by the total peer count. This is load-bearing: an attacker who fills
 every inbound slot must not be able to stop us from dialing out, which
 is how a node gets eclipsed. Inbound connections are counted toward
@@ -1264,7 +1294,7 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 
 | Layer | Choice |
 |-------|--------|
-| Transport | TCP (with optional QUIC, deferred) |
+| Transport | TCP; with a mesh role, WebRTC-direct, WebRTC over a circuit relay and the opt-in secure WebSocket as well (→ The mesh) |
 | Stream multiplexing | yamux or mplex |
 | Encryption | Noise (with libp2p-noise) |
 | PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all |
@@ -1288,8 +1318,39 @@ the file takes its directory's.
 **`net` runs under the key its caller hands it.** `NetConfig.nodeKey` is required, and `start` hands it to libp2p,
 refusing with `NodeKeyError` a `KeyPair` whose `secretKey` is not of the key file's form or whose `publicKey` is not
 its seed's; `net` reads no file at start. `loadNodeKey` is the one
-reader of a key file — the node calls it on `NODE_KEY_PATH` (`NODE_INTERFACE → Configuration`), a mesh service on
-its own key file (`MESH_INTERFACE → Identity`).
+reader of a key file — the node calls it on `NODE_KEY_PATH` (`NODE_INTERFACE → Configuration`), and a mesh node's
+key is that key (`MESH_INTERFACE → Identity`).
+
+### The mesh
+
+**`NetConfig.mesh` makes the node a mesh node**; absent, `start` builds the libp2p node of TCP, Noise, yamux,
+gossipsub, identify and ping alone. Its rules are `MESH_INTERFACE`'s — the transports, the roles, the discovery, the
+endpoint and the IP certificate — and `net` is where they run:
+
+```typescript
+interface MeshConfig {
+  role: 'public' | 'private'      // MESH_INTERFACE → NAT → "A node's role is its operator's setting"
+  network: 'devnet' | 'testnet' | 'mainnet'   // names the DHT protocol, /notis/<network>/kad/1.0.0
+  listen: string[]                // the mesh's listen addresses — a public node's WebRTC-direct among them
+  announce?: string[]
+  stateDir: string                // the WebRTC-direct certificate's datastore, the ACME account and certificate
+  httpBase: string                // the node's public HTTP API on loopback, the endpoint's upstream
+  stun?: { host: string; port: number }        // a public node's STUN server
+  stunServers?: string[]          // a private node's ICE servers, stun:<ip>:<port> alone
+  wss?: { ip: string; port: number; acmeDirectory: string; challengePort: number }  // public alone
+  relayRetryBaseMs?: number
+  relayRetryCapMs?: number
+}
+```
+
+Every refusal `MESH_INTERFACE` names is `MeshConfigError`, thrown by `start` before any socket opens; a state
+directory it cannot read is `MeshStateError` (`MESH_INTERFACE → Transports → "The WebRTC-direct certificate
+persists"`). `meshIdentity()` answers the node's mesh identity — its Notis spelling, its peer id, the addresses it
+announces and its local WebRTC-direct addresses — once they are announced, `null` with no mesh; `onMeshAddresses`
+reports each change of the announced set.
+
+> ⚠ **AHEAD OF CODE (2026-11-04).** `NetConfig.mesh` and everything above; `tools/mesh-poc`'s mesh service runs it until
+> then.
 
 ---
 
@@ -1300,7 +1361,10 @@ its own key file (`MESH_INTERFACE → Identity`).
 | `/dagsocial/handshake/1` (`HANDSHAKE_PROTOCOL`) | Frame | The peer handshake (→ Handshake) |
 | `/dagsocial/sync/1` (`SYNC_PROTOCOL`) | Frame | Headers-first sync, post bodies, peer discovery (codes 2, 4, 5, 8, 9, 14–17) |
 
-**These two are the whole set.** Every chain-data query multiplexes over the sync stream and the
+**These two are the whole set** of Notis's own protocols. Beside them a node with a mesh role serves HTTP over libp2p
+(`/http/1.1`, `MESH_INTERFACE → The node endpoint`) and libp2p's own — identify, ping, Kad-DHT on
+`/notis/<network>/kad/1.0.0`, circuit relay, AutoNAT, DCUtR — none of which carries chain data. Every chain-data query
+multiplexes over the sync stream and the
 frame `code` byte disambiguates it. A second stream protocol for chain data is what codes exist to
 avoid: it duplicates the framing, the caps and the serve loop, and — because protocol handlers are
 registered per protocol — it acquires its own admission policy by omission rather than by decision.
@@ -1580,7 +1644,11 @@ first hop.
 | `peerId()` | `() => string` | This node's libp2p peer ID — the node key's (→ The node key) |
 | `loadNodeKey(path)` | `(string) => Promise<KeyPair>` | Read the node key file at `path`, or write a fresh key there; `NodeKeyError` on a file it refuses (→ The node key) |
 | `peers()` | `() => Peer[]` | Connected peers with metadata, at any peer state; never this node itself (→ Handshake) |
-| `getConnectedPeers()` | `() => string[]` | Peer IDs of the Active peers — the DAGsocial handshake completed; never this node's own (→ Handshake) |
+| `getConnectedPeers()` | `() => string[]` | Peer IDs of the Active chain-serving peers — the DAGsocial handshake completed, `servesChain` of its capabilities; never this node's own, never a reader (→ Readers) |
+| `getConnectedReaders()` | `() => string[]` | Peer IDs of the Active readers (→ Readers) |
+| `peerCapabilities(peerId)` | `(string) => readonly number[] \| null` | The capabilities an Active peer's handshake declared; `null` for a peer not Active |
+| `meshIdentity()` | `() => MeshIdentity \| null` | `{ notisId, peerId, multiaddrs, localAddrs }` once announced; `null` with no mesh (→ The mesh) |
+| `onMeshAddresses(cb)` | `((MeshIdentity) => void) => void` | Each change of the announced set (→ The mesh) |
 | `tipApplied(height)` | `(number) => void` | The node reports each applied tip — every successful apply and the tip a reorg leaves, at the seam where it stamps `dag_tip_height`. When `protocolVersionAt(schedule, height + 1)` is above the era last in force, the boundary sweep runs (→ Post-Handshake Routing); inside an era it does nothing |
 | `syncPhase()` | `() => 'idle' \| 'syncing' \| 'synced'` | The scheduler's phase (Sync State Machine → "The phases"): `'idle'` before the first claim this node settles — before `start()`, after `stop()`, and on a node that has met no peer; `'syncing'` while a header sync or a block request is open or the best chain is not fully applied; `'synced'` once the best chain is fully applied and every unmarked Active peer's claim is settled — a co-started mesh enters it at its first settled claims, a miner with followers included. A reader wanting "not behind" tests for `'syncing'` absent |
 
@@ -1590,6 +1658,20 @@ first hop.
 |----------|-----------|-------------|
 | `broadcastOrderingBlock(b)` | `(OrderingBlock) => Promise<void>` | Gossip a newly created ordering block |
 | `broadcastTx(tx, content?)` | `(UtxoTransaction, string?) => Promise<void>` | Gossip a transaction **packet** — `encodeTxPacket(tx, content)`; a post's body travels in the same message (→ Gossip Topics). The caller passes `content` ⟺ `tx.post` is set. |
+
+### The browser entry
+
+**`@dagsocial/net/browser` is the half a browser runs**, importing no Node built-in and reading no Node global, held by
+a build of it with a plugin that refuses any Node built-in (`WEB_INTERFACE → The client's builds substitute nothing`):
+the gossip rules (`gossipTopics`, `gossipMessageId`, `GOSSIP_SEEN_WINDOW_MS`, `gossipsubOptions`); `BlockCheck`, the
+ordering-block topic's checks of → Stage 1 — the one copy, which the node's own validator calls; the handshake codec,
+`NODE_CAPABILITIES`, `READER_CAPABILITIES` and `servesChain`; and the reader's side — `readerHandshake`,
+`readerLibp2pOptions`, `meshFetch` and `meshFetchOverConnection` (`GET` and `POST`), the mesh URL and the key's two
+spellings (`MESH_INTERFACE → Identity`). The frame checksum is `hash32` (`TYPES_INTERFACE → The protocol hash`), so the
+codec is the same code on both sides.
+
+> ⚠ **AHEAD OF CODE (2026-11-04).** `./browser`, `BlockCheck` in `net` and the checksum through `hash32`; the frame
+> checksum is `node:crypto`'s `createHash('blake2b512')` and the client holds its own copies until then.
 
 **A broadcast that sends nothing still resolves.** Each publishes on the node's own topic for its
 payload. Before `start()`, with no peer on the topic, or with the bytes already seen on the topic inside
@@ -1734,6 +1816,8 @@ interface NetConfig {
   bootstrapPeers: string[]
   listenAddrs: string
   maxPeers: number
+  maxReaders: number               // the readers held at once (→ Readers)
+  mesh?: MeshConfig                // absent: no mesh (→ The mesh)
 
   // Network — REQUIRED, supplied by the node from its resolved profile.
   // No default; see §Magic Bytes and §Consensus parameters net enforces.
