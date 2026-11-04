@@ -29,6 +29,7 @@ import {
 import { BlockCheck } from '../src/block-check.js';
 import type { BlockCheckContext, BlockValidators } from '../src/block-check.js';
 import { GOSSIP_SEEN_WINDOW_MS } from '../src/gossip.js';
+import { PenaltyKind } from '../src/types.js';
 import { makeBlockAt } from './helpers/devnet-block.js';
 
 // NET_INTERFACE → The browser entry — BlockCheck is the one copy of the
@@ -45,6 +46,7 @@ const validators: BlockValidators = {
   verifyValidatorSignature,
   verifyOrderingBlockStructure,
   verifyUtxoTxRoot,
+  blockHash,
 };
 
 interface CtxOverrides {
@@ -79,31 +81,30 @@ function assembleRaw(
   return w.toBytes();
 }
 
-// AHEAD OF CODE: the BlockCheck stub answers { result: 'accept' } for
-// every input. Each failing case flips to plain `it` as its check lands in
-// the rule.
 describe("BlockCheck — net's Stage 1 for the block topic", () => {
-  it.fails('over MAX_ORDERING_BLOCK_BYTES → reject, lie', () => {
+  it('over MAX_ORDERING_BLOCK_BYTES → reject, lie, ProtocolViolation', () => {
     const raw = new Uint8Array(MAX_ORDERING_BLOCK_BYTES + 1);
     const verdict = new BlockCheck(validators, makeCtx()).check(raw);
     expect(verdict).toEqual({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.ProtocolViolation,
       detail: expect.stringContaining('MAX_ORDERING_BLOCK_BYTES'),
     });
   });
 
-  it.fails('sections that do not read → reject, lie', () => {
+  it('sections that do not read → reject, lie, ProtocolViolation', () => {
     const raw = new Uint8Array([0xff, 0xff, 0xff, 0xff]);
     const verdict = new BlockCheck(validators, makeCtx()).check(raw);
     expect(verdict).toEqual({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.ProtocolViolation,
       detail: expect.stringContaining('malformed ordering block header'),
     });
   });
 
-  it.fails('invalid field domains → reject, lie', () => {
+  it('invalid field domains → reject, lie, Misbehavior', () => {
     const good = makeBlockAt(1, PROTOCOL_VERSION);
     const badHeader: BlockHeader = { ...good.header, powTargetBits: POW_TARGET_BITS_MAX + 1 };
     const raw = assembleRaw(
@@ -115,11 +116,12 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict).toEqual({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.Misbehavior,
       detail: expect.stringContaining('powTargetBits'),
     });
   });
 
-  it.fails('protocol version not the era → reject, not a lie', () => {
+  it('protocol version not the era → reject, not a lie, Transient', () => {
     // Devnet's schedule is a single era at version 1 from height 0; a
     // block declaring version 2 at height 1 is a compatibility signal
     // (NET_INTERFACE → Peer Penalty System), Transient, so `lie: false`.
@@ -129,11 +131,12 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict).toEqual({
       result: 'reject',
       lie: false,
+      penalty: PenaltyKind.Transient,
       detail: expect.stringContaining('protocol version'),
     });
   });
 
-  it.fails('below floorBits → reject, lie', () => {
+  it('below floorBits → reject, lie, Misbehavior', () => {
     const block = makeBlockAt(1, PROTOCOL_VERSION, {
       powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR - 1,
     });
@@ -142,11 +145,12 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict).toEqual({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.Misbehavior,
       detail: expect.stringContaining('floor'),
     });
   });
 
-  it.fails('PoW not met → reject, lie', () => {
+  it('PoW not met → reject, lie, Misbehavior', () => {
     const good = makeBlockAt(1, PROTOCOL_VERSION);
     let bad = (good.header.powNonce + 1) >>> 0;
     while (verifyOrderingBlockPoW({ ...good.header, powNonce: bad })) {
@@ -162,13 +166,14 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict).toEqual({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.Misbehavior,
       detail: expect.stringContaining('PoW'),
     });
   });
 
-  it.fails('scheduled target differs → reject, not a lie', () => {
+  it('scheduled target differs → reject, not a lie, no penalty', () => {
     // NET_INTERFACE → Stage 1 → "A scheduled-target mismatch is refused,
-    // never forwarded, and never penalised" — lie: false.
+    // never forwarded, and never penalised" — lie: false, penalty: null.
     const block = makeBlockAt(1, PROTOCOL_VERSION);
     const raw = encodeOrderingBlock(block);
     const verdict = new BlockCheck(
@@ -178,6 +183,7 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict).toEqual({
       result: 'reject',
       lie: false,
+      penalty: null,
       detail: expect.stringContaining('scheduled'),
     });
   });
@@ -192,7 +198,7 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict.result).toBe('accept');
   });
 
-  it.fails('standing held or refused → ignore', () => {
+  it('standing held or refused → ignore', () => {
     const block = makeBlockAt(1, PROTOCOL_VERSION);
     const raw = encodeOrderingBlock(block);
     const held = new BlockCheck(validators, makeCtx({ standing: () => 'held' })).check(raw);
@@ -201,7 +207,7 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(refused).toEqual({ result: 'ignore' });
   });
 
-  it.fails('accepted inside the seen window → ignore; past it → accept again', () => {
+  it('accepted inside the seen window → ignore; past it → accept again', () => {
     // NET_INTERFACE → Stage 1 → "A header this node knows is Ignored".
     const block = makeBlockAt(1, PROTOCOL_VERSION);
     const raw = encodeOrderingBlock(block);
@@ -216,7 +222,7 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(third.result).toBe('accept');
   });
 
-  it.fails('validator signature fails → reject, lie', () => {
+  it('validator signature fails → reject, lie, Misbehavior', () => {
     const good = makeBlockAt(1, PROTOCOL_VERSION);
     const bad: OrderingBlock = {
       ...good,
@@ -227,11 +233,12 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict).toEqual({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.Misbehavior,
       detail: expect.stringContaining('validator signature'),
     });
   });
 
-  it.fails('body undecodable → reject, lie', () => {
+  it('body undecodable → reject, lie, ProtocolViolation', () => {
     const good = makeBlockAt(1, PROTOCOL_VERSION);
     const raw = assembleRaw(
       good.header,
@@ -242,11 +249,12 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict).toEqual({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.ProtocolViolation,
       detail: expect.stringContaining('malformed ordering block body'),
     });
   });
 
-  it.fails('structure invalid → reject, lie', () => {
+  it('structure invalid → reject, lie, Misbehavior', () => {
     // An empty body carries no settlement transaction, which
     // verifyOrderingBlockStructure refuses.
     const good = makeBlockAt(1, PROTOCOL_VERSION);
@@ -257,11 +265,12 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict).toEqual({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.Misbehavior,
       detail: expect.stringContaining('settlement'),
     });
   });
 
-  it.fails("body not the root's → reject, lie", () => {
+  it("body not the root's → reject, lie, Misbehavior", () => {
     // NET_INTERFACE → Stage 1 → "A worked header is forwarded with the
     // body its root commits".
     const good = makeBlockAt(1, PROTOCOL_VERSION);
@@ -276,11 +285,12 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(verdict).toEqual({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.Misbehavior,
       detail: expect.stringContaining("header's root"),
     });
   });
 
-  it.fails('valid → accept, the block and its blockHash', () => {
+  it('valid → accept, the block and its blockHash', () => {
     const block = makeBlockAt(1, PROTOCOL_VERSION);
     const raw = encodeOrderingBlock(block);
     const verdict = new BlockCheck(validators, makeCtx()).check(raw);
@@ -290,7 +300,7 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
     expect(block.header.powTargetBits).toBe(ORDERING_BLOCK_POW_TARGET_FLOOR);
   });
 
-  it.fails('a throw from a context provider → ignore, not a lie', () => {
+  it('a throw from a context provider → ignore with a fault, not a lie', () => {
     // NET_INTERFACE → Stage 1 → "A fault of this node's is no peer's".
     const block = makeBlockAt(1, PROTOCOL_VERSION);
     const raw = encodeOrderingBlock(block);
@@ -302,6 +312,9 @@ describe("BlockCheck — net's Stage 1 for the block topic", () => {
         },
       }),
     ).check(raw);
-    expect(verdict).toEqual({ result: 'ignore' });
+    expect(verdict).toEqual({
+      result: 'ignore',
+      fault: expect.stringContaining('context provider down'),
+    });
   });
 });

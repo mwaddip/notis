@@ -1800,14 +1800,12 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
   // NET_INTERFACE → The browser entry — the ordering-block topic's checks
   // are BlockCheck's one copy; the validator answers its verdict
   // (penalty, Accept/Reject/Ignore, the record).
-  // AHEAD OF CODE: the validator keeps its inline logic; BlockCheck.check
-  // is never called, so the spy's return is unused. Flips to plain `it`
-  // once the rule steps in.
-  it.fails("the ordering-block validator answers BlockCheck's verdict", async () => {
+  it("the ordering-block validator answers BlockCheck's verdict", async () => {
     const mod = await import('../src/block-check.js');
     const spy = vi.spyOn(mod.BlockCheck.prototype, 'check').mockReturnValue({
       result: 'reject',
       lie: true,
+      penalty: PenaltyKind.Misbehavior,
       detail: 'spy forced rejection',
     });
     try {
