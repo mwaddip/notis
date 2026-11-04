@@ -10,6 +10,9 @@ overrides:
   proxy-addr@<2.0.8: ^2.0.8
 
 patchedDependencies:
+  '@libp2p/http-utils@2.0.6':
+    hash: 917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d
+    path: patches/@libp2p__http-utils@2.0.6.patch
   '@libp2p/webrtc@7.0.2':
     hash: 2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24
     path: patches/@libp2p__webrtc@7.0.2.patch
@@ -102,7 +105,7 @@ importers:
         version: 4.0.4
       '@libp2p/http-utils':
         specifier: 2.0.6
-        version: 2.0.6
+        version: 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/identify':
         specifier: 4.1.18
         version: 4.1.18
@@ -489,7 +492,7 @@ importers:
         version: 4.0.4
       '@libp2p/http-utils':
         specifier: 2.0.6
-        version: 2.0.6
+        version: 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/identify':
         specifier: 4.1.18
         version: 4.1.18
@@ -4207,7 +4210,7 @@ snapshots:
   '@libp2p/http-fetch@4.0.4':
     dependencies:
       '@achingbrain/http-parser-js': 0.5.9
-      '@libp2p/http-utils': 2.0.6
+      '@libp2p/http-utils': 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/interface': 3.4.0
       uint8arrays: 6.1.1
 
@@ -4219,7 +4222,7 @@ snapshots:
       uint8-varint: 3.0.0
       uint8arrays: 6.1.1
 
-  '@libp2p/http-utils@2.0.6':
+  '@libp2p/http-utils@2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)':
     dependencies:
       '@achingbrain/http-parser-js': 0.5.9
       '@libp2p/interface': 3.4.0
@@ -4238,7 +4241,7 @@ snapshots:
   '@libp2p/http-websocket@2.0.4':
     dependencies:
       '@achingbrain/http-parser-js': 0.5.9
-      '@libp2p/http-utils': 2.0.6
+      '@libp2p/http-utils': 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/interface': 3.4.0
       '@libp2p/interface-internal': 3.2.2
       '@libp2p/utils': 7.4.5
@@ -4252,7 +4255,7 @@ snapshots:
     dependencies:
       '@libp2p/http-fetch': 4.0.4
       '@libp2p/http-peer-id-auth': 2.0.3
-      '@libp2p/http-utils': 2.0.6
+      '@libp2p/http-utils': 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/http-websocket': 2.0.4
       '@libp2p/interface': 3.4.0
       '@libp2p/interface-internal': 3.2.2

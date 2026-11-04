@@ -326,4 +326,67 @@ describe('mesh — the node endpoint', () => {
     expect(stub!.received[0]!.body.byteLength).toBe(bodyBytes.byteLength);
     expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bodyBytes))).toBe(0);
   }, 30_000);
+
+  // The patched `readHeaders` stops the HTTPParser at the end of the
+  // headers whether the body rides the same chunk or a later one;
+  // this case drives headers alone in one `stream.send`, then the
+  // body in a second after a short pause, and asserts the body
+  // reaches the upstream intact.
+  it('a POST whose headers and body arrive in separate chunks is forwarded byte for byte', async () => {
+    const { meshFetch: _meshFetch } = await bringUp((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"accepted":1}');
+    });
+    const libp2p = (node as unknown as { libp2p: Libp2p }).libp2p;
+    const serverPeerId = libp2p.peerId.toString();
+    const path = '/tx';
+    const bodyBytes = new TextEncoder().encode('{"split":true}');
+    const headers =
+      `POST ${path} HTTP/1.1\r\n`
+      + `host: ${serverPeerId}\r\n`
+      + 'content-type: application/json\r\n'
+      + `content-length: ${bodyBytes.byteLength}\r\n`
+      + 'connection: close\r\n\r\n';
+
+    // `conn.newStream` opens a bare libp2p stream the handler owns.
+    // Writing headers in one `send` then the body in another forces
+    // the server's `onData` to fire twice, so `readHeaders` returns
+    // after the first chunk and the body arrives as a later
+    // `'message'` event — the case the patched kOnHeadersComplete is
+    // argued from (`net`'s own `mesh/endpoint.ts` reads the body off
+    // the stream alone).
+    const [conn] = (client as unknown as Libp2p).getConnections();
+    const stream = await conn!.newStream('/http/1.1');
+    const streamApi = stream as unknown as {
+      send: (b: Uint8Array) => boolean;
+      onDrain: (o?: { signal?: AbortSignal }) => Promise<void>;
+      close: (o?: { signal?: AbortSignal }) => Promise<void>;
+    };
+    if (!streamApi.send(new TextEncoder().encode(headers))) {
+      await streamApi.onDrain();
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    if (!streamApi.send(bodyBytes)) await streamApi.onDrain();
+    await streamApi.close();
+
+    // Drain the stream's response (headers + body); the status line
+    // alone is all we need to tell the upstream did the read.
+    const chunks: Uint8Array[] = [];
+    const iterable = stream as unknown as AsyncIterable<Uint8Array | { subarray(): Uint8Array }>;
+    for await (const v of iterable) {
+      const b = v instanceof Uint8Array ? v : v.subarray();
+      chunks.push(b);
+    }
+    let total = 0;
+    for (const c of chunks) total += c.byteLength;
+    const all = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { all.set(c, off); off += c.byteLength; }
+    const text = new TextDecoder().decode(all);
+    expect(text.startsWith('HTTP/1.1 200')).toBe(true);
+    expect(stub!.received).toHaveLength(1);
+    expect(stub!.received[0]!.method).toBe('POST');
+    expect(stub!.received[0]!.path).toBe(path);
+    expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bodyBytes))).toBe(0);
+  }, 30_000);
 });

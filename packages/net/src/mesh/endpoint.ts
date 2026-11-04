@@ -1,13 +1,13 @@
 // MESH_INTERFACE → The node endpoint — a mesh node answers HTTP over
-// libp2p (`@libp2p/http`) by forwarding each `GET` and `POST` to its own
-// public HTTP API on loopback, a `POST`'s body and `content-type` as
-// sent, and answering with the upstream's status, `content-type` and
-// body bytes as they came. Any other method answers 405. The server is
-// built by passing this factory's `WebServer` to `http({ server })` at
-// libp2p construction.
+// libp2p (`@libp2p/http`) by forwarding each `GET` and `POST` to its
+// own public HTTP API on loopback, a `POST`'s body and `content-type`
+// as sent, and answering with the upstream's status, `content-type`
+// and body bytes as they came. Any other method answers 405. The
+// server is built by passing this factory's `WebServer` to
+// `http({ server })` at libp2p construction.
 //
-// Node-only: it reads from an upstream HTTP server, which is a Node.js
-// service (`MESH_INTERFACE → Place in the workspace`).
+// Node-only: it reads from an upstream HTTP server, which is a
+// Node.js service (`MESH_INTERFACE → Place in the workspace`).
 
 import type { WebServer } from '@libp2p/http';
 import type { HeaderInfo } from '@libp2p/http-utils';
@@ -98,38 +98,21 @@ export function meshEndpoint(
 }
 
 /**
- * Read the request body. `@libp2p/http-utils@2.0.6`'s `readHeaders`
- * runs its HTTPParser with only `kOnHeadersComplete` set — its default
- * `kOnBody` is a no-op, and when a single incoming buffer carries
- * headers *and* body, the parser's `BODY_SIZED` state consumes the
- * body bytes through that no-op and `parser.execute` returns the full
- * buffer length. The pushback branch `read < buf.byteLength` never
- * fires, so the body bytes never land back on the stream's read
- * buffer. The same bytes are reachable through `info.raw` — the
- * `Uint8ArrayList` `earlyData` that `readHeaders` appends to after
- * every `execute` call, which `HeaderInfo.raw` references. Any
- * content-length not already in `info.raw` comes off the stream's
- * `'message'` events as usual.
+ * Read the request body from the stream's `'message'` events.
+ * `@libp2p/http-utils@2.0.6`'s `readHeaders` is patched to stop its
+ * HTTPParser at the end of the headers, so any body bytes that
+ * arrived in the same chunk are pushed back onto the stream and
+ * reach the first `'message'` listener attached after `readHeaders`
+ * returns.
  */
 async function readBody(
-  info: HeaderInfo,
+  _info: HeaderInfo,
   stream: unknown,
   bytes: number,
 ): Promise<Uint8Array> {
   if (bytes === 0) return new Uint8Array();
   const out = new Uint8Array(bytes);
   let n = 0;
-  // The parser-eaten tail of `info.raw` is everything after the
-  // `\r\n\r\n` headers terminator.
-  const raw = info.raw;
-  const headerEnd = findHeadersEnd(raw);
-  const fromRawLen = Math.min(bytes, raw.byteLength - headerEnd);
-  if (fromRawLen > 0) {
-    out.set(raw.subarray(headerEnd, headerEnd + fromRawLen), 0);
-    n = fromRawLen;
-  }
-  if (n === bytes) return out;
-  // Read the remainder straight off the stream's `'message'` events.
   const s = stream as {
     addEventListener(
       type: string,
@@ -178,24 +161,3 @@ async function readBody(
     s.addEventListener('close', onEnd);
   });
 }
-
-/**
- * Find the offset of the first byte past the `\r\n\r\n` headers
- * terminator in `raw`. The HTTPParser only sets `kOnHeadersComplete`
- * after it has consumed the terminator, so `raw` always contains it.
- */
-function findHeadersEnd(raw: {
-  byteLength: number;
-  indexOf(search: Uint8Array): number;
-}): number {
-  const idx = raw.indexOf(CRLF_CRLF);
-  if (idx < 0) {
-    // A `readHeaders` that returned without the terminator is a
-    // library invariant break — treat `info.raw` as containing only
-    // headers so body reading falls through to the stream.
-    return raw.byteLength;
-  }
-  return idx + CRLF_CRLF.byteLength;
-}
-
-const CRLF_CRLF = new Uint8Array([13, 10, 13, 10]);

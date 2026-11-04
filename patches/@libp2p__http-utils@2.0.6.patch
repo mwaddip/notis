@@ -1,0 +1,79 @@
+diff --git a/dist/src/index.js b/dist/src/index.js
+index aa99e623a60d2d39abc994aced73f7ce1177ff3a..d257a8c6575145d0bc6053ee08a94dc1ea914143 100644
+--- a/dist/src/index.js
++++ b/dist/src/index.js
+@@ -385,6 +385,18 @@ export async function readHeaders(stream, options) {
+             raw: earlyData,
+             method: HTTPParser.methods[info.method]
+         };
++        // Stop parsing at the end of the headers so any body bytes
++        // in the same chunk stay in the stream's read buffer. The
++        // parser's default `kOnBody` is a no-op, and before this
++        // return, a `BODY_SIZED` state after `kOnHeadersComplete`
++        // would consume body bytes through that no-op — the pushback
++        // branch below (`read < buf.byteLength`) would then not
++        // fire, and the body would be lost to every `/http/1.1`
++        // handler that reads the stream after `readHeaders`.
++        // Returning `2` makes `execute` call `nextRequest` and
++        // return the header length only, which the pushback branch
++        // needs.
++        return 2;
+     };
+     try {
+         while (true) {
+diff --git a/dist/src/stream-to-socket.browser.d.ts b/dist/src/stream-to-socket.browser.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..cb0ff5c3b541f646105198ee23ac0fc3d805023e
+--- /dev/null
++++ b/dist/src/stream-to-socket.browser.d.ts
+@@ -0,0 +1 @@
++export {};
+diff --git a/dist/src/stream-to-socket.browser.js b/dist/src/stream-to-socket.browser.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..cc42d6c452e773c6f7182afd5638ffa5329088e3
+--- /dev/null
++++ b/dist/src/stream-to-socket.browser.js
+@@ -0,0 +1,6 @@
++// A Node-side server adapter — `./stream-to-socket.js` imports
++// `node:stream` and `node:net` — has no browser twin because no
++// browser uses it. This file is the twin the `package.json` `browser`
++// field maps the barrel's `export * from './stream-to-socket.js'` to,
++// so a bundler keeps the Node module out of a browser build.
++export {};
+diff --git a/package.json b/package.json
+index d4b3a02aa0c8340acea44567861423f906a70968..966fbb5b61270a790b7ae2cc2b87d9dd49e0fd88 100644
+--- a/package.json
++++ b/package.json
+@@ -157,7 +157,8 @@
+     "aegir": "^48.0.11"
+   },
+   "browser": {
+-    "node:stream": "readable-stream"
++    "node:stream": "readable-stream",
++    "./dist/src/stream-to-socket.js": "./dist/src/stream-to-socket.browser.js"
+   },
+   "sideEffects": false
+ }
+diff --git a/src/index.ts b/src/index.ts
+index 495757b36bce4f5791ba927be33d4b040600f100..eded0b25f9a09d69d3b0f43f08b4ec99bb7adbfc 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -517,6 +517,18 @@ export async function readHeaders (stream: Stream, options?: AbortOptions): Prom
+       raw: earlyData,
+       method: HTTPParser.methods[info.method]
+     }
++
++    // Stop parsing at the end of the headers so any body bytes in
++    // the same chunk stay in the stream's read buffer. The parser's
++    // default `kOnBody` is a no-op, and before this return a
++    // `BODY_SIZED` state after `kOnHeadersComplete` would consume
++    // body bytes through that no-op — the pushback branch below
++    // (`read < buf.byteLength`) would then not fire, and the body
++    // would be lost to every `/http/1.1` handler that reads the
++    // stream after `readHeaders`. Returning `2` makes `execute`
++    // call `nextRequest` and return the header length only, which
++    // the pushback branch needs.
++    return 2
+   }
+ 
+   try {
