@@ -12,15 +12,13 @@ export default mergeConfig(
       // proof-route bench is `vitest.bench.config.ts`'s alone, run on its
       // own; this suite neither runs nor counts any.
       exclude: [...configDefaults.exclude, 'slow/**', 'shadow/**', 'bench/**'],
-      // `@libp2p/webrtc@7.0.2` binds `node-datachannel` on Node, whose
-      // native callbacks crash with `v8::HandleScope::CreateHandle`
-      // when more than one worker thread holds a live
-      // `RTCPeerConnection` in the same process. The mesh-endpoint test
-      // is the one node test file that builds the transport, so it alone
-      // runs in the forks pool — its own child process, as
-      // packages/net does (`NET_INTERFACE → The browser entry`); every
-      // other file runs in the default pool.
-      poolMatchGlobs: [['**/mesh-endpoint.test.ts', 'forks']],
+      // `node-datachannel`'s binding crashes with `v8::HandleScope::CreateHandle`
+      // when more than one worker thread holds a live `RTCPeerConnection` in
+      // the same process, and the mesh-endpoint case builds the transport, so
+      // the suite runs in child processes. Measured on Node 24.22.1 (i9-14900HX,
+      // idle), the whole suite in forks is also the faster setting: 182 s and
+      // 184 s, against 218 s and 208 s with only the mesh-endpoint file in forks.
+      pool: 'forks',
       // Block-application suites mine real PoW solutions (the powTargetBits
       // schedule is enforced at apply, so fixtures cannot fake it) and are
       // compute-bound by design. Under a full-repo parallel run the 5s
