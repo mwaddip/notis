@@ -375,11 +375,27 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = freshDir();
-    const now = Date.now();
-    const cert1 = await makeSelfSigned(now, now + 4_000);
+    // The source builds its certificate the first time the node
+    // asks for it, with `notBefore` 10 s in the past and `notAfter`
+    // 10 s ahead — so the half-life
+    // (`(notBefore + notAfter) / 2`) is at the moment of the
+    // `current()` call, and the renewer's first tick reads clock
+    // past the half-life and fires `obtain()` at once, with no
+    // real-time half-life wait and no dependency on how long
+    // `startWssNode` took (`NetNode.start()` under vitest's forks
+    // pool takes up to a few seconds beside sibling mesh tests;
+    // `notAfter` is 10 s ahead so the `stop-wss` path has a
+    // comfortable budget).
+    let cert1: IpCertificate | null = null;
     let obtains = 0;
     const source: CertificateSource = {
-      async current() { return cert1; },
+      async current() {
+        if (cert1 === null) {
+          const t = Date.now();
+          cert1 = await makeSelfSigned(t - 10_000, t + 10_000);
+        }
+        return cert1;
+      },
       async obtain() {
         obtains++;
         throw new Error('ACME down');
@@ -390,9 +406,17 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     const port = wssPortOf(server);
     const fp1 = await tlsFingerprint(port);
 
-    // After the half-life renewal fires, the obtain rejects: the
-    // old certificate still serves and one `console.error` fires.
-    await new Promise((r) => setTimeout(r, 2_500));
+    // Wait until the renewer's first tick has fired `obtain()` —
+    // a condition, not a fixed wall-clock wait. The tick is a
+    // `setTimeout(0)` scheduled by `planNext()` inside
+    // `startWssRenewal`, so one macrotask after `node.start()`
+    // returns; the loop below gives the event loop that macrotask
+    // (and any follow-on microtasks for the catch + log) without
+    // racing wall time.
+    const until = Date.now() + 1_000;
+    while (obtains === 0 && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
     expect(obtains).toBe(1);
     const fp2 = await tlsFingerprint(port);
     expect(fp2).toBe(fp1);
