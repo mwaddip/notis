@@ -44,6 +44,12 @@ export {
   handshakePenalty,
   validateHandshake,
 } from './handshake.js';
+export {
+  NODE_CAPABILITIES,
+  READER_CAPABILITIES,
+  servesChain,
+  declares,
+} from './capabilities.js';
 export type { HandshakeMsg, HandshakeRejection, HandshakeResult } from './handshake.js';
 export {
   isRecord,

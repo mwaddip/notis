@@ -65,6 +65,7 @@ import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
 import { OutboundManager } from './outbound-mgr.js';
+import { NODE_CAPABILITIES } from './capabilities.js';
 import { decodeFrame, KNOWN_FRAME_MAGICS } from './frame.js';
 import {
   buildHandshakeFrame,
@@ -1671,7 +1672,8 @@ export class NetNode {
       declaredAddress: (this.libp2p?.getMultiaddrs() ?? [])
         .map((a) => a.toString())
         .find((a) => !isLoopbackAddress(a)),
-      capabilities: [],
+      // NET_INTERFACE → Readers → "A full node declares `NODE_CAPABILITIES`".
+      capabilities: [...NODE_CAPABILITIES],
     };
   }
 

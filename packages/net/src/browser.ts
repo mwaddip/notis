@@ -58,6 +58,14 @@ export type {
   HandshakeResult,
 } from './handshake-codec.js';
 
+// NET_INTERFACE → Readers.
+export {
+  NODE_CAPABILITIES,
+  READER_CAPABILITIES,
+  servesChain,
+  declares,
+} from './capabilities.js';
+
 // NET_INTERFACE → Gossip Topics.
 export {
   GOSSIP_SEEN_WINDOW_MS,

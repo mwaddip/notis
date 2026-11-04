@@ -342,7 +342,7 @@ describe('NET_INTERFACE → Readers', () => {
   }, TIMEOUT);
 
   // Case 6 — "The node declares `NODE_CAPABILITIES`."
-  it.fails('the node declares NODE_CAPABILITIES', async () => {
+  it('the node declares NODE_CAPABILITIES', async () => {
     const nodeA = new NetNode(makeConfig(), validators);
     nodes.push(nodeA);
     await nodeA.start();
