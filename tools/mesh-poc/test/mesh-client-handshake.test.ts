@@ -12,13 +12,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { profileFor, generateKeyPair, PROTOCOL_VERSION } from '@dagsocial/types';
+import { profileFor, PROTOCOL_VERSION } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
-import { READER_CAPABILITIES } from '@dagsocial/net/browser';
-import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
-import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import {
+  HANDSHAKE_PROTOCOL,
+  NODE_CAPABILITIES,
+  READER_CAPABILITIES,
+  buildHandshakeFrame,
+  decodeFrame,
+  MAX_HANDSHAKE_FRAME_BYTES,
+} from '@dagsocial/net/browser';
+import { NetNode } from '@dagsocial/net';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
-import { attachNetHandshake } from './helpers/net-handshake-responder.js';
+import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain } from './helpers/devnet-block.js';
 
@@ -37,30 +43,73 @@ async function startBareStub(): Promise<{ srv: Server; base: string; requests: n
   return { srv, base: `http://127.0.0.1:${port}`, requests };
 }
 
-interface Started { node: MeshNode; id: string; webrtcAddr: string; }
-async function startBareNode(
-  upstream: { base: string },
-  dir: string,
-): Promise<Started> {
-  const key = nodeKeyFromKeyPair(generateKeyPair());
-  const n = await startMeshNode({
-    key, network: 'devnet', role: 'public',
-    listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
-    bootstrap: [], stateDir: dir, upstream: upstream.base,
-  });
-  const addrs = n.multiaddrs();
-  const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
-  if (!webrtcAddr) {
-    await n.stop();
-    throw new Error('no WebRTC-direct listen address');
-  }
-  const id = notisIdFromPeerId(n.libp2p.peerId);
-  return { node: n, id, webrtcAddr };
+/**
+ * NET_INTERFACE → Handshake → `"A peer becomes Active once"` — a handshake
+ * handler registered on a running `NetNode`'s libp2p with `force: true`
+ * replaces net's own, so the test case gets to shape the response (or
+ * stall before it). The helpers below read the dialler's frame to its
+ * cap, decode it to drop a malformed one, then write a frame carrying
+ * `capabilities` back after `stallMs`. Stays inside this file — the
+ * stall, the no-chain-serving and the no-handler cases are the only
+ * three that bend net's handshake, and the helper has no other reader.
+ */
+async function overrideHandshake(
+  node: NetMeshNode,
+  opts: { capabilities: readonly number[]; stallMs?: number; agentName?: string },
+): Promise<void> {
+  const magic = PROFILE.magic;
+  const stallMs = opts.stallMs ?? 0;
+  const agentName = opts.agentName ?? 'test-responder';
+  await node.libp2p.handle(HANDSHAKE_PROTOCOL, (stream) => {
+    void (async () => {
+      try {
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        const iterable = stream as unknown as AsyncIterable<
+          Uint8Array | { subarray(): Uint8Array }
+        >;
+        for await (const value of iterable) {
+          const bytes = value instanceof Uint8Array ? value : value.subarray();
+          chunks.push(bytes);
+          total += bytes.length;
+          if (total > MAX_HANDSHAKE_FRAME_BYTES) break;
+        }
+        if (total === 0 || total > MAX_HANDSHAKE_FRAME_BYTES) {
+          await stream.close().catch(() => undefined);
+          return;
+        }
+        const data = new Uint8Array(total);
+        let off = 0;
+        for (const c of chunks) { data.set(c, off); off += c.length; }
+        try { decodeFrame(magic, data); } catch {
+          await stream.close().catch(() => undefined);
+          return;
+        }
+        if (stallMs > 0) await new Promise((r) => setTimeout(r, stallMs));
+        const frame = buildHandshakeFrame(magic, {
+          agentName,
+          protocolVersion: PROTOCOL_VERSION,
+          nodeName: agentName,
+          chainHeight: 0,
+          capabilities: [...opts.capabilities],
+        });
+        const api = stream as unknown as {
+          send: (b: Uint8Array) => boolean;
+          onDrain: (ops?: { signal?: AbortSignal }) => Promise<void>;
+          close: (ops?: { signal?: AbortSignal }) => Promise<void>;
+        };
+        if (!api.send(frame)) await api.onDrain();
+        await api.close();
+      } catch {
+        try { await stream.close(); } catch { /* already gone */ }
+      }
+    })();
+  }, { force: true });
 }
 
 describe('mesh-client — the reader handshake', () => {
   const clients: MeshClient[] = [];
-  const nodes: MeshNode[] = [];
+  const nodes: NetNode[] = [];
   const stubs: { srv: Server }[] = [];
   const ups: ChainUpstream[] = [];
   const dirs: string[] = [];
@@ -77,11 +126,7 @@ describe('mesh-client — the reader handshake', () => {
     const stub = await startBareStub(); stubs.push(stub);
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'hs-ok-')); dirs.push(dir);
-    const n = await startBareNode(up, dir); nodes.push(n.node);
-    await attachNetHandshake(n.node.libp2p, {
-      magic: PROFILE.magic,
-      protocolVersion: PROTOCOL_VERSION,
-    });
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
 
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
@@ -105,10 +150,12 @@ describe('mesh-client — the reader handshake', () => {
     const stub = await startBareStub(); stubs.push(stub);
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'hs-refuse-')); dirs.push(dir);
-    // No `attachNetHandshake`: the node's libp2p registers no handler
-    // for the handshake protocol, so the client's stream open rejects
-    // and `readerHandshake` answers `{ ok: false, reason: ... }`.
-    const n = await startBareNode(up, dir); nodes.push(n.node);
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
+    // `libp2p.unhandle(HANDSHAKE_PROTOCOL)` drops net's own handler on
+    // this node, so the client's stream open rejects with "protocol
+    // not supported" and `readerHandshake` answers
+    // `{ ok: false, reason: ... }`.
+    await n.libp2p.unhandle(HANDSHAKE_PROTOCOL);
 
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
@@ -132,15 +179,13 @@ describe('mesh-client — the reader handshake', () => {
     const stub = await startBareStub(); stubs.push(stub);
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'hs-noserve-')); dirs.push(dir);
-    const n = await startBareNode(up, dir); nodes.push(n.node);
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
     // `capabilities: READER_CAPABILITIES` (`[]`) is what a non-chain
     // peer declares; `servesChain` answers false, so the client holds
-    // the connection but opens no read on it.
-    await attachNetHandshake(n.node.libp2p, {
-      magic: PROFILE.magic,
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities: READER_CAPABILITIES,
-    });
+    // the connection but opens no read on it. `overrideHandshake`
+    // replaces net's own handler so the handshake answers with that
+    // set in place of `NODE_CAPABILITIES`.
+    await overrideHandshake(n, { capabilities: READER_CAPABILITIES });
 
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
@@ -177,39 +222,14 @@ describe('mesh-client — the reader handshake', () => {
     const port = (upstreamSrv.address() as AddressInfo).port;
     const upstreamBase = `http://127.0.0.1:${port}`;
     const dir = mkdtempSync(join(tmpdir(), 'hs-order-')); dirs.push(dir);
-    const n = await startBareNode({ base: upstreamBase }, dir); nodes.push(n.node);
+    const n = await startNetPublicMesh({ upstream: upstreamBase, stateDir: dir }); nodes.push(n.node);
 
     const STALL_MS = 300;
-    const { HANDSHAKE_PROTOCOL, NODE_CAPABILITIES, buildHandshakeFrame, MAX_HANDSHAKE_FRAME_BYTES } =
-      await import('@dagsocial/net/browser');
     const startMs = Date.now();
-    await n.node.libp2p.handle(HANDSHAKE_PROTOCOL, (stream) => {
-      void (async () => {
-        const iterable = stream as unknown as AsyncIterable<
-          Uint8Array | { subarray(): Uint8Array }
-        >;
-        let total = 0;
-        for await (const value of iterable) {
-          const bytes = value instanceof Uint8Array ? value : value.subarray();
-          total += bytes.length;
-          if (total > MAX_HANDSHAKE_FRAME_BYTES) break;
-        }
-        await new Promise((r) => setTimeout(r, STALL_MS));
-        const frame = buildHandshakeFrame(PROFILE.magic, {
-          agentName: 'stalling-responder',
-          protocolVersion: PROTOCOL_VERSION,
-          nodeName: '',
-          chainHeight: 0,
-          capabilities: [...NODE_CAPABILITIES],
-        });
-        const api = stream as unknown as {
-          send: (b: Uint8Array) => boolean;
-          onDrain: () => Promise<void>;
-          close: () => Promise<void>;
-        };
-        if (!api.send(frame)) await api.onDrain();
-        await api.close();
-      })();
+    await overrideHandshake(n, {
+      capabilities: NODE_CAPABILITIES,
+      stallMs: STALL_MS,
+      agentName: 'stalling-responder',
     });
 
     const client = await startMeshClient({

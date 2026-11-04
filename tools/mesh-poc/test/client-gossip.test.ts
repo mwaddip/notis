@@ -37,9 +37,7 @@ import {
 } from '@dagsocial/validation';
 import { verifierProfile } from '@dagsocial/nipopow-client';
 import { blockTopic } from '../src/gossip-rules.js';
-import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
-import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
-import { attachNetHandshake } from './helpers/net-handshake-responder.js';
+import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { lieTarget, startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import type { BlockVerdict } from '@dagsocial/net/browser';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
@@ -51,31 +49,13 @@ const MAGIC = MAGIC_DEVNET;
 const TOPIC = blockTopic(MAGIC);
 const MESH_WAIT_MS = 60_000;
 
-interface Started { mesh: MeshNode; id: string; webrtcAddr: string; up: ChainUpstream; dir: string; }
+interface Started { mesh: NetMeshNode; id: string; webrtcAddr: string; up: ChainUpstream; dir: string; }
 
 async function startNode(chain: OrderingBlock[]): Promise<Started> {
   const up = await chainUpstream(chain);
   const dir = mkdtempSync(join(tmpdir(), 'cg-'));
-  const key = nodeKeyFromKeyPair(generateKeyPair());
-  const mesh = await startMeshNode({
-    key, network: 'devnet', role: 'public',
-    listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
-    bootstrap: [], stateDir: dir, upstream: up.base,
-  });
-  // NET_INTERFACE → Handshake — the responder lets the client's
-  // readerHandshake complete so reads reach the node.
-  await attachNetHandshake(mesh.libp2p, {
-    magic: MAGIC_DEVNET,
-    protocolVersion: PROTOCOL_VERSION,
-  });
-  const addrs = mesh.multiaddrs();
-  const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
-  if (!webrtcAddr) {
-    await mesh.stop();
-    throw new Error(`no WebRTC-direct listen address: ${JSON.stringify(addrs)}`);
-  }
-  const id = notisIdFromPeerId(mesh.libp2p.peerId);
-  return { mesh, id, webrtcAddr, up, dir };
+  const mesh = await startNetPublicMesh({ upstream: up.base, stateDir: dir });
+  return { mesh, id: mesh.id, webrtcAddr: mesh.webrtcAddr, up, dir };
 }
 
 // The GossipSub implementation exposes `getMeshPeers`; the exported

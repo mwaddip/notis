@@ -31,10 +31,9 @@ import {
   type MeshClient,
 } from '../src/client/mesh-client.js';
 import { MeshConfigError } from '../src/config.js';
-import { peerIdFromNotisId, seedOfSecretKey, nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
-import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
-import { MAGIC_DEVNET, PROTOCOL_VERSION } from '@dagsocial/types';
-import { attachNetHandshake } from './helpers/net-handshake-responder.js';
+import { peerIdFromNotisId, seedOfSecretKey } from '../src/identity.js';
+import { NetNode } from '@dagsocial/net';
+import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { chainUpstream, chainResolve, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain } from './helpers/devnet-block.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -256,7 +255,7 @@ describe('MeshClient.addByHand — refusals', () => {
 // ---------- MeshClient.addByHand — anchorReached ----------
 
 describe('MeshClient.addByHand — anchorReached', () => {
-  const nodes: MeshNode[] = [];
+  const nodes: NetNode[] = [];
   const ups: ChainUpstream[] = [];
   const dirs: string[] = [];
   let client: MeshClient | null = null;
@@ -274,22 +273,8 @@ describe('MeshClient.addByHand — anchorReached', () => {
   async function startNode(
     upstream: { base: string },
     dir: string,
-  ): Promise<{ node: MeshNode; id: string; webrtcAddr: string }> {
-    const key = nodeKeyFromKeyPair(generateKeyPair());
-    const n = await startMeshNode({
-      key, network: 'devnet', role: 'public',
-      listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
-      bootstrap: [], stateDir: dir, upstream: upstream.base,
-    });
-    await attachNetHandshake(n.libp2p, {
-      magic: MAGIC_DEVNET,
-      protocolVersion: PROTOCOL_VERSION,
-    });
-    const addrs = n.multiaddrs();
-    const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
-    if (!webrtcAddr) { await n.stop(); throw new Error('no WebRTC-direct listen address'); }
-    const id = notisIdFromPeerId(n.libp2p.peerId);
-    return { node: n, id, webrtcAddr };
+  ): Promise<NetMeshNode> {
+    return await startNetPublicMesh({ upstream: upstream.base, stateDir: dir });
   }
 
   it('a trusted hand-added node makes anchorReached true when it answers', async () => {
