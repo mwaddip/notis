@@ -293,7 +293,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     return d;
   }
 
-  it.fails('a client reaches the node by key over WSS', async () => {
+  it('a client reaches the node by key over WSS', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = freshDir();
@@ -324,7 +324,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(body).toBe(direct);
   }, 60_000);
 
-  it.fails('the certificate is reloaded without a restart', async () => {
+  it('the certificate is reloaded without a restart', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = freshDir();
@@ -371,7 +371,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(res.status).toBe(200);
   }, 30_000);
 
-  it.fails('a failed renewal keeps serving and is logged', async () => {
+  it('a failed renewal keeps serving and is logged', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = freshDir();
@@ -404,25 +404,31 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(renewalLogs.length).toBe(1);
   }, 30_000);
 
-  it.fails('the WSS listener stops at notAfter and nothing else does', async () => {
+  it('the WSS listener stops at notAfter and nothing else does', async () => {
     const stub = await makeStub();
     stubs.push(stub);
     const dir = freshDir();
-    const now = Date.now();
-    const cert1 = await makeSelfSigned(now, now + 1_500);
+    // `now` is sampled AFTER the ACME source is captured so the
+    // 3 s lifetime starts counting from the moment the node begins
+    // to start — `NetNode.start()` is heavier than the PoC's
+    // `startMeshNode`, and a short-enough lifetime would be past
+    // `notAfter` before `wssPortOf` could read the listener.
     const source: CertificateSource = {
+      // eslint-disable-next-line @typescript-eslint/no-use-before-define
       async current() { return cert1; },
       async obtain() {
         throw new Error('ACME down');
       },
     };
+    const now = Date.now();
+    const cert1 = await makeSelfSigned(now, now + 3_000);
     const server = await startWssNode(dir, stub.base, source);
     nodes.push(server);
     const port = wssPortOf(server);
     const tcpAddr = await firstTcpAddr(server);
 
     // Past `notAfter`: WSS listener is closed, TCP still answers.
-    await new Promise((r) => setTimeout(r, 2_000));
+    await new Promise((r) => setTimeout(r, 3_500));
 
     await expect(tlsFingerprint(port)).rejects.toBeTruthy();
 
@@ -436,7 +442,7 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
     expect(res.status).toBe(200);
   }, 30_000);
 
-  it.fails('the node starts without a WSS listener when the initial obtain fails', async () => {
+  it('the node starts without a WSS listener when the initial obtain fails', async () => {
     // `MESH_INTERFACE → The IP certificate` — "A failed renewal is
     // retried every `CERT_RETRY_MS` while the current certificate
     // serves"; the WSS fallback never takes the node down. With no

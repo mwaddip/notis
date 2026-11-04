@@ -106,6 +106,15 @@ import {
   notisIdFromPeerId,
   localAddrsFor,
 } from './mesh/identity.js';
+import { acmeSource, type CertificateSource, type IpCertificate } from './mesh/acme.js';
+import {
+  initialCertificate,
+  startWssRenewal,
+  type WssOptions,
+  type WssRenewal,
+} from './mesh/wss.js';
+import { webSockets } from '@libp2p/websockets';
+import { isIPv6 } from 'node:net';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
 
@@ -704,6 +713,24 @@ export class NetNode {
    * does not answer never stops a private node"`).
    */
   private relayRetries: RelayRetry[] = [];
+  /**
+   * NET_INTERFACE → The mesh — a public mesh node's WSS renewal
+   * driver (`MESH_INTERFACE → The IP certificate`). Started after
+   * libp2p when `mesh.wss` is set and the state directory holds a
+   * valid certificate or `obtain()` succeeds at start; stopped
+   * before libp2p at `stop`.
+   */
+  private wssRenewal: WssRenewal | null = null;
+  /**
+   * Test seam — a case injects a `CertificateSource` of its own in
+   * place of the `acmeSource(...)` `start()` would build from
+   * `mesh.wss`. The PoC's `MeshNodeOptions.wss` carried the source
+   * directly (`tools/mesh-poc/test/wss.test.ts`); here the config
+   * shape is the contract's, so a test sets this field. Never read
+   * in production — `mesh.wss.acmeDirectory` drives the source.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private __wssSourceOverride: CertificateSource | null = null;
 
   constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
     this.config = config;
@@ -777,11 +804,31 @@ export class NetNode {
     const mesh = this.config.mesh;
     let meshDatastore: ReturnType<typeof openMeshDatastore> | null = null;
     let meshStunSetting: { host: string; port: number } | undefined = undefined;
+    // `MESH_INTERFACE → The IP certificate` — the WSS listener needs
+    // its TLS certificate and key at libp2p construction time, so
+    // the initial certificate is resolved before `createLibp2p` runs.
+    // `initialCertificate` returns null when `current()` reads
+    // nothing (or an expired cert) and `obtain()` fails: the node
+    // then starts without the WSS listener and the renewal timer
+    // retries every `CERT_RETRY_MS` until a certificate arrives.
+    // The WSS fallback never takes the node down.
+    let wssOptions: WssOptions | null = null;
+    let wssInitialCert: IpCertificate | null = null;
     if (mesh !== undefined) {
       assertMeshConfig(mesh);
       await assertStateDirIntegrity(mesh.stateDir);
       meshDatastore = openMeshDatastore(mesh.stateDir);
       meshStunSetting = stunSettingFor(mesh.role, mesh.listen, mesh.stun);
+      if (mesh.wss !== undefined) {
+        const source: CertificateSource = this.__wssSourceOverride ?? acmeSource({
+          directoryUrl: mesh.wss.acmeDirectory,
+          ip: mesh.wss.ip,
+          stateDir: mesh.stateDir,
+          challengePort: mesh.wss.challengePort,
+        });
+        wssOptions = { ip: mesh.wss.ip, port: mesh.wss.port, source };
+        wssInitialCert = await initialCertificate(wssOptions);
+      }
     }
 
     // NET_INTERFACE → "A peer's sync streams are served one at a time":
@@ -840,11 +887,32 @@ export class NetNode {
       // listen so an existing TCP sync peer still reaches the node by
       // its plain address.
       if (mesh.role === 'public') {
+        // `MESH_INTERFACE → The IP certificate` — with an initial
+        // certificate held, the WSS transport and its `/tls/ws`
+        // listen address go up with libp2p; without one (no stored
+        // cert and `obtain()` failed), the node starts with every
+        // other transport up and the renewal driver wires the WSS
+        // listener in on the first successful `obtain()`.
+        const publicListen = meshListenAddrs(this.config.listenAddrs, mesh);
+        if (wssInitialCert !== null && mesh.wss !== undefined) {
+          const ipFamily = isIPv6(mesh.wss.ip) ? 'ip6' : 'ip4';
+          publicListen.push(
+            `/${ipFamily}/${mesh.wss.ip}/tcp/${mesh.wss.port}/tls/ws`,
+          );
+        }
+        const publicTransports: unknown[] = [tcp(), meshWebRTCDirectTransport()];
+        if (wssInitialCert !== null) {
+          publicTransports.push(
+            webSockets({
+              https: { cert: wssInitialCert.certPem, key: wssInitialCert.keyPem },
+            }),
+          );
+        }
         libp2p = await createLibp2p({
           privateKey: libp2pPrivateKey,
           datastore: meshDatastore,
-          addresses: { listen: meshListenAddrs(this.config.listenAddrs, mesh) },
-          transports: [tcp(), meshWebRTCDirectTransport()],
+          addresses: { listen: publicListen },
+          transports: publicTransports as never,
           connectionEncrypters: [noise()],
           streamMuxers,
           services: { ...plainServices, ...meshPublicServices(mesh, meshDatastore) },
@@ -910,6 +978,19 @@ export class NetNode {
         this.libp2p = null;
         throw e;
       }
+    }
+    // `MESH_INTERFACE → The IP certificate` — the renewal driver
+    // swaps the WSS listener's certificate in place at half the
+    // lifetime, closes it at `notAfter`, and with no initial cert
+    // retries `obtain()` every `CERT_RETRY_MS` and wires the
+    // listener in on the first successful retry. Started after
+    // libp2p because it fires events on the shared bus and reaches
+    // into the transport manager.
+    if (wssOptions !== null) {
+      this.wssRenewal = startWssRenewal(libp2p, wssOptions, {
+        cert: wssInitialCert,
+        lastFailureMs: wssInitialCert === null ? Date.now() : null,
+      });
     }
     // NET_INTERFACE → The mesh — `onMeshAddresses` fires on each change
     // of the announced set; libp2p's `self:peer:update` is the one
@@ -1166,6 +1247,10 @@ export class NetNode {
       }
       for (const r of this.relayRetries) r.stop();
       this.relayRetries = [];
+      if (this.wssRenewal !== null) {
+        this.wssRenewal.stop();
+        this.wssRenewal = null;
+      }
       this.syncMachine?.stop();
       this.syncMachine = null;
       this.outboundMgr = null;
@@ -1239,6 +1324,13 @@ export class NetNode {
     // through this node.
     for (const r of this.relayRetries) r.stop();
     this.relayRetries = [];
+    // `MESH_INTERFACE → The IP certificate` — stop the WSS renewal
+    // driver before libp2p's teardown so a pending `obtain()` or a
+    // scheduled renewal does not reach the dying transport manager.
+    if (this.wssRenewal !== null) {
+      this.wssRenewal.stop();
+      this.wssRenewal = null;
+    }
     if (this.meshSelfPeerUpdateListener !== null) {
       this.libp2p.removeEventListener('self:peer:update', this.meshSelfPeerUpdateListener);
       this.meshSelfPeerUpdateListener = null;
