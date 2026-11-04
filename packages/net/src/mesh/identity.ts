@@ -15,7 +15,7 @@ export class MeshKeyError extends Error {
   override readonly name = 'MeshKeyError';
 }
 
-export interface NodeMeshKey {
+export interface NodeKey {
   readonly keyPair: KeyPair;
   readonly notisId: string;
   readonly privateKey: PrivateKey;
@@ -55,7 +55,7 @@ export function seedOfMeshSecretKey(secretKey: Uint8Array): Uint8Array {
  * private key cannot sign for, so the two halves of the pair are held
  * to each other.
  */
-export function nodeMeshKeyFromKeyPair(kp: KeyPair): NodeMeshKey {
+export function nodeKeyFromKeyPair(kp: KeyPair): NodeKey {
   if (kp.publicKey.length !== 32) {
     throw new MeshKeyError(`publicKey length ${kp.publicKey.length}, must be 32`);
   }

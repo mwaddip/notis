@@ -89,11 +89,14 @@ export type {
 export {
   peerIdFromNotisId,
   notisIdFromPeerId,
-  nodeMeshKeyFromKeyPair,
+  nodeKeyFromKeyPair,
   MeshKeyError,
   localAddrsFor,
 } from './mesh/identity.js';
-export type { NodeMeshKey } from './mesh/identity.js';
+export type { NodeKey } from './mesh/identity.js';
+// NET_INTERFACE → Readers — the reader's dial-side handshake.
+export { readerHandshake } from './mesh/reader-handshake.js';
+export type { ReaderHandshakeOptions, ReaderHandshakeResult } from './mesh/reader-handshake.js';
 // MESH_INTERFACE → Discovery / NAT / The IP certificate — the numbers
 // the client reads (its retry cadence, its STUN port, the certificate
 // lifespan). The register's drift test keys off these; a new number
