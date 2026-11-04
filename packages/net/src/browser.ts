@@ -97,6 +97,9 @@ export type { NodeKey } from './mesh/identity.js';
 // NET_INTERFACE → Readers — the reader's dial-side handshake.
 export { readerHandshake } from './mesh/reader-handshake.js';
 export type { ReaderHandshakeOptions, ReaderHandshakeResult } from './mesh/reader-handshake.js';
+// NET_INTERFACE → The browser entry — the reader's libp2p options.
+export { readerLibp2pOptions } from './mesh/reader-options.js';
+export type { ReaderLibp2pOptions } from './mesh/reader-options.js';
 // MESH_INTERFACE → Discovery / NAT / The IP certificate — the numbers
 // the client reads (its retry cadence, its STUN port, the certificate
 // lifespan). The register's drift test keys off these; a new number
