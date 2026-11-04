@@ -87,7 +87,7 @@ import {
 } from './types.js';
 import type { ModifierRequest, ModifierResponse } from './sync-types.js';
 import { FaultTolerance } from '@libp2p/interface';
-import { assertMeshConfig } from './mesh/config.js';
+import { assertMeshConfig, type WssConfig } from './mesh/config.js';
 import { assertStateDirIntegrity, openMeshDatastore } from './mesh/state-dir.js';
 import { stunSettingFor } from './mesh/stun-setting.js';
 import { startStunServer } from './mesh/stun.js';
@@ -722,23 +722,30 @@ export class NetNode {
    */
   private wssRenewal: WssRenewal | null = null;
   /**
-   * Test seam — a case injects a `CertificateSource` of its own in
-   * place of the `acmeSource(...)` `start()` would build from
-   * `mesh.wss`. The PoC's `MeshNodeOptions.wss` carried the source
-   * directly (`tools/mesh-poc/test/wss.test.ts`); here the config
-   * shape is the contract's, so a test sets this field. Never read
-   * in production — `mesh.wss.acmeDirectory` drives the source.
+   * `MESH_INTERFACE → The IP certificate` — the factory the mesh
+   * branch of `start()` builds its `CertificateSource` from. Absent,
+   * `acmeSource(...)` runs the production path. The seam mirrors
+   * `peerStorage`'s standing on the constructor — an optional
+   * dependency a caller (a test) hands in, never a private field a
+   * test reaches past the type.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private __wssSourceOverride: CertificateSource | null = null;
+  private readonly certificateSource:
+    | ((wss: WssConfig, stateDir: string) => CertificateSource)
+    | null;
 
-  constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
+  constructor(
+    config: NetConfig,
+    validators: NetValidators,
+    peerStorage?: PeerStorage,
+    certificateSource?: (wss: WssConfig, stateDir: string) => CertificateSource,
+  ) {
     this.config = config;
     this.validators = validators;
     this.syncStore = new LazySyncStore(validators);
     // Omitted in tests/embedded use — PeerDb then runs ephemeral (NET_INTERFACE →
     // Persistence seam), which is the valid non-production configuration.
     this.peerStorage = peerStorage ?? null;
+    this.certificateSource = certificateSource ?? null;
     // Ban hooks late-bind this.peerDb: it is created in start(), and the
     // closures read it at call time, so bans imposed before start (or after
     // stop) simply have no address surface to propagate to.
@@ -820,12 +827,14 @@ export class NetNode {
       meshDatastore = openMeshDatastore(mesh.stateDir);
       meshStunSetting = stunSettingFor(mesh.role, mesh.listen, mesh.stun);
       if (mesh.wss !== undefined) {
-        const source: CertificateSource = this.__wssSourceOverride ?? acmeSource({
-          directoryUrl: mesh.wss.acmeDirectory,
-          ip: mesh.wss.ip,
-          stateDir: mesh.stateDir,
-          challengePort: mesh.wss.challengePort,
-        });
+        const source: CertificateSource = this.certificateSource !== null
+          ? this.certificateSource(mesh.wss, mesh.stateDir)
+          : acmeSource({
+              directoryUrl: mesh.wss.acmeDirectory,
+              ip: mesh.wss.ip,
+              stateDir: mesh.stateDir,
+              challengePort: mesh.wss.challengePort,
+            });
         wssOptions = { ip: mesh.wss.ip, port: mesh.wss.port, source };
         wssInitialCert = await initialCertificate(wssOptions);
       }

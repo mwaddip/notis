@@ -183,30 +183,30 @@ async function startWssNode(
   httpBase: string,
   source: CertificateSource,
 ): Promise<NetNode> {
-  const node = new NetNode(makeConfig({
-    nodeKey: generateKeyPair(),
-    listenAddrs: '/ip4/127.0.0.1/tcp/0',
-    mesh: {
-      role: 'public',
-      network: 'devnet',
-      listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
-      stateDir,
-      httpBase,
-      stun: null,
-      // The driver uses the source passed through `MeshConfig.wss`'s
-      // `acmeDirectory`; here the source is overridden in-place by
-      // the helper below so the `acmeDirectory` string is unused.
-      wss: { ip: '127.0.0.1', port: 0, acmeDirectory: 'about:blank', challengePort: 0 },
-    },
-  }), validators);
-  // Inject the test-owned certificate source in place of
-  // `acmeSource(…)`. `NetNode.start()` builds the source from the
-  // config; the only seam a test owns is overriding the acme module
-  // itself, which is heavier than injecting through a private
-  // field. Instead we patch `mesh.wss` through a cast to a shape
-  // that carries the source; `NetNode` reads the source from
-  // `mesh.wss.source` when present (test hook).
-  (node as unknown as { __wssSourceOverride: CertificateSource }).__wssSourceOverride = source;
+  // The constructor's fourth parameter — the certificate-source
+  // factory — is the WSS test seam, with the same standing as
+  // `peerStorage`'s third-parameter seam. Production calls remain
+  // the three-argument form (`acmeSource(...)` builds the source
+  // from `mesh.wss`); the test hands in a source of its own, and
+  // the `acmeDirectory` string on `mesh.wss` is unused.
+  const node = new NetNode(
+    makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+        stateDir,
+        httpBase,
+        stun: null,
+        wss: { ip: '127.0.0.1', port: 0, acmeDirectory: 'about:blank', challengePort: 0 },
+      },
+    }),
+    validators,
+    undefined,
+    () => source,
+  );
   await node.start();
   return node;
 }
