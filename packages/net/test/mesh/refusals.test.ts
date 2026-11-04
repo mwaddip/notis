@@ -166,6 +166,49 @@ describe('mesh — start-time refusals', () => {
     expect(err.message).toMatch(/DNS/);
   });
 
+  // MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by
+  // IP" — a `stun.host` that is neither IPv4 nor IPv6 literal is
+  // refused at start.
+  it('refuses a mesh.stun.host that is not an IP literal', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'public',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          stun: { host: 'stun.example.com', port: 3478 },
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/stun\.host/);
+  });
+
+  // MESH_INTERFACE → NAT — a `stun.port` outside the 0..65535 range
+  // is refused at start.
+  it('refuses a mesh.stun.port out of the 0..65535 range', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'public',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          stun: { host: '127.0.0.1', port: 70_000 },
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/stun\.port/);
+  });
+
   // MESH_INTERFACE → Transports → "The WebRTC-direct certificate persists"
   // — "A state directory whose certificate cannot be read stops the node
   // at start ... and is left as it is, as a key file of another form is".
