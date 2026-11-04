@@ -127,12 +127,18 @@ importers:
       '@libp2p/webrtc':
         specifier: 7.0.2
         version: 7.0.2(patch_hash=2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24)
+      '@libp2p/websockets':
+        specifier: 10.1.25
+        version: 10.1.25
       '@libp2p/yamux':
         specifier: 8.0.7
         version: 8.0.7
       '@multiformats/multiaddr':
         specifier: 13.0.3
         version: 13.0.3
+      acme-client:
+        specifier: 5.4.0
+        version: 5.4.0
       datastore-fs:
         specifier: 12.0.1
         version: 12.0.1
@@ -149,12 +155,18 @@ importers:
       '@noble/hashes':
         specifier: 2.2.0
         version: 2.2.0
+      '@peculiar/x509':
+        specifier: 2.2.0
+        version: 2.2.0
       '@types/node':
         specifier: ^24.19.2
         version: 24.19.2
       datastore-core:
         specifier: 12.0.1
         version: 12.0.1
+      reflect-metadata:
+        specifier: 0.2.2
+        version: 0.2.2
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)

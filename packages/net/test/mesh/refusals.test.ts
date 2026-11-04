@@ -139,7 +139,32 @@ describe('mesh — start-time refusals', () => {
     expect(err.message).toMatch(/stunServers/);
   });
 
-  it('refuses mesh.wss naming the later run\'s subject', async () => {
+  // `MESH_INTERFACE → The IP certificate` — "A public node's operator
+  // may opt in to the secure WebSocket fallback." A private node has
+  // no public address worth a certificate; `wss` on a private role
+  // is refused at start.
+  it('refuses mesh.wss on a private node', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'private',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          wss: { ip: '127.0.0.1', port: 443, acmeDirectory: '', challengePort: 80 },
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/wss|WebSocket/i);
+  });
+
+  // `MESH_INTERFACE → The IP certificate` — the certificate is for
+  // the node's bare IP; a hostname `wss.ip` is refused at start.
+  it('refuses a mesh.wss.ip that is not an IP literal', async () => {
     const dir = freshDir();
     const err = await expectMeshConfigError(async () => {
       const n = new NetNode(makeConfig({
@@ -149,13 +174,13 @@ describe('mesh — start-time refusals', () => {
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
           httpBase: 'http://127.0.0.1:0',
-          wss: { ip: '192.0.2.1', port: 443, acmeDirectory: '', challengePort: 80 },
+          wss: { ip: 'example.com', port: 443, acmeDirectory: '', challengePort: 80 },
         },
       }), validators);
       await n.start();
       return n;
     });
-    expect(err.message).toMatch(/wss|WebSocket/i);
+    expect(err.message).toMatch(/wss\.ip|IP literal/i);
   });
 
   it('refuses a public listen with no /webrtc-direct', async () => {
@@ -316,7 +341,7 @@ describe('mesh — start-time refusals', () => {
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
           httpBase: 'http://127.0.0.1:0',
-          wss: { ip: '192.0.2.1', port: 443, acmeDirectory: '', challengePort: 80 },
+          wss: { ip: 'example.com', port: 443, acmeDirectory: '', challengePort: 80 },
         },
       }), validators);
       await n.start();

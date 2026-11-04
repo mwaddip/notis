@@ -94,11 +94,27 @@ export interface MeshConfig {
    */
   readonly relayListenTimeoutMs?: number;
   /**
-   * `MESH_INTERFACE → The IP certificate` — the secure WebSocket
-   * fallback. Not built by this run; a set value is refused with
-   * `MeshConfigError` naming the later run's subject.
+   * `MESH_INTERFACE → The IP certificate` — a public node's secure
+   * WebSocket fallback: a TLS WebSocket listener for the node's bare
+   * IP, obtained over ACME on the `http-01` challenge of
+   * `challengePort`, renewed at half the lifetime, stopped at
+   * `notAfter`. A private node with `wss` set, or `wss.ip` that is
+   * not an IP literal, is refused at start.
    */
-  readonly wss?: unknown;
+  readonly wss?: WssConfig;
+}
+
+/**
+ * `MESH_INTERFACE → The IP certificate` — the operator-named fields
+ * of the secure WebSocket fallback. The certificate source is built
+ * at start from `acmeDirectory`, `ip`, `stateDir` and `challengePort`
+ * (`src/mesh/wss.ts` / `src/mesh/acme.ts`).
+ */
+export interface WssConfig {
+  readonly ip: string;
+  readonly port: number;
+  readonly acmeDirectory: string;
+  readonly challengePort: number;
 }
 
 const DNS_RE = /\/dns4\/|\/dns6\/|\/dnsaddr\//;
@@ -130,10 +146,20 @@ export function assertMeshConfig(mesh: MeshConfig): void {
   if (mesh.role !== 'public' && mesh.role !== 'private') {
     throw new MeshConfigError(`mesh.role refused: ${JSON.stringify(mesh.role)} is not 'public' or 'private'`);
   }
+  // `MESH_INTERFACE → The IP certificate` — a public node opts in to
+  // the secure WebSocket fallback by naming an IP certificate; a
+  // private node has no public address worth a certificate, and a
+  // non-IP `wss.ip` is a hostname (the IP certificate is for a bare
+  // IP alone).
   if (mesh.wss !== undefined) {
-    throw new MeshConfigError(
-      'mesh.wss refused: the secure WebSocket is not built yet (MESH_INTERFACE → The IP certificate)',
-    );
+    if (mesh.role === 'private') {
+      throw new MeshConfigError('mesh.wss refused: a private node does not serve WSS');
+    }
+    if (!isIpLiteral(mesh.wss.ip)) {
+      throw new MeshConfigError(
+        `mesh.wss.ip refused: ${JSON.stringify(mesh.wss.ip)} is not an IP literal`,
+      );
+    }
   }
   assertNoDns('mesh.listen', mesh.listen);
   if (mesh.announce) assertNoDns('mesh.announce', mesh.announce);
