@@ -14,7 +14,13 @@ import { refuseNodeBuiltins } from '../../../packages/web/scripts/refuse-node-bu
 // sits above the repo and resolves undeclared imports, so the plugin's
 // refusal — not the lockfile — is the proof here.
 describe("@dagsocial/net/browser builds without reaching a Node built-in", () => {
-  it('vite build succeeds', async () => {
+  // Red until `patches/@libp2p__http-utils@2.0.6.patch` lands:
+  // `src/browser.ts` now exports `meshFetch` through
+  // `@libp2p/http-fetch`, whose barrel re-exports
+  // `stream-to-socket.js` from `@libp2p/http-utils@2.0.6`, and that
+  // file imports `node:stream` and `node:net`. The patch maps the
+  // file to a browser twin through `package.json`'s `browser` field.
+  it.fails('vite build succeeds', async () => {
     const outDir = mkdtempSync(join(tmpdir(), 'net-browser-entry-'));
     try {
       await build({

@@ -32,6 +32,7 @@
     "@libp2p/dcutr": "3.0.32",
     "@libp2p/gossipsub": "17.2.1",
     "@libp2p/http": "2.0.6",
+    "@libp2p/http-fetch": "4.0.4",
     "@libp2p/http-utils": "2.0.6",
     "@libp2p/identify": "4.1.18",
     "@libp2p/interface": "3.4.0",

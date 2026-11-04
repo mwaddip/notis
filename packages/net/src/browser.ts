@@ -94,6 +94,14 @@ export {
   localAddrsFor,
 } from './mesh/identity.js';
 export type { NodeKey } from './mesh/identity.js';
+// MESH_INTERFACE → The mesh URL — the browser builds and parses mesh URLs.
+export { parseMeshUrl, meshBaseUrl, MeshUrlError, idOfMeshUrl } from './mesh/mesh-url.js';
+// MESH_INTERFACE → The node endpoint — the reader's mesh fetch.
+export {
+  meshFetch,
+  meshFetchOverConnection,
+  MeshFetchError,
+} from './mesh/mesh-fetch.js';
 // NET_INTERFACE → Readers — the reader's dial-side handshake.
 export { readerHandshake } from './mesh/reader-handshake.js';
 export type { ReaderHandshakeOptions, ReaderHandshakeResult } from './mesh/reader-handshake.js';
