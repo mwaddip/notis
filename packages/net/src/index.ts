@@ -4,7 +4,11 @@ export {
   GET_PEERS_RESPONSE_LIMIT,
   decodeHandshakePayload,
 } from './node.js';
-export type { HandshakePayload } from './node.js';
+export type { HandshakePayload, MeshIdentity } from './node.js';
+// NET_INTERFACE → The mesh — the two refusal classes a caller catches,
+// and the config shape its options take.
+export { MeshConfigError, MeshStateError } from './mesh/config.js';
+export type { MeshConfig } from './mesh/config.js';
 export { PeerManager, MAX_TRACKED_BANS, MAX_TRACKED_SCORES } from './peer-mgr.js';
 export type { PeerBanHooks } from './peer-mgr.js';
 export { loadNodeKey, NodeKeyError } from './node-key.js';

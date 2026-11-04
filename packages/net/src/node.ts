@@ -86,8 +86,56 @@ import {
   MODIFIER_POST_BODY,
 } from './types.js';
 import type { ModifierRequest, ModifierResponse } from './sync-types.js';
+import { assertMeshConfig } from './mesh/config.js';
+import { assertStateDirIntegrity, openMeshDatastore } from './mesh/state-dir.js';
+import { stunSettingFor } from './mesh/stun-setting.js';
+import { startStunServer } from './mesh/stun.js';
+import {
+  meshListenAddrs,
+  meshServices,
+  meshWebRTCDirectTransport,
+} from './mesh/libp2p-options.js';
+import {
+  notisIdFromPeerId,
+  localAddrsFor,
+} from './mesh/identity.js';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
+
+/**
+ * NET_INTERFACE → The mesh — the mesh identity `meshIdentity()` answers
+ * once a mesh node's addresses are announced; `null` with no mesh.
+ */
+export interface MeshIdentity {
+  readonly notisId: string;
+  readonly peerId: string;
+  readonly multiaddrs: readonly string[];
+  readonly localAddrs: readonly string[];
+}
+
+/**
+ * Flatten every transport listener's own `getAddrs()` — the
+ * WebRTC-direct listener splices its `/certhash/` onto its listen
+ * address at read time (`@libp2p/webrtc`
+ * `private-to-public/listener.ts`), so an identity line's
+ * `localAddrs` can see the certhash from this source.
+ */
+function listenerAddrsOf(node: Libp2p): string[] {
+  const components = (node as unknown as {
+    components?: {
+      transportManager?: {
+        getListeners(): Array<{ getAddrs(): Array<{ toString(): string }> }>;
+      };
+    };
+  }).components;
+  const tm = components?.transportManager;
+  if (!tm) return [];
+  const out: string[] = [];
+  for (const l of tm.getListeners()) {
+    for (const a of l.getAddrs()) out.push(a.toString());
+  }
+  return out;
+}
 type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
 
 /**
@@ -621,6 +669,27 @@ export class NetNode {
    */
   private handshakeDeadlines: Map<string, NodeJS.Timeout> = new Map();
 
+  /**
+   * NET_INTERFACE → The mesh — the STUN server that rides a public
+   * mesh node. Opened after libp2p at `start`, closed before libp2p
+   * at `stop` (`MESH_INTERFACE → NAT`). `null` when no mesh is set,
+   * or when the mesh is set with `stun: null` or no WebRTC-direct
+   * listen was picked.
+   */
+  private meshStun: { close(): Promise<void> } | null = null;
+  /**
+   * NET_INTERFACE → The mesh — the callers subscribed through
+   * `onMeshAddresses`. Fires for each change of the announced set
+   * (`self:peer:update` from libp2p).
+   */
+  private meshAddressHandlers: Array<(id: MeshIdentity) => void> = [];
+  /**
+   * The `self:peer:update` listener registered with libp2p, kept for
+   * removal at `stop` (`MESH_INTERFACE → NAT`).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private meshSelfPeerUpdateListener: ((ev: any) => void) | null = null;
+
   constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
     this.config = config;
     this.validators = validators;
@@ -686,62 +755,129 @@ export class NetNode {
     rawPrivate.set(nodeKey.publicKey, 32);
     const libp2pPrivateKey = privateKeyFromRaw(rawPrivate);
 
-    const libp2p = await createLibp2p({
-      privateKey: libp2pPrivateKey,
-      addresses: {
-        listen: [this.config.listenAddrs],
+    // NET_INTERFACE → The mesh — with `mesh`, hold every refusal
+    // `MESH_INTERFACE` names and the state-directory refusal before
+    // any socket opens, and derive the STUN setting now (no socket
+    // reach). Without `mesh`, nothing of this runs.
+    const mesh = this.config.mesh;
+    let meshDatastore: ReturnType<typeof openMeshDatastore> | null = null;
+    let meshStunSetting: { host: string; port: number } | undefined = undefined;
+    if (mesh !== undefined) {
+      assertMeshConfig(mesh);
+      await assertStateDirIntegrity(mesh.stateDir);
+      meshDatastore = openMeshDatastore(mesh.stateDir);
+      meshStunSetting = stunSettingFor(mesh.role, mesh.listen, mesh.stun);
+    }
+
+    // NET_INTERFACE → "A peer's sync streams are served one at a time":
+    // the stream window is pinned at `YAMUX_STREAM_WINDOW_BYTES` for the
+    // initial size and the maximum alike, and the receive-buffer cap is
+    // pinned at the same bound. The window bounds what a reading stream
+    // may buffer between drains, and the receive-buffer cap bounds what
+    // a waiting stream (no reader attached yet) may hold — a sync stream
+    // whose turn has not come stays at one window's worth of bytes.
+    const streamMuxers = [yamux({
+      streamOptions: {
+        initialStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
+        maxStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
+        maxReadBufferLength: YAMUX_STREAM_WINDOW_BYTES,
       },
-      transports: [tcp()],
-      connectionEncrypters: [noise()],
-      // NET_INTERFACE → "A peer's sync streams are served one at a time":
-      // the stream window is pinned at `YAMUX_STREAM_WINDOW_BYTES` for the
-      // initial size and the maximum alike, and the receive-buffer cap is
-      // pinned at the same bound. The window bounds what a reading stream
-      // may buffer between drains, and the receive-buffer cap bounds what
-      // a waiting stream (no reader attached yet) may hold — a sync stream
-      // whose turn has not come stays at one window's worth of bytes.
-      streamMuxers: [yamux({
-        streamOptions: {
-          initialStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
-          maxStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
-          maxReadBufferLength: YAMUX_STREAM_WINDOW_BYTES,
-        },
-      })],
-      services: {
-        // NET_INTERFACE → libp2p Stack — gossipsub built from the one
-        // options object `./gossip-rules.ts`' `gossipsubOptions` answers;
-        // each field cites its rule.
-        pubsub: gossipsub(gossipsubOptions(this.config.magic, [topics.orderingBlock, topics.tx])),
-        identify: identify(),
-        ping: ping(),
-      },
+    })];
+    const plainServices = {
+      // NET_INTERFACE → libp2p Stack — gossipsub built from the one
+      // options object `./gossip-rules.ts`' `gossipsubOptions` answers;
+      // each field cites its rule.
+      pubsub: gossipsub(gossipsubOptions(this.config.magic, [topics.orderingBlock, topics.tx])),
+      identify: identify(),
+      ping: ping(),
+    };
+    const connectionGater = {
       // NET_INTERFACE → "A banned peer's inbound connection is refused at the transport"
-      connectionGater: {
-        denyInboundEncryptedConnection: (peerId: { toString(): string }) =>
-          this.peerMgr.isBanned(peerId.toString()),
-      },
-      connectionManager: {
-        // NET_INTERFACE → Readers → "Readers have a budget of their own":
-        // libp2p's connection ceiling is `maxPeers + maxReaders +
-        // HANDSHAKE_SLACK`, so a connection is counted by the kind its
-        // handshake declares and libp2p refuses an inbound past the
-        // ceiling at the upgrade before any handler runs (verified in
-        // `libp2p@3.5.1`, `src/connection-manager/index.ts:688` —
-        // `getConnections().length < maxConnections` admits, otherwise the
-        // inbound is refused at `maConnection()`).
-        maxConnections: this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK,
-      },
-      // Disable the built-in connection monitor heartbeat.  When enabled it
-      // pings peers every 10 s via /ipfs/ping/1.0.0 and aborts the connection
-      // if the ping fails.  The AdaptiveTimeout uses a 2 s floor derived from
-      // an uninitialised moving average, so the first heartbeat almost always
-      // times out and kills the connection.  Explicit pings are still available
-      // via @libp2p/ping if needed.
-      connectionMonitor: {
-        enabled: false,
-      },
-    });
+      denyInboundEncryptedConnection: (peerId: { toString(): string }) =>
+        this.peerMgr.isBanned(peerId.toString()),
+    };
+    const connectionManager = {
+      // NET_INTERFACE → Readers → "Readers have a budget of their own":
+      // libp2p's connection ceiling is `maxPeers + maxReaders +
+      // HANDSHAKE_SLACK`, so a connection is counted by the kind its
+      // handshake declares and libp2p refuses an inbound past the
+      // ceiling at the upgrade before any handler runs (verified in
+      // `libp2p@3.5.1`, `src/connection-manager/index.ts:688` —
+      // `getConnections().length < maxConnections` admits, otherwise the
+      // inbound is refused at `maConnection()`).
+      maxConnections: this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK,
+    };
+    // Disable the built-in connection monitor heartbeat.  When enabled it
+    // pings peers every 10 s via /ipfs/ping/1.0.0 and aborts the connection
+    // if the ping fails.  The AdaptiveTimeout uses a 2 s floor derived from
+    // an uninitialised moving average, so the first heartbeat almost always
+    // times out and kills the connection.  Explicit pings are still available
+    // via @libp2p/ping if needed.
+    const connectionMonitor = { enabled: false };
+
+    let libp2p: Libp2p;
+    if (mesh !== undefined && meshDatastore !== null) {
+      // NET_INTERFACE → The mesh — the public role adds WebRTC-direct
+      // beside TCP, the keychain, the Notis DHT, AutoNAT v2, the
+      // circuit-relay server and `@libp2p/http`. `addresses.listen`
+      // prepends the plain listen so an existing TCP sync peer still
+      // reaches the node by its plain address.
+      libp2p = await createLibp2p({
+        privateKey: libp2pPrivateKey,
+        datastore: meshDatastore,
+        addresses: { listen: meshListenAddrs(this.config.listenAddrs, mesh) },
+        transports: [tcp(), meshWebRTCDirectTransport()],
+        connectionEncrypters: [noise()],
+        streamMuxers,
+        services: { ...plainServices, ...meshServices(mesh, meshDatastore) },
+        connectionGater,
+        connectionManager,
+        connectionMonitor,
+      }) as Libp2p;
+    } else {
+      libp2p = await createLibp2p({
+        privateKey: libp2pPrivateKey,
+        addresses: { listen: [this.config.listenAddrs] },
+        transports: [tcp()],
+        connectionEncrypters: [noise()],
+        streamMuxers,
+        services: plainServices,
+        connectionGater,
+        connectionManager,
+        connectionMonitor,
+      });
+    }
     this.libp2p = libp2p;
+
+    // NET_INTERFACE → The mesh — STUN after libp2p so a bind failure
+    // tears libp2p down before `start` returns
+    // (`MESH_INTERFACE → NAT`).
+    if (mesh !== undefined && meshStunSetting !== undefined) {
+      try {
+        this.meshStun = await startStunServer(meshStunSetting);
+      } catch (e) {
+        try { await libp2p.stop(); } catch { /* already stopped */ }
+        this.libp2p = null;
+        throw e;
+      }
+    }
+    // NET_INTERFACE → The mesh — `onMeshAddresses` fires on each change
+    // of the announced set; libp2p's `self:peer:update` is the one
+    // event that carries that signal.
+    if (mesh !== undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const listener = (_ev: any): void => {
+        const id = this.meshIdentity();
+        if (id === null) return;
+        for (const cb of this.meshAddressHandlers) {
+          try { cb(id); } catch (err) {
+            console.warn(`[net] onMeshAddresses handler error: ${String(err)}`);
+          }
+        }
+      };
+      libp2p.addEventListener('self:peer:update', listener);
+      this.meshSelfPeerUpdateListener = listener;
+    }
 
     try {
       // Create PeerDb with self-address filtering
@@ -1024,6 +1160,18 @@ export class NetNode {
     this.handshakeDeadlines.clear();
     this.handshakenConnections.clear();
     this.completedConnections.clear();
+    // NET_INTERFACE → The mesh — STUN closes before libp2p's stop so a
+    // bind failure is surfaced over the libp2p teardown (`MESH_INTERFACE
+    // → NAT`); the `self:peer:update` listener is removed first so a
+    // late update never re-fires `onMeshAddresses` through this node.
+    if (this.meshSelfPeerUpdateListener !== null) {
+      this.libp2p.removeEventListener('self:peer:update', this.meshSelfPeerUpdateListener);
+      this.meshSelfPeerUpdateListener = null;
+    }
+    if (this.meshStun !== null) {
+      await this.meshStun.close();
+      this.meshStun = null;
+    }
     await this.libp2p.stop();
     this.libp2p = null;
     this.topics = null;
@@ -1922,6 +2070,38 @@ export class NetNode {
   peerCapabilities(peerId: string): readonly number[] | null {
     if (!this.peerMgr.isPeerActive(peerId)) return null;
     return this.peerMgr.getPeerMetadata(peerId)?.capabilities ?? null;
+  }
+
+  /**
+   * NET_INTERFACE → The mesh — the mesh node's identity, once its
+   * addresses are announced: its Notis spelling, its peer id, the
+   * addresses it announces and its local WebRTC-direct addresses.
+   * `null` with no mesh, or before libp2p has started.
+   */
+  meshIdentity(): MeshIdentity | null {
+    const mesh = this.config.mesh;
+    if (mesh === undefined) return null;
+    if (this.libp2p === null) return null;
+    const node = this.libp2p;
+    const notisId = notisIdFromPeerId(node.peerId);
+    const peerId = node.peerId.toString();
+    const multiaddrs = node.getMultiaddrs().map((a) => a.toString());
+    // Private role lists its local WebRTC-direct listen with certhash
+    // and the peer id (`MESH_INTERFACE → Discovery → "A node added by
+    // hand"`); public lists none (announces its listen addresses
+    // already). The private role is not built by this run, but the
+    // branching is kept so a later run adding it needs only the
+    // listener-address source.
+    const localAddrs = localAddrsFor(mesh.role, listenerAddrsOf(node), peerId);
+    return { notisId, peerId, multiaddrs, localAddrs };
+  }
+
+  /**
+   * NET_INTERFACE → The mesh — register a callback for each change of
+   * the mesh node's announced address set.
+   */
+  onMeshAddresses(cb: (id: MeshIdentity) => void): void {
+    this.meshAddressHandlers.push(cb);
   }
 
   /**

@@ -1,4 +1,5 @@
 import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra, KeyPair } from '@dagsocial/types';
+import type { MeshConfig } from './mesh/config.js';
 
 // ---------------------------------------------------------------------------
 // Message codes
@@ -168,6 +169,12 @@ export interface NetConfig {
   temporalBanDurationMs: number;
   penaltyDecayIntervalMs: number;
   syncRequestTimeoutMs: number;
+  /**
+   * NET_INTERFACE → The mesh — present makes the node a mesh node.
+   * Absent, `start` builds the libp2p node of TCP, Noise, yamux,
+   * gossipsub, identify and ping alone, byte-for-byte as it did.
+   */
+  mesh?: MeshConfig;
 }
 
 // ---------------------------------------------------------------------------
