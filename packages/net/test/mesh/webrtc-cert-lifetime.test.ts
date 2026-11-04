@@ -254,29 +254,42 @@ describe('@libp2p/webrtc — the WebRTC-direct certificate renewal timer, patche
   });
 
   it('4. stop() leaves no renewal pending', async () => {
-    // Real timers. Unpatched: a 1 ms-clamped renewal timer is
-    // scheduled during `start()`; `stop()`'s `clearTimeout` kills
-    // it before the next tick. Patched: the first bounded step is
-    // scheduled at 2^31 − 1 ms; `stop()`'s `clearTimeout` kills it,
-    // and because every bounded step reassigns
-    // `this.renewCertificateTask` the chain cannot resume on its
-    // own. In both the assertion is the same — 300 ms of real time
-    // after `stop()` sees no renewal event.
-    const ds = new MemoryDatastore();
-    const key = await generateKeyPair('Ed25519');
-    const components = await makeComponents(ds, key);
-    const transport = buildTransport(components);
+    vi.useFakeTimers();
+    try {
+      const ds = new MemoryDatastore();
+      const key = await generateKeyPair('Ed25519');
+      const components = await makeComponents(ds, key);
+      await populateWebrtcKeychain(components);
+      const transport = buildTransport(components);
 
-    const renewEvents: Array<{ certhash: string }> = [];
-    transport.emitter.addEventListener('certificate:renew', (ev) => {
-      renewEvents.push(ev.detail);
-    });
+      const renewEvents: Array<{ certhash: string }> = [];
+      transport.emitter.addEventListener('certificate:renew', (ev) => {
+        renewEvents.push(ev.detail);
+      });
 
-    await transport.start();
-    await transport.stop();
-    await new Promise((resolve) => setTimeout(resolve, 300));
+      const startTime = Date.now();
+      await transport.start();
+      await transport.stop();
 
-    expect(renewEvents).toEqual([]);
+      const notAfterMs =
+        Math.floor((startTime + WEBRTC_CERT_LIFESPAN_MS) / 1000) * 1000;
+      const renewAt = notAfterMs - DEFAULT_RENEWAL_THRESHOLD_MS;
+
+      // Past the renewal point. Every bounded step reassigns
+      // `this.renewCertificateTask`, so `stop()`'s `clearTimeout`
+      // must have caught the one scheduled at `start()` — if it
+      // did not, each step would re-arm itself and the final step
+      // would fire a renewal somewhere inside this advance. Switch
+      // to real timers afterwards and give the async side of any
+      // renewal that did slip through time to dispatch.
+      await vi.advanceTimersByTimeAsync(renewAt - Date.now() + 1000);
+      vi.useRealTimers();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(renewEvents).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // The constant's ceilings — the lifespan has to fit in X.509
