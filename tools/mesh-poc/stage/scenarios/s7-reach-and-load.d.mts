@@ -24,3 +24,4 @@ export declare function run(ctx: { dryRun: boolean; topology: unknown; [k: strin
   steps: Array<{ name: string; verdict: 'PASS' | 'FAIL' | 'skipped'; measurement: unknown; timeMs?: number }>;
   faults: string[];
 }>;
+export declare function lan1InboundLoggedSince(logPath: string, startOffset: number): boolean;

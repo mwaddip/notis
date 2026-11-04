@@ -1,8 +1,8 @@
 // MESH_INTERFACE → Block gossip → "One router, net's rules" — a plain libp2p
-// host wearing gossipsub on `gossipsubOptions(magic)`, used in-process by cases
-// that measure the mesh node's router against the one net runs. The host
-// subscribes to `blockTopic(magic)` and records every message it receives on
-// that topic as raw bytes.
+// host wearing gossipsub on `gossipsubOptions(magic, topics)`, used in-process
+// by cases that measure the mesh node's router against the one net runs. The
+// host subscribes to `gossipTopics(magic).orderingBlock` and records every
+// message it receives on that topic as raw bytes.
 
 import { createLibp2p, type Libp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
@@ -10,7 +10,7 @@ import { noise } from '@libp2p/noise';
 import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
 import { gossipsub } from '@libp2p/gossipsub';
-import { blockTopic, gossipsubOptions } from '../../src/gossip-rules.js';
+import { gossipTopics, gossipsubOptions } from '@dagsocial/net/browser';
 
 export interface PlainGossipsubHost {
   readonly libp2p: Libp2p;
@@ -29,10 +29,10 @@ export async function startPlainGossipsubHost(magic: number): Promise<PlainGossi
     connectionMonitor: { enabled: false },
     services: {
       identify: identify(),
-      pubsub: gossipsub(gossipsubOptions(magic)),
+      pubsub: gossipsub(gossipsubOptions(magic, [gossipTopics(magic).orderingBlock])),
     },
   });
-  const topic = blockTopic(magic);
+  const topic = gossipTopics(magic).orderingBlock;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pubsub = (libp2p.services as any).pubsub;
   pubsub.subscribe(topic);

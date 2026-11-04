@@ -10,6 +10,7 @@ import {
   profileFor,
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType, ProtocolEra } from '@dagsocial/types';
+import type { MeshConfig } from '@dagsocial/net';
 import { DEFAULT_MAX_MEMPOOL_ENTRIES } from './store/mempool.js';
 import { DECIMAL_INT } from './decimal-int.js';
 
@@ -155,12 +156,13 @@ export interface Config {
    * `proofRetentionBlocks`.
    */
   proofRetentionBytes: number;
-  // Net settings — the seven whole-number knobs reach `NetNode` from the one
+  // Net settings — the whole-number knobs reach `NetNode` from the one
   // loaded `config`; semantics `NET_INTERFACE → Config` and
   // `NET_INTERFACE → Outbound Manager`.
   bootstrapPeers: string[];
   listenAddrs: string;
   maxPeers: number;
+  maxReaders: number;
   minPeers: number;
   peerDbCap: number;
   outboundRedialCooldownMs: number;
@@ -168,6 +170,13 @@ export interface Config {
   temporalBanDurationMs: number;
   penaltyDecayIntervalMs: number;
   syncRequestTimeoutMs: number;
+  /**
+   * The mesh a `public` or `private` node runs — `null` with no
+   * `MESH_ROLE` (NODE_INTERFACE → Configuration; NET_INTERFACE → The
+   * mesh). `index.ts` passes it as the `NetConfig.mesh` of this
+   * node's `NetNode`, substituting `undefined` for `null`.
+   */
+  mesh: MeshConfig | null;
 }
 
 export function loadConfig(): Readonly<Config> {
@@ -181,9 +190,14 @@ export function loadConfig(): Readonly<Config> {
   const decay = decayCfgFor(profile);
 
   const dbPath = process.env['DB_PATH'] ?? 'dagsocial.db';
+  // Named once rather than read twice: `port` reaches the HTTP listener as
+  // `cfg.port` and the mesh's `httpBase` as `http://127.0.0.1:<port>`
+  // (NODE_INTERFACE → Configuration → "The node's mesh endpoint forwards to
+  // its own public listener").
+  const port = readWholeNumber('PORT', 3000, { floor: 0, port: true });
 
   const cfg: Config = {
-    port: readWholeNumber('PORT', 3000, { floor: 0, port: true }),
+    port,
     adminPort: readWholeNumber('ADMIN_PORT', 3001, { floor: 0, port: true }),
     adminBindAddress: process.env['ADMIN_BIND_ADDRESS'] ?? '127.0.0.1',
     dbPath,
@@ -247,6 +261,7 @@ export function loadConfig(): Readonly<Config> {
     bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',
     maxPeers: readWholeNumber('MAX_PEERS', 50, { floor: 1 }),
+    maxReaders: readWholeNumber('MAX_READERS', 64, { floor: 0 }),
     minPeers: readWholeNumber('MIN_PEERS', 3, { floor: 0 }),
     peerDbCap: readWholeNumber('PEER_DB_CAP', 1000, { floor: 0 }),
     outboundRedialCooldownMs: readWholeNumber('OUTBOUND_REDIAL_COOLDOWN_MS', 60_000, { floor: 0 }),
@@ -254,6 +269,19 @@ export function loadConfig(): Readonly<Config> {
     temporalBanDurationMs: readWholeNumber('TEMPORAL_BAN_DURATION_MS', 3_600_000, { floor: 0 }),
     penaltyDecayIntervalMs: readWholeNumber('PENALTY_DECAY_INTERVAL_MS', 120_000, { floor: 1 }),
     syncRequestTimeoutMs: readWholeNumber('SYNC_REQUEST_TIMEOUT_MS', 10_000, { floor: 1 }),
+    mesh: parseMeshConfig({
+      role: process.env['MESH_ROLE'],
+      listen: process.env['MESH_LISTEN'],
+      announce: process.env['MESH_ANNOUNCE'],
+      stun: process.env['MESH_STUN'],
+      stunServers: process.env['MESH_STUN_SERVERS'],
+      wss: process.env['MESH_WSS'],
+      acmeDirectory: process.env['MESH_ACME_DIRECTORY'],
+      acmeChallengePort: process.env['MESH_ACME_CHALLENGE_PORT'],
+      network: profile.networkType,
+      dbPath,
+      port,
+    }),
   };
 
   assertMiningAuthConfigured(cfg);
@@ -573,6 +601,219 @@ function parseBootstrapPeers(raw: string | undefined, profilePeers: readonly str
 function parseNodeRole(raw: string): 'server' | 'miner' {
   if (raw === 'server' || raw === 'miner') return raw;
   throw new Error(`Invalid NODE_ROLE "${raw}" — must be "server" or "miner"`);
+}
+
+// MESH_INTERFACE → Discovery → "An address is a hint" — a mesh listen
+// or announce multiaddr is an IP literal address, never a hostname.
+const MESH_DNS_RE = /\/dns4\/|\/dns6\/|\/dnsaddr\//;
+// MESH_INTERFACE → NAT — a public node's listen set must hold a
+// `/webrtc-direct` address so a browser can reach it at a fixed port.
+const MESH_WEBRTC_DIRECT_RE = /\/webrtc-direct(?:\/|$)/;
+
+/**
+ * NODE_INTERFACE → Configuration → "The mesh state directory is named
+ * for the store". `DB_PATH` with its extension replaced by `.mesh` —
+ * `dagsocial.db` → `dagsocial.mesh`, a name with no extension takes
+ * `.mesh` appended — as `parseNodeKeyPath` does for `.key`.
+ */
+function meshStateDirFor(dbPath: string): string {
+  const parsed = parsePath(dbPath);
+  return joinPath(parsed.dir, parsed.name + '.mesh');
+}
+
+/**
+ * NODE_INTERFACE → Configuration → "The node's mesh endpoint forwards
+ * to its own public listener" — `httpBase` is `http://127.0.0.1:<PORT>`,
+ * never `ADMIN_PORT`'s listener, and no setting names another.
+ */
+function meshHttpBaseFor(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+/**
+ * NODE_INTERFACE → Configuration — a comma-separated list, trimmed
+ * and emptied of blanks. Unset or empty yields `[]`.
+ */
+function parseMeshAddrList(raw: string | undefined): string[] {
+  if (raw === undefined || raw === '') return [];
+  return raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/**
+ * NODE_INTERFACE → Configuration — `MESH_STUN` is `<ip>:<port>` or
+ * `[<ipv6>]:<port>`, `off` turning the server off, unset leaving it
+ * absent so `net` derives the default from the first WebRTC-direct
+ * listen address (MESH_INTERFACE → NAT → "A node's role is its
+ * operator's setting"). The strict `isIpLiteral` check lives in
+ * `MeshConfig`'s own `assertMeshConfig` at `net.start()`; this reader
+ * returns `{ host, port }` for whatever the operator spelled, and
+ * `net` refuses a hostname with `MeshConfigError`.
+ */
+function parseMeshStun(raw: string | undefined): { host: string; port: number } | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === 'off') return null;
+  let host: string;
+  let portStr: string;
+  if (raw.startsWith('[')) {
+    const idx = raw.indexOf(']:');
+    if (idx < 0) {
+      throw new Error(`Invalid MESH_STUN "${raw}" — a bracketed host must end with ]:<port>`);
+    }
+    host = raw.substring(1, idx);
+    portStr = raw.substring(idx + 2);
+  } else {
+    const idx = raw.lastIndexOf(':');
+    if (idx < 0) {
+      throw new Error(`Invalid MESH_STUN "${raw}" — must be <ip>:<port> or off`);
+    }
+    host = raw.substring(0, idx);
+    portStr = raw.substring(idx + 1);
+  }
+  if (!DECIMAL_INT.test(portStr)) {
+    throw new Error(`Invalid MESH_STUN "${raw}" — port must be decimal digits only`);
+  }
+  const port = Number(portStr);
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
+    throw new Error(`Invalid MESH_STUN "${raw}" — port must be 0..65535`);
+  }
+  return { host, port };
+}
+
+/**
+ * NODE_INTERFACE → Configuration — `MESH_WSS` is `<ip>:<port>` or
+ * `[<ipv6>]:<port>`, requires `MESH_ACME_DIRECTORY`. The challenge
+ * port reads through the one whole-number reader as a port, defaulting
+ * to 80. The strict IP check is `MeshConfig`'s at `net.start()`.
+ */
+function parseMeshWss(
+  raw: string | undefined,
+  acmeDirectory: string | undefined,
+  acmeChallengePortRaw: string | undefined,
+): { ip: string; port: number; acmeDirectory: string; challengePort: number } | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  if (acmeDirectory === undefined || acmeDirectory === '') {
+    throw new Error('Invalid MESH_WSS — MESH_ACME_DIRECTORY must be set');
+  }
+  let ip: string;
+  let portStr: string;
+  if (raw.startsWith('[')) {
+    const idx = raw.indexOf(']:');
+    if (idx < 0) {
+      throw new Error(`Invalid MESH_WSS "${raw}" — a bracketed host must end with ]:<port>`);
+    }
+    ip = raw.substring(1, idx);
+    portStr = raw.substring(idx + 2);
+  } else {
+    const idx = raw.lastIndexOf(':');
+    if (idx < 0) {
+      throw new Error(`Invalid MESH_WSS "${raw}" — must be <ip>:<port>`);
+    }
+    ip = raw.substring(0, idx);
+    portStr = raw.substring(idx + 1);
+  }
+  if (!DECIMAL_INT.test(portStr)) {
+    throw new Error(`Invalid MESH_WSS "${raw}" — port must be decimal digits only`);
+  }
+  const port = Number(portStr);
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
+    throw new Error(`Invalid MESH_WSS "${raw}" — port must be 0..65535`);
+  }
+  // NODE_INTERFACE → Configuration → "Every whole-number setting is read by one reader, and a set value it refuses stops the node at load."
+  // `MESH_ACME_CHALLENGE_PORT` passes through the same path,
+  // defaulting to 80.
+  let challengePort: number;
+  if (acmeChallengePortRaw === undefined) {
+    challengePort = 80;
+  } else {
+    if (!DECIMAL_INT.test(acmeChallengePortRaw)) {
+      throw new Error(
+        `Invalid MESH_ACME_CHALLENGE_PORT "${acmeChallengePortRaw}" — must be decimal digits only`,
+      );
+    }
+    challengePort = Number(acmeChallengePortRaw);
+    if (!Number.isSafeInteger(challengePort) || challengePort < 0 || challengePort > 65_535) {
+      throw new Error(
+        `Invalid MESH_ACME_CHALLENGE_PORT "${acmeChallengePortRaw}" — a TCP port is at most 65 535`,
+      );
+    }
+  }
+  return { ip, port, acmeDirectory, challengePort };
+}
+
+/**
+ * NODE_INTERFACE → Configuration — the mesh a node runs, or `null`
+ * with no `MESH_ROLE`. Every refusal names the setting at fault; the
+ * strict refusals `MESH_INTERFACE` names (the IP literal on
+ * `MESH_STUN` and `MESH_WSS`, the `stun:<ip>:<port>` shape on
+ * `MESH_STUN_SERVERS`, the `/webrtc-direct` requirement on a public
+ * node's listen set) land in `net`'s own `assertMeshConfig` at
+ * `net.start()`; those the node can see at load without reading a
+ * socket land here.
+ */
+function parseMeshConfig(opts: {
+  role: string | undefined;
+  listen: string | undefined;
+  announce: string | undefined;
+  stun: string | undefined;
+  stunServers: string | undefined;
+  wss: string | undefined;
+  acmeDirectory: string | undefined;
+  acmeChallengePort: string | undefined;
+  network: 'devnet' | 'testnet' | 'mainnet';
+  dbPath: string;
+  port: number;
+}): MeshConfig | null {
+  if (opts.role === undefined) return null;
+  if (opts.role !== 'public' && opts.role !== 'private') {
+    throw new Error(
+      `Invalid MESH_ROLE "${opts.role}" — must be "public" or "private"`,
+    );
+  }
+  const role: 'public' | 'private' = opts.role;
+  const listen = parseMeshAddrList(opts.listen);
+  for (const a of listen) {
+    if (MESH_DNS_RE.test(a)) {
+      throw new Error(`Invalid MESH_LISTEN "${a}" — carries a DNS component`);
+    }
+  }
+  if (role === 'public') {
+    let hasWebrtcDirect = false;
+    for (const a of listen) {
+      if (MESH_WEBRTC_DIRECT_RE.test(a)) { hasWebrtcDirect = true; break; }
+    }
+    if (!hasWebrtcDirect) {
+      throw new Error(
+        'Invalid MESH_LISTEN — a public node has no /webrtc-direct listen address',
+      );
+    }
+  }
+  const announce = parseMeshAddrList(opts.announce);
+  for (const a of announce) {
+    if (MESH_DNS_RE.test(a)) {
+      throw new Error(`Invalid MESH_ANNOUNCE "${a}" — carries a DNS component`);
+    }
+  }
+  const stun = parseMeshStun(opts.stun);
+  if (role === 'private' && stun !== undefined) {
+    throw new Error('Invalid MESH_STUN — a private node does not serve STUN');
+  }
+  const stunServers = parseMeshAddrList(opts.stunServers);
+  const wss = parseMeshWss(opts.wss, opts.acmeDirectory, opts.acmeChallengePort);
+  if (role === 'private' && wss !== undefined) {
+    throw new Error('Invalid MESH_WSS — a private node does not serve WSS');
+  }
+  const mesh: MeshConfig = {
+    role,
+    network: opts.network,
+    listen,
+    stateDir: meshStateDirFor(opts.dbPath),
+    httpBase: meshHttpBaseFor(opts.port),
+    ...(announce.length > 0 ? { announce } : {}),
+    ...(stun !== undefined ? { stun } : {}),
+    ...(stunServers.length > 0 ? { stunServers } : {}),
+    ...(wss !== undefined ? { wss } : {}),
+  };
+  return mesh;
 }
 
 export const config = loadConfig();

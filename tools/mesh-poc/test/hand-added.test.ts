@@ -20,8 +20,6 @@ import { tcp } from '@libp2p/tcp';
 import { noise } from '@libp2p/noise';
 import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
-import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { privateKeyFromRaw } from '@libp2p/crypto/keys';
 import { bytesToHex, generateKeyPair, profileFor } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
 import {
@@ -31,8 +29,9 @@ import {
   type MeshClient,
 } from '../src/client/mesh-client.js';
 import { MeshConfigError } from '../src/config.js';
-import { peerIdFromNotisId, seedOfSecretKey, nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
-import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { peerIdFromNotisId, nodeKeyFromKeyPair } from '@dagsocial/net/browser';
+import { NetNode } from '@dagsocial/net';
+import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { chainUpstream, chainResolve, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain } from './helpers/devnet-block.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -159,8 +158,7 @@ describe('clientDenyDialMultiaddr — libp2p calls it with the full dial multiad
 
     // A valid-but-unresponsive target key.
     const kp = generateKeyPair();
-    const privateKey = privateKeyFromRaw(seedOfSecretKey(kp.secretKey));
-    const peerId = peerIdFromPrivateKey(privateKey);
+    const { peerId } = nodeKeyFromKeyPair(kp);
     const addr = `/ip4/127.0.0.1/tcp/9999/p2p/${peerId.toString()}`;
 
     const recorder = createDialProgressRecorder();
@@ -254,7 +252,7 @@ describe('MeshClient.addByHand — refusals', () => {
 // ---------- MeshClient.addByHand — anchorReached ----------
 
 describe('MeshClient.addByHand — anchorReached', () => {
-  const nodes: MeshNode[] = [];
+  const nodes: NetNode[] = [];
   const ups: ChainUpstream[] = [];
   const dirs: string[] = [];
   let client: MeshClient | null = null;
@@ -272,18 +270,8 @@ describe('MeshClient.addByHand — anchorReached', () => {
   async function startNode(
     upstream: { base: string },
     dir: string,
-  ): Promise<{ node: MeshNode; id: string; webrtcAddr: string }> {
-    const key = nodeKeyFromKeyPair(generateKeyPair());
-    const n = await startMeshNode({
-      key, network: 'devnet', role: 'public',
-      listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
-      bootstrap: [], stateDir: dir, upstream: upstream.base,
-    });
-    const addrs = n.multiaddrs();
-    const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
-    if (!webrtcAddr) { await n.stop(); throw new Error('no WebRTC-direct listen address'); }
-    const id = notisIdFromPeerId(n.libp2p.peerId);
-    return { node: n, id, webrtcAddr };
+  ): Promise<NetMeshNode> {
+    return await startNetPublicMesh({ upstream: upstream.base, stateDir: dir });
   }
 
   it('a trusted hand-added node makes anchorReached true when it answers', async () => {

@@ -10,6 +10,13 @@ import {
 } from './msg-guards.js';
 import { addressWithoutPeerId } from './util.js';
 
+// A fresh encoder per predicate call is ~70 ns; a module-level singleton
+// buys nothing and loses the promise that this file holds no module-level
+// state.
+function utf8ByteLength(s: string): number {
+  return new TextEncoder().encode(s).length;
+}
+
 export interface PeerStorage {
   loadAll(): PeerRecord[];
   put(record: PeerRecord): void;
@@ -37,12 +44,12 @@ export interface PeerStorage {
 function isServableRecord(rec: unknown): rec is PeerRecord {
   if (!isRecord(rec)) return false;
   if (typeof rec.address !== 'string') return false;
-  if (Buffer.byteLength(rec.address as string, 'utf8') > MAX_ADDRESS_BYTES) return false;
+  if (utf8ByteLength(rec.address as string) > MAX_ADDRESS_BYTES) return false;
   if (!isBoundedInt(rec.lastSeenMs, Number.MAX_SAFE_INTEGER)) return false;
   if (typeof rec.agentName !== 'string' || (rec.agentName as string).length === 0) return false;
-  if (Buffer.byteLength(rec.agentName as string, 'utf8') > MAX_NAME_BYTES) return false;
+  if (utf8ByteLength(rec.agentName as string) > MAX_NAME_BYTES) return false;
   if (typeof rec.nodeName !== 'string') return false;
-  if (Buffer.byteLength(rec.nodeName as string, 'utf8') > MAX_NAME_BYTES) return false;
+  if (utf8ByteLength(rec.nodeName as string) > MAX_NAME_BYTES) return false;
   if (!isBoundedInt(rec.protocolVersion, MAX_CAPABILITY_CODE)) return false;
   if (!isBoundedIntArray(rec.capabilities, MAX_CAPABILITY_CODE)) return false;
   if (Array.isArray(rec.capabilities) && rec.capabilities.length > MAX_CAPABILITY_ENTRIES) return false;

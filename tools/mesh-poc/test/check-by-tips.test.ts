@@ -11,7 +11,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   encodeOrderingBlock,
-  generateKeyPair,
   MAGIC_DEVNET,
   PROTOCOL_VERSION,
   profileFor,
@@ -19,9 +18,9 @@ import {
 import type { BlockHeader, NetworkProfile, NetworkType, OrderingBlock } from '@dagsocial/types';
 import { asertTargetBits, blockHash } from '@dagsocial/validation';
 import { verifierProfile } from '@dagsocial/nipopow-client';
-import { blockTopic } from '../src/gossip-rules.js';
-import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
-import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { gossipTopics } from '@dagsocial/net/browser';
+import { NetNode } from '@dagsocial/net';
+import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeBlockAt, makeLinkedChain } from './helpers/devnet-block.js';
@@ -45,21 +44,8 @@ async function handBuilt(handler: (req: { url: string }, res: {
 async function startNode(
   upstream: { base: string },
   dir: string,
-): Promise<{ node: MeshNode; id: string; webrtcAddr: string }> {
-  const key = nodeKeyFromKeyPair(generateKeyPair());
-  const n = await startMeshNode({
-    key, network: 'devnet', role: 'public',
-    listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
-    bootstrap: [], stateDir: dir, upstream: upstream.base,
-  });
-  const addrs = n.multiaddrs();
-  const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
-  if (!webrtcAddr) {
-    await n.stop();
-    throw new Error(`no WebRTC-direct listen address: ${JSON.stringify(addrs)}`);
-  }
-  const id = notisIdFromPeerId(n.libp2p.peerId);
-  return { node: n, id, webrtcAddr };
+): Promise<NetMeshNode> {
+  return await startNetPublicMesh({ upstream: upstream.base, stateDir: dir });
 }
 
 /**
@@ -91,7 +77,7 @@ function pubsubOf(libp2p: unknown): MeshPeerQuery {
 }
 
 describe('mesh-client — a check reads tips, places them, and proves the rest', () => {
-  const nodes: MeshNode[] = [];
+  const nodes: NetNode[] = [];
   const ups: ChainUpstream[] = [];
   const builts: HandBuilt[] = [];
   const dirs: string[] = [];
@@ -1573,11 +1559,11 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(client.state().tip?.height).toBe(K + 1);
 
     // Gossipsub mesh with A so the inside-resolve publish propagates.
-    const TOPIC = blockTopic(MAGIC_DEVNET);
+    const TOPIC = gossipTopics(MAGIC_DEVNET).orderingBlock;
     await vi.waitFor(() => {
       expect(pubsubOf(client.libp2p).getMeshPeers(TOPIC))
-        .toContain(a.node.libp2p.peerId.toString());
-      expect(pubsubOf(a.node.libp2p).getMeshPeers(TOPIC))
+        .toContain(a.libp2p.peerId.toString());
+      expect(pubsubOf(a.libp2p).getMeshPeers(TOPIC))
         .toContain(client.libp2p.peerId.toString());
     }, { timeout: 60_000, interval: 300 });
 
@@ -1585,7 +1571,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     // resolve so the chain gains K+2 before the winner's tip (K+1) is
     // weighed.
     injectOnNextResolve = async () => {
-      await pubsubOf(a.node.libp2p).publish(TOPIC, encodeOrderingBlock(extraBlock));
+      await pubsubOf(a.libp2p).publish(TOPIC, encodeOrderingBlock(extraBlock));
       await vi.waitFor(() => {
         expect(client.state().tip?.height).toBe(K + 2);
       }, { timeout: 15_000, interval: 50 });

@@ -1,8 +1,8 @@
 # mesh-poc — a tester's manual
 
 A browser page reaches a Notis node's HTTP API **by the node's Ed25519 key**, over libp2p, from a
-handful of anchors and **no DNS name**, with mesh nodes sitting beside unmodified devnet
-`@dagsocial/node`s — the client's answer is the node's own, byte for byte. The stage runs the whole
+handful of anchors and **no DNS name**. The mesh runs inside each devnet `@dagsocial/node` — the
+node answers the mesh endpoint from its own HTTP, byte for byte. The stage runs the whole
 machinery inside Linux network namespaces on one host and the eight scenarios in
 `MESH_INTERFACE → Acceptance` drive it from the browser's side.
 
@@ -56,25 +56,38 @@ A build that satisfies the claims but does any of these has **failed**:
 
 Linux network namespaces named `notismesh-<host>`. One namespace per host, bridged into one
 internet segment at `11.100.0.0/24`, with two NAT routers wrapping endpoint-independent and
-symmetric sub-segments (`stage/topology.json`):
+symmetric sub-segments (`stage/topology.json`). **Each host runs one integrated
+`@dagsocial/node`** — the `MESH_*` environment it answers is the role's settings, and the
+mesh runs beside the node's own libp2p (`NODE_INTERFACE → Configuration`):
 
 | Host | Role | Address |
 |---|---|---|
-| pub1 | public mesh node + Notis node (miner) | `11.100.0.11` |
-| pub2 | public mesh node + Notis node | `11.100.0.12` |
+| pub1 | integrated node, public mesh role, miner | `11.100.0.11` |
+| pub2 | integrated node, public mesh role | `11.100.0.12` |
 | pebble | ACME test server | `11.100.0.21` |
 | dns-log | REFUSED resolver + DNS witness | `11.100.0.22` |
-| hostile-malformed | mesh node forwarding a non-hex `proof` and a tip of its own; its Notis p2p port peers only with hostile-lagging from before start, on the pair's own chain from genesis; its mesh service carries no `MESH_NODE_P2P` so block gossip never carries the pair's chain | `11.100.0.31` |
-| hostile-invalid | mesh node forwarding a `verifyProof`-refusing proof and a tip of its own | `11.100.0.32` |
-| hostile-lagging | mesh node whose Notis p2p port peers only with hostile-malformed from before start; a 100 % boot miner then a 1 % miner on its node grows the pair's own chain from genesis; its mesh service carries no `MESH_NODE_P2P` for the same reason as the partner's | `11.100.0.33` |
-| hostile-publisher | mesh node publishing malformed ordering blocks on the gossip topic | `11.100.0.34` |
+| hostile-malformed | integrated node with public mesh role; its Notis p2p port peers only with hostile-lagging from before start, on the pair's own chain from genesis; an `hostile-upstream` interposer sits in front of the node's mesh endpoint by an nft `nat output` redirect, forwarding a non-hex `proof` and a tip of its own | `11.100.0.31` |
+| hostile-invalid | integrated node with public mesh role; an interposer redirects its mesh endpoint to a `verifyProof`-refusing proof and a tip of its own | `11.100.0.32` |
+| hostile-lagging | integrated node with public mesh role; its Notis p2p port peers only with hostile-malformed from before start; a 100 % boot miner then a 1 % miner on its node grows the pair's own chain from genesis | `11.100.0.33` |
+| hostile-publisher | integrated node with no `MESH_*` env; a `stage/hostile-gossip.mjs` libp2p host built from `@dagsocial/net`'s pieces publishes malformed ordering blocks on the gossip topic beside it | `11.100.0.34` |
 | natA | endpoint-independent NAT router (public `11.100.0.101`, inside `10.101.0.0/24`) | — |
-| priv1 | private mesh node + Notis node behind natA | `10.101.0.11` |
+| priv1 | integrated node, private mesh role, behind natA | `10.101.0.11` |
 | natB | symmetric NAT router (public `11.100.0.102`, inside `10.102.0.0/24`) | — |
-| priv2 | private mesh node + Notis node behind natB | `10.102.0.11` |
+| priv2 | integrated node, private mesh role, behind natB | `10.102.0.11` |
 | natC | endpoint-independent NAT router (public `11.100.0.103`, inside `10.103.0.0/24`) | — |
 | browser | Chromium under `--host-resolver-rules=MAP * ~NOTFOUND` behind natC | `10.103.0.11` |
-| lan1 | private mesh node + Notis node beside the browser, on natC's inside bridge | `10.103.0.21` |
+| lan1 | integrated node, private mesh role, beside the browser on natC's inside bridge | `10.103.0.21` |
+
+Each host's node reads its role from `MESH_ROLE`, its listens from `MESH_LISTEN`, its STUN
+server (public only) from `MESH_STUN`, its WSS opt-in (pub1 only) from `MESH_WSS` and
+`MESH_ACME_*`, and its STUN list (private only) from `MESH_STUN_SERVERS`. Private nodes
+derive their relay listens from `BOOTSTRAP_PEERS`'s public entries over the TCP connection
+to each seed — no `/p2p-circuit` entry appears in `MESH_LISTEN`. A hostile host carries no
+setting for its lie: the node runs honest and an interposer binds the host's `:7000`;
+`sudo ip netns exec <ns> nft` installs a `nat output` rule that redirects every outgoing
+packet to `127.0.0.1:3100` to `:7000`, so the node's own mesh-endpoint forward hits the
+interposer. The interposer reaches the node at the namespace's own address (daddr-127.0.0.1
+match fails there), and forwards the body it wants to.
 
 ### What the stage needs
 
@@ -116,34 +129,35 @@ timeout  1m  pnpm --filter @dagsocial/mesh-poc stage:report
 timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
 ```
 
-- `pnpm -r build` builds every workspace member; the mesh-poc node binaries land at
-  `tools/mesh-poc/dist/node/{main,mesh-key-tool}.js`.
+- `pnpm -r build` builds every workspace member; the integrated node the stage spawns lands
+  at `packages/node/dist/index.js`.
 - `pnpm --filter @dagsocial/mesh-poc page:build` writes the browser page to
   `tools/mesh-poc/dist-page/` (vite). `stage/page-server.mjs` serves this directory and splices
   `stage/out/browser/config.json` at `/config.json`.
 - **`stage:up`** rotates `stage/out/` to `stage/out.prev/` (replacing any older `.prev`), creates
   every namespace and NAT rule, lifts `net.ipv4.ip_unprivileged_port_start=0` in the browser,
   dns-log and pub1 namespaces, writes `/etc/netns/notismesh-browser/resolv.conf` with the dns-log
-  address, creates each mesh node's `mesh.key` (PKCS8 Ed25519 seed, 48 bytes, mode `0600`),
+  address, creates each host's `node.key` (PKCS8 Ed25519 seed, 48 bytes, mode `0600`),
   downloads Pebble and generates a stage CA + Pebble server cert, starts the dns-log server, cuts
   hostile-lagging's and hostile-malformed's Notis p2p port from everything but each other BEFORE
   starting their Notis nodes (so the pair grows its own chain from genesis, each pair host naming
-  the partner alone in `BOOTSTRAP_PEERS` and neither pair mesh service carrying `MESH_NODE_P2P`),
-  starts each Notis node, each mesh node (public first; private second — their relay reservations
-  land on the publics that are up), the miner inside pub1 at `MINER_PCT=100` alongside the
-  miner-lagging-boot inside hostile-lagging at `MINER_PCT=100`, waits until every honest node AND
-  the pair's node (hostile-lagging) reads `/blocks/current.height >= 50`, swaps the honest miner
-  to `MINER_PCT=2` and the pair's miner to `MINER_PCT=1`, writes
-  `stage/out/browser/config.json` and
-  `stage/out/browser/config.default.json` from the mesh nodes' printed multiaddrs, writes
-  `stage/out/identities.json`, installs Pebble's root into Chromium's NSS db under
-  `stage/out/browser/home/.pki/nssdb` with trust flag `C,,`, starts the page server on
-  `http://localhost:80/` inside the browser namespace, launches Chromium headless with
-  `--remote-debugging-port=9222` and `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost ,
-  EXCLUDE 11.100.0.*`, confirms every recorded PID is alive, and prints
-  `stage up: <N> processes, <M> namespaces`. On failure it rolls back exactly what it created
-  (SIGTERMs each recorded PID, deletes each namespace in reverse order, removes
-  `/etc/netns/notismesh-*`).
+  the partner alone in `BOOTSTRAP_PEERS`), installs each hostile-upstream host's
+  nft `nat output` redirect rule and starts its interposer on `:7000`, starts each integrated
+  Notis node (public mesh roles first; private second — their relay reservations land on the
+  publics that are up), starts the hostile-publisher's `stage/hostile-gossip.mjs` host beside
+  its node, the miner inside pub1 at `MINER_PCT=100` alongside the miner-lagging-boot inside
+  hostile-lagging at `MINER_PCT=100`, waits until every honest node AND the pair's node
+  (hostile-lagging) reads `/blocks/current.height >= 50`, swaps the honest miner to
+  `MINER_PCT=2` and the pair's miner to `MINER_PCT=1`, writes `stage/out/browser/config.json`
+  and `stage/out/browser/config.default.json` from the mesh addresses the nodes printed in
+  their identity lines, writes `stage/out/identities.json`, installs Pebble's root into
+  Chromium's NSS db under `stage/out/browser/home/.pki/nssdb` with trust flag `C,,`, starts the
+  page server on `http://localhost:80/` inside the browser namespace, launches Chromium
+  headless with `--remote-debugging-port=9222` and
+  `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE 11.100.0.*`, confirms
+  every recorded PID is alive, and prints `stage up: <N> processes, <M> namespaces`. On
+  failure it rolls back exactly what it created (SIGTERMs each recorded PID, deletes each
+  namespace in reverse order, removes `/etc/netns/notismesh-*`).
 - **`stage:run [<name>...]`** runs the named scenarios in the order given (default: all eight,
   `s6 s1 s2 s3 s4 s5 s7 s8` — `MESH_INTERFACE → Block gossip → "A router scores its peers by
   gossipsub's defaults"` kicks in past ten peers from one NAT address and keeps the penalty an
@@ -183,8 +197,15 @@ stage/out/pebble-root.pem         Pebble's issuing root, fetched from its manage
 stage/out/pebble-config.json      Pebble's launch config
 stage/out/stage-ca{,-key}.pem     the stage CA that signs Pebble's own TLS
 stage/out/pebble-server-{cert,key}.pem  Pebble's TLS cert (SAN=ip:11.100.0.21)
-stage/out/<host>/mesh.key         each mesh node's PKCS8 Ed25519 seed, mode 0600
-stage/out/<host>/<tag>.log        per-host, per-process log (notis, mesh, miner-steady, …)
+stage/out/<host>/node.key         each integrated node's PKCS8 Ed25519 seed, mode 0600
+stage/out/<host>/notis.db         each integrated node's SQLite store
+stage/out/<host>/notis.mesh/      each integrated node's mesh state directory (libp2p
+                                  datastore holding the WebRTC-direct certificate's keychain)
+stage/out/<host>/notis.log        each host's node log — one JSON line per journal event,
+                                  plus a `{ notisId, peerId, multiaddrs, ... }` identity line
+                                  reprinted on every `self:peer:update`
+stage/out/<host>/<tag>.log        per-host, per-process log (miner-steady, hostile-gossip,
+                                  hostile-upstream, …)
 stage/out/scenarios/<s>.json      one per scenario stage:run touched
 stage/out/summary.md              stage:report's build
 ```
@@ -245,7 +266,7 @@ update could change that), but the acceptance line names a relayed path.
 
 ### s3 — A node goes away (`MESH_INTERFACE → Acceptance 3`)
 
-Four sub-steps against pub1's mesh node, driving the client's `CHECK_INTERVAL_MS` (30 000 ms) and
+Four sub-steps against pub1's integrated node, driving the client's `CHECK_INTERVAL_MS` (30 000 ms) and
 the retry cadence by hand.
 
 | # | Step | Pass condition | What breaks it |
@@ -265,7 +286,7 @@ Four sub-steps against UDP from the browser namespace, then TCP between the Noti
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
-| 1 | `UDP to pub1 cut: client gets in through another public mesh node` | `connected === true`; either `nodeId !== pub1` or `nodeId === pub1 && transport === 'wss'`. | Neither path. |
+| 1 | `UDP to pub1 cut: client gets in through another public node` | `connected === true`; either `nodeId !== pub1` or `nodeId === pub1 && transport === 'wss'`. | Neither path. |
 | 2 | `UDP to every public node cut: client connects over WSS to pub1 with the Pebble-issued cert` | `transport === 'wss'`, `nodeId === pub1`, the TLS issuer name read from `openssl s_client` inside the browser namespace contains `Pebble`. | A non-WSS transport; a different issuer. |
 | 3 | `across one renewal the probes keep succeeding, no lastLeft names a failure` | Pebble log shows at least one renewal across the 240 000 ms window; the client was connected over WSS at the window boundary and at its end; no `state.lastLeft.reason` named `timeout`/`refused`/`dropped`/`transport`/`lie`/`malformed`/`proof-invalid` in the window. **Positive evidence required**: `connectedBeforeWindow === true` and `connectedAfterWindow === true`. | A dropped request named by `lastLeft.reason`; no renewal in the Pebble log; a window boundary with no connection. |
 | 4 | `TCP between the Notis nodes p2p port cut: record what still answers` | After one `CHECK_INTERVAL_MS` the page's `state.transport` and `state.nodeId` are both non-null. | Neither field settled. |
@@ -277,9 +298,9 @@ be widened.
 
 ### s5 — Impersonation (`MESH_INTERFACE → Acceptance 5`)
 
-One step with four measurements. Stop pub1's mesh node; spawn an impostor whose state dir is a
-byte-for-byte copy of pub1's **except for a fresh `mesh.key`** — same WebRTC-direct certificate,
-different Ed25519 identity. Bind pub1's address.
+One step with four measurements. Stop pub1's integrated node; spawn an impostor whose state is a
+byte-for-byte copy of pub1's `.mesh` directory — same WebRTC-direct certificate — **with a fresh
+`node.key`** beside it. Bind pub1's address.
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
@@ -298,7 +319,7 @@ Three sub-steps.
 |---|---|---|---|
 | 1 | `anchors unreachable: anchorReached is false, page shows the contract words` | nft rules in the browser namespace drop every anchor address; `state.anchorReached === false`; the page's `[data-role="banner"]` reads `No anchor reached. Nothing shown here is verified.` byte for byte; **at least one hostile seed** reached a terminal status (`ok` / `behind` / `blacklisted`) — positive evidence the page connected to something. | A different banner text; `anchorReached: true`; no seed left `new`. |
 | 2 | `anchors reachable, hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted` | `hostile-malformed` → `blacklisted`, evidence `malformed`; `hostile-invalid` → `blacklisted`, evidence `proof-invalid`; `hostile-lagging` → `behind`, never `blacklisted` — the pair runs its own chain from genesis, no block shared with the honest one; devnet pins no `genesisId`, so `compareProofs` answers `incomparable / no-common-ancestor` (`NIPOPOW_INTERFACE → compareProofs`), `resolveTip` keeps the client's own tip's proof handed to it first (`MESH_INTERFACE → The client's node list → "A check"`), and the pair's tip, not on the winner's suffix, reads `behind: null` which `tipEvent` turns into `behind`. | Any of those three not landing. |
-| 3 | `the publisher is blacklisted for gossip-block; the client forwarded nothing` | `hostile-publisher` → `blacklisted`, evidence `gossip-block`; every honest mesh node's log holds no `[mesh] ordering block rejected from <X>` line where `X` is anything but the publisher's peer id (the client refused the bad block, so no honest mesh ever sourced it from the browser). | Publisher not blacklisted or evidence of a different kind; one honest mesh log named a reject source other than the publisher. |
+| 3 | `the publisher is blacklisted for gossip-block; the client forwarded nothing` | `hostile-publisher` → `blacklisted`, evidence `gossip-block`; every honest node's `notis.log` holds no `peer_penalised` event whose `detail` names an ordering-block reject sourced from a peer other than the publisher (the client refused the bad block, so no honest node ever sourced it from the browser). | Publisher not blacklisted or evidence of a different kind; one honest node's log named a reject source other than the publisher. |
 
 **What a tester reports even on PASS:** the hostile-lagging node at `blacklisted` at any point —
 a timeout, a refused connection, a dropped link or a non-2xx is `retry`, and a valid proof of a
@@ -319,7 +340,7 @@ the agreement counts.
 |---|---|---|---|
 | 1 | `older reads spread across ≥ 2 nodes; tip reads only on ok nodes` | `?reads=20&need=older` names at least two distinct serving nodes; every tip read from `?reads=10&need=tip` was served by a node reading `ok` at that read. | Older reads all on one node; a tip read served by a node not `ok` at that read. |
 | 2 | `pub2 delayed 200ms serves no read` | A `tc qdisc add dev <pub2 outside peer> root netem delay 200ms` is applied inside `notismesh-pub2`; after one completed check `?reads=20&need=older` names no read served by pub2. | Any read served by pub2 after the delay lands. |
-| 3 | `lan1 is never dialled from a seed; by hand it is reached, anchorReached follows the trusted flag` | Three phases: (a) with lan1 named only as a seed, over two completed checks lan1 never holds a connection AND lan1's mesh log holds no inbound from `10.103.0.11`; (b) with no anchors and `byHand: [lan1, trusted:true]`, lan1 reads `ok` or `trailing` over `webrtc-direct`, `path: direct`, `anchorReached: true`; (c) the same with `trusted: false` → `anchorReached: false`. | A connection to lan1 in the seed phase; a dial from the browser logged on lan1's mesh node; a hand-added `anchorReached` reading other than the trusted flag's value. |
+| 3 | `lan1 is never dialled from a seed; by hand it is reached, anchorReached follows the trusted flag` | Three phases: (a) with lan1 named only as a seed, over two completed checks lan1 never holds a connection AND lan1's `notis.log` holds no `[net] connection:close ... addr=/ip4/10.103.0.11/... dir=inbound` line; (b) with no anchors and `byHand: [lan1, trusted:true]`, lan1 reads `ok` or `trailing` over `webrtc-direct`, `path: direct`, `anchorReached: true`; (c) the same with `trusted: false` → `anchorReached: false`. | A connection to lan1 in the seed phase; a dial from the browser logged on lan1's node; a hand-added `anchorReached` reading other than the trusted flag's value. |
 | 4 | `the agreement counts hold agreeing ≥ 2 and agreeingAnchors ≥ 1` | After a completed check on the stage default: `state.agreement.agreeing ≥ 2` AND `state.agreement.agreeingAnchors ≥ 1`. | A count below either threshold; a check that never completed (`agreement: null`). |
 
 **A node on the browser's own network comes in by the reader's hand**
@@ -341,9 +362,9 @@ cut.
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
-| 1 | `no proof read across five completed checks on the stage default` | A step-scoped firewall drops the browser's output to every hostile host for the step's duration (a `FaultLog` fault, removed in a `finally` inside the step), so the stage-default's DHT walk never reaches a hostile mesh node whose tip-of-its-own would be read on the first check. The baseline is the first state with the chain settled (`checks >= 1`, `proofReads >= 1`) where every honest node the list HOLDS reads `ok`, `trailing` or `behind` and both anchors are held — a honest node absent from the list is not asserted, so a node the browser reaches only by DHT does not stall the baseline. Across the five completed checks past it, `state.traffic.proofReads` is unchanged, both anchors are still held, and every held honest node still reads `ok`, `trailing` or `behind`. | A `proofReads` that moved; an anchor dropped from the list; a held honest node at `retry` or `blacklisted`; fewer than five checks past the baseline. |
+| 1 | `no proof read across five completed checks on the stage default` | A step-scoped firewall drops the browser's output to every hostile host for the step's duration (a `FaultLog` fault, removed in a `finally` inside the step), so the stage-default's DHT walk never reaches a hostile node whose tip-of-its-own would be read on the first check. The baseline is the first state with the chain settled (`checks >= 1`, `proofReads >= 1`) where every honest node the list HOLDS reads `ok`, `trailing` or `behind` and both anchors are held — a honest node absent from the list is not asserted, so a node the browser reaches only by DHT does not stall the baseline. Across the five completed checks past it, `state.traffic.proofReads` is unchanged, both anchors are still held, and every held honest node still reads `ok`, `trailing` or `behind`. | A `proofReads` that moved; an anchor dropped from the list; a held honest node at `retry` or `blacklisted`; fewer than five checks past the baseline. |
 | 2 | `three new blocks reach the browser by gossip within 5 s each` | One page kept open across the three deliveries, so the client's gossip subscription survives. The page's tracker pushes `{height, atMs, checks}` on each tip change; the scenario polls pub1's `/blocks/current` every 250 ms inside pub1's namespace and keeps the first `atMs` it sees each height. For the first three client tip changes past the baseline, `delayMs` is the client's `atMs` for that change minus pub1's first `atMs` at or above that height (a negative delay says gossip beat the 250 ms poll — a delivery within the bound), and `checksMoved` is whether the client's `checks` advanced in that window. At least two of three carry `delayMs ≤ 5000` and `checksMoved === false`. | A delivery delayed past 5 s; a delivery whose `checks` moved in the window (a check ran meanwhile — carried the block by proof, not gossip). |
-| 3 | `the lagging fork reads behind, client tip stays on pub1's chain, exactly two proofs that check` | Hostile-seeds variant with `hostile-lagging` and `hostile-malformed` on the pair's own chain from genesis, each pair host peered only with the partner since `up`'s pre-spawn cut; `miner-lagging` grows the pair's chain at `MINER_PCT=1` against the honest chain's `MINER_PCT=2`. The pair's chain shares no block with the honest one; devnet pins no `genesisId`, so the lagging node's proof verifies and `compareProofs` answers `incomparable / no-common-ancestor` (`NIPOPOW_INTERFACE → compareProofs`); `resolveTip` keeps the client's own tip's proof handed to it first (`MESH_INTERFACE → The client's node list → "A check"`), and the lagging tip, not on the winner's suffix, reads `behind: null` which `tipEvent` turns into `behind`. The step waits for a completed check cycle in which `traffic.proofReads` rose by exactly two — the new lagging tip's proof plus the client's own tip proof, the one shape "one per distinct tip, and the client's own" takes when every other node names the chain's tip (hostile-malformed's mesh service answers `LIE_HASH` and non-hex proofs, so it is `blacklisted`, no proof read after the first evidence). PASS: `hostile-lagging.status === 'behind'`, `state.tip.hash` equals pub1's node's block hash at that height, and the delta is exactly two. | Lagging `blacklisted` or any status other than `behind`; the client's tip hash differs from pub1's at that height (the pair's chain won); a check whose delta was 1 (lagging never read) or 3 (another off-chain tip too). |
+| 3 | `the lagging fork reads behind, client tip stays on pub1's chain, exactly two proofs that check` | Hostile-seeds variant with `hostile-lagging` and `hostile-malformed` on the pair's own chain from genesis, each pair host peered only with the partner since `up`'s pre-spawn cut; `miner-lagging` grows the pair's chain at `MINER_PCT=1` against the honest chain's `MINER_PCT=2`. The pair's chain shares no block with the honest one; devnet pins no `genesisId`, so the lagging node's proof verifies and `compareProofs` answers `incomparable / no-common-ancestor` (`NIPOPOW_INTERFACE → compareProofs`); `resolveTip` keeps the client's own tip's proof handed to it first (`MESH_INTERFACE → The client's node list → "A check"`), and the lagging tip, not on the winner's suffix, reads `behind: null` which `tipEvent` turns into `behind`. The step waits for a completed check cycle in which `traffic.proofReads` rose by exactly two — the new lagging tip's proof plus the client's own tip proof, the one shape "one per distinct tip, and the client's own" takes when every other node names the chain's tip (hostile-malformed's interposer redirects its mesh endpoint to `LIE_HASH` and non-hex proofs, so it is `blacklisted`, no proof read after the first evidence). PASS: `hostile-lagging.status === 'behind'`, `state.tip.hash` equals pub1's node's block hash at that height, and the delta is exactly two. | Lagging `blacklisted` or any status other than `behind`; the client's tip hash differs from pub1's at that height (the pair's chain won); a check whose delta was 1 (lagging never read) or 3 (another off-chain tip too). |
 | 4 | `the browser's gossip cut for three blocks and restored: tip catches up by headers, no proof read` | On the stage default: a page kept open across the window. The scenario firewalls the browser from every mesh host, waits until pub1 has advanced three blocks past the moment the firewall landed, removes the firewall, and awaits the tracker (3-min deadline). The cut is short — gossip moves the tip one block at a time, so no check sees it. The tracker ends at the first one-block tip change AFTER its first jump of three or more (the fill, then gossip extending the tip past it — the client is at the head), recording `proofReads` and the tip at that one-block-after point; the scenario then reads pub1. PASS: `proofReadsAfter === proofReadsBefore`, `jump >= 3` (fill size), and the tip is within two of pub1's read. | A `proofReads` that moved during the window; a fill jump smaller than three (gossip-paced, not a header fill); a tip at the head that landed more than two off pub1's read. |
 
 **No proof after the first** (`MESH_INTERFACE → The client's node list → "A check"`): a check that

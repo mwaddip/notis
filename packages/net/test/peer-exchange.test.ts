@@ -27,6 +27,7 @@ import { encodeGetPeers, decodePeers } from '../src/sync-codec.js';
 import { decodeFrame, MAGIC_MAINNET, MAGIC_TESTNET } from '../src/frame.js';
 import { MSG_PEERS, PeerState } from '../src/types.js';
 import type { NetConfig, PeerRecord, PeersMsg } from '../src/types.js';
+import { NODE_CAPABILITIES } from '../src/capabilities.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
 
 // These tests drive the exact functions the stream handler and the 30s timer
@@ -36,6 +37,7 @@ import { makeConfig as makeBaseConfig } from './helpers.js';
 function makeConfig(): NetConfig {
   return makeBaseConfig({
     maxPeers: 8,
+    maxReaders: 100,
     listenAddrs: '/ip4/127.0.0.1/tcp/0',
     syncRequestTimeoutMs: 30_000,
   });
@@ -345,6 +347,9 @@ describe('duePeerExchange cadence', () => {
 
   function activePeer(peerMgr: PeerManager, id: string): void {
     peerMgr.addPeer({ id, multiaddrs: [], protocols: [], connectedAt: Date.now() });
+    // duePeerExchange reads servesChain on the Peer's capabilities; a node
+    // declares NODE_CAPABILITIES (NET_INTERFACE → Readers).
+    peerMgr.setPeerCapabilities(id, [...NODE_CAPABILITIES]);
     peerMgr.setPeerState(id, PeerState.Active);
   }
 

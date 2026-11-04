@@ -17,6 +17,7 @@ import { NetNode } from '../src/node.js';
 import { SyncMachine } from '../src/sync-machine.js';
 import type { SyncStore } from '../src/sync-machine.js';
 import { buildHandshakeFrame } from '../src/handshake.js';
+import { NODE_CAPABILITIES } from '../src/capabilities.js';
 import { MSG_SYNC_INFO, PenaltyKind } from '../src/types.js';
 import type { NetValidators } from '../src/types.js';
 import { makeConfig } from './helpers.js';
@@ -110,7 +111,7 @@ function validHandshakeFrame(): Uint8Array {
     protocolVersion: PROTOCOL_VERSION,
     nodeName: 'peer',
     chainHeight: 7,
-    capabilities: [],
+    capabilities: [...NODE_CAPABILITIES],
   });
 }
 

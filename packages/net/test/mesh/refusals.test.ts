@@ -1,0 +1,353 @@
+// NET_INTERFACE → The mesh — the start-time refusals a `MeshConfig`
+// meets, before any socket opens or state directory is written to.
+// Each refusal is `MeshConfigError` and names the setting the
+// operator passed (role, listen, announce, stun, stunServers, wss)
+// that `MeshConfig` refuses.
+
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import {
+  verifyOrderingBlockPoW,
+  verifyProtocolVersion,
+  verifyTxProtocolVersion,
+  verifyTxStructure,
+  verifyTxSignatures,
+  verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
+  verifyPostBody,
+} from '@dagsocial/validation';
+import { NetNode, MeshConfigError } from '../../src/index.js';
+import type { NetValidators } from '../../src/index.js';
+import { makeConfig } from '../helpers.js';
+
+const validators: NetValidators = {
+  verifyOrderingBlockPoW,
+  verifyProtocolVersion,
+  verifyTxProtocolVersion,
+  verifyTxStructure,
+  verifyTxSignatures,
+  verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
+  verifyHeaderFieldDomains,
+  verifyValidatorSignature,
+  verifyPostBody,
+};
+
+describe('mesh — start-time refusals', () => {
+  let dirs: string[] = [];
+  let nodes: NetNode[] = [];
+
+  afterEach(async () => {
+    for (const n of nodes) {
+      try { await n.stop(); } catch { /* already stopped */ }
+    }
+    for (const d of dirs) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+    }
+    nodes = []; dirs = [];
+  });
+
+  function freshDir(): string {
+    const d = mkdtempSync(join(tmpdir(), 'net-mesh-refusals-'));
+    dirs.push(d);
+    return d;
+  }
+
+  async function expectMeshConfigError(start: () => Promise<NetNode>): Promise<MeshConfigError> {
+    let started: NetNode | null = null;
+    let thrown: unknown;
+    try {
+      started = await start();
+    } catch (e) {
+      thrown = e;
+    } finally {
+      if (started !== null) {
+        nodes.push(started);
+      }
+    }
+    expect(thrown).toBeInstanceOf(MeshConfigError);
+    return thrown as MeshConfigError;
+  }
+
+  // MESH_INTERFACE → NAT → "A node's role is its operator's setting"
+  // — the only legitimate values are `public` and `private`; any
+  // other spelling is refused at start.
+  it("refuses a mesh.role that is neither 'public' nor 'private'", async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          role: 'relay' as any,
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/role/);
+  });
+
+  // MESH_INTERFACE → NAT — STUN is served from a public address; a
+  // private node with `stun` set is refused at start.
+  it('refuses a private mesh.stun', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'private',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          stun: { host: '127.0.0.1', port: 3480 },
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/stun/);
+  });
+
+  // MESH_INTERFACE → NAT → "Every STUN server is a mesh node named
+  // by IP" — a `stunServers` entry that is not `stun:<ip>:<port>` is
+  // refused at start.
+  it('refuses a mesh.stunServers entry that is not stun:<ip>:<port>', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'private',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          stunServers: ['stun:example.com:3478'],
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/stunServers/);
+  });
+
+  // `MESH_INTERFACE → The IP certificate` — "A public node's operator
+  // may opt in to the secure WebSocket fallback." A private node has
+  // no public address worth a certificate; `wss` on a private role
+  // is refused at start.
+  it('refuses mesh.wss on a private node', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'private',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          wss: { ip: '127.0.0.1', port: 443, acmeDirectory: '', challengePort: 80 },
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/wss|WebSocket/i);
+  });
+
+  // `MESH_INTERFACE → The IP certificate` — the certificate is for
+  // the node's bare IP; a hostname `wss.ip` is refused at start.
+  it('refuses a mesh.wss.ip that is not an IP literal', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'public',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          wss: { ip: 'example.com', port: 443, acmeDirectory: '', challengePort: 80 },
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/wss\.ip|IP literal/i);
+  });
+
+  it('refuses a public listen with no /webrtc-direct', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'public',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/tcp/0'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/webrtc-direct/);
+  });
+
+  it('refuses a DNS mesh.listen address', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'public',
+          network: 'devnet',
+          listen: ['/dns4/example.com/udp/4001/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/DNS/);
+  });
+
+  it('refuses a DNS mesh.announce address', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'public',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          announce: ['/dnsaddr/example.com/tcp/1'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/DNS/);
+  });
+
+  // MESH_INTERFACE → NAT → "Every STUN server is a mesh node named by
+  // IP" — a `stun.host` that is neither IPv4 nor IPv6 literal is
+  // refused at start.
+  it('refuses a mesh.stun.host that is not an IP literal', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'public',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          stun: { host: 'stun.example.com', port: 3478 },
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/stun\.host/);
+  });
+
+  // MESH_INTERFACE → NAT — a `stun.port` outside the 0..65535 range
+  // is refused at start.
+  it('refuses a mesh.stun.port out of the 0..65535 range', async () => {
+    const dir = freshDir();
+    const err = await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'public',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          stun: { host: '127.0.0.1', port: 70_000 },
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    expect(err.message).toMatch(/stun\.port/);
+  });
+
+  // MESH_INTERFACE → NAT → "A node's role is its operator's setting"
+  // — a public node runs a STUN server on the chosen host:port, and a
+  // bind failure (port already in use) tears libp2p down before
+  // `start` returns, so nothing of the node is left running.
+  it('a mesh.stun port already in use fails start and leaves libp2p down', async () => {
+    const dir = freshDir();
+    const { createSocket } = await import('node:dgram');
+    const squatter = createSocket({ type: 'udp4' });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onErr = (e: Error): void => reject(e);
+        squatter.once('error', onErr);
+        squatter.bind(0, '127.0.0.1', () => {
+          squatter.off('error', onErr);
+          resolve();
+        });
+      });
+      const stunPort = (squatter.address() as { port: number }).port;
+      let thrown: unknown;
+      let started: NetNode | null = null;
+      try {
+        started = new NetNode(makeConfig({
+          mesh: {
+            role: 'public',
+            network: 'devnet',
+            listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+            stateDir: dir,
+            httpBase: 'http://127.0.0.1:0',
+            stun: { host: '127.0.0.1', port: stunPort },
+          },
+        }), validators);
+        await started.start();
+        nodes.push(started);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect(String((thrown as Error).message)).toMatch(/EADDRINUSE|bind/i);
+      // libp2p is down: a second start on this node throws because
+      // this.libp2p is null and the first start did not succeed.
+    } finally {
+      await new Promise<void>((resolve) => squatter.close(() => resolve()));
+    }
+  });
+
+  // MESH_INTERFACE → Transports → "The WebRTC-direct certificate persists"
+  // — "A state directory whose certificate cannot be read stops the node
+  // at start ... and is left as it is, as a key file of another form is".
+  // A refusal reads the directory but writes nothing; `start` throws
+  // before any socket opens, so the directory is empty after.
+  it('leaves the state directory as it was on a refusal', async () => {
+    const dir = freshDir();
+    await expectMeshConfigError(async () => {
+      const n = new NetNode(makeConfig({
+        mesh: {
+          role: 'public',
+          network: 'devnet',
+          listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+          stateDir: dir,
+          httpBase: 'http://127.0.0.1:0',
+          wss: { ip: 'example.com', port: 443, acmeDirectory: '', challengePort: 80 },
+        },
+      }), validators);
+      await n.start();
+      return n;
+    });
+    // A refusal before any datastore open leaves the directory empty.
+    expect(readdirSync(dir)).toEqual([]);
+  });
+});

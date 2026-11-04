@@ -1,17 +1,20 @@
+// NET_INTERFACE → The browser entry → "The frame codec is one code with its
+// checksum handed in" — the Node binding of the codec. The 32-byte checksum
+// is `createHash('blake2b512').update(data).digest().subarray(0, 32)`
+// (ARCHITECTURE → Cryptographic), the same 32 bytes `@dagsocial/types`'
+// `hash32` answers (TYPES_INTERFACE → The protocol hash → "Truncated
+// BLAKE2b-512, never BLAKE2b-256"), so the browser entry's frames and this
+// entry's are one frame on the wire.
 import { createHash } from 'crypto';
 import {
-  encodeFrame as wireEncodeFrame,
-  decodeFrame as wireDecodeFrame,
-  type HashFn,
-} from '@dagsocial/wire';
+  encodeFrame as encodeFrameWithHash,
+  decodeFrame as decodeFrameWithHash,
+} from './frame-codec.js';
+import type { HashFn } from './frame-codec.js';
 
-// The magics and the canonical set come from @dagsocial/types — wire owns the codec, not
-// network identity (NET_INTERFACE → Magic Bytes). Never re-declare KNOWN_FRAME_MAGICS as a
-// local literal: a magic missing from it is classified as not-a-frame instead of wrong-magic
-// (both frame-tier, no penalty — the cost is the diagnosis, not the outcome).
-export { MAGIC_MAINNET, MAGIC_TESTNET, MAGIC_DEVNET, KNOWN_FRAME_MAGICS } from '@dagsocial/types';
+export { MAGIC_MAINNET, MAGIC_TESTNET, MAGIC_DEVNET, KNOWN_FRAME_MAGICS } from './frame-codec.js';
 
-/** Create the standard blake2b256 hasher for frame checksums. */
+/** The Node binding's 32-byte checksum. */
 export function createBlake2b256Hash(): HashFn {
   return (data: Uint8Array): Uint8Array => {
     return new Uint8Array(createHash('blake2b512').update(data).digest().subarray(0, 32));
@@ -24,7 +27,7 @@ export function encodeFrame(
   code: number,
   body: Uint8Array,
 ): Uint8Array {
-  return wireEncodeFrame(magic, code, body, createBlake2b256Hash());
+  return encodeFrameWithHash(magic, code, body, createBlake2b256Hash());
 }
 
 /** Decode a framed envelope. Throws on wrong magic, bad checksum, or truncation. */
@@ -32,5 +35,5 @@ export function decodeFrame(
   magic: number,
   data: Uint8Array,
 ): { code: number; body: Uint8Array } {
-  return wireDecodeFrame(magic, data, createBlake2b256Hash());
+  return decodeFrameWithHash(magic, data, createBlake2b256Hash());
 }

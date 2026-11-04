@@ -4,6 +4,9 @@
 // on the real stage (not here).
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildPredicate } from '../stage/cdp.mjs';
 import * as s1 from '../stage/scenarios/s1-no-name.mjs';
 import * as s2 from '../stage/scenarios/s2-nat.mjs';
@@ -216,17 +219,19 @@ describe('s5 (impersonation)', () => {
   it('describe() lists one step', () => {
     expect(s5.describe()).toEqual(['impostor on pub1 address: refused at the link, address dropped, anchor not blacklisted']);
   });
-  it('run({dryRun:true}) prints the stop + impostor spawn with pub1 bind addr', async () => {
+  it('run({dryRun:true}) prints the stop + impostor notis spawn with pub1 bind addr', async () => {
     const r = await s5.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s5');
     expect(r.steps.length).toBe(1);
-    const stopLine = r.faults.find((f) => f.includes('stop-pub1-mesh'));
-    expect(stopLine, 'stop line').toBeDefined();
-    const spawnLine = r.faults.find((f) => f.includes('impostor-mesh'));
+    const stopLine = r.faults.find((f) => f.includes('stop-pub1-notis'));
+    expect(stopLine, 'stop line names the notis target').toBeDefined();
+    const spawnLine = r.faults.find((f) => f.includes('impostor-notis'));
     expect(spawnLine, 'impostor spawn line').toBeDefined();
     expect(spawnLine!).toContain('/ip4/10.100.0.11/udp/4001/webrtc-direct');
     expect(spawnLine!).toContain('MESH_LISTEN=');
-    expect(spawnLine!).toContain('MESH_KEY_PATH=');
+    expect(spawnLine!).toContain('NODE_KEY_PATH=');
+    // The impostor spawns the notis binary.
+    expect(spawnLine!).toContain('packages/node/dist/index.js');
   });
   it('writeFreshMeshKey writes 48 bytes (PKCS8 Ed25519) and returns a 64-hex notisId', () => {
     const { mkdtempSync, rmSync, readFileSync } = require('node:fs');
@@ -280,11 +285,12 @@ describe('s6 (hostile)', () => {
     expect(dels.length, 'one table delete').toBe(1);
   });
   // MESH_INTERFACE → Block gossip → "A refused block is evidence as
-  // `net` weighs it" — `otherRejectSourcesIn` reads each honest mesh
-  // log for rejection lines and keeps those whose source is not the
-  // publisher's peer id. The function is pure; mkdtempSync feeds it
-  // a controlled log tree.
-  it('otherRejectSourcesIn drops rejections sourced from the publisher and keeps every other', async () => {
+  // `net` weighs it" — `otherRejectSourcesIn` reads each honest node's
+  // `stage/out/<host>/notis.log` for JSON `peer_penalised` events whose
+  // detail names an ordering-block refusal (`BlockCheck`'s reject
+  // paths) and keeps those whose source is not the publisher. The
+  // function is pure; mkdtempSync feeds it a controlled log tree.
+  it('otherRejectSourcesIn drops rejections sourced from the publisher and keeps every other (reads notis.log)', async () => {
     const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
@@ -292,14 +298,45 @@ describe('s6 (hostile)', () => {
     try {
       const pubId = '12D3KooWPublisher';
       const browserId = '12D3KooWBrowser';
+      const line = (peerId: string, detail: string): string => JSON.stringify({
+        timestamp: '2026-11-04T00:00:00.000Z',
+        event: 'peer_penalised',
+        level: 'WARN',
+        peer_id: peerId,
+        kind: 'protocol_violation',
+        detail,
+      });
       mkdirSync(join(dir, 'pub1'), { recursive: true });
-      writeFileSync(join(dir, 'pub1', 'mesh:pub1.log'),
-        `[mesh] start\n[mesh] ordering block rejected from ${pubId}: malformed ordering block header: ...\n[mesh] peer:connect\n`);
+      writeFileSync(join(dir, 'pub1', 'notis.log'),
+        `${JSON.stringify({ event: 'server_starting', level: 'INFO' })}\n${line(pubId, 'malformed ordering block header: ReaderError: ...')}\n${JSON.stringify({ event: 'peer_connected', level: 'INFO', peer_id: pubId })}\n`);
       mkdirSync(join(dir, 'pub2'), { recursive: true });
-      writeFileSync(join(dir, 'pub2', 'mesh:pub2.log'),
-        `[mesh] start\n[mesh] ordering block rejected from ${browserId}: malformed ordering block header: ...\n`);
+      // One ordering-block refusal by the browser AND one tx refusal
+      // by the same browser (shares its detail with a handshake path
+      // on a different peer). Only the ordering-block one is kept —
+      // the regex excludes `handshake:` and `malformed tx:` details.
+      writeFileSync(join(dir, 'pub2', 'notis.log'),
+        `${JSON.stringify({ event: 'server_starting', level: 'INFO' })}\n${line(browserId, 'ordering block PoW invalid')}\n${line(browserId, 'malformed tx: ReaderError: ...')}\n${line('12D3KooWOther', 'handshake: unsupported protocol version 0; era 1')}\n`);
+      // priv1 has a notis.log but no peer_penalised events — covered.
+      mkdirSync(join(dir, 'priv1'), { recursive: true });
+      writeFileSync(join(dir, 'priv1', 'notis.log'),
+        `${JSON.stringify({ event: 'server_starting', level: 'INFO' })}\n`);
       const sources = s6.otherRejectSourcesIn(dir, ['pub1', 'pub2', 'priv1'], pubId);
       expect(sources).toEqual([{ host: 'pub2', peerIdString: browserId }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  // MESH_INTERFACE → Block gossip — a missing honest notis.log is a
+  // stage defect, not a vacuous answer: `otherRejectSourcesIn` throws
+  // naming the file, so the step records FAIL with that message.
+  it('otherRejectSourcesIn throws naming the file when a honest notis.log is missing', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'notismesh-s6-missing-'));
+    try {
+      expect(() => s6.otherRejectSourcesIn(dir, ['pub1'], '12D3KooWPublisher'))
+        .toThrow(/pub1\/notis\.log/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -416,6 +453,45 @@ describe('s7 (reach and load)', () => {
     const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / tc qdisc del /.test(f));
     expect(adds.length, 'one netem add').toBe(1);
     expect(dels.length, 'one netem del').toBe(1);
+  });
+
+  // MESH_INTERFACE → Discovery → "Seeds" — step 3a's `seedPhase.lan1InboundLogged`
+  // reads only bytes added to lan1's notis log during the seed phase: the step
+  // records the log's size at the phase start and tests the pattern against
+  // bytes past that offset. An old inbound line from a previous run of s7
+  // against the same stage is before the offset and never matches.
+  it('lan1InboundLoggedSince: an old inbound line before the offset reads as never dialled; a new line reads as dialled', () => {
+    // A node-fs tmp dir, a log that already holds an inbound close line
+    // from a previous run — the offset captured at phase start equals the
+    // current size, so a slice from there reads no bytes and the match
+    // fails.
+    const dir = mkdtempSync(join(tmpdir(), 'mesh-s7-lan1-'));
+    try {
+      const log = join(dir, 'notis.log');
+      const oldLine =
+        '[net] connection:close peer=12D3KooWOld addr=/ip4/10.103.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/12D3KooWOld dir=inbound durationMs=12\n';
+      writeFileSync(log, oldLine);
+      const offset = statSync(log).size;
+
+      // No new line during the phase — the match must read false.
+      expect(s7.lan1InboundLoggedSince(log, offset)).toBe(false);
+
+      // A new inbound line arrives during the phase — the match reads true.
+      const newLine =
+        '[net] connection:close peer=12D3KooWNew addr=/ip4/10.103.0.11/udp/4001/webrtc-direct/certhash/uEiB/p2p/12D3KooWNew dir=inbound durationMs=34\n';
+      appendFileSync(log, newLine);
+      expect(s7.lan1InboundLoggedSince(log, offset)).toBe(true);
+
+      // A line past the offset that names another address does not match.
+      const dir2 = mkdtempSync(join(tmpdir(), 'mesh-s7-lan1-'));
+      const log2 = join(dir2, 'notis.log');
+      writeFileSync(log2, '');
+      const offset2 = 0;
+      appendFileSync(log2,
+        '[net] connection:close peer=12D3KooWOther addr=/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiC/p2p/12D3KooWOther dir=inbound durationMs=56\n');
+      expect(s7.lan1InboundLoggedSince(log2, offset2)).toBe(false);
+      rmSync(dir2, { recursive: true, force: true });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
 

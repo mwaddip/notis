@@ -24,10 +24,8 @@ import {
   subscribeTopics,
   broadcastOrderingBlock,
   broadcastTx,
-  gossipTopics,
-  gossipMessageId,
-  GOSSIP_SEEN_WINDOW_MS,
 } from './gossip.js';
+import { gossipTopics, gossipsubOptions } from './gossip-rules.js';
 import {
   HANDSHAKE_PROTOCOL,
   SYNC_PROTOCOL,
@@ -54,6 +52,7 @@ import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
 import { readStreamBounded, sinkWithDeadline, addressWithoutPeerId, peerIdOfAddress } from './util.js';
 import {
   HANDSHAKE_DEADLINE_FACTOR,
+  HANDSHAKE_SLACK,
   MAX_CHAIN_RESPONSE_ITEMS,
   MAX_HANDSHAKE_FRAME_BYTES,
   MAX_INBOUND_HANDSHAKE_STREAMS,
@@ -67,6 +66,7 @@ import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
 import { OutboundManager } from './outbound-mgr.js';
+import { NODE_CAPABILITIES, servesChain, declares } from './capabilities.js';
 import { decodeFrame, KNOWN_FRAME_MAGICS } from './frame.js';
 import {
   buildHandshakeFrame,
@@ -75,6 +75,20 @@ import {
   validateHandshake,
 } from './handshake.js';
 import type { HandshakeResult } from './handshake.js';
+
+/**
+ * The outcome of `admitOutboundConnection` — the handshake succeeded and
+ * the peer was admitted (or found already Active), or the handshake or an
+ * admission check closed the connection. The shared Promise's value: the
+ * dial funnel reads `ok` to decide its source-specific bookkeeping
+ * (NET_INTERFACE → Outbound Manager — `markBootstrapSettled`,
+ * `recordDialResult`), and reads `handshake` for the agent and node names
+ * the dialled-address PeerDb record keeps.
+ */
+interface OutboundAdmissionResult {
+  ok: boolean;
+  handshake?: HandshakeResult;
+}
 import {
   MSG_GET_PEERS,
   MSG_PEERS,
@@ -86,8 +100,73 @@ import {
   MODIFIER_POST_BODY,
 } from './types.js';
 import type { ModifierRequest, ModifierResponse } from './sync-types.js';
+import { FaultTolerance } from '@libp2p/interface';
+import { assertMeshConfig, type WssConfig } from './mesh/config.js';
+import { assertStateDirIntegrity, openMeshDatastore } from './mesh/state-dir.js';
+import { stunSettingFor } from './mesh/stun-setting.js';
+import { startStunServer } from './mesh/stun.js';
+import {
+  meshListenAddrs,
+  meshPublicServices,
+  meshPrivateServices,
+  meshPrivateCircuitTransport,
+  meshPrivateWebRTCTransport,
+  meshWebRTCDirectTransport,
+  privateAnnounceFilter,
+  effectiveAnnounce,
+} from './mesh/libp2p-options.js';
+import { startRelayRetry, type RelayRetry } from './mesh/relay-retry.js';
+import { RETRY_BASE_MS, RETRY_CAP_MS } from './mesh/constants.js';
+import {
+  notisIdFromPeerId,
+  localAddrsFor,
+} from './mesh/identity.js';
+import { acmeSource, type CertificateSource, type IpCertificate } from './mesh/acme.js';
+import {
+  initialCertificate,
+  startWssRenewal,
+  type WssOptions,
+  type WssRenewal,
+} from './mesh/wss.js';
+import { webSockets } from '@libp2p/websockets';
+import { isIPv6 } from 'node:net';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
+
+/**
+ * NET_INTERFACE → The mesh — the mesh identity `meshIdentity()` answers
+ * once a mesh node's addresses are announced; `null` with no mesh.
+ */
+export interface MeshIdentity {
+  readonly notisId: string;
+  readonly peerId: string;
+  readonly multiaddrs: readonly string[];
+  readonly localAddrs: readonly string[];
+}
+
+/**
+ * Flatten every transport listener's own `getAddrs()` — the
+ * WebRTC-direct listener splices its `/certhash/` onto its listen
+ * address at read time (`@libp2p/webrtc`
+ * `private-to-public/listener.ts`), so an identity line's
+ * `localAddrs` can see the certhash from this source.
+ */
+function listenerAddrsOf(node: Libp2p): string[] {
+  const components = (node as unknown as {
+    components?: {
+      transportManager?: {
+        getListeners(): Array<{ getAddrs(): Array<{ toString(): string }> }>;
+      };
+    };
+  }).components;
+  const tm = components?.transportManager;
+  if (!tm) return [];
+  const out: string[] = [];
+  for (const l of tm.getListeners()) {
+    for (const a of l.getAddrs()) out.push(a.toString());
+  }
+  return out;
+}
 type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => boolean;
 
 /**
@@ -486,11 +565,13 @@ export function intakePeersBody(
 }
 
 /**
- * Which peers are due a GetPeers this tick: Active state, and no send within
- * the last GET_PEERS_INTERVAL_MS. Stamps `lastSentMs` for every returned id,
- * so a peer is never picked twice inside one interval. A peer with no stamp
+ * Which peers are due a GetPeers this tick: Active state, `servesChain` of
+ * its declared capabilities, and no send within the last
+ * GET_PEERS_INTERVAL_MS. Stamps `lastSentMs` for every returned id, so a
+ * peer is never picked twice inside one interval. A peer with no stamp
  * (fresh handshake) is due immediately — the bootstrap flow sends GetPeers
- * right after handshake, not two minutes later.
+ * right after handshake, not two minutes later. NET_INTERFACE → Readers —
+ * "A reader is never asked for chain data": readers are skipped.
  */
 export function duePeerExchange(
   peerMgr: PeerManager,
@@ -500,6 +581,8 @@ export function duePeerExchange(
   const due: string[] = [];
   for (const peer of peerMgr.getPeers()) {
     if (!peerMgr.isPeerActive(peer.id)) continue;
+    const caps = peer.capabilities;
+    if (!caps || !servesChain(caps)) continue;
     const last = lastSentMs.get(peer.id);
     if (last !== undefined && nowMs - last < GET_PEERS_INTERVAL_MS) continue;
     lastSentMs.set(peer.id, nowMs);
@@ -608,6 +691,17 @@ export class NetNode {
    */
   private completedConnections: Set<string> = new Set();
   /**
+   * The shared outbound-admission Promise for each outbound connection
+   * (NET_INTERFACE → Handshake → "Every connection this node dialled carries
+   * its handshake, whoever within the node dialled it"). The ownership mark:
+   * the first writer runs the handshake; every later caller — the dial
+   * funnel awaiting its own dial, or a second open hook on the same
+   * connection id — reads this map and awaits the Promise rather than
+   * opening a second handshake stream. Dropped at `connection:close` and
+   * cleared at `stop()`.
+   */
+  private outboundAdmissions: Map<string, Promise<OutboundAdmissionResult>> = new Map();
+  /**
    * Per-connection timers that close a connection whose handshake has not
    * completed `HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs` after its
    * open (NET_INTERFACE → Handshake →
@@ -617,13 +711,67 @@ export class NetNode {
    */
   private handshakeDeadlines: Map<string, NodeJS.Timeout> = new Map();
 
-  constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
+  /**
+   * NET_INTERFACE → The mesh — the STUN server that rides a public
+   * mesh node. Opened after libp2p at `start`, closed before libp2p
+   * at `stop` (`MESH_INTERFACE → NAT`). `null` when no mesh is set,
+   * or when the mesh is set with `stun: null` or no WebRTC-direct
+   * listen was picked.
+   */
+  private meshStun: { close(): Promise<void> } | null = null;
+  /**
+   * NET_INTERFACE → The mesh — the callers subscribed through
+   * `onMeshAddresses`. Fires for each change of the announced set
+   * (`self:peer:update` from libp2p).
+   */
+  private meshAddressHandlers: Array<(id: MeshIdentity) => void> = [];
+  /**
+   * The `self:peer:update` listener registered with libp2p, kept for
+   * removal at `stop` (`MESH_INTERFACE → NAT`).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private meshSelfPeerUpdateListener: ((ev: any) => void) | null = null;
+  /**
+   * NET_INTERFACE → The mesh — a private mesh node's relay-listen
+   * retries, one per `bootstrapPeers` entry. Started after libp2p's
+   * floor dial has opened the TCP connection to each seed, stopped
+   * before libp2p at `stop` (`MESH_INTERFACE → NAT → "A relay that
+   * does not answer never stops a private node"`).
+   */
+  private relayRetries: RelayRetry[] = [];
+  /**
+   * NET_INTERFACE → The mesh — a public mesh node's WSS renewal
+   * driver (`MESH_INTERFACE → The IP certificate`). Started after
+   * libp2p when `mesh.wss` is set and the state directory holds a
+   * valid certificate or `obtain()` succeeds at start; stopped
+   * before libp2p at `stop`.
+   */
+  private wssRenewal: WssRenewal | null = null;
+  /**
+   * `MESH_INTERFACE → The IP certificate` — the factory the mesh
+   * branch of `start()` builds its `CertificateSource` from. Absent,
+   * `acmeSource(...)` runs the production path. The seam mirrors
+   * `peerStorage`'s standing on the constructor — an optional
+   * dependency a caller (a test) hands in, never a private field a
+   * test reaches past the type.
+   */
+  private readonly certificateSource:
+    | ((wss: WssConfig, stateDir: string) => CertificateSource)
+    | null;
+
+  constructor(
+    config: NetConfig,
+    validators: NetValidators,
+    peerStorage?: PeerStorage,
+    certificateSource?: (wss: WssConfig, stateDir: string) => CertificateSource,
+  ) {
     this.config = config;
     this.validators = validators;
     this.syncStore = new LazySyncStore(validators);
     // Omitted in tests/embedded use — PeerDb then runs ephemeral (NET_INTERFACE →
     // Persistence seam), which is the valid non-production configuration.
     this.peerStorage = peerStorage ?? null;
+    this.certificateSource = certificateSource ?? null;
     // Ban hooks late-bind this.peerDb: it is created in start(), and the
     // closures read it at call time, so bans imposed before start (or after
     // stop) simply have no address surface to propagate to.
@@ -682,84 +830,228 @@ export class NetNode {
     rawPrivate.set(nodeKey.publicKey, 32);
     const libp2pPrivateKey = privateKeyFromRaw(rawPrivate);
 
-    const libp2p = await createLibp2p({
-      privateKey: libp2pPrivateKey,
-      addresses: {
-        listen: [this.config.listenAddrs],
+    // NET_INTERFACE → The mesh — with `mesh`, hold every refusal
+    // `MESH_INTERFACE` names and the state-directory refusal before
+    // any socket opens, and derive the STUN setting now (no socket
+    // reach). Without `mesh`, nothing of this runs.
+    const mesh = this.config.mesh;
+    let meshDatastore: ReturnType<typeof openMeshDatastore> | null = null;
+    let meshStunSetting: { host: string; port: number } | undefined = undefined;
+    // `MESH_INTERFACE → The IP certificate` — the WSS listener needs
+    // its TLS certificate and key at libp2p construction time, so
+    // the initial certificate is resolved before `createLibp2p` runs.
+    // `initialCertificate` returns null when `current()` reads
+    // nothing (or an expired cert) and `obtain()` fails: the node
+    // then starts without the WSS listener and the renewal timer
+    // retries every `CERT_RETRY_MS` until a certificate arrives.
+    // The WSS fallback never takes the node down.
+    let wssOptions: WssOptions | null = null;
+    let wssInitialCert: IpCertificate | null = null;
+    if (mesh !== undefined) {
+      assertMeshConfig(mesh);
+      await assertStateDirIntegrity(mesh.stateDir);
+      meshDatastore = openMeshDatastore(mesh.stateDir);
+      meshStunSetting = stunSettingFor(mesh.role, mesh.listen, mesh.stun);
+      if (mesh.wss !== undefined) {
+        const source: CertificateSource = this.certificateSource !== null
+          ? this.certificateSource(mesh.wss, mesh.stateDir)
+          : acmeSource({
+              directoryUrl: mesh.wss.acmeDirectory,
+              ip: mesh.wss.ip,
+              stateDir: mesh.stateDir,
+              challengePort: mesh.wss.challengePort,
+            });
+        wssOptions = { ip: mesh.wss.ip, port: mesh.wss.port, source };
+        wssInitialCert = await initialCertificate(wssOptions);
+      }
+    }
+
+    // NET_INTERFACE → "A peer's sync streams are served one at a time":
+    // the stream window is pinned at `YAMUX_STREAM_WINDOW_BYTES` for the
+    // initial size and the maximum alike, and the receive-buffer cap is
+    // pinned at the same bound. The window bounds what a reading stream
+    // may buffer between drains, and the receive-buffer cap bounds what
+    // a waiting stream (no reader attached yet) may hold — a sync stream
+    // whose turn has not come stays at one window's worth of bytes.
+    const streamMuxers = [yamux({
+      streamOptions: {
+        initialStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
+        maxStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
+        maxReadBufferLength: YAMUX_STREAM_WINDOW_BYTES,
       },
-      transports: [tcp()],
-      connectionEncrypters: [noise()],
-      // NET_INTERFACE → "A peer's sync streams are served one at a time":
-      // the stream window is pinned at `YAMUX_STREAM_WINDOW_BYTES` for the
-      // initial size and the maximum alike, and the receive-buffer cap is
-      // pinned at the same bound. The window bounds what a reading stream
-      // may buffer between drains, and the receive-buffer cap bounds what
-      // a waiting stream (no reader attached yet) may hold — a sync stream
-      // whose turn has not come stays at one window's worth of bytes.
-      streamMuxers: [yamux({
-        streamOptions: {
-          initialStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
-          maxStreamWindowSize: YAMUX_STREAM_WINDOW_BYTES,
-          maxReadBufferLength: YAMUX_STREAM_WINDOW_BYTES,
-        },
-      })],
-      services: {
-        // NET_INTERFACE → libp2p Stack.
-        pubsub: gossipsub({
-          // NET_INTERFACE → Gossip Topics →
-          // "A message is its topic and its data"
-          // The router refuses a signed envelope and emits none.
-          globalSignaturePolicy: 'StrictNoSign',
-          // NET_INTERFACE → Gossip Topics → "A message is named by its bytes".
-          msgIdFn: (msg) => gossipMessageId(msg.topic, msg.data),
-          // NET_INTERFACE → Gossip Topics →
-          // "A message is heard once in a seen window"
-          seenTTL: GOSSIP_SEEN_WINDOW_MS,
-          // NET_INTERFACE → Gossip →
-          // "A broadcast that sends nothing still resolves"
-          // A publish of bytes this node has seen inside the window resolves
-          // without sending.
-          ignoreDuplicatePublishError: true,
-          // NET_INTERFACE → Gossip Topics →
-          // "A topic is named for its network"
-          // The two topic strings are the whole of what the router hears; a
-          // subscription or a message on any other topic is passed over before
-          // the router names, caches or forwards anything.
-          allowedTopics: [topics.orderingBlock, topics.tx],
-          allowPublishToZeroTopicPeers: true,
-          // NET_INTERFACE → Forwarding Rule → "An ordering block is forwarded
-          // once Stage 1 passes; a transaction once this node admits it":
-          // the router holds a message that passed its topic validator in the
-          // message cache until the listener reports Accept, Ignore or Reject.
-          asyncValidation: true,
-          // NET_INTERFACE → libp2p Stack: gossipsub alone. The library's
-          // default is `fallbackToFloodsub: true`, which pushes
-          // `/floodsub/1.0.0` onto the host's registered protocols; the
-          // option is set here so that id is not registered at all.
-          fallbackToFloodsub: false,
-        }),
-        identify: identify(),
-        ping: ping(),
-      },
+    })];
+    const plainServices = {
+      // NET_INTERFACE → libp2p Stack — gossipsub built from the one
+      // options object `./gossip-rules.ts`' `gossipsubOptions` answers;
+      // each field cites its rule.
+      pubsub: gossipsub(gossipsubOptions(this.config.magic, [topics.orderingBlock, topics.tx])),
+      identify: identify(),
+      ping: ping(),
+    };
+    const connectionGater = {
       // NET_INTERFACE → "A banned peer's inbound connection is refused at the transport"
-      connectionGater: {
-        denyInboundEncryptedConnection: (peerId: { toString(): string }) =>
-          this.peerMgr.isBanned(peerId.toString()),
-      },
-      connectionManager: {
-        maxConnections: this.config.maxPeers,
-      },
-      // Disable the built-in connection monitor heartbeat.  When enabled it
-      // pings peers every 10 s via /ipfs/ping/1.0.0 and aborts the connection
-      // if the ping fails.  The AdaptiveTimeout uses a 2 s floor derived from
-      // an uninitialised moving average, so the first heartbeat almost always
-      // times out and kills the connection.  Explicit pings are still available
-      // via @libp2p/ping if needed.
-      connectionMonitor: {
-        enabled: false,
-      },
-    });
+      denyInboundEncryptedConnection: (peerId: { toString(): string }) =>
+        this.peerMgr.isBanned(peerId.toString()),
+    };
+    const connectionManager = {
+      // NET_INTERFACE → Readers → "Readers have a budget of their own":
+      // libp2p's connection ceiling is `maxPeers + maxReaders +
+      // HANDSHAKE_SLACK`, so a connection is counted by the kind its
+      // handshake declares and libp2p refuses an inbound past the
+      // ceiling at the upgrade before any handler runs (verified in
+      // `libp2p@3.5.1`, `src/connection-manager/index.ts:688` —
+      // `getConnections().length < maxConnections` admits, otherwise the
+      // inbound is refused at `maConnection()`).
+      maxConnections: this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK,
+    };
+    // Disable the built-in connection monitor heartbeat.  When enabled it
+    // pings peers every 10 s via /ipfs/ping/1.0.0 and aborts the connection
+    // if the ping fails.  The AdaptiveTimeout uses a 2 s floor derived from
+    // an uninitialised moving average, so the first heartbeat almost always
+    // times out and kills the connection.  Explicit pings are still available
+    // via @libp2p/ping if needed.
+    const connectionMonitor = { enabled: false };
+
+    let libp2p: Libp2p;
+    if (mesh !== undefined && meshDatastore !== null) {
+      // NET_INTERFACE → The mesh — the public role adds WebRTC-direct
+      // beside TCP, the keychain, the Notis DHT, AutoNAT v2, the
+      // circuit-relay server and `@libp2p/http`; the private role adds
+      // WebRTC and the circuit-relay transport, DCUtR, and runs the
+      // DHT in client mode. `addresses.listen` prepends the plain
+      // listen so an existing TCP sync peer still reaches the node by
+      // its plain address.
+      if (mesh.role === 'public') {
+        // `MESH_INTERFACE → The IP certificate` — with an initial
+        // certificate held, the WSS transport and its `/tls/ws`
+        // listen address go up with libp2p; without one (no stored
+        // cert and `obtain()` failed), the node starts with every
+        // other transport up and the renewal driver wires the WSS
+        // listener in on the first successful `obtain()`.
+        const publicListen = meshListenAddrs(this.config.listenAddrs, mesh);
+        if (wssInitialCert !== null && mesh.wss !== undefined) {
+          const ipFamily = isIPv6(mesh.wss.ip) ? 'ip6' : 'ip4';
+          publicListen.push(
+            `/${ipFamily}/${mesh.wss.ip}/tcp/${mesh.wss.port}/tls/ws`,
+          );
+        }
+        const publicTransports: unknown[] = [tcp(), meshWebRTCDirectTransport()];
+        if (wssInitialCert !== null) {
+          publicTransports.push(
+            webSockets({
+              https: { cert: wssInitialCert.certPem, key: wssInitialCert.keyPem },
+            }),
+          );
+        }
+        // `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
+        // — the public role's announce holds every listen address
+        // with a concrete port; the WSS listen is appended above
+        // when the initial certificate is held, so it rides along.
+        const publicAnnounce = effectiveAnnounce(publicListen, mesh);
+        libp2p = await createLibp2p({
+          privateKey: libp2pPrivateKey,
+          datastore: meshDatastore,
+          addresses: {
+            listen: publicListen,
+            ...(publicAnnounce !== undefined ? { announce: publicAnnounce } : {}),
+          },
+          transports: publicTransports as never,
+          connectionEncrypters: [noise()],
+          streamMuxers,
+          services: { ...plainServices, ...meshPublicServices(mesh, meshDatastore) },
+          connectionGater,
+          connectionManager,
+          connectionMonitor,
+        }) as Libp2p;
+      } else {
+        // `MESH_INTERFACE → NAT → "A relay that does not answer never
+        // stops a private node"` — the initial listen has no circuit
+        // entries (they come from `bootstrapPeers` through
+        // `startRelayRetry` after start). The announce filter keeps
+        // `/p2p-circuit`-bearing addresses alone. `faultTolerance:
+        // NO_FATAL` is a defence in depth for a listener that fails
+        // after start — the private role must never take libp2p down.
+        const relayCount = Math.max(1, this.config.bootstrapPeers.length);
+        const stunServers = mesh.stunServers ?? [];
+        libp2p = await createLibp2p({
+          privateKey: libp2pPrivateKey,
+          datastore: meshDatastore,
+          addresses: {
+            listen: meshListenAddrs(this.config.listenAddrs, mesh),
+            announceFilter: privateAnnounceFilter,
+          },
+          transports: [
+            tcp(),
+            meshWebRTCDirectTransport(),
+            meshPrivateWebRTCTransport(stunServers),
+            meshPrivateCircuitTransport(relayCount),
+          ],
+          connectionEncrypters: [noise()],
+          streamMuxers,
+          services: { ...plainServices, ...meshPrivateServices(mesh, meshDatastore) },
+          connectionGater,
+          connectionManager,
+          connectionMonitor,
+          transportManager: { faultTolerance: FaultTolerance.NO_FATAL },
+        }) as Libp2p;
+      }
+    } else {
+      libp2p = await createLibp2p({
+        privateKey: libp2pPrivateKey,
+        addresses: { listen: [this.config.listenAddrs] },
+        transports: [tcp()],
+        connectionEncrypters: [noise()],
+        streamMuxers,
+        services: plainServices,
+        connectionGater,
+        connectionManager,
+        connectionMonitor,
+      });
+    }
     this.libp2p = libp2p;
+
+    // NET_INTERFACE → The mesh — STUN after libp2p so a bind failure
+    // tears libp2p down before `start` returns
+    // (`MESH_INTERFACE → NAT`).
+    if (mesh !== undefined && meshStunSetting !== undefined) {
+      try {
+        this.meshStun = await startStunServer(meshStunSetting);
+      } catch (e) {
+        try { await libp2p.stop(); } catch { /* already stopped */ }
+        this.libp2p = null;
+        throw e;
+      }
+    }
+    // `MESH_INTERFACE → The IP certificate` — the renewal driver
+    // swaps the WSS listener's certificate in place at half the
+    // lifetime, closes it at `notAfter`, and with no initial cert
+    // retries `obtain()` every `CERT_RETRY_MS` and wires the
+    // listener in on the first successful retry. Started after
+    // libp2p because it fires events on the shared bus and reaches
+    // into the transport manager.
+    if (wssOptions !== null) {
+      this.wssRenewal = startWssRenewal(libp2p, wssOptions, {
+        cert: wssInitialCert,
+        lastFailureMs: wssInitialCert === null ? Date.now() : null,
+      });
+    }
+    // NET_INTERFACE → The mesh — `onMeshAddresses` fires on each change
+    // of the announced set; libp2p's `self:peer:update` is the one
+    // event that carries that signal.
+    if (mesh !== undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const listener = (_ev: any): void => {
+        const id = this.meshIdentity();
+        if (id === null) return;
+        for (const cb of this.meshAddressHandlers) {
+          try { cb(id); } catch (err) {
+            console.warn(`[net] onMeshAddresses handler error: ${String(err)}`);
+          }
+        }
+      };
+      libp2p.addEventListener('self:peer:update', listener);
+      this.meshSelfPeerUpdateListener = listener;
+    }
 
     try {
       // Create PeerDb with self-address filtering
@@ -820,6 +1112,19 @@ export class NetNode {
         // "A connection handshakes within its deadline, or is closed":
         // the deadline starts at connection:open, per connection id.
         if (typeof conn?.id === 'string') this.startHandshakeDeadline(conn);
+        // NET_INTERFACE → Handshake →
+        // "Every connection this node dialled carries its handshake,
+        // whoever within the node dialled it": libp2p opens outbound
+        // connections on the node's behalf outside the dial funnel — a
+        // relay reservation, a DHT query, AutoNAT's dial-back. Whichever
+        // reaches the connection first — this open hook, or the funnel's
+        // own continuation of `await libp2p.dial(...)` — runs the handshake
+        // through `ensureOutboundAdmission`, and the other awaits that one.
+        // The admission carries its own self-check and banned-check, so
+        // correctness is not tied to which side claims first.
+        if (direction === 'outbound' && typeof conn?.id === 'string') {
+          void this.ensureOutboundAdmission(conn);
+        }
       });
 
       libp2p.addEventListener('peer:connect', (evt: any) => {
@@ -859,6 +1164,11 @@ export class NetNode {
           // the deadline timer and the "completed" fact live with the
           // connection, dropped at its close.
           this.completedConnections.delete(conn.id);
+          // NET_INTERFACE → Handshake →
+          // "Every connection this node dialled carries its handshake,
+          // whoever within the node dialled it": the ownership mark lives
+          // with the connection.
+          this.outboundAdmissions.delete(conn.id);
           const timer = this.handshakeDeadlines.get(conn.id);
           if (timer !== undefined) {
             clearTimeout(timer);
@@ -871,15 +1181,26 @@ export class NetNode {
       libp2p.addEventListener('peer:disconnect', (evt: any) => {
         const peerId = evt.detail?.toString() ?? 'unknown';
         console.log(`[net] peer:disconnect ${peerId} (total=${Math.max(0, this.peerMgr.getPeerCount() - 1)})`);
+        // NET_INTERFACE → Readers → "The peer hooks see chain-serving peers
+        // alone": read the peer's declared capabilities from the metadata
+        // before `removePeer` drops it so the chain-serving check still has
+        // something to answer.
+        const meta = this.peerMgr.getPeerMetadata(peerId);
+        const wasChainServing =
+          meta?.state === PeerState.Active
+          && meta.capabilities !== null
+          && servesChain(meta.capabilities);
         this.peerMgr.removePeer(peerId);
         this.lastGetPeersSentMs.delete(peerId);
         // NET_INTERFACE → Stream Protocols → "A peer's sync streams are served one at a time":
         // per-peer state goes when the peer does.
         this.peerStreamQueues.delete(peerId);
         this.syncMachine?.onPeerDisconnect(peerId);
-        for (const cb of this.peerDisconnectedHandlers) {
-          try { cb(peerId, ''); } catch (err) {
-            console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+        if (wasChainServing) {
+          for (const cb of this.peerDisconnectedHandlers) {
+            try { cb(peerId, ''); } catch (err) {
+              console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+            }
           }
         }
       });
@@ -949,6 +1270,25 @@ export class NetNode {
         await this.dialAndHandshake(addr, 'seed');
       }
 
+      // `MESH_INTERFACE → NAT → "A node's role is its operator's setting"`
+      // — a private node takes a relay reservation on each of its
+      // bootstrap peers over the connection `net` already holds to
+      // that peer, never by searching. Each bootstrap entry becomes
+      // a `<entry>/p2p-circuit` listen address added after start; a
+      // reservation that cannot complete is tried again on the retry
+      // cadence. A private node with `bootstrapPeers: []` asks no
+      // relay and starts on its own addresses alone.
+      if (mesh !== undefined && mesh.role === 'private') {
+        const baseMs = mesh.relayRetryBaseMs ?? RETRY_BASE_MS;
+        const capMs = mesh.relayRetryCapMs ?? RETRY_CAP_MS;
+        const listenTimeoutMs = mesh.relayListenTimeoutMs;
+        for (const addr of this.config.bootstrapPeers) {
+          this.relayRetries.push(startRelayRetry(libp2p, `${addr}/p2p-circuit`, {
+            baseMs, capMs, listenTimeoutMs,
+          }));
+        }
+      }
+
       // Start periodic timer: outbound manager + peer discovery. The sync machine
       // keeps its own tick cadence inside its event loop. A method, not an
       // inline closure, so a test can drive one tick without waiting
@@ -965,6 +1305,12 @@ export class NetNode {
       if (this.syncTimer) {
         clearInterval(this.syncTimer);
         this.syncTimer = null;
+      }
+      for (const r of this.relayRetries) r.stop();
+      this.relayRetries = [];
+      if (this.wssRenewal !== null) {
+        this.wssRenewal.stop();
+        this.wssRenewal = null;
       }
       this.syncMachine?.stop();
       this.syncMachine = null;
@@ -1031,6 +1377,30 @@ export class NetNode {
     this.handshakeDeadlines.clear();
     this.handshakenConnections.clear();
     this.completedConnections.clear();
+    this.outboundAdmissions.clear();
+    // NET_INTERFACE → The mesh — a private node's relay-listen
+    // retries stop first, then STUN closes before libp2p's stop so a
+    // bind failure is surfaced over the libp2p teardown
+    // (`MESH_INTERFACE → NAT`); the `self:peer:update` listener is
+    // removed first so a late update never re-fires `onMeshAddresses`
+    // through this node.
+    for (const r of this.relayRetries) r.stop();
+    this.relayRetries = [];
+    // `MESH_INTERFACE → The IP certificate` — stop the WSS renewal
+    // driver before libp2p's teardown so a pending `obtain()` or a
+    // scheduled renewal does not reach the dying transport manager.
+    if (this.wssRenewal !== null) {
+      this.wssRenewal.stop();
+      this.wssRenewal = null;
+    }
+    if (this.meshSelfPeerUpdateListener !== null) {
+      this.libp2p.removeEventListener('self:peer:update', this.meshSelfPeerUpdateListener);
+      this.meshSelfPeerUpdateListener = null;
+    }
+    if (this.meshStun !== null) {
+      await this.meshStun.close();
+      this.meshStun = null;
+    }
     await this.libp2p.stop();
     this.libp2p = null;
     this.topics = null;
@@ -1052,18 +1422,195 @@ export class NetNode {
    * a completed connection is left alone. The timer is `unref`ed, so a live
    * one never holds the process open.
    */
-  private startHandshakeDeadline(conn: { id: string; close(): Promise<void> }): void {
+  private startHandshakeDeadline(
+    conn: {
+      id: string;
+      close(): Promise<void>;
+      remotePeer?: { toString(): string };
+    },
+  ): void {
     if (this.handshakeDeadlines.has(conn.id)) return;
     const deadlineMs = HANDSHAKE_DEADLINE_FACTOR * this.config.syncRequestTimeoutMs;
     const timer = setTimeout(() => {
       this.handshakeDeadlines.delete(conn.id);
       if (this.completedConnections.has(conn.id)) return;
+      // NET_INTERFACE → Handshake →
+      // "A connection handshakes within its deadline, or is closed": the
+      // close names the peer and that the handshake did not complete, so
+      // a service-opened connection that never handshakes is audible to
+      // the operator.
+      const peerId = conn.remotePeer?.toString() ?? 'unknown';
+      console.log(`[net] handshake deadline: closing connection to ${peerId} — handshake did not complete in time`);
       // The close hangs the connection up. The connection:close event the
       // close raises clears every per-connection fact, so this fires once.
       void conn.close().catch(() => { /* already gone */ });
     }, deadlineMs);
     timer.unref();
     this.handshakeDeadlines.set(conn.id, timer);
+  }
+
+  /**
+   * NET_INTERFACE → Handshake →
+   * "Every connection this node dialled carries its handshake, whoever
+   * within the node dialled it": the ownership mark that gives a connection
+   * exactly one handshake. The first caller — the open hook on the
+   * outbound connection — stores a Promise in `outboundAdmissions`; every
+   * later caller (the dial funnel after `libp2p.dial()` returns the same
+   * connection) reads that Promise and awaits it. The funnel's own
+   * handshake and this one are the same handshake, never two.
+   *
+   * Returns the shared admission Promise, which resolves when the handshake
+   * on `conn` has completed (ok or not) and its consequences — Active,
+   * capabilities, maxPeers close for a chain-serving peer past the budget
+   * — have been applied.
+   */
+  private ensureOutboundAdmission(
+    conn: import('@libp2p/interface').Connection,
+  ): Promise<OutboundAdmissionResult> {
+    const existing = this.outboundAdmissions.get(conn.id);
+    if (existing !== undefined) return existing;
+    // NET_INTERFACE → Handshake → "A connection carries one handshake,
+    // opened by the side that dialled it": the mark the inbound handler
+    // reads to refuse a later handshake stream on the same connection
+    // (`registerHandshakeHandler`). Set before the stream opens.
+    this.handshakenConnections.add(conn.id);
+    const promise = this.admitOutboundConnection(conn);
+    this.outboundAdmissions.set(conn.id, promise);
+    void promise.catch((err) => {
+      console.warn(`[net] outbound admission on ${conn.remotePeer.toString()} threw: ${String(err)}`);
+    });
+    return promise;
+  }
+
+  /**
+   * Run the outbound handshake on an outbound connection and admit its
+   * peer (NET_INTERFACE → Handshake → "Every connection this node dialled
+   * carries its handshake, whoever within the node dialled it"). Called
+   * through `ensureOutboundAdmission`, so this runs at most once per
+   * connection id. The caller (funnel or open hook) awaits the shared
+   * Promise and reads the result to decide source-specific bookkeeping.
+   *
+   * On handshake success: the peer becomes Active with its declared
+   * version and capabilities (NET_INTERFACE → Handshake → "A peer becomes
+   * Active once"); a peer that declares no chain service is closed
+   * (→ Readers → "A peer dialled for chain service that declares none is
+   * closed"); a chain-serving peer past `maxPeers` is closed (→ Readers).
+   * On handshake failure: the connection is closed; no `recordDialResult`
+   * — that is the funnel's job over `addr`, and a service dial (relay
+   * reservation, DHT, AutoNAT) names no `addr`.
+   */
+  private async admitOutboundConnection(
+    conn: import('@libp2p/interface').Connection,
+  ): Promise<OutboundAdmissionResult> {
+    const peerId = conn.remotePeer.toString();
+    const connId = conn.id;
+    const libp2p = this.libp2p;
+    if (!libp2p) return { ok: false };
+
+    // NET_INTERFACE →
+    // "A connection whose remote peer id is this node's own is never a peer":
+    // libp2p already refuses a self-dial, but a defensive hang-up catches
+    // any path that reaches here.
+    if (peerId === libp2p.peerId.toString()) {
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false };
+    }
+
+    // NET_INTERFACE → "A banned peer's handshake is refused unread": a
+    // connection that resolved to a banned peer is closed with the
+    // address joining the peer's ban. The one log for this close, on
+    // either path (funnel or service dial), lives here.
+    if (this.peerMgr.isBanned(peerId)) {
+      const remoteAddr = conn.remoteAddr?.toString();
+      console.log(`[net] dial resolved to banned peer ${peerId} — closing`);
+      await conn.close().catch(() => { /* already gone */ });
+      if (remoteAddr) this.peerMgr.extendBan(peerId, remoteAddr);
+      return { ok: false };
+    }
+
+    let result: HandshakeResult;
+    try {
+      result = await this.runOutboundHandshake(conn);
+    } catch (handshakeErr: any) {
+      console.warn(`[net] outbound handshake with ${peerId} failed: ${handshakeErr?.message ?? handshakeErr}`);
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false };
+    }
+
+    if (!result.ok || !result.msg) {
+      // NET_INTERFACE → Handshake →
+      // "A handshake that does not complete ends its connection".
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false, handshake: result };
+    }
+
+    // NET_INTERFACE → Handshake →
+    // "A connection handshakes within its deadline, or is closed":
+    // the dialler's handshake has completed on this connection; the
+    // deadline leaves it alone.
+    this.completedConnections.add(connId);
+
+    const peerServesChain = servesChain(result.peerCapabilities);
+    // NET_INTERFACE → Readers → "A peer dialled for chain service that
+    // declares none is closed". A relay we dialled serves the chain, so
+    // this close does not fire for the mesh's service connections; it
+    // fires for a reader-only build that was dialled as a seed.
+    if (!peerServesChain) {
+      console.log(`[net] outbound handshake with ${peerId} declares no chain service — closing`);
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false, handshake: result };
+    }
+    // NET_INTERFACE → Readers — "a chain-serving peer past `maxPeers` is
+    // closed after its handshake as well".
+    if (
+      !this.peerMgr.isPeerActive(peerId)
+      && this.getConnectedPeers().length >= this.config.maxPeers
+    ) {
+      console.log(`[net] outbound handshake with ${peerId} past maxPeers — closing`);
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false, handshake: result };
+    }
+
+    // NET_INTERFACE → Handshake → "A peer becomes Active once": a
+    // handshake that completes for a peer already Active records and
+    // raises nothing.
+    if (!this.peerMgr.isPeerActive(peerId)) {
+      this.peerMgr.setPeerState(peerId, PeerState.Active);
+      // The dialled address joins `peerMgr.setPeerAddress` only when the
+      // funnel knows it; `conn.remoteAddr` is a resolved multiaddr — the
+      // funnel overwrites with the seed-list spelling after the admission.
+      const remoteAddr = conn.remoteAddr?.toString();
+      if (remoteAddr) this.peerMgr.setPeerAddress(peerId, remoteAddr);
+      // The record and the metadata keep the peer's declared version,
+      // not ours — it is what the boundary sweep reads
+      // (NET_INTERFACE → PeerDb; → Post-Handshake Routing).
+      this.peerMgr.setPeerVersion(peerId, result.msg.protocolVersion);
+      this.peerMgr.setPeerCapabilities(peerId, result.peerCapabilities);
+      // PeerDb for a service-opened connection is keyed by `conn.remoteAddr`
+      // — a resolved multiaddr; the funnel, when it dialled, adds a second
+      // record under the seed-list spelling after this admission returns.
+      if (remoteAddr) {
+        this.peerDb?.record({
+          address: remoteAddr,
+          lastSeenMs: Date.now(),
+          agentName: result.msg.agentName,
+          nodeName: result.msg.nodeName,
+          protocolVersion: result.msg.protocolVersion,
+          capabilities: result.peerCapabilities,
+        });
+      }
+      const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
+      // NET_INTERFACE → Readers → "A reader is never asked for chain data":
+      // the scheduler and the peerActive handlers fire for a chain-serving
+      // peer alone. A non-chain outbound was closed above.
+      this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
+      for (const cb of this.peerActiveHandlers) {
+        try { cb(peerId, dir); } catch (err) {
+          console.warn(`[net] peerActive handler error: ${String(err)}`);
+        }
+      }
+    }
+    return { ok: true, handshake: result };
   }
 
   /**
@@ -1104,14 +1651,14 @@ export class NetNode {
         return false;
       }
 
-      // NET_INTERFACE → "A banned peer's handshake is refused unread": the
-      // funnel checks the peer id the dial resolved to next, before
-      // recordSeedPeer and before the handshake stream opens — closed,
-      // unrecorded, and the dialled address joins the peer's ban (→
-      // "A ban carries every address its peer has been tied to").
+      // NET_INTERFACE → "A banned peer's handshake is refused unread":
+      // the admission's own banned-check closes the connection and logs
+      // the one line. The funnel's duty here is its source-specific
+      // bookkeeping — extend the ban to the dialled address, settle the
+      // seed — with no second log and no redial cooldown (a ban is
+      // stronger than a cooldown).
       const remote = conn.remotePeer.toString();
       if (this.peerMgr.isBanned(remote)) {
-        console.log(`[net] dial to ${addr} resolved to banned peer ${remote} — closing`);
         await conn.close().catch(() => { /* already gone */ });
         this.peerMgr.extendBan(remote, addr);
         if (source === 'seed') this.markBootstrapSettled(addr);
@@ -1128,77 +1675,54 @@ export class NetNode {
 
       // NET_INTERFACE → Handshake →
       // "The dial funnel handshakes only a connection it opened": when the
-      // returned connection is one the peer opened, or one that has
-      // carried a handshake, the funnel opens no handshake stream on it;
-      // it counts connected when the peer is Active, and otherwise leaves
-      // the connection to its deadline.
-      const connId = conn.id;
-      const connDirection = conn.direction;
-      if (connDirection === 'inbound' || this.handshakenConnections.has(connId)) {
+      // returned connection is one the peer opened — libp2p answers a dial
+      // naming a connected peer id with a connection it holds — the funnel
+      // opens no handshake stream on it; it counts connected when the peer
+      // is Active, and otherwise leaves the connection to its deadline.
+      if (conn.direction === 'inbound') {
         if (source === 'seed') this.markBootstrapSettled(addr);
         return this.peerMgr.isPeerActive(remote);
       }
-      // NET_INTERFACE → Handshake → "A connection carries one handshake,
-      // opened by the side that dialled it": the dialler marks when it
-      // opens one.
-      this.handshakenConnections.add(connId);
 
-      try {
-        const result = await this.runOutboundHandshake(conn);
-        if (result.ok && result.msg) {
-          const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
-          // NET_INTERFACE → Handshake →
-          // "A connection handshakes within its deadline, or is closed":
-          // the dialler's handshake has completed on this connection; the
-          // deadline leaves it alone.
-          this.completedConnections.add(connId);
-          // NET_INTERFACE → Handshake → "A peer becomes Active once": a
-          // handshake that completes for a peer already Active records and
-          // raises nothing.
-          if (!this.peerMgr.isPeerActive(remote)) {
-            this.peerMgr.setPeerState(remote, PeerState.Active);
-            this.peerMgr.setPeerAddress(remote, addr);
-            // The record and the metadata keep the peer's declared version,
-            // not ours — it is what the boundary sweep reads
-            // (NET_INTERFACE → PeerDb; → Post-Handshake Routing).
-            this.peerMgr.setPeerVersion(remote, result.msg.protocolVersion);
-            this.peerDb?.record({
-              address: addr,
-              lastSeenMs: Date.now(),
-              agentName: result.msg.agentName,
-              nodeName: result.msg.nodeName,
-              protocolVersion: result.msg.protocolVersion,
-              capabilities: result.peerCapabilities,
-            });
-            this.syncMachine?.onPeerActive(remote, result.peerHeight, dir);
-            for (const cb of this.peerActiveHandlers) {
-              try { cb(remote, dir); } catch (err) {
-                console.warn(`[net] peerActive handler error: ${String(err)}`);
-              }
-            }
-          }
-          if (source === 'seed') this.markBootstrapSettled(addr);
-          return true;
+      // NET_INTERFACE → Handshake →
+      // "Every connection this node dialled carries its handshake, whoever
+      // within the node dialled it": the open hook started the handshake
+      // the moment this connection opened. The funnel awaits that shared
+      // admission — the funnel's own and the open hook's are the same
+      // handshake, never two.
+      const admission = await this.ensureOutboundAdmission(conn);
+      // After the admission completes, the dialled address — the funnel's
+      // own spelling, not the open hook's `conn.remoteAddr` — joins PeerDb
+      // and `peerMgr.setPeerAddress` with the time stamp, so a later fill
+      // phase can redial by the same string the seed list holds.
+      if (admission.ok) {
+        const msg = admission.handshake?.msg;
+        const caps = admission.handshake?.peerCapabilities;
+        if (msg && caps) {
+          this.peerMgr.setPeerAddress(remote, addr);
+          this.peerDb?.record({
+            address: addr,
+            lastSeenMs: Date.now(),
+            agentName: msg.agentName,
+            nodeName: msg.nodeName,
+            protocolVersion: msg.protocolVersion,
+            capabilities: [...caps],
+          });
         }
-        // NET_INTERFACE → Handshake →
-        // "A handshake that does not complete ends its connection"; →
-        // Outbound Manager, fill phase: an address a dialler's handshake did
-        // not complete joins the redial cooldown as a failed dial does.
-        await conn.close().catch(() => { /* already gone */ });
-        this.outboundMgr?.recordDialResult(addr, false);
         if (source === 'seed') this.markBootstrapSettled(addr);
-        return false;
-      } catch (handshakeErr: any) {
-        console.warn(`[net] handshake with ${addr} failed: ${handshakeErr?.message ?? handshakeErr}`);
-        // NET_INTERFACE → Handshake →
-        // "A handshake that does not complete ends its connection"; →
-        // Outbound Manager, fill phase: an address a dialler's handshake did
-        // not complete joins the redial cooldown as a failed dial does.
-        await conn.close().catch(() => { /* already gone */ });
-        this.outboundMgr?.recordDialResult(addr, false);
-        if (source === 'seed') this.markBootstrapSettled(addr);
-        return false;
+        return true;
       }
+      // NET_INTERFACE → Handshake →
+      // "A handshake that does not complete ends its connection"; →
+      // Outbound Manager, fill phase: an address a dialler's handshake did
+      // not complete joins the redial cooldown as a failed dial does. A
+      // service dial (libp2p's own — relay reservation, DHT, AutoNAT) runs
+      // no funnel path at all, so no `recordDialResult` is called on its
+      // failure; libp2p handles its own service retry, and the next tick's
+      // floor/fill is driven by the funnel.
+      this.outboundMgr?.recordDialResult(addr, false);
+      if (source === 'seed') this.markBootstrapSettled(addr);
+      return false;
     } catch (err: any) {
       this.pendingDials.delete(addr);
       // NET_INTERFACE →
@@ -1216,6 +1740,17 @@ export class NetNode {
           this.markBootstrapSettled(addr);
         }
         else this.peerDb?.forgetSelf(addr);
+        return false;
+      }
+      // NET_INTERFACE → "A banned peer's handshake is refused unread":
+      // the admission's banned-check runs on `connection:open` and closes
+      // the connection before libp2p's dial resolves, so libp2p throws
+      // "Remote closed connection during opening" here. A ban is stronger
+      // than a dial cooldown — the floor keeps listing a banned seed by
+      // design (NET_INTERFACE → Outbound Manager, Floor phase), so an
+      // addr the admission just banned takes no `recordDialResult`.
+      if (this.peerDb?.isBanned(addr) === true) {
+        if (source === 'seed') this.markBootstrapSettled(addr);
         return false;
       }
       console.warn(`[net] dial FAILED: ${addr} — ${err?.message ?? err}`);
@@ -1376,20 +1911,43 @@ export class NetNode {
         // NET_INTERFACE → Handshake → "A peer becomes Active once": a
         // handshake that completes for a peer already Active is answered
         // when this node is the listener, and records and raises nothing.
+        const peerServesChain = servesChain(msg.capabilities);
+        // NET_INTERFACE → Readers → "Readers have a budget of their own": a
+        // reader past `maxReaders` is closed after its handshake, and so
+        // is a chain-serving peer past `maxPeers`. Checked before the
+        // state transitions so the budgets count the held peers, not the
+        // one arriving.
+        let closeAfterReply = false;
         if (!this.peerMgr.isPeerActive(peerId)) {
+          if (peerServesChain) {
+            if (this.getConnectedPeers().length >= this.config.maxPeers) {
+              closeAfterReply = true;
+            }
+          } else {
+            if (this.getConnectedReaders().length >= this.config.maxReaders) {
+              closeAfterReply = true;
+            }
+          }
+        }
+
+        if (!closeAfterReply && !this.peerMgr.isPeerActive(peerId)) {
           // The metadata keeps the peer's declared version, not ours — it
           // is what the boundary sweep reads
           // (NET_INTERFACE → Post-Handshake Routing).
           this.peerMgr.setPeerVersion(peerId, msg.protocolVersion);
+          this.peerMgr.setPeerCapabilities(peerId, msg.capabilities);
           // NET_INTERFACE → Handshake →
           // "A declared address is hearsay until a dial names it": the
           // listener records the dialler's declared address only when it
           // is no bogus address and its `/p2p/` component names the peer
           // id the connection proved, at lastSeenMs 0; a handshake that
-          // declares no address records none.
+          // declares no address records none. NET_INTERFACE → Readers —
+          // "a reader declares no address, so it never enters `PeerDb`":
+          // only a chain-serving peer's declared address is kept.
           const declared = msg.declaredAddress;
           if (
-            declared !== undefined
+            peerServesChain
+            && declared !== undefined
             && !isBogusAddress(declared, this.config.magic)
             && peerIdOfAddress(declared) === peerId
           ) {
@@ -1406,10 +1964,15 @@ export class NetNode {
 
           this.peerMgr.setPeerState(peerId, PeerState.Active);
           const dir = (connection.direction ?? 'inbound') as 'inbound' | 'outbound';
-          this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
-          for (const cb of this.peerActiveHandlers) {
-            try { cb(peerId, dir); } catch (err) {
-              console.warn(`[net] peerActive handler error: ${String(err)}`);
+          // NET_INTERFACE → Readers → "A reader is never asked for chain
+          // data": the scheduler and the peerActive handlers fire for a
+          // chain-serving peer alone.
+          if (peerServesChain) {
+            this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
+            for (const cb of this.peerActiveHandlers) {
+              try { cb(peerId, dir); } catch (err) {
+                console.warn(`[net] peerActive handler error: ${String(err)}`);
+              }
             }
           }
         }
@@ -1432,6 +1995,14 @@ export class NetNode {
         // the listener's handshake has completed on this connection; the
         // deadline leaves it alone.
         if (typeof connId === 'string') this.completedConnections.add(connId);
+        if (closeAfterReply) {
+          // NET_INTERFACE → Readers — "Readers have a budget of their
+          // own": a reader past `maxReaders`, and a chain-serving peer
+          // past `maxPeers`, is closed after its handshake.
+          const kind = peerServesChain ? 'chain peer past maxPeers' : 'reader past maxReaders';
+          console.log(`[net] inbound handshake ${peerId}: ${kind} — closing`);
+          await endConnection();
+        }
       } catch (err) {
         // The empty frame is all we can say to a peer whose handshake did not
         // complete; the log is what separates that from a peer that never
@@ -1703,7 +2274,9 @@ export class NetNode {
       declaredAddress: (this.libp2p?.getMultiaddrs() ?? [])
         .map((a) => a.toString())
         .find((a) => !isLoopbackAddress(a)),
-      capabilities: [],
+      // NET_INTERFACE → Readers → "A peer's capabilities say what it
+      // serves": the request codes a full node answers.
+      capabilities: [...NODE_CAPABILITIES],
     };
   }
 
@@ -1820,11 +2393,78 @@ export class NetNode {
     return this.peerMgr.getPeers();
   }
 
-  /** Return the peer IDs of all currently Active peers. */
+  /**
+   * NET_INTERFACE → API → Node Lifecycle → `getConnectedPeers`: the peer ids
+   * of the Active chain-serving peers — the handshake completed and
+   * `servesChain` of its capabilities (NET_INTERFACE → Readers).
+   */
   getConnectedPeers(): string[] {
-    return this.peerMgr.getPeers()
-      .filter(p => this.peerMgr.isPeerActive(p.id))
-      .map(p => p.id);
+    const out: string[] = [];
+    for (const peer of this.peerMgr.getPeers()) {
+      if (!this.peerMgr.isPeerActive(peer.id)) continue;
+      const caps = peer.capabilities;
+      if (!caps || !servesChain(caps)) continue;
+      out.push(peer.id);
+    }
+    return out;
+  }
+
+  /**
+   * NET_INTERFACE → API → Node Lifecycle → `getConnectedReaders`: the peer
+   * ids of the Active readers (NET_INTERFACE → Readers → "A peer's
+   * capabilities say what it serves" — a peer that is not chain-serving is
+   * a reader).
+   */
+  getConnectedReaders(): string[] {
+    const out: string[] = [];
+    for (const peer of this.peerMgr.getPeers()) {
+      if (!this.peerMgr.isPeerActive(peer.id)) continue;
+      const caps = peer.capabilities;
+      if (!caps) continue;
+      if (servesChain(caps)) continue;
+      out.push(peer.id);
+    }
+    return out;
+  }
+
+  /**
+   * NET_INTERFACE → API → Node Lifecycle → `peerCapabilities`: the
+   * capabilities an Active peer's handshake declared; `null` for a peer
+   * not Active.
+   */
+  peerCapabilities(peerId: string): readonly number[] | null {
+    if (!this.peerMgr.isPeerActive(peerId)) return null;
+    return this.peerMgr.getPeerMetadata(peerId)?.capabilities ?? null;
+  }
+
+  /**
+   * NET_INTERFACE → The mesh — the mesh node's identity, once its
+   * addresses are announced: its Notis spelling, its peer id, the
+   * addresses it announces and its local WebRTC-direct addresses.
+   * `null` with no mesh, or before libp2p has started.
+   */
+  meshIdentity(): MeshIdentity | null {
+    const mesh = this.config.mesh;
+    if (mesh === undefined) return null;
+    if (this.libp2p === null) return null;
+    const node = this.libp2p;
+    const notisId = notisIdFromPeerId(node.peerId);
+    const peerId = node.peerId.toString();
+    const multiaddrs = node.getMultiaddrs().map((a) => a.toString());
+    // Private role lists its local WebRTC-direct listen with certhash
+    // and the peer id (`MESH_INTERFACE → Discovery → "A node added by
+    // hand"`); public lists none (announces its listen addresses
+    // already).
+    const localAddrs = localAddrsFor(mesh.role, listenerAddrsOf(node), peerId);
+    return { notisId, peerId, multiaddrs, localAddrs };
+  }
+
+  /**
+   * NET_INTERFACE → The mesh — register a callback for each change of
+   * the mesh node's announced address set.
+   */
+  onMeshAddresses(cb: (id: MeshIdentity) => void): void {
+    this.meshAddressHandlers.push(cb);
   }
 
   /**
@@ -2102,6 +2742,13 @@ export class NetNode {
     peerId: string,
   ): Promise<{ id: string; content: string }[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
+    // NET_INTERFACE → Readers → "A peer is asked for a code only if it
+    // declares it": a caller's list of peers may be stale (a reader
+    // selected by a caller that filtered on the wrong moment); the guard
+    // refuses rather than open a stream against a peer that would close
+    // it unanswered.
+    const caps = this.peerMgr.getPeerMetadata(peerId)?.capabilities ?? null;
+    if (caps === null || !declares(caps, MSG_MODIFIER_REQUEST)) return [];
     const libp2p = this.libp2p;
     const peer = connectedPeer(libp2p, peerId);
 

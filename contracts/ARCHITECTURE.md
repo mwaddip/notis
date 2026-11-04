@@ -1562,6 +1562,7 @@ chain or owed one:
 | **the handshake** (2026-10-19) | **no committed byte and no consensus verdict** — the handshake body: `sessionMagic` retires (NET_INTERFACE → Handshake Body), so a node on it completes no handshake with a node on 0.3.1. **Rides the 0.4.0 reset**, with no era row |
 | **the pool's output rows** (2026-10-22) | **no committed byte and no consensus verdict** — `mempool_outputs` carries each output's owner, type and value under an owner index (MEMPOOL_INTERFACE → Schema), and the store adds no column to a standing table, so a store written before them is not one this build opens: `initDb` refuses the owner index over a table that lacks its columns (measured 2026-10-22: `no such column: owner`). **Rides the 0.4.0 reset** |
 | **the decay window and the paid squaring** (2026-10-28) | the verdict and the effects of every block that squares an identity (NODE_INTERFACE → Karma decay): the window's end starts the clock, a squaring writes the height it settles through, every owner the settlement pays is squared before the payment lands, and every squaring writes its clock however little the floor lets it burn — so the settlement's decay leg, the pool's inflow, `lastDecayBlock`, every `stateRoot` from the first such block, and the `adProofsRoot` of every block whose settlement pays an owner (the squared set's reads); the effective karma every valuation answers past a window's end. **Owes the reset**, and rides the 0.4.0 reset |
+| **the mesh** (2026-11-04) | **no committed byte and no consensus verdict** — a node run with `MESH_ROLE` is a mesh node (`MESH_INTERFACE`), and every connection's handshake declares its capabilities (`NET_INTERFACE → Readers`): a node of an earlier build declares none and reads as a reader to an upgraded one, so both boxes are deployed in one window, notis.fun first. On each box: `MESH_ROLE=public` and a WebRTC-direct listen address on `udp/9733` (open already) in `node.env`, `3478/udp` opened for STUN, the state directory `/var/lib/dagsocial/dagsocial.mesh` kept by a wipe as the key file is. The secure WebSocket stays off (nginx holds port 80 on notis.fun). The Windows bundle carries `node-datachannel`'s `win32-x64-msvc` prebuild, proven at the next release's Windows job |
 | **the node key** (2026-11-03) | **no committed byte and no consensus verdict** — a node's libp2p identity persists in its key file (NET_INTERFACE → The node key), and testnet's seed names notis.fun's peer id (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"): a node on this build reaches its seed only where notis.fun answers under that key, so notis.fun deploys first, its key file already on the box at `/var/lib/dagsocial/dagsocial.key`. **Owes no reset** |
 
 **Outstanding against the live node: nothing.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
@@ -2125,7 +2126,7 @@ no object check compares against it and no producer stamps it.
   compute is `@dagsocial/types`' `hash32`**, over `@noble/hashes` — one implementation for the node and the browser
   (`TYPES_INTERFACE → The protocol hash`; the packages: → Package boundaries). Node-only code hashes with
   `node:crypto`'s `createHash('blake2b512')`, which answers the same bytes: the node's network, name and holder record
-  keys, net's frame checksum, the miner script (`MINING_INTERFACE → Miner Script`) and the e2e suite's own miner and
+  keys, net's frame checksum on its Node entry, the miner script (`MINING_INTERFACE → Miner Script`) and the e2e suite's own miner and
   test identities
 - Signatures: raw Ed25519 (64 bytes). **Two encodings carry a signature, and base64 is not one of
   them:** raw bytes in the positional encodings (all consensus structures), and **lowercase hex**
@@ -2580,6 +2581,11 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   second time against the DOM library with no Node types (`tsconfig.browser.json`), where a Node built-in or global is
   a compile error; `@dagsocial/consensus`' suite builds `applyBlock` for a browser and runs it with browser globals
   alone (`CONSENSUS_INTERFACE → Tests`). A test running under Node proves none of it — Node supplies both.
+- **`@dagsocial/net` has two entries.** `@dagsocial/net` runs on Node.js — TCP, the file-backed datastore, STUN, the
+  ACME client; **`@dagsocial/net/browser` runs in the browser as written** — the handshake codec with its frame
+  checksum through `hash32` (`NET_INTERFACE → The browser entry`), the gossip rules, `BlockCheck`, the reader's handshake, libp2p options and mesh fetch
+  (`NET_INTERFACE → The browser entry`) — held by its own `tsconfig.browser.json` and by a build of it that refuses any
+  Node built-in.
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in

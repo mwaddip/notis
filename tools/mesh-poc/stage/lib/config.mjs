@@ -69,6 +69,7 @@ export function buildPageConfig(topology, nodeIdentities, realMultiaddrs, opts) 
       // placeholder that the browser cannot dial.
       throw new Error(`${name}: no realMultiaddrs supplied in exec mode (pass { dryRun: true } to opt into the placeholder)`);
     }
+    for (const addr of addrs) assertAddrFinalP2pMatches(name, peerIdStr, addr);
     anchors.push({ notisId: id, addrs });
   }
   return {
@@ -76,6 +77,33 @@ export function buildPageConfig(topology, nodeIdentities, realMultiaddrs, opts) 
     anchors,
     seeds: [],
   };
+}
+
+/**
+ * MESH_INTERFACE → Discovery / Identity — every `/p2p/<peer id>` in an
+ * anchor's or seed's address must be the peer id derived from that
+ * entry's `notisId`. The check reads the FINAL `/p2p/<id>` component,
+ * so a relay hop (`/p2p/<relay>/p2p-circuit/…/p2p/<target>`) is read
+ * as naming `<target>` — the relay's own id is the hop, not the entry's.
+ * A mismatch throws naming the host: the shape a host with two keys
+ * writes (one key's id under another key's addresses) fails `stage:up`
+ * at phase 9, instead of a scenario failing an hour later when the
+ * browser cannot reach the entry.
+ */
+function assertAddrFinalP2pMatches(hostName, expectedPeerIdStr, addr) {
+  const parts = addr.split('/');
+  let finalP2p = null;
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    if (parts[i] === 'p2p') finalP2p = parts[i + 1];
+  }
+  if (finalP2p === null) {
+    throw new Error(`${hostName}: address carries no /p2p/<peer id>: ${addr}`);
+  }
+  if (finalP2p !== expectedPeerIdStr) {
+    throw new Error(
+      `${hostName}: address names /p2p/${finalP2p} but notisId's peer id is ${expectedPeerIdStr}: ${addr}`,
+    );
+  }
 }
 
 /**

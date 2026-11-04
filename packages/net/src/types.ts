@@ -1,4 +1,5 @@
 import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra, KeyPair } from '@dagsocial/types';
+import type { MeshConfig } from './mesh/config.js';
 
 // ---------------------------------------------------------------------------
 // Message codes
@@ -33,6 +34,12 @@ export interface Peer {
   multiaddrs: string[];
   protocols: string[];
   connectedAt: number;
+  /**
+   * NET_INTERFACE → Readers → "A peer's capabilities say what it serves".
+   * The declared codes a peer's handshake carries; absent until the
+   * handshake completes, `[]` for a reader.
+   */
+  capabilities?: readonly number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +111,14 @@ export interface PeerMetadata {
    * not handshaken and is not Active, so it is never the sweep's.
    */
   protocolVersion: number | null;
+  /**
+   * The peer's declared capabilities (the handshake's), or null until the
+   * handshake reveals them. NET_INTERFACE → Readers — `getConnectedPeers`
+   * and `getConnectedReaders` filter on this: a peer whose capabilities
+   * `servesChain` stands in the chain list, one that does not stands in the
+   * reader list.
+   */
+  capabilities: readonly number[] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +158,9 @@ export interface NetConfig {
   bootstrapPeers: string[];
   listenAddrs: string;
   maxPeers: number;
+  // NET_INTERFACE → Readers → "Readers have a budget of their own": at most
+  // this many readers are held at once.
+  maxReaders: number;
   // All three required — net holds no default (NET_INTERFACE → Outbound Manager).
   minPeers: number;
   peerDbCap: number;
@@ -151,6 +169,12 @@ export interface NetConfig {
   temporalBanDurationMs: number;
   penaltyDecayIntervalMs: number;
   syncRequestTimeoutMs: number;
+  /**
+   * NET_INTERFACE → The mesh — present makes the node a mesh node.
+   * Absent, `start` builds the libp2p node of TCP, Noise, yamux,
+   * gossipsub, identify and ping alone, byte-for-byte as it did.
+   */
+  mesh?: MeshConfig;
 }
 
 // ---------------------------------------------------------------------------

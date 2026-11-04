@@ -77,7 +77,11 @@ async function main(argv) {
     process.exit(2);
   }
   const nodeBin = process.execPath;
-  const meshMain = join(PACKAGE_ROOT, 'dist', 'node', 'main.js');
+  // NODE_INTERFACE → Configuration — the notis binary is the one
+  // long-lived process per mesh host; `stage/up.mjs` spawns it, s5
+  // spawns an impostor instance of it on pub1's addresses with a copy
+  // of pub1's `.mesh` directory and a fresh node key.
+  const notisMain = join(REPO_ROOT, 'packages', 'node', 'dist', 'index.js');
 
   // Scenarios ride on top of `stage:up`'s run: `pids.json` holds every
   // process `up` recorded, so a scenario can look up pub1's mesh pid or
@@ -116,7 +120,7 @@ async function main(argv) {
         pidsPath: PIDS_PATH,
         invokingUser,
         nodeBin,
-        meshMain,
+        notisMain,
         cdpScript,
         outDir: OUT_DIR,
       });

@@ -8,7 +8,7 @@
 // mutates nothing but its own entries and reads a monotonic clock the caller
 // supplies.
 
-import { MeshKeyError } from '../identity.js';
+import { MeshKeyError } from '@dagsocial/net/browser';
 import { RETRY_BASE_MS, RETRY_CAP_MS } from '../protocols.js';
 
 export interface Anchor {

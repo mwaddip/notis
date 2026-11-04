@@ -1,6 +1,6 @@
 // MESH_INTERFACE → Block gossip — the client runs gossipsub on
-// `gossipsubOptions(magic)`, subscribes to `blockTopic` and runs
-// net's Stage 1 over every message as a `BlockCheck`. On accept it
+// `gossipsubOptions(magic, topics)`, subscribes to the ordering-block
+// topic and runs net's Stage 1 over every message as a `BlockCheck`. On accept it
 // forwards the message (traffic.forwarded + 1), and either extends
 // its chain (`extended` → state.tip moves) or triggers an immediate
 // check (`fork`, `gap`). A reject with a lie by the propagation
@@ -36,39 +36,26 @@ import {
   verifyOrderingBlockPoW,
 } from '@dagsocial/validation';
 import { verifierProfile } from '@dagsocial/nipopow-client';
-import { blockTopic } from '../src/gossip-rules.js';
-import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
-import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { gossipTopics } from '@dagsocial/net/browser';
+import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { lieTarget, startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
-import type { BlockVerdict } from '../src/block-check.js';
+import type { BlockVerdict } from '@dagsocial/net/browser';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain, makeBlockAt } from './helpers/devnet-block.js';
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 const K = 5;
 const MAGIC = MAGIC_DEVNET;
-const TOPIC = blockTopic(MAGIC);
+const TOPIC = gossipTopics(MAGIC).orderingBlock;
 const MESH_WAIT_MS = 60_000;
 
-interface Started { mesh: MeshNode; id: string; webrtcAddr: string; up: ChainUpstream; dir: string; }
+interface Started { mesh: NetMeshNode; id: string; webrtcAddr: string; up: ChainUpstream; dir: string; }
 
 async function startNode(chain: OrderingBlock[]): Promise<Started> {
   const up = await chainUpstream(chain);
   const dir = mkdtempSync(join(tmpdir(), 'cg-'));
-  const key = nodeKeyFromKeyPair(generateKeyPair());
-  const mesh = await startMeshNode({
-    key, network: 'devnet', role: 'public',
-    listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
-    bootstrap: [], stateDir: dir, upstream: up.base,
-  });
-  const addrs = mesh.multiaddrs();
-  const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
-  if (!webrtcAddr) {
-    await mesh.stop();
-    throw new Error(`no WebRTC-direct listen address: ${JSON.stringify(addrs)}`);
-  }
-  const id = notisIdFromPeerId(mesh.libp2p.peerId);
-  return { mesh, id, webrtcAddr, up, dir };
+  const mesh = await startNetPublicMesh({ upstream: up.base, stateDir: dir });
+  return { mesh, id: mesh.id, webrtcAddr: mesh.webrtcAddr, up, dir };
 }
 
 // The GossipSub implementation exposes `getMeshPeers`; the exported
@@ -694,8 +681,8 @@ describe('lieTarget', () => {
   const held = (set: Set<string>): ((id: string) => boolean) => (id) => set.has(id);
   const KEY = 'aa'.repeat(32);
   const UNHELD = 'bb'.repeat(32);
-  const LIE: BlockVerdict = { result: 'reject', lie: true, detail: 'bad signature' };
-  const NON_LIE: BlockVerdict = { result: 'reject', lie: false, detail: 'version mismatch' };
+  const LIE: BlockVerdict = { result: 'reject', lie: true, penalty: null, detail: 'bad signature' };
+  const NON_LIE: BlockVerdict = { result: 'reject', lie: false, penalty: null, detail: 'version mismatch' };
 
   it('a lie from a held key names the key', () => {
     expect(lieTarget(LIE, KEY, held(new Set([KEY])))).toBe(KEY);

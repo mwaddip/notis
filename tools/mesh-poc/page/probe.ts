@@ -13,7 +13,7 @@
 // Node 20+ as a built-in; no `node:crypto` import.
 
 import type { MeshClient } from '../src/client/mesh-client.js';
-import { meshBaseUrl } from '../src/mesh-url.js';
+import { meshBaseUrl } from '@dagsocial/net/browser';
 
 export interface ProbeResult {
   path: string;

@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { tipEvent, type TipEvent } from '../src/client/tip-events.js';
-import { meshBaseUrl, idOfMeshUrl } from '../src/mesh-url.js';
+import { meshBaseUrl, idOfMeshUrl } from '@dagsocial/net/browser';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
 const idA = 'a'.repeat(64);

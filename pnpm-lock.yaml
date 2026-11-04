@@ -9,6 +9,14 @@ overrides:
   qs@<6.16.0: ^6.16.0
   proxy-addr@<2.0.8: ^2.0.8
 
+patchedDependencies:
+  '@libp2p/http-utils@2.0.6':
+    hash: 917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d
+    path: patches/@libp2p__http-utils@2.0.6.patch
+  '@libp2p/webrtc@7.0.2':
+    hash: 2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24
+    path: patches/@libp2p__webrtc@7.0.2.patch
+
 importers:
 
   .: {}
@@ -62,6 +70,9 @@ importers:
 
   packages/net:
     dependencies:
+      '@dagsocial/node-reads':
+        specifier: workspace:*
+        version: link:../node-reads
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../types
@@ -71,55 +82,106 @@ importers:
       '@dagsocial/wire':
         specifier: workspace:*
         version: link:../wire
+      '@libp2p/autonat-v2':
+        specifier: 2.1.8
+        version: 2.1.8
+      '@libp2p/circuit-relay-v2':
+        specifier: 4.2.17
+        version: 4.2.17
       '@libp2p/crypto':
-        specifier: ^5.2.0
+        specifier: 5.2.0
         version: 5.2.0
+      '@libp2p/dcutr':
+        specifier: 3.0.32
+        version: 3.0.32
       '@libp2p/gossipsub':
-        specifier: ^17.0.0
+        specifier: 17.2.1
         version: 17.2.1
+      '@libp2p/http':
+        specifier: 2.0.6
+        version: 2.0.6
+      '@libp2p/http-fetch':
+        specifier: 4.0.4
+        version: 4.0.4
+      '@libp2p/http-utils':
+        specifier: 2.0.6
+        version: 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/identify':
-        specifier: ^4.0.0
+        specifier: 4.1.18
         version: 4.1.18
       '@libp2p/interface':
-        specifier: ^3.4.0
+        specifier: 3.4.0
         version: 3.4.0
+      '@libp2p/kad-dht':
+        specifier: 16.4.9
+        version: 16.4.9
+      '@libp2p/keychain':
+        specifier: 6.1.10
+        version: 6.1.10
       '@libp2p/noise':
-        specifier: ^17.0.0
+        specifier: 17.0.7
         version: 17.0.7
+      '@libp2p/peer-id':
+        specifier: 6.0.18
+        version: 6.0.18
       '@libp2p/ping':
-        specifier: ^3.0.0
+        specifier: 3.1.17
         version: 3.1.17
       '@libp2p/tcp':
-        specifier: ^11.0.0
+        specifier: 11.0.32
         version: 11.0.32
+      '@libp2p/webrtc':
+        specifier: 7.0.2
+        version: 7.0.2(patch_hash=2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24)
+      '@libp2p/websockets':
+        specifier: 10.1.25
+        version: 10.1.25
       '@libp2p/yamux':
-        specifier: ^8.0.0
+        specifier: 8.0.7
         version: 8.0.7
       '@multiformats/multiaddr':
-        specifier: ^13.0.0
+        specifier: 13.0.3
         version: 13.0.3
+      acme-client:
+        specifier: 5.4.0
+        version: 5.4.0
+      datastore-fs:
+        specifier: 12.0.1
+        version: 12.0.1
+      interface-datastore:
+        specifier: 10.0.1
+        version: 10.0.1
       libp2p:
-        specifier: ^3.5.1
+        specifier: 3.5.1
         version: 3.5.1
     devDependencies:
-      '@libp2p/peer-id':
-        specifier: ^6.0.18
-        version: 6.0.18
       '@noble/curves':
         specifier: 2.2.0
         version: 2.2.0
       '@noble/hashes':
         specifier: 2.2.0
         version: 2.2.0
+      '@peculiar/x509':
+        specifier: 2.2.0
+        version: 2.2.0
       '@types/node':
         specifier: ^24.19.2
         version: 24.19.2
+      datastore-core:
+        specifier: 12.0.1
+        version: 12.0.1
+      reflect-metadata:
+        specifier: 0.2.2
+        version: 0.2.2
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
+      vite:
+        specifier: ^5.4.0
+        version: 5.4.21(@types/node@24.19.2)
       vitest:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@24.19.2)(happy-dom@20.13.2)
@@ -176,6 +238,12 @@ importers:
         specifier: ^4.22.3
         version: 4.22.3
     devDependencies:
+      '@libp2p/interface':
+        specifier: 3.4.0
+        version: 3.4.0
+      '@multiformats/multiaddr':
+        specifier: 13.0.3
+        version: 13.0.3
       '@types/better-sqlite3':
         specifier: ^7.6.0
         version: 7.6.13
@@ -188,6 +256,9 @@ importers:
       '@types/supertest':
         specifier: ^7.2.1
         version: 7.2.1
+      libp2p:
+        specifier: 3.5.1
+        version: 3.5.1
       supertest:
         specifier: ^7.2.2
         version: 7.2.2
@@ -404,54 +475,30 @@ importers:
       '@dagsocial/validation':
         specifier: workspace:*
         version: link:../../packages/validation
-      '@libp2p/autonat-v2':
-        specifier: 2.1.8
-        version: 2.1.8
       '@libp2p/bootstrap':
         specifier: 12.0.36
         version: 12.0.36
-      '@libp2p/circuit-relay-v2':
-        specifier: 4.2.17
-        version: 4.2.17
       '@libp2p/crypto':
         specifier: 5.2.0
         version: 5.2.0
-      '@libp2p/dcutr':
-        specifier: 3.0.32
-        version: 3.0.32
       '@libp2p/gossipsub':
         specifier: 17.2.1
         version: 17.2.1
-      '@libp2p/http':
-        specifier: 2.0.6
-        version: 2.0.6
       '@libp2p/http-fetch':
         specifier: 4.0.4
         version: 4.0.4
-      '@libp2p/http-utils':
-        specifier: 2.0.6
-        version: 2.0.6
       '@libp2p/identify':
         specifier: 4.1.18
         version: 4.1.18
       '@libp2p/interface':
         specifier: 3.4.0
         version: 3.4.0
-      '@libp2p/kad-dht':
-        specifier: 16.4.9
-        version: 16.4.9
-      '@libp2p/keychain':
-        specifier: 6.1.10
-        version: 6.1.10
       '@libp2p/noise':
         specifier: 17.0.7
         version: 17.0.7
       '@libp2p/peer-id':
         specifier: 6.0.18
         version: 6.0.18
-      '@libp2p/ping':
-        specifier: 3.1.17
-        version: 3.1.17
       '@libp2p/tcp':
         specifier: 11.0.32
         version: 11.0.32
@@ -460,10 +507,7 @@ importers:
         version: 7.4.5
       '@libp2p/webrtc':
         specifier: 7.0.2
-        version: 7.0.2
-      '@libp2p/websockets':
-        specifier: 10.1.25
-        version: 10.1.25
+        version: 7.0.2(patch_hash=2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24)
       '@libp2p/yamux':
         specifier: 8.0.7
         version: 8.0.7
@@ -473,12 +517,6 @@ importers:
       '@noble/curves':
         specifier: 2.2.0
         version: 2.2.0
-      acme-client:
-        specifier: ^5.4.0
-        version: 5.4.0
-      datastore-fs:
-        specifier: ^12.0.1
-        version: 12.0.1
       libp2p:
         specifier: 3.5.1
         version: 3.5.1
@@ -2922,10 +2960,6 @@ packages:
     resolution: {integrity: sha512-NAigyu8hfvJe7MsS18mnc4is0MZtau3QMdBklaJKK23oBQb6occO3UPM3vHmTckW8KhfyjMZaUOqdTFEYliHgg==}
     engines: {node: '>=22'}
 
-  p-timeout@7.0.1:
-    resolution: {integrity: sha512-AxTM2wDGORHGEkPCt8yqxOTMgpfbEHqF51f/5fJCmwFC3C/zNcGT63SymH2ttOAaiIws2zVg4+izQCjrakcwHg==}
-    engines: {node: '>=20'}
-
   p-timeout@7.0.2:
     resolution: {integrity: sha512-prbX4Z3YszrFNgH+MW5Zoeq3baXrMtP/MQnFeET90UB/GtGcGDQ5Usg9OCy6ETjTTntOw1SL2z9fMPUppN3Guw==}
     engines: {node: '>=20'}
@@ -4148,7 +4182,7 @@ snapshots:
   '@libp2p/http-fetch@4.0.4':
     dependencies:
       '@achingbrain/http-parser-js': 0.5.9
-      '@libp2p/http-utils': 2.0.6
+      '@libp2p/http-utils': 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/interface': 3.4.0
       uint8arrays: 6.1.1
 
@@ -4160,7 +4194,7 @@ snapshots:
       uint8-varint: 3.0.0
       uint8arrays: 6.1.1
 
-  '@libp2p/http-utils@2.0.6':
+  '@libp2p/http-utils@2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)':
     dependencies:
       '@achingbrain/http-parser-js': 0.5.9
       '@libp2p/interface': 3.4.0
@@ -4179,7 +4213,7 @@ snapshots:
   '@libp2p/http-websocket@2.0.4':
     dependencies:
       '@achingbrain/http-parser-js': 0.5.9
-      '@libp2p/http-utils': 2.0.6
+      '@libp2p/http-utils': 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/interface': 3.4.0
       '@libp2p/interface-internal': 3.2.2
       '@libp2p/utils': 7.4.5
@@ -4193,7 +4227,7 @@ snapshots:
     dependencies:
       '@libp2p/http-fetch': 4.0.4
       '@libp2p/http-peer-id-auth': 2.0.3
-      '@libp2p/http-utils': 2.0.6
+      '@libp2p/http-utils': 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/http-websocket': 2.0.4
       '@libp2p/interface': 3.4.0
       '@libp2p/interface-internal': 3.2.2
@@ -4408,7 +4442,7 @@ snapshots:
       uint8arraylist: 3.0.2
       uint8arrays: 6.1.1
 
-  '@libp2p/webrtc@7.0.2':
+  '@libp2p/webrtc@7.0.2(patch_hash=2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24)':
     dependencies:
       '@chainsafe/is-ip': 2.1.0
       '@libp2p/crypto': 5.2.0
@@ -6442,13 +6476,11 @@ snapshots:
   p-queue@9.3.3:
     dependencies:
       eventemitter3: 5.0.4
-      p-timeout: 7.0.1
+      p-timeout: 7.0.2
 
   p-retry@8.0.1:
     dependencies:
       is-network-error: 1.3.2
-
-  p-timeout@7.0.1: {}
 
   p-timeout@7.0.2: {}
 

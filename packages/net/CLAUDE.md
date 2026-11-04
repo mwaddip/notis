@@ -32,7 +32,11 @@ on what the sender could know — Stage 1's checks over the message alone (`NET_
 `NET_INTERFACE → Penalty Attribution`).
 
 - **Owns:** `src/*` (`node.ts`, `sync-machine.ts`, `sync.ts`, `gossip.ts`, `peer-mgr.ts`, `peerdb.ts`,
-  `types.ts`).
+  `types.ts`, `capabilities.ts`, the codecs), `src/mesh/` (the mesh: transports, roles, the endpoint, STUN, the IP
+  certificate, the reader's side) and `src/browser.ts` (`@dagsocial/net/browser` — the half a browser runs, importing
+  no Node built-in; `NET_INTERFACE → The browser entry`). Its mesh test files start WebRTC, whose native binding allows
+  one live `RTCPeerConnection` per process: the suite runs in the `forks` pool, and a case with two ends puts one in a
+  child process.
 - **Does NOT own:** chain state / consensus / block application (that's `@dagsocial/node`; net calls into it
   via registered handlers), data structures (`@dagsocial/types`), stateless checks
   (`@dagsocial/validation`), the wire codec (`@dagsocial/wire`, which net uses).

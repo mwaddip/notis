@@ -14,7 +14,7 @@ import { emptyTraffic } from '../src/client/mesh-client.js';
 import type { NodeEntry } from '../src/client/node-list.js';
 import type { ReadNeed } from '../src/client/server-pick.js';
 import { MeshConfigError } from '../src/config.js';
-import { MeshFetchError } from '../src/http-fetch.js';
+import { MeshFetchError } from '@dagsocial/net/browser';
 import { render } from '../page/render.js';
 import { runMain } from '../page/main.js';
 import { runProbe } from '../page/probe.js';

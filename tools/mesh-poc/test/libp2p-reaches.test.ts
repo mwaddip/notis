@@ -6,13 +6,11 @@
 //     attribution (`mesh-client.ts`).
 // Each reach is held by a case against the real libp2p so an upgrade
 // that moves it fails its case. The WSS listener's reach
-// (`wss.ts:resolveInternals`), the private node's relay listen after
-// start (`mesh-node.ts`), and the `node:stream` shim (`vite.config.ts`
-// alias, `page/shims/node-stream.ts`) are held elsewhere: the first by
+// (`wss.ts:resolveInternals`) and the private node's relay listen
+// after start (`mesh-node.ts`) are held elsewhere: the first by
 // `wss.test.ts` ('a client reaches the node by key over WSS'), the
 // second by `private-relay-retry.test.ts` ('starts with ECONNREFUSED
-// on the relay listen, then reserves once the relay comes up'), the
-// third by `page.test.ts`'s 'page/build output', which builds the page.
+// on the relay listen, then reserves once the relay comes up').
 //
 // In-process, Node.js, TCP only, no root.
 
@@ -26,14 +24,12 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { createServer, type Server as NetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { generateKeyPair } from '@dagsocial/types';
-import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { privateKeyFromRaw } from '@libp2p/crypto/keys';
+import { nodeKeyFromKeyPair } from '@dagsocial/net/browser';
 import {
   attributeAggregateDialErrors,
   createDialProgressRecorder,
   unwrapAggregate,
 } from '../src/client/mesh-client.js';
-import { seedOfSecretKey } from '../src/identity.js';
 
 /**
  * Bind a TCP server on a kernel-chosen loopback port and keep it open
@@ -99,9 +95,7 @@ describe('libp2p-reaches — attribution against real libp2p', () => {
     // One target key — two addresses for the same peer id. libp2p
     // dedups equal addresses, so the two ports differ.
     const kp = generateKeyPair();
-    const seed = seedOfSecretKey(kp.secretKey);
-    const privateKey = privateKeyFromRaw(seed);
-    const targetPeerId = peerIdFromPrivateKey(privateKey).toString();
+    const targetPeerId = nodeKeyFromKeyPair(kp).peerId.toString();
     const addr1 = `/ip4/127.0.0.1/tcp/${port1}/p2p/${targetPeerId}`;
     const addr2 = `/ip4/127.0.0.1/tcp/${port2}/p2p/${targetPeerId}`;
 

@@ -14,7 +14,7 @@ import { decodeNipopowProof, verifyProof } from '@dagsocial/nipopow';
 import { verifierProfile } from '@dagsocial/nipopow-client';
 import { profileFor } from '@dagsocial/types';
 import { readTopology, assertTopologyWhole } from '../stage/lib/topology.mjs';
-import { buildPageConfig, buildIdentitiesOut } from '../stage/lib/config.mjs';
+import { buildPageConfig, buildIdentitiesOut, peerIdStringOf } from '../stage/lib/config.mjs';
 import { malformedBody, invalidBody } from '../stage/hostile-upstream.mjs';
 import {
   HOSTILE_FORK_PAIR,
@@ -139,6 +139,92 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
       anchors: config.anchors,
       seeds: config.seeds,
     })).not.toThrow();
+  });
+});
+
+// MESH_INTERFACE → Discovery / Identity — every `/p2p/<peer id>` an
+// anchor's or seed's address names must be the peer id derived from the
+// entry's own `notisId`. The check is on the FINAL `/p2p/` component so
+// a relay hop's `/p2p/<R>/p2p-circuit/…/p2p/<X>` reads <X> as the entry's
+// id (NAT → "a relay reservation on each public node"). A mismatch
+// records one key under another's addresses — the shape a host with
+// two identities writes — and the client never reaches the entry.
+describe('buildPageConfig refuses an entry whose addresses name another key', () => {
+  const minimalTopology = {
+    network: 'devnet' as const,
+    hosts: {
+      pub1: {
+        role: 'public',
+        addr: '11.100.0.11',
+        mesh: { role: 'public', webrtcPort: 4001 },
+        node: { httpPort: 3100 },
+      },
+    },
+  };
+  const matchingId = 'a'.repeat(64);
+  const otherId = 'b'.repeat(64);
+
+  it("throws naming the host when an anchor addr's final /p2p/ is not peerIdStringOf(notisId)", () => {
+    const wrongPeer = peerIdStringOf(otherId);
+    const realMultiaddrs = {
+      pub1: [
+        `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAtest/p2p/${wrongPeer}`,
+      ],
+    };
+    expect(() =>
+      buildPageConfig(minimalTopology, { pub1: matchingId }, realMultiaddrs, {}),
+    ).toThrow(/pub1/);
+  });
+
+  it("accepts an anchor addr whose final /p2p/ matches peerIdStringOf(notisId)", () => {
+    const rightPeer = peerIdStringOf(matchingId);
+    const realMultiaddrs = {
+      pub1: [
+        `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAtest/p2p/${rightPeer}`,
+      ],
+    };
+    const config = buildPageConfig(minimalTopology, { pub1: matchingId }, realMultiaddrs, {});
+    expect(config.anchors.length).toBe(1);
+    expect(config.anchors[0]!.addrs.length).toBe(1);
+  });
+
+  // MESH_INTERFACE → NAT — "a private node … takes a relay reservation on
+  // each public node". A relayed address names the relay hop's peer id
+  // before `/p2p-circuit/`; the entry's own peer id is the final `/p2p/`.
+  // The check reads the final component so a relayed anchor does not
+  // false-positive on the relay hop's id.
+  it("skips the relay hop's /p2p/ before /p2p-circuit when more than one /p2p/ is present", () => {
+    const rightPeer = peerIdStringOf(matchingId);
+    const relayPeer = peerIdStringOf(otherId);
+    const realMultiaddrs = {
+      pub1: [
+        `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAtest/p2p/${relayPeer}/p2p-circuit/webrtc/p2p/${rightPeer}`,
+      ],
+    };
+    const config = buildPageConfig(minimalTopology, { pub1: matchingId }, realMultiaddrs, {});
+    expect(config.anchors.length).toBe(1);
+  });
+
+  // MESH_INTERFACE → Discovery — the real stage's exec-mode shape:
+  // every public mesh host's addresses carry its OWN peer id as the final
+  // `/p2p/` (one identity per host after the fix). The guard accepts this
+  // shape.
+  it("accepts the real stage's phase-9 inputs when each host's addresses carry its own peer id", () => {
+    const topology = readTopology(TOPOLOGY_PATH);
+    const ids = fakeIdentities();
+    const realMultiaddrs: Record<string, string[]> = {};
+    for (const [name, host] of Object.entries(topology.hosts as Record<string, any>)) {
+      if (host.role !== 'public' || host.mesh?.role !== 'public') continue;
+      const peer = peerIdStringOf(ids[name]!);
+      const addrs: string[] = [
+        `/ip4/${host.addr}/udp/${host.mesh.webrtcPort}/webrtc-direct/certhash/uEiAtest/p2p/${peer}`,
+      ];
+      if (host.mesh.wss !== undefined) {
+        addrs.push(`/ip4/${host.addr}/tcp/${host.mesh.wss.port}/tls/ws/p2p/${peer}`);
+      }
+      realMultiaddrs[name] = addrs;
+    }
+    expect(() => buildPageConfig(topology, ids, realMultiaddrs, {})).not.toThrow();
   });
 });
 
@@ -596,12 +682,11 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance 8 — a node on another chain has its
   // proof read when its tip moves, with the client's own, and the
   // client's tip stays the honest chain's / MINING_INTERFACE → "The
-  // peer-readiness gate" — the hostile fork pair grows a chain of its
-  // own from genesis: each pair host names
-  // the partner ALONE in `BOOTSTRAP_PEERS` (no pub1), so the pair
-  // never dials an honest node and never sees the honest chain's
-  // blocks. Every other node's `BOOTSTRAP_PEERS` carries pub1 alone.
-  it("the pair hostiles' Notis BOOTSTRAP_PEERS names the partner alone (no pub1); every other Notis BOOTSTRAP_PEERS carries pub1 alone", () => {
+  // peer-readiness gate" — the hostile fork pair grows a chain of
+  // its own from genesis: each pair host names the partner ALONE in
+  // `BOOTSTRAP_PEERS` (no pub1), so the pair never dials an honest
+  // node and never sees the honest chain's blocks.
+  it("the pair hostiles' Notis BOOTSTRAP_PEERS names the partner alone (no pub1)", () => {
     runDryOnce();
     const spawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:notis:'));
     expect(spawnLines.length, 'at least one notis spawn').toBeGreaterThan(0);
@@ -609,51 +694,14 @@ describe('stage up --dry-run', () => {
       'hostile-lagging': '/ip4/11.100.0.31/tcp/9100',
       'hostile-malformed': '/ip4/11.100.0.33/tcp/9100',
     };
-    for (const line of spawnLines) {
-      const n = /\[spawn:notis:([^\]]+)\]/.exec(line);
-      expect(n, line).not.toBeNull();
-      const name = n![1]!;
-      const m = /BOOTSTRAP_PEERS=([^\s]+)/.exec(line);
+    for (const name of Object.keys(pairAddrs)) {
+      const line = spawnLines.find((l) => l.startsWith(`[spawn:notis:${name}]`));
+      expect(line, `pair notis spawn: ${name}`).toBeDefined();
+      const m = /BOOTSTRAP_PEERS=([^\s]+)/.exec(line!);
       expect(m, `BOOTSTRAP_PEERS present on ${name}`).not.toBeNull();
       const value = m![1]!;
-      if (Object.hasOwn(pairAddrs, name)) {
-        const partner = pairAddrs[name]!;
-        expect(value, `${name} names the partner alone`).toBe(partner);
-        expect(value, `${name} does NOT name pub1`).not.toContain('/ip4/11.100.0.11/');
-      } else {
-        expect(value, `${name} names pub1 alone`).toBe('/ip4/11.100.0.11/tcp/9100');
-      }
-    }
-  }, 30_000);
-
-  // MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer
-  // of its own node" — the pair hostiles are the exception: their
-  // mesh services carry NO `MESH_NODE_P2P`, so block gossip on the
-  // ordering-block topic never carries the pair's own chain to the
-  // browser (or, through the honest hosts' mesh services, onto the
-  // honest network). Every other mesh service names its node's p2p
-  // addr.
-  it("the pair hostiles' mesh env carries NO MESH_NODE_P2P; every other mesh env names its node's p2p addr", () => {
-    runDryOnce();
-    const meshLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
-    expect(meshLines.length, 'at least one mesh spawn').toBeGreaterThan(0);
-    const pairHosts = new Set(['hostile-lagging', 'hostile-malformed']);
-    for (const line of meshLines) {
-      const n = /\[spawn:mesh:([^\]]+)\]/.exec(line);
-      expect(n, line).not.toBeNull();
-      const name = n![1]!;
-      if (pairHosts.has(name)) {
-        expect(line, `${name}: no MESH_NODE_P2P`).not.toMatch(/\bMESH_NODE_P2P=/);
-      } else {
-        // Only hosts with their own `node` config carry MESH_NODE_P2P
-        // in up.mjs; a mesh service without a node (pebble has one
-        // but no mesh) is not in this listing to begin with. Hosts
-        // whose `node` is present pass this assertion.
-        // The current topology gives every mesh host (other than the
-        // pair) its own node, so every non-pair mesh spawn carries
-        // the env.
-        expect(line, `${name}: has MESH_NODE_P2P`).toMatch(/\bMESH_NODE_P2P=\/ip4\/\d/);
-      }
+      expect(value, `${name} names the partner alone`).toBe(pairAddrs[name]);
+      expect(value, `${name} does NOT name pub1`).not.toContain('/ip4/11.100.0.11/');
     }
   }, 30_000);
 
@@ -696,33 +744,6 @@ describe('stage up --dry-run', () => {
       expect(inDropIdx, `${host}: in-drop present`).toBeGreaterThanOrEqual(0);
       expect(outAcceptIdx, `${host}: out-accept before out-drop`).toBeLessThan(outDropIdx);
       expect(inAcceptIdx, `${host}: in-accept before in-drop`).toBeLessThan(inDropIdx);
-    }
-  }, 30_000);
-
-  // MESH_INTERFACE → Acceptance — the lag cut only after the height wait, so
-  // `hostile-lagging` is behind from a synced start, not from a slow sync
-  // that may still be running.
-  // MESH_INTERFACE → Discovery / Transports — a mesh node bootstraps from
-  // other MESH nodes' addresses, not the Notis p2p port. The TCP mesh
-  // port is in the topology; the `/p2p/<peer id>` tail is derived from
-  // the public mesh node's notisId. A bootstrap address with no `/p2p/`
-  // component is refused at the door (`bootstrap address refused:
-  // /ip4/10.100.0.11/tcp/9100 has no /p2p/ component`).
-  it('every mesh spawn\'s MESH_BOOTSTRAP names a mesh port with a /p2p/ id, not the Notis p2p port', () => {
-    runDryOnce();
-    const meshSpawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
-    expect(meshSpawnLines.length, 'at least one mesh spawn').toBeGreaterThan(0);
-    for (const line of meshSpawnLines) {
-      const m = /MESH_BOOTSTRAP=([^\s]+)/.exec(line);
-      expect(m, `MESH_BOOTSTRAP is set on ${line.slice(0, 80)}...`).not.toBeNull();
-      const value = m![1]!;
-      // Each comma-separated address must carry /p2p/<id>.
-      const addrs = value.split(',');
-      expect(addrs.length, `at least one bootstrap address: ${value}`).toBeGreaterThan(0);
-      for (const addr of addrs) {
-        expect(addr, `each bootstrap carries /p2p/: ${addr}`).toMatch(/\/p2p\/[A-Za-z0-9]+$/);
-        expect(addr, `no Notis p2p port in bootstrap: ${addr}`).not.toMatch(/\/tcp\/9100\b/);
-      }
     }
   }, 30_000);
 
@@ -789,6 +810,94 @@ describe('stage up --dry-run', () => {
     expect(laggingSteadyIdx, 'miner-lagging at 1 % follows the pair height wait').toBeGreaterThan(pairWaitIdx);
   }, 30_000);
 
+  // MESH_INTERFACE → NAT → "A public node announces its listen addresses
+  // from the start" / MINING_INTERFACE → The peer-readiness gate — a node
+  // that seeds from another dials its seed on boot; a dial on a listener
+  // that is not up yet lands on `ECONNREFUSED`, and `net` redials a seed
+  // only at its next outbound tick, 30 s on, after a 60 s cooldown. So
+  // phase 7 starts each seed before the nodes that seed from it: pub1
+  // and pub2 before every non-pair node (`BOOTSTRAP_PEERS` names the
+  // publics), with each public's identity line awaited between.
+  it("phase 7 starts pub1 and pub2 before the nodes that seed from them, with the identity wait between", () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const spawnIdxOf = (name: string): number => lines.findIndex((l) => l.startsWith(`[spawn:notis:${name}]`));
+    const pub1Idx = spawnIdxOf('pub1');
+    const pub2Idx = spawnIdxOf('pub2');
+    expect(pub1Idx, 'pub1 notis spawn is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(pub2Idx, 'pub2 notis spawn is in the dry-run').toBeGreaterThanOrEqual(0);
+    // The ordered identity waits sit between consecutive serial spawns —
+    // `pub1` reads its identity line before `pub2` is started, and `pub2`
+    // reads its identity line before any non-pair seed-from-publics host.
+    const pub1WaitIdx = lines.findIndex(
+      (l, i) => i > pub1Idx && l.startsWith('[wait]') && /\bpub1\b.*identity line/.test(l),
+    );
+    const pub2WaitIdx = lines.findIndex(
+      (l, i) => i > pub2Idx && l.startsWith('[wait]') && /\bpub2\b.*identity line/.test(l),
+    );
+    expect(pub1WaitIdx, 'pub1 identity wait sits between pub1 and pub2').toBeGreaterThan(pub1Idx);
+    expect(pub1WaitIdx, 'pub1 identity wait precedes pub2 spawn').toBeLessThan(pub2Idx);
+    expect(pub2WaitIdx, 'pub2 identity wait follows pub2 spawn').toBeGreaterThan(pub2Idx);
+    // Every non-pair, seed-from-publics host spawns AFTER both publics.
+    // `hostile-publisher` is not here: its mesh entity is `hostile-gossip.mjs`,
+    // not a Notis node — nothing on that host needs a chain or its HTTP API.
+    for (const name of ['hostile-invalid', 'priv1', 'priv2', 'lan1']) {
+      const idx = spawnIdxOf(name);
+      expect(idx, `${name} notis spawn is in the dry-run`).toBeGreaterThanOrEqual(0);
+      expect(idx, `${name} spawns after pub1`).toBeGreaterThan(pub1Idx);
+      expect(idx, `${name} spawns after pub2`).toBeGreaterThan(pub2Idx);
+      expect(idx, `${name} spawns after pub2's identity wait`).toBeGreaterThan(pub2WaitIdx);
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance 8 — the hostile fork pair seeds each
+  // other (`BOOTSTRAP_PEERS` names the partner alone), so one has to be
+  // listening before the other dials it. MINING_INTERFACE → The
+  // peer-readiness gate — `hostile-lagging`'s miner only produces
+  // templates when the node holds at least one Active peer. Start
+  // `hostile-malformed` first (no miner, boots quickly and listens);
+  // `hostile-lagging` second, so its miner finds an Active peer at
+  // once instead of waiting out `net`'s 60 s dial cooldown.
+  it("the hostile pair starts hostile-malformed before hostile-lagging, with the identity wait between", () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const malformedIdx = lines.findIndex((l) => l.startsWith('[spawn:notis:hostile-malformed]'));
+    const laggingIdx = lines.findIndex((l) => l.startsWith('[spawn:notis:hostile-lagging]'));
+    expect(malformedIdx, 'hostile-malformed notis spawn is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(laggingIdx, 'hostile-lagging notis spawn is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(malformedIdx, 'hostile-malformed starts before hostile-lagging').toBeLessThan(laggingIdx);
+    const malformedWaitIdx = lines.findIndex(
+      (l, i) => i > malformedIdx && l.startsWith('[wait]') && /hostile-malformed.*identity line/.test(l),
+    );
+    expect(malformedWaitIdx, 'hostile-malformed identity wait sits between pair hosts').toBeGreaterThan(malformedIdx);
+    expect(malformedWaitIdx, 'hostile-malformed identity wait precedes hostile-lagging spawn').toBeLessThan(laggingIdx);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance 6 — a later phase or step reads a chain
+  // from every honest node AND from each hostile-upstream host (the
+  // interposer reads its own node's `/nipopow/proof/*` and
+  // `/blocks/current`). The height gate holds the whole set, each on
+  // its own chain: `hostile-invalid` on the honest chain (its
+  // `BOOTSTRAP_PEERS` names the publics); `hostile-malformed` on the
+  // pair chain (`BOOTSTRAP_PEERS` names `hostile-lagging` alone, the
+  // pair runs its own chain from genesis). Without the hostile-upstream
+  // hosts in the gate, the live check in phase 9 would land on a host
+  // whose `/blocks/current` the gate never confirmed.
+  it("the height gate names hostile-invalid on the honest chain and hostile-malformed on the pair chain", () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const honestWait = lines.find((l) => l.startsWith('[wait] every honest node reads /blocks/current.height'));
+    const pairWait = lines.find((l) => l.startsWith("[wait] the pair's node reads /blocks/current.height"));
+    expect(honestWait, 'honest height wait is in the dry-run').toBeDefined();
+    expect(pairWait, 'pair height wait is in the dry-run').toBeDefined();
+    expect(honestWait!, 'honest height wait names hostile-invalid').toMatch(/\bhostile-invalid\b/);
+    for (const name of ['pub1', 'pub2', 'priv1', 'priv2', 'lan1']) {
+      expect(honestWait!, `honest height wait names ${name}`).toMatch(new RegExp(`\\b${name}\\b`));
+    }
+    expect(pairWait!, 'pair height wait names hostile-lagging').toMatch(/\bhostile-lagging\b/);
+    expect(pairWait!, 'pair height wait names hostile-malformed').toMatch(/\bhostile-malformed\b/);
+  }, 30_000);
+
   // MESH_INTERFACE → Acceptance — a sustained 100 % duty on `pub1`'s
   // miner burns a core for every minute the stage is up. After the
   // height wait, the miner is restarted at a gentle duty so the chain
@@ -810,24 +919,29 @@ describe('stage up --dry-run', () => {
     expect(steadyIdx, 'steady miner at a lower duty follows the height wait').toBeGreaterThan(waitIdx);
   }, 30_000);
 
-  // MESH_INTERFACE → Acceptance — each hostile host runs its own Notis
-  // node (as `hostile-lagging` does); the hostile upstream forwards to
-  // that node on 127.0.0.1 inside its namespace, never to pub1's remote
-  // HTTP (pub1 binds its namespace loopback alone). Scenario 6 reads
-  // what the hostile upstreams answer; a hostile upstream pointed at a
-  // host that is not reachable would die without printing.
-  it('every hostile host carries its own Notis node and its hostile upstream points at loopback', () => {
+  // MESH_INTERFACE → Acceptance — "a hostile host's lie outside the node
+  // it runs". Each hostile-upstream host runs its own Notis node; the
+  // interposer forwards to that node at the namespace's own address, not
+  // loopback — the `ip daddr 127.0.0.1` redirect rule the node's mesh
+  // endpoint lands on is scoped to loopback, so the interposer reaching
+  // the node at `<host.addr>` is free of it.
+  it("every hostile-upstream host carries its own Notis node; its interposer forwards to the node at the namespace's own address", () => {
     runDryOnce();
-    for (const host of ['hostile-malformed', 'hostile-invalid']) {
+    const hostAddrs: Record<string, string> = {
+      'hostile-malformed': '11.100.0.31',
+      'hostile-invalid': '11.100.0.32',
+    };
+    for (const host of Object.keys(hostAddrs)) {
       const notisSpawn = out.split('\n').find((l) => l.startsWith(`[spawn:notis:${host}]`));
       expect(notisSpawn, `[spawn:notis:${host}] is in the dry-run`).toBeDefined();
       expect(notisSpawn, `${host}'s Notis node runs inside its own namespace`).toContain(`ip netns exec notismesh-${host}`);
       const hostileSpawn = out.split('\n').find((l) => l.startsWith(`[spawn:hostile-upstream:${host}]`));
       expect(hostileSpawn, `[spawn:hostile-upstream:${host}] is in the dry-run`).toBeDefined();
-      // The hostile upstream's PUB1_BASE points at the local Notis
-      // node on 127.0.0.1, not pub1's remote address.
-      expect(hostileSpawn, `${host}'s hostile upstream points at 127.0.0.1`).toMatch(/PUB1_BASE=http:\/\/127\.0\.0\.1:\d+\b/);
-      expect(hostileSpawn, `${host}'s hostile upstream does not point at 10.100.0.11`).not.toMatch(/PUB1_BASE=http:\/\/10\.100\.0\.11\b/);
+      const addr = hostAddrs[host]!;
+      expect(hostileSpawn, `${host}'s interposer forwards to the ns address`).toMatch(
+        new RegExp(`PUB1_BASE=http://${addr.replace(/\./g, '\\.')}:\\d+\\b`),
+      );
+      expect(hostileSpawn, `${host}'s interposer does not forward to loopback`).not.toMatch(/PUB1_BASE=http:\/\/127\.0\.0\.1\b/);
     }
   }, 30_000);
 
@@ -1130,6 +1244,126 @@ describe('stage up --dry-run', () => {
     // No namespace that was not yet created is "undone" — the teardown
     // only names what up itself recorded.
     expect(stdout, 'teardown report').toMatch(/\[teardown complete\]/);
+  }, 30_000);
+});
+
+// MESH_INTERFACE → Acceptance — "each host one devnet `@dagsocial/node` run
+// with a mesh role, a hostile host's lie outside the node it runs". The
+// dry-run shows one `[spawn:notis:*]` per mesh host and no `[spawn:mesh:*]`
+// line; the node reads the `MESH_*` env (`NODE_INTERFACE → Configuration`);
+// and a hostile host's lie sits outside the node — an interposer in the ns
+// at `127.0.0.1:7000`, an nft `nat output` redirect rule the node's own
+// loopback forward lands on.
+describe('stage up --dry-run — one node per host', () => {
+  let out = '';
+  function runDryOnce(): void {
+    if (out !== '') return;
+    const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    if (res.status !== 0) throw new Error(`up --dry-run exit ${res.status}: ${res.stderr}`);
+    out = res.stdout;
+  }
+
+  // NODE_INTERFACE → Configuration → "A mesh node prints its identity line" —
+  // the node is the mesh node, so phase 7 spawns `notis:<host>` alone and
+  // no separate `[spawn:mesh:*]` line stands beside it.
+  it('no [spawn:mesh:*] line appears — the node is the mesh node', () => {
+    runDryOnce();
+    // Control: the dry-run produced output and at least one notis spawn.
+    expect(out.length, 'stdout non-empty (control)').toBeGreaterThan(0);
+    const notisLines = out.split('\n').filter((l) => l.startsWith('[spawn:notis:'));
+    expect(notisLines.length, 'at least one [spawn:notis:*] (control)').toBeGreaterThan(0);
+    // The target shape.
+    const meshLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
+    expect(meshLines, `a [spawn:mesh:*] stands beside the node: ${meshLines.join('\n')}`).toEqual([]);
+  }, 30_000);
+
+  // NODE_INTERFACE → Configuration — "`MESH_ROLE` … `public` or `private`;
+  // unset, the node runs no mesh". The node reads the mesh listens and the
+  // STUN setting from its own `MESH_*` env, and the stage maps each public
+  // host's listen set accordingly.
+  it('a notis spawn on a mesh-public host carries MESH_ROLE=public and the mapped MESH_LISTEN', () => {
+    runDryOnce();
+    const pub1Line = out.split('\n').find((l) => l.startsWith('[spawn:notis:pub1]'));
+    expect(pub1Line, 'pub1 notis spawn line (control)').toBeDefined();
+    // Control: the current env already carries NETWORK_TYPE=devnet.
+    expect(pub1Line!, 'pub1 names NETWORK_TYPE=devnet (control)').toContain('NETWORK_TYPE=devnet');
+    // The target shape.
+    expect(pub1Line!, 'MESH_ROLE=public set on the node env').toMatch(/\bMESH_ROLE=public\b/);
+    expect(pub1Line!, 'MESH_LISTEN names webrtc-direct + tcp on pub1\'s addr').toMatch(
+      /\bMESH_LISTEN=\/ip4\/11\.100\.0\.11\/udp\/4001\/webrtc-direct,\/ip4\/11\.100\.0\.11\/tcp\/4002\b/,
+    );
+  }, 30_000);
+
+  // MESH_INTERFACE → NAT — "a private node … takes a relay reservation on
+  // each public node it is told of — its bootstrap peers, by address and
+  // id, over the connection `net` holds to each". A private node's circuit
+  // listens come from the connection `net` holds to each seed, not from
+  // `MESH_LISTEN`. Phase 7 names both publics with their `/p2p/<peerId>`
+  // trailers so the seed table carries ids `net` can dial.
+  it('BOOTSTRAP_PEERS on a non-pair notis spawn names both publics with /p2p/<peerId>', () => {
+    runDryOnce();
+    const priv1Line = out.split('\n').find((l) => l.startsWith('[spawn:notis:priv1]'));
+    expect(priv1Line, 'priv1 notis spawn line (control)').toBeDefined();
+    const m = /BOOTSTRAP_PEERS=([^\s]+)/.exec(priv1Line!);
+    expect(m, 'BOOTSTRAP_PEERS present (control)').not.toBeNull();
+    const value = m![1]!;
+    const peers = value.split(',');
+    // The target shape.
+    expect(peers.length, `two seeds (pub1 and pub2), got: ${value}`).toBe(2);
+    for (const peer of peers) {
+      expect(peer, `each seed names /tcp/ and /p2p/<peerId>: ${peer}`).toMatch(
+        /\/ip4\/\d[\d.]*\/tcp\/\d+\/p2p\/[A-Za-z0-9]+/,
+      );
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — "a hostile host's lie outside the node
+  // it runs". An nft `nat output` rule in the hostile namespace redirects
+  // `127.0.0.1:<nodePort>` to the interposer's port, so the node's own
+  // mesh endpoint forward (to `http://127.0.0.1:<PORT>`) reaches the
+  // interposer. The rule goes in BEFORE the node starts.
+  it('each hostile-upstream host carries an nft redirect rule before its notis spawn', () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    // Control: the dry-run names the hostile-malformed host.
+    const notisIdx = lines.findIndex((l) => l.startsWith('[spawn:notis:hostile-malformed]'));
+    expect(notisIdx, 'hostile-malformed notis spawn present (control)').toBeGreaterThan(-1);
+    // The target shape: a redirect rule in the hostile ns, sitting ahead
+    // of the notis spawn. The rule names either `redirect to :7000` or
+    // `dnat to 127.0.0.1:7000` under the nat output hook.
+    const redirectIdx = lines.findIndex(
+      (l, i) =>
+        i < notisIdx &&
+        /ip netns exec notismesh-hostile-malformed/.test(l) &&
+        /\bnat\b/.test(l) &&
+        /(redirect to :7000|dnat to 127\.0\.0\.1:7000)/.test(l),
+    );
+    expect(
+      redirectIdx,
+      `redirect rule for hostile-malformed before its notis spawn (lines around notis spawn: ${lines.slice(Math.max(0, notisIdx - 5), notisIdx).join(' | ')})`,
+    ).toBeGreaterThan(-1);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance 6 — "A mesh node publishing a block that
+  // fails its checks is blacklisted with its evidence, and the client
+  // does not forward it." The publisher host's one mesh entity is
+  // `hostile-gossip.mjs`. A Notis node beside it would hold a second
+  // identity on the same host (two keys, two peer ids) — the config
+  // entry's `notisId` would be one key's and its addresses the other's.
+  // The dry-run shows one `[spawn:*:hostile-publisher]` line — the
+  // hostile-gossip one.
+  it('the publisher host shows one mesh entity — no [spawn:notis:hostile-publisher]', () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    // Control: the dry-run names the publisher host.
+    const gossip = lines.find((l) => l.startsWith('[spawn:hostile-gossip:hostile-publisher]'));
+    expect(gossip, 'hostile-gossip spawn on the publisher host (control)').toBeDefined();
+    // The target shape: no Notis node spawn on the publisher host.
+    const notis = lines.find((l) => l.startsWith('[spawn:notis:hostile-publisher]'));
+    expect(notis, `no [spawn:notis:hostile-publisher] line, got: ${notis ?? '<none>'}`).toBeUndefined();
   }, 30_000);
 });
 

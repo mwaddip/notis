@@ -1796,4 +1796,33 @@ describe('ordering-block topic validator — Stage 1 reads the header first', ()
   // A non-dead reference so the surrounding helpers keep their intent visible
   // even where only the mined fixture is reached.
   void mineUnderValidator;
+
+  // NET_INTERFACE → The browser entry — the ordering-block topic's checks
+  // are BlockCheck's one copy; the validator answers its verdict
+  // (penalty, Accept/Reject/Ignore, the record).
+  it("the ordering-block validator answers BlockCheck's verdict", async () => {
+    const mod = await import('../src/block-check.js');
+    const spy = vi.spyOn(mod.BlockCheck.prototype, 'check').mockReturnValue({
+      result: 'reject',
+      lie: true,
+      penalty: PenaltyKind.Misbehavior,
+      detail: 'spy forced rejection',
+    });
+    try {
+      const bytes = assembleFrame(minedHeader, encodeFrameBody(minedTree()), minedSignature);
+      const { topicValidators, peerMgr, penaltySpy } = makeHarness();
+      const validate = topicValidators.get(topics.orderingBlock)!;
+      const peer = newPeer(peerMgr);
+      const result = validate(peer, { data: bytes });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(result).toBe(TopicValidatorResult.Reject);
+      expect(penaltySpy).toHaveBeenCalledWith(
+        PenaltyKind.Misbehavior,
+        peer.id,
+        expect.stringContaining('spy forced rejection'),
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

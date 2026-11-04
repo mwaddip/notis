@@ -16,7 +16,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
 import { tipEvent, type TipEvent } from '../src/client/tip-events.js';
-import { idOfMeshUrl } from '../src/mesh-url.js';
+import { idOfMeshUrl } from '@dagsocial/net/browser';
 import { NodeList } from '../src/client/node-list.js';
 import type { NodeEntry } from '../src/client/node-list.js';
 import { render } from '../page/render.js';

@@ -17,7 +17,7 @@ import {
   emitPeerPenalised,
   emitSyncComplete,
 } from './journal.js';
-import { NetNode, loadNodeKey } from '@dagsocial/net';
+import { NetNode, loadNodeKey, MeshConfigError, MeshStateError } from '@dagsocial/net';
 import { bytesToHex } from '@dagsocial/types';
 import { netValidators } from './services/signature-memo.js';
 import { setNet } from './services/net-instance.js';
@@ -159,6 +159,7 @@ const net = new NetNode(
     bootstrapPeers: config.bootstrapPeers,
     listenAddrs: config.listenAddrs,
     maxPeers: config.maxPeers,
+    maxReaders: config.maxReaders,
     minPeers: config.minPeers,
     peerDbCap: config.peerDbCap,
     outboundRedialCooldownMs: config.outboundRedialCooldownMs,
@@ -166,6 +167,10 @@ const net = new NetNode(
     temporalBanDurationMs: config.temporalBanDurationMs,
     penaltyDecayIntervalMs: config.penaltyDecayIntervalMs,
     syncRequestTimeoutMs: config.syncRequestTimeoutMs,
+    // NODE_INTERFACE → Configuration. `null` from `loadConfig` with
+    // no `MESH_ROLE`; `NetConfig.mesh` is optional, absent making the
+    // node TCP-only (NET_INTERFACE → The mesh).
+    ...(config.mesh !== null ? { mesh: config.mesh } : {}),
   },
   netValidators(),
   peerStorage,
@@ -251,11 +256,44 @@ try {
     `Net node started, peer ID: ${net.peerId()}, key: ${bytesToHex(nodeKey.publicKey)}`,
   );
 } catch (err) {
+  // NET_INTERFACE → The mesh — `MeshConfigError` and `MeshStateError`
+  // are the mesh's start-time refusals, fail-stop with the message as
+  // `NodeKeyError`'s is.
+  const prefix = (err instanceof MeshConfigError || err instanceof MeshStateError)
+    ? ''
+    : 'net.start() threw: ';
   console.error(
-    `net.start() threw: ${err instanceof Error ? err.message : String(err)}`,
+    `${prefix}${err instanceof Error ? err.message : String(err)}`,
   );
   closeDb();
   process.exit(1);
+}
+
+// NODE_INTERFACE → Configuration → "A mesh node prints its identity line" —
+// one JSON line, the `MeshIdentity` fields in order, once the addresses
+// are announced and again at every change (NET_INTERFACE → The mesh).
+if (config.mesh !== null) {
+  const initial = net.meshIdentity();
+  if (initial !== null) {
+    process.stdout.write(
+      JSON.stringify({
+        notisId: initial.notisId,
+        peerId: initial.peerId,
+        multiaddrs: initial.multiaddrs,
+        localAddrs: initial.localAddrs,
+      }) + '\n',
+    );
+  }
+  net.onMeshAddresses((id) => {
+    process.stdout.write(
+      JSON.stringify({
+        notisId: id.notisId,
+        peerId: id.peerId,
+        multiaddrs: id.multiaddrs,
+        localAddrs: id.localAddrs,
+      }) + '\n',
+    );
+  });
 }
 
 // Discovery opens once `net.start()` has returned, and this is the only place

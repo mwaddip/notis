@@ -3,13 +3,18 @@
 // link, that address dropped, the anchor not blacklisted."
 //
 // One step with three measurements:
-//   1. Stop pub1's mesh node (`sigterm` the recorded PID).
-//   2. Spawn an impostor mesh node whose state dir is a copy of pub1's
-//      state dir with a freshly generated `mesh.key` — same WebRTC-direct
-//      certificate, different Ed25519 identity. Bind pub1's address.
+//   1. Stop pub1's notis node (`sigterm` the recorded PID of
+//      `notis:pub1`; the mesh functionality lives in the integrated
+//      node, NODE_INTERFACE → Configuration).
+//   2. Spawn an impostor notis node whose `.mesh` directory is a copy
+//      of pub1's and whose node key is fresh — so the WebRTC-direct
+//      certificate's hash in the printed multiaddr matches pub1's and
+//      the Ed25519 identity does not
+//      (MESH_INTERFACE → Transports → "Every link is authenticated by
+//      the key it was dialled for"). Bind pub1's address.
 //   3. Poll `state.nodes[pub1-id].droppedAddrs` for pub1's own address;
 //      measure `anchorStatus` from `state.nodes[pub1-id].status`.
-//   4. Stop the impostor; restart pub1's mesh from the recorded argv.
+//   4. Stop the impostor; restart pub1's notis from the recorded argv.
 //
 // Pass condition: pub1's status is not `blacklisted` (an impostor on
 // a key-authenticated link is a key mismatch, not a lie); the dropped
@@ -28,7 +33,9 @@ import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's5';
 const TARGET_HOST = 'pub1';
-const TARGET_MESH_DESC = `mesh:${TARGET_HOST}`;
+// MESH_INTERFACE → Acceptance 5 — the stop target is the one integrated
+// `notis:<host>` process that `up.mjs` spawns.
+const TARGET_NOTIS_DESC = `notis:${TARGET_HOST}`;
 // RFC 8410 PKCS8 Ed25519 private-key wrapper for a 32-byte seed.
 const PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 
@@ -44,6 +51,14 @@ export function describe() {
  * the returned object carries the derived notisId (64 hex of the
  * public key) so the scenario can spot the impostor's identity in
  * the client's node list.
+ *
+ * Writes the integrated node's key file (`NODE_KEY_PATH`): the one
+ * Ed25519 key that drives the libp2p peer identity. Pairing it with
+ * a copy of pub1's `.mesh` directory keeps the WebRTC-direct
+ * certificate's hash matching pub1's advertised multiaddr while the
+ * node's identity differs (MESH_INTERFACE → Transports → "Every link
+ * is authenticated by the key it was dialled for"; NODE_INTERFACE →
+ * Configuration → "The mesh state directory is named for the store").
  */
 export function writeFreshMeshKey(path, { randomBytes }) {
   const seed = randomBytes(32);
@@ -59,25 +74,29 @@ export function applyFaults(log, topology) {
   // Dry-run records the stop + spawn so a reader sees the shape.
   const pub1 = topology.hosts.pub1;
   const invokingUser = 'mwaddip';
-  const impostorStateDir = `/home/${invokingUser}/.cache/mesh-poc/s5-impostor`;
-  const impostorKey = `${impostorStateDir}/mesh.key`;
+  const impostorRoot = `/home/${invokingUser}/.cache/mesh-poc/s5-impostor`;
+  const impostorKey = `${impostorRoot}/notis.key`;
+  const impostorDb = `${impostorRoot}/notis.db`;
   const nodeBin = '/home/mwaddip/.nvm/versions/node/v24.22.1/bin/node';
-  const meshMain = '/home/mwaddip/projects/dagsocial/tools/mesh-poc/dist/node/main.js';
-  log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM <${TARGET_MESH_DESC}-pid>`);
-  if (log.dryRun) process.stdout.write(`[fault:${NAME}:stop-${TARGET_HOST}-mesh] kill -TERM <${TARGET_MESH_DESC}-pid>\n`);
+  const notisMain = '/home/mwaddip/projects/dagsocial/packages/node/dist/index.js';
+  log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-notis] kill -TERM <${TARGET_NOTIS_DESC}-pid>`);
+  if (log.dryRun) process.stdout.write(`[fault:${NAME}:stop-${TARGET_HOST}-notis] kill -TERM <${TARGET_NOTIS_DESC}-pid>\n`);
   const argv = [
     'sudo', 'ip', 'netns', 'exec', 'notismesh-pub1',
     'sudo', '-u', invokingUser, '--',
     'env',
-    `MESH_KEY_PATH=${impostorKey}`,
-    `MESH_NETWORK=${topology.network}`,
+    `NETWORK_TYPE=${topology.network}`,
+    'NODE_ROLE=server',
+    `PORT=${pub1.node.httpPort}`,
+    `ADMIN_PORT=${pub1.node.httpPort + 1}`,
+    `DB_PATH=${impostorDb}`,
+    `NODE_KEY_PATH=${impostorKey}`,
+    `LISTEN_ADDRS=/ip4/${pub1.addr}/tcp/${pub1.node.p2pPort}`,
     'MESH_ROLE=public',
-    `MESH_STATE_DIR=${impostorStateDir}`,
-    'MESH_UPSTREAM=http://127.0.0.1:3100',
     `MESH_LISTEN=/ip4/${pub1.addr}/udp/${pub1.mesh.webrtcPort}/webrtc-direct,/ip4/${pub1.addr}/tcp/${pub1.mesh.tcpPort}`,
-    nodeBin, meshMain,
+    nodeBin, notisMain,
   ];
-  log.spawn('impostor-mesh', argv);
+  log.spawn('impostor-notis', argv);
 }
 
 export async function run(ctx) {
@@ -98,19 +117,31 @@ export async function run(ctx) {
 
   const identities = JSON.parse(readFileSync(join(ctx.outDir, 'identities.json'), 'utf8'));
   const pub1Id = identities.pub1?.notisId;
-  const pub1Addr = ctx.topology.hosts.pub1.addr;
-  const pub1Mesh = ctx.topology.hosts.pub1.mesh;
-  const pub1Entry = findPid(ctx.pids?.pids, TARGET_MESH_DESC);
-  if (!pub1Entry) throw new Error(`s5: pids.json has no ${TARGET_MESH_DESC} entry`);
+  const pub1Host = ctx.topology.hosts.pub1;
+  const pub1Addr = pub1Host.addr;
+  const pub1Mesh = pub1Host.mesh;
+  const pub1Entry = findPid(ctx.pids?.pids, TARGET_NOTIS_DESC);
+  if (!pub1Entry) throw new Error(`s5: pids.json has no ${TARGET_NOTIS_DESC} entry`);
 
   const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
-  const impostorStateDir = join(ctx.outDir, 'scenarios', 's5-impostor');
-  const pub1StateDir = join(ctx.outDir, 'pub1');
+  // The impostor's root: a fresh dir holding the `.mesh` copy, its
+  // fresh node key and its own empty `.db` file, laid out the way
+  // config.ts' `meshStateDirFor(dbPath)` and `parseNodeKeyPath` expect
+  // (NODE_INTERFACE → Configuration → "The mesh state directory is
+  // named for the store"). `notis.db` → `notis.mesh` (directory) →
+  // `notis.key` (file).
+  const impostorRoot = join(ctx.outDir, 'scenarios', 's5-impostor');
+  const impostorDb = join(impostorRoot, 'notis.db');
+  const impostorKey = join(impostorRoot, 'notis.key');
+  const impostorMeshDir = join(impostorRoot, 'notis.mesh');
+  // pub1's `.mesh` directory sits beside its `DB_PATH`
+  // (`stage/out/pub1/notis.db` → `stage/out/pub1/notis.mesh`).
+  const pub1MeshDir = join(ctx.outDir, 'pub1', 'notis.mesh');
 
-  // 1. Stop pub1's mesh.
+  // 1. Stop pub1's notis node.
   let pub1Stopped = false;
   let impostorPid = null;
-  log.records.push(`[fault:${NAME}:stop-pub1-mesh] kill -TERM ${pub1Entry.pid}`);
+  log.records.push(`[fault:${NAME}:stop-pub1-notis] kill -TERM ${pub1Entry.pid}`);
   const r = sigterm(pub1Entry.pid);
   pub1Stopped = r.sent;
   // Wait a moment for the OS to free the ports.
@@ -118,14 +149,19 @@ export async function run(ctx) {
 
   try {
     await rec.step(describe()[0], async () => {
-      // 2. Prepare impostor state dir: copy pub1's state dir, replace
-      //    mesh.key with a fresh one.
-      if (existsSync(impostorStateDir)) {
-        rmSync(impostorStateDir, { recursive: true, force: true });
+      // 2. Prepare impostor root: copy pub1's `.mesh` directory into
+      //    the impostor's own layout, write a fresh node key. The
+      //    WebRTC-direct certificate lives in the libp2p datastore
+      //    under `.mesh/`; copying it keeps the cert hash matching
+      //    pub1's multiaddr while a fresh NODE_KEY_PATH gives the
+      //    impostor a different Ed25519 identity.
+      if (existsSync(impostorRoot)) {
+        rmSync(impostorRoot, { recursive: true, force: true });
       }
-      cpSync(pub1StateDir, impostorStateDir, { recursive: true });
-      const impostorKey = join(impostorStateDir, 'mesh.key');
-      rmSync(impostorKey, { force: true });
+      mkdirSync(impostorRoot, { recursive: true });
+      if (existsSync(pub1MeshDir)) {
+        cpSync(pub1MeshDir, impostorMeshDir, { recursive: true });
+      }
       const randomBytes = (n) => {
         const buf = Buffer.alloc(n);
         const nodeCrypto = globalThis.crypto;
@@ -135,18 +171,24 @@ export async function run(ctx) {
       };
       const { notisId: impostorNotisId } = writeFreshMeshKey(impostorKey, { randomBytes });
 
-      // 3. Spawn impostor with pub1's address.
+      // 3. Spawn impostor on pub1's addresses. The notis binary's
+      //    MESH_* env drives its mesh entity's listen set
+      //    (NODE_INTERFACE → Configuration); NODE_KEY_PATH selects
+      //    the fresh key.
       const impostorArgv = [
         'sudo', 'ip', 'netns', 'exec', 'notismesh-pub1',
         'sudo', '-u', ctx.invokingUser, '--',
         'env',
-        `MESH_KEY_PATH=${impostorKey}`,
-        `MESH_NETWORK=${ctx.topology.network}`,
+        `NETWORK_TYPE=${ctx.topology.network}`,
+        'NODE_ROLE=server',
+        `PORT=${pub1Host.node.httpPort}`,
+        `ADMIN_PORT=${pub1Host.node.httpPort + 1}`,
+        `DB_PATH=${impostorDb}`,
+        `NODE_KEY_PATH=${impostorKey}`,
+        `LISTEN_ADDRS=/ip4/${pub1Addr}/tcp/${pub1Host.node.p2pPort}`,
         'MESH_ROLE=public',
-        `MESH_STATE_DIR=${impostorStateDir}`,
-        'MESH_UPSTREAM=http://127.0.0.1:3100',
         `MESH_LISTEN=/ip4/${pub1Addr}/udp/${pub1Mesh.webrtcPort}/webrtc-direct,/ip4/${pub1Addr}/tcp/${pub1Mesh.tcpPort}`,
-        ctx.nodeBin, ctx.meshMain,
+        ctx.nodeBin, ctx.notisMain,
       ];
       const spawnEntry = {
         argv: impostorArgv,
@@ -154,7 +196,7 @@ export async function run(ctx) {
         logPath: join(ctx.outDir, 'scenarios', 's5-impostor.log'),
       };
       impostorPid = restartFromEntry(spawnEntry);
-      log.records.push(`[fault:${NAME}:impostor-mesh:spawn] ${impostorArgv.join(' ')}`);
+      log.records.push(`[fault:${NAME}:impostor-notis:spawn] ${impostorArgv.join(' ')}`);
 
       // 4. Poll state until pub1's entry has an address in droppedAddrs.
       const stateText = await cdpPoll(ctx, browserUrl,
@@ -198,8 +240,8 @@ export async function run(ctx) {
         process.stderr.write(`[s5 teardown] pub1 restart: ${err?.message ?? err}\n`);
       }
     }
-    if (existsSync(impostorStateDir)) {
-      rmSync(impostorStateDir, { recursive: true, force: true });
+    if (existsSync(impostorRoot)) {
+      rmSync(impostorRoot, { recursive: true, force: true });
     }
     log.removeAll();
   }

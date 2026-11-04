@@ -18,13 +18,12 @@ import { profileFor } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType, OrderingBlock } from '@dagsocial/types';
 import type { NodeTipResult } from '@dagsocial/nipopow-client';
 import type { Connection } from '@libp2p/interface';
-import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../src/identity.js';
-import { meshBaseUrl } from '../src/mesh-url.js';
+import { nodeKeyFromKeyPair, peerIdFromNotisId, meshBaseUrl } from '@dagsocial/net/browser';
 import { MeshConfigError } from '../src/config.js';
 import { assertClientConfig, cappedTimerMs, MAX_TIMER_MS, pickConnectionForRead } from '../src/client/mesh-client.js';
-import { MeshFetchError } from '../src/http-fetch.js';
-import { MeshUrlError } from '../src/mesh-url.js';
-import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { MeshFetchError, MeshUrlError } from '@dagsocial/net/browser';
+import { NetNode } from '@dagsocial/net';
+import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { multiaddr } from '@multiformats/multiaddr';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
@@ -35,21 +34,8 @@ import { makeLinkedChain } from './helpers/devnet-block.js';
 // of this shape.
 interface Stub { srv: Server; base: string; }
 
-async function startNode(upstream: { base: string }, dir: string): Promise<{ node: MeshNode; id: string; webrtcAddr: string }> {
-  const key = nodeKeyFromKeyPair(generateKeyPair());
-  const n = await startMeshNode({
-    key, network: 'devnet', role: 'public',
-    listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
-    bootstrap: [], stateDir: dir, upstream: upstream.base,
-  });
-  const addrs = n.multiaddrs();
-  const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));
-  if (!webrtcAddr) {
-    await n.stop();
-    throw new Error(`no WebRTC-direct listen address: ${JSON.stringify(addrs)}`);
-  }
-  const id = notisIdFromPeerId(n.libp2p.peerId);
-  return { node: n, id, webrtcAddr };
+async function startNode(upstream: { base: string }, dir: string): Promise<NetMeshNode> {
+  return await startNetPublicMesh({ upstream: upstream.base, stateDir: dir });
 }
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
@@ -67,7 +53,7 @@ const CHAIN_K_PLUS_2_TRAIL = CHAIN_K_PLUS_2.slice(0, K);
 
 
 describe('mesh-client — refusals, dialling by key, state and triggers', () => {
-  const nodes: MeshNode[] = [];
+  const nodes: NetNode[] = [];
   const stubs: Stub[] = [];
   const ups: ChainUpstream[] = [];
   const dirs: string[] = [];
@@ -718,7 +704,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // body-level failure (overflow, unparseable) or an answer that is
   // not a tip moves it by `lie` of kind `malformed` — a malformed
   // answer over the key-authenticated link is the contract's lie row.
-  async function startWithHostileTip(bodyFactory: (req: unknown) => { status: number; body: string }): Promise<{ client: MeshClient; stub: Stub; nodeStarted: { id: string; node: MeshNode; webrtcAddr: string } }> {
+  async function startWithHostileTip(bodyFactory: (req: unknown) => { status: number; body: string }): Promise<{ client: MeshClient; stub: Stub; nodeStarted: NetMeshNode }> {
     // The tip test needs control over `/blocks/current`, so the upstream
     // is a hand-built server here — not `chainUpstream`. The resolve
     // path still runs over the shared chain through `chainResolve`.

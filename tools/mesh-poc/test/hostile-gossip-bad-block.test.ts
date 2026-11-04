@@ -3,13 +3,45 @@
 // client does not forward it." The hostile gossip publisher's bad
 // block is a pure byte builder — a tiny payload whose
 // `readOrderingBlockSections` throws, so `BlockCheck.check` reads
-// it as `reject` with `lie: true`.
+// it as `reject` with `lie: true`. The publisher also answers a
+// dialling reader's handshake (`HANDSHAKE_PROTOCOL`) with its own
+// reply frame, built here as `buildResponderFrame`.
 
 import { describe, expect, it } from 'vitest';
 // eslint-disable-next-line import/extensions
-import { badBlockBytes, scoresLine } from '../stage/hostile-gossip.mjs';
-import { BlockCheck } from '../src/block-check.js';
-import { profileFor } from '@dagsocial/types';
+import { badBlockBytes, scoresLine, buildResponderFrame } from '../stage/hostile-gossip.mjs';
+import { BlockCheck } from '@dagsocial/net/browser';
+import type { BlockValidators } from '@dagsocial/net/browser';
+import { profileFor, PROTOCOL_VERSION } from '@dagsocial/types';
+import {
+  blockHash,
+  verifyHeaderFieldDomains,
+  verifyOrderingBlockPoW,
+  verifyOrderingBlockStructure,
+  verifyProtocolVersion,
+  verifyUtxoTxRoot,
+  verifyValidatorSignature,
+} from '@dagsocial/validation';
+import {
+  decodeFrame,
+  decodeHandshakeBody,
+  READER_CAPABILITIES,
+  servesChain,
+  MAGIC_DEVNET,
+} from '@dagsocial/net';
+
+// NET_INTERFACE → The browser entry — BlockCheck's one copy of
+// Stage 1's checks. The validators are `@dagsocial/validation`'s
+// functions, as the client passes them.
+const validators: BlockValidators = {
+  verifyHeaderFieldDomains,
+  verifyProtocolVersion,
+  verifyOrderingBlockPoW,
+  verifyValidatorSignature,
+  verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
+  blockHash,
+};
 
 describe('badBlockBytes — the publisher\'s block', () => {
   it('is a Uint8Array under MAX_ORDERING_BLOCK_BYTES', () => {
@@ -21,8 +53,9 @@ describe('badBlockBytes — the publisher\'s block', () => {
   it('BlockCheck.check reads it as reject with lie: true', () => {
     const bytes = badBlockBytes(1);
     const profile = profileFor('devnet');
-    const check = new BlockCheck({
-      profile,
+    const check = new BlockCheck(validators, {
+      schedule: profile.protocolVersionSchedule,
+      floorBits: profile.orderingBlockPowTargetFloorBits,
       scheduledTargetBits: () => null,
       standing: () => null,
       nowMs: () => Date.now(),
@@ -53,8 +86,9 @@ describe('badBlockBytes — the publisher\'s block', () => {
   it('BlockCheck.check reads badBlockBytes(2) as reject with lie: true (every counter is a lie)', () => {
     const bytes = badBlockBytes(2);
     const profile = profileFor('devnet');
-    const check = new BlockCheck({
-      profile,
+    const check = new BlockCheck(validators, {
+      schedule: profile.protocolVersionSchedule,
+      floorBits: profile.orderingBlockPowTargetFloorBits,
       scheduledTargetBits: () => null,
       standing: () => null,
       nowMs: () => Date.now(),
@@ -74,5 +108,41 @@ describe('scoresLine — the publisher\'s score line', () => {
   });
   it('answers an empty list for no subscribers', () => {
     expect(scoresLine(20, [])).toBe('publish seq=20 scores=[]');
+  });
+});
+
+// MESH_INTERFACE → Block gossip → "A client is a reader of every node
+// it holds a connection to" — the browser dials the publisher and
+// runs `readerHandshake` on `HANDSHAKE_PROTOCOL`. The responder's
+// reply frame declares `READER_CAPABILITIES` (an empty array) so
+// `servesChain(capabilities)` reads false at the dialler; `mesh-client`
+// marks the connection `no-chain`, no read goes over it, but the
+// libp2p connection stays open and gossip flows — the browser still
+// receives the publisher's bad blocks and blacklists it on evidence.
+describe("buildResponderFrame — the publisher's handshake reply", () => {
+  it('decodes to a valid handshake body with READER_CAPABILITIES (empty) so servesChain reads false', () => {
+    const frame = buildResponderFrame(MAGIC_DEVNET, {
+      protocolVersion: PROTOCOL_VERSION,
+      agentName: 'dagsocial-hostile-publisher',
+      nodeName: '',
+    });
+    const { code, body } = decodeFrame(MAGIC_DEVNET, frame);
+    expect(code).toBe(1);
+    const msg = decodeHandshakeBody(body);
+    expect(msg).not.toBeNull();
+    expect(msg!.capabilities).toEqual([...READER_CAPABILITIES]);
+    expect(servesChain(msg!.capabilities)).toBe(false);
+    expect(msg!.agentName).toBe('dagsocial-hostile-publisher');
+    expect(msg!.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(msg!.chainHeight).toBe(0);
+  });
+  it("defaults the agentName and protocolVersion when opts are omitted", () => {
+    const frame = buildResponderFrame(MAGIC_DEVNET);
+    const { body } = decodeFrame(MAGIC_DEVNET, frame);
+    const msg = decodeHandshakeBody(body);
+    expect(msg).not.toBeNull();
+    expect(msg!.agentName).toBe('dagsocial-hostile-publisher');
+    expect(msg!.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(msg!.capabilities).toEqual([...READER_CAPABILITIES]);
   });
 });

@@ -1,0 +1,17 @@
+{
+  // ARCHITECTURE → Package boundaries — `@dagsocial/net/browser` is the
+  // half a browser runs, importing no Node built-in and reading no Node
+  // global. This pass compiles `src/browser.ts` under the DOM lib with no
+  // Node types, so a Node built-in or global is a compile error.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM"],
+    "types": [],
+    "paths": {
+      "@dagsocial/*": ["../*/src/index.ts"]
+    }
+  },
+  "include": [],
+  "files": ["src/browser.ts"]
+}

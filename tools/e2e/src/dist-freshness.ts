@@ -13,6 +13,7 @@ const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..');
 export const NODE_LOADS: readonly string[] = [
   'packages/wire',
   'packages/types',
+  'packages/node-reads',
   'packages/validation',
   'packages/net',
   'packages/avltree',

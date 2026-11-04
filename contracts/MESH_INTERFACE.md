@@ -2,28 +2,36 @@
 
 ## Scope
 
-`@dagsocial/mesh-poc` is a proof of concept beside the protocol: a browser page reaches a Notis node's HTTP API by the
-node's key over libp2p, with no DNS name and no hosted page. **It changes no consensus, wire, gossip or HTTP API
-rule.** Every node it reaches is an unmodified `@dagsocial/node`, and every answer it checks is checked by code the
-extension already runs. The client and each mesh service are peers in the nodes' own block gossip, under `net`'s rules
-(→ Block gossip). What it has to show is → Acceptance.
+The mesh is how a browser reaches a Notis node's HTTP API by the node's key over libp2p, with no DNS name and no hosted
+page. **A Notis node run with a mesh role is a mesh node** — one process under its node key (`NET_INTERFACE → The node
+key`), `@dagsocial/net` carrying the transports, the roles, the DHT and the endpoint (→ Place in the workspace).
+**It changes no consensus, wire or HTTP API rule.** Every answer a client checks is checked by code the extension
+already runs. The client is a reader in the nodes' own block gossip, under `net`'s rules (→ Block gossip).
+`@dagsocial/mesh-poc` holds the client's reasoning about nodes, the page and the stage; what the stage has to show is →
+Acceptance.
 
 It carries Notis's own traffic and nothing else: no exit to the wider network, no IP tunnel.
 
 ## Place in the workspace
 
-A member under `tools/`. It depends on `@dagsocial/types`, `@dagsocial/validation`, `@dagsocial/node-reads`,
-`@dagsocial/nipopow-client`, `@dagsocial/net` — in `src/node/` alone, for the handshake codec — and libp2p 3.x, the line
-`@dagsocial/net` runs, `@libp2p/gossipsub` among it. `src/lib.ts` and everything it reaches runs in the browser as
-written; `src/node/` runs on Node.js. No WASM. One native module, `node-datachannel` under `@libp2p/webrtc`, serves
-WebRTC on Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
+**The node half is `@dagsocial/net`'s**, under `NetConfig.mesh` (`NET_INTERFACE → The mesh`), configured by the node's
+`MESH_*` settings (`NODE_INTERFACE → Configuration`). **The browser half is `@dagsocial/net/browser`**: the reader's
+handshake, the gossip rules, the block check, the reader's libp2p options and the mesh fetch, importing no Node
+built-in and reading no Node global. `tools/mesh-poc` is a member under `tools/`: it depends on `@dagsocial/types`,
+`@dagsocial/validation`, `@dagsocial/node-reads`, `@dagsocial/nipopow`, `@dagsocial/nipopow-client` and `@dagsocial/net`, and `src/lib.ts`
+and everything it reaches runs in the browser as written. No WASM. One native module, `node-datachannel` under
+`@libp2p/webrtc`, serves WebRTC on Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
 
-**libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of the member are at an exact version. The member
-reaches places libp2p does not promise to keep — its `components` object, for a listener added after start (the secure
-WebSocket, a private node's relay listens) and for the listener addresses a private node prints; the dial queue's
-`dial-queue:calculated-addresses` progress event and its `AggregateError` order, for per-address attribution; a
-`node:stream` stub the page's bundle gives `@libp2p/http-utils` — and each is held by a case against the real libp2p, so
-an upgrade that moves one fails its case.
+**libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of `net` and of the member are at an exact version.
+They reach places libp2p does not promise to keep — its `components` object, for a listener added after start (the
+secure WebSocket, a private node's relay listens) and for the listener addresses a private node prints; the dial
+queue's `dial-queue:calculated-addresses` progress event and its `AggregateError` order, for per-address attribution
+— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Two pinned
+packages carry local patches** (pnpm's `patchedDependencies`, the diffs under `patches/`), each held by a case against
+the patched package: `@libp2p/webrtc`, whose certificate renewal timer re-arms past Node's timer limit (→ Transports →
+"The WebRTC-direct certificate persists"), and `@libp2p/http-utils`, whose `readHeaders` hands a request's body back to
+its stream and whose Node-side server adapter is kept out of the browser's import path. A pin that moves carries its
+patch to the new version, the cases deciding that it still applies and still holds.
 
 ## Identity
 
@@ -37,9 +45,9 @@ an upgrade that moves one fails its case.
 
 Each converts to the other. A peer id of any other key type, and any spelling but 64 lowercase hex, is refused.
 
-**The key persists.** A mesh service's key file is a node key file, read by `net`'s `loadNodeKey` under its rule
-(`NET_INTERFACE → The node key`): created on first start, never overwritten, a file of any other form refused and
-left as it is. A node that restarts keeps its peer id.
+**The key persists.** A mesh node's key is its node key, read by `net`'s `loadNodeKey` from `NODE_KEY_PATH` under its
+rule (`NET_INTERFACE → The node key`): created on first start, never overwritten, a file of any other form refused and
+left as it is. A node that restarts keeps its peer id. A client's key is its own, made for the session.
 
 Nothing about a mesh key touches the chain.
 
@@ -65,8 +73,13 @@ readers, `@dagsocial/nipopow-client`'s `resolveTip` — runs over the mesh uncha
 here — over WebRTC it binds the DTLS certificates to the two keys — and a node whose key is not the one dialled is
 refused, whatever certificate it holds.
 
-**The WebRTC-direct certificate persists** in the node's state directory. Its hash is part of the address an anchor
-lists, so a new certificate at a restart would leave every anchor naming the node unreachable.
+**The WebRTC-direct certificate persists** in the node's mesh state directory, and lives as long as the node's key:
+created at first start with a lifespan of `WEBRTC_CERT_LIFESPAN_MS`, never replaced while it is valid, its renewal
+timer re-arming in steps under Node's 2 147 483 647 ms limit, so a lifespan past that limit renews only at
+`notAfter` less libp2p's renewal threshold. Its hash is part of the address an anchor lists, so a certificate that
+changed — at a restart or at a renewal — would leave every anchor naming the node unreachable. **A state directory
+whose certificate cannot be read stops the node at start**, naming the directory, and is left as it is, as a key file
+of another form is.
 
 **A client dials a private address only when its own configuration names it.** libp2p's default connection gater in a
 browser refuses every address in a private or reserved range (`10.0.0.0/8`, `100.64.0.0/10`, `192.168.0.0/16`, the
@@ -81,11 +94,13 @@ js-libp2p's WebTransport does not listen on Node.js, and a Notis node is Node.js
 
 ## NAT
 
-**A node's role is its operator's setting**, `public` or `private`. A **public** node runs a circuit relay v2 server and
+**A node's role is its operator's setting**, `public` or `private` — `MESH_ROLE`; a node run with none runs no mesh.
+A **public** node runs a circuit relay v2 server and
 AutoNAT v2 — the dial-back that tells other nodes which of their addresses answer — and a STUN server on `STUN_PORT`
 (RFC 8489's port) at the IP of its first WebRTC-direct listen address, unless its operator names another or turns it
 off. A **private** node, one run with no public address, takes a relay reservation on each public node it is told of —
-by address and id, never by searching — and is reached through them; between nodes, DCUtR upgrades a relayed connection
+its bootstrap peers, by address and id, over the connection `net` holds to each, never by searching — and is reached
+through them; between nodes, DCUtR upgrades a relayed connection
 to a direct one where the NATs allow it. A browser reaches a private node over WebRTC signalled through the relay,
 gathering ICE candidates against public nodes' STUN servers alone — or, where no direct path opens, over the relay
 itself.
@@ -117,30 +132,32 @@ most `STUN_SERVERS_MAX`. With no public node held the list is empty, and the ICE
 
 ## Block gossip
 
-**A mesh service is a gossip peer of its own node.** It dials its node's libp2p TCP address, named with no `/p2p/`
-component — the node's peer id is learnt at the link — and runs `net`'s handshake as the dialler (`NET_INTERFACE →
-Handshake`), its body declaring no address and no capability. It subscribes to the ordering-block topic alone and
-publishes nothing of its own. A node it cannot reach, or one that restarts, is dialled again; a mesh service given no
-node address runs the router with no node peer.
+**A client is a reader of every node it holds a connection to.** On each connection it opens, before any read, it runs
+`net`'s handshake as the dialler (`NET_INTERFACE → Handshake`) with a reader's body: no `declaredAddress`, an empty
+`nodeName`, its held chain's tip height (0 before it holds one) and the reader's capabilities, none
+(`NET_INTERFACE → Readers`). A node whose handshake fails is `retry`, the handshake named, never a lie; a node whose
+handshake declares no chain service is not read. The client subscribes to the ordering-block topic alone and publishes
+nothing of its own.
 
-**One router, `net`'s rules.** The mesh service and the client each run gossipsub on `net`'s ordering-block topic and on
-no other, with `net`'s envelope, message id and seen window (`NET_INTERFACE → Gossip Topics`): unsigned, named by
-`hash32(lpUtf8(topic) ‖ data)`, heard once in `GOSSIP_SEEN_WINDOW_MS`. The code the page runs holds its own copy of the
-topic name and the message id, held equal to `net`'s by a case. A router's peers are its node and every mesh service and
-client it holds a connection to; nothing dials for gossip's sake.
+**One router, `net`'s rules.** A node and a client each run gossipsub with `net`'s options (`gossipsubOptions`), a client
+on the ordering-block topic alone, with `net`'s envelope, message id and seen window (`NET_INTERFACE → Gossip Topics`):
+unsigned, named by `hash32(lpUtf8(topic) ‖ data)`, heard once in `GOSSIP_SEEN_WINDOW_MS`. The code the page runs is
+`net/browser`'s, the one copy. A node's router holds its node peers and its readers; a client's, every node it holds a
+connection to; nothing dials for gossip's sake.
 
 **A block is checked before it is forwarded, and never applied.** A receiver runs the ordering-block topic's checks of
-`NET_INTERFACE → Stage 1`, in their order, through the same functions, and forwards a block that passes them
+`NET_INTERFACE → Stage 1`, in their order, through `net`'s `BlockCheck`, and forwards a block that passes them
 (`NET_INTERFACE → Forwarding Rule`). The client checks the schedule where its chain holds the parent (→ The client's
-node list → "The client's chain"); a mesh service holds no chain and checks no schedule — a mismatch it forwards, its
-node refuses with no penalty. No receiver applies a block or forwards a transaction.
+node list → "The client's chain"). A client applies no block and forwards no transaction.
 
 **A refused block is evidence as `net` weighs it.** A block over its bound or undecodable, or well-formed and failing
 its field domains, the network's floor, its work, its validator signature, its structure or its body's root, is a lie of
 the key that sent it: the client blacklists that key, the evidence kept. A version mismatch, a scheduled-target mismatch
-and a header the receiver knows record nothing. A mesh service keeps no list and logs the refusal.
+and a header the receiver knows record nothing. A node weighs the sender by `net`'s ban policy (`NET_INTERFACE →
+Handshake → "Ban policy"`), and each penalty it records reaches its journal as a `peer_penalised` event naming the
+sender's peer id.
 
-**A router scores its peers by gossipsub's defaults.** The mesh service's router and the client's keep libp2p
+**A router scores its peers by gossipsub's defaults.** A node's router and a client's keep libp2p
 gossipsub's default peer scores, its IP colocation penalty among them: past ten peers a router has seen from one IP
 address, each of them scores −5 × (n − 10)², a score a peer keeps for an hour after it leaves. From twelve such peers a
 router forwards them nothing, from fourteen it publishes nothing to them, and from fifteen it ignores what they send
@@ -173,12 +190,13 @@ known key's current addresses.
 
 ## The node endpoint
 
-A node's mesh service answers HTTP over libp2p (`@libp2p/http`) by forwarding each `GET` to its own Notis node's HTTP
-base and answering with the upstream's status, `content-type` and body bytes as they came. Any other method answers
-`405`.
+A mesh node answers HTTP over libp2p (`@libp2p/http`) by forwarding each `GET` and `POST` to its own public HTTP API on
+loopback — never its admin port — a `POST`'s body and `content-type` as sent, and answering with the upstream's status,
+`content-type` and body bytes as they came. Any other method answers `405`. Every cap the node holds a request to over
+HTTP holds over the mesh the same, `HTTP_BODY_MAX_BYTES` among them.
 
-The client's side is an `HttpFetch` over the mesh URL: `GET` only, ending at `REQUEST_TIMEOUT_MS` as every read does
-(`CONSTANTS → Client reads`). Every cap a reader holds an answer to over HTTP holds over the mesh the same.
+The client's side is an `HttpFetch` over the mesh URL: `GET` and `POST`, ending at `REQUEST_TIMEOUT_MS` as every read
+does (`CONSTANTS → Client reads`). Every cap a reader holds an answer to over HTTP holds over the mesh the same.
 
 **The client checks what it can with the extension's verifier**: `resolveTip` over the mesh URLs of the nodes a check
 reads proofs from (→ The client's node list → "A check"), each proof held to the client's network profile
@@ -303,7 +321,8 @@ proof carries no challenge and any node can serve one it copied. A node that ans
 ## The IP certificate
 
 **A public node's operator may opt in to the secure WebSocket fallback.** The node then obtains a certificate for its
-own bare IP over ACME — the `http-01` challenge on port 80 of that IP — with no step by the operator after opting in,
+own bare IP over ACME — the `http-01` challenge on port 80 of that IP, answered by the node itself or, where the
+operator's own server holds port 80, on `MESH_ACME_CHALLENGE_PORT` behind it — with no step by the operator after opting in,
 and renews it at half its lifetime, `notBefore + (notAfter − notBefore) / 2`. A failed renewal is retried every
 `CERT_RETRY_MS` while the current certificate serves. At `notAfter` the WebSocket listener stops, and every other
 transport carries on. A renewed certificate replaces the old one without a restart, and open connections stay up.
@@ -316,8 +335,9 @@ behind NAT cannot hold one.
 
 A stage on one machine runs the proof of concept end to end: public nodes, a node behind an endpoint-independent NAT and
 one behind a symmetric NAT, a browser behind NAT, a node on the browser's own network, an ACME test server, and hostile
-nodes — each mesh node beside an unmodified devnet `@dagsocial/node`. The proof of concept holds when every step of the
-eight scenarios passes on what it measured; a step that did not run reads `skipped`, never a pass.
+nodes — each host one devnet `@dagsocial/node` run with a mesh role, a hostile host's lie outside the node it runs.
+The mesh holds when every step of the eight scenarios passes on what it measured; a step that did not run reads
+`skipped`, never a pass.
 
 1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, over WebRTC-direct, with the
    browser's own resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte
@@ -347,10 +367,10 @@ eight scenarios passes on what it measured; a step that did not run reads `skipp
    by a seed, is never dialled; added by hand, it is reached at its private address, and `anchorReached` reads true from
    it alone when the reader trusts it and false when the reader does not. The page shows the agreement counts.
 8. **Prove once, follow by gossip.** After the first check, no proof is read across five checks while every node names a
-   tip on the client's chain; a block mined on a node reaches the browser by gossip through a mesh service and moves the
+   tip on the client's chain; a block mined on a node reaches the browser by gossip and moves the
    client's tip before its next check; a node on another chain — on the stage, a chain mined from its own genesis — has
    its proof read when its tip moves, with the client's own, and the client's tip stays the honest chain's; the
    browser's gossip cut for three blocks and restored, its tip catches up by headers with no proof read.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
-untested. The proof of concept holds only where WebRTC-direct connects on defaults in both.
+untested. The mesh holds only where WebRTC-direct connects on defaults in both.

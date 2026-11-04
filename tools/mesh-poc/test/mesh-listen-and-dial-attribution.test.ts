@@ -24,7 +24,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
 const TOPOLOGY_PATH = join(PACKAGE_ROOT, 'stage', 'topology.json');
 const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
-const SRC_MESH_MAIN = join(PACKAGE_ROOT, 'src', 'node', 'main.ts');
 const SRC_S4 = join(PACKAGE_ROOT, 'stage', 'scenarios', 's4-transport-cut.mjs');
 
 describe('every mesh host listens on its own segment IP with concrete ports', () => {
@@ -57,18 +56,21 @@ describe('every mesh host listens on its own segment IP with concrete ports', ()
     }
   });
 
-  it('stage:up --dry-run: every mesh spawn\'s MESH_LISTEN names the host\'s own IP, never 127.0.0.1 or port 0', () => {
+  it('stage:up --dry-run: every notis spawn with MESH_LISTEN names the host\'s own IP, never 127.0.0.1 or port 0', () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
       encoding: 'utf8', timeout: 30_000,
     });
     expect(res.status, `exit (stderr: ${res.stderr})`).toBe(0);
     const topology = readTopology(TOPOLOGY_PATH);
-    const meshSpawns = res.stdout.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
-    expect(meshSpawns.length, 'at least one [spawn:mesh:] in dry-run').toBeGreaterThan(0);
+    // One node per host: each node reads its mesh role from `MESH_*`
+    // env. The check runs on every `[spawn:notis:*]` line that carries
+    // `MESH_LISTEN` — the mesh hosts' notis spawns.
+    const notisSpawns = res.stdout.split('\n').filter((l) => l.startsWith('[spawn:notis:') && /\bMESH_LISTEN=/.test(l));
+    expect(notisSpawns.length, 'at least one notis spawn with MESH_LISTEN').toBeGreaterThan(0);
     const bad: string[] = [];
-    for (const line of meshSpawns) {
-      const nameM = /^\[spawn:mesh:([^\]]+)\]/.exec(line);
-      expect(nameM, `[spawn:mesh:*] carries a host name: ${line}`).not.toBeNull();
+    for (const line of notisSpawns) {
+      const nameM = /^\[spawn:notis:([^\]]+)\]/.exec(line);
+      expect(nameM, `[spawn:notis:*] carries a host name: ${line}`).not.toBeNull();
       const host = topology.hosts[nameM![1]!];
       expect(host, `topology holds ${nameM![1]}`).toBeDefined();
       const addr = host.addr as string;
@@ -89,22 +91,6 @@ describe('a private mesh node reprints its identity line when a /p2p-circuit lan
   // mesh node prints: the client's config.json carried only the
   // loopback address and s2 failed with "AggregateError: All multiaddr
   // dials failed" on both private hosts.
-
-  it('mesh main.ts registers a listener on self:peer:update that reprints the identity line', () => {
-    const src = readFileSync(SRC_MESH_MAIN, 'utf8');
-    // The listener registration lives at the top of a line (no leading
-    // `//` or `/*` comment prefix) — a commented-out line reads the
-    // event's name but does nothing on dispatch. Each source line is
-    // checked rather than the whole file so a comment higher up cannot
-    // satisfy the match.
-    const lines = src.split('\n');
-    const idx = lines.findIndex((l) => /^\s*node\.libp2p\.addEventListener\(['"]self:peer:update['"]/.test(l));
-    expect(idx, 'main.ts has an uncommented addEventListener for self:peer:update').toBeGreaterThanOrEqual(0);
-    // The listener body (within ~40 lines of the registration) writes a
-    // fresh identity line through `writeIdentity`.
-    const window = lines.slice(idx, Math.min(lines.length, idx + 40)).join('\n');
-    expect(window, 'the listener body writes a fresh identity line').toContain('writeIdentity(');
-  });
 
   it('stage:up --dry-run names a wait for each private mesh node\'s /p2p-circuit announcement', () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
