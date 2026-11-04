@@ -1355,6 +1355,10 @@ interface MeshConfig {
 }
 ```
 
+**The certificate source is a constructor dependency**, as `PeerStorage` is: `NetNode`'s optional fourth parameter,
+`certificateSource?: (wss, stateDir) => CertificateSource`, answers the secure WebSocket's certificates; absent, the
+node's ACME client over `wss.acmeDirectory` does.
+
 Every refusal `MESH_INTERFACE` names is `MeshConfigError`, thrown by `start` before any socket opens; a state
 directory it cannot read is `MeshStateError` (`MESH_INTERFACE → Transports → "The WebRTC-direct certificate
 persists"`). `meshIdentity()` answers the node's mesh identity — its Notis spelling, its peer id, the addresses it
