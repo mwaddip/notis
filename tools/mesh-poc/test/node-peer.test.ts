@@ -81,6 +81,7 @@ function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
     bootstrapPeers: [],
     listenAddrs: '/ip4/127.0.0.1/tcp/0',
     maxPeers: 10,
+    maxReaders: 64,
     minPeers: 0,
     peerDbCap: 1_000,
     outboundRedialCooldownMs: 60_000,
@@ -236,21 +237,21 @@ describe('startNodePeer against a real NetNode', () => {
       // Reach Active first.
       await vi.waitFor(
         () => {
-          expect(node.getConnectedPeers()).toContain(host.libp2p.peerId.toString());
+          expect(node.getConnectedReaders()).toContain(host.libp2p.peerId.toString());
         },
         { timeout: 15_000, interval: 100 },
       );
 
       // Past the handshake deadline, the Active peer stays Active.
       await new Promise((r) => setTimeout(r, HANDSHAKE_DEADLINE_MS + 2_000));
-      expect(node.getConnectedPeers()).toContain(host.libp2p.peerId.toString());
+      expect(node.getConnectedReaders()).toContain(host.libp2p.peerId.toString());
 
       // Past two SyncInfo rounds the peer still stands and has not been
       // penalised. The sync machine dials SYNC_PROTOCOL on the host; the
       // host registers no sync handler, so the dial fails with CODE_UNSUPPORTED
       // and net's sendToPeer swallows the catch — no penalty is accrued.
       await new Promise((r) => setTimeout(r, TWO_ROUNDS_WAIT_MS));
-      expect(node.getConnectedPeers()).toContain(host.libp2p.peerId.toString());
+      expect(node.getConnectedReaders()).toContain(host.libp2p.peerId.toString());
       const hostPenalties = penalised.filter(
         (p) => p.peerId === host.libp2p.peerId.toString(),
       );
@@ -336,7 +337,7 @@ describe('startNodePeer against a real NetNode', () => {
       await vi.waitFor(
         () => {
           expect(peer.connected()).toBe(true);
-          expect(node1.getConnectedPeers()).toContain(host.libp2p.peerId.toString());
+          expect(node1.getConnectedReaders()).toContain(host.libp2p.peerId.toString());
         },
         { timeout: 15_000, interval: 100 },
       );
@@ -362,7 +363,7 @@ describe('startNodePeer against a real NetNode', () => {
       await vi.waitFor(
         () => {
           expect(peer.connected()).toBe(true);
-          expect(node2.getConnectedPeers()).toContain(host.libp2p.peerId.toString());
+          expect(node2.getConnectedReaders()).toContain(host.libp2p.peerId.toString());
         },
         { timeout: 20_000, interval: 100 },
       );
@@ -453,7 +454,7 @@ describe('startNodePeer against a real NetNode', () => {
       const connsAfter = host.libp2p.getConnections(nodePeerIdObj);
       expect(connsAfter).toHaveLength(1);
       expect(connsAfter[0]!.id).toBe(connIdFirst);
-      expect(node.getConnectedPeers()).toContain(host.libp2p.peerId.toString());
+      expect(node.getConnectedReaders()).toContain(host.libp2p.peerId.toString());
 
       const hostPenalties = penalised.filter(
         (p) => p.peerId === host.libp2p.peerId.toString(),

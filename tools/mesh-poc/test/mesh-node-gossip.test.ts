@@ -78,6 +78,7 @@ function makeNetConfig(overrides: Partial<NetConfig> = {}): NetConfig {
     bootstrapPeers: [],
     listenAddrs: '/ip4/127.0.0.1/tcp/0',
     maxPeers: 10,
+    maxReaders: 64,
     minPeers: 0,
     peerDbCap: 1_000,
     outboundRedialCooldownMs: 60_000,
