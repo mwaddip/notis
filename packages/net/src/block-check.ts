@@ -1,15 +1,13 @@
-// NET_INTERFACE → The browser entry → "The frame codec is one code with
-// its checksum handed in" — BlockCheck is the one copy of the
+// NET_INTERFACE → The browser entry — BlockCheck is the one copy of the
 // ordering-block topic's checks of NET_INTERFACE → Stage 1, its checks in
-// their order. The node's own validator calls it; the browser and the mesh
-// service share the same code.
+// their order. The node's own validator calls it; a browser runs the same
+// code.
 //
 // The verdict carries the penalty the net validator records for the
 // refusal, so the gossip.ts validator reads one field rather than
-// classifying by detail string. `lie` is kept from the PoC shape and is
-// derived: `true` for ProtocolViolation and Misbehavior, `false` for
-// Transient and a refusal that records nothing
-// (NET_INTERFACE → Peer Penalty System,
+// classifying by detail string. `lie` is derived: `true` for
+// ProtocolViolation and Misbehavior, `false` for Transient and a refusal
+// that records nothing (NET_INTERFACE → Peer Penalty System,
 // NET_INTERFACE → Stage 1 → "A refusal that rests on this node's state
 // records nothing").
 import {

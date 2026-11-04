@@ -27,8 +27,8 @@ import {
 import { readBoundedLpUtf8, readBoundedCapabilities } from './codec-helpers.js';
 
 /**
- * NET_INTERFACE → Handshake → "The side that dialled a connection opens a
- * stream on `/dagsocial/handshake/1` on it".
+ * NET_INTERFACE → Handshake → "A connection carries one handshake, opened
+ * by the side that dialled it".
  */
 export const HANDSHAKE_PROTOCOL = '/dagsocial/handshake/1';
 
@@ -150,13 +150,19 @@ function reject(
 /**
  * Validate a decoded handshake.
  *
- * Shape and bounds are enforced by the codec; this function checks that the
- * peer covers our era. NET_INTERFACE → Handshake → "Peering is by era
- * coverage": accept iff the peer's declared `protocolVersion` is at or
- * above `era`, the era of the next block we would apply. The codec runs
- * first, so a malformed body is `null` before this is reached — a body
- * that is malformed AND version-mismatched is classified `malformed`, not
- * `unsupported-version`.
+ * Shape and bounds are enforced by the codec; this function checks that the peer
+ * covers our era. Peering is by era coverage (NET_INTERFACE → Handshake): accept
+ * iff the peer's declared `protocolVersion` is at or above `era`, the era of the
+ * next block we would apply. A newer build passes — it covers our era; a build
+ * whose versions end below our era is refused. The codec runs first, so a
+ * malformed body is `null` before this is reached — a body that is malformed AND
+ * version-mismatched is classified `malformed`, not `unsupported-version`.
+ *
+ * `era` is `protocolVersionAt(schedule, chainHeight() + 1)`, so it is `null` when
+ * the chain height is out of the schedule's domain — a build defect, since
+ * `SyncStore` supplies a non-negative integer and `{ version: 1, fromHeight: 0 }`
+ * covers it. A null era refuses softly: we decline what we cannot place against
+ * an era we cannot compute, and the refusal is reversible (Transient).
  */
 export function validateHandshake(
   raw: unknown,
