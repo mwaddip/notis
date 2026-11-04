@@ -37,48 +37,44 @@ describe('a private mesh node listens on a /p2p-circuit per public relay it boot
     expect(publics.length, 'at least one public host').toBeGreaterThan(0);
   });
 
-  // Dry-run runs stage up without the stage. Each private node's
-  // MESH_LISTEN names the private's own IP + concrete ports PLUS one
-  // `/ip4/<pub-addr>/tcp/<pub-tcpPort>/p2p/<pub-peerid>/p2p-circuit`
-  // per public relay. Dry-run peer ids are deterministic ephemerals
-  // the stage prints inline (`notisIds` map); the case asserts the
-  // CIRCUIT SHAPE and the per-public coverage, not the particular id.
+  // MESH_INTERFACE → NAT — with one node per host, a private node's
+  // MESH_LISTEN names its own IP + concrete ports; its circuit listens
+  // are derived by `net` from the connection it holds to each seed, so
+  // `BOOTSTRAP_PEERS` carries each public with its `/p2p/<peerId>`
+  // trailer. The case reads the private host's notis spawn: its
+  // MESH_LISTEN names the private's own IP + concrete ports, and its
+  // BOOTSTRAP_PEERS names each public with a `/p2p/<peerId>` tail.
   for (const priv of privateHosts) {
-    it(`${priv.name}'s MESH_LISTEN names a /p2p-circuit through each public relay by id`, () => {
+    it(`${priv.name}'s notis spawn names its own listens and seeds each public by peer id`, () => {
       const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
         encoding: 'utf8', timeout: 30_000,
       });
       expect(res.status, `exit (stderr: ${res.stderr})`).toBe(0);
-      const line = res.stdout.split('\n').find((l) => l.startsWith(`[spawn:mesh:${priv.name}]`));
-      expect(line, `[spawn:mesh:${priv.name}] in dry-run`).toBeDefined();
-      const m = /MESH_LISTEN=([^\s]+)/.exec(line!);
-      expect(m, `MESH_LISTEN set on ${priv.name}`).not.toBeNull();
-      const value = m![1]!;
-      const parts = value.split(',');
-      // A private node's own IP + concrete ports stay in MESH_LISTEN
-      // alongside its circuit addresses (MESH_INTERFACE → NAT).
+      const line = res.stdout.split('\n').find((l) => l.startsWith(`[spawn:notis:${priv.name}]`));
+      expect(line, `[spawn:notis:${priv.name}] in dry-run`).toBeDefined();
+      const listenM = /MESH_LISTEN=([^\s]+)/.exec(line!);
+      expect(listenM, `MESH_LISTEN set on ${priv.name}`).not.toBeNull();
+      const listenParts = listenM![1]!.split(',');
       const addr = priv.host['addr'] as string;
-      expect(parts.some((p) => p === `/ip4/${addr}/udp/4001/webrtc-direct`),
+      expect(listenParts.some((p) => p === `/ip4/${addr}/udp/4001/webrtc-direct`),
         `${priv.name}: webrtc-direct listen on own IP`).toBe(true);
-      expect(parts.some((p) => p === `/ip4/${addr}/tcp/4002`),
+      expect(listenParts.some((p) => p === `/ip4/${addr}/tcp/4002`),
         `${priv.name}: tcp listen on own IP`).toBe(true);
-      // One circuit listen per public relay — specific form, not bare.
+      // No circuit listens in MESH_LISTEN — they are derived from seeds.
+      expect(listenParts.some((p) => p.includes('/p2p-circuit')),
+        `${priv.name}: MESH_LISTEN carries no /p2p-circuit (derived from seeds)`).toBe(false);
+      const bootM = /BOOTSTRAP_PEERS=([^\s]+)/.exec(line!);
+      expect(bootM, `BOOTSTRAP_PEERS set on ${priv.name}`).not.toBeNull();
+      const seeds = bootM![1]!.split(',');
       for (const { name: pubName, host: pubHost } of publics) {
         const pubAddr = (pubHost as { addr: string }).addr;
-        const pubTcp = ((pubHost as { mesh: { tcpPort: number } }).mesh.tcpPort);
-        const circuitPrefix = `/ip4/${pubAddr}/tcp/${pubTcp}/p2p/`;
-        const circuit = parts.find((p) => p.startsWith(circuitPrefix) && p.endsWith('/p2p-circuit'));
-        expect(circuit, `${priv.name}: a /p2p-circuit through ${pubName} by id`).toBeDefined();
-        // The /p2p/<id> after the prefix is a non-empty peer id string
-        // (12D3Koo… or an ephemeral in dry-run). Not an empty slot.
-        const idSection = circuit!.slice(circuitPrefix.length, -'/p2p-circuit'.length);
-        expect(idSection.length, `${priv.name}: ${pubName}'s peer id present in the circuit`).toBeGreaterThan(0);
+        const pubP2p = ((pubHost as { node: { p2pPort: number } }).node.p2pPort);
+        const prefix = `/ip4/${pubAddr}/tcp/${pubP2p}/p2p/`;
+        const seed = seeds.find((s) => s.startsWith(prefix));
+        expect(seed, `${priv.name}: a seed naming ${pubName} by peer id`).toBeDefined();
+        const idSection = seed!.slice(prefix.length);
+        expect(idSection.length, `${priv.name}: ${pubName}'s peer id present in the seed`).toBeGreaterThan(0);
       }
-      // No bare `/p2p-circuit` entry — the explicit form covers every
-      // known relay and the bare form triggers libp2p's non-deterministic
-      // discovery (`CircuitSearch` → RelayDiscovery).
-      expect(parts.some((p) => p === '/p2p-circuit'),
-        `${priv.name}: no bare /p2p-circuit (would trigger DHT discovery)`).toBe(false);
     }, 30_000);
   }
 });

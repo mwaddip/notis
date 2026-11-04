@@ -596,12 +596,11 @@ describe('stage up --dry-run', () => {
   // MESH_INTERFACE → Acceptance 8 — a node on another chain has its
   // proof read when its tip moves, with the client's own, and the
   // client's tip stays the honest chain's / MINING_INTERFACE → "The
-  // peer-readiness gate" — the hostile fork pair grows a chain of its
-  // own from genesis: each pair host names
-  // the partner ALONE in `BOOTSTRAP_PEERS` (no pub1), so the pair
-  // never dials an honest node and never sees the honest chain's
-  // blocks. Every other node's `BOOTSTRAP_PEERS` carries pub1 alone.
-  it("the pair hostiles' Notis BOOTSTRAP_PEERS names the partner alone (no pub1); every other Notis BOOTSTRAP_PEERS carries pub1 alone", () => {
+  // peer-readiness gate" — the hostile fork pair grows a chain of
+  // its own from genesis: each pair host names the partner ALONE in
+  // `BOOTSTRAP_PEERS` (no pub1), so the pair never dials an honest
+  // node and never sees the honest chain's blocks.
+  it("the pair hostiles' Notis BOOTSTRAP_PEERS names the partner alone (no pub1)", () => {
     runDryOnce();
     const spawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:notis:'));
     expect(spawnLines.length, 'at least one notis spawn').toBeGreaterThan(0);
@@ -609,51 +608,14 @@ describe('stage up --dry-run', () => {
       'hostile-lagging': '/ip4/11.100.0.31/tcp/9100',
       'hostile-malformed': '/ip4/11.100.0.33/tcp/9100',
     };
-    for (const line of spawnLines) {
-      const n = /\[spawn:notis:([^\]]+)\]/.exec(line);
-      expect(n, line).not.toBeNull();
-      const name = n![1]!;
-      const m = /BOOTSTRAP_PEERS=([^\s]+)/.exec(line);
+    for (const name of Object.keys(pairAddrs)) {
+      const line = spawnLines.find((l) => l.startsWith(`[spawn:notis:${name}]`));
+      expect(line, `pair notis spawn: ${name}`).toBeDefined();
+      const m = /BOOTSTRAP_PEERS=([^\s]+)/.exec(line!);
       expect(m, `BOOTSTRAP_PEERS present on ${name}`).not.toBeNull();
       const value = m![1]!;
-      if (Object.hasOwn(pairAddrs, name)) {
-        const partner = pairAddrs[name]!;
-        expect(value, `${name} names the partner alone`).toBe(partner);
-        expect(value, `${name} does NOT name pub1`).not.toContain('/ip4/11.100.0.11/');
-      } else {
-        expect(value, `${name} names pub1 alone`).toBe('/ip4/11.100.0.11/tcp/9100');
-      }
-    }
-  }, 30_000);
-
-  // MESH_INTERFACE → Block gossip → "A mesh service is a gossip peer
-  // of its own node" — the pair hostiles are the exception: their
-  // mesh services carry NO `MESH_NODE_P2P`, so block gossip on the
-  // ordering-block topic never carries the pair's own chain to the
-  // browser (or, through the honest hosts' mesh services, onto the
-  // honest network). Every other mesh service names its node's p2p
-  // addr.
-  it("the pair hostiles' mesh env carries NO MESH_NODE_P2P; every other mesh env names its node's p2p addr", () => {
-    runDryOnce();
-    const meshLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
-    expect(meshLines.length, 'at least one mesh spawn').toBeGreaterThan(0);
-    const pairHosts = new Set(['hostile-lagging', 'hostile-malformed']);
-    for (const line of meshLines) {
-      const n = /\[spawn:mesh:([^\]]+)\]/.exec(line);
-      expect(n, line).not.toBeNull();
-      const name = n![1]!;
-      if (pairHosts.has(name)) {
-        expect(line, `${name}: no MESH_NODE_P2P`).not.toMatch(/\bMESH_NODE_P2P=/);
-      } else {
-        // Only hosts with their own `node` config carry MESH_NODE_P2P
-        // in up.mjs; a mesh service without a node (pebble has one
-        // but no mesh) is not in this listing to begin with. Hosts
-        // whose `node` is present pass this assertion.
-        // The current topology gives every mesh host (other than the
-        // pair) its own node, so every non-pair mesh spawn carries
-        // the env.
-        expect(line, `${name}: has MESH_NODE_P2P`).toMatch(/\bMESH_NODE_P2P=\/ip4\/\d/);
-      }
+      expect(value, `${name} names the partner alone`).toBe(pairAddrs[name]);
+      expect(value, `${name} does NOT name pub1`).not.toContain('/ip4/11.100.0.11/');
     }
   }, 30_000);
 
@@ -696,33 +658,6 @@ describe('stage up --dry-run', () => {
       expect(inDropIdx, `${host}: in-drop present`).toBeGreaterThanOrEqual(0);
       expect(outAcceptIdx, `${host}: out-accept before out-drop`).toBeLessThan(outDropIdx);
       expect(inAcceptIdx, `${host}: in-accept before in-drop`).toBeLessThan(inDropIdx);
-    }
-  }, 30_000);
-
-  // MESH_INTERFACE → Acceptance — the lag cut only after the height wait, so
-  // `hostile-lagging` is behind from a synced start, not from a slow sync
-  // that may still be running.
-  // MESH_INTERFACE → Discovery / Transports — a mesh node bootstraps from
-  // other MESH nodes' addresses, not the Notis p2p port. The TCP mesh
-  // port is in the topology; the `/p2p/<peer id>` tail is derived from
-  // the public mesh node's notisId. A bootstrap address with no `/p2p/`
-  // component is refused at the door (`bootstrap address refused:
-  // /ip4/10.100.0.11/tcp/9100 has no /p2p/ component`).
-  it('every mesh spawn\'s MESH_BOOTSTRAP names a mesh port with a /p2p/ id, not the Notis p2p port', () => {
-    runDryOnce();
-    const meshSpawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
-    expect(meshSpawnLines.length, 'at least one mesh spawn').toBeGreaterThan(0);
-    for (const line of meshSpawnLines) {
-      const m = /MESH_BOOTSTRAP=([^\s]+)/.exec(line);
-      expect(m, `MESH_BOOTSTRAP is set on ${line.slice(0, 80)}...`).not.toBeNull();
-      const value = m![1]!;
-      // Each comma-separated address must carry /p2p/<id>.
-      const addrs = value.split(',');
-      expect(addrs.length, `at least one bootstrap address: ${value}`).toBeGreaterThan(0);
-      for (const addr of addrs) {
-        expect(addr, `each bootstrap carries /p2p/: ${addr}`).toMatch(/\/p2p\/[A-Za-z0-9]+$/);
-        expect(addr, `no Notis p2p port in bootstrap: ${addr}`).not.toMatch(/\/tcp\/9100\b/);
-      }
     }
   }, 30_000);
 
@@ -810,24 +745,29 @@ describe('stage up --dry-run', () => {
     expect(steadyIdx, 'steady miner at a lower duty follows the height wait').toBeGreaterThan(waitIdx);
   }, 30_000);
 
-  // MESH_INTERFACE → Acceptance — each hostile host runs its own Notis
-  // node (as `hostile-lagging` does); the hostile upstream forwards to
-  // that node on 127.0.0.1 inside its namespace, never to pub1's remote
-  // HTTP (pub1 binds its namespace loopback alone). Scenario 6 reads
-  // what the hostile upstreams answer; a hostile upstream pointed at a
-  // host that is not reachable would die without printing.
-  it('every hostile host carries its own Notis node and its hostile upstream points at loopback', () => {
+  // MESH_INTERFACE → Acceptance — "a hostile host's lie outside the node
+  // it runs". Each hostile-upstream host runs its own Notis node; the
+  // interposer forwards to that node at the namespace's own address, not
+  // loopback — the `ip daddr 127.0.0.1` redirect rule the node's mesh
+  // endpoint lands on is scoped to loopback, so the interposer reaching
+  // the node at `<host.addr>` is free of it.
+  it("every hostile-upstream host carries its own Notis node; its interposer forwards to the node at the namespace's own address", () => {
     runDryOnce();
-    for (const host of ['hostile-malformed', 'hostile-invalid']) {
+    const hostAddrs: Record<string, string> = {
+      'hostile-malformed': '11.100.0.31',
+      'hostile-invalid': '11.100.0.32',
+    };
+    for (const host of Object.keys(hostAddrs)) {
       const notisSpawn = out.split('\n').find((l) => l.startsWith(`[spawn:notis:${host}]`));
       expect(notisSpawn, `[spawn:notis:${host}] is in the dry-run`).toBeDefined();
       expect(notisSpawn, `${host}'s Notis node runs inside its own namespace`).toContain(`ip netns exec notismesh-${host}`);
       const hostileSpawn = out.split('\n').find((l) => l.startsWith(`[spawn:hostile-upstream:${host}]`));
       expect(hostileSpawn, `[spawn:hostile-upstream:${host}] is in the dry-run`).toBeDefined();
-      // The hostile upstream's PUB1_BASE points at the local Notis
-      // node on 127.0.0.1, not pub1's remote address.
-      expect(hostileSpawn, `${host}'s hostile upstream points at 127.0.0.1`).toMatch(/PUB1_BASE=http:\/\/127\.0\.0\.1:\d+\b/);
-      expect(hostileSpawn, `${host}'s hostile upstream does not point at 10.100.0.11`).not.toMatch(/PUB1_BASE=http:\/\/10\.100\.0\.11\b/);
+      const addr = hostAddrs[host]!;
+      expect(hostileSpawn, `${host}'s interposer forwards to the ns address`).toMatch(
+        new RegExp(`PUB1_BASE=http://${addr.replace(/\./g, '\\.')}:\\d+\\b`),
+      );
+      expect(hostileSpawn, `${host}'s interposer does not forward to loopback`).not.toMatch(/PUB1_BASE=http:\/\/127\.0\.0\.1\b/);
     }
   }, 30_000);
 
@@ -1156,7 +1096,7 @@ describe('stage up --dry-run — one node per host, no mesh service', () => {
   // the mesh service's spawn line is retired because the node is the mesh
   // node. A `[spawn:mesh:*]` line means phase 7 still runs the separate
   // service.
-  it.fails('no [spawn:mesh:*] line appears — the mesh service collapses into the node', () => {
+  it('no [spawn:mesh:*] line appears — the mesh service collapses into the node', () => {
     runDryOnce();
     // Control: the dry-run produced output and at least one notis spawn.
     expect(out.length, 'stdout non-empty (control)').toBeGreaterThan(0);
@@ -1171,7 +1111,7 @@ describe('stage up --dry-run — one node per host, no mesh service', () => {
   // unset, the node runs no mesh". The node reads the mesh listens and the
   // STUN setting from its own `MESH_*` env, and the stage maps each public
   // host's listen set accordingly.
-  it.fails('a notis spawn on a mesh-public host carries MESH_ROLE=public and the mapped MESH_LISTEN', () => {
+  it('a notis spawn on a mesh-public host carries MESH_ROLE=public and the mapped MESH_LISTEN', () => {
     runDryOnce();
     const pub1Line = out.split('\n').find((l) => l.startsWith('[spawn:notis:pub1]'));
     expect(pub1Line, 'pub1 notis spawn line (control)').toBeDefined();
@@ -1190,7 +1130,7 @@ describe('stage up --dry-run — one node per host, no mesh service', () => {
   // listens come from the connection `net` holds to each seed, not from
   // `MESH_LISTEN`. Phase 7 names both publics with their `/p2p/<peerId>`
   // trailers so the seed table carries ids `net` can dial.
-  it.fails('BOOTSTRAP_PEERS on a non-pair notis spawn names both publics with /p2p/<peerId>', () => {
+  it('BOOTSTRAP_PEERS on a non-pair notis spawn names both publics with /p2p/<peerId>', () => {
     runDryOnce();
     const priv1Line = out.split('\n').find((l) => l.startsWith('[spawn:notis:priv1]'));
     expect(priv1Line, 'priv1 notis spawn line (control)').toBeDefined();
@@ -1212,7 +1152,7 @@ describe('stage up --dry-run — one node per host, no mesh service', () => {
   // `127.0.0.1:<nodePort>` to the interposer's port, so the node's own
   // mesh endpoint forward (to `http://127.0.0.1:<PORT>`) reaches the
   // interposer. The rule goes in BEFORE the node starts.
-  it.fails('each hostile-upstream host carries an nft redirect rule before its notis spawn', () => {
+  it('each hostile-upstream host carries an nft redirect rule before its notis spawn', () => {
     runDryOnce();
     const lines = out.split('\n');
     // Control: the dry-run names the hostile-malformed host.

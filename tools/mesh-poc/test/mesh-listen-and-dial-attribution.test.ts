@@ -57,18 +57,21 @@ describe('every mesh host listens on its own segment IP with concrete ports', ()
     }
   });
 
-  it('stage:up --dry-run: every mesh spawn\'s MESH_LISTEN names the host\'s own IP, never 127.0.0.1 or port 0', () => {
+  it('stage:up --dry-run: every notis spawn with MESH_LISTEN names the host\'s own IP, never 127.0.0.1 or port 0', () => {
     const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
       encoding: 'utf8', timeout: 30_000,
     });
     expect(res.status, `exit (stderr: ${res.stderr})`).toBe(0);
     const topology = readTopology(TOPOLOGY_PATH);
-    const meshSpawns = res.stdout.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
-    expect(meshSpawns.length, 'at least one [spawn:mesh:] in dry-run').toBeGreaterThan(0);
+    // One node per host now: the node reads the `MESH_*` settings the
+    // mesh service used to. The check runs on every `[spawn:notis:*]`
+    // line that carries `MESH_LISTEN` — the mesh hosts' notis spawns.
+    const notisSpawns = res.stdout.split('\n').filter((l) => l.startsWith('[spawn:notis:') && /\bMESH_LISTEN=/.test(l));
+    expect(notisSpawns.length, 'at least one notis spawn with MESH_LISTEN').toBeGreaterThan(0);
     const bad: string[] = [];
-    for (const line of meshSpawns) {
-      const nameM = /^\[spawn:mesh:([^\]]+)\]/.exec(line);
-      expect(nameM, `[spawn:mesh:*] carries a host name: ${line}`).not.toBeNull();
+    for (const line of notisSpawns) {
+      const nameM = /^\[spawn:notis:([^\]]+)\]/.exec(line);
+      expect(nameM, `[spawn:notis:*] carries a host name: ${line}`).not.toBeNull();
       const host = topology.hosts[nameM![1]!];
       expect(host, `topology holds ${nameM![1]}`).toBeDefined();
       const addr = host.addr as string;
