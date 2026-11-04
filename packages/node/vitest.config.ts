@@ -15,12 +15,12 @@ export default mergeConfig(
       // `@libp2p/webrtc@7.0.2` binds `node-datachannel` on Node, whose
       // native callbacks crash with `v8::HandleScope::CreateHandle`
       // when more than one worker thread holds a live
-      // `RTCPeerConnection` in the same process: the mesh-endpoint
-      // test builds the transport, so the whole suite runs in the
-      // forks pool — each test file in its own child process, as
-      // packages/net does (`NET_INTERFACE → The browser entry`). The
-      // isolation costs a few seconds of total run time.
-      pool: 'forks',
+      // `RTCPeerConnection` in the same process. The mesh-endpoint test
+      // is the one node test file that builds the transport, so it alone
+      // runs in the forks pool — its own child process, as
+      // packages/net does (`NET_INTERFACE → The browser entry`); every
+      // other file runs in the default pool.
+      poolMatchGlobs: [['**/mesh-endpoint.test.ts', 'forks']],
       // Block-application suites mine real PoW solutions (the powTargetBits
       // schedule is enforced at apply, so fixtures cannot fake it) and are
       // compute-bound by design. Under a full-repo parallel run the 5s
