@@ -724,6 +724,94 @@ describe('stage up --dry-run', () => {
     expect(laggingSteadyIdx, 'miner-lagging at 1 % follows the pair height wait').toBeGreaterThan(pairWaitIdx);
   }, 30_000);
 
+  // MESH_INTERFACE → NAT → "A public node announces its listen addresses
+  // from the start" / MINING_INTERFACE → The peer-readiness gate — a node
+  // that seeds from another dials its seed on boot; a dial on a listener
+  // that is not up yet lands on `ECONNREFUSED`, and `net` redials a seed
+  // only at its next outbound tick, 30 s on, after a 60 s cooldown. So
+  // phase 7 starts each seed before the nodes that seed from it: pub1
+  // and pub2 before every non-pair node (`BOOTSTRAP_PEERS` names the
+  // publics), with each public's identity line awaited between.
+  it("phase 7 starts pub1 and pub2 before the nodes that seed from them, with the identity wait between", () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const spawnIdxOf = (name: string): number => lines.findIndex((l) => l.startsWith(`[spawn:notis:${name}]`));
+    const pub1Idx = spawnIdxOf('pub1');
+    const pub2Idx = spawnIdxOf('pub2');
+    expect(pub1Idx, 'pub1 notis spawn is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(pub2Idx, 'pub2 notis spawn is in the dry-run').toBeGreaterThanOrEqual(0);
+    // The ordered identity waits sit between consecutive serial spawns —
+    // `pub1` reads its identity line before `pub2` is started, and `pub2`
+    // reads its identity line before any non-pair seed-from-publics host.
+    const pub1WaitIdx = lines.findIndex(
+      (l, i) => i > pub1Idx && l.startsWith('[wait]') && /\bpub1\b.*identity line/.test(l),
+    );
+    const pub2WaitIdx = lines.findIndex(
+      (l, i) => i > pub2Idx && l.startsWith('[wait]') && /\bpub2\b.*identity line/.test(l),
+    );
+    expect(pub1WaitIdx, 'pub1 identity wait sits between pub1 and pub2').toBeGreaterThan(pub1Idx);
+    expect(pub1WaitIdx, 'pub1 identity wait precedes pub2 spawn').toBeLessThan(pub2Idx);
+    expect(pub2WaitIdx, 'pub2 identity wait follows pub2 spawn').toBeGreaterThan(pub2Idx);
+    // Every non-pair, seed-from-publics host spawns AFTER both publics.
+    for (const name of ['hostile-invalid', 'hostile-publisher', 'priv1', 'priv2', 'lan1']) {
+      const idx = spawnIdxOf(name);
+      expect(idx, `${name} notis spawn is in the dry-run`).toBeGreaterThanOrEqual(0);
+      expect(idx, `${name} spawns after pub1`).toBeGreaterThan(pub1Idx);
+      expect(idx, `${name} spawns after pub2`).toBeGreaterThan(pub2Idx);
+      expect(idx, `${name} spawns after pub2's identity wait`).toBeGreaterThan(pub2WaitIdx);
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance 8 — the hostile fork pair seeds each
+  // other (`BOOTSTRAP_PEERS` names the partner alone), so one has to be
+  // listening before the other dials it. MINING_INTERFACE → The
+  // peer-readiness gate — `hostile-lagging`'s miner only produces
+  // templates when the node holds at least one Active peer. Start
+  // `hostile-malformed` first (no miner, boots quickly and listens);
+  // `hostile-lagging` second, so its miner finds an Active peer at
+  // once instead of waiting out `net`'s 60 s dial cooldown.
+  it("the hostile pair starts hostile-malformed before hostile-lagging, with the identity wait between", () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const malformedIdx = lines.findIndex((l) => l.startsWith('[spawn:notis:hostile-malformed]'));
+    const laggingIdx = lines.findIndex((l) => l.startsWith('[spawn:notis:hostile-lagging]'));
+    expect(malformedIdx, 'hostile-malformed notis spawn is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(laggingIdx, 'hostile-lagging notis spawn is in the dry-run').toBeGreaterThanOrEqual(0);
+    expect(malformedIdx, 'hostile-malformed starts before hostile-lagging').toBeLessThan(laggingIdx);
+    const malformedWaitIdx = lines.findIndex(
+      (l, i) => i > malformedIdx && l.startsWith('[wait]') && /hostile-malformed.*identity line/.test(l),
+    );
+    expect(malformedWaitIdx, 'hostile-malformed identity wait sits between pair hosts').toBeGreaterThan(malformedIdx);
+    expect(malformedWaitIdx, 'hostile-malformed identity wait precedes hostile-lagging spawn').toBeLessThan(laggingIdx);
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance 6 — a later phase or step reads a chain
+  // from every honest node AND from each hostile-upstream host (the
+  // interposer reads its own node's `/nipopow/proof/*` and
+  // `/blocks/current`). The height gate has to hold the whole set, each
+  // on its own chain: `hostile-invalid` on the honest chain (its
+  // `BOOTSTRAP_PEERS` names the publics); `hostile-malformed` on the
+  // pair chain (`BOOTSTRAP_PEERS` names `hostile-lagging` alone, the
+  // pair runs its own chain from genesis). Without them, the live
+  // check in phase 9 lands on a host whose `/blocks/current` the gate
+  // never confirmed — the shape that read `hostile-upstream:hostile-invalid
+  // did not answer http://127.0.0.1:7000/nipopow/proof/24/20` in the
+  // 2026-11-04 stage.
+  it("the height gate names hostile-invalid on the honest chain and hostile-malformed on the pair chain", () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    const honestWait = lines.find((l) => l.startsWith('[wait] every honest node reads /blocks/current.height'));
+    const pairWait = lines.find((l) => l.startsWith("[wait] the pair's node reads /blocks/current.height"));
+    expect(honestWait, 'honest height wait is in the dry-run').toBeDefined();
+    expect(pairWait, 'pair height wait is in the dry-run').toBeDefined();
+    expect(honestWait!, 'honest height wait names hostile-invalid').toMatch(/\bhostile-invalid\b/);
+    for (const name of ['pub1', 'pub2', 'priv1', 'priv2', 'lan1']) {
+      expect(honestWait!, `honest height wait names ${name}`).toMatch(new RegExp(`\\b${name}\\b`));
+    }
+    expect(pairWait!, 'pair height wait names hostile-lagging').toMatch(/\bhostile-lagging\b/);
+    expect(pairWait!, 'pair height wait names hostile-malformed').toMatch(/\bhostile-malformed\b/);
+  }, 30_000);
+
   // MESH_INTERFACE → Acceptance — a sustained 100 % duty on `pub1`'s
   // miner burns a core for every minute the stage is up. After the
   // height wait, the miner is restarted at a gentle duty so the chain

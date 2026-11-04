@@ -807,8 +807,7 @@ if (laggingHostCfg && malformedHostCfg) {
 // `@dagsocial/net`'s pieces, publishing bad blocks on the gossip topic),
 // so the publisher host's Notis node runs with no `MESH_*` env and the
 // publisher's identity comes from `hostile-gossip.mjs` instead.
-for (const [name, host] of Object.entries(topology.hosts)) {
-  if (host.node === undefined) continue;
+function spawnNotisForHost(name, host) {
   const ns = nsOf(name);
   const dbPath = join(OUT_DIR, name, 'notis.db');
   const nodeKeyPath = join(OUT_DIR, name, 'node.key');
@@ -844,7 +843,7 @@ for (const [name, host] of Object.entries(topology.hosts)) {
     MINING_SECRET: 'stage-mining-secret',
   };
 
-  // MESH_INTERFACE → NAT — "A public node announces its listen addresses
+  // MESH_INTERFACE → NAT → "A public node announces its listen addresses
   // from the start" with concrete-port WebRTC-direct and TCP addresses on
   // its own IP; a private node listens on its own IP with the same shape,
   // and its circuit listens are derived by `net` from the connection it
@@ -890,13 +889,13 @@ for (const [name, host] of Object.entries(topology.hosts)) {
   const child = log.spawn(userWrap(ns, notisEnv).concat([notisNodeEntry]), { description: `notis:${name}`, logPath: notisLogPath });
 
   if (isMeshHost && !dryRun) {
-    // The node writes one JSON identity line once its addresses are
-    // announced (NODE_INTERFACE → Configuration → "A mesh node prints
-    // its identity line"), and again on every change. The predicate
-    // picks the first line that matches the role: any identity for
-    // public, one whose `multiaddrs` carries `/p2p-circuit/webrtc/p2p/`
-    // for private (so the stage's `identities.json` names an address a
-    // browser can dial).
+    // NODE_INTERFACE → "A mesh node prints its identity line" —
+    // the node writes one JSON identity line once its addresses are
+    // announced, and again on every change. The predicate picks the
+    // first line that matches the role: any identity for public, one
+    // whose `multiaddrs` carries `/p2p-circuit/webrtc/p2p/` for private
+    // (so the stage's `identities.json` names an address a browser can
+    // dial).
     const predicate = identityPredicateForMeshRole(host.mesh.role);
     const identityTimeoutMs = host.mesh.role === 'private' ? 120_000 : 60_000;
     meshIdentityPromises[name] = readMeshIdentityUntil(child, notisLogPath, predicate, { timeoutMs: identityTimeoutMs })
@@ -906,6 +905,44 @@ for (const [name, host] of Object.entries(topology.hosts)) {
         throw new Error(`notis:${name} identity line not read: ${err.message}\n--- last 20 lines of ${notisLogPath} ---\n${body}`);
       });
   }
+}
+
+// MESH_INTERFACE → NAT → "A public node announces its listen addresses
+// from the start" / MINING_INTERFACE → The peer-readiness gate — a node
+// that seeds from another dials its seed on boot. A dial on a listener
+// that is not up yet lands on `ECONNREFUSED`, and `net` redials a seed
+// only at its next outbound tick, 30 s on, after a 60 s cooldown. The
+// ordered spawn below starts each seed before the nodes that seed from
+// it, with the seed's identity line awaited between so the dependent
+// dials a listener that is live.
+//
+// - pub1 and pub2 are each other's seed; start pub1, await its identity,
+//   then pub2 — pub2 dials pub1 on boot and connects at once, pub1 picks
+//   up pub2 on its own retry cadence.
+// - MESH_INTERFACE → Acceptance 8 / MINING_INTERFACE → The peer-readiness
+//   gate — the hostile fork pair's hosts seed each other alone. Start
+//   `hostile-malformed` first: it carries no miner so it boots quickly;
+//   `hostile-lagging` second, so its miner finds an Active peer at once
+//   instead of waiting out the dial cooldown with no template produced.
+const serialNotisOrder = ['pub1', 'pub2', 'hostile-malformed', 'hostile-lagging'];
+const meshIdentities = {};
+for (const name of serialNotisOrder) {
+  const host = topology.hosts[name];
+  if (host === undefined || host.node === undefined) continue;
+  spawnNotisForHost(name, host);
+  recordWait(`${name} prints its identity line (notisId, peerId, multiaddrs)`);
+  if (!dryRun && meshIdentityPromises[name] !== undefined) {
+    meshIdentities[name] = await meshIdentityPromises[name];
+  }
+}
+
+// Every remaining node seeds from the publics (or carries no MESH_* env
+// at all, the publisher host's Notis node); the publics are now up, so
+// their spawns dial a listener that is live.
+for (const [name, host] of Object.entries(topology.hosts)) {
+  if (host.node === undefined) continue;
+  if (serialNotisOrder.includes(name)) continue;
+  spawnNotisForHost(name, host);
 }
 
 // MESH_INTERFACE → Acceptance 6 → "A mesh node publishing a block that
@@ -966,7 +1003,6 @@ async function awaitMeshIdentities(whichRole) {
 }
 
 recordWait('each public mesh node prints its identity line (notisId, peerId, multiaddrs with /certhash/)');
-let meshIdentities = {};
 if (!dryRun) {
   Object.assign(meshIdentities, await awaitMeshIdentities('public'));
 }
@@ -1011,18 +1047,36 @@ const minerLaggingBootChild = laggingHostCfg !== undefined
     }).concat([minerScript]), { description: 'miner-lagging-boot', logPath: logPathFor('miner-lagging-boot') })
   : null;
 
+// MESH_INTERFACE → Acceptance 6 — a later phase or step reads a chain
+// from every honest node AND from each hostile-upstream host (the
+// interposer reads its own node's `/nipopow/proof/*` and
+// `/blocks/current`, forwarding every other route; the pair miner is
+// read through `hostile-malformed` too, since it rides the pair chain
+// from genesis). The gate holds every host on its own chain:
+//   - honest: pub1, pub2, priv1, priv2, lan1 — their `BOOTSTRAP_PEERS`
+//     names the publics, so they grow the honest chain;
+//   - honest via its own interposer: hostile-invalid — the node runs
+//     honest, seeding from the publics; its interposer rewrites only
+//     the two mesh routes;
+//   - pair: hostile-lagging (the miner) and hostile-malformed (its
+//     partner) — each names the other alone in `BOOTSTRAP_PEERS`
+//     (`hostile-fork-pair.mjs`), so the pair runs its own chain from
+//     genesis.
 const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2', 'lan1'];
+if (topology.hosts['hostile-invalid']?.node !== undefined) honestHeightTargetHost.push('hostile-invalid');
 const pairHeightTargetHost = laggingHostCfg !== undefined ? ['hostile-lagging'] : [];
+if (laggingHostCfg !== undefined && malformedHostCfg !== undefined) pairHeightTargetHost.push('hostile-malformed');
 recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
 if (pairHeightTargetHost.length > 0) {
   recordWait(`the pair's node reads /blocks/current.height >= 50: ${pairHeightTargetHost.join(', ')}`);
 }
 if (!dryRun) {
-  // Each honest node is polled inside its own namespace as the user —
-  // the host has no route into the stage, and the user has no privilege
-  // beyond what `ip netns exec` grants in that namespace. The pair's
-  // own chain is polled alongside: hostile-lagging reads its own
-  // chain's height, which the pair miner is pushing in parallel.
+  // Each node is polled inside its own namespace as the user. The URL
+  // reads `http://<host.addr>:<port>` rather than `http://127.0.0.1`
+  // so the hostile-upstream hosts' `ip daddr 127.0.0.1 ... redirect to
+  // :7000` rule does not intercept the poll — the gate confirms each
+  // node's own `/blocks/current`, not the interposer's `LIE_HASH`
+  // reply (`hostile-upstream.mjs` → `blocksCurrentBody`).
   const HEIGHT_TARGET = 50;
   await Promise.all([...honestHeightTargetHost, ...pairHeightTargetHost].map(async (name) => {
     const host = topology.hosts[name];
@@ -1033,7 +1087,7 @@ if (!dryRun) {
       async () => {
         const stdout = execIn(nsOf(name), [
           'curl', '-sf', '--max-time', '5',
-          `http://127.0.0.1:${port}/blocks/current`,
+          `http://${host.addr}:${port}/blocks/current`,
         ], { timeoutMs: 8_000 });
         const data = JSON.parse(stdout);
         if (typeof data.height !== 'number') return false;
