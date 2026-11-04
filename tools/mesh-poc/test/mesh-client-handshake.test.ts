@@ -248,4 +248,50 @@ describe('mesh-client — the reader handshake', () => {
     // at least STALL_MS less a safety margin for a TOCTOU in timing.
     expect(firstReq - startMs, 'first read waited for the handshake').toBeGreaterThanOrEqual(STALL_MS - 50);
   }, 60_000);
+
+  // MESH_INTERFACE → The client's node list → "A check" — "timed from
+  // the request to the end of the body", so a `readMs` holds the time
+  // of the request alone. The connection's handshake is the
+  // connection's, not the read's: a stalling handshake (300 ms) on top
+  // of an instant tip response records a `readMs` well under the
+  // stall.
+  it('readMs holds the request alone, not the handshake wait', async () => {
+    const upstreamSrv = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ height: 0, hash: null }));
+    });
+    await new Promise<void>((resolve) => upstreamSrv.listen(0, '127.0.0.1', resolve));
+    stubs.push({ srv: upstreamSrv });
+    const port = (upstreamSrv.address() as AddressInfo).port;
+    const upstreamBase = `http://127.0.0.1:${port}`;
+    const dir = mkdtempSync(join(tmpdir(), 'hs-readms-')); dirs.push(dir);
+    const n = await startNetPublicMesh({ upstream: upstreamBase, stateDir: dir }); nodes.push(n.node);
+
+    const STALL_MS = 300;
+    await overrideHandshake(n, {
+      capabilities: NODE_CAPABILITIES,
+      stallMs: STALL_MS,
+      agentName: 'stalling-responder-for-readms',
+    });
+
+    const client = await startMeshClient({
+      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      resolve: chainResolve(() => CHAIN, K),
+    });
+    clients.push(client);
+
+    await client.check();
+    const entry = client.state().nodes.find((e) => e.notisId === n.id);
+    expect(entry, 'anchor entry exists').toBeTruthy();
+    expect(entry!.readMs, 'readMs is set').not.toBeNull();
+    // The upstream answers at once; the handshake stalls 300 ms. The
+    // recorded speed must be the request's own, not the connection's
+    // wait, so it is well under the stall.
+    expect(
+      entry!.readMs!,
+      `readMs ${entry!.readMs} ms must be well under the ${STALL_MS} ms handshake stall`,
+    ).toBeLessThan(STALL_MS - 100);
+  }, 60_000);
 });

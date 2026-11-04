@@ -1492,7 +1492,6 @@ class MeshClientImpl implements MeshClient {
    */
   private makeTimedFetch(target: Map<string, number>): HttpFetch {
     return async (url, init) => {
-      const startMs = this.clock();
       // The URL is a `meshBaseUrl(id)` + path — `idOfMeshUrl` and
       // `pathOfMeshUrl` throwing here is a bug upstream, so the throw
       // propagates.
@@ -1507,6 +1506,13 @@ class MeshClientImpl implements MeshClient {
         this.state_.traffic.proofReads += 1;
       }
       const recordReadMs = path === '/blocks/current';
+      // MESH_INTERFACE → The client's node list → "A check" — "timed
+      // from the request to the end of the body". The connection's
+      // handshake is the connection's, not the read's, so the clock
+      // starts once it is done; the inner `this.fetch` awaits the
+      // same handshake, resolved at once here.
+      await this.awaitHandshakeForNode(id);
+      const startMs = this.clock();
       const response = await this.fetch(url, init);
       if (!response.body) {
         if (recordReadMs) target.set(id, this.clock() - startMs);
