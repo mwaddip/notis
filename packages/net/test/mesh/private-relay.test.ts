@@ -114,7 +114,7 @@ describe('a private NetNode with an unreachable seed starts, then reserves once 
     nodes = []; toStop = []; dirs = [];
   });
 
-  it.fails('starts at once with an ECONNREFUSED seed, reserves once the seed answers', async () => {
+  it('starts at once with an ECONNREFUSED seed, reserves once the seed answers', async () => {
     // Pick a port the relay will later bind. Until it does, every
     // dial to that port reads ECONNREFUSED.
     const relayPort = await freePort();
@@ -168,7 +168,7 @@ describe('a private NetNode with an unreachable seed starts, then reserves once 
     ).toBe(true);
   }, 30_000);
 
-  it.fails('a stalled second relay never stops the node; the working one lands', async () => {
+  it('a stalled second relay never stops the node; the working one lands', async () => {
     // Working relay — speaks HOP.
     const workingKey = await libp2pGenerate('Ed25519');
     const workingPeer = peerIdFromPrivateKey(workingKey);

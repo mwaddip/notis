@@ -133,7 +133,7 @@ describe('mesh — a private NetNode', () => {
   // bootstrap address is a plain TCP multiaddr with `/p2p/<peer>`; the
   // private node reserves on each through the TCP connection the
   // outbound floor opened.
-  it.fails('reserves on its TCP seed and the reservation rides the floor-opened TCP connection', async () => {
+  it('reserves on its TCP seed and the reservation rides the floor-opened TCP connection', async () => {
     // A plain libp2p circuit-relay server on loopback TCP — the
     // minimal shape of a public mesh node's relay surface.
     const relayKey = await libp2pGenerate('Ed25519');
@@ -189,7 +189,7 @@ describe('mesh — a private NetNode', () => {
   // own (for the local-address path, `→ Discovery → "A node added by
   // hand"`), `getMultiaddrs()` carries circuit entries alone — every
   // address names `/p2p-circuit`.
-  it.fails('a private node announces its relay reservations alone (announceFilter)', async () => {
+  it('a private node announces its relay reservations alone (announceFilter)', async () => {
     const relayKey = await libp2pGenerate('Ed25519');
     const relayPeer = peerIdFromPrivateKey(relayKey);
     const relay = await createLibp2p({

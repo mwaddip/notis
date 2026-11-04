@@ -100,6 +100,8 @@ import {
   meshWebRTCDirectTransport,
   privateAnnounceFilter,
 } from './mesh/libp2p-options.js';
+import { startRelayRetry, type RelayRetry } from './mesh/relay-retry.js';
+import { RETRY_BASE_MS, RETRY_CAP_MS } from './mesh/constants.js';
 import {
   notisIdFromPeerId,
   localAddrsFor,
@@ -694,6 +696,14 @@ export class NetNode {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private meshSelfPeerUpdateListener: ((ev: any) => void) | null = null;
+  /**
+   * NET_INTERFACE → The mesh — a private mesh node's relay-listen
+   * retries, one per `bootstrapPeers` entry. Started after libp2p's
+   * floor dial has opened the TCP connection to each seed, stopped
+   * before libp2p at `stop` (`MESH_INTERFACE → NAT → "A relay that
+   * does not answer never stops a private node"`).
+   */
+  private relayRetries: RelayRetry[] = [];
 
   constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
     this.config = config;
@@ -1118,6 +1128,22 @@ export class NetNode {
         await this.dialAndHandshake(addr, 'seed');
       }
 
+      // `MESH_INTERFACE → NAT → "A private node ... takes a relay
+      // reservation on each public node it is told of — its bootstrap
+      // peers, by address and id, over the connection `net` holds to
+      // each, never by searching"`. Each bootstrap peer becomes a
+      // `<entry>/p2p-circuit` listen address added after start; a
+      // reservation that cannot complete is tried again on the retry
+      // cadence. A private node with `bootstrapPeers: []` asks no
+      // relay and starts on its own addresses alone.
+      if (mesh !== undefined && mesh.role === 'private') {
+        const baseMs = mesh.relayRetryBaseMs ?? RETRY_BASE_MS;
+        const capMs = mesh.relayRetryCapMs ?? RETRY_CAP_MS;
+        for (const addr of this.config.bootstrapPeers) {
+          this.relayRetries.push(startRelayRetry(libp2p, `${addr}/p2p-circuit`, { baseMs, capMs }));
+        }
+      }
+
       // Start periodic timer: outbound manager + peer discovery. The sync machine
       // keeps its own tick cadence inside its event loop. A method, not an
       // inline closure, so a test can drive one tick without waiting
@@ -1135,6 +1161,8 @@ export class NetNode {
         clearInterval(this.syncTimer);
         this.syncTimer = null;
       }
+      for (const r of this.relayRetries) r.stop();
+      this.relayRetries = [];
       this.syncMachine?.stop();
       this.syncMachine = null;
       this.outboundMgr = null;
@@ -1200,10 +1228,14 @@ export class NetNode {
     this.handshakeDeadlines.clear();
     this.handshakenConnections.clear();
     this.completedConnections.clear();
-    // NET_INTERFACE → The mesh — STUN closes before libp2p's stop so a
-    // bind failure is surfaced over the libp2p teardown (`MESH_INTERFACE
-    // → NAT`); the `self:peer:update` listener is removed first so a
-    // late update never re-fires `onMeshAddresses` through this node.
+    // NET_INTERFACE → The mesh — a private node's relay-listen
+    // retries stop first, then STUN closes before libp2p's stop so a
+    // bind failure is surfaced over the libp2p teardown
+    // (`MESH_INTERFACE → NAT`); the `self:peer:update` listener is
+    // removed first so a late update never re-fires `onMeshAddresses`
+    // through this node.
+    for (const r of this.relayRetries) r.stop();
+    this.relayRetries = [];
     if (this.meshSelfPeerUpdateListener !== null) {
       this.libp2p.removeEventListener('self:peer:update', this.meshSelfPeerUpdateListener);
       this.meshSelfPeerUpdateListener = null;

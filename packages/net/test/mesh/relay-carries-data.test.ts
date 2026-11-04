@@ -193,7 +193,7 @@ describe('a public NetNode relays data from a private NetNode with no circuit li
     stateDirs.length = 0;
   });
 
-  it.fails('a private node lists a plain circuit address beside its WebRTC one', () => {
+  it('a private node lists a plain circuit address beside its WebRTC one', () => {
     const libp2p = (priv as unknown as { libp2p: Libp2p }).libp2p;
     const addrs = libp2p.getMultiaddrs().map((a) => a.toString());
     const privPeer = libp2p.peerId.toString();
@@ -210,7 +210,7 @@ describe('a public NetNode relays data from a private NetNode with no circuit li
     expect(webrtcCircuit.length, `addrs = ${addrs.join(', ')}`).toBeGreaterThan(0);
   });
 
-  it.fails('a relayed connection carries no limit', async () => {
+  it('a relayed connection carries no limit', async () => {
     const relayLibp2p = (relay as unknown as { libp2p: Libp2p }).libp2p;
     const privLibp2p = (priv as unknown as { libp2p: Libp2p }).libp2p;
     const privPeer = privLibp2p.peerId.toString();
@@ -223,7 +223,7 @@ describe('a public NetNode relays data from a private NetNode with no circuit li
     expect(conn.limits, `limits = ${JSON.stringify(conn.limits)}`).toBeUndefined();
   }, 30_000);
 
-  it.fails('a body larger than 128 KiB arrives whole over the relayed mesh endpoint', async () => {
+  it('a body larger than 128 KiB arrives whole over the relayed mesh endpoint', async () => {
     const relayLibp2p = (relay as unknown as { libp2p: Libp2p }).libp2p;
     const privLibp2p = (priv as unknown as { libp2p: Libp2p }).libp2p;
     const privPeer = privLibp2p.peerId.toString();
