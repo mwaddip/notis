@@ -41,14 +41,33 @@ import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { isNonNegSafeInt } from '@dagsocial/node-reads';
 import { isHex64 } from '@dagsocial/types';
 import type { BlockHeader } from '@dagsocial/types';
-import { blockHash } from '@dagsocial/validation';
+import {
+  blockHash,
+  verifyHeaderFieldDomains,
+  verifyProtocolVersion,
+  verifyOrderingBlockPoW,
+  verifyValidatorSignature,
+  verifyOrderingBlockStructure,
+  verifyUtxoTxRoot,
+} from '@dagsocial/validation';
+import {
+  BlockCheck,
+  type BlockVerdict,
+  gossipTopics,
+  gossipsubOptions,
+  MeshKeyError,
+  nodeKeyFromKeyPair,
+  notisIdFromPeerId,
+  peerIdFromNotisId,
+  meshBaseUrl,
+  idOfMeshUrl,
+  meshFetchOverConnection,
+  MeshFetchError,
+  dhtProtocol,
+  STUN_PORT as _STUN_PORT_UNUSED,
+} from '@dagsocial/net/browser';
 import { HeldChain, type Placement } from './held-chain.js';
 import { headerFromJson } from './header-json.js';
-import { blockTopic, gossipsubOptions } from '../gossip-rules.js';
-import { BlockCheck, type BlockVerdict } from '../block-check.js';
-import { MeshKeyError, nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../identity.js';
-import { meshBaseUrl, idOfMeshUrl } from '../mesh-url.js';
-import { meshFetchOverConnection, MeshFetchError } from '../http-fetch.js';
 import { MeshConfigError, assertNoDns } from '../config.js';
 import {
   NodeList,
@@ -61,7 +80,6 @@ import { pickServer, type ReadNeed } from './server-pick.js';
 import { agreementCounts, type AgreementCounts, type AgreementEntry } from './agreement.js';
 import { stunServersFor } from './stun-list.js';
 import {
-  dhtProtocol,
   CHECK_INTERVAL_MS,
   DIAL_TIMEOUT_MS,
   PEER_DIAL_MIN_MS,
@@ -69,6 +87,7 @@ import {
   BLOCK_READ_BYTES,
   type NetworkName,
 } from '../protocols.js';
+void _STUN_PORT_UNUSED;
 export type { ReadNeed } from './server-pick.js';
 
 /**
@@ -449,11 +468,13 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
       ping: ping(),
       dht: kadDHT({ protocol: dhtProtocol(o.network), clientMode: true }),
       // MESH_INTERFACE → Block gossip → "One router, net's rules" — the
-      // client runs gossipsub on `gossipsubOptions(magic)`, carrying
+      // client runs gossipsub on net's `gossipsubOptions`, carrying
       // net's envelope, message id and seen window. The client
-      // subscribes to `blockTopic` alone and reads nothing else off
-      // the router.
-      pubsub: gossipsub(gossipsubOptions(o.profile.magic)),
+      // subscribes to the ordering-block topic alone and reads nothing
+      // else off the router.
+      pubsub: gossipsub(
+        gossipsubOptions(o.profile.magic, [gossipTopics(o.profile.magic).orderingBlock]),
+      ),
     },
   });
 
@@ -619,15 +640,31 @@ class MeshClientImpl implements MeshClient {
     this.onConnectionOpen = (): void => this.refreshTransportPathAndEmit();
     this.onConnectionClose = (): void => this.refreshTransportPathAndEmit();
     // MESH_INTERFACE → Block gossip → "A block is checked before it is
-    // forwarded, and never applied" — the client's HeldChain answers
-    // the schedule and the standing; the clock is the monotonic one
-    // BlockCheck's own seen-accepted memory reads.
-    this.blockCheck = new BlockCheck({
-      profile: o.profile,
-      scheduledTargetBits: (h) => this.chain.scheduledTargetBits(h),
-      standing: (hash, height) => this.chain.standing(hash, height),
-      nowMs: () => this.clock(),
-    });
+    // forwarded, and never applied" — net's `BlockCheck` runs its
+    // Stage 1 checks over every gossiped block. Validators are
+    // `@dagsocial/validation`'s functions (the one copy the Node and
+    // the browser share — `ARCHITECTURE → Package boundaries`); the
+    // context reads the client's HeldChain for the schedule and the
+    // standing, and the monotonic clock for the seen-accepted memory
+    // BlockCheck holds inside the window.
+    this.blockCheck = new BlockCheck(
+      {
+        verifyHeaderFieldDomains,
+        verifyProtocolVersion,
+        verifyOrderingBlockPoW,
+        verifyValidatorSignature,
+        verifyOrderingBlockStructure,
+        verifyUtxoTxRoot,
+        blockHash,
+      },
+      {
+        schedule: o.profile.protocolVersionSchedule,
+        floorBits: o.profile.orderingBlockPowTargetFloorBits,
+        scheduledTargetBits: (h) => this.chain.scheduledTargetBits(h),
+        standing: (hash, height) => this.chain.standing(hash, height),
+        nowMs: () => this.clock(),
+      },
+    );
     this.onGossipMessage = (ev): void => this.handleGossipMessage(ev);
   }
 
@@ -671,7 +708,7 @@ class MeshClientImpl implements MeshClient {
 
   private startGossip(): void {
     const pubsub = this.getPubsub();
-    const topic = blockTopic(this.profile.magic);
+    const topic = gossipTopics(this.profile.magic).orderingBlock;
     pubsub.topicValidators.set(topic, (peer, msg) =>
       this.validateGossipMessage(peer, msg),
     );
@@ -753,7 +790,7 @@ class MeshClientImpl implements MeshClient {
     } }).detail;
     if (!detail) return;
     const msg = detail.msg;
-    const topic = blockTopic(this.profile.magic);
+    const topic = gossipTopics(this.profile.magic).orderingBlock;
     if (!msg || msg.topic !== topic) return;
     const msgId = detail.msgId;
     if (msgId === undefined) return;

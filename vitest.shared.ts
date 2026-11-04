@@ -30,6 +30,7 @@ export default defineConfig({
       '@dagsocial/validation': src('validation'),
       '@dagsocial/nipopow': src('nipopow'),
       '@dagsocial/consensus': src('consensus'),
+      '@dagsocial/net/browser': fileURLToPath(new URL('./packages/net/src/browser.ts', import.meta.url)),
       '@dagsocial/net': src('net'),
       '@dagsocial/node': src('node'),
       '@dagsocial/node-reads': src('node-reads'),

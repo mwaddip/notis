@@ -40,7 +40,7 @@ import { blockTopic } from '../src/gossip-rules.js';
 import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
 import { lieTarget, startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
-import type { BlockVerdict } from '../src/block-check.js';
+import type { BlockVerdict } from '@dagsocial/net/browser';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain, makeBlockAt } from './helpers/devnet-block.js';
 
@@ -694,8 +694,8 @@ describe('lieTarget', () => {
   const held = (set: Set<string>): ((id: string) => boolean) => (id) => set.has(id);
   const KEY = 'aa'.repeat(32);
   const UNHELD = 'bb'.repeat(32);
-  const LIE: BlockVerdict = { result: 'reject', lie: true, detail: 'bad signature' };
-  const NON_LIE: BlockVerdict = { result: 'reject', lie: false, detail: 'version mismatch' };
+  const LIE: BlockVerdict = { result: 'reject', lie: true, penalty: null, detail: 'bad signature' };
+  const NON_LIE: BlockVerdict = { result: 'reject', lie: false, penalty: null, detail: 'version mismatch' };
 
   it('a lie from a held key names the key', () => {
     expect(lieTarget(LIE, KEY, held(new Set([KEY])))).toBe(KEY);

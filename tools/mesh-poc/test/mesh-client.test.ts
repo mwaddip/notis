@@ -22,8 +22,7 @@ import { nodeKeyFromKeyPair, notisIdFromPeerId, peerIdFromNotisId } from '../src
 import { meshBaseUrl } from '../src/mesh-url.js';
 import { MeshConfigError } from '../src/config.js';
 import { assertClientConfig, cappedTimerMs, MAX_TIMER_MS, pickConnectionForRead } from '../src/client/mesh-client.js';
-import { MeshFetchError } from '../src/http-fetch.js';
-import { MeshUrlError } from '../src/mesh-url.js';
+import { MeshFetchError, MeshUrlError } from '@dagsocial/net/browser';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { multiaddr } from '@multiformats/multiaddr';
