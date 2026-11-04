@@ -31,6 +31,15 @@ const TEST_KEYS = [
   'NODE_ROLE',
   'BOOTSTRAP_PEERS',
   'NODE_KEY_PATH',
+  // NODE_INTERFACE → Configuration — the `MESH_*` rows.
+  'MESH_ROLE',
+  'MESH_LISTEN',
+  'MESH_ANNOUNCE',
+  'MESH_STUN',
+  'MESH_STUN_SERVERS',
+  'MESH_WSS',
+  'MESH_ACME_DIRECTORY',
+  'MESH_ACME_CHALLENGE_PORT',
   // Dead: consensus values are selected by NETWORK_TYPE, never set
   // individually. Section 7 sets these to prove they are ignored.
   //
@@ -1174,6 +1183,259 @@ describe('config', () => {
         process.env['NODE_KEY_PATH'] = '';
         await expect(import('../src/config.js')).rejects.toThrow(/NODE_KEY_PATH/);
       });
+    });
+  });
+
+  // NODE_INTERFACE → Configuration — the `MESH_*` rows. The node refuses
+  // at load what it can see at load; `net`'s own refusals at `start`
+  // stand behind these (`net`'s strict IP-literal check on
+  // `MESH_STUN`/`MESH_WSS` and the `stun:<ip>:<port>` shape on
+  // `MESH_STUN_SERVERS` is `MeshConfigError` at start).
+  describe('19. MESH_* settings', () => {
+    it('no MESH_ROLE → mesh: null', async () => {
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      expect((cfg as unknown as Record<string, unknown>)['mesh']).toBeNull();
+    });
+
+    it('MESH_ROLE=public with a /webrtc-direct listen admits', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['role']).toBe('public');
+      expect(mesh['listen']).toEqual(['/ip4/0.0.0.0/udp/0/webrtc-direct']);
+    });
+
+    it('MESH_ROLE=public with no /webrtc-direct in MESH_LISTEN is refused naming MESH_LISTEN', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/tcp/0';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_LISTEN/);
+    });
+
+    it('MESH_ROLE=public with no MESH_LISTEN at all is refused naming MESH_LISTEN', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_LISTEN/);
+    });
+
+    it('MESH_ROLE=private with MESH_STUN set is refused naming MESH_STUN', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['MESH_STUN'] = '198.51.100.10:3478';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_STUN/);
+    });
+
+    it('MESH_STUN=off → stun: null', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_STUN'] = 'off';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['stun']).toBeNull();
+    });
+
+    it('MESH_STUN=<ip>:<port> is parsed to { host, port }', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_STUN'] = '198.51.100.10:3478';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['stun']).toEqual({ host: '198.51.100.10', port: 3478 });
+    });
+
+    it('MESH_WSS without MESH_ACME_DIRECTORY is refused naming MESH_WSS', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_WSS'] = '198.51.100.10:443';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_WSS/);
+    });
+
+    it('MESH_WSS with MESH_ACME_DIRECTORY admits; MESH_ACME_CHALLENGE_PORT defaults to 80', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_WSS'] = '198.51.100.10:443';
+      process.env['MESH_ACME_DIRECTORY'] = 'https://acme.example.com/directory';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['wss']).toEqual({
+        ip: '198.51.100.10',
+        port: 443,
+        acmeDirectory: 'https://acme.example.com/directory',
+        challengePort: 80,
+      });
+    });
+
+    it('MESH_ACME_CHALLENGE_PORT overrides the default', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_WSS'] = '198.51.100.10:443';
+      process.env['MESH_ACME_DIRECTORY'] = 'https://acme.example.com/directory';
+      process.env['MESH_ACME_CHALLENGE_PORT'] = '8080';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect((mesh['wss'] as Record<string, unknown>)['challengePort']).toBe(8080);
+    });
+
+    it('a DNS name in MESH_ANNOUNCE is refused naming MESH_ANNOUNCE', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_ANNOUNCE'] = '/dns4/example.com/udp/9999/webrtc-direct';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_ANNOUNCE/);
+    });
+
+    it('a DNS name in MESH_LISTEN is refused naming MESH_LISTEN', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/dns4/example.com/udp/9999/webrtc-direct';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_LISTEN/);
+    });
+
+    it('DB_PATH=/var/lib/dagsocial/dagsocial.db → stateDir /var/lib/dagsocial/dagsocial.mesh', async () => {
+      process.env['DB_PATH'] = '/var/lib/dagsocial/dagsocial.db';
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['stateDir']).toBe('/var/lib/dagsocial/dagsocial.mesh');
+    });
+
+    it('DB_PATH with no extension takes .mesh appended', async () => {
+      process.env['DB_PATH'] = 'mystore';
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['stateDir']).toBe('mystore.mesh');
+    });
+
+    // NODE_INTERFACE → Configuration → "The node's mesh endpoint
+    // forwards to its own public listener": `httpBase` is
+    // `http://127.0.0.1:<PORT>`, never `ADMIN_PORT`'s listener.
+    it('httpBase names PORT, not ADMIN_PORT', async () => {
+      process.env['PORT'] = '8080';
+      process.env['ADMIN_PORT'] = '8081';
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['httpBase']).toBe('http://127.0.0.1:8080');
+    });
+
+    // MESH_INTERFACE → NAT — "A private node ... takes a relay
+    // reservation on each public node it is told of — its bootstrap
+    // peers". A private node admitted with an empty bootstrap list
+    // starts on its own addresses (it holds no reservations yet); the
+    // refusal `MESH_INTERFACE` names is for the operator-level case,
+    // caught at `net.start()` where it is `MeshConfigError`. The node
+    // config admits it.
+    it('MESH_ROLE=private with no BOOTSTRAP_PEERS is admitted', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['BOOTSTRAP_PEERS'] = '';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['role']).toBe('private');
+      expect((cfg as unknown as Record<string, unknown>)['bootstrapPeers']).toEqual([]);
+    });
+
+    it('MESH_ROLE="server" is refused naming MESH_ROLE', async () => {
+      process.env['MESH_ROLE'] = 'server';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_ROLE/);
+    });
+
+    it('MESH_STUN_SERVERS carries a comma-separated list', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['MESH_STUN_SERVERS'] = 'stun:198.51.100.10:3478, stun:198.51.100.11:3478';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['stunServers']).toEqual([
+        'stun:198.51.100.10:3478',
+        'stun:198.51.100.11:3478',
+      ]);
+    });
+
+    it('MESH_ROLE=private with MESH_WSS is refused naming MESH_WSS', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['MESH_WSS'] = '198.51.100.10:443';
+      process.env['MESH_ACME_DIRECTORY'] = 'https://acme.example.com/directory';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_WSS/);
+    });
+
+    it('MESH_STUN with a bracketed host missing ]: is refused naming MESH_STUN', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_STUN'] = '[2001:db8::1:3478';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_STUN/);
+    });
+
+    it('MESH_STUN with a non-decimal port is refused naming MESH_STUN', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_STUN'] = '198.51.100.10:abc';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_STUN/);
+    });
+
+    it('MESH_STUN with a port above 65535 is refused naming MESH_STUN', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_STUN'] = '198.51.100.10:70000';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_STUN/);
+    });
+
+    it('MESH_STUN with no colon is refused naming MESH_STUN', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_STUN'] = '198.51.100.10';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_STUN/);
+    });
+
+    it('MESH_WSS with no colon is refused naming MESH_WSS', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_WSS'] = '198.51.100.10';
+      process.env['MESH_ACME_DIRECTORY'] = 'https://acme.example.com/directory';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_WSS/);
+    });
+
+    it('MESH_WSS with a bracketed host missing ]: is refused naming MESH_WSS', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_WSS'] = '[2001:db8::1:443';
+      process.env['MESH_ACME_DIRECTORY'] = 'https://acme.example.com/directory';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_WSS/);
+    });
+
+    it('MESH_WSS with a port above 65535 is refused naming MESH_WSS', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_WSS'] = '198.51.100.10:70000';
+      process.env['MESH_ACME_DIRECTORY'] = 'https://acme.example.com/directory';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_WSS/);
+    });
+
+    it('MESH_ACME_CHALLENGE_PORT with non-decimal is refused naming MESH_ACME_CHALLENGE_PORT', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_WSS'] = '198.51.100.10:443';
+      process.env['MESH_ACME_DIRECTORY'] = 'https://acme.example.com/directory';
+      process.env['MESH_ACME_CHALLENGE_PORT'] = 'abc';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_ACME_CHALLENGE_PORT/);
+    });
+
+    it('MESH_ACME_CHALLENGE_PORT above 65535 is refused naming MESH_ACME_CHALLENGE_PORT', async () => {
+      process.env['MESH_ROLE'] = 'public';
+      process.env['MESH_LISTEN'] = '/ip4/0.0.0.0/udp/0/webrtc-direct';
+      process.env['MESH_WSS'] = '198.51.100.10:443';
+      process.env['MESH_ACME_DIRECTORY'] = 'https://acme.example.com/directory';
+      process.env['MESH_ACME_CHALLENGE_PORT'] = '70000';
+      await expect(import('../src/config.js')).rejects.toThrow(/MESH_ACME_CHALLENGE_PORT/);
     });
   });
 });
