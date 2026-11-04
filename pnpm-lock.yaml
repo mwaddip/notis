@@ -92,6 +92,9 @@ importers:
       '@libp2p/tcp':
         specifier: ^11.0.0
         version: 11.0.32
+      '@libp2p/webrtc':
+        specifier: 7.0.2
+        version: 7.0.2
       '@libp2p/yamux':
         specifier: ^8.0.0
         version: 8.0.7
@@ -102,6 +105,9 @@ importers:
         specifier: ^3.5.1
         version: 3.5.1
     devDependencies:
+      '@libp2p/keychain':
+        specifier: ^6.1.10
+        version: 6.1.10
       '@libp2p/peer-id':
         specifier: ^6.0.18
         version: 6.0.18
@@ -114,6 +120,9 @@ importers:
       '@types/node':
         specifier: ^24.19.2
         version: 24.19.2
+      datastore-core:
+        specifier: ^12.0.1
+        version: 12.0.1
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)
