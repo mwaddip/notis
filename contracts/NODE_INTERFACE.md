@@ -5704,7 +5704,7 @@ its actual reach.
 | `MAX_MEMPOOL_ENTRIES` | `local` | `10000` | Mempool capacity |
 | `MIN_FEE_RATE_PER_BYTE` | `local` | `MIN_FEE_RATE_PER_BYTE` (`0n`) | Relay fee floor in base units per in-block byte — admission policy, not consensus (MEMPOOL_INTERFACE → Fee floor) |
 | `MAX_PEERS` | `local` | `50` | Max connected libp2p peers |
-| `MAX_READERS` | `local` | `64` | The readers — browsers and other clients that serve no chain — held at once, never counted in `MAX_PEERS` — semantics `NET_INTERFACE → Readers`. A held reader costs 1.15 MiB of the node's memory and 0.03 % of a core (measured 2026-11-04 over TCP, 1 to 100 readers, slope); the testnet boxes have 961 MB with about 475 MB available, so 64 readers hold some 73 MiB, under a sixth of it |
+| `MAX_READERS` | `local` | `64` | The readers — browsers and other clients that serve no chain — held at once, never counted in `MAX_PEERS` — semantics `NET_INTERFACE → Readers`. A held reader costs 1.15 MiB of the node's memory and 0.03 % of a core over TCP, 0.75 MiB and 0.04 % over WebRTC-direct (measured 2026-11-04 on Node 24, 1 to 100 readers, the slope); the testnet boxes have 961 MB with about 475 MB available and one core, so 64 readers hold some 73 MiB at the dearer figure, under a sixth of it, and some 2.5 % of the core |
 | `MIN_PEERS` | `local` | `3` | Outbound fill floor — semantics `NET_INTERFACE → Config` |
 | `PEER_DB_CAP` | `local` | `1000` | Soft cap on PeerDb entries — semantics `NET_INTERFACE → Config` |
 | `OUTBOUND_REDIAL_COOLDOWN_MS` | `local` | `60000` | Redial cooldown per failed outbound target — semantics `NET_INTERFACE → Config` |
