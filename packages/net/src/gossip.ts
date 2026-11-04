@@ -1,16 +1,13 @@
 import {
-  ByteWriter,
   decodeOrderingBlock,
   decodeTxPacket,
   decodeUtxoTxTree,
   encodeOrderingBlock,
   encodeTxPacket,
-  hash32,
   MAX_ORDERING_BLOCK_BYTES,
   MAX_TX_PACKET_BYTES,
   protocolVersionAt,
   readOrderingBlockSections,
-  writeLpUtf8,
 } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra, UtxoTxTree } from '@dagsocial/types';
@@ -19,6 +16,8 @@ import type { GossipSub } from '@libp2p/gossipsub';
 import { PenaltyKind } from './types.js';
 import type { NetValidators } from './types.js';
 import type { PeerManager } from './peer-mgr.js';
+import { GOSSIP_SEEN_WINDOW_MS } from './gossip-rules.js';
+import type { GossipTopics } from './gossip-rules.js';
 
 // ---------------------------------------------------------------------------
 // Minimal interface capturing what gossip.ts needs from a libp2p node.
@@ -45,59 +44,15 @@ export interface Libp2pGossip {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Topic strings and message id — NET_INTERFACE → Gossip Topics
-// ---------------------------------------------------------------------------
-
-export interface GossipTopics {
-  readonly orderingBlock: string;
-  readonly tx: string;
-}
-
-/**
- * NET_INTERFACE → Gossip Topics → "A topic is named for its network".
- *
- * The pair a node of this magic hears: the ordering-block topic and the tx
- * topic, each carrying the magic as eight lowercase hex digits. Throws when
- * `magic` is not an unsigned 32-bit integer — a node with no network does not
- * start on a topic of its own (`NET_INTERFACE → Config`).
- */
-export function gossipTopics(magic: number): GossipTopics {
-  if (!Number.isInteger(magic) || magic < 0 || magic > 0xffffffff) {
-    throw new Error(`gossipTopics: magic must be an unsigned 32-bit integer, got ${magic}`);
-  }
-  const hex = magic.toString(16).padStart(8, '0');
-  return {
-    orderingBlock: `/dagsocial/${hex}/ordering-block/1`,
-    tx: `/dagsocial/${hex}/tx/1`,
-  };
-}
-
-// Tracked reservation (TYPES_INTERFACE → Tracked reservations, condition 3):
-// the topic name `subblock` (NET_INTERFACE → Gossip Topics).
-
-/**
- * NET_INTERFACE → Gossip Topics → "A message is heard once in a seen window".
- *
- * The router keeps every id it has named for two minutes and records it before
- * the topic validator runs; a second copy inside the window is not validated,
- * not delivered and not forwarded (`CONSTANTS → net`).
- */
-export const GOSSIP_SEEN_WINDOW_MS = 120_000;
-
-/**
- * NET_INTERFACE → Gossip Topics → "A message is named by its bytes".
- *
- * `hash32(lpUtf8(topic) ‖ data)` — the protocol hash
- * (`TYPES_INTERFACE → The protocol hash`) over the topic string,
- * length-prefixed, and the payload. The router's id function, for a message this
- * node publishes as for one it receives.
- */
-export function gossipMessageId(topic: string, data: Uint8Array): Uint8Array {
-  const w = new ByteWriter();
-  writeLpUtf8(w, topic);
-  return hash32(w.toBytes(), data);
-}
+// The topic strings, the message id and the seen window live in
+// `./gossip-rules.js` (browser-safe) — re-exported here so `index.ts`
+// still finds them at this module's name.
+export {
+  GOSSIP_SEEN_WINDOW_MS,
+  gossipMessageId,
+  gossipTopics,
+} from './gossip-rules.js';
+export type { GossipTopics } from './gossip-rules.js';
 
 // ---------------------------------------------------------------------------
 // Relay-path membership gate (NODE_INTERFACE → Post transactions)

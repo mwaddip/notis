@@ -24,10 +24,8 @@ import {
   subscribeTopics,
   broadcastOrderingBlock,
   broadcastTx,
-  gossipTopics,
-  gossipMessageId,
-  GOSSIP_SEEN_WINDOW_MS,
 } from './gossip.js';
+import { gossipTopics, gossipsubOptions } from './gossip-rules.js';
 import {
   HANDSHAKE_PROTOCOL,
   SYNC_PROTOCOL,
@@ -704,40 +702,10 @@ export class NetNode {
         },
       })],
       services: {
-        // NET_INTERFACE → libp2p Stack.
-        pubsub: gossipsub({
-          // NET_INTERFACE → Gossip Topics →
-          // "A message is its topic and its data"
-          // The router refuses a signed envelope and emits none.
-          globalSignaturePolicy: 'StrictNoSign',
-          // NET_INTERFACE → Gossip Topics → "A message is named by its bytes".
-          msgIdFn: (msg) => gossipMessageId(msg.topic, msg.data),
-          // NET_INTERFACE → Gossip Topics →
-          // "A message is heard once in a seen window"
-          seenTTL: GOSSIP_SEEN_WINDOW_MS,
-          // NET_INTERFACE → Gossip →
-          // "A broadcast that sends nothing still resolves"
-          // A publish of bytes this node has seen inside the window resolves
-          // without sending.
-          ignoreDuplicatePublishError: true,
-          // NET_INTERFACE → Gossip Topics →
-          // "A topic is named for its network"
-          // The two topic strings are the whole of what the router hears; a
-          // subscription or a message on any other topic is passed over before
-          // the router names, caches or forwards anything.
-          allowedTopics: [topics.orderingBlock, topics.tx],
-          allowPublishToZeroTopicPeers: true,
-          // NET_INTERFACE → Forwarding Rule → "An ordering block is forwarded
-          // once Stage 1 passes; a transaction once this node admits it":
-          // the router holds a message that passed its topic validator in the
-          // message cache until the listener reports Accept, Ignore or Reject.
-          asyncValidation: true,
-          // NET_INTERFACE → libp2p Stack: gossipsub alone. The library's
-          // default is `fallbackToFloodsub: true`, which pushes
-          // `/floodsub/1.0.0` onto the host's registered protocols; the
-          // option is set here so that id is not registered at all.
-          fallbackToFloodsub: false,
-        }),
+        // NET_INTERFACE → libp2p Stack — gossipsub built from the one
+        // options object `./gossip-rules.ts`' `gossipsubOptions` answers;
+        // each field cites its rule.
+        pubsub: gossipsub(gossipsubOptions(this.config.magic, [topics.orderingBlock, topics.tx])),
         identify: identify(),
         ping: ping(),
       },
