@@ -684,43 +684,33 @@ async function startBAndSoftRefused(): Promise<{
 // A node of another network is no peer of ours
 // NET_INTERFACE → Gossip Topics → "A topic is named for its network" — a node
 // of another magic subscribes to its own topic pair, so B's router lists it
-// under no topic of its own and a message it publishes runs no validator of
-// B's. The connection is opened around the funnel so no handshake stream
-// runs on it; the connection stands up to B's handshake deadline
-// (HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs = 30 s under the
-// defaults), inside which gossipsub meshes.
+// under no topic of its own. NET_INTERFACE → Handshake → "Every connection
+// this node dialled carries its handshake, whoever within the node dialled
+// it": X's dial to B, inside or outside its own funnel, opens X's outbound
+// handshake on the connection. The handshake frame carries X's magic, which
+// B's listener frame-tier rejects (→ Ban policy), and the connection ends.
 // ---------------------------------------------------------------------------
 
 async function startBAndStrangerLingering(): Promise<{
   nodeB: NetNode;
   nodeX: NetNode;
 }> {
-  // B keeps the default `syncRequestTimeoutMs` (10 s), so B's handshake
-  // deadline is 30 s. The suite completes inside that window.
   const nodeB = new NetNode(makeConfig(), validators);
   await nodeB.start();
   const bAddr = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
   if (!bAddr) throw new Error('B has no listen address');
 
-  // X runs on another magic and dials B around its own funnel — no handshake
-  // stream ever opens on the connection, so neither side's handshake runs
-  // and the connection stands up to B's deadline. gossipsub exchanges
-  // subscription records on its own protocol over this connection.
+  // X runs on another magic. The dial opens a connection; X's open hook
+  // runs the outbound handshake on it and B's listener frame-tier rejects
+  // because the magic is another network's. The connection ends; neither
+  // side records the other as a peer and no gossipsub mesh forms.
   const nodeX = new NetNode(makeConfig({ magic: MAGIC_DEVNET }), validators);
   await nodeX.start();
-  await nodeX.libp2pNode!.dial(multiaddr(bAddr));
+  await nodeX.libp2pNode!.dial(multiaddr(bAddr)).catch(() => { /* the handshake close may race the dial return */ });
 
-  await vi.waitFor(
-    () => {
-      expect(nodeB.libp2pNode?.getConnections().length ?? 0).toBeGreaterThan(0);
-      expect(nodeX.libp2pNode?.getConnections().length ?? 0).toBeGreaterThan(0);
-    },
-    { timeout: 10_000, interval: 250 },
-  );
-  // The pair shares no topic (NET_INTERFACE → Gossip Topics →
-  // "A topic is named for its network"), so there is nothing to poll on. The
-  // fixed quiet waits out two gossipsub heartbeats — any subscription record
-  // or mesh graft that would arrive, does.
+  // The frame-tier close runs the moment the handshake stream is read.
+  // Wait a couple of gossipsub heartbeats: any subscription record or
+  // mesh graft that would still arrive, does — and does not.
   await new Promise((r) => setTimeout(r, SETTLE_MS));
   return { nodeB, nodeX };
 }
@@ -738,14 +728,13 @@ describe('A node of another network is no peer of ours', () => {
   };
 
   it(
-    'a node of another magic holds a connection to B and neither is Active to the other',
+    'a node of another magic is no peer of B after the frame-tier close',
     async () => {
       const { nodeB, nodeX } = await startBAndStrangerLingering();
       track([nodeB, nodeX]);
-      const bConns = nodeB.libp2pNode?.getConnections() ?? [];
-      const xConns = nodeX.libp2pNode?.getConnections() ?? [];
-      expect(bConns.length).toBeGreaterThan(0);
-      expect(xConns.length).toBeGreaterThan(0);
+      // The frame-tier reject closed the connection on both sides.
+      expect(nodeB.libp2pNode?.getConnections() ?? []).toHaveLength(0);
+      expect(nodeX.libp2pNode?.getConnections() ?? []).toHaveLength(0);
       expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
       expect(nodeX.getConnectedPeers()).not.toContain(nodeB.peerId());
     },
@@ -757,7 +746,6 @@ describe('A node of another network is no peer of ours', () => {
     async () => {
       const { nodeB, nodeX } = await startBAndStrangerLingering();
       track([nodeB, nodeX]);
-      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
       expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
 
       const topicsB = topicsOf(nodeB);
@@ -780,7 +768,6 @@ describe('A node of another network is no peer of ours', () => {
     async () => {
       const { nodeB, nodeX } = await startBAndStrangerLingering();
       track([nodeB, nodeX]);
-      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
       expect(nodeB.getConnectedPeers()).not.toContain(nodeX.peerId());
 
       const bValidator = newCounter();
@@ -860,50 +847,41 @@ describe('A body-tier soft refusal ends the connection', () => {
 });
 
 // ---------------------------------------------------------------------------
-// A carrier that is not Active
+// A carrier of the same network
 // NET_INTERFACE → Inbound Processing →
 //   "A gossip message that passes Stage 1 is delivered, whichever peer carried it"
-// NET_INTERFACE → Peer State Machine — a peer whose handshake has not
-// completed is not Active and is no entry of getConnectedPeers().
-// The carrier opens a connection to B around its own funnel, so no handshake
-// stream runs on it; the connection stands up to B's handshake deadline
-// (HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs = 30 s under the
-// defaults), inside which gossipsub meshes and the carrier publishes a
-// block that passes Stage 1.
+// NET_INTERFACE → Handshake → "Every connection this node dialled carries
+// its handshake, whoever within the node dialled it": Y's dial to B runs
+// Y's outbound handshake on the connection, and Y's magic is B's, so the
+// handshake completes and Y is Active at B. The mesh forms on gossipsub's
+// own protocol, and the carrier publishes a block that passes Stage 1.
 // ---------------------------------------------------------------------------
 
+// B and Y both hold the default schedule (version 1 at height 0), so the
+// handshake at tip + 1 = 1 declares version 1 on both sides and completes.
 // The block Y publishes is at height 1 with its header's own
-// `protocolVersion = PROTOCOL_VERSION + 1`, which matches B's era at height 1
-// under this schedule.
+// `protocolVersion = PROTOCOL_VERSION`, matching both sides' era at height 1.
 async function startBAndCarrierLingering(): Promise<{
   nodeB: NetNode;
   nodeY: NetNode;
 }> {
-  // B's handshake deadline is 30 s under the default `syncRequestTimeoutMs`
-  // (10 s); the suite completes well inside that window.
-  const nodeB = new NetNode(
-    makeConfig({
-      protocolVersionSchedule: [
-        { version: PROTOCOL_VERSION, fromHeight: 0 },
-        { version: PROTOCOL_VERSION + 1, fromHeight: 1 },
-      ],
-    }),
-    validators,
-  );
+  const nodeB = new NetNode(makeConfig(), validators);
   await nodeB.start();
   const bAddr = nodeB.libp2pNode?.getMultiaddrs()[0]?.toString();
   if (!bAddr) throw new Error('B has no listen address');
 
-  // Y shares B's magic (so their topic pair matches) and dials B around its
-  // own funnel — no handshake stream opens, so Y stays Connecting at B. The
-  // mesh forms over the connection on gossipsub's own protocol.
+  // Y shares B's magic and schedule. The dial runs Y's outbound handshake
+  // on the connection (NET_INTERFACE → Handshake → "Every connection this
+  // node dialled carries its handshake, whoever within the node dialled
+  // it"); B's listener answers, Y goes Active at B, and the mesh forms on
+  // gossipsub's own protocol.
   const nodeY = new NetNode(makeConfig(), validators);
   await nodeY.start();
   await nodeY.libp2pNode!.dial(multiaddr(bAddr));
 
   await vi.waitFor(
     () => {
-      expect(nodeB.libp2pNode?.getConnections().length ?? 0).toBeGreaterThan(0);
+      expect(nodeB.getConnectedPeers()).toContain(nodeY.peerId());
     },
     { timeout: 10_000, interval: 250 },
   );
@@ -911,7 +889,7 @@ async function startBAndCarrierLingering(): Promise<{
   return { nodeB, nodeY };
 }
 
-describe('A carrier that is not Active', () => {
+describe('A carrier of the same network', () => {
   const open: NetNode[] = [];
   afterEach(async () => {
     while (open.length > 0) {
@@ -924,20 +902,19 @@ describe('A carrier that is not Active', () => {
   };
 
   it(
-    'B\'s validator accepts a block Y publishes while Y is not Active at B',
+    'B\'s validator accepts a block Y publishes once Y is Active at B',
     async () => {
       const { nodeB, nodeY } = await startBAndCarrierLingering();
       track([nodeB, nodeY]);
 
-      // Y holds a connection to B and is not Active at B.
-      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
-      expect(nodeB.getConnectedPeers()).not.toContain(nodeY.peerId());
+      // The handshake on Y's dial completed; Y is Active at B.
+      expect(nodeB.getConnectedPeers()).toContain(nodeY.peerId());
 
       const bValidator = newCounter();
       const topicsB = topicsOf(nodeB);
       wrapValidator(nodeB, topicsB.orderingBlock, bValidator);
 
-      const block = makeBlockAt(1, PROTOCOL_VERSION + 1);
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
       await expect(nodeY.broadcastOrderingBlock(block)).resolves.toBeUndefined();
 
       await vi.waitFor(
@@ -951,13 +928,12 @@ describe('A carrier that is not Active', () => {
   );
 
   it(
-    'a block Y publishes is delivered once at B although Y is not Active there',
+    'a block Y publishes is delivered once at B',
     async () => {
       const { nodeB, nodeY } = await startBAndCarrierLingering();
       track([nodeB, nodeY]);
 
-      expect((nodeB.libp2pNode?.getConnections().length ?? 0)).toBeGreaterThan(0);
-      expect(nodeB.getConnectedPeers()).not.toContain(nodeY.peerId());
+      expect(nodeB.getConnectedPeers()).toContain(nodeY.peerId());
 
       const bValidator = newCounter();
       const topicsB = topicsOf(nodeB);
@@ -968,7 +944,7 @@ describe('A carrier that is not Active', () => {
         bDeliveries.push(b);
       });
 
-      const block = makeBlockAt(1, PROTOCOL_VERSION + 1);
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
       await nodeY.broadcastOrderingBlock(block);
 
       await vi.waitFor(

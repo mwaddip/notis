@@ -14,7 +14,6 @@ import { tcp } from '@libp2p/tcp';
 import { noise } from '@libp2p/noise';
 import { yamux } from '@libp2p/yamux';
 import { identify } from '@libp2p/identify';
-import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { generateKeyPair as libp2pGenerate } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import type { AddressInfo } from 'node:net';
@@ -63,6 +62,16 @@ async function freePort(): Promise<number> {
   });
 }
 
+async function waitFor<T>(fn: () => T | null | undefined, ms: number, label: string): Promise<T> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    const v = fn();
+    if (v !== null && v !== undefined) return v;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`waitFor timed out after ${ms} ms: ${label}`);
+}
+
 function privateMeshOn(stateDir: string): MeshConfig {
   return {
     role: 'private',
@@ -75,6 +84,17 @@ function privateMeshOn(stateDir: string): MeshConfig {
     relayRetryBaseMs: 50,
     relayRetryCapMs: 500,
   } as MeshConfig;
+}
+
+function publicMeshOn(stateDir: string): MeshConfig {
+  return {
+    role: 'public',
+    network: 'devnet',
+    listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+    stateDir,
+    httpBase: 'http://127.0.0.1:1',
+    stun: null,
+  };
 }
 
 describe('retryIntervalMs — the private node\'s relay retry cadence (pure)', () => {
@@ -118,9 +138,11 @@ describe('a private NetNode with an unreachable seed starts, then reserves once 
     // Pick a port the relay will later bind. Until it does, every
     // dial to that port reads ECONNREFUSED.
     const relayPort = await freePort();
-    const relayKey = await libp2pGenerate('Ed25519');
-    const relayPeer = peerIdFromPrivateKey(relayKey);
-    const relayAddr = `/ip4/127.0.0.1/tcp/${relayPort}/p2p/${relayPeer.toString()}`;
+    const relayKey = generateKeyPair();
+    // The relay's peer id is derived from `relayKey`; the private node
+    // only needs the bootstrap address (bare host:port works, net
+    // resolves the peer id on dial).
+    const relayAddr = `/ip4/127.0.0.1/tcp/${relayPort}`;
 
     const dir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-econn-'));
     dirs.push(dir);
@@ -142,22 +164,28 @@ describe('a private NetNode with an unreachable seed starts, then reserves once 
     expect(initial.some((m) => m.includes('/p2p-circuit')),
       `no circuit yet, addrs = ${initial.join(', ')}`).toBe(false);
 
-    // Start the relay. The next retry attempt reserves.
-    const relay = await createLibp2p({
-      privateKey: relayKey,
-      addresses: { listen: [`/ip4/127.0.0.1/tcp/${relayPort}`] },
-      transports: [tcp()],
-      connectionEncrypters: [noise()],
-      streamMuxers: [yamux()],
-      services: { identify: identify(), circuitRelay: circuitRelayServer() },
-    });
-    toStop.push(relay);
+    // Start the relay as a public mesh NetNode on the pre-picked port.
+    // NET_INTERFACE → Handshake →
+    // "Every connection this node dialled carries its handshake, whoever within the node dialled it":
+    // the relay is a chain-serving NetNode so the funnel's handshake
+    // completes and the reservation rides the floor TCP connection.
+    const relayDir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-econn-relay-'));
+    dirs.push(relayDir);
+    const relay = new NetNode(makeConfig({
+      nodeKey: relayKey,
+      listenAddrs: `/ip4/127.0.0.1/tcp/${relayPort}`,
+      bootstrapPeers: [],
+      mesh: publicMeshOn(relayDir),
+    }), validators);
+    await relay.start();
+    nodes.push(relay);
+    const relayPeer = (relay as unknown as { libp2p: Libp2p }).libp2p.peerId.toString();
 
     const deadline = Date.now() + 15_000;
     let reserved = false;
     while (Date.now() < deadline) {
       const mas = libp2p.getMultiaddrs().map((a) => a.toString());
-      if (mas.some((m) => m.includes('/p2p-circuit') && m.includes(relayPeer.toString()))) {
+      if (mas.some((m) => m.includes('/p2p-circuit') && m.includes(relayPeer))) {
         reserved = true;
         break;
       }
@@ -169,24 +197,32 @@ describe('a private NetNode with an unreachable seed starts, then reserves once 
   }, 30_000);
 
   it('a stalled second relay never stops the node; the working one lands', async () => {
-    // Working relay — speaks HOP.
-    const workingKey = await libp2pGenerate('Ed25519');
-    const workingPeer = peerIdFromPrivateKey(workingKey);
-    const workingPort = await freePort();
-    const workingRelay = await createLibp2p({
-      privateKey: workingKey,
-      addresses: { listen: [`/ip4/127.0.0.1/tcp/${workingPort}`] },
-      transports: [tcp()],
-      connectionEncrypters: [noise()],
-      streamMuxers: [yamux()],
-      services: { identify: identify(), circuitRelay: circuitRelayServer() },
-    });
-    toStop.push(workingRelay);
+    // Working relay — a public mesh NetNode, speaks the handshake and HOP.
+    const workingDir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-stall-working-'));
+    dirs.push(workingDir);
+    const workingRelay = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      bootstrapPeers: [],
+      mesh: publicMeshOn(workingDir),
+    }), validators);
+    await workingRelay.start();
+    nodes.push(workingRelay);
+    const workingLibp2p = (workingRelay as unknown as { libp2p: Libp2p }).libp2p;
+    const workingPeer = workingLibp2p.peerId.toString();
+    const workingAddr = await waitFor(
+      () => workingLibp2p.getMultiaddrs().map((a) => a.toString()).find((s) => /\/tcp\/\d+\/p2p\//.test(s)),
+      5_000,
+      "working relay's TCP multiaddr",
+    );
 
-    // Stall relay — libp2p WITHOUT circuitRelayServer, so a HOP stream
-    // is refused by multistream-select (UnsupportedProtocolError). The
-    // behaviour under the real circuit-relay-v2 reservation store is
-    // more subtle; either way, the working relay must land.
+    // Stall relay — a plain libp2p host without `/dagsocial/handshake/1`
+    // and without `circuitRelayServer`. The TCP + Noise upgrade completes;
+    // the private node's funnel handshake stream fails multistream (the
+    // protocol is not supported), and the admission closes the connection
+    // (NET_INTERFACE → Handshake → "A handshake that does not complete
+    // ends its connection"). start() returns at once, and the working
+    // relay's reservation still lands.
     const stallKey = await libp2pGenerate('Ed25519');
     const stallPeer = peerIdFromPrivateKey(stallKey);
     const stallPort = await freePort();
@@ -199,8 +235,6 @@ describe('a private NetNode with an unreachable seed starts, then reserves once 
       services: { identify: identify() },
     });
     toStop.push(stallRelay);
-
-    const workingAddr = `/ip4/127.0.0.1/tcp/${workingPort}/p2p/${workingPeer.toString()}`;
     const stallAddr = `/ip4/127.0.0.1/tcp/${stallPort}/p2p/${stallPeer.toString()}`;
 
     const dir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-stall-'));
@@ -222,7 +256,7 @@ describe('a private NetNode with an unreachable seed starts, then reserves once 
     let workingReserved = false;
     while (Date.now() < deadline) {
       const mas = libp2p.getMultiaddrs().map((a) => a.toString());
-      if (mas.some((m) => m.includes('/p2p-circuit') && m.includes(workingPeer.toString()))) {
+      if (mas.some((m) => m.includes('/p2p-circuit') && m.includes(workingPeer))) {
         workingReserved = true;
         break;
       }

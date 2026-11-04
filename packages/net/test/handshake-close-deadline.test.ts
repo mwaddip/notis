@@ -206,7 +206,7 @@ describe('a dialler whose handshake does not complete closes the connection and 
   }, TIMEOUT);
 });
 
-describe('a connection with no handshake is closed at its deadline', () => {
+describe('an outbound connection libp2p opens outside the funnel handshakes', () => {
   let nodeA: NetNode | null = null;
   let nodeB: NetNode | null = null;
 
@@ -217,43 +217,54 @@ describe('a connection with no handshake is closed at its deadline', () => {
     nodeB = null;
   });
 
-  // NET_INTERFACE → Handshake → "A connection handshakes within its deadline,
-  // or is closed". A keeps a short deadline (3 × syncRequestTimeoutMs = 3 s);
-  // B keeps a long one (30 s). B dials A around the funnel, so no handshake
-  // stream ever opens. A closes at its deadline, no penalty.
-  it('A closes the connection B opened without a handshake', async () => {
+  // NET_INTERFACE → Handshake → "Every connection this node dialled carries its
+  // handshake, whoever within the node dialled it". B dials A through libp2p
+  // directly — bypassing the funnel the way a relay reservation retry, a DHT
+  // query or an AutoNAT dial-back does. The node's outbound handshake runs on
+  // the connection as it opens; A lists B Active, B lists A Active, and the
+  // connection stands past 3 × syncRequestTimeoutMs.
+  it('a direct libp2p dial handshakes and the connection outlives the deadline', async () => {
     nodeA = new NetNode(makeConfig({ syncRequestTimeoutMs: 1_000 }), validators);
-    // The peer manager drops a peer's metadata at disconnect, so a reader
-    // of `getPeerMetadata(peerId)?.penaltyCount` after the close reads 0
-    // whatever the handler recorded; the live capture through
-    // `onPeerPenalised` fires at the record site and survives the drop.
-    const penalties: Array<{ peerId: string; kind: string }> = [];
-    nodeA.onPeerPenalised((peerId, kind) => { penalties.push({ peerId, kind }); });
+    const aActive: Array<{ peerId: string; dir: string }> = [];
+    nodeA.onPeerActive((peerId, dir) => { aActive.push({ peerId, dir }); });
+    const aPenalties: Array<{ peerId: string; kind: string }> = [];
+    nodeA.onPeerPenalised((peerId, kind) => { aPenalties.push({ peerId, kind }); });
     await nodeA.start();
     const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
     expect(aAddr).toBeTruthy();
 
-    nodeB = new NetNode(makeConfig({ syncRequestTimeoutMs: 10_000 }), validators);
+    nodeB = new NetNode(makeConfig({ syncRequestTimeoutMs: 1_000 }), validators);
+    const bActive: Array<{ peerId: string; dir: string }> = [];
+    nodeB.onPeerActive((peerId, dir) => { bActive.push({ peerId, dir }); });
     await nodeB.start();
+    const aId = nodeA.peerId();
     const bId = nodeB.peerId();
 
-    // A plain dial, around B's funnel, opens the connection and nothing more.
+    // The dial goes around B's funnel, the way libp2p opens a connection on
+    // the node's own behalf — a relay reservation, a DHT query, AutoNAT.
     await nodeB.libp2pNode!.dial(multiaddr(aAddr!));
 
-    // control: before A's deadline the connection stands
+    // The handshake completes under the deadline on both sides.
     await new Promise((r) => setTimeout(r, 1_500));
-    expect(
-      nodeA.libp2pNode!.getConnections().filter((c) => c.remotePeer.toString() === bId),
-    ).toHaveLength(1);
+    expect(nodeA.getConnectedPeers()).toContain(bId);
+    expect(nodeB.getConnectedPeers()).toContain(aId);
 
-    // last: 3 s after the open, A's deadline fires and the connection closes
+    // One peerActive fire per peer: the guard that the funnel's own and the
+    // open hook's handshake are the same handshake, never two.
+    expect(aActive.filter((e) => e.peerId === bId)).toHaveLength(1);
+    expect(bActive.filter((e) => e.peerId === aId)).toHaveLength(1);
+
+    // Past 3 × syncRequestTimeoutMs (3 s): the deadline leaves a handshaken
+    // connection alone, so the connection stands.
     await new Promise((r) => setTimeout(r, 2_500));
     expect(
       nodeA.libp2pNode!.getConnections().filter((c) => c.remotePeer.toString() === bId),
-    ).toHaveLength(0);
+    ).toHaveLength(1);
+    expect(nodeA.getConnectedPeers()).toContain(bId);
+    expect(nodeB.getConnectedPeers()).toContain(aId);
 
-    // the deadline is unscored: no penalty for B at A, no ban
-    expect(penalties.filter((p) => p.peerId === bId)).toEqual([]);
+    // No penalty — an honest connection past its deadline carries one.
+    expect(aPenalties.filter((p) => p.peerId === bId)).toEqual([]);
     const internalsA = nodeA as unknown as Internals;
     expect(internalsA.peerMgr.isBanned(bId)).toBe(false);
   }, 25_000);

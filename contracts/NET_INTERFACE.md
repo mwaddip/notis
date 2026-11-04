@@ -324,10 +324,12 @@ outbound connections on the node's behalf outside the dial funnel — a private 
 AutoNAT's dial-back (→ The mesh). Each is an outbound connection like the funnel's: the node opens its handshake on it
 as it opens, once — the funnel's own and this one are the same handshake, never two — and it lives or ends by the rules
 above and below. A connection none handshakes is closed at its deadline, and a relay reservation riding it is lost with
-it.
-
-> ⚠ **AHEAD OF CODE (2026-11-04).** the handshake on an outbound connection the funnel did not open; such a
-> connection is closed unhandshaken at its deadline until then.
+it. The ownership mark is `outboundAdmissions`, one Promise per outbound connection id: the first caller — the funnel
+after `libp2p.dial()` resolves, or the `connection:open` hook's deferred `setImmediate` for a connection libp2p opened
+on the node's own behalf — stores the Promise and runs the handshake; every later caller awaits the Promise. A dial
+funnel's handshake failure applies the redial cooldown through `outboundMgr.recordDialResult(addr, false)`; a service
+dial names no `addr` and takes no cooldown, libp2p drives its own retry (`startRelayRetry`, the DHT walker's own
+cadence, AutoNAT's own schedule).
 
 **A peer becomes Active once.** The first handshake that completes for a peer, in either direction, makes it
 `Active` — the PeerDb record its side makes, its version and addresses on the metadata, `onPeerActive`, the

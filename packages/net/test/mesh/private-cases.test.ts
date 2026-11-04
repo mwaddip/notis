@@ -11,14 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createLibp2p, type Libp2p } from 'libp2p';
-import { tcp } from '@libp2p/tcp';
-import { noise } from '@libp2p/noise';
-import { yamux } from '@libp2p/yamux';
-import { identify } from '@libp2p/identify';
-import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
-import { generateKeyPair as libp2pGenerate } from '@libp2p/crypto/keys';
-import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import type { Libp2p } from 'libp2p';
 import { generateKeyPair } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
@@ -72,15 +65,24 @@ function privateMeshOn(stateDir: string): MeshConfig {
   };
 }
 
+function publicMeshOn(stateDir: string): MeshConfig {
+  return {
+    role: 'public',
+    network: 'devnet',
+    listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+    stateDir,
+    httpBase: 'http://127.0.0.1:1',
+    stun: null,
+  };
+}
+
 describe('mesh — a private NetNode', () => {
   let nodes: NetNode[] = [];
-  let relays: Libp2p[] = [];
   let dirs: string[] = [];
   afterEach(async () => {
     for (const n of nodes) { try { await n.stop(); } catch { /* already stopped */ } }
-    for (const r of relays) { try { await r.stop(); } catch { /* already stopped */ } }
     for (const d of dirs) { try { rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ } }
-    nodes = []; relays = []; dirs = [];
+    nodes = []; dirs = [];
   });
 
   // MESH_INTERFACE → Discovery → "The DHT is Notis's own" — a private
@@ -132,23 +134,26 @@ describe('mesh — a private NetNode', () => {
   // bootstrap peers over the connection `net` holds to that peer,
   // never by searching. The bootstrap address is a plain TCP
   // multiaddr with `/p2p/<peer>`; the private node reserves on each
-  // through the TCP connection the outbound floor opened.
+  // through the TCP connection the outbound floor opened. The relay is
+  // a public mesh `NetNode`, so the funnel's outbound handshake
+  // completes (NET_INTERFACE → Handshake → "Every connection this node
+  // dialled carries its handshake, whoever within the node dialled it";
+  // "A relay we dialled serves the chain").
   it('reserves on its TCP seed and the reservation rides the floor-opened TCP connection', async () => {
-    // A plain libp2p circuit-relay server on loopback TCP — the
-    // minimal shape of a public mesh node's relay surface.
-    const relayKey = await libp2pGenerate('Ed25519');
-    const relayPeer = peerIdFromPrivateKey(relayKey);
-    const relay = await createLibp2p({
-      privateKey: relayKey,
-      addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] },
-      transports: [tcp()],
-      connectionEncrypters: [noise()],
-      streamMuxers: [yamux()],
-      services: { identify: identify(), circuitRelay: circuitRelayServer() },
-    });
-    relays.push(relay);
+    const relayDir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-boot-relay-'));
+    dirs.push(relayDir);
+    const relay = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      bootstrapPeers: [],
+      mesh: publicMeshOn(relayDir),
+    }), validators);
+    await relay.start();
+    nodes.push(relay);
+    const relayLibp2p = (relay as unknown as { libp2p: Libp2p }).libp2p;
+    const relayPeerId = relayLibp2p.peerId.toString();
     const relayAddr = await waitFor(
-      () => relay.getMultiaddrs().map((a) => a.toString()).find((s) => /\/tcp\/\d+\/p2p\//.test(s)),
+      () => relayLibp2p.getMultiaddrs().map((a) => a.toString()).find((s) => /\/tcp\/\d+\/p2p\//.test(s)),
       5_000,
       "relay's TCP multiaddr with /p2p/",
     );
@@ -169,7 +174,7 @@ describe('mesh — a private NetNode', () => {
     await waitFor(
       () => {
         const mas = libp2p.getMultiaddrs().map((a) => a.toString());
-        return mas.some((m) => m.includes('/p2p-circuit') && m.includes(relayPeer.toString())) ? true : null;
+        return mas.some((m) => m.includes('/p2p-circuit') && m.includes(relayPeerId)) ? true : null;
       },
       20_000,
       'reservation on the TCP seed',
@@ -178,7 +183,7 @@ describe('mesh — a private NetNode', () => {
     // Exactly ONE TCP connection stands to the relay peer — the floor's
     // dial, reused by the circuit transport's `openConnection`.
     const conns = libp2p.getConnections()
-      .filter((c) => c.remotePeer.toString() === relayPeer.toString());
+      .filter((c) => c.remotePeer.toString() === relayPeerId);
     expect(conns.length,
       `connections to relay = ${conns.map((c) => c.remoteAddr.toString()).join(', ')}`,
     ).toBe(1);
@@ -191,19 +196,20 @@ describe('mesh — a private NetNode', () => {
   // `getMultiaddrs()` carries circuit entries alone — every address
   // names `/p2p-circuit`.
   it('a private node announces its relay reservations alone (announceFilter)', async () => {
-    const relayKey = await libp2pGenerate('Ed25519');
-    const relayPeer = peerIdFromPrivateKey(relayKey);
-    const relay = await createLibp2p({
-      privateKey: relayKey,
-      addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] },
-      transports: [tcp()],
-      connectionEncrypters: [noise()],
-      streamMuxers: [yamux()],
-      services: { identify: identify(), circuitRelay: circuitRelayServer() },
-    });
-    relays.push(relay);
+    const relayDir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-announce-relay-'));
+    dirs.push(relayDir);
+    const relay = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      bootstrapPeers: [],
+      mesh: publicMeshOn(relayDir),
+    }), validators);
+    await relay.start();
+    nodes.push(relay);
+    const relayLibp2p = (relay as unknown as { libp2p: Libp2p }).libp2p;
+    const relayPeerId = relayLibp2p.peerId.toString();
     const relayAddr = await waitFor(
-      () => relay.getMultiaddrs().map((a) => a.toString()).find((s) => /\/tcp\/\d+\/p2p\//.test(s)),
+      () => relayLibp2p.getMultiaddrs().map((a) => a.toString()).find((s) => /\/tcp\/\d+\/p2p\//.test(s)),
       5_000,
       "relay's TCP multiaddr with /p2p/",
     );
@@ -223,7 +229,7 @@ describe('mesh — a private NetNode', () => {
     await waitFor(
       () => {
         const mas = libp2p.getMultiaddrs().map((a) => a.toString());
-        return mas.some((m) => m.includes('/p2p-circuit') && m.includes(relayPeer.toString())) ? true : null;
+        return mas.some((m) => m.includes('/p2p-circuit') && m.includes(relayPeerId)) ? true : null;
       },
       20_000,
       'reservation lands',

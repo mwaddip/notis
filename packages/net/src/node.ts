@@ -75,6 +75,20 @@ import {
   validateHandshake,
 } from './handshake.js';
 import type { HandshakeResult } from './handshake.js';
+
+/**
+ * The outcome of `admitOutboundConnection` — the handshake succeeded and
+ * the peer was admitted (or found already Active), or the handshake or an
+ * admission check closed the connection. The shared Promise's value: the
+ * dial funnel reads `ok` to decide its source-specific bookkeeping
+ * (NET_INTERFACE → Outbound Manager — `markBootstrapSettled`,
+ * `recordDialResult`), and reads `handshake` for the agent and node names
+ * the dialled-address PeerDb record keeps.
+ */
+interface OutboundAdmissionResult {
+  ok: boolean;
+  handshake?: HandshakeResult;
+}
 import {
   MSG_GET_PEERS,
   MSG_PEERS,
@@ -677,6 +691,17 @@ export class NetNode {
    */
   private completedConnections: Set<string> = new Set();
   /**
+   * The shared outbound-admission Promise for each outbound connection
+   * (NET_INTERFACE → Handshake → "Every connection this node dialled carries
+   * its handshake, whoever within the node dialled it"). The ownership mark:
+   * the first writer runs the handshake; every later caller — the dial
+   * funnel awaiting its own dial, or a second open hook on the same
+   * connection id — reads this map and awaits the Promise rather than
+   * opening a second handshake stream. Dropped at `connection:close` and
+   * cleared at `stop()`.
+   */
+  private outboundAdmissions: Map<string, Promise<OutboundAdmissionResult>> = new Map();
+  /**
    * Per-connection timers that close a connection whose handshake has not
    * completed `HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs` after its
    * open (NET_INTERFACE → Handshake →
@@ -1087,6 +1112,29 @@ export class NetNode {
         // "A connection handshakes within its deadline, or is closed":
         // the deadline starts at connection:open, per connection id.
         if (typeof conn?.id === 'string') this.startHandshakeDeadline(conn);
+        // NET_INTERFACE → Handshake →
+        // "Every connection this node dialled carries its handshake,
+        // whoever within the node dialled it": libp2p opens outbound
+        // connections on the node's behalf outside the dial funnel — a
+        // relay reservation, a DHT query, AutoNAT's dial-back. The open
+        // hook runs the outbound handshake on every one as it opens.
+        // `ensureOutboundAdmission` is idempotent on `conn.id`, so the
+        // funnel's own and this one are the same handshake, never two.
+        //
+        // Scheduled through `setImmediate` so the funnel's own continuation
+        // of `await libp2p.dial(...)` — which runs its self-check and
+        // banned-check and only then claims the admission — runs first:
+        // the funnel's claim wins for a funnel dial, this one wins for a
+        // service dial (relay reservation, DHT, AutoNAT) that no funnel
+        // claims. `setImmediate` is unref'd so a late-firing admission
+        // never holds the process open.
+        if (direction === 'outbound' && typeof conn?.id === 'string') {
+          const im = setImmediate(() => {
+            if (this.outboundAdmissions.has(conn.id)) return;
+            void this.ensureOutboundAdmission(conn);
+          });
+          im.unref();
+        }
       });
 
       libp2p.addEventListener('peer:connect', (evt: any) => {
@@ -1126,6 +1174,11 @@ export class NetNode {
           // the deadline timer and the "completed" fact live with the
           // connection, dropped at its close.
           this.completedConnections.delete(conn.id);
+          // NET_INTERFACE → Handshake →
+          // "Every connection this node dialled carries its handshake,
+          // whoever within the node dialled it": the ownership mark lives
+          // with the connection.
+          this.outboundAdmissions.delete(conn.id);
           const timer = this.handshakeDeadlines.get(conn.id);
           if (timer !== undefined) {
             clearTimeout(timer);
@@ -1334,6 +1387,7 @@ export class NetNode {
     this.handshakeDeadlines.clear();
     this.handshakenConnections.clear();
     this.completedConnections.clear();
+    this.outboundAdmissions.clear();
     // NET_INTERFACE → The mesh — a private node's relay-listen
     // retries stop first, then STUN closes before libp2p's stop so a
     // bind failure is surfaced over the libp2p teardown
@@ -1378,18 +1432,196 @@ export class NetNode {
    * a completed connection is left alone. The timer is `unref`ed, so a live
    * one never holds the process open.
    */
-  private startHandshakeDeadline(conn: { id: string; close(): Promise<void> }): void {
+  private startHandshakeDeadline(
+    conn: {
+      id: string;
+      close(): Promise<void>;
+      remotePeer?: { toString(): string };
+    },
+  ): void {
     if (this.handshakeDeadlines.has(conn.id)) return;
     const deadlineMs = HANDSHAKE_DEADLINE_FACTOR * this.config.syncRequestTimeoutMs;
     const timer = setTimeout(() => {
       this.handshakeDeadlines.delete(conn.id);
       if (this.completedConnections.has(conn.id)) return;
+      // NET_INTERFACE → Handshake →
+      // "A connection handshakes within its deadline, or is closed": the
+      // close names the peer and that the handshake did not complete, so
+      // the churn a silent close used to hide (the service-opened
+      // connection without a handshake) is audible.
+      const peerId = conn.remotePeer?.toString() ?? 'unknown';
+      console.log(`[net] handshake deadline: closing connection to ${peerId} — handshake did not complete in time`);
       // The close hangs the connection up. The connection:close event the
       // close raises clears every per-connection fact, so this fires once.
       void conn.close().catch(() => { /* already gone */ });
     }, deadlineMs);
     timer.unref();
     this.handshakeDeadlines.set(conn.id, timer);
+  }
+
+  /**
+   * NET_INTERFACE → Handshake →
+   * "Every connection this node dialled carries its handshake, whoever
+   * within the node dialled it": the ownership mark that guarantees "one
+   * handshake per connection". The first caller — the open hook on the
+   * outbound connection — stores a Promise in `outboundAdmissions`; every
+   * later caller (the dial funnel after `libp2p.dial()` returns the same
+   * connection) reads that Promise and awaits it. The funnel's own
+   * handshake and this one are the same handshake, never two.
+   *
+   * Returns the shared admission Promise, which resolves when the handshake
+   * on `conn` has completed (ok or not) and its consequences — Active,
+   * capabilities, maxPeers close for a chain-serving peer past the budget
+   * — have been applied.
+   */
+  private ensureOutboundAdmission(
+    conn: import('@libp2p/interface').Connection,
+  ): Promise<OutboundAdmissionResult> {
+    const existing = this.outboundAdmissions.get(conn.id);
+    if (existing !== undefined) return existing;
+    // NET_INTERFACE → Handshake → "A connection carries one handshake,
+    // opened by the side that dialled it": the mark the inbound handler
+    // reads to refuse a later handshake stream on the same connection
+    // (`registerHandshakeHandler`). Set before the stream opens.
+    this.handshakenConnections.add(conn.id);
+    const promise = this.admitOutboundConnection(conn);
+    this.outboundAdmissions.set(conn.id, promise);
+    void promise.catch((err) => {
+      console.warn(`[net] outbound admission on ${conn.remotePeer.toString()} threw: ${String(err)}`);
+    });
+    return promise;
+  }
+
+  /**
+   * Run the outbound handshake on an outbound connection and admit its
+   * peer (NET_INTERFACE → Handshake → "Every connection this node dialled
+   * carries its handshake, whoever within the node dialled it"). Called
+   * through `ensureOutboundAdmission`, so this runs at most once per
+   * connection id. The caller (funnel or open hook) awaits the shared
+   * Promise and reads the result to decide source-specific bookkeeping.
+   *
+   * On handshake success: the peer becomes Active with its declared
+   * version and capabilities (NET_INTERFACE → Handshake → "A peer becomes
+   * Active once"); a peer that declares no chain service is closed
+   * (→ Readers → "A peer dialled for chain service that declares none is
+   * closed"); a chain-serving peer past `maxPeers` is closed (→ Readers).
+   * On handshake failure: the connection is closed; no `recordDialResult`
+   * — that is the funnel's job over `addr`, and a service dial (relay
+   * reservation, DHT, AutoNAT) names no `addr`.
+   */
+  private async admitOutboundConnection(
+    conn: import('@libp2p/interface').Connection,
+  ): Promise<OutboundAdmissionResult> {
+    const peerId = conn.remotePeer.toString();
+    const connId = conn.id;
+    const libp2p = this.libp2p;
+    if (!libp2p) return { ok: false };
+
+    // NET_INTERFACE →
+    // "A connection whose remote peer id is this node's own is never a peer":
+    // libp2p already refuses a self-dial, but a defensive hang-up catches
+    // any path that reaches here.
+    if (peerId === libp2p.peerId.toString()) {
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false };
+    }
+
+    // NET_INTERFACE → "A banned peer's handshake is refused unread": a
+    // dial that resolved to a banned peer is closed with the dialled
+    // address joining the peer's ban. The funnel's own check at
+    // `dialAndHandshake` covers a funnel dial; this one covers a service
+    // dial libp2p opens outside the funnel.
+    if (this.peerMgr.isBanned(peerId)) {
+      console.log(`[net] outbound admission: banned peer ${peerId} — closing`);
+      await conn.close().catch(() => { /* already gone */ });
+      const remoteAddr = conn.remoteAddr?.toString();
+      if (remoteAddr) this.peerMgr.extendBan(peerId, remoteAddr);
+      return { ok: false };
+    }
+
+    let result: HandshakeResult;
+    try {
+      result = await this.runOutboundHandshake(conn);
+    } catch (handshakeErr: any) {
+      console.warn(`[net] outbound handshake with ${peerId} failed: ${handshakeErr?.message ?? handshakeErr}`);
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false };
+    }
+
+    if (!result.ok || !result.msg) {
+      // NET_INTERFACE → Handshake →
+      // "A handshake that does not complete ends its connection".
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false, handshake: result };
+    }
+
+    // NET_INTERFACE → Handshake →
+    // "A connection handshakes within its deadline, or is closed":
+    // the dialler's handshake has completed on this connection; the
+    // deadline leaves it alone.
+    this.completedConnections.add(connId);
+
+    const peerServesChain = servesChain(result.peerCapabilities);
+    // NET_INTERFACE → Readers → "A peer dialled for chain service that
+    // declares none is closed". A relay we dialled serves the chain, so
+    // this close does not fire for the mesh's service connections; it
+    // fires for a reader-only build that was dialled as a seed.
+    if (!peerServesChain) {
+      console.log(`[net] outbound handshake with ${peerId} declares no chain service — closing`);
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false, handshake: result };
+    }
+    // NET_INTERFACE → Readers — "a chain-serving peer past `maxPeers` is
+    // closed after its handshake as well".
+    if (
+      !this.peerMgr.isPeerActive(peerId)
+      && this.getConnectedPeers().length >= this.config.maxPeers
+    ) {
+      console.log(`[net] outbound handshake with ${peerId} past maxPeers — closing`);
+      await conn.close().catch(() => { /* already gone */ });
+      return { ok: false, handshake: result };
+    }
+
+    // NET_INTERFACE → Handshake → "A peer becomes Active once": a
+    // handshake that completes for a peer already Active records and
+    // raises nothing.
+    if (!this.peerMgr.isPeerActive(peerId)) {
+      this.peerMgr.setPeerState(peerId, PeerState.Active);
+      // The dialled address joins `peerMgr.setPeerAddress` only when the
+      // funnel knows it; `conn.remoteAddr` is a resolved multiaddr — the
+      // funnel overwrites with the seed-list spelling after the admission.
+      const remoteAddr = conn.remoteAddr?.toString();
+      if (remoteAddr) this.peerMgr.setPeerAddress(peerId, remoteAddr);
+      // The record and the metadata keep the peer's declared version,
+      // not ours — it is what the boundary sweep reads
+      // (NET_INTERFACE → PeerDb; → Post-Handshake Routing).
+      this.peerMgr.setPeerVersion(peerId, result.msg.protocolVersion);
+      this.peerMgr.setPeerCapabilities(peerId, result.peerCapabilities);
+      // PeerDb for a service-opened connection is keyed by `conn.remoteAddr`
+      // — a resolved multiaddr; the funnel, when it dialled, adds a second
+      // record under the seed-list spelling after this admission returns.
+      if (remoteAddr) {
+        this.peerDb?.record({
+          address: remoteAddr,
+          lastSeenMs: Date.now(),
+          agentName: result.msg.agentName,
+          nodeName: result.msg.nodeName,
+          protocolVersion: result.msg.protocolVersion,
+          capabilities: result.peerCapabilities,
+        });
+      }
+      const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
+      // NET_INTERFACE → Readers → "A reader is never asked for chain data":
+      // the scheduler and the peerActive handlers fire for a chain-serving
+      // peer alone. A non-chain outbound was closed above.
+      this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
+      for (const cb of this.peerActiveHandlers) {
+        try { cb(peerId, dir); } catch (err) {
+          console.warn(`[net] peerActive handler error: ${String(err)}`);
+        }
+      }
+    }
+    return { ok: true, handshake: result };
   }
 
   /**
@@ -1454,106 +1686,54 @@ export class NetNode {
 
       // NET_INTERFACE → Handshake →
       // "The dial funnel handshakes only a connection it opened": when the
-      // returned connection is one the peer opened, or one that has
-      // carried a handshake, the funnel opens no handshake stream on it;
-      // it counts connected when the peer is Active, and otherwise leaves
-      // the connection to its deadline.
-      const connId = conn.id;
-      const connDirection = conn.direction;
-      if (connDirection === 'inbound' || this.handshakenConnections.has(connId)) {
+      // returned connection is one the peer opened — libp2p answers a dial
+      // naming a connected peer id with a connection it holds — the funnel
+      // opens no handshake stream on it; it counts connected when the peer
+      // is Active, and otherwise leaves the connection to its deadline.
+      if (conn.direction === 'inbound') {
         if (source === 'seed') this.markBootstrapSettled(addr);
         return this.peerMgr.isPeerActive(remote);
       }
-      // NET_INTERFACE → Handshake → "A connection carries one handshake,
-      // opened by the side that dialled it": the dialler marks when it
-      // opens one.
-      this.handshakenConnections.add(connId);
 
-      try {
-        const result = await this.runOutboundHandshake(conn);
-        if (result.ok && result.msg) {
-          const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
-          // NET_INTERFACE → Handshake →
-          // "A connection handshakes within its deadline, or is closed":
-          // the dialler's handshake has completed on this connection; the
-          // deadline leaves it alone.
-          this.completedConnections.add(connId);
-          // NET_INTERFACE → Handshake → "A peer becomes Active once": a
-          // handshake that completes for a peer already Active records and
-          // raises nothing.
-          const peerServesChain = servesChain(result.peerCapabilities);
-          // NET_INTERFACE → Readers → "A peer dialled for chain service
-          // that declares none is closed": a reader on the dial side, or
-          // a build that declares nothing, is a seed misconfigured. Close
-          // the connection with nothing recorded — no peerDb entry, no
-          // dial cooldown — and the next tick dials another.
-          if (!peerServesChain) {
-            console.log(`[net] outbound handshake with ${remote} declares no chain service — closing`);
-            await conn.close().catch(() => { /* already gone */ });
-            if (source === 'seed') this.markBootstrapSettled(addr);
-            return false;
-          }
-          // NET_INTERFACE → Readers — "a chain-serving peer past `maxPeers`
-          // is closed after its handshake as well". An outbound that lands
-          // past the budget is closed with nothing recorded.
-          if (
-            !this.peerMgr.isPeerActive(remote)
-            && this.getConnectedPeers().length >= this.config.maxPeers
-          ) {
-            console.log(`[net] outbound handshake with ${remote} past maxPeers — closing`);
-            await conn.close().catch(() => { /* already gone */ });
-            if (source === 'seed') this.markBootstrapSettled(addr);
-            return false;
-          }
-          if (!this.peerMgr.isPeerActive(remote)) {
-            this.peerMgr.setPeerState(remote, PeerState.Active);
-            this.peerMgr.setPeerAddress(remote, addr);
-            // The record and the metadata keep the peer's declared version,
-            // not ours — it is what the boundary sweep reads
-            // (NET_INTERFACE → PeerDb; → Post-Handshake Routing).
-            this.peerMgr.setPeerVersion(remote, result.msg.protocolVersion);
-            this.peerMgr.setPeerCapabilities(remote, result.peerCapabilities);
-            this.peerDb?.record({
-              address: addr,
-              lastSeenMs: Date.now(),
-              agentName: result.msg.agentName,
-              nodeName: result.msg.nodeName,
-              protocolVersion: result.msg.protocolVersion,
-              capabilities: result.peerCapabilities,
-            });
-            // NET_INTERFACE → Readers → "A reader is never asked for chain
-            // data": the scheduler and the peerActive handlers fire for a
-            // chain-serving peer alone. A non-chain outbound was closed
-            // above, so this path is reached for a chain-serving peer.
-            this.syncMachine?.onPeerActive(remote, result.peerHeight, dir);
-            for (const cb of this.peerActiveHandlers) {
-              try { cb(remote, dir); } catch (err) {
-                console.warn(`[net] peerActive handler error: ${String(err)}`);
-              }
-            }
-          }
-          if (source === 'seed') this.markBootstrapSettled(addr);
-          return true;
+      // NET_INTERFACE → Handshake →
+      // "Every connection this node dialled carries its handshake, whoever
+      // within the node dialled it": the open hook started the handshake
+      // the moment this connection opened. The funnel awaits that shared
+      // admission — the funnel's own and the open hook's are the same
+      // handshake, never two.
+      const admission = await this.ensureOutboundAdmission(conn);
+      // After the admission completes, the dialled address — the funnel's
+      // own spelling, not the open hook's `conn.remoteAddr` — joins PeerDb
+      // and `peerMgr.setPeerAddress` with the time stamp, so a later fill
+      // phase can redial by the same string the seed list holds.
+      if (admission.ok) {
+        const msg = admission.handshake?.msg;
+        const caps = admission.handshake?.peerCapabilities;
+        if (msg && caps) {
+          this.peerMgr.setPeerAddress(remote, addr);
+          this.peerDb?.record({
+            address: addr,
+            lastSeenMs: Date.now(),
+            agentName: msg.agentName,
+            nodeName: msg.nodeName,
+            protocolVersion: msg.protocolVersion,
+            capabilities: [...caps],
+          });
         }
-        // NET_INTERFACE → Handshake →
-        // "A handshake that does not complete ends its connection"; →
-        // Outbound Manager, fill phase: an address a dialler's handshake did
-        // not complete joins the redial cooldown as a failed dial does.
-        await conn.close().catch(() => { /* already gone */ });
-        this.outboundMgr?.recordDialResult(addr, false);
         if (source === 'seed') this.markBootstrapSettled(addr);
-        return false;
-      } catch (handshakeErr: any) {
-        console.warn(`[net] handshake with ${addr} failed: ${handshakeErr?.message ?? handshakeErr}`);
-        // NET_INTERFACE → Handshake →
-        // "A handshake that does not complete ends its connection"; →
-        // Outbound Manager, fill phase: an address a dialler's handshake did
-        // not complete joins the redial cooldown as a failed dial does.
-        await conn.close().catch(() => { /* already gone */ });
-        this.outboundMgr?.recordDialResult(addr, false);
-        if (source === 'seed') this.markBootstrapSettled(addr);
-        return false;
+        return true;
       }
+      // NET_INTERFACE → Handshake →
+      // "A handshake that does not complete ends its connection"; →
+      // Outbound Manager, fill phase: an address a dialler's handshake did
+      // not complete joins the redial cooldown as a failed dial does. A
+      // service dial (libp2p's own — relay reservation, DHT, AutoNAT) runs
+      // no funnel path at all, so no `recordDialResult` is called on its
+      // failure; libp2p handles its own service retry, and the next tick's
+      // floor/fill is driven by the funnel.
+      this.outboundMgr?.recordDialResult(addr, false);
+      if (source === 'seed') this.markBootstrapSettled(addr);
+      return false;
     } catch (err: any) {
       this.pendingDials.delete(addr);
       // NET_INTERFACE →
