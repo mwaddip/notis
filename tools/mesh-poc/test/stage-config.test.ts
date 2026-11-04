@@ -1133,6 +1133,108 @@ describe('stage up --dry-run', () => {
   }, 30_000);
 });
 
+// MESH_INTERFACE → Acceptance — "each host one devnet `@dagsocial/node` run
+// with a mesh role, a hostile host's lie outside the node it runs". The
+// mesh service collapses into the node: every `[spawn:mesh:*]` goes away,
+// the node reads the mapped `MESH_*` settings (`NODE_INTERFACE →
+// Configuration`), and a hostile host's lie sits outside the node — an
+// interposer in the ns at `127.0.0.1:7000`, an nft `nat output` redirect
+// rule the node's own loopback forward lands on.
+describe('stage up --dry-run — one node per host, no mesh service', () => {
+  let out = '';
+  function runDryOnce(): void {
+    if (out !== '') return;
+    const res = spawnSync(process.execPath, [UP_SCRIPT, '--dry-run'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    if (res.status !== 0) throw new Error(`up --dry-run exit ${res.status}: ${res.stderr}`);
+    out = res.stdout;
+  }
+
+  // NODE_INTERFACE → Configuration → "A mesh node prints its identity line" —
+  // the mesh service's spawn line is retired because the node is the mesh
+  // node. A `[spawn:mesh:*]` line means phase 7 still runs the separate
+  // service.
+  it.fails('no [spawn:mesh:*] line appears — the mesh service collapses into the node', () => {
+    runDryOnce();
+    // Control: the dry-run produced output and at least one notis spawn.
+    expect(out.length, 'stdout non-empty (control)').toBeGreaterThan(0);
+    const notisLines = out.split('\n').filter((l) => l.startsWith('[spawn:notis:'));
+    expect(notisLines.length, 'at least one [spawn:notis:*] (control)').toBeGreaterThan(0);
+    // The target shape.
+    const meshLines = out.split('\n').filter((l) => l.startsWith('[spawn:mesh:'));
+    expect(meshLines, `mesh service spawns remain: ${meshLines.join('\n')}`).toEqual([]);
+  }, 30_000);
+
+  // NODE_INTERFACE → Configuration — "`MESH_ROLE` … `public` or `private`;
+  // unset, the node runs no mesh". The node reads the mesh listens and the
+  // STUN setting from its own `MESH_*` env, and the stage maps each public
+  // host's listen set accordingly.
+  it.fails('a notis spawn on a mesh-public host carries MESH_ROLE=public and the mapped MESH_LISTEN', () => {
+    runDryOnce();
+    const pub1Line = out.split('\n').find((l) => l.startsWith('[spawn:notis:pub1]'));
+    expect(pub1Line, 'pub1 notis spawn line (control)').toBeDefined();
+    // Control: the current env already carries NETWORK_TYPE=devnet.
+    expect(pub1Line!, 'pub1 names NETWORK_TYPE=devnet (control)').toContain('NETWORK_TYPE=devnet');
+    // The target shape.
+    expect(pub1Line!, 'MESH_ROLE=public set on the node env').toMatch(/\bMESH_ROLE=public\b/);
+    expect(pub1Line!, 'MESH_LISTEN names webrtc-direct + tcp on pub1\'s addr').toMatch(
+      /\bMESH_LISTEN=\/ip4\/11\.100\.0\.11\/udp\/4001\/webrtc-direct,\/ip4\/11\.100\.0\.11\/tcp\/4002\b/,
+    );
+  }, 30_000);
+
+  // MESH_INTERFACE → NAT — "a private node … takes a relay reservation on
+  // each public node it is told of — its bootstrap peers, by address and
+  // id, over the connection `net` holds to each". A private node's circuit
+  // listens come from the connection `net` holds to each seed, not from
+  // `MESH_LISTEN`. Phase 7 names both publics with their `/p2p/<peerId>`
+  // trailers so the seed table carries ids `net` can dial.
+  it.fails('BOOTSTRAP_PEERS on a non-pair notis spawn names both publics with /p2p/<peerId>', () => {
+    runDryOnce();
+    const priv1Line = out.split('\n').find((l) => l.startsWith('[spawn:notis:priv1]'));
+    expect(priv1Line, 'priv1 notis spawn line (control)').toBeDefined();
+    const m = /BOOTSTRAP_PEERS=([^\s]+)/.exec(priv1Line!);
+    expect(m, 'BOOTSTRAP_PEERS present (control)').not.toBeNull();
+    const value = m![1]!;
+    const peers = value.split(',');
+    // The target shape.
+    expect(peers.length, `two seeds (pub1 and pub2), got: ${value}`).toBe(2);
+    for (const peer of peers) {
+      expect(peer, `each seed names /tcp/ and /p2p/<peerId>: ${peer}`).toMatch(
+        /\/ip4\/\d[\d.]*\/tcp\/\d+\/p2p\/[A-Za-z0-9]+/,
+      );
+    }
+  }, 30_000);
+
+  // MESH_INTERFACE → Acceptance — "a hostile host's lie outside the node
+  // it runs". An nft `nat output` rule in the hostile namespace redirects
+  // `127.0.0.1:<nodePort>` to the interposer's port, so the node's own
+  // mesh endpoint forward (to `http://127.0.0.1:<PORT>`) reaches the
+  // interposer. The rule goes in BEFORE the node starts.
+  it.fails('each hostile-upstream host carries an nft redirect rule before its notis spawn', () => {
+    runDryOnce();
+    const lines = out.split('\n');
+    // Control: the dry-run names the hostile-malformed host.
+    const notisIdx = lines.findIndex((l) => l.startsWith('[spawn:notis:hostile-malformed]'));
+    expect(notisIdx, 'hostile-malformed notis spawn present (control)').toBeGreaterThan(-1);
+    // The target shape: a redirect rule in the hostile ns, sitting ahead
+    // of the notis spawn. The rule names either `redirect to :7000` or
+    // `dnat to 127.0.0.1:7000` under the nat output hook.
+    const redirectIdx = lines.findIndex(
+      (l, i) =>
+        i < notisIdx &&
+        /ip netns exec notismesh-hostile-malformed/.test(l) &&
+        /\bnat\b/.test(l) &&
+        /(redirect to :7000|dnat to 127\.0\.0\.1:7000)/.test(l),
+    );
+    expect(
+      redirectIdx,
+      `redirect rule for hostile-malformed before its notis spawn (lines around notis spawn: ${lines.slice(Math.max(0, notisIdx - 5), notisIdx).join(' | ')})`,
+    ).toBeGreaterThan(-1);
+  }, 30_000);
+});
+
 function hexToBytes(hex: string): Uint8Array {
   if (typeof hex !== 'string' || hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
     throw new Error('invalid hex');
