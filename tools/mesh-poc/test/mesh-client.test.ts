@@ -24,6 +24,8 @@ import { MeshConfigError } from '../src/config.js';
 import { assertClientConfig, cappedTimerMs, MAX_TIMER_MS, pickConnectionForRead } from '../src/client/mesh-client.js';
 import { MeshFetchError, MeshUrlError } from '@dagsocial/net/browser';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { MAGIC_DEVNET, PROTOCOL_VERSION } from '@dagsocial/types';
+import { attachNetHandshake } from './helpers/net-handshake-responder.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { multiaddr } from '@multiformats/multiaddr';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
@@ -40,6 +42,13 @@ async function startNode(upstream: { base: string }, dir: string): Promise<{ nod
     key, network: 'devnet', role: 'public',
     listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
     bootstrap: [], stateDir: dir, upstream: upstream.base,
+  });
+  // NET_INTERFACE → Handshake — the mesh-poc node does not yet speak
+  // net's handshake; the test attaches a responder so the client's
+  // readerHandshake answers and reads can proceed.
+  await attachNetHandshake(n.libp2p, {
+    magic: MAGIC_DEVNET,
+    protocolVersion: PROTOCOL_VERSION,
   });
   const addrs = n.multiaddrs();
   const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));

@@ -33,6 +33,8 @@ import {
 import { MeshConfigError } from '../src/config.js';
 import { peerIdFromNotisId, seedOfSecretKey, nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { MAGIC_DEVNET, PROTOCOL_VERSION } from '@dagsocial/types';
+import { attachNetHandshake } from './helpers/net-handshake-responder.js';
 import { chainUpstream, chainResolve, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain } from './helpers/devnet-block.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -278,6 +280,10 @@ describe('MeshClient.addByHand — anchorReached', () => {
       key, network: 'devnet', role: 'public',
       listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
       bootstrap: [], stateDir: dir, upstream: upstream.base,
+    });
+    await attachNetHandshake(n.libp2p, {
+      magic: MAGIC_DEVNET,
+      protocolVersion: PROTOCOL_VERSION,
     });
     const addrs = n.multiaddrs();
     const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));

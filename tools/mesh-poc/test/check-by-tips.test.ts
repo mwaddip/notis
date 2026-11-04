@@ -22,6 +22,7 @@ import { verifierProfile } from '@dagsocial/nipopow-client';
 import { blockTopic } from '../src/gossip-rules.js';
 import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
 import { startMeshNode, type MeshNode } from '../src/node/mesh-node.js';
+import { attachNetHandshake } from './helpers/net-handshake-responder.js';
 import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeBlockAt, makeLinkedChain } from './helpers/devnet-block.js';
@@ -51,6 +52,13 @@ async function startNode(
     key, network: 'devnet', role: 'public',
     listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
     bootstrap: [], stateDir: dir, upstream: upstream.base,
+  });
+  // NET_INTERFACE → Handshake — mesh-poc's node does not yet speak net's
+  // handshake; the responder answers it so the client's readerHandshake
+  // completes and reads can proceed.
+  await attachNetHandshake(n.libp2p, {
+    magic: MAGIC_DEVNET,
+    protocolVersion: PROTOCOL_VERSION,
   });
   const addrs = n.multiaddrs();
   const webrtcAddr = addrs.find((a) => a.includes('/webrtc-direct/'));

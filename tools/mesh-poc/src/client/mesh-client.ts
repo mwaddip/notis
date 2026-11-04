@@ -25,7 +25,7 @@ import {
   circuitRelayAddressesLast,
 } from '@libp2p/utils';
 import { peerIdFromString } from '@libp2p/peer-id';
-import { decodeOrderingBlock, generateKeyPair } from '@dagsocial/types';
+import { decodeOrderingBlock, generateKeyPair, PROTOCOL_VERSION } from '@dagsocial/types';
 import type { NetworkProfile, OrderingBlock } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
@@ -55,6 +55,8 @@ import {
   meshFetchOverConnection,
   MeshFetchError,
   readerLibp2pOptions,
+  readerHandshake,
+  servesChain,
 } from '@dagsocial/net/browser';
 import { HeldChain, type Placement } from './held-chain.js';
 import { headerFromJson } from './header-json.js';
@@ -115,6 +117,20 @@ export function cappedTimerMs(ms: number): number {
 // failure.
 const BODY_OVER_CAP = 'body over ';
 const BODY_UNPARSEABLE = 'unparseable body:';
+
+/**
+ * MESH_INTERFACE → Block gossip → "A handshake that declares no chain
+ * service is not read — it is not a node". A read whose handshake
+ * answered `READER_CAPABILITIES` is signalled with this error so the
+ * check's phase 2 skips the entry and no failure event is applied —
+ * the entry stays at its pre-handshake state.
+ */
+class HandshakeNoChainServiceError extends Error {
+  override readonly name = 'HandshakeNoChainServiceError';
+  constructor(public readonly notisId: string) {
+    super(`handshake: no chain service (${notisId})`);
+  }
+}
 
 /**
  * MESH_INTERFACE → Discovery / NAT — the client's config refusals as a pure,
@@ -538,8 +554,37 @@ class MeshClientImpl implements MeshClient {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private readonly onDiscovery: (evt: CustomEvent<{ id: PeerId; multiaddrs: Multiaddr[] }>) => void;
-  private readonly onConnectionOpen: () => void;
-  private readonly onConnectionClose: () => void;
+  private readonly onConnectionOpen: (evt: CustomEvent<Connection>) => void;
+  private readonly onConnectionClose: (evt: CustomEvent<Connection>) => void;
+  /**
+   * MESH_INTERFACE → Block gossip → "A client is a reader of every
+   * node it holds a connection to" — the handshake outcome keyed by
+   * `conn.id`: `passed` is the one state a read goes out on; `failed`
+   * carries the handshake reason to a `retry` event; `no-chain` leaves
+   * the node unread.
+   */
+  private readonly handshakeResults: Map<string, 'passed' | 'failed' | 'no-chain'> = new Map();
+  /**
+   * The handshake's reason from the dialler's side, kept so a read's
+   * failure carries the handshake's message (`handshake: <reason>`)
+   * rather than the read's own `no open connection`.
+   */
+  private readonly handshakeReasons: Map<string, string> = new Map();
+  /**
+   * MESH_INTERFACE → Block gossip → "A handshake that declares no
+   * chain service is not read — it is not a node". A notisId lands
+   * here once a handshake to it declared `READER_CAPABILITIES`; the
+   * check skips it in every phase and no read goes out on it.
+   */
+  private readonly notAChainNodes: Set<string> = new Set();
+  /**
+   * MESH_INTERFACE → Block gossip → "A client is a reader of every
+   * node it holds a connection to" — "A read waits for its
+   * connection's handshake". The per-connection promise resolves to
+   * the handshake's final state so a read awaits the handshake once;
+   * cleared on `connection:close`.
+   */
+  private readonly handshakeDone: Map<string, Promise<'passed' | 'failed' | 'no-chain'>> = new Map();
   // MESH_INTERFACE → Block gossip — the delivery listener, kept as a
   // bound reference so `removeEventListener` reads the same identity
   // on stop.
@@ -589,15 +634,35 @@ class MeshClientImpl implements MeshClient {
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — the client's reads open their stream on a
     // connection the client already holds for the key, picked by
-    // `pickConnectionForRead` (strict: open, direct first, never
-    // limited). A read with no suitable connection rejects as a
-    // transport failure.
-    this.meshFetchFn = meshFetchOverConnection((notisId) =>
-      pickConnectionForRead(this.libp2p.getConnections(), toLibp2pPeerIdString(notisId)),
+    // `pickReadyConnection` (strict: open, direct first, never
+    // limited, handshake passed). A read with no ready connection
+    // rejects as a transport failure.
+    const innerFetch = meshFetchOverConnection((notisId) =>
+      this.pickReadyConnection(notisId),
     );
+    // MESH_INTERFACE → Block gossip → "A read waits for its
+    // connection's handshake" — await the handshake for a connection
+    // the pick would open its stream on, then hand off to the inner
+    // mesh fetch. No connection, or every one of theirs failed:
+    // the inner fetch rejects as transport.
+    this.meshFetchFn = async (url, init) => {
+      const notisId = idOfMeshUrl(url);
+      await this.awaitHandshakeForNode(notisId);
+      return innerFetch(url, init);
+    };
     this.onDiscovery = (evt): void => this.handleDiscovery(evt.detail);
-    this.onConnectionOpen = (): void => this.refreshTransportPathAndEmit();
-    this.onConnectionClose = (): void => this.refreshTransportPathAndEmit();
+    this.onConnectionOpen = (evt): void => {
+      const conn = evt.detail;
+      const promise = this.runHandshake(conn);
+      this.handshakeDone.set(conn.id, promise);
+      this.refreshTransportPathAndEmit();
+    };
+    this.onConnectionClose = (evt): void => {
+      this.handshakeDone.delete(evt.detail.id);
+      this.handshakeResults.delete(evt.detail.id);
+      this.handshakeReasons.delete(evt.detail.id);
+      this.refreshTransportPathAndEmit();
+    };
     // MESH_INTERFACE → Block gossip → "A block is checked before it is
     // forwarded, and never applied" — net's `BlockCheck` runs its
     // Stage 1 checks over every gossiped block. Validators are
@@ -809,13 +874,12 @@ class MeshClientImpl implements MeshClient {
     // to a node its need allows". `usable` is the strict read pick's
     // non-null result over the same connection list the fetch opens
     // its stream on.
-    const connections = this.libp2p.getConnections();
     const entries = this.nodeList.entries();
     const candidates = entries.map((e) => ({
       id: e.notisId,
       status: e.status,
       readMs: this.readMsMap.get(e.notisId) ?? null,
-      usable: pickConnectionForRead(connections, toLibp2pPeerIdString(e.notisId)) !== null,
+      usable: this.pickReadyConnection(e.notisId) !== null,
     }));
     const picked = pickServer(candidates, need, this.random);
     if (picked === null) {
@@ -979,7 +1043,11 @@ class MeshClientImpl implements MeshClient {
     // Phase 1: pre-dial every candidate the client has not already
     // connected to, so libp2p's unexpected-peer failure is caught per
     // address instead of folded into a generic transport failure.
-    const beforeIds = this.nodeList.candidates();
+    // MESH_INTERFACE → Block gossip → "A handshake that declares no
+    // chain service is not read — it is not a node". Phase 1 and
+    // phase 2 drop a candidate whose handshake answered with no
+    // chain service.
+    const beforeIds = this.nodeList.candidates().filter((id) => !this.notAChainNodes.has(id));
     for (const id of beforeIds) {
       if (this.stopped) break;
       if (this.hasOpenConnection(id)) continue;
@@ -995,7 +1063,7 @@ class MeshClientImpl implements MeshClient {
     // failure; a body-level overflow or unparse, or a shape that is
     // not a tip, is a `malformed` lie — the lie row of
     // MESH_INTERFACE → The client's node list.
-    const afterIds = this.nodeList.candidates();
+    const afterIds = this.nodeList.candidates().filter((id) => !this.notAChainNodes.has(id));
     const pendingReadMs = new Map<string, number>();
     const pendingBehindBy = new Map<string, number | null>();
     const timedFetch = this.makeTimedFetch(pendingReadMs);
@@ -1011,6 +1079,10 @@ class MeshClientImpl implements MeshClient {
       try {
         response = await timedFetch(url + '/blocks/current', undefined);
       } catch (e) {
+        // MESH_INTERFACE → Block gossip → "A handshake that declares
+        // no chain service is not read — it is not a node". No
+        // failure event: the entry stays unread.
+        if (e instanceof HandshakeNoChainServiceError) continue;
         const message = e instanceof Error ? e.message : String(e);
         this.applyEvent({ id, ev: 'failure', kind: 'transport', message });
         continue;
@@ -1747,6 +1819,110 @@ class MeshClientImpl implements MeshClient {
     }
     const addrs = detail.multiaddrs.map((ma) => ma.toString());
     this.nodeList.add(id, addrs);
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "A read opens no
+   * connection" — the strict read pick, gated on the handshake. The
+   * open-direct-unlimited pick (`pickConnectionForRead`) is refused
+   * when the connection's handshake has not completed with
+   * `servesChain(capabilities)` true — before then, "no read goes out
+   * on a connection".
+   */
+  private pickReadyConnection(notisId: string): Connection | null {
+    const conn = pickConnectionForRead(
+      this.libp2p.getConnections(),
+      toLibp2pPeerIdString(notisId),
+    );
+    if (conn === null) return null;
+    return this.handshakeResults.get(conn.id) === 'passed' ? conn : null;
+  }
+
+  /**
+   * MESH_INTERFACE → Block gossip → "A client is a reader of every
+   * node it holds a connection to" — on each connection the client
+   * opens, run `net`'s handshake as the dialler with a reader's body:
+   * the client's held chain's tip height (0 before it holds one), its
+   * build's `PROTOCOL_VERSION`, an `agentName` naming the client. A
+   * failed handshake moves the node to `retry` with the handshake's
+   * reason named, never a lie, never `blacklisted`; a handshake that
+   * declares no chain service (`!servesChain(capabilities)`) leaves
+   * the node unread — it is not a node.
+   */
+  private async runHandshake(conn: Connection): Promise<'passed' | 'failed' | 'no-chain'> {
+    if (this.stopped) return 'failed';
+    const existing = this.handshakeResults.get(conn.id);
+    if (existing !== undefined) return existing;
+    try {
+      notisIdFromPeerId(conn.remotePeer);
+    } catch (e) {
+      if (!(e instanceof MeshKeyError)) throw e;
+      // A peer id that is not an Ed25519 key is not a Notis node;
+      // the handshake reason below carries this to the read's failure.
+    }
+    const tip = this.chain.tip();
+    const chainHeight = tip !== null ? tip.height : 0;
+    const result = await readerHandshake(conn, {
+      magic: this.profile.magic,
+      protocolVersion: PROTOCOL_VERSION,
+      agentName: 'notis-mesh-poc',
+      chainHeight,
+      timeoutMs: 10_000,
+    });
+    if (this.stopped) return 'failed';
+    if (!result.ok) {
+      this.handshakeResults.set(conn.id, 'failed');
+      this.handshakeReasons.set(conn.id, result.reason);
+      this.emitStateChange();
+      return 'failed';
+    }
+    if (!servesChain(result.capabilities)) {
+      this.handshakeResults.set(conn.id, 'no-chain');
+      this.handshakeReasons.set(conn.id, 'no chain service');
+      try {
+        const notisId = notisIdFromPeerId(conn.remotePeer);
+        this.notAChainNodes.add(notisId);
+      } catch (e) {
+        if (!(e instanceof MeshKeyError)) throw e;
+      }
+      this.emitStateChange();
+      return 'no-chain';
+    }
+    this.handshakeResults.set(conn.id, 'passed');
+    this.emitStateChange();
+    return 'passed';
+  }
+
+  /**
+   * MESH_INTERFACE → Block gossip → "A read waits for its
+   * connection's handshake" — await the handshake for the connection
+   * the client's pick would open its stream on (open, direct first,
+   * never limited). A handshake that declares no chain service
+   * throws `HandshakeNoChainServiceError`, which the read-caller
+   * catches and skips without a failure event (the entry is not a
+   * node). A failed handshake throws `MeshFetchError` of kind
+   * `transport` whose message starts with `handshake:`, so the
+   * caller's failure event names it directly, never a lie. No open
+   * connection: return at once; the inner fetch rejects with its own
+   * transport reason.
+   */
+  private async awaitHandshakeForNode(notisId: string): Promise<void> {
+    const conn = pickConnectionForRead(
+      this.libp2p.getConnections(),
+      toLibp2pPeerIdString(notisId),
+    );
+    if (conn === null) return;
+    const pending = this.handshakeDone.get(conn.id);
+    if (pending !== undefined) {
+      try { await pending; } catch { /* reflected in handshakeResults */ }
+    }
+    const state = this.handshakeResults.get(conn.id);
+    if (state === 'passed') return;
+    if (state === 'no-chain') {
+      throw new HandshakeNoChainServiceError(notisId);
+    }
+    const reason = this.handshakeReasons.get(conn.id) ?? 'failed';
+    throw new MeshFetchError('transport', `handshake: ${reason}`);
   }
 
   private emitStateChange(): void {

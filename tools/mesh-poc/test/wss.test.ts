@@ -37,7 +37,8 @@ import { ping } from '@libp2p/ping';
 import { http as httpService, type HTTP } from '@libp2p/http';
 import { tcp } from '@libp2p/tcp';
 import { multiaddr } from '@multiformats/multiaddr';
-import { generateKeyPair } from '@dagsocial/types';
+import { generateKeyPair, PROTOCOL_VERSION } from '@dagsocial/types';
+import { attachNetHandshake } from './helpers/net-handshake-responder.js';
 import { meshBaseUrl } from '../src/mesh-url.js';
 import { meshFetch } from '../src/http-fetch.js';
 import { nodeKeyFromKeyPair, notisIdFromPeerId } from '../src/identity.js';
@@ -566,6 +567,10 @@ describe('wss — the IP certificate and the secure WebSocket fallback', () => {
         stateDir: dir,
         upstream: stub.base,
         wss: { ip: '127.0.0.1', port: 0, source },
+      });
+      await attachNetHandshake(server.libp2p, {
+        magic: PROFILE.magic,
+        protocolVersion: PROTOCOL_VERSION,
       });
       nodes.push(server);
 
