@@ -96,7 +96,7 @@ describe('mesh — start-time refusals', () => {
     expect(err.message).toMatch(/role/);
   });
 
-  // MESH_INTERFACE → NAT — "STUN serves from a public address"; a
+  // MESH_INTERFACE → NAT — STUN is served from a public address; a
   // private node with `stun` set is refused at start.
   it('refuses a private mesh.stun', async () => {
     const dir = freshDir();

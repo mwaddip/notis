@@ -137,8 +137,8 @@ describe('mesh — a private NetNode', () => {
   // through the TCP connection the outbound floor opened. The relay is
   // a public mesh `NetNode`, so the funnel's outbound handshake
   // completes (NET_INTERFACE → Handshake → "Every connection this node
-  // dialled carries its handshake, whoever within the node dialled it";
-  // "A relay we dialled serves the chain").
+  // dialled carries its handshake, whoever within the node dialled it"),
+  // and a relay the node dialled serves the chain.
   it('reserves on its TCP seed and the reservation rides the floor-opened TCP connection', async () => {
     const relayDir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-boot-relay-'));
     dirs.push(relayDir);

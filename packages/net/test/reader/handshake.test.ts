@@ -2,7 +2,7 @@
 // `readerLibp2pOptions` runs `readerHandshake` as the dialler over
 // an open WebRTC-direct connection. On success the node lists the
 // reader in `getConnectedReaders()` with the empty capability set
-// (NET_INTERFACE → Readers — "A reader declares no capability"); the
+// (NET_INTERFACE → Readers — "A peer's capabilities say what it serves"); the
 // reader reads the node's answer as
 // `{ ok: true, capabilities, height }`.
 

@@ -177,7 +177,7 @@ export function assertMeshConfig(mesh: MeshConfig): void {
       );
     }
   }
-  // MESH_INTERFACE → NAT — "STUN serves from a public address". A
+  // MESH_INTERFACE → NAT — STUN is served from a public address. A
   // private node with `stun` set is a config error at start, named
   // here; `stunSettingFor` catches it at its seam too.
   if (mesh.role === 'private' && mesh.stun !== undefined && mesh.stun !== null) {

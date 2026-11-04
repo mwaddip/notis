@@ -1,5 +1,6 @@
-// NET_INTERFACE → The mesh — "Without `mesh`, the options are today's,
-// byte for byte in what they configure". A plain `NetConfig` builds a
+// NET_INTERFACE → The mesh — "`NetConfig.mesh` makes the node a mesh node";
+// without `mesh`, the options are today's, byte for byte in what they
+// configure. A plain `NetConfig` builds a
 // node with one transport (TCP), no DHT, no circuit relay, no HTTP
 // service, and never writes a datastore directory.
 

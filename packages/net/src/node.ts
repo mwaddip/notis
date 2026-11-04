@@ -1452,8 +1452,8 @@ export class NetNode {
   /**
    * NET_INTERFACE → Handshake →
    * "Every connection this node dialled carries its handshake, whoever
-   * within the node dialled it": the ownership mark that guarantees "one
-   * handshake per connection". The first caller — the open hook on the
+   * within the node dialled it": the ownership mark that gives a connection
+   * exactly one handshake. The first caller — the open hook on the
    * outbound connection — stores a Promise in `outboundAdmissions`; every
    * later caller (the dial funnel after `libp2p.dial()` returns the same
    * connection) reads that Promise and awaits it. The funnel's own
@@ -1996,9 +1996,9 @@ export class NetNode {
         // deadline leaves it alone.
         if (typeof connId === 'string') this.completedConnections.add(connId);
         if (closeAfterReply) {
-          // NET_INTERFACE → Readers — "a reader past `maxReaders` is
-          // closed after its handshake", "a chain-serving peer past
-          // `maxPeers` is closed after its handshake as well".
+          // NET_INTERFACE → Readers — "Readers have a budget of their
+          // own": a reader past `maxReaders`, and a chain-serving peer
+          // past `maxPeers`, is closed after its handshake.
           const kind = peerServesChain ? 'chain peer past maxPeers' : 'reader past maxReaders';
           console.log(`[net] inbound handshake ${peerId}: ${kind} — closing`);
           await endConnection();

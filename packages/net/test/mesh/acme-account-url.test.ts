@@ -133,8 +133,7 @@ describe('acmeSource — account URL persistence', () => {
     ).toBe('https://acme.test/account/42');
   });
 
-  // `MESH_INTERFACE → The IP certificate` — "the two keys mode
-  // `0600`". The account key and the cert+key file land under
+  // `MESH_INTERFACE → The IP certificate`. The account key and the cert+key file land under
   // `<stateDir>/acme/` with world-unreadable permissions. The
   // account URL rides alongside.
   it('writes account.key, account-url.txt and wss-cert.json mode 0600', async () => {
