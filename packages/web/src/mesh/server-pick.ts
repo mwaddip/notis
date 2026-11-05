@@ -87,11 +87,65 @@ export interface OrderCandidate {
 }
 
 export function orderServers(
-  _nodes: ReadonlyArray<OrderCandidate>,
-  _need: ReadNeed,
-  _firstCheckEnded: boolean,
+  nodes: ReadonlyArray<OrderCandidate>,
+  need: ReadNeed,
+  firstCheckEnded: boolean,
 ): string[] {
-  // stub: the feat commit of this unit implements `MESH_INTERFACE → The
-  // client's node list → "The client's order for a need"`.
-  throw new Error('orderServers(): not implemented');
+  const out: string[] = [];
+  // MESH_INTERFACE → The client's node list → "An entry may carry an
+  // API base" — "It is one entry whichever way it answers — one witness
+  // in every count". An entry's URL appears once in the order: its mesh
+  // base when connected, else its API base. The `seenIds` map carries
+  // that per-entry dedupe; URL-level dedupe is a safety belt.
+  const seenIds = new Set<string>();
+  const seenUrls = new Set<string>();
+  const push = (id: string, url: string): void => {
+    if (seenIds.has(id) || seenUrls.has(url)) return;
+    seenIds.add(id);
+    seenUrls.add(url);
+    out.push(url);
+  };
+
+  if (!firstCheckEnded) {
+    // Before the first check ends, every anchor serves any need: its
+    // mesh base if connected, else at its API base (`MESH_INTERFACE →
+    // The client's node list → "Before the first check ends an anchor
+    // serves any need"`). Non-anchors do not serve until a check has
+    // read them; a `blacklisted` anchor never — "A `blacklisted` node
+    // is never one [a candidate]" holds at every stage.
+    for (const n of nodes) {
+      if (!n.anchor) continue;
+      if (n.status === 'blacklisted') continue;
+      if (n.meshUsable) push(n.id, n.meshBase);
+      else if (n.api !== null) push(n.id, n.api);
+    }
+    return out;
+  }
+
+  const allows = (s: NodeStatus): boolean =>
+    need === 'tip' ? s === 'ok' : s === 'ok' || s === 'trailing';
+
+  // Fast-set-first among mesh-reachable, need-allowed nodes.
+  const meshAllowed = nodes.filter((n) => n.meshUsable && allows(n.status));
+  let min: number | null = null;
+  for (const n of meshAllowed) {
+    if (n.readMs !== null && (min === null || n.readMs < min)) min = n.readMs;
+  }
+  const inFastSet = (n: OrderCandidate): boolean => {
+    if (min === null) return true; // first-check or all-failed: spread uniformly
+    if (n.readMs === null) return false;
+    return n.readMs <= FAST_SET_FACTOR * min + FAST_SET_SLACK_MS;
+  };
+  for (const n of meshAllowed) if (inFastSet(n)) push(n.id, n.meshBase);
+  for (const n of meshAllowed) if (!inFastSet(n)) push(n.id, n.meshBase);
+
+  // Then the API bases of the entries the need allows, in the same
+  // order; an entry already emitted over the mesh is `seenIds` and
+  // does not re-emit at its API base.
+  for (const n of nodes) {
+    if (n.api === null) continue;
+    if (!allows(n.status)) continue;
+    push(n.id, n.api);
+  }
+  return out;
 }

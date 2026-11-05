@@ -139,7 +139,7 @@ describe('pickServer', () => {
 });
 
 describe('orderServers', () => {
-  it.fails('mesh-reached nodes come first, API bases after, deduplicated on the mesh base', () => {
+  it('mesh-reached nodes come first, API bases after, deduplicated on the mesh base', () => {
     // MESH_INTERFACE → The client's node list → "The client's order for
     // a need" — every node the need allows reached over the mesh, the
     // fast set first, then the API bases of the entries it allows, in
@@ -157,7 +157,7 @@ describe('orderServers', () => {
     ]);
   });
 
-  it.fails('the fast set comes first; slower mesh nodes after', () => {
+  it('the fast set comes first; slower mesh nodes after', () => {
     // A (readMs 10), B (readMs 100) — bound is 2*10+50=70, so B is
     // outside the fast set but still mesh-reached. The fast node is
     // first, then the slow one.
@@ -171,7 +171,7 @@ describe('orderServers', () => {
     ]);
   });
 
-  it.fails('an older read picks ok or trailing; behind nodes are refused', () => {
+  it('an older read picks ok or trailing; behind nodes are refused', () => {
     const nodes: OrderCandidate[] = [
       ocand(idA, { status: 'ok', meshUsable: true, readMs: 10, api: 'https://a.example' }),
       ocand(idB, { status: 'trailing', meshUsable: true, readMs: 15, api: 'https://b.example' }),
@@ -188,7 +188,7 @@ describe('orderServers', () => {
     expect(tip).toEqual([`notis-mesh://${idA}`]);
   });
 
-  it.fails('before the first check ends, every anchor serves any need; others do not', () => {
+  it('before the first check ends, every anchor serves any need; others do not', () => {
     // MESH_INTERFACE → The client's node list → "Before the first check
     // ends an anchor serves any need, over its connection or at its API
     // base". A non-anchor's status alone would allow nothing — until a
@@ -206,7 +206,7 @@ describe('orderServers', () => {
     ]);
   });
 
-  it.fails('a blacklisted anchor is never in the order, at any stage', () => {
+  it('a blacklisted anchor is never in the order, at any stage', () => {
     // MESH_INTERFACE → The client's node list → "A `blacklisted` node
     // is never one [a candidate]" — the before-first-check branch
     // honours this too; and a blacklisted node is not need-allowed in

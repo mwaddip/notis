@@ -996,14 +996,62 @@ class MeshClientImpl implements MeshClient {
     const meshPicked = pickServer(meshCandidates, need, this.random);
 
     let pickedId: string | null = null;
-    const route: 'mesh' | 'api' = 'mesh';
+    let route: 'mesh' | 'api' = 'mesh';
     let url: string = '';
     if (meshPicked !== null) {
       pickedId = meshPicked;
+      route = 'mesh';
       url = meshBaseUrl(meshPicked) + path;
+    } else {
+      // Mesh had none allowed: fall back to API bases of entries the need
+      // allows. Same need and speed rule as the mesh pick; the API entry
+      // is `usable` by virtue of holding an api, with its readMs the
+      // check's last base-read time.
+      const apiCandidates = entries
+        .filter((e) => e.api !== null)
+        .map((e) => ({
+          id: e.notisId,
+          status: e.status,
+          readMs: this.readMsMap.get(e.notisId) ?? null,
+          usable: true,
+        }));
+      const apiPicked = pickServer(apiCandidates, need, this.random);
+      if (apiPicked !== null) {
+        const entry = entries.find((e) => e.notisId === apiPicked);
+        // `pickServer` picks only from the candidates list, which was
+        // built from entries carrying `api !== null` — the find is
+        // known to answer, and the exclamation is defensive.
+        if (entry && entry.api !== null) {
+          pickedId = apiPicked;
+          route = 'api';
+          url = entry.api + path;
+        }
+      }
     }
-    // stub: the API-base fallback and the before-first-check anchor
-    // fallback land in the feat commit of this unit.
+
+    // MESH_INTERFACE → The client's node list → "Before the first check
+    // ends an anchor serves any need, over its connection or at its API
+    // base, since a verdict never blocks a read". Status alone does not
+    // refuse here — but `blacklisted` always does (the "lie" row stays
+    // "never a candidate" at every stage).
+    const firstCheckEnded = this.state_.checks > 0;
+    if (pickedId === null && !firstCheckEnded) {
+      for (const e of entries) {
+        if (!e.anchor) continue;
+        if (e.status === 'blacklisted') continue;
+        if (this.pickReadyConnection(e.notisId) !== null) {
+          pickedId = e.notisId;
+          route = 'mesh';
+          url = meshBaseUrl(e.notisId) + path;
+          break;
+        } else if (e.api !== null) {
+          pickedId = e.notisId;
+          route = 'api';
+          url = e.api + path;
+          break;
+        }
+      }
+    }
 
     if (pickedId === null) {
       // Trigger a check so the next read may find an allowed node.
@@ -1205,16 +1253,18 @@ class MeshClientImpl implements MeshClient {
     // candidate whose handshake answered with no chain service.
     // MESH_INTERFACE → The client's node list → "An entry may carry an
     // API base" — an entry with api but no addrs still needs no dial;
-    // one with addrs whose dial fails and no api is skipped as before.
-    // stub: the feat commit of this unit adds the retry-window guard
-    // (a retry's mesh dial waits for its window even when the entry
-    // carries an api that phase 2 reads at once).
+    // one with addrs whose dial fails and no api is skipped as before;
+    // a retry entry's mesh dial waits for its retry window even when
+    // it carries an api (the api read takes the retry window's place
+    // in phase 2).
     const beforeIds = this.nodeList.candidates().filter((id) => !this.notAChainNodes.has(id));
+    const nowMsPhase1 = this.clock();
     for (const id of beforeIds) {
       if (this.stopped) break;
       if (this.hasOpenConnection(id)) continue;
       const entry = this.nodeList.entry(id);
       if (!entry || entry.addrs.length === 0) continue; // api-only or no addresses: no dial
+      if (entry.status === 'retry' && nowMsPhase1 < entry.retryAtMs) continue;
       await this.dialByAddresses(id);
     }
 
@@ -1680,11 +1730,22 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
-   * MESH_INTERFACE → The client's node list → "An entry may carry an
-   * API base" — stub: the check still reads at the mesh base alone;
-   * the feat commit of this unit adds the API-base route.
+   * MESH_INTERFACE → The client's node list → "An entry may carry an API
+   * base" — the base a check reads an id at, with its route: the mesh
+   * base when the client holds an open connection to the key (the timed
+   * fetch awaits the handshake there — the handshake belongs to the
+   * connection, not the read), else the entry's api when it has one,
+   * else the mesh base again so the read fails as transport by the
+   * retry row (no api means no API-base route; the dial already failed).
    */
   private checkBase(id: string): { url: string; route: 'mesh' | 'api' } {
+    if (this.hasOpenConnection(id)) {
+      return { url: meshBaseUrl(id), route: 'mesh' };
+    }
+    const entry = this.nodeList.entry(id);
+    if (entry && entry.api !== null) {
+      return { url: entry.api, route: 'api' };
+    }
     return { url: meshBaseUrl(id), route: 'mesh' };
   }
 
@@ -1793,9 +1854,7 @@ class MeshClientImpl implements MeshClient {
     };
   }
 
-  private applyEvent(ev: TipEvent, _route: 'mesh' | 'api' = 'mesh'): void {
-    // stub: the feat commit of this unit adds the route-aware
-    // lie→failure downgrade at the API base.
+  private applyEvent(ev: TipEvent, route: 'mesh' | 'api' = 'mesh'): void {
     switch (ev.ev) {
       case 'success':
         this.nodeList.success(ev.id);
@@ -1814,8 +1873,20 @@ class MeshClientImpl implements MeshClient {
         this.latestEventReason.set(ev.id, ev.message ? `failure: ${ev.kind}: ${ev.message}` : `failure: ${ev.kind}`);
         break;
       case 'lie':
-        this.nodeList.lie(ev.id, ev.evidence);
-        this.latestEventReason.set(ev.id, `lie: ${ev.evidence.kind}`);
+        // MESH_INTERFACE → The client's node list — the API-base row:
+        // "a malformed answer, a proof that fails verification … the
+        // same at an entry's API base — the host, not the key —
+        // HTTPS authenticates a name, never a node key — `retry`, as
+        // a transport failure; never `blacklisted`". The evidence
+        // detail rides as the failure's message so the page shows why.
+        if (route === 'api') {
+          const detail = `api ${ev.evidence.kind}: ${ev.evidence.detail}`;
+          this.nodeList.failure(ev.id, 'transport', detail);
+          this.latestEventReason.set(ev.id, `failure: transport: ${detail}`);
+        } else {
+          this.nodeList.lie(ev.id, ev.evidence);
+          this.latestEventReason.set(ev.id, `lie: ${ev.evidence.kind}`);
+        }
         break;
     }
   }

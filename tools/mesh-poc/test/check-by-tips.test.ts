@@ -1703,7 +1703,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   // rules the brief names: mesh-first with an API-base fallback, the
   // before-first-check anchor, an API-base lie as `retry`, and one
   // entry per key whichever way it answered.
-  it.fails('every mesh dial failing: the first read routes to api, the check seats, proofs land at the bases', async () => {
+  it('every mesh dial failing: the first read routes to api, the check seats, proofs land at the bases', async () => {
     // MESH_INTERFACE → The client's node list → "A routed read goes to a
     // node its need allows" / → "An entry may carry an API base" — each
     // anchor's `addrs` names a closed port (nothing listens there), so
@@ -1757,7 +1757,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s1.chain).toBe(blockHash(chain[0]!.header));
   }, 60_000);
 
-  it.fails('a read before the first check ends is served by an anchor at its API base', async () => {
+  it('a read before the first check ends is served by an anchor at its API base', async () => {
     // MESH_INTERFACE → The client's node list → "Before the first check
     // ends an anchor serves any need, over its connection or at its API
     // base, since a verdict never blocks a read" — with no check yet
@@ -1787,7 +1787,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(body).toMatchObject({ height: chain.length });
   }, 60_000);
 
-  it.fails("one anchor's certhash wrong: its reads go to api, the other anchor's over the mesh", async () => {
+  it("one anchor's certhash wrong: its reads go to api, the other anchor's over the mesh", async () => {
     // MESH_INTERFACE → The client's node list → the "address answers
     // with another key" row and the "An entry may carry an API base"
     // row — a dial whose certhash does not match the peer's fails as
@@ -1839,7 +1839,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s.agreement!.onChain).toBe(2);
   }, 90_000);
 
-  it.fails('one entry per key: an anchor reached both ways counts once in onChain', async () => {
+  it('one entry per key: an anchor reached both ways counts once in onChain', async () => {
     // MESH_INTERFACE → The client's node list → "An entry may carry an
     // API base" — "It is one entry whichever way it answers — one
     // witness in every count". With the mesh connection open, the
@@ -1871,7 +1871,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s.nodes[0]!.api).toBe(up.base);
   }, 90_000);
 
-  it.fails('an api-base malformed tip is `retry`, never `blacklisted` (the API-base row)', async () => {
+  it('an api-base malformed tip is `retry`, never `blacklisted` (the API-base row)', async () => {
     // MESH_INTERFACE → The client's node list — "a malformed answer, a
     // proof that fails verification … the same at an entry's API base
     // — the host, not the key — HTTPS authenticates a name, never a

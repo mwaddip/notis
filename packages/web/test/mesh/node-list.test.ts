@@ -284,7 +284,7 @@ describe('node-list', () => {
     expect(list.anchorReached()).toBe(true);
   });
 
-  it.fails("an anchor's api is kept on its entry; duplicate anchors' first api stands", () => {
+  it("an anchor's api is kept on its entry; duplicate anchors' first api stands", () => {
     // MESH_INTERFACE → The client's node list → "An entry may carry an
     // API base" — the anchor's `api` lands on the entry and `entries()`
     // surfaces it; two anchors with the same key keep the first api

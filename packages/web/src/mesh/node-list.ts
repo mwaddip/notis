@@ -436,6 +436,11 @@ export class NodeList {
    * group the Map's insertion order answers "first known", with anchors
    * in their given order first because the constructor inserts them
    * before any `add`.
+   *
+   * "An entry the client holds no connection to is a candidate at its
+   * API base where it has one" — a retry entry's api is reached without
+   * dialling, so the retry timer (which caps the dial cadence) does not
+   * hold out a candidate that carries one; its api is served at once.
    */
   candidates(): string[] {
     const ok: string[] = [];
@@ -450,7 +455,7 @@ export class NodeList {
       else if (e.status === 'behind') behind.push(e.notisId);
       else if (e.status === 'new') fresh.push(e.notisId);
       else if (e.status === 'retry') {
-        if (now >= this.clampedRetryAt(e)) retry.push(e.notisId);
+        if (now >= this.clampedRetryAt(e) || e.api !== null) retry.push(e.notisId);
       }
       // `blacklisted` is dropped: never a candidate.
     }
@@ -530,9 +535,7 @@ export class NodeList {
       // transport state, so it emits `null`/`null` here.
       transport: null,
       path: null,
-      // stub: the feat commit of this unit carries the anchor's api
-      // through to the entry (and the client reads it in its check).
-      api: null,
+      api: e.api,
     };
   }
 }
