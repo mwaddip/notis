@@ -111,6 +111,19 @@ describe('meshVerdict — the seven rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'too-short', height: null });
   });
 
+  it.fails('row 3 only reads too-short when every answered proof is too-short — a verified-but-unseated state reads no-proof', () => {
+    // WEB_INTERFACE → The extension → "The verified tip" — the totality rule
+    // reads anything no row holds as no check ended. An unseated state with
+    // proofs answered, none invalid and not all too-short falls to no-proof.
+    const s = stateOf({
+      seated: false,
+      agreement: agreement(0, 0, 0),
+      proofs: { asked: 2, verified: 1, invalid: 0, tooShort: 1 },
+      tipHeight: null,
+    });
+    expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'no-proof', height: null });
+  });
+
   it('row 4: seated and no anchor stands on it → thin no-anchor', () => {
     // The chain is seated; `anchorReached` is false — every anchor's latest
     // event is a failure or a lie (MESH_INTERFACE → No anchor reached).
