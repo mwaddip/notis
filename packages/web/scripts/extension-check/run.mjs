@@ -8,15 +8,20 @@
 // composer, the like word, the profile and wallet windows' rows, and the prompt
 // window found by its `prompt.html?id=` URL. The verified-tip block runs
 // against a second stack the harness owns — node B (server, bootstrapped from
-// A), node C (used for 19b's real-fork case, where A's heavier chain seats and
-// C names a tip off it — *a node names a tip off this chain*), node D (isolated,
-// 17a adds D by hand and reads the verdict with D among the nodes; 19c mines
-// D past m + k + 4 and reads *a node names a tip off this chain*) and the
-// lying relay (19a — the relay flips one byte of every /nipopow/proof/
-// answer; the block retargets to the new verdict table with the relay as
-// an unreachable substitute for a seed entry, and the detail of how the
-// relay is routed into the client's node list is left to the recipe main
-// runs). The verified-figures block brings up a B of its own and, for its
+// A), node D (isolated, its chain mined on demand for 19b heavier than A/B and
+// for 19c lighter than B), and two switchable relays RLA in front of A and RLB
+// in front of B on fixed ports (`RLA_PORT`, `RLB_PORT`), each with a mode the
+// harness sets between steps: `honest` (every request passed through),
+// `proof-invalid` (the `/nipopow/proof/` answer altered one byte so it does
+// not verify), `proof-short` (the proof route answered 404 chain-too-short,
+// `NODE_INTERFACE → Nipopow`) and `upstream-D` (every request passed to D).
+// The build's seed list names the two relays as its two entries, each
+// `{notisId, addrs: [], api: <relay>}` — an entry with no addrs is reached at
+// its api alone (`MESH_INTERFACE → The client's node list → "An entry may
+// carry an API base"`), so every read the extension makes passes through one
+// of them. A fresh page is a fresh client (`WEB_INTERFACE → The extension →
+// "The contexts, and what each may hold"`) — each tip-block step opens its
+// own after the relays' modes are set. The verified-figures block brings up a B of its own and, for its
 // six lie arms, the figures relay (22a · 22b · 22c · 22d · 22e · 23); the
 // verified-names block brings up a B of its own too, and the figures relay
 // again for its lie arms, in its name modes (27a–d · 28a–b). The light block
@@ -32,16 +37,15 @@
 // spawned on 19820.
 //
 // The seed list the extension is built with carries two node entries whose
-// addrs are empty and whose api names the harness's own base — A and B for
-// the verified blocks, RA and RB for --light. An entry with no addrs is
+// addrs are empty and whose api names the harness's own base — RLA and RLB
+// for the verified blocks, RA and RB for --light. An entry with no addrs is
 // reached at its api alone (MESH_INTERFACE → The client's node list → "An
 // entry may carry an API base"); this run keeps every block on HTTP, and the
-// extension's mesh client does no WebRTC dial. The settings window's node
-// row no longer switches the reading base — it adds a mesh anchor by hand
-// (WEB_INTERFACE → The settings window → "In the extension the row adds a
-// node by hand"); the row's address is handed to `client.addByHand` and the
-// client's read router picks a node its need allows (MESH_INTERFACE → The
-// client's node list → "A routed read goes to a node its need allows").
+// extension's mesh client does no WebRTC dial. Each relay stands in front of
+// one node and the harness switches its mode between steps — no second build
+// is needed, and no settings-row change, since the relay is already on the
+// path (WEB_INTERFACE → The extension → "The verified tip", "The contexts,
+// and what each may hold").
 //
 // Preconditions:
 //  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
@@ -53,10 +57,12 @@
 //     (`{ pubKeyHex, privKeyBase64 }`) lives in a scratch path outside the
 //     repo and never enters a commit, a log or the REPORT.
 //  4. The extension was built via build-extension.sh with devnet values
-//     — VITE_NODES points at [A, B] for --verified-{tip,figures,names}, and
-//     at [RA, RB] (the two relay origins the harness owns) for --light. The
-//     two builds differ and a run takes one; --light is refused together with
-//     any of the other three verified flags.
+//     — VITE_NODES points at [{notisId:<A>, addrs:[], api:RLA},
+//     {notisId:<B>, addrs:[], api:RLB}] for --verified-{tip,figures,names},
+//     and at [{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[],
+//     api:RB}] for --light. The two builds differ and a run takes one;
+//     --light is refused together with any of the other three verified flags.
+//     Each `notisId` is read from its api's node's start line.
 //  5. For --verified-names: a second throwaway S promoted as R is, holding a
 //     name `claim-name.mjs` (beside this file) claimed; S's clear file lives
 //     in a scratch path as R's does, and the harness reads its public key
@@ -181,16 +187,39 @@ const B_HTTP_PORT = 19770;
 const B_ADMIN_PORT = 19771;
 const B_P2P_PORT = 19772;
 const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
-const RELAY_PORT = 19780;
-const RELAY_ORIGIN = `http://127.0.0.1:${RELAY_PORT}`;
+// The verified blocks' two relays — RLA in front of A, RLB in front of B.
+// The extension built for the verified-tip / figures / names runs names these
+// two bases in its seed list (`[{notisId, addrs: [], api: RLA}, {notisId,
+// addrs: [], api: RLB}]`), each entry reached at its api alone
+// (`MESH_INTERFACE → The client's node list → "An entry may carry an API
+// base"`), so every read the extension makes passes through one of them. Each
+// relay carries a mode the harness sets between steps — the one hostile edit
+// per mode (WEB_INTERFACE → The extension → "The verified tip"):
+//   `honest`         — none; everything passes to upstream verbatim.
+//   `proof-invalid`  — the `/nipopow/proof/<m>/<k>` answer altered so it does
+//                      not verify (one byte flipped ten from the end), every
+//                      other request passed through.
+//   `proof-short`    — the proof route answered as a node whose chain is
+//                      shorter than `m + k` answers it (`NODE_INTERFACE →
+//                      Nipopow`): 404 `{error:'chain too short'}`; every
+//                      other request passed through.
+//   `upstream-D`     — every request passed to D, an isolated node on another
+//                      chain, so the relay's base names D's tip and serves
+//                      D's proof.
+const RLA_PORT = 19780;
+const RLA_ORIGIN = `http://127.0.0.1:${RLA_PORT}`;
+const RLB_PORT = 19781;
+const RLB_ORIGIN = `http://127.0.0.1:${RLB_PORT}`;
 // The figures relay — the lie arms 22a · 22b · 22c · 22d · 22e · 23, and in its
-// name modes the lie arms 27a–d · 28a–b, on a port of its own beside 19a's
-// relay.
+// name modes the lie arms 27a–d · 28a–b, on a port of its own beside the two
+// tip relays.
 const FIG_RELAY_PORT = 19785;
 const FIG_RELAY_ORIGIN = `http://127.0.0.1:${FIG_RELAY_PORT}`;
-// Node D — isolated, spawned so 17a's NOT RUN line can read D's live height
-// alongside the retargeting note; the retired C (19b's fork) is no longer
-// spawned and its ports are gone with it.
+// Node D — isolated, mined on demand: for 19b the block mines D past A's tip
+// so D's chain is heavier than A/B's, and the client seats D's chain and B's
+// tip reads off it; for 19c the block mines D past m + k + 4 and keeps it
+// below A's height, so D's chain verifies but B's heavier chain seats and D's
+// tip reads off it (WEB_INTERFACE → The extension → "The verified tip").
 const D_HTTP_PORT = 19795;
 const D_ADMIN_PORT = 19796;
 const D_P2P_PORT = 19797;
@@ -199,8 +228,8 @@ const D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
 // in one of eight modes at a time (honest, text, drop, hold, hang, list-down,
 // list-replay, down); the extension built for the block names them as its
 // seed list, and no other base (WEB_INTERFACE → The extension → "The light
-// read", "The resolve"). Ports clear of the lying relay (19780), the figures
-// relay (19785) and D (19795/96/97).
+// read", "The resolve"). Ports clear of the two tip relays (19780, 19781),
+// the figures relay (19785) and D (19795/96/97).
 const RA_PORT = 19810;
 const RA_ORIGIN = `http://127.0.0.1:${RA_PORT}`;
 const RB_PORT = 19815;
@@ -224,11 +253,10 @@ if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir')
 // file is still an argument error.
 if (R_KEY && !existsSync(R_KEY)) { console.error(`--r-key not found: ${R_KEY}`); process.exit(2); }
 
-// --verified-tip requires the four lifecycle arguments — the harness owns node
-// B, node D (for 17a's NOT RUN line's height read), the lying relay and every
-// miner it starts; A itself and A's miner are the operator's. The retired
-// node C (19b's fork) is gone with the retargeting of 19b to thin · split
-// (WEB_INTERFACE → The extension → "The verified tip").
+// --verified-tip requires the four lifecycle arguments — the harness owns
+// node B, node D (mined on demand for 19b heavier and 19c lighter), the two
+// tip relays RLA and RLB and every miner it starts; A itself and A's miner
+// are the operator's (WEB_INTERFACE → The extension → "The verified tip").
 if (VERIFIED_TIP) {
   if (!NODE_DIST || !existsSync(NODE_DIST)) {
     console.error('--verified-tip requires --node-dist <packages/node/dist/index.js>');
@@ -261,12 +289,13 @@ if (VERIFIED_TIP) {
 // client's own check settles the chain, and no tool-side comparison is
 // what the verdict reads any more.
 // --light cannot be combined with any of the verified-tip/figures/names blocks:
-// the two builds differ (seed list [RA, RB] versus [A, B]), and a run takes one
-// (WEB_INTERFACE → The extension → "The light read" — the extension's seed list
-// is the two relay origins; the harness refuses otherwise, and the two builds
-// differ, so a run takes one).
+// the two builds differ (seed list `[{api:RA,…},{api:RB,…}]` versus
+// `[{api:RLA,…},{api:RLB,…}]`), and a run takes one (WEB_INTERFACE → The
+// extension → "The light read", "The verified tip" — the extension's seed
+// list is the two relay origins; the harness refuses otherwise, and the two
+// builds differ, so a run takes one).
 if (LIGHT && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
-  console.error('--light cannot be combined with --verified-tip, --verified-figures or --verified-names — the extension builds differ (seed list [RA, RB] vs [A, B]) and a run takes one');
+  console.error('--light cannot be combined with --verified-tip, --verified-figures or --verified-names — the extension builds differ (seed list [{api:RA,…},{api:RB,…}] vs [{api:RLA,…},{api:RLB,…}]) and a run takes one');
   process.exit(2);
 }
 
@@ -447,14 +476,16 @@ if (R_KEY) {
 // profile against a devnet chain would read *no node's proof verified* and a
 // green step would be a lie about the check. The bundle's `notis-nodes` must
 // be exactly the pair the run's build names, in that order — the verified
-// blocks name the lying relay in front of A, then B; --light names RA, then
-// RB (WEB_INTERFACE → The extension → "The light read"). Each entry is a node
-// object with `notisId` 64 hex, `addrs` empty, and `api` the base this run
-// serves (MESH_INTERFACE → The client's node list → "An entry may carry an
-// API base"); an entry with no addrs is reached at its api alone, so the
-// relays stay on the path. The notisId the shell carries is not checked
-// against a live value here — the invoker baked the key of each api's node
-// into the build before this harness ran — only its shape.
+// blocks name RLA in front of A, then RLB in front of B; --light names RA,
+// then RB (WEB_INTERFACE → The extension → "The verified tip", "The light
+// read"). Each entry is a node object with `notisId` 64 hex, `addrs` empty,
+// and `api` the base this run serves (MESH_INTERFACE → The client's node
+// list → "An entry may carry an API base"); an entry with no addrs is
+// reached at its api alone, so the relays stay on the path and every read
+// the extension makes passes through one of them. The notisId the shell
+// carries is not checked against a live value here — the invoker baked the
+// key of each api's node into the build before this harness ran — only its
+// shape.
 if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT) {
   const networkMetaMatch = shellHtml.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
   const shellNetwork = networkMetaMatch ? networkMetaMatch[1] : null;
@@ -472,13 +503,16 @@ if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT) {
   const shellNodesRaw = nodesMetaMatch ? (nodesMetaMatch[1] ?? nodesMetaMatch[2]) : null;
   let shellNodes = null;
   try { shellNodes = JSON.parse(shellNodesRaw ?? ''); } catch {}
-  // The two apis this run's build names, in order — A and B for the verified
-  // blocks, the relays RA and RB for --light (--light's relays are in front
-  // of A and B). Mainnet's [] and testnet's live JSON are not valid here —
-  // the run is for a devnet stack with the harness's own bases.
+  // The two apis this run's build names, in order — the verified blocks name
+  // RLA in front of A and RLB in front of B (`startTipRelay`), the --light
+  // block names the two light relays RA and RB. The verified blocks' reads
+  // pass through RLA / RLB verbatim in `honest` mode, so steps that do not set
+  // another mode see the node's own answers (WEB_INTERFACE → The extension →
+  // "The verified tip"). Mainnet's [] and testnet's live JSON are not valid
+  // here — the run is for a devnet stack with the harness's own bases.
   const expectedApis = LIGHT
     ? [RA_ORIGIN, RB_ORIGIN]
-    : [NODE.replace(/\/+$/, ''), B_ORIGIN];
+    : [RLA_ORIGIN, RLB_ORIGIN];
   const hex64 = /^[0-9a-f]{64}$/;
   const entryOk = (e, i) =>
     e !== null
@@ -877,11 +911,12 @@ async function feedContains(id) {
 // The verified-tip block — helpers.
 //
 // WEB_INTERFACE → The extension → "The verified tip", steps 17–20. The
-// harness owns the lifecycle of node B, the lying relay, node C and node A's
-// miner; A itself is the operator's. Every child is a node:child_process
-// handle (`node`'s own), stopped by the handle at cleanup (SIGKILL) — never
-// by name, never by grepping /proc — so any dagsocial-miner unit running the
-// same miner.mjs against another network stays untouched.
+// harness owns the lifecycle of node B, node D and D's miner, and of the
+// two tip relays RLA / RLB in front of A and B. A itself and A's miner are
+// the operator's. Every child is a node:child_process handle (`node`'s own),
+// stopped by the handle at cleanup (SIGKILL) — never by name, never by
+// grepping /proc — so any dagsocial-miner unit running the same miner.mjs
+// against another network stays untouched.
 // ---------------------------------------------------------------------------
 
 // The live children — the cleanup path at the end of the run sends SIGKILL to
@@ -994,28 +1029,55 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
   return null;
 }
 
-// The retired fork comparison (`readForkComparison`, `describeForkComparison`
-// over `resolveTip` + `compareProofs`) drove 19b's old refused · outworked
-// predicate; 19b now retargets to the mesh client's own `thin · split`
-// verdict (WEB_INTERFACE → The extension → "The verified tip"), and the
-// tool-side comparison is not what the client reads any more — gone with
-// the C spawn.
-
-// The lying relay — WEB_INTERFACE → The extension → "The verified tip". Every
-// GET is proxied to node A verbatim, `access-control-allow-origin: *` added so
-// the extension page can read it (as A does directly). The one hostile edit
-// is /nipopow/proof/<m>/<k>: one byte flipped ten bytes from the end — the
-// spike's technique. Two flips fall in `refuseCode: 'invalid'` — a verify
-// failure or a decode failure — and the REPORT names which.
-async function startLyingRelay(upstream) {
-  const flips = { total: 0 };
-  const server = createServer(async (req, res) => {
+// A tip-block relay — WEB_INTERFACE → The extension → "The verified tip". It
+// stands in front of one node (A for RLA, B for RLB) and passes every request
+// through to `relay.upstream`, with `access-control-allow-origin: *` added on
+// the answer so the extension page can read it (as the figures and light
+// relays do). Methods other than GET / HEAD / OPTIONS land 405, since the
+// tip block reads only; the figures and names blocks' writes go to A
+// directly, not through this relay (`verifiedFiguresSteps` / `verifiedNamesSteps`).
+// `relay.upstream` is reassignable: a step sets it to `D_ORIGIN` for the
+// `upstream-D` mode and back to its node origin after.
+//
+// The modes, one at a time, the one hostile edit each
+// (`WEB_INTERFACE → The extension → "The verified tip"`):
+//   `honest`         — none; everything passes to upstream verbatim.
+//   `proof-invalid`  — on /nipopow/proof/<m>/<k> alone, the upstream's answer
+//                      arrives with one byte flipped ten bytes from the end
+//                      (the spike's technique). Two flips fall in
+//                      `refuseCode: 'invalid'` — a verify failure or a decode
+//                      failure (`NODE_INTERFACE → Nipopow`).
+//   `proof-short`    — on /nipopow/proof/<m>/<k> alone, the relay answers
+//                      404 `{error:'chain too short'}` without asking
+//                      upstream — the shape a node whose chain is below
+//                      `m + k` answers with (`NODE_INTERFACE → Nipopow`); the
+//                      tool classifies it `refuseCode: 'too-short'`.
+//   `upstream-D`     — `relay.upstream` is set to `D_ORIGIN` for the whole
+//                      step, so every request lands on D's answers — D's tip
+//                      from /blocks/current, D's proof, D's blocks. The
+//                      relay's mode stays `honest` under upstream-D: the one
+//                      edit is the upstream swap, not a per-route lie.
+// `relay.flips` counts each flipped proof answer; `relay.shorts` counts each
+// 404 chain-too-short answered; `relay.log` holds each request's url, method,
+// mode-at-arrival, upstream-at-arrival and status for the REPORT.
+async function startTipRelay(upstream, port) {
+  const relay = {
+    server: null,
+    origin: `http://127.0.0.1:${port}`,
+    upstream,
+    mode: 'honest',
+    flips: { total: 0 },
+    shorts: { total: 0 },
+    log: [],
+  };
+  relay.server = createServer(async (req, res) => {
+    const at = Date.now();
     try {
       const method = req.method ?? 'GET';
       const url = req.url ?? '/';
       if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
         res.writeHead(405, { 'access-control-allow-origin': '*' });
-        res.end('lying relay serves reads only');
+        res.end('tip relay serves reads only');
         return;
       }
       if (method === 'OPTIONS') {
@@ -1027,14 +1089,34 @@ async function startLyingRelay(upstream) {
         res.end();
         return;
       }
-      const upstreamRes = await fetch(upstream + url, { method });
+      const mode = relay.mode;
+      const upstreamAtArrival = relay.upstream;
+      const isProof = /^\/nipopow\/proof\/\d+\/\d+/.test(url);
+      // `proof-short` — the 404 shape a node whose chain is shorter than
+      // m + k answers it with (`NODE_INTERFACE → Nipopow`): the tool classifies
+      // the body `{error:'chain too short'}` as `too-short`.
+      if (mode === 'proof-short' && isProof) {
+        relay.shorts.total += 1;
+        res.writeHead(404, {
+          'access-control-allow-origin': '*',
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+        res.end(JSON.stringify({ error: 'chain too short' }));
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode, upstream: upstreamAtArrival, status: 404 });
+        return;
+      }
+      const upstreamRes = await fetch(upstreamAtArrival + url, { method });
       const buf = Buffer.from(await upstreamRes.arrayBuffer());
       let body = buf;
-      const isProof = /^\/nipopow\/proof\/\d+\/\d+/.test(url);
-      if (isProof && upstreamRes.status === 200 && buf.length >= 11) {
+      // `proof-invalid` — one byte of the proof's bytes flipped so the
+      // tool reads `refuseCode: 'invalid'` (WEB_INTERFACE → The extension →
+      // "The verified tip"; the `applyEvent` route-at-API-base rule holds
+      // the entry at `retry`, never `blacklisted`).
+      if (mode === 'proof-invalid' && isProof && upstreamRes.status === 200 && buf.length >= 11) {
         body = Buffer.from(buf);
         body[body.length - 10] = body[body.length - 10] ^ 0x01;
-        flips.total += 1;
+        relay.flips.total += 1;
       }
       const headers = {
         'access-control-allow-origin': '*',
@@ -1043,16 +1125,18 @@ async function startLyingRelay(upstream) {
       };
       res.writeHead(upstreamRes.status, headers);
       res.end(body);
+      relay.log.push({ at, doneAt: Date.now(), method, url, mode, upstream: upstreamAtArrival, status: upstreamRes.status });
     } catch (e) {
       res.writeHead(502, { 'access-control-allow-origin': '*' });
       res.end(String(e));
+      relay.log.push({ at, doneAt: Date.now(), method: req.method ?? '', url: req.url ?? '', mode: relay.mode, upstream: relay.upstream, status: 502 });
     }
   });
   await new Promise((res, rej) => {
-    server.on('error', rej);
-    server.listen(RELAY_PORT, '127.0.0.1', res);
+    relay.server.on('error', rej);
+    relay.server.listen(port, '127.0.0.1', res);
   });
-  return { server, flips, origin: RELAY_ORIGIN };
+  return relay;
 }
 
 // The figures relay — WEB_INTERFACE → The extension → "The verified figures",
@@ -1535,7 +1619,7 @@ async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
 // The verified-tip block — steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20.
 // ---------------------------------------------------------------------------
 
-const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19b', '19c', 20];
+const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19a-both', '19b', '19c', 20];
 // The verified-figures block — steps 21 · 24 · 22a · 22b · 22c · 22d · 22e ·
 // 23 · 25, in the order they run (WEB_INTERFACE → The extension → "The
 // verified figures"); 22a · 22b · 22c · 22d · 22e · 23 are the lie arms,
@@ -1612,7 +1696,40 @@ async function bringUpNodeB() {
   return { bDbPath };
 }
 
-async function verifiedTipSteps(cx, targetId = 'unknown') {
+// Open a fresh extension page through the browser-level session — a page is
+// a client (WEB_INTERFACE → The extension → "The contexts, and what each may
+// hold"), so each tip-block step that reads the state after a check opens
+// one. Waits for the corner to mount and returns the session and the target
+// id; the caller closes both. The `set relays, open fresh, read verdict`
+// sequence is the one the tip block uses for 17a · 19a · 19b · 19c, as
+// `--light` uses `relay.upstream` for L13.
+async function openFreshExtensionPage(bcx) {
+  const created = await bcx.call('Target.createTarget', {
+    url: `chrome-extension://${EXT_ID}/index.html`,
+  });
+  const info = await findTargetById(created.targetId, 15000);
+  if (!info) throw new Error(`fresh extension page ${created.targetId.slice(0, 8)}… never appeared in /json/list`);
+  const fresh = await openSession(info.webSocketDebuggerUrl);
+  await fresh.waitFor(`!!document.querySelector('.corner')`, 'corner mounted on fresh page', 30000);
+  return { cx: fresh, targetId: created.targetId };
+}
+
+// Set every tip relay to `mode`. A step asserts the verdict by opening a
+// fresh page after this call so the client's first check reads the upstream
+// through the mode the step set (WEB_INTERFACE → The extension → "The
+// verified tip").
+function setTipRelayModes(mode) {
+  if (tipRelays.a) tipRelays.a.mode = mode;
+  if (tipRelays.b) tipRelays.b.mode = mode;
+}
+
+// WEB_INTERFACE → The extension → "The verified tip" — the verified-tip
+// block. `cx` is the main extension page (used for 17 · 17b · 18 · 20 as
+// before); `bcx` is the browser-level session the block opens a fresh
+// extension page on for each step whose contract reads a different state
+// after a check (`WEB_INTERFACE → The extension → "The contexts, and what
+// each may hold"`: a page is a reader, so a fresh page is a fresh check).
+async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
   // ---- Liveness probe on the session — a few-second wall around `1+1`
   // before any block work; a session with no live target records every step
   // FAIL with the reason, in place of `openSession`'s 60-second CDP wall
@@ -1678,50 +1795,43 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
 
   await cx.waitFor(`!!document.querySelector('.corner')`, 'corner mounted', 30000);
 
-  // ---- Spawn node D — isolated, miner role with its own secret, no miner
-  // script yet. D is spawned so 17a's NOT RUN line can read D's live height
-  // alongside its retargeting note; the retired 17a (D read as the base) and
-  // 19c (D mined past m + k + 4 so its proof seats a chain off A's) are both
-  // gone with the mechanism they depended on. The secret is random and per-run
-  // — nothing of it lands in the tree.
-  const dDbPath = join(SCRATCH, 'd.db');
-  for (const suffix of ['', '-shm', '-wal']) {
-    try { rmSync(dDbPath + suffix, { force: true }); } catch {}
+  // ---- Step 17a — the chain is too short to check yet. Both relays' modes
+  // are set to `proof-short`, which answers every /nipopow/proof/ with the
+  // 404 shape a node whose chain is below `m + k` answers with
+  // (`NODE_INTERFACE → Nipopow`). The tool reads each as
+  // `refuseCode: 'too-short'`, and the mesh client's verdict is row 3 of
+  // the seven-row table (`WEB_INTERFACE → The extension → "The verified
+  // tip"`): no chain seated, and every proof answered says its chain is
+  // shorter than `m + k` → `thin · too-short`, the corner title *the
+  // chain is too short to check yet · tip N* (`→ The status corner`). A
+  // fresh extension page is a fresh client, so the first check runs under
+  // the mode set above (`→ "The contexts, and what each may hold"`). The
+  // tip in the title is the node's live height — the status corner reads
+  // /blocks/current through RLA in honest mode after each check fires its
+  // read — so it is whatever A has reached by now.
+  setTipRelayModes('proof-short');
+  {
+    const page = await openFreshExtensionPage(bcx);
+    try {
+      const reached = await waitForCornerState(
+        page.cx,
+        (c) => c.ledClass === 'led thin'
+          && /^the chain is too short to check yet · tip \d+$/.test(c.title ?? ''),
+        'led thin + "the chain is too short to check yet · tip N"',
+        60000);
+      const reading = reached.last;
+      const ok = !reached.timedOut
+        && reading?.ledClass === 'led thin'
+        && reading?.tipClass === 'tip mono'
+        && /^the chain is too short to check yet · tip \d+$/.test(reading?.title ?? '');
+      record('17a', ok,
+        `led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, RLA shorts=${tipRelays.a?.shorts.total ?? 'null'}, RLB shorts=${tipRelays.b?.shorts.total ?? 'null'}`);
+    } finally {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
   }
-  const dSecret = randomBytes(32).toString('hex');
-  console.log(`[vt] spawning node D: port=${D_HTTP_PORT} admin=${D_ADMIN_PORT} p2p=${D_P2P_PORT} db=${dDbPath} isolated`);
-  spawnDaemon('d', NODE_DIST, {
-    NETWORK_TYPE: 'devnet',
-    NODE_ROLE: 'miner',
-    PORT: String(D_HTTP_PORT),
-    ADMIN_PORT: String(D_ADMIN_PORT),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${D_P2P_PORT}`,
-    BOOTSTRAP_PEERS: '',
-    DB_PATH: dDbPath,
-    MINING_SECRET: dSecret,
-  });
-  if (!await waitForHttpUp(D_ORIGIN, 30000)) {
-    markVerifiedTipNotRun(`node D did not come up at ${D_ORIGIN}`);
-    return;
-  }
-  console.log(`[vt] node D up at ${D_ORIGIN}, height ${await currentHeight(D_ORIGIN)}`);
-
-  // ---- Step 17a — the settings row adds D by hand (WEB_INTERFACE → The
-  // settings window → "In the extension the row adds a node by hand"). The
-  // retired rule — the row switched the reading base, and D's genesis-only
-  // chain gave the whole verdict a *too-short* line — is gone: the mesh
-  // client's verdict is total across its reachable nodes, so D (isolated,
-  // height 0) sitting in the client's list as a hand-added anchor does not
-  // move the verdict while A and B still prove. The new assertion is that
-  // D's address — mesh address with `/p2p/<peer id>` and no DNS — is
-  // committed by the row and stands in `client.state().nodes`. Marked
-  // NOT RUN here because D is spawned with a TCP listen address, not the
-  // `/webrtc-direct/` segment `MeshClient.addByHand` asks for
-  // (MESH_INTERFACE → Discovery → "A node added by hand"); wiring a
-  // webrtc-direct listener on D is a stack-level change the recipe main
-  // runs will carry.
-  record('17a', 'NOT RUN',
-    `the settings row adds a mesh anchor by hand and D's printed address is a TCP multiaddr (LISTEN_ADDRS=/ip4/127.0.0.1/tcp/${D_P2P_PORT}); MeshClient.addByHand refuses an address without /webrtc-direct/, so D stays unaddable until the node is spawned with a webrtc-direct listener. Height D=${await currentHeight(D_ORIGIN)}, A=${await currentHeight(NODE)}.`);
+  setTipRelayModes('honest');
 
   // ---- Step 17 — verified. The mesh client reads proofs only for tips its
   // chain cannot place (MESH_INTERFACE → The client's node list → "A check");
@@ -1835,56 +1945,212 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
       `B gone=${bGone}; stopped-press led=${readingStopped.ledClass}, tip=${readingStopped.tipClass}, title=${JSON.stringify(readingStopped.title)}, stopped proof requests=${stopped.proofs.length}; restarted synced=${synced2 !== null ? JSON.stringify(synced2) : 'null'}; restart-press led=${back.reading.ledClass}, tip=${back.reading.tipClass}, title=${JSON.stringify(back.reading.title)}, restart proof requests=${back.proofs.length}`);
   }
 
-  // ---- Step 19a — refused, a bad proof. The title reads *no node's proof
-  // verified · tip N* under `refused · invalid-proof` (WEB_INTERFACE → The
-  // extension → "The verified tip"; → The status corner). The retired rule
-  // (`this node's proof did not verify` on a per-node row) is gone; the
-  // mesh-client verdict is total across its reachable nodes, so the refused
-  // row holds only when no reachable node's proof verifies. The lying relay
-  // the harness spawns here serves bad proofs when read, but the two seed
-  // entries name A and B directly — not the relay — so 19a's recipe for the
-  // routing is left to the run: the harness starts the relay as a hand-added
-  // mesh anchor is added, and the detail of making the client use it in
-  // place of A rather than beside is the recipe main runs, since the mesh
-  // anchor's address format (`/p2p/<peer id>` with no DNS and the
-  // `/webrtc-direct/` segment MeshClient.addByHand asks for, MESH_INTERFACE
-  // → Discovery → "A node added by hand") is a mesh listen address the HTTP
-  // relay does not have. Marked `NOT RUN` here when the mechanism is not
-  // wired; a run that wires it names the title in place and the assertion
-  // below reads the new title.
-  let relay = null;
+  // ---- Step 19a — RLA lies, RLB honest, then both lie. RLA's `proof-invalid`
+  // flips one byte of the /nipopow/proof/ answer so the tool reads
+  // `refuseCode: 'invalid'`; RLB passes verbatim, so B's proof verifies and
+  // seats the chain. A, read at RLA's api base, has a lie `at an entry's
+  // API base` which the `applyEvent` route-at-API-base rule holds at
+  // `retry`, never `blacklisted` (`MESH_INTERFACE → The client's node list`);
+  // A's tip from /blocks/current is the same hash as B's (A and B are
+  // peered), so B's verification propagates its 'on' verdict to A and both
+  // count on the chain. The verdict is row 7 of the seven-row table
+  // (`WEB_INTERFACE → The extension → "The verified tip"`): two or more on
+  // the chain → `verified`, the title *verified across 2 nodes · tip N* (`→
+  // The status corner`). This asserts the sentence *a node counts without
+  // serving a proof of its own, since a proof carries no challenge and any
+  // node can serve one it copied*. Then both relays are set to
+  // `proof-invalid` on a second fresh page: no chain seats, a proof answered
+  // is invalid, row 2 fires → `refused · invalid-proof`, title *no node's
+  // proof verified · tip N*.
+  setTipRelayModes('honest');
+  tipRelays.a.mode = 'proof-invalid';
   {
-    console.log(`[vt] starting lying relay: :${RELAY_PORT} → ${NODE}`);
-    relay = await startLyingRelay(NODE);
-    record('19a', 'NOT RUN',
-      `the retargeted verdict needs the relay to stand as a reachable node in the client's list, and the harness owns no path to route its HTTP flips through the mesh anchor the settings row would add; relay flips=${relay.flips.total} so far (none yet)`);
+    const page = await openFreshExtensionPage(bcx);
+    try {
+      const reached = await waitForCornerState(
+        page.cx,
+        (c) => c.ledClass === 'led fresh'
+          && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
+        'led fresh + "verified across N nodes · tip N" (RLA lies, RLB honest)',
+        60000);
+      const reading = reached.last;
+      const ok = !reached.timedOut
+        && reading?.ledClass === 'led fresh'
+        && reading?.tipClass === 'tip mono'
+        && /^verified across \d+ nodes · tip \d+$/.test(reading?.title ?? '');
+      record('19a', ok,
+        `arm 1 (RLA proof-invalid, RLB honest): led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, RLA flips=${tipRelays.a.flips.total}, RLB flips=${tipRelays.b.flips.total}`);
+    } finally {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
   }
+  setTipRelayModes('proof-invalid');
+  {
+    const page = await openFreshExtensionPage(bcx);
+    try {
+      const reached = await waitForCornerState(
+        page.cx,
+        (c) => c.ledClass === 'led refused'
+          && /^no node's proof verified · tip \d+$/.test(c.title ?? ''),
+        'led refused + "no node\'s proof verified · tip N"',
+        60000);
+      const reading = reached.last;
+      const ok = !reached.timedOut
+        && reading?.ledClass === 'led refused'
+        && reading?.tipClass === 'tip mono clay'
+        && /^no node's proof verified · tip \d+$/.test(reading?.title ?? '');
+      record('19a-both', ok,
+        `arm 2 (both relays proof-invalid): led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, RLA flips=${tipRelays.a.flips.total}, RLB flips=${tipRelays.b.flips.total}`);
+    } finally {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+  setTipRelayModes('honest');
 
-  // ---- Step 19b — retargeted from `refused · outworked` (retired) to
-  // `thin · split` (WEB_INTERFACE → The extension → "The verified tip"):
-  // the retired rule — when the reading node's chain lost to another's,
-  // the verdict refused and the title named the winner's host — is gone.
-  // The new rule — the client seats a heavier chain and a node left on
-  // the lighter one names a tip off it — reads *a node names a tip off
-  // this chain* under `thin · split`, with the reads routed to a node on
-  // the seated chain. For 19b the block mines C into an isolated branch;
-  // in the new world C must stand in `client.state().nodes` for its tip
-  // to be read, which (same as 17a and 19c) asks for `addByHand` and a
-  // webrtc-direct address C does not listen on. Marked NOT RUN until the
-  // mechanism is wired at stack-level; the spawn/fork setup is retired.
-  record('19b', 'NOT RUN',
-    `the retargeted verdict (thin · split, *a node names a tip off this chain*) needs C in the client's node list, which asks the settings row's addByHand for a /webrtc-direct/ address C's spawn does not print; wiring C with a webrtc-direct listener and reaching it is a stack-level change the recipe main runs will carry. The fork setup (spawn, isolate, mine past m + k + 14, out-score A) is retired here; the tool-side comparison (resolveTip/compareProofs) is not what the client reads any more — the client's own check settles the chain.`);
+  // ---- Spawn node D — isolated, miner role with its own secret, no miner
+  // script yet. D is mined to serve 19c (`m + k + 4`, lighter than B) first,
+  // then on to serve 19b (past A's current, heavier than B). The two steps
+  // run sequentially on the same D so the chain's height moves one way
+  // only. The secret is random and per-run — nothing of it lands in the tree.
+  const dDbPath = join(SCRATCH, 'd.db');
+  for (const suffix of ['', '-shm', '-wal']) {
+    try { rmSync(dDbPath + suffix, { force: true }); } catch {}
+  }
+  const dSecret = randomBytes(32).toString('hex');
+  console.log(`[vt] spawning node D: port=${D_HTTP_PORT} admin=${D_ADMIN_PORT} p2p=${D_P2P_PORT} db=${dDbPath} isolated`);
+  spawnDaemon('d', NODE_DIST, {
+    NETWORK_TYPE: 'devnet',
+    NODE_ROLE: 'miner',
+    PORT: String(D_HTTP_PORT),
+    ADMIN_PORT: String(D_ADMIN_PORT),
+    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${D_P2P_PORT}`,
+    BOOTSTRAP_PEERS: '',
+    DB_PATH: dDbPath,
+    MINING_SECRET: dSecret,
+  });
+  if (!await waitForHttpUp(D_ORIGIN, 30000)) {
+    record('19c', 'NOT RUN', `node D did not come up at ${D_ORIGIN}`);
+    record('19b', 'NOT RUN', `node D did not come up at ${D_ORIGIN}`);
+  } else {
+    console.log(`[vt] node D up at ${D_ORIGIN}, height ${await currentHeight(D_ORIGIN)}`);
 
-  // ---- Step 19c — retargeted from `thin · split` with the retired title
-  // `the nodes share no block to compare` (WEB_INTERFACE → The extension
-  // → "The verified tip"). The new title is *a node names a tip off this
-  // chain* under `thin · split`, held when a node names a tip off the
-  // chain's last k headers; D mined past m + k + 4 is far off A's chain.
-  // 19c needs D in the client's node list — the same addByHand mechanism
-  // 17a and 19b need, the same webrtc-direct listener gap. Marked NOT RUN
-  // until wired.
-  record('19c', 'NOT RUN',
-    `the retargeted verdict (thin · split) is the same title 19b carries, under D mined past m + k + 4 off A's chain; D must stand in the client's node list for its tip to be read, which asks addByHand for the webrtc-direct address D does not listen on. The earlier D miner (to past m + k + 4) is retired here.`);
+    // ---- Step 19c — RLA upstream-D with D lighter than B, D's tip off the
+    // chain's last `k` headers. D mines just past `m + k + 4` so its proof
+    // exists (`NODE_INTERFACE → Nipopow`, the proof route answers 404 below
+    // `m + k`) and shares no block with A past genesis (D is isolated and
+    // its block 2+ are its own). B's proof wins the compare (`NIPOPOW_INTERFACE
+    // → compareProofs`) and the client seats B's chain; A (read through RLA's
+    // upstream-switch to D) names D's tip, off A's chain's last `k` headers
+    // → `offChain = 1`, row 5 fires → `thin · split`, title *a node names a
+    // tip off this chain · tip N* (`WEB_INTERFACE → The extension → "The
+    // verified tip"`, `MESH_INTERFACE → No anchor reached → "The agreement
+    // counts"`). The corner's tip is B's chain's own — the seated chain.
+    const dLightTarget = TIP_M + TIP_K + 4;
+    console.log(`[vt] 19c: mining D to height ${dLightTarget + 1} (lighter than A)`);
+    spawnDaemon('d-miner', MINER_SCRIPT, {
+      NODE_URL: D_ORIGIN,
+      MINING_SECRET: dSecret,
+      MINER_PCT: '100',
+    });
+    const dLightReached = await waitForHeight(D_ORIGIN, dLightTarget + 1, 10 * 60 * 1000);
+    await stopChild('d-miner');
+    await sleep(1500);
+    const hDafterLight = await currentHeight(D_ORIGIN);
+    if (dLightReached === null) {
+      record('19c', false, `D never reached height ${dLightTarget + 1} within 10 min (last=${hDafterLight})`);
+    } else {
+      tipRelays.a.upstream = D_ORIGIN;
+      tipRelays.a.mode = 'upstream-D';
+      tipRelays.b.upstream = B_ORIGIN;
+      tipRelays.b.mode = 'honest';
+      const page = await openFreshExtensionPage(bcx);
+      try {
+        const reached = await waitForCornerState(
+          page.cx,
+          (c) => c.ledClass === 'led thin'
+            && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
+          'led thin + "a node names a tip off this chain · tip N" (19c, D lighter)',
+          60000);
+        const reading = reached.last;
+        const hAnow = await currentHeight(NODE);
+        const hBnow = await currentHeight(B_ORIGIN);
+        const titleTip = tipFromTitle(reading?.title ?? '');
+        const ok = !reached.timedOut
+          && reading?.ledClass === 'led thin'
+          && reading?.tipClass === 'tip mono'
+          && /^a node names a tip off this chain · tip \d+$/.test(reading?.title ?? '')
+          && typeof titleTip === 'number'
+          && typeof hBnow === 'number'
+          && Math.abs(hBnow - titleTip) <= 5;
+        record('19c', ok,
+          `led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, title tip=${titleTip} vs B height=${hBnow} (seated chain), A height=${hAnow}, D height=${hDafterLight}`);
+      } finally {
+        try { page.cx.s.close(); } catch {}
+        await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+      }
+      tipRelays.a.upstream = NODE.replace(/\/+$/, '');
+      setTipRelayModes('honest');
+    }
+
+    // ---- Step 19b — RLA upstream-D with D heavier than A/B. D mines past
+    // A's current height by a margin so D's chain wins the compare, the
+    // client seats D's chain, and B — still on A's lighter chain — names a
+    // tip off D's last `k` headers → `offChain = 1`, row 5 fires →
+    // `thin · split`, title *a node names a tip off this chain · tip N*.
+    // The corner's tip is the seated chain's — D's height, not A's
+    // (`WEB_INTERFACE → The status corner`, `MESH_INTERFACE → The client's
+    // node list → "The client's chain"`). The margin is `hA + 50` so A's
+    // live miner cannot catch D between the measurement and the assertion.
+    const hAatHeavy = await currentHeight(NODE);
+    const dHeavyTarget = (hAatHeavy ?? 0) + 50;
+    console.log(`[vt] 19b: mining D to height ≥ ${dHeavyTarget} (A=${hAatHeavy}, heavier by ≥ 50)`);
+    spawnDaemon('d-miner', MINER_SCRIPT, {
+      NODE_URL: D_ORIGIN,
+      MINING_SECRET: dSecret,
+      MINER_PCT: '100',
+    });
+    const dHeavyReached = await waitForHeight(D_ORIGIN, dHeavyTarget, 10 * 60 * 1000);
+    await stopChild('d-miner');
+    await sleep(1500);
+    const hDafterHeavy = await currentHeight(D_ORIGIN);
+    if (dHeavyReached === null) {
+      record('19b', false, `D never reached height ≥ ${dHeavyTarget} within 10 min (last=${hDafterHeavy}, A at start=${hAatHeavy})`);
+    } else {
+      tipRelays.a.upstream = D_ORIGIN;
+      tipRelays.a.mode = 'upstream-D';
+      tipRelays.b.upstream = B_ORIGIN;
+      tipRelays.b.mode = 'honest';
+      const page = await openFreshExtensionPage(bcx);
+      try {
+        const reached = await waitForCornerState(
+          page.cx,
+          (c) => c.ledClass === 'led thin'
+            && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
+          'led thin + "a node names a tip off this chain · tip N" (19b, D heavier)',
+          60000);
+        const reading = reached.last;
+        const hDnow = await currentHeight(D_ORIGIN);
+        const hBnow = await currentHeight(B_ORIGIN);
+        const titleTip = tipFromTitle(reading?.title ?? '');
+        const ok = !reached.timedOut
+          && reading?.ledClass === 'led thin'
+          && reading?.tipClass === 'tip mono'
+          && /^a node names a tip off this chain · tip \d+$/.test(reading?.title ?? '')
+          && typeof titleTip === 'number'
+          && typeof hDnow === 'number'
+          && Math.abs(hDnow - titleTip) <= 5;
+        record('19b', ok,
+          `led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, title tip=${titleTip} vs D height=${hDnow} (seated chain), B height=${hBnow}, D at mine stop=${hDafterHeavy}`);
+      } finally {
+        try { page.cx.s.close(); } catch {}
+        await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+      }
+      tipRelays.a.upstream = NODE.replace(/\/+$/, '');
+      setTipRelayModes('honest');
+    }
+  }
 
   // ---- Step 20 — no verifier, on the hosted origin.
   if (PUBLIC === null) {
@@ -1934,12 +2200,12 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
     try { bcx.s.close(); } catch {}
   }
 
-  // ---- Cleanup — every child by its handle, and the lying relay's server.
+  // ---- Cleanup — every child by its handle (B, D, D's miner); the tip
+  // relays stay up for the figures and names blocks to read A/B through.
+  // The relays' modes are left `honest` and their upstreams at the node
+  // origins by the 19 steps' exits.
   console.log(`[vt] cleanup: stopping all children by handle`);
   await stopAllChildren();
-  if (relay) {
-    try { relay.server.close(); } catch {}
-  }
   console.log(`[vt] cleanup done; live children left=${vtChildren.size}`);
 }
 
@@ -4837,6 +5103,12 @@ function markLightFail(reason) {
 //                  verbatim.
 //   down         — every connection is destroyed unanswered: a node that
 //                  is not there.
+//   upstream-D   — pass-through (no per-route lie), paired with
+//                  `relay.upstream = DL_ORIGIN`: every request lands on D's
+//                  answers, so the relay's base names D's tip and the chain
+//                  the client reads is D's (`WEB_INTERFACE → The extension
+//                  → "The chain's name"`, `"The post cache"`). The one
+//                  edit is the upstream swap, not the mode's behaviour.
 async function startRelay(name, upstream, port) {
   const relay = {
     name,
@@ -6364,11 +6636,15 @@ async function lightSteps(cx, targetId = 'unknown') {
   }
 
   // ---- L13 — another chain. A light page of the feed is recorded from
-  // RA. Both relays' upstreams move to D, and the reading node is read
-  // afresh: the browser lists D's database and not A's. Then RA on
-  // list-replay with the recorded page and a ↻: the listed ids stand as
-  // slots and are asked of the relays — no card is drawn from the first
-  // chain's entries — and at the end no slot stands.
+  // RA. Both relays are set to `upstream-D` mode with their `upstream`
+  // reassigned to D, and the page reloads: a fresh page is a fresh client
+  // (`WEB_INTERFACE → The extension → "The contexts, and what each may
+  // hold"`), its tip run names D's chain, the cache opens D's database
+  // and deletes A's (`WEB_INTERFACE → The extension → "The chain's
+  // name"`, `"The post cache"`). Then RA on list-replay with the recorded
+  // page and a ↻: the listed ids stand as slots and are asked of the
+  // relays — no card is drawn from the first chain's entries — and at
+  // the end no slot stands.
   try {
     RA.mode = 'honest';
     RB.mode = 'honest';
@@ -6397,13 +6673,8 @@ async function lightSteps(cx, targetId = 'unknown') {
           console.log(`[vl] D block 1 hash=${dBlock1.slice(0, 12)}…, db=${dDbName}`);
           RA.upstream = DL_ORIGIN;
           RB.upstream = DL_ORIGIN;
-          RA.mode = 'honest';
-          RB.mode = 'honest';
-          // The reader stays on RA — a page reload re-reads the chain's
-          // name from whatever /blocks/1 the relay serves (D). A
-          // verified-tip run names D's chain, the cache opens D's
-          // database and deletes A's (WEB_INTERFACE → The extension →
-          // "The post cache").
+          RA.mode = 'upstream-D';
+          RB.mode = 'upstream-D';
           await cx.call('Page.reload');
           await cx.waitFor(`!!document.querySelector('#feed')`, 'L13 feed after reload with upstream=D', 60000);
           await pressAndReadVerdict(cx, { atLeast: 1, ms: 60000, quietMs: 2000 }).catch(() => {});
@@ -6522,13 +6793,17 @@ async function lightSteps(cx, targetId = 'unknown') {
 // where none is live.
 async function runVerifiedBlocks(bcx) {
   // The verified-tip block after the 1–16 pass and before the browser-context
-  // arm — 17a's D is fresh and isolated, so its readings hold whatever A's
-  // height is by now. 17b's press train runs under A's live miner; 19b makes
-  // its own fork on C; 19c uses D's own miner past m + k + 4. The block runs
-  // on the extension page live at this moment — 16(d)'s bridge takeover leaves
-  // one; where none is open, `Target.createTarget` a fresh `index.html`, the
-  // way the harness opens every other extension page (WEB_INTERFACE → The
-  // extension → "The verified tip").
+  // arm. 17b's press train runs under A's live miner; 17a sets both tip
+  // relays to `proof-short` and opens a fresh extension page; 19a sets RLA
+  // to `proof-invalid` with RLB honest (then both `proof-invalid`), again
+  // each on a fresh page; 19b mines D past A's tip so the client seats
+  // D's chain and B reads off it; 19c mines D past `m + k + 4` and leaves
+  // it below A's tip so B's chain seats and D reads off it. The main
+  // extension page is the one live at this moment — 16(d)'s bridge
+  // takeover leaves one; where none is open, `Target.createTarget` a
+  // fresh `index.html`, the way the harness opens every other extension
+  // page (WEB_INTERFACE → The extension → "The verified tip"). `bcx`
+  // runs `verifiedTipSteps`' fresh-page openings.
   if (VERIFIED_TIP) {
     let vtPage = await findExt('index.html');
     if (!vtPage) {
@@ -6538,7 +6813,7 @@ async function runVerifiedBlocks(bcx) {
     }
     if (!vtPage) throw new Error('verified-tip block: no extension page');
     const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
-    await verifiedTipSteps(vtCx, vtPage.id);
+    await verifiedTipSteps(vtCx, bcx, vtPage.id);
     try { vtCx.s.close(); } catch {}
   } else {
     markVerifiedTipNotRun('no --verified-tip');
@@ -6659,7 +6934,15 @@ async function main() {
       record(s, 'NOT RUN', 'no --r-key — the links steps do not run');
     }
     if (VERIFIED_TIP) {
-      await verifiedTipSteps(cx, page.id);
+      // WEB_INTERFACE → The extension → "The verified tip" — the block's
+      // fresh-page openings (17a · 19a · 19b · 19c) ask the browser-level
+      // session for `Target.createTarget`.
+      const vtBcx = await openBrowserSession();
+      try {
+        await verifiedTipSteps(cx, vtBcx, page.id);
+      } finally {
+        try { vtBcx.s.close(); } catch {}
+      }
     } else {
       markVerifiedTipNotRun('no --verified-tip');
     }
@@ -6676,7 +6959,7 @@ async function main() {
   // The expected first node matches the extension build the run was given —
   // RA under --light (seed list [RA, RB]), else A (seed list [A, B]) — and
   // the shell check at the top refuses any other build.
-  const expectedFirstNode = LIGHT ? RA_ORIGIN : NODE.replace(/\/$/, '');
+  const expectedFirstNode = LIGHT ? RA_ORIGIN : RLA_ORIGIN;
   const s1 = await cx.eval(`(() => ({
     nodes: document.querySelector('meta[name="notis-nodes"]').content,
     newPost: !!document.querySelector('[data-composer-open="@feed"]'),
@@ -8119,14 +8402,42 @@ async function teardownLightRelays() {
   }
 }
 
+// WEB_INTERFACE → The extension → "The verified tip" — the verified blocks'
+// two relays, RLA in front of A and RLB in front of B, each on its fixed
+// port, start before the browser opens the extension page, so the extension's
+// seed list `[{notisId:<A>, addrs:[], api:RLA}, {notisId:<B>, addrs:[],
+// api:RLB}]` reads them from the first paint and every read it makes passes
+// through one of them. Each relay's `upstream` stays reassignable — the
+// `upstream-D` mode of 19b and 19c points RLA at `D_ORIGIN` for the step and
+// back after. The function is a no-op when no verified block runs; the
+// figures and names blocks reach this relay too, since they also run under
+// the two-relay build.
+const tipRelays = { a: null, b: null };
+
+async function setupTipRelays() {
+  if (!(VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) return;
+  const rla = await startTipRelay(NODE.replace(/\/+$/, ''), RLA_PORT);
+  const rlb = await startTipRelay(B_ORIGIN, RLB_PORT);
+  tipRelays.a = rla;
+  tipRelays.b = rlb;
+  console.log(`[vt] RLA up at ${rla.origin} → ${rla.upstream}; RLB up at ${rlb.origin} → ${rlb.upstream}`);
+}
+
+async function teardownTipRelays() {
+  if (tipRelays.a) { closeRelay(tipRelays.a); tipRelays.a = null; }
+  if (tipRelays.b) { closeRelay(tipRelays.b); tipRelays.b = null; }
+}
+
 let exitCode = 0;
 try {
+  await setupTipRelays();
   await setupLightRelays();
   await main();
 } catch (e) {
   console.error('proof failed:', e);
   exitCode = 1;
 }
+await teardownTipRelays();
 await teardownLightRelays();
 
 console.log('\n=== SUMMARY ===');
