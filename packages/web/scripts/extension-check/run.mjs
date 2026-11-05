@@ -7145,6 +7145,44 @@ async function spawnPlainNode(name, env, httpOrigin, timeoutMs = 60000) {
   if (!up) throw new Error(`${name} did not answer /blocks/current at ${httpOrigin} within ${timeoutMs}ms`);
 }
 
+// A's peer id, read from `NODE_P2P` (the --node-p2p multiaddr, shape
+// `/ip4/.../tcp/<port>/p2p/<peerId>`). A transaction's forward is bought
+// by its admission (NET_INTERFACE → Forwarding Rule → "An ordering block
+// is forwarded once Stage 1 passes; a transaction once this node admits
+// it") — so a node that admits a write relays it to the peers it holds
+// at the admission. M3's and M4's writes are preceded by a wait for each
+// writing node to have completed its outbound handshake with A, so A is
+// one of the peers at admission and a miner-less node (A' and B') relays
+// the packet to A for mining.
+function nodeP2pPeerId() {
+  if (!NODE_P2P) return null;
+  const m = NODE_P2P.match(/\/p2p\/([^/]+)$/);
+  return m ? m[1] : null;
+}
+
+// Wait for a node's log to carry `[net] outbound handshake with <peerId>:
+// ok=true` — the one line `packages/net`'s node writer records when an
+// outbound handshake completes. The log is `${SCRATCH}/${name}.log`, which
+// both `spawnDaemon` and `spawnMeshNode` write to. Returns true on match,
+// false on timeout. A restart appends to the log, so the caller passes
+// the offset into the file where the restart begins — a previous spawn's
+// handshake line is not counted for the current one.
+function logOffset(logPath) {
+  try { return readFileSync(logPath, 'utf8').length; } catch { return 0; }
+}
+async function waitForOutboundHandshakeInLog(logPath, peerId, sinceOffset, ms = 180000) {
+  const needle = `outbound handshake with ${peerId}: ok=true`;
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const data = readFileSync(logPath, 'utf8');
+      if (data.length > sinceOffset && data.slice(sinceOffset).includes(needle)) return true;
+    } catch {}
+    await sleep(500);
+  }
+  return false;
+}
+
 // The webrtc-direct multiaddr in the identity line's `multiaddrs` that
 // names the node's own mesh listen port — the one an anchor's `addrs`
 // entry carries (`MESH_INTERFACE → Discovery → "A node added by hand"`,
@@ -7391,19 +7429,30 @@ async function runMeshStepM3(bcx) {
   try {
     await stopChild('ap');
     await stopChild('bp');
+    const apLog = join(SCRATCH, 'ap.log');
+    const bpLog = join(SCRATCH, 'bp.log');
+    const apLogOff = logOffset(apLog);
+    const bpLogOff = logOffset(bpLog);
     const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
       ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: true, bootstrap: NODE_P2P,
     }));
     const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
     if (!apUp) throw new Error(`A' did not answer at ${AP_ORIGIN} after M3 restart`);
-    const bpBootstrap = `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${apSpawn.identity.peerId}`;
+    // B' bootstraps from A, the same bootstrap A' takes, so B' peers
+    // with A directly and relays an admitted write to A at admission.
     const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
-      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: true, bootstrap: bpBootstrap,
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: true, bootstrap: NODE_P2P,
     }));
     const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
     if (!bpUp) throw new Error(`B' did not answer at ${BP_ORIGIN} after M3 restart`);
     meshNodes.ap = { ...meshNodes.ap, identity: apSpawn.identity, mesh: true };
     meshNodes.bp = { ...meshNodes.bp, identity: bpSpawn.identity, mesh: true };
+    const aPeerId = nodeP2pPeerId();
+    if (!aPeerId) throw new Error(`could not read A's peer id from --node-p2p: ${NODE_P2P}`);
+    const apHandshakeWithA = await waitForOutboundHandshakeInLog(apLog, aPeerId, apLogOff, 180000);
+    if (!apHandshakeWithA) throw new Error(`A' did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M3 restart`);
+    const bpHandshakeWithA = await waitForOutboundHandshakeInLog(bpLog, aPeerId, bpLogOff, 180000);
+    if (!bpHandshakeWithA) throw new Error(`B' did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M3 restart`);
 
     page = await openFreshExtensionPage(bcx);
     await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m3', 30000);
@@ -7430,10 +7479,12 @@ async function runMeshStepM3(bcx) {
     // proxy's `sign` resolves without a prompt page for a rep write).
     const landed = await (async () => {
       const t0 = Date.now();
-      while (Date.now() - t0 < 60000) {
-        // A `GET /posts/:id` on each node for CONTENT's post id after
-        // its submit is the brief's assertion; probing each node's /posts
-        // by author is enough to prove the post landed on both.
+      // The operator's miner is paced (40 s stopped, 3 s running per
+      // cycle); 180 s is more than three cycles, the floor the landing
+      // polls elsewhere in this file take.
+      while (Date.now() - t0 < 180000) {
+        // Each node's /posts by author covers that CONTENT's post landed
+        // on both; a GET /posts/:id after its submit proves the same.
         const [a, b] = await Promise.all([
           fetch(`${AP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=10`).then((r) => r.json()).catch(() => null),
           fetch(`${BP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=10`).then((r) => r.json()).catch(() => null),
@@ -7484,19 +7535,30 @@ async function runMeshStepM4(bcx) {
   try {
     await stopChild('ap');
     await stopChild('bp');
+    const apM4Log = join(SCRATCH, 'ap-m4.log');
+    const bpLog = join(SCRATCH, 'bp.log');
+    const apM4LogOff = logOffset(apM4Log);
+    const bpLogOff = logOffset(bpLog);
     // A' restarts on its alt HTTP port (p2p and mesh ports unchanged).
     // No MESH_ROLE — M4 reaches each at its api base alone. A' still
-    // bootstraps from --node-p2p so it stays on A's chain.
+    // bootstraps from --node-p2p so it stays on A's chain, and B' takes
+    // the same bootstrap so B' peers with A directly and relays the
+    // admitted write to A at admission.
     await spawnPlainNode('ap-m4', meshNodeEnv({
       ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P, httpPort: AP_ALT_HTTP_PORT,
     }), `http://127.0.0.1:${AP_ALT_HTTP_PORT}`);
     await spawnPlainNode('bp', meshNodeEnv({
-      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false,
-      bootstrap: `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${meshNodes.ap.identity.peerId}`,
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false, bootstrap: NODE_P2P,
     }), BP_ORIGIN);
     meshNodes.ap.apHttp = AP_ALT_HTTP_PORT;
     meshNodes.ap.mesh = false;
     meshNodes.bp.mesh = false;
+    const aPeerId = nodeP2pPeerId();
+    if (!aPeerId) throw new Error(`could not read A's peer id from --node-p2p: ${NODE_P2P}`);
+    const apHandshakeWithA = await waitForOutboundHandshakeInLog(apM4Log, aPeerId, apM4LogOff, 180000);
+    if (!apHandshakeWithA) throw new Error(`ap-m4 did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M4 restart`);
+    const bpHandshakeWithA = await waitForOutboundHandshakeInLog(bpLog, aPeerId, bpLogOff, 180000);
+    if (!bpHandshakeWithA) throw new Error(`B' did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M4 restart`);
     // The tip relay on AP_HTTP_PORT with A''s alt HTTP as upstream — the
     // build's api for A' still names AP_ORIGIN, so every client read of
     // A''s HTTP base routes through this relay. `hold-posts` holds POST
@@ -7537,10 +7599,12 @@ async function runMeshStepM4(bcx) {
       await sleep(250);
     }
     // The content lands exactly once on each node (one post per node, not
-    // two). Wait up to 90s for both to carry it.
+    // two). The operator's miner is paced (40 s stopped, 3 s running per
+    // cycle); 180 s is more than three cycles, the floor the landing
+    // polls elsewhere in this file take.
     const landed = await (async () => {
       const t0 = Date.now();
-      while (Date.now() - t0 < 90000) {
+      while (Date.now() - t0 < 180000) {
         const [a, b] = await Promise.all([
           fetch(`http://127.0.0.1:${AP_ALT_HTTP_PORT}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
           fetch(`${BP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
