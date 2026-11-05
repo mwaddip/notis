@@ -407,10 +407,7 @@ describe('mesh — the node endpoint', () => {
   // a string or bytes body keeps the caller's `content-type`; a string
   // body's `content-length` is the UTF-8 byte length.
 
-  // `it.fails` while the patch on `@libp2p/http-fetch@4.0.4` is
-  // AHEAD OF CODE (`MESH_INTERFACE → Place in the workspace → "libp2p
-  // is pinned"`); the next commit lands the patch and flips it to `it`.
-  it.fails('a GET with a query reaches the upstream with that query byte for byte', async () => {
+  it('a GET with a query reaches the upstream with that query byte for byte', async () => {
     const { meshFetch } = await bringUp((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"ok":true}');
@@ -423,7 +420,7 @@ describe('mesh — the node endpoint', () => {
     expect(stub!.received[0]!.query).toBe('?a=1&b=two');
   }, 30_000);
 
-  it.fails('a POST with a string body and a caller content-type keeps that content-type and its bytes', async () => {
+  it('a POST with a string body and a caller content-type keeps that content-type and its bytes', async () => {
     const { meshFetch } = await bringUp((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"accepted":1}');
@@ -442,7 +439,7 @@ describe('mesh — the node endpoint', () => {
     expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bodyText, 'utf8'))).toBe(0);
   }, 30_000);
 
-  it.fails('a POST with a non-ASCII string body reaches the upstream whole, its content-length the UTF-8 byte length', async () => {
+  it('a POST with a non-ASCII string body reaches the upstream whole, its content-length the UTF-8 byte length', async () => {
     const { meshFetch } = await bringUp((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"accepted":1}');
@@ -461,7 +458,7 @@ describe('mesh — the node endpoint', () => {
     expect(Buffer.compare(stub!.received[0]!.body, utf8)).toBe(0);
   }, 30_000);
 
-  it.fails('a POST with a Uint8Array body and a caller content-type keeps that content-type', async () => {
+  it('a POST with a Uint8Array body and a caller content-type keeps that content-type', async () => {
     const { meshFetch } = await bringUp((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"accepted":1}');

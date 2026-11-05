@@ -16,7 +16,8 @@
     },
     "patchedDependencies": {
       "@libp2p/webrtc@7.0.2": "patches/@libp2p__webrtc@7.0.2.patch",
-      "@libp2p/http-utils@2.0.6": "patches/@libp2p__http-utils@2.0.6.patch"
+      "@libp2p/http-utils@2.0.6": "patches/@libp2p__http-utils@2.0.6.patch",
+      "@libp2p/http-fetch@4.0.4": "patches/@libp2p__http-fetch@4.0.4.patch"
     }
   }
 }

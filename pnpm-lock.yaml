@@ -10,6 +10,9 @@ overrides:
   proxy-addr@<2.0.8: ^2.0.8
 
 patchedDependencies:
+  '@libp2p/http-fetch@4.0.4':
+    hash: 8dc5c1cd5c95e76add4403182d5380b8e420604f266a1b47677c92348078da41
+    path: patches/@libp2p__http-fetch@4.0.4.patch
   '@libp2p/http-utils@2.0.6':
     hash: 917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d
     path: patches/@libp2p__http-utils@2.0.6.patch
@@ -102,7 +105,7 @@ importers:
         version: 2.0.6
       '@libp2p/http-fetch':
         specifier: 4.0.4
-        version: 4.0.4
+        version: 4.0.4(patch_hash=8dc5c1cd5c95e76add4403182d5380b8e420604f266a1b47677c92348078da41)
       '@libp2p/http-utils':
         specifier: 2.0.6
         version: 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
@@ -516,7 +519,7 @@ importers:
         version: 17.2.1
       '@libp2p/http-fetch':
         specifier: 4.0.4
-        version: 4.0.4
+        version: 4.0.4(patch_hash=8dc5c1cd5c95e76add4403182d5380b8e420604f266a1b47677c92348078da41)
       '@libp2p/identify':
         specifier: 4.1.18
         version: 4.1.18
@@ -4206,7 +4209,7 @@ snapshots:
       uint8arraylist: 3.0.2
       uint8arrays: 6.1.1
 
-  '@libp2p/http-fetch@4.0.4':
+  '@libp2p/http-fetch@4.0.4(patch_hash=8dc5c1cd5c95e76add4403182d5380b8e420604f266a1b47677c92348078da41)':
     dependencies:
       '@achingbrain/http-parser-js': 0.5.9
       '@libp2p/http-utils': 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
@@ -4252,7 +4255,7 @@ snapshots:
 
   '@libp2p/http@2.0.6':
     dependencies:
-      '@libp2p/http-fetch': 4.0.4
+      '@libp2p/http-fetch': 4.0.4(patch_hash=8dc5c1cd5c95e76add4403182d5380b8e420604f266a1b47677c92348078da41)
       '@libp2p/http-peer-id-auth': 2.0.3
       '@libp2p/http-utils': 2.0.6(patch_hash=917fbf79c9ecb1fdf0f84c638a98ba8a0a9a342b06e5e29f552c6203158fcc2d)
       '@libp2p/http-websocket': 2.0.4
