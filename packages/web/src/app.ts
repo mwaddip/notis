@@ -4602,14 +4602,12 @@ export class App {
     if (this.verifier === null) return;
     if (!this.cornerVisible()) return;
     if (this.verifyInFlight) return;
-    const readingBase = prefs.node;
-    if (readingBase === '') return;
     if (!askedByNames) this.nameRunAsked = false;
     const gen = this.verifyGen;
     this.lastVerifyBeganAt = Date.now();
     this.verifyInFlight = true;
     const verifier = this.verifier;
-    void verifier.run(readingBase).then(
+    void verifier.run().then(
       (run) => {
         // A late run under an older generation never touches the flag or
         // the render — the new run's own resolver owns them.

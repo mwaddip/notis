@@ -2,9 +2,9 @@
 // after a check (WEB_INTERFACE → The extension → "The verified tip"). The
 // table's first row that holds answers the verdict; a state whose counts are
 // not non-negative integers reads as no check ended (thin · no-proof). The
-// run lands the verdict beside the anchor and the chain name the extension's
-// extension build reads (→ "The verified figures" → "The anchor", → "The
-// chain's name").
+// run lands the verdict beside the anchor and the chain name the extension
+// build reads (→ "The verified figures" → "The anchor", → "The chain's
+// name").
 
 import type { ClientState } from '../mesh/mesh-client.js';
 import type { TipRun } from './state.js';
@@ -59,11 +59,15 @@ export function meshVerdict(s: ClientState): TipVerdict {
     if (answered === 0) return { kind: 'thin', reason: 'no-proof', height };
     // Row 2 — a proof answered did not decode or did not verify.
     if (p !== null && p.invalid > 0) {
-      return { kind: 'refused', reason: 'invalid-proof', by: null, height };
+      return { kind: 'refused', reason: 'invalid-proof', height };
     }
-    // Row 3 — every proof answered says its chain is shorter than m + k: the
-    // only answered class left is too-short.
-    return { kind: 'thin', reason: 'too-short', height };
+    // Row 3 — every proof answered says its chain is shorter than m + k.
+    // Anything no row above holds and that is not every answered proof as
+    // too-short reads as no-proof — the totality rule.
+    if (p !== null && p.tooShort === answered) {
+      return { kind: 'thin', reason: 'too-short', height };
+    }
+    return { kind: 'thin', reason: 'no-proof', height };
   }
 
   // Row 4 — the chain is seated, and no anchor stands on it.

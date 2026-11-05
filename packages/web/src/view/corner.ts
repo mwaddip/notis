@@ -65,8 +65,8 @@ export function cornerState(input: CornerInput): CornerState {
 /** The state's words as the corner's `title` reads them
  *  (WEB_INTERFACE → The status corner). Where the state names a verdict — thin,
  *  refused, or a verified verdict as `fresh` — the verdict carries its own
- *  wording, in the house voice (HOUSE_STYLE → Voice). A node named by its
- *  host, never by a URL; an unparsable `by` reads *another node*. */
+ *  wording, in the house voice (HOUSE_STYLE → Voice). No title names a node or
+ *  carries a URL or an address. */
 export function cornerTitle(state: CornerState, tip: number | null, verdict?: TipVerdict | null): string {
   const t = tip ?? '—';
   if (state === 'fresh') {
@@ -87,25 +87,7 @@ export function cornerTitle(state: CornerState, tip: number | null, verdict?: Ti
     return `the chain could not be checked · tip ${t}`;
   }
   // state === 'refused'
-  if (verdict && verdict.kind === 'refused') {
-    if (verdict.reason === 'invalid-proof') return `this node's proof did not verify · tip ${t}`;
-    if (verdict.reason === 'outworked') {
-      const host = hostOf(verdict.by);
-      return host === null
-        ? `another node holds more work than this node · tip ${t}`
-        : `${host} holds more work than this node · tip ${t}`;
-    }
-  }
   return `this node's proof did not verify · tip ${t}`;
-}
-
-function hostOf(url: string | null): string | null {
-  if (url === null) return null;
-  try {
-    return new URL(url).host;
-  } catch {
-    return null;
-  }
 }
 
 /** The corner is a `<button>` holding the dot and the height, rendered in place

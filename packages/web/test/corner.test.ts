@@ -111,11 +111,12 @@ const THIN_ONE: TipVerdict = { kind: 'thin', reason: 'one-node', height: 7766 };
 const THIN_SHORT: TipVerdict = { kind: 'thin', reason: 'too-short', height: 12 };
 const THIN_NO: TipVerdict = { kind: 'thin', reason: 'no-proof', height: 7766 };
 const THIN_SPLIT: TipVerdict = { kind: 'thin', reason: 'split', height: 7766 };
-const REFUSED_INVALID: TipVerdict = { kind: 'refused', reason: 'invalid-proof', by: null, height: 7766 };
-const REFUSED_OUTWORKED: TipVerdict = {
-  kind: 'refused', reason: 'outworked',
-  by: 'https://node02.notis.fun/testnet/api', height: 7766,
-};
+const REFUSED_INVALID: TipVerdict = { kind: 'refused', reason: 'invalid-proof', height: 7766 };
+// A second REFUSED constant kept for the overall "refused outranks" case,
+// now equal to REFUSED_INVALID (the outworked verdict retired with the
+// per-run `resolveTip` over the seed list; the mesh client's own place/fold
+// never writes it).
+const REFUSED_OTHER: TipVerdict = { kind: 'refused', reason: 'invalid-proof', height: 7766 };
 
 describe('cornerState — verdict: undefined reproduces the first paragraph\'s four states', () => {
   it('rise inside the window → fresh', () => {
@@ -145,7 +146,7 @@ describe('cornerState — verdict folds in, first row that holds', () => {
   });
   it('refused outranks checking, thin and the stale/fresh cases', () => {
     expect(cornerState({ ...RISE, verdict: REFUSED_INVALID })).toBe('refused');
-    expect(cornerState({ ...RISE, verdict: REFUSED_OUTWORKED })).toBe('refused');
+    expect(cornerState({ ...RISE, verdict: REFUSED_OTHER })).toBe('refused');
     expect(cornerState({ ...NO_RISE, verdict: REFUSED_INVALID })).toBe('refused');
   });
   it('verdict null after an answering read → checking', () => {
@@ -191,18 +192,6 @@ describe('cornerTitle — verdict-aware titles, word for word', () => {
   it('refused invalid-proof: this node\'s proof did not verify', () => {
     expect(cornerTitle('refused', 7766, REFUSED_INVALID)).toBe("this node's proof did not verify · tip 7766");
   });
-  it('refused outworked names the winner\'s host, never the URL', () => {
-    expect(cornerTitle('refused', 7766, REFUSED_OUTWORKED))
-      .toBe('node02.notis.fun holds more work than this node · tip 7766');
-  });
-  it('refused outworked with an unparsable by reads another node', () => {
-    const v: TipVerdict = { kind: 'refused', reason: 'outworked', by: 'not a url', height: 7766 };
-    expect(cornerTitle('refused', 7766, v)).toBe('another node holds more work than this node · tip 7766');
-  });
-  it('refused outworked with by: null reads another node', () => {
-    const v: TipVerdict = { kind: 'refused', reason: 'outworked', by: null, height: 7766 };
-    expect(cornerTitle('refused', 7766, v)).toBe('another node holds more work than this node · tip 7766');
-  });
   it('a null tip reads as — in every verdict-aware title', () => {
     expect(cornerTitle('checking', null)).toBe('checking the chain · tip —');
     expect(cornerTitle('thin', null, THIN_ONE)).toBe('only one node could be checked · tip —');
@@ -232,8 +221,8 @@ describe('renderCorner — the tip\'s weight rides its own span', () => {
   });
   it('the verdict-aware title is written onto the host', () => {
     const host = document.createElement('button');
-    renderCorner(host, 'refused', 7766, REFUSED_OUTWORKED);
-    expect(host.getAttribute('title')).toBe('node02.notis.fun holds more work than this node · tip 7766');
+    renderCorner(host, 'refused', 7766, REFUSED_INVALID);
+    expect(host.getAttribute('title')).toBe("this node's proof did not verify · tip 7766");
     renderCorner(host, 'checking', 7766);
     expect(host.getAttribute('title')).toBe('checking the chain · tip 7766');
     renderCorner(host, 'thin', 7766, THIN_ONE);

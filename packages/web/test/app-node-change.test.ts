@@ -159,7 +159,6 @@ interface FigureCall {
   resolve(r: FiguresResult): void;
 }
 interface TipCall {
-  readingBase: string;
   resolve(v: { verdict: TipVerdict; anchor: Anchor | null; chain: string | null }): void;
 }
 
@@ -221,7 +220,7 @@ function harness(opts: {
     }),
   };
   const tipVerifier: TipVerifier = {
-    run: (readingBase) => new Promise((resolve) => { tipCalls.push({ readingBase, resolve }); }),
+    run: () => new Promise((resolve) => { tipCalls.push({ resolve }); }),
   };
   if (opts.layout) localStorage.setItem(KEY_LAYOUT, opts.layout);
   const app = new App(
@@ -632,7 +631,6 @@ describe('the verified figures across a node or identity change', () => {
     await h.drive.changeNode(B);
     await flush();
     const tipB = h.tipCalls[h.tipCalls.length - 1]!;
-    expect(tipB.readingBase).toBe(B);
     tipB.resolve({ verdict: verified(495), anchor: anchorAt(495, 'bb'), chain: null });
     await flush();
     for (const c of h.figuresCalls.slice(before)) c.resolve(emptyResult());

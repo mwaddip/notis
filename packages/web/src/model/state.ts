@@ -387,26 +387,24 @@ export interface AppIdentity {
   setLinks?(v: 'site' | 'here'): Promise<void>;
 }
 
-/** The chain the extension reads is checked against the build's own profile
- *  and the other bases of the seed list (WEB_INTERFACE → The extension →
- *  "The verified tip"). The App holds an implementation only in the extension
- *  build; the web build is handed none. `run` takes the reading base at the
- *  moment the trigger fires and answers a verdict and — under `verified`
- *  alone — the reading node's own headers, for the figures verifier to prove
- *  boxes against (→ "The verified figures"). */
+/** The chain the extension reads is checked by the mesh client's own check
+ *  (WEB_INTERFACE → The extension → "The verified tip"). The App holds an
+ *  implementation only in the extension build; the web build is handed none.
+ *  `run` awaits one check and answers the verdict and — under `verified`
+ *  alone — the anchor the client's state carries, for the figures verifier
+ *  to prove boxes against (→ "The verified figures"). */
 export interface TipRun {
   verdict: TipVerdict;
   anchor: Anchor | null;
-  /** The hash of the first header of the reading node's verified proof — block
-   *  1, held to the profile's `genesisId` where one is pinned
-   *  (WEB_INTERFACE → The extension → "The chain's name"). Non-null whenever
-   *  the reading node's proof verified, under `verified` and under `thin`
-   *  alike; null for a reading node whose own proof did not verify. The post
-   *  cache's name reads it (→ "The post cache"); nothing else does. */
+  /** The hash of block 1 the client's chain keeps — the first header of the
+   *  proof that seated it (WEB_INTERFACE → The extension → "The chain's
+   *  name"). Non-null whenever the chain is seated, under `verified` and
+   *  under `thin` alike; null for a state whose chain is not seated. The
+   *  post cache's name reads it (→ "The post cache"); nothing else does. */
   chain: string | null;
 }
 export interface TipVerifier {
-  run(readingBase: string): Promise<TipRun>;
+  run(): Promise<TipRun>;
 }
 
 /** The extension proves the two figures the reading node serves for the loaded

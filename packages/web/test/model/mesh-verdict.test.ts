@@ -98,7 +98,7 @@ describe('meshVerdict — the seven rows of the table', () => {
       proofs: { asked: 2, verified: 0, invalid: 1, tooShort: 0 },
       tipHeight: null,
     });
-    expect(meshVerdict(s)).toEqual({ kind: 'refused', reason: 'invalid-proof', by: null, height: null });
+    expect(meshVerdict(s)).toEqual({ kind: 'refused', reason: 'invalid-proof', height: null });
   });
 
   it('row 3: not seated and every proof answered too-short → thin too-short', () => {
@@ -111,7 +111,7 @@ describe('meshVerdict — the seven rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'too-short', height: null });
   });
 
-  it.fails('row 3 only reads too-short when every answered proof is too-short — a verified-but-unseated state reads no-proof', () => {
+  it('row 3 only reads too-short when every answered proof is too-short — a verified-but-unseated state reads no-proof', () => {
     // WEB_INTERFACE → The extension → "The verified tip" — the totality rule
     // reads anything no row holds as no check ended. An unseated state with
     // proofs answered, none invalid and not all too-short falls to no-proof.

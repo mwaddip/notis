@@ -74,7 +74,7 @@ function input(over: Partial<FiguresLineInput>): FiguresLineInput {
 }
 
 const THIN: TipVerdict = { kind: 'thin', reason: 'no-proof', height: null };
-const REFUSED: TipVerdict = { kind: 'refused', reason: 'invalid-proof', by: null, height: null };
+const REFUSED: TipVerdict = { kind: 'refused', reason: 'invalid-proof', height: null };
 const VERIFIED: TipVerdict = { kind: 'verified', nodes: 2, height: 9020 };
 
 // ---------------------------------------------------------------------------

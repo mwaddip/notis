@@ -1634,7 +1634,7 @@ function pfFigures(result: Partial<FiguresResult> = {}, suffixHeight = 9005): Fi
   };
 }
 const VERIFIED_PF: TipVerdict = { kind: 'verified', nodes: 2, height: 9020 };
-const REFUSED_PF: TipVerdict = { kind: 'refused', reason: 'invalid-proof', by: null, height: null };
+const REFUSED_PF: TipVerdict = { kind: 'refused', reason: 'invalid-proof', height: null };
 
 describe('profile — the verified-figures line beneath the rep number', () => {
   const repCtx = (over: Partial<ProfileCtx> = {}): ProfileCtx => ctx({

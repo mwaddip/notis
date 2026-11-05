@@ -5,7 +5,6 @@ import { createTabs, type Tabs } from './tabs';
 import { identity } from './identity/identity';
 import { bootstrapProxy } from './extension/proxy';
 import { wrapTabs } from './extension/handover';
-import { createTipVerifier } from './extension/tip-verifier';
 import { createFiguresVerifier } from './extension/figures-verifier';
 import { createNamesVerifier } from './extension/names-verifier';
 import { createPostsVerifier } from './extension/posts-verifier';
@@ -43,17 +42,10 @@ const mode = decideMode(location.pathname, WEB_BASE);
 const tabs: Tabs = isExtension ? wrapTabs(createTabs(), chrome) : createTabs();
 // WEB_INTERFACE → The extension → "The verified tip" — the verifier is handed
 // to the App by the extension build alone; an extension with an empty
-// `notis-network` is handed none, exactly as the web build. The static
-// `isExtension` keeps `tip-verifier.ts` out of the web bundle
-// (build-release.sh's `nipopow/proof` check).
-const verifier: TipVerifier | undefined = isExtension && BUILD_NETWORK !== null
-  ? createTipVerifier({
-      network: BUILD_NETWORK,
-      nodes: BUILD_NODE_BASES,
-      fetch: fetch.bind(globalThis),
-      now: Date.now,
-    })
-  : undefined;
+// `notis-network` is handed none, exactly as the web build. AHEAD OF CODE
+// (2026-11-05): the seams module lands the `MeshTipVerifier` over the mesh
+// client; until then the extension build is handed `undefined`.
+const verifier: TipVerifier | undefined = undefined;
 // WEB_INTERFACE → The extension → "The verified figures" — the figures verifier
 // is handed to the App under the same static condition as the tip verifier, so
 // the web build's substitution renders this a static false and Rollup dead-
