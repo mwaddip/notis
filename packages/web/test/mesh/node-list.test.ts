@@ -12,9 +12,9 @@ import {
   type MeshAnchor,
   type FailureKind,
   type LieEvidence,
-} from '@dagsocial/web/mesh';
+} from '../../src/mesh/node-list.js';
 import { MeshKeyError } from '@dagsocial/net/browser';
-import { RETRY_BASE_MS, RETRY_CAP_MS } from '@dagsocial/web/mesh';
+import { RETRY_BASE_MS, RETRY_CAP_MS } from '../../src/mesh/protocols.js';
 
 const idA = 'a'.repeat(64);
 const idB = 'b'.repeat(64);
