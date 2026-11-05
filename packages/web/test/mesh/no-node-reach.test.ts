@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
+import { builtinModules } from 'node:module';
 
 const DIST_MESH = process.env['NO_NODE_REACH_DIST']
   ?? fileURLToPath(new URL('../../dist-mesh', import.meta.url));
@@ -58,7 +59,6 @@ describe('@dagsocial/web/mesh — the bundle reaches no Node built-in', () => {
     ).toBe(true);
     const files = distFiles(DIST_MESH);
     expect(files.length, `dist-mesh/ holds no .js file (${DIST_MESH})`).toBeGreaterThan(0);
-    const { builtinModules } = await import('node:module');
     const importHits: string[] = [];
     const globalHits: string[] = [];
     for (const f of files) {
