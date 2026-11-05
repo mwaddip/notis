@@ -7,7 +7,12 @@
 // allowed.
 
 import { describe, it, expect } from 'vitest';
-import { pickServer, type PickCandidate } from '../../src/mesh/server-pick.js';
+import {
+  pickServer,
+  orderServers,
+  type OrderCandidate,
+  type PickCandidate,
+} from '../../src/mesh/server-pick.js';
 
 function cand(id: string, over: Partial<PickCandidate> = {}): PickCandidate {
   return {
@@ -21,6 +26,18 @@ function cand(id: string, over: Partial<PickCandidate> = {}): PickCandidate {
 const idA = 'a'.repeat(64);
 const idB = 'b'.repeat(64);
 const idC = 'c'.repeat(64);
+
+function ocand(id: string, over: Partial<OrderCandidate> = {}): OrderCandidate {
+  return {
+    id,
+    status: over.status ?? 'ok',
+    readMs: over.readMs ?? null,
+    meshUsable: over.meshUsable ?? false,
+    anchor: over.anchor ?? false,
+    api: over.api ?? null,
+    meshBase: over.meshBase ?? `notis-mesh://${id}`,
+  };
+}
 
 describe('pickServer', () => {
   it('a tip read picks only ok nodes', () => {
@@ -118,5 +135,87 @@ describe('pickServer', () => {
     expect(pickServer(noneUsable, 'tip', () => 0)).toBeNull();
     const emptyAllowed: PickCandidate[] = [cand(idA, { status: 'behind', readMs: 10 })];
     expect(pickServer(emptyAllowed, 'tip', () => 0)).toBeNull();
+  });
+});
+
+describe('orderServers', () => {
+  it.fails('mesh-reached nodes come first, API bases after, deduplicated on the mesh base', () => {
+    // MESH_INTERFACE → The client's node list → "The client's order for
+    // a need" — every node the need allows reached over the mesh, the
+    // fast set first, then the API bases of the entries it allows, in
+    // the same order; duplicates dropped.
+    const nodes: OrderCandidate[] = [
+      ocand(idA, { status: 'ok', meshUsable: true, readMs: 10, api: 'https://a.example' }),
+      ocand(idB, { status: 'ok', meshUsable: false, api: 'https://b.example' }),
+      ocand(idC, { status: 'ok', meshUsable: true, readMs: 15, api: null }),
+    ];
+    const order = orderServers(nodes, 'tip', true);
+    expect(order).toEqual([
+      `notis-mesh://${idA}`,
+      `notis-mesh://${idC}`,
+      'https://b.example',
+    ]);
+  });
+
+  it.fails('the fast set comes first; slower mesh nodes after', () => {
+    // A (readMs 10), B (readMs 100) — bound is 2*10+50=70, so B is
+    // outside the fast set but still mesh-reached. The fast node is
+    // first, then the slow one.
+    const nodes: OrderCandidate[] = [
+      ocand(idA, { status: 'ok', meshUsable: true, readMs: 10 }),
+      ocand(idB, { status: 'ok', meshUsable: true, readMs: 100 }),
+    ];
+    expect(orderServers(nodes, 'tip', true)).toEqual([
+      `notis-mesh://${idA}`,
+      `notis-mesh://${idB}`,
+    ]);
+  });
+
+  it.fails('an older read picks ok or trailing; behind nodes are refused', () => {
+    const nodes: OrderCandidate[] = [
+      ocand(idA, { status: 'ok', meshUsable: true, readMs: 10, api: 'https://a.example' }),
+      ocand(idB, { status: 'trailing', meshUsable: true, readMs: 15, api: 'https://b.example' }),
+      ocand(idC, { status: 'behind', meshUsable: true, readMs: 20, api: 'https://c.example' }),
+    ];
+    const older = orderServers(nodes, 'older', true);
+    expect(older).toEqual([
+      `notis-mesh://${idA}`,
+      `notis-mesh://${idB}`,
+    ]);
+    // A tip read: trailing is not allowed either — so neither B nor
+    // its api is in the order.
+    const tip = orderServers(nodes, 'tip', true);
+    expect(tip).toEqual([`notis-mesh://${idA}`]);
+  });
+
+  it.fails('before the first check ends, every anchor serves any need; others do not', () => {
+    // MESH_INTERFACE → The client's node list → "Before the first check
+    // ends an anchor serves any need, over its connection or at its API
+    // base". A non-anchor's status alone would allow nothing — until a
+    // check reads it.
+    const nodes: OrderCandidate[] = [
+      ocand(idA, { status: 'new', meshUsable: true, anchor: true, api: 'https://a.example' }),
+      ocand(idB, { status: 'new', meshUsable: false, anchor: true, api: 'https://b.example' }),
+      ocand(idC, { status: 'new', meshUsable: true, anchor: false, api: 'https://c.example' }),
+    ];
+    // Mesh anchor first (its meshBase), API-only anchor at its base,
+    // non-anchor dropped.
+    expect(orderServers(nodes, 'tip', false)).toEqual([
+      `notis-mesh://${idA}`,
+      'https://b.example',
+    ]);
+  });
+
+  it.fails('a blacklisted anchor is never in the order, at any stage', () => {
+    // MESH_INTERFACE → The client's node list → "A `blacklisted` node
+    // is never one [a candidate]" — the before-first-check branch
+    // honours this too; and a blacklisted node is not need-allowed in
+    // the after-first-check branch.
+    const nodes: OrderCandidate[] = [
+      ocand(idA, { status: 'blacklisted', meshUsable: true, anchor: true, api: 'https://a.example' }),
+      ocand(idB, { status: 'ok', meshUsable: true, anchor: true, api: 'https://b.example' }),
+    ];
+    expect(orderServers(nodes, 'tip', false)).toEqual([`notis-mesh://${idB}`]);
+    expect(orderServers(nodes, 'tip', true)).toEqual([`notis-mesh://${idB}`]);
   });
 });

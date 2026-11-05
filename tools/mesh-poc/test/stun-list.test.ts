@@ -40,6 +40,7 @@ function makeEntry(partial: {
     lastFailures: {},
     transport: null,
     path: null,
+    api: null,
   };
 }
 

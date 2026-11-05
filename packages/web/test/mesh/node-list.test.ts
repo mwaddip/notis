@@ -284,6 +284,39 @@ describe('node-list', () => {
     expect(list.anchorReached()).toBe(true);
   });
 
+  it.fails("an anchor's api is kept on its entry; duplicate anchors' first api stands", () => {
+    // MESH_INTERFACE → The client's node list → "An entry may carry an
+    // API base" — the anchor's `api` lands on the entry and `entries()`
+    // surfaces it; two anchors with the same key keep the first api
+    // (the pairing of a base with a key is the list's word).
+    const list = new NodeList(
+      [
+        { notisId: idA, addrs: [a1], api: 'https://node.example' },
+        { notisId: idA, addrs: [a2], api: 'https://other.example' },
+        { notisId: idB, addrs: [], api: 'https://b.example' },
+        { notisId: idC, addrs: [a3] },
+      ],
+      own,
+      () => 0,
+    );
+    expect(list.entry(idA)!.api).toBe('https://node.example');
+    expect(list.entry(idA)!.addrs).toEqual([a1, a2]);
+    expect(list.entry(idB)!.api).toBe('https://b.example');
+    expect(list.entry(idB)!.addrs).toEqual([]);
+    expect(list.entry(idC)!.api).toBeNull();
+  });
+
+  it('a non-anchor entry added through `add` or `addByHand` has api null', () => {
+    // MESH_INTERFACE → The client's node list — the api is the anchor's
+    // own; DHT- or hand-added entries carry none.
+    const list = new NodeList([], own, () => 0);
+    list.add(idA, [a1]);
+    expect(list.entry(idA)!.api).toBeNull();
+    const webrtc = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
+    list.addByHand(idB, [webrtc], true);
+    expect(list.entry(idB)!.api).toBeNull();
+  });
+
   it('candidates() keeps first-known order inside a status', () => {
     const list = new NodeList([], own, () => 0);
     list.add(idB, []);

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   encodeOrderingBlock,
+  generateKeyPair,
   MAGIC_DEVNET,
   PROTOCOL_VERSION,
   profileFor,
@@ -18,7 +19,7 @@ import {
 import type { BlockHeader, NetworkProfile, NetworkType, OrderingBlock } from '@dagsocial/types';
 import { asertTargetBits, blockHash } from '@dagsocial/validation';
 import { verifierProfile } from '@dagsocial/nipopow-client';
-import { gossipTopics } from '@dagsocial/net/browser';
+import { gossipTopics, nodeKeyFromKeyPair, peerIdFromNotisId } from '@dagsocial/net/browser';
 import { NetNode } from '@dagsocial/net';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
@@ -1695,4 +1696,228 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     // The chain's name does not change — the block 1 is the same.
     expect(s2.chain).toBe(s1.chain);
   }, 180_000);
+
+  // MESH_INTERFACE → The client's node list → "An entry may carry an API
+  // base" — an anchor the list gives one is read there over HTTPS wherever
+  // the client holds no connection to its key. These cases pin the four
+  // rules the brief names: mesh-first with an API-base fallback, the
+  // before-first-check anchor, an API-base lie as `retry`, and one
+  // entry per key whichever way it answered.
+  it.fails('every mesh dial failing: the first read routes to api, the check seats, proofs land at the bases', async () => {
+    // MESH_INTERFACE → The client's node list → "A routed read goes to a
+    // node its need allows" / → "An entry may carry an API base" — each
+    // anchor's `addrs` names a closed port (nothing listens there), so
+    // every mesh dial fails; each anchor's `api` is the chain harness's
+    // own HTTP URL. The first `read('/blocks/current','tip')` answers
+    // with `route: 'api'` before the first check ends; the check reads
+    // tips and proofs at those bases and seats the chain.
+    const K_DEFAULT = 20;
+    const chain = makeLinkedChain(K_DEFAULT + 1, PROFILE);
+    const upA = await chainUpstream(chain); ups.push(upA);
+    const upB = await chainUpstream(chain); ups.push(upB);
+    const kA = nodeKeyFromKeyPair(generateKeyPair());
+    const kB = nodeKeyFromKeyPair(generateKeyPair());
+    const closedAddrA = fakeWebrtcAddr('127.0.0.1', 1, kA.notisId);
+    const closedAddrB = fakeWebrtcAddr('127.0.0.1', 1, kB.notisId);
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.startsWith(upA.base) || url.startsWith(upB.base)) return chain;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: kA.notisId, addrs: [closedAddrA], api: upA.base },
+        { notisId: kB.notisId, addrs: [closedAddrB], api: upB.base },
+      ],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, K_DEFAULT),
+    });
+    clients.push(client);
+    // The before-first-check anchor fallback answers routed reads over
+    // the API base — no node has a connection yet, so the first read
+    // must land at an API before the first check ends.
+    const startedAtMs = Date.now();
+    const first = await client.read('/blocks/current', 'tip');
+    expect(Date.now() - startedAtMs).toBeLessThan(10_000);
+    expect(first.route).toBe('api');
+    expect([kA.notisId, kB.notisId]).toContain(first.nodeId);
+    expect(first.response.ok).toBe(true);
+
+    await client.check();
+    const s1 = client.state();
+    expect(s1.seated).toBe(true);
+    // Proofs counted for the API-base reads too — "`ClientState.proofs`
+    // counts the proofs read at a base as it counts those read over
+    // the mesh".
+    expect(s1.proofs).not.toBeNull();
+    expect(s1.proofs!.verified).toBeGreaterThanOrEqual(1);
+    // The agreement-on-chain count names at least one entry, and the
+    // chain name is this chain's genesis.
+    expect(s1.agreement!.onChain).toBeGreaterThanOrEqual(1);
+    expect(s1.chain).toBe(blockHash(chain[0]!.header));
+  }, 60_000);
+
+  it.fails('a read before the first check ends is served by an anchor at its API base', async () => {
+    // MESH_INTERFACE → The client's node list → "Before the first check
+    // ends an anchor serves any need, over its connection or at its API
+    // base, since a verdict never blocks a read" — with no check yet
+    // completed the read reaches the anchor's api, not a transport
+    // failure.
+    const chain = makeLinkedChain(5, PROFILE);
+    const up = await chainUpstream(chain); ups.push(up);
+    const k = nodeKeyFromKeyPair(generateKeyPair());
+    const closedAddr = fakeWebrtcAddr('127.0.0.1', 1, k.notisId);
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.startsWith(up.base)) return chain;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [{ notisId: k.notisId, addrs: [closedAddr], api: up.base }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, 5),
+    });
+    clients.push(client);
+    // The state has not seen a check complete yet.
+    expect(client.state().checks).toBe(0);
+    const r = await client.read('/blocks/current', 'tip');
+    expect(r.route).toBe('api');
+    expect(r.nodeId).toBe(k.notisId);
+    const body = await r.response.json();
+    expect(body).toMatchObject({ height: chain.length });
+  }, 60_000);
+
+  it.fails("one anchor's certhash wrong: its reads go to api, the other anchor's over the mesh", async () => {
+    // MESH_INTERFACE → The client's node list → the "address answers
+    // with another key" row and the "An entry may carry an API base"
+    // row — a dial whose certhash does not match the peer's fails as
+    // transport, and the entry falls back to its api. The reachable
+    // anchor's reads stay on the mesh. The route the client picks is
+    // visible on each entry's `transport`/`path` pair.
+    const K_DEFAULT = 20;
+    const chain = makeLinkedChain(K_DEFAULT + 1, PROFILE);
+    const upA = await chainUpstream(chain); ups.push(upA);
+    const upB = await chainUpstream(chain); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-api-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-api-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+    // B's addr with a scrambled certhash: dial fails at WebRTC-direct's
+    // certhash check, which `applyEvent` records as transport.
+    const bBogusAddr = fakeWebrtcAddr('127.0.0.1', 1, b.id);
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id) || url.startsWith(upA.base)) return chain;
+      if (url.includes(b.id) || url.startsWith(upB.base)) return chain;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr], api: upA.base },
+        { notisId: b.id, addrs: [bBogusAddr], api: upB.base },
+      ],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, K_DEFAULT),
+    });
+    clients.push(client);
+    await client.check();
+    const s = client.state();
+    const aEntry = s.nodes.find((n) => n.notisId === a.id)!;
+    const bEntry = s.nodes.find((n) => n.notisId === b.id)!;
+    // A reached over the mesh: has a transport/path pair.
+    expect(aEntry.transport).not.toBeNull();
+    expect(aEntry.status).toBe('ok');
+    // B's dial failed, so its reads went to its api. The status row
+    // moves by the tip there — B is at the chain's tip too, so `ok`.
+    // The entry carries no transport/path (no open connection on the
+    // mesh), and its api is the one the list named.
+    expect(bEntry.transport).toBeNull();
+    expect(bEntry.path).toBeNull();
+    expect(bEntry.status).toBe('ok');
+    expect(bEntry.api).toBe(upB.base);
+    expect(s.seated).toBe(true);
+    expect(s.agreement!.onChain).toBe(2);
+  }, 90_000);
+
+  it.fails('one entry per key: an anchor reached both ways counts once in onChain', async () => {
+    // MESH_INTERFACE → The client's node list → "An entry may carry an
+    // API base" — "It is one entry whichever way it answers — one
+    // witness in every count". With the mesh connection open, the
+    // routed read goes over the mesh and the check reads at the mesh
+    // base; the api is a fallback the check does not need. The entry
+    // is one row in `onChain`.
+    const K_DEFAULT = 20;
+    const chain = makeLinkedChain(K_DEFAULT + 1, PROFILE);
+    const up = await chainUpstream(chain); ups.push(up);
+    const d = mkdtempSync(join(tmpdir(), 'cbt-single-')); dirs.push(d);
+    const n = await startNode(up, d); nodes.push(n.node);
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(n.id) || url.startsWith(up.base)) return chain;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr], api: up.base }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, K_DEFAULT),
+    });
+    clients.push(client);
+    await client.check();
+    const s = client.state();
+    expect(s.agreement!.onChain).toBe(1);
+    expect(s.agreement!.onChainAnchors).toBe(1);
+    // The one entry carries both addresses and the api.
+    expect(s.nodes).toHaveLength(1);
+    expect(s.nodes[0]!.api).toBe(up.base);
+  }, 90_000);
+
+  it.fails('an api-base malformed tip is `retry`, never `blacklisted` (the API-base row)', async () => {
+    // MESH_INTERFACE → The client's node list — "a malformed answer, a
+    // proof that fails verification … the same at an entry's API base
+    // — the host, not the key — HTTPS authenticates a name, never a
+    // node key — `retry`, as a transport failure; never `blacklisted`".
+    // The anchor carries an api alone (no addrs), so phase 1 dials
+    // nothing and phase 2's api read is the only move on the entry.
+    const liar = await handBuilt(async (req, res) => {
+      if (req.url === '/blocks/current') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('not json'); // malformed body
+        return;
+      }
+      res.writeHead(404); res.end();
+    });
+    builts.push(liar);
+    const k = nodeKeyFromKeyPair(generateKeyPair());
+    const client = await startMeshClient({
+      anchors: [{ notisId: k.notisId, addrs: [], api: liar.base }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(() => 'unreachable', 5),
+    });
+    clients.push(client);
+    await client.check();
+    const entry = client.state().nodes.find((e) => e.notisId === k.notisId)!;
+    expect(entry.status).toBe('retry');
+    expect(entry.evidence).toBeNull();
+    expect(entry.lastFailure).not.toBeNull();
+    expect(entry.lastFailure!.kind).toBe('transport');
+    // The diagnostic names the api-lie detail so a reader sees why.
+    expect(entry.lastFailure!.message).toMatch(/api /);
+  }, 60_000);
 });
+
+/**
+ * MESH_INTERFACE → The client's node list — a webrtc-direct addr
+ * shaped for the given peer id and a closed port, so the dial reaches
+ * the port, nothing answers, and the dial fails as transport (not a
+ * wrong-key answer). The certhash is a well-formed multibase but not
+ * tied to any real listener — the port is closed, so nothing answers
+ * to check the hash either way.
+ */
+function fakeWebrtcAddr(ip: string, port: number, notisId: string): string {
+  const peerId = peerIdFromNotisId(notisId).toString();
+  // 32-byte sha2-256 placeholder: `uEiA` = base64url of multihash
+  // prefix 0x12 0x20, then 32 zero bytes. The decoder accepts it.
+  const certhash = 'uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  return `/ip4/${ip}/udp/${String(port)}/webrtc-direct/certhash/${certhash}/p2p/${peerId}`;
+}

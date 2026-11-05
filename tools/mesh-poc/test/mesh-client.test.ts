@@ -125,8 +125,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   it('a seed is a candidate', async () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const seedKey = nodeKeyFromKeyPair(generateKeyPair());
+    // MESH_INTERFACE → The client's node list → "An entry may carry an
+    // API base" — an anchor with neither addrs nor api is refused, so
+    // this anchor carries an api base alone. The address is never
+    // reached in this case.
     const client = await startMeshClient({
-      anchors: [{ notisId: anchorKey.notisId, addrs: [] }],
+      anchors: [{ notisId: anchorKey.notisId, addrs: [], api: 'http://127.0.0.1:1' }],
       seeds: [{ notisId: seedKey.notisId, addrs: [] }],
       network: 'devnet',
       profile: PROFILE,
@@ -1458,6 +1462,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
             headers: { 'content-type': 'application/json' },
           }),
           nodeId: stranger,
+          route: 'mesh',
         };
       }
       return originalRead(path, need);

@@ -42,6 +42,7 @@ function makeEntry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     lastFailures: over.lastFailures ?? {},
     transport: over.transport ?? null,
     path: over.path ?? null,
+    api: over.api ?? null,
   };
 }
 
@@ -354,7 +355,7 @@ interface FakeClientInit {
 }
 
 interface FakeClient {
-  client: Pick<MeshClient, 'read' | 'state' | 'onState' | 'addByHand' | 'fetch' | 'stop'>;
+  client: Pick<MeshClient, 'read' | 'state' | 'onState' | 'addByHand' | 'fetch' | 'stop' | 'order'>;
   emit: (over: Partial<ClientState>) => void;
   calls: {
     addByHand: Array<{ notisId: string; addrs: string[]; trusted: boolean }>;
@@ -392,8 +393,9 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
         throw new MeshFetchError('transport', 'no answer queued');
       }
       if ('error' in answer) throw new MeshFetchError('transport', answer.error);
-      return { response: new Response('', { status: 200 }), nodeId: answer.nodeId };
+      return { response: new Response('', { status: 200 }), nodeId: answer.nodeId, route: 'mesh' };
     },
+    order: () => [],
     state: () => state,
     onState: (cb) => {
       listeners.add(cb);

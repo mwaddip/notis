@@ -61,3 +61,37 @@ export function pickServer(
   const picked = fast[Math.min(idx, fast.length - 1)]!;
   return picked.id;
 }
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client's order for a need"
+ * — every node the need allows reached over the mesh (`meshUsable`), the
+ * fast set first, as `notis-mesh://<id>` bases, then the API bases of the
+ * entries the need allows in the same order; before the first check ends,
+ * every anchor, over its mesh base if connected else at its API base.
+ * Duplicates dropped. A write and a resolve walk this order.
+ *
+ * Pure, browser-safe (`MESH_INTERFACE → Place in the workspace`): the
+ * caller composes the candidates and tells us whether the first check
+ * ended.
+ */
+export interface OrderCandidate {
+  id: string;
+  status: NodeStatus;
+  readMs: number | null;
+  meshUsable: boolean;
+  anchor: boolean;
+  /** The API base `(scheme)://(host)[:(port)]` with no trailing `/`. */
+  api: string | null;
+  /** The `notis-mesh://<id>` base, so the caller does not restate it. */
+  meshBase: string;
+}
+
+export function orderServers(
+  _nodes: ReadonlyArray<OrderCandidate>,
+  _need: ReadNeed,
+  _firstCheckEnded: boolean,
+): string[] {
+  // stub: the feat commit of this unit implements `MESH_INTERFACE → The
+  // client's node list → "The client's order for a need"`.
+  throw new Error('orderServers(): not implemented');
+}

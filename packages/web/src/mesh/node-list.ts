@@ -11,9 +11,19 @@
 import { MeshKeyError } from '@dagsocial/net/browser';
 import { RETRY_BASE_MS, RETRY_CAP_MS } from './protocols.js';
 
+/**
+ * MESH_INTERFACE → Discovery → "Anchors" — a client starts from a list of
+ * anchors, each `(notisId, addrs)` or `(notisId, addrs, api)`: a key it
+ * trusts, the addresses that key was last reached at, and where the list
+ * gives one, the API base the node answers at over HTTPS
+ * (`→ The client's node list → "An entry may carry an API base"`). An anchor
+ * with an `api` and no `addrs` is a node reached at its base alone; one with
+ * neither is refused as `MeshConfigError`.
+ */
 export interface MeshAnchor {
   notisId: string;
   addrs: string[];
+  api?: string;
 }
 
 export type FailureKind = 'timeout' | 'refused' | 'dropped' | 'transport' | 'clock';
@@ -99,6 +109,13 @@ export interface NodeEntry {
    */
   transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
   path: 'direct' | 'relay' | null;
+  /**
+   * MESH_INTERFACE → The client's node list → "An entry may carry an API
+   * base" — the HTTPS base where the client holds no connection to the key.
+   * `null` when the list gave none; the list itself does not validate the
+   * string (the client's `assertClientConfig` does, as a `MeshConfigError`).
+   */
+  api: string | null;
 }
 
 const NOTIS_ID_RE = /^[0-9a-f]{64}$/;
@@ -137,6 +154,14 @@ interface InternalEntry {
   evidence: LieEvidence | null;
   lastFailure: LastFailure | null;
   lastFailures: Record<string, LastFailure>;
+  /**
+   * MESH_INTERFACE → The client's node list → "An entry may carry an API
+   * base" — the HTTPS base where the client holds no connection to the
+   * key. Set from the anchor's `api` at construction or merged from a
+   * duplicate anchor's; `null` when the list gave none. The pairing of a
+   * base with a key is the list's word (→ Discovery → "Anchors").
+   */
+  api: string | null;
 }
 
 export class NodeList {
@@ -155,8 +180,11 @@ export class NodeList {
         // "Two anchors with one key are one anchor" (MESH_INTERFACE → Discovery):
         // the first entry stands; the rest's addresses merge into it. Both
         // sets are anchor-given, so the merged addresses count as configured.
+        // The api too — the first non-null stands, since the pairing of a
+        // base with a key is the list's word (→ Discovery → "Anchors").
         this.mergeAddrs(existing, a.addrs);
         this.mergeConfigured(existing, a.addrs);
+        if (existing.api === null && a.api !== undefined) existing.api = a.api;
       } else {
         this.entries_.set(a.notisId, {
           notisId: a.notisId,
@@ -172,6 +200,7 @@ export class NodeList {
           evidence: null,
           lastFailure: null,
           lastFailures: {},
+          api: a.api ?? null,
         });
       }
     }
@@ -205,6 +234,7 @@ export class NodeList {
       evidence: null,
       lastFailure: null,
       lastFailures: {},
+      api: null,
     });
   }
 
@@ -244,6 +274,7 @@ export class NodeList {
       evidence: null,
       lastFailure: null,
       lastFailures: {},
+      api: null,
     });
   }
 
@@ -499,6 +530,9 @@ export class NodeList {
       // transport state, so it emits `null`/`null` here.
       transport: null,
       path: null,
+      // stub: the feat commit of this unit carries the anchor's api
+      // through to the entry (and the client reads it in its check).
+      api: null,
     };
   }
 }

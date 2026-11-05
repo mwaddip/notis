@@ -22,3 +22,23 @@ export function assertNoDns(label: string, addrs: readonly string[]): void {
     }
   }
 }
+
+/**
+ * MESH_INTERFACE → The client's node list → "An entry may carry an API base"
+ * — the api is an `http:` or `https:` base with no trailing `/`. Anything
+ * else is refused; the message names the setting so the operator sees what
+ * their input broke.
+ */
+export function assertApiBase(label: string, api: string): void {
+  const isHttp = api.startsWith('http://') || api.startsWith('https://');
+  if (!isHttp) {
+    throw new MeshConfigError(
+      `${label} api refused: ${api} must start with http:// or https://`,
+    );
+  }
+  if (api.endsWith('/')) {
+    throw new MeshConfigError(
+      `${label} api refused: ${api} must have no trailing '/'`,
+    );
+  }
+}

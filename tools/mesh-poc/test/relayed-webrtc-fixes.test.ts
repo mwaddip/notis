@@ -502,6 +502,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
       lastFailures: over.lastFailures ?? {},
       transport: over.transport ?? null,
       path: over.path ?? null,
+      api: over.api ?? null,
     };
   }
 
