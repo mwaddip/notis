@@ -1891,20 +1891,25 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
   // seated the chain before the first press — a run whose tips all place
   // asks no proof.
   {
-    const firstPressIdx = cx.events.length;
-    await pressCorner(cx);
+    // A fresh page: 17a's page keeps its too-short verdict for the tip it saw
+    // (MESH_INTERFACE → The client's node list → "A check").
+    const page = await openFreshExtensionPage(bcx);
+    const px = page.cx;
+    try {
+    const firstPressIdx = px.events.length;
+    await pressCorner(px);
     await sleep(2000);
-    const firstProofs = proofRequestsSince(cx.events, firstPressIdx);
-    const first = await readCorner(cx);
+    const firstProofs = proofRequestsSince(px.events, firstPressIdx);
+    const first = await readCorner(px);
     const reachedTitleOk = /^verified across \d+ nodes · tip \d+$/.test(first.title ?? '');
-    const idleStart = cx.events.length;
+    const idleStart = px.events.length;
     await sleep(20000);
-    const idleProofs = proofRequestsSince(cx.events, idleStart);
-    const secondPressIdx = cx.events.length;
-    await pressCorner(cx);
+    const idleProofs = proofRequestsSince(px.events, idleStart);
+    const secondPressIdx = px.events.length;
+    await pressCorner(px);
     await sleep(2000);
-    const secondProofs = proofRequestsSince(cx.events, secondPressIdx);
-    const secondReading = await readCorner(cx);
+    const secondProofs = proofRequestsSince(px.events, secondPressIdx);
+    const secondReading = await readCorner(px);
     const ok = reachedTitleOk
       && first.ledClass === 'led fresh'
       && first.tipClass === 'tip mono'
@@ -1913,6 +1918,10 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
       && idleProofs.length === 0;
     record(17, ok,
       `led=${first.ledClass}, tip=${first.tipClass}, title=${JSON.stringify(first.title)}, first-press proof requests=${firstProofs.length} (${JSON.stringify(firstProofs.map(p => p.url))}), idle-20s proof requests=${idleProofs.length}, second-press proof requests=${secondProofs.length}`);
+    } finally {
+      try { px.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
   }
 
   // ---- Step 17b — 30 presses one second apart under A's live miner. Every
