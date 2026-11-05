@@ -2586,6 +2586,12 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   checksum through `hash32` (`NET_INTERFACE → The browser entry`), the gossip rules, `BlockCheck`, the reader's handshake, libp2p options and mesh fetch
   (`NET_INTERFACE → The browser entry`) — held by its own `tsconfig.browser.json` and by a build of it that refuses any
   Node built-in.
+- **`@dagsocial/web` has one entry other packages import, `@dagsocial/web/mesh`** — the mesh client the extension runs
+  (`MESH_INTERFACE → Place in the workspace`), built by tsup beside the client's own vite build, running in the browser
+  as written, held by the member's `tsconfig.browser.json` and by the stage page's build, which refuses any Node
+  built-in.
+  > ⚠ **AHEAD OF CODE (2026-11-05).** `@dagsocial/web/mesh`; until then the mesh client is `tools/mesh-poc`'s `src/lib.ts` and
+  > `@dagsocial/web` exports nothing.
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in
@@ -2621,7 +2627,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 
 Every package is ESM and builds with `tsup src/index.ts --format esm --dts` to a single bundled
 `dist/index.js`. The library packages (`types`, `wire`, `avltree`, `validation`, `nipopow`, `consensus`, `net`,
-`node-reads`) each declare exactly one export condition — `"."` — and there are no subpath exports anywhere. **`node` has no
+`node-reads`) each declare the export condition `"."`, and `net` one subpath beside it, `./browser`; `@dagsocial/web`,
+an application, declares the subpath `./mesh` alone. **`node` has no
 `exports` field at all**, only `main`; it is the application package and nothing depends on it, so
 bare-specifier resolution there goes through `main`. The practical effect is identical, but `node`
 is not subject to the subpath restriction the others get from `exports`.

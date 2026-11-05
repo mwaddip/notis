@@ -19,10 +19,14 @@ Notis link taken into the extension's workspace by the bridge, the links prefere
 offering a thread to an extension first (→ The extension, → The way into the workspace) — and the **signed
 Firefox build** — the extension signed through addons.mozilla.org's unlisted channel, the xpi on the release, an
 installed copy updating itself from the branch `updates` (→ "The Firefox build ships signed as well") — and the
-**verified tip** — the extension checking the chain it reads by NiPoPoW proofs from the seed list's nodes, the verdict
-in the status corner (→ The extension → "The verified tip", → The status corner) — are
-implemented
+**verified tip** — the extension checking the chain it reads by NiPoPoW proofs, the verdict in the status corner
+(→ The extension → "The verified tip", → The status corner) — and the **mesh** — the extension reaching nodes by key
+over libp2p, and over a node's API base where no mesh node serves (→ The extension → "The mesh is the extension's
+first path") — are implemented
 **Protocol version:** read from the node, never held — see Invariants
+
+> ⚠ **AHEAD OF CODE (2026-11-05).** The mesh in the extension; until then the extension reaches the seed list's API bases over
+> HTTPS alone, and its verified tip asks each of them for a proof on every run.
 
 > **This client is a standalone product.** The node serves no client (`NODE_INTERFACE → The node serves no client`):
 > this is one implementation of the client side of the node's contract, a static bundle any host serves
@@ -91,8 +95,8 @@ second renderer, and with no identity loaded it is the read surface exactly.
 
 **The client bundled as a browser extension, the identity held by the extension's background, and every
 write signed there.** The property it serves: after install, Notis needs no hosted page, no server-held
-key, no server that signs, and no call home — the only traffic is to the node(s) the reader configured — and
-the chain it reads is checked, not taken on one node's word (→ The extension → "The verified tip").
+key, no server that signs, and no call home — the only traffic is to nodes: the build's, the nodes they name, and
+the reader's own (→ The extension → "The mesh is the extension's first path") — and the chain it reads is checked, not taken on one node's word (→ The extension → "The verified tip").
 It is the App in a second build, not a second client: with no identity loaded it is the read surface
 exactly, and with one it is the write surface with its signing moved out of the page (→ The extension). A post's link
 still names the website (→ Links): a reader who follows one is brought from that page into the extension, and
@@ -101,9 +105,9 @@ the extension itself sends the website nothing.
 ## The client's builds substitute nothing
 
 **The browser runs every workspace package it reaches as that package is written**
-(`ARCHITECTURE → Package boundaries`): `@dagsocial/types`, `@dagsocial/validation`, `@dagsocial/nipopow` and
-`@dagsocial/nipopow-client`'s library import no Node built-in and read no Node global, each held to it by its own
-browser typecheck. The client supplies nothing in their place — no alias, no injected global, no polyfill — and its hex
+(`ARCHITECTURE → Package boundaries`): `@dagsocial/types`, `@dagsocial/validation`, `@dagsocial/nipopow`,
+`@dagsocial/node-reads`, `@dagsocial/nipopow-client`'s library, `@dagsocial/net`'s browser entry and the client's own
+mesh entry import no Node built-in and read no Node global, each held to it by its own browser typecheck. The client supplies nothing in their place — no alias, no injected global, no polyfill — and its hex
 conversions are `@dagsocial/types`' pair (`TYPES_INTERFACE → Export table`), not copies of it.
 
 ⛔ **A Node built-in fails every build.** `vite.config.ts`, `vite.background.config.ts`, `vite.extension.config.ts`
@@ -205,9 +209,12 @@ read takes the element's attribute through the URL constructor, never `document.
 `notis-api` behaves exactly as one in the `node` preference does: the node answers any origin. A foreign origin in
 `notis-faucet` works only where the browser grants the host — the extension (→ The faucet step).
 
-**The three later tags.** `notis-nodes` is a JSON array of API bases — the build's **seed list**, one per
-network, the extension build's way of naming a node without a hosted page (→ The extension); anything
-that is not a JSON array of strings reads as `[]`. `notis-public` is an origin and base, opening with a
+**The three later tags.** `notis-nodes` is a JSON array — the build's **seed list**, one per network, the
+extension build's way of naming a node without a hosted page (→ The extension). An entry is an API base, or a
+**node**: `{ "notisId": <64 lowercase hex>, "addrs": [<multiaddr>, …], "api": <API base> }` — its key, the addresses
+the mesh dials it at, each ending in its `/p2p/` id and none with a DNS component, and the base its API answers at.
+The web build reads an entry's API base — a node's `api` — and the extension its node (→ The extension → "The mesh is
+the extension's first path"); anything that is not a JSON array of such entries reads as `[]`. `notis-public` is an origin and base, opening with a
 scheme and closing with `/`, or empty — the URL `link` copies from (→ Links): a page whose own location
 is not shareable, an extension page, needs one; the web build leaves it empty and `link` copies the
 page's own location. `notis-network` names the network the build is for — `testnet`, `devnet`,
@@ -215,12 +222,17 @@ page's own location. `notis-network` names the network the build is for — `tes
 (→ The extension → "The verified tip"): `profileFor` of the name (`TYPES_INTERFACE → Network profiles`), **never the
 `networkType` a node reports** — a verifier that took its profile from the node it checks would hold a lying node to
 whatever target that node named. Empty, or a name no profile answers to, is a build with no verifier; the web release
-writes it empty. **The node the client talks to resolves in one order:** the stored
+writes it empty. **In the web build the node the client talks to resolves in one order:** the stored
 `node` preference, else the first entry of `notis-nodes`, else `notis-api`. At start, when no `node` preference
 is stored and the feed's first read fails — no answer, a refusal, or an answer not of its route's shape (→ Reading a
 node's answer) — and the list has more entries, the App adopts the next one whose feed read answers — for the
 session, not stored, so the list keeps governing; when none answers, the feed's own report line says *no node
 answered — set one in settings*, and the settings window's `node` row is where one is typed. No first-run screen.
+**In the extension no one node is talked to**: the mesh client routes each read (→ The extension → "The mesh is the
+extension's first path"), and the `node` row adds a node by hand (→ The settings window).
+
+> ⚠ **AHEAD OF CODE (2026-11-05).** An entry as a node, and the extension's routing; until then an entry is an API base alone and
+> the extension resolves its node as the web build does.
 
 **The shell carries the site's preview card, and the picture's URL is the seventh configured value.** After the
 six tags the head carries `description`, `og:type` website, `og:site_name` Notis, `og:title` Notis,
@@ -263,8 +275,8 @@ base is path-absolute.
 **The client bundled as a browser extension — Chrome and Firefox, Manifest V3 — with the identity held
 by the extension's background and every write signed there.** It is `@dagsocial/web`'s second build
 target, not a second client: the App is byte-identical between the web build and the extension build,
-and only what the App is handed — the identity implementation, and the lock-and-channel pair wrapped to take a
-thread from the background — the two extra pages, the bridge and the shell's values differ. The
+and only what the App is handed — the identity implementation, the lock-and-channel pair wrapped to take a
+thread from the background, and the mesh client with the readers and writers built on it — the two extra pages, the bridge and the shell's values differ. The
 property it serves is stated in the Scope (→ The extension slice): no hosted page, no server-held key, no
 server that signs, no call home.
 
@@ -279,9 +291,11 @@ server that signs, no call home.
   what fires `onChange` — and every other call is a message to the background. The page runs the
   workspace mode only — the standalone mode is unreachable here: a post's link names the website, since
   `link` copies from `notis-public` (→ The client is served from the node's own origin), and a thread
-  followed from outside reaches this page through the bridge (→ "Links into the extension", below).
+  followed from outside reaches this page through the bridge (→ "Links into the extension", below). **The page
+  holds the extension's reader** — its libp2p node, its connections and the mesh client over them (→ "The mesh is the
+  extension's first path") — one per page, started at load and stopped at `pagehide`; two pages are two readers.
 - **The background** — a service worker on Chrome, an event page on Firefox — holds the identity service
-  and nothing else. **It may be killed between any two events, so it keeps no state in globals** and
+  and nothing else — no connection to any node. **It may be killed between any two events, so it keeps no state in globals** and
   reloads what it needs from storage on every call. The envelope and the backed-up flag live in
   `storage.local` under `notis.identity` and `notis.identity.backedup`, the envelope the shape → The
   identity module states; a clear value there, or an envelope outside the scrypt bound (→ The identity module →
@@ -327,7 +341,8 @@ raises it, else creates one. No `default_popup`, since one suppresses `onClicked
 **Permissions and policy, the whole list.** `storage` and `tabs`; the browser's default extension-page
 CSP, `script-src 'self'` — which is why the shell's theme script is a file the shell references and not
 an inline script, in both builds; **no host permission for the node**, because every node answers every
-origin (`NODE_INTERFACE → Cross-origin requests`) and an extension page fetches under CORS like any page;
+origin (`NODE_INTERFACE → Cross-origin requests`) and an extension page fetches under CORS like any page, and none
+for the mesh, which WebRTC and the default policy leave open;
 **one optional host permission, for the build's faucet origin** — the faucet sends no CORS header
 (`NODE_INTERFACE → Faucet`) and an extension context bypasses CORS only for a host it was granted, so the
 `ask the faucet` press requests it before the request leaves (→ The faucet step); the manifest declares that
@@ -339,8 +354,10 @@ revocable by the reader, and revoked it leaves the website behaving as it does f
 sends, declared to Firefox** — `personalCommunications` for what the reader publishes, a post or a reply and the
 signed acts around them (a like, a vouch, an invite, a withdrawal, a name), and `financialAndPaymentInfo` for a
 credits send, both required; the public key rides each of them, each read as `viewer` and the faucet's request; the ids
-of the posts a list names and the reader lacks go to the seed list's nodes in turn, with no key beside them (→ "The
-resolve"); and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. An
+of the posts a list names and the reader lacks go to the nodes in turn, with no key beside them (→ "The resolve"); the
+reader's handshake carries a height and a key made for the page, never the reader's (`NET_INTERFACE → Readers`), and
+the page forwards the ordering-block gossip and asks the nodes it holds for others (`MESH_INTERFACE → Block gossip`,
+`→ Discovery`); and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. An
 `update_url` in Firefox's manifest alone (→ "The Firefox build ships signed as well").
 
 **The manifest** is one template and two emitted files. Common: Manifest V3, the repository's version,
@@ -365,83 +382,126 @@ base.
 they are; the bridge is built the same way.
 
 **The seed list, the faucet's base and the network's name** are the per-network facts the build carries, all in the
-shell (→ The client is served from the node's own origin): `notis-nodes`, testnet `["https://notis.fun/testnet/api",
-"https://node02.notis.fun/testnet/api"]`, mainnet `[]` until there is one; `notis-faucet`, testnet
+shell (→ The client is served from the node's own origin): `notis-nodes`, testnet's two nodes — notis.fun's and
+node02's — and mainnet `[]` until there is one; `notis-faucet`, testnet
 `https://notis.fun/testnet/faucet`, mainnet empty; and `notis-network`, the network's own name — `VITE_FAUCET_BASE`
 and `VITE_NETWORK` overriding theirs as `VITE_NODES` overrides the list. They live in the extension's build
 configuration, never in `@dagsocial/types`. **The build's `notis-public`** — testnet `https://notis.fun/web/`,
 `VITE_PUBLIC` overriding it — is the origin `link` copies from, the one the bridge is declared for, and the
 prefix the background checks the bridge's sender against; an empty one builds an extension with no bridge and
-no links row.
+no links row. Testnet's `notis-nodes`, each entry a node (→ The client is served from the node's own origin → "The
+three later tags"):
+
+```json
+[
+  { "notisId": "68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09",
+    "addrs": ["/ip4/64.176.70.50/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa"],
+    "api": "https://notis.fun/testnet/api" },
+  { "notisId": "e6380c4a6f836f44d6076cde32c8226324b159ef1d909e88dcafdd96a5ca9e72",
+    "addrs": ["/ip4/65.20.105.28/udp/9733/webrtc-direct/certhash/uEiANgUbw3RldQddGIXGt_xk6i52NPumh1hAIG2nMKkHQRQ/p2p/12D3KooWRK3WSeTr9LZQtEVz1FsdmfMMbZk59qJwpv5dW4ECrKvq"],
+    "api": "https://node02.notis.fun/testnet/api" }
+]
+```
+
+A certhash is the node's for the life of its key while its mesh directory is kept (`MESH_INTERFACE → Transports →
+"The WebRTC-direct certificate persists"`); a node whose certhash changed is reached at its API base until a release
+names the new one.
+
+> ⚠ **AHEAD OF CODE (2026-11-05).** Testnet's entries as nodes; the build writes the two API bases alone until then.
+
+**The mesh is the extension's first path.** The page reaches nodes by key over libp2p through the mesh client
+(`MESH_INTERFACE → The client's node list`), the client's own `src/mesh/`, which the extension build alone hands the
+App: one reader per page — a key made for the page, `net`'s reader options and handshake (`NET_INTERFACE → The
+browser entry`) — started at load with the seed list's nodes as its anchors (`MESH_INTERFACE → Discovery →
+"Anchors"`). **A node of the seed list is one entry, reached two ways**: over the mesh at the addresses the list names,
+and at its API base over HTTPS. **A read goes to a node its need allows over the mesh, and to an API base only when no
+such node is reached over the mesh** (`MESH_INTERFACE → The client's node list → "A routed read goes to a node its need
+allows"`); before the client's first check ends an anchor serves any read, since a verdict never blocks one (→ "The
+verified tip"). Every reader that takes a fetch — the App's, the light client's, the resolve's — takes the client's,
+which sends a `notis-mesh://` URL over the connection it holds (`MESH_INTERFACE → The mesh URL`) and an API base's URL
+over the page's `fetch`; every answer is the node's, read as over HTTPS. **A write goes to one node and, with no
+answer, to the next**: the same bytes, the nodes reached over the mesh first and then the API bases, in the client's
+order, and the first answer of any status is the write's (→ The wallet → "Nothing retries a rejection"). A resend is
+safe because a node answers a transaction its pool already holds as held (`NODE_INTERFACE → Service Layer Architecture
+→ "A transaction the pool already holds is answered as held"`); one confirmed between two sends is refused by the
+second node, its input spent, and the flight reads that refusal until the post or the box lands. The faucet is no node
+and is reached at its base alone (→ The faucet step).
+
+> ⚠ **AHEAD OF CODE (2026-11-05).** Everything in this paragraph; until then the extension reads and writes over HTTPS alone, at the
+> node being read, and a write goes to that node and nowhere else.
 
 **Every answer is read under its route's cap.** Each read the light client makes — `@dagsocial/nipopow-client`'s,
-which the command line and the extension both run — and the resolve's batch read (→ "The resolve") is read as every
-client's read is (→ Reading a node's answer): under its route's cap and the one deadline, through
+which the command line and the extension both run — and the resolve's batch read (→ "The resolve") is read, over the
+mesh or over HTTPS (`MESH_INTERFACE → The node endpoint`), as every client's read is (→ Reading a node's answer): under its route's cap and the one deadline, through
 `@dagsocial/node-reads`, the proof route's cap computed by the light client from the `m` and `k` it asks.
 
-**The verified tip.** The extension checks the chain it reads: a NiPoPoW proof from the node it reads and from every
-other base of the seed list, each verified against the build's own profile and the best kept
-(`NIPOPOW_INTERFACE → The trust model`). The verifier is `resolveTip` of `@dagsocial/nipopow-client` — the code the
-command-line light client runs, never a second implementation of a trust decision — handed to the App by the extension
-build alone, as the identity proxy is; **the web build is handed none**, since a verifier served by the host it checks
-says nothing about that host. It runs in the page: at start, on a press of the status corner, every ten minutes
-while the tab is visible — a tab that becomes visible again runs one only when the last began ten minutes ago or more —
-and when a name check asks for one (→ "The verified names"); one run at a time, a trigger during a run being that run; a change of the node being read drops the verdict and any
-run still in flight for the node before, and runs again; a run that ends without a verdict leaves the corner where
-none has returned; nothing is stored. A run
-asks `GET /nipopow/proof/24/20` — the tool's `DEFAULT_M` and `DEFAULT_K`, imported with `resolveTip`, never a second
-copy (`CONSTANTS → Client defaults`; `NODE_INTERFACE → Nipopow`) — of the reading node first and then of the others, duplicates
-dropped, one after another, each under the tool's ten-second timeout — and needs no host permission, since every node
-answers every origin. **The reading node is asked first, so the fold's own rule gives the comparison its meaning**: a
-tie keeps the first, and a winner at index `0` says the reading node holds the best chain or ties for it
-(`NIPOPOW_INTERFACE → compareProofs`). **A winner elsewhere says the reading node is behind, not that it is wrong**:
-the nodes answer one after another, so a block that lands between two answers makes the later proof the longer one.
-The reading node is outworked only when the winner's suffix — its last `k` headers — does not carry the reading node's
-tip: it stands on another chain, or further behind than the suffix reaches. The tool answers this as each verified
-node's `behind` — the count of blocks from its tip to the winner's where the winner's suffix carries that tip, `0` for
-the winner and for a node on the same tip, `null` where it does not. **The verdict** is a pure function of the result,
-the first row that holds:
+**The verified tip.** The extension checks the chain it reads: the mesh client's check proves the network once — a
+NiPoPoW proof from each node it holds, verified against the build's own profile and the best kept
+(`NIPOPOW_INTERFACE → The trust model`) — and then follows the tip by the ordering-block gossip, each block held to the
+stateless checks and linked onto the chain the client holds, a proof asked again only for a tip that chain cannot place
+(`MESH_INTERFACE → The client's node list → "A check"`, `→ Block gossip`). The verifier is `resolveTip` of
+`@dagsocial/nipopow-client` — the code the command-line light client runs, never a second implementation of a trust
+decision — inside the mesh client the extension build alone hands the App, as the identity proxy is; **the web build
+is handed none**, since a verifier served by the host it checks says nothing about that host. A check runs at start,
+on a press of the status corner, at the client's own interval (`MESH_INTERFACE → The client's node list`), and when a
+name check asks for one (→ "The verified names"); one at a time, a trigger during a check being that check; a check
+that ends without a verdict leaves the corner where none has returned; nothing is stored. A check asks `GET
+/nipopow/proof/24/20` — the tool's `DEFAULT_M` and `DEFAULT_K`, imported with `resolveTip`, never a second copy
+(`CONSTANTS → Client defaults`; `NODE_INTERFACE → Nipopow`) — of each node it reads a proof from, over the mesh, or at
+the node's API base where it holds no connection to it (→ "The mesh is the extension's first path"), each under the
+tool's ten-second timeout. **A node is one witness**: a node of the seed list is one entry whether it answers over the
+mesh or at its API base, and the pairing of a base with a key is the build's word, as the list itself is. **The
+verdict** is a pure function of the client's state after a check, the first row that holds:
 
-| The reading node | Verdict |
+| The client's state after a check | Verdict |
 |---|---|
-| answered with no proof in the body, or with one that does not decode or does not verify | `refused` · *invalid-proof* |
-| answered that its chain is shorter than `m + k` | `thin` · *too-short* |
-| gave no answer to read — a transport failure, or any other status | `thin` · *no-proof* |
-| verified, another node's chain won, and the winner's suffix does not carry the reading node's tip (`behind` is `null`) | `refused` · *outworked*, naming the winner |
-| verified, and shares no block with another node's proof | `thin` · *split* |
-| verified, and no other node did | `thin` · *one-node* |
-| verified — best, tied, or behind on the winner's own chain — with at least one other verified | `verified`, with the count |
+| no check has ended, or no chain is seated and no node answered a proof | `thin` · *no-proof* |
+| no chain is seated, and a proof answered did not decode or did not verify | `refused` · *invalid-proof* |
+| no chain is seated, and every proof answered says its chain is shorter than `m + k` | `thin` · *too-short* |
+| the chain is seated, and no anchor stands on it (`MESH_INTERFACE → No anchor reached`) | `thin` · *no-anchor* |
+| a node names a tip off the chain's last `k` headers (`MESH_INTERFACE → No anchor reached → "The agreement counts"`) | `thin` · *split* |
+| fewer than two nodes name a tip on it | `thin` · *one-node* |
+| two or more do | `verified`, with the count |
 
-**The verdict is total by itself**: the last four rows hold only for a reading node the result marks verified, beside
-the result's own tip. A reading node left unverified under no code, or a verified one beside no tip, reads `refused` ·
-*invalid-proof* — decided here, never on what the tool is known to fill. A `behind` that is not a non-negative
-integer reads as `null`, by the same rule.
-Another node's bad proof never refuses the reading node — it thins the verdict, since the second witness is gone.
-Which of these a node's failure is comes from the result's `refuseCode` — `unreachable`, `too-short`, `http`,
-`invalid`, a closed set the tool fills from the route's documented answers (`NODE_INTERFACE → Nipopow`) — never
-parsed out of the sentence beside it. **It warns and nothing more**: no read is blocked, no write but a send to a handle (→ "The verified names"), and the reading node is never switched — the reader's remedy is the
-settings window's `node` row, and the status corner is where the verdict shows (→ The status corner). What a verdict
-says is the trust model's and no more: headers and work, never a body; nothing about a balance, a name or a post the
-page shows — the loaded key's own two figures, the names the page shows and each post's binding to its author are the exceptions, below; nothing with
-fewer than two nodes answering; and two nodes under one operator and one DNS zone answer for one box lying, not for the
-operator.
+A node counts without serving a proof of its own, since a proof carries no challenge and any node can serve one it
+copied; a seated chain stays seated through a later check whose proofs fail.
 
-**The chain's name.** A tip run answers `chain` beside its verdict and its anchor: the hash of the first header of the
-reading node's proof — block 1, the header `verifyProof` holds to the profile's `genesisId` where one is pinned
-(`NIPOPOW_INTERFACE → verifyProof`) — which the tool answers as that node's `genesisHash`. It is non-null whenever the
-reading node's proof verified, under `verified` and under `thin` alike: naming a chain takes a proof that verifies,
+**The verdict is total by itself**: a state whose counts are not non-negative integers reads as no check ended —
+decided here, never on what the client is known to fill. A node's bad proof never refuses the chain: it thins the
+verdict where the second witness is gone, and the client holds the node out as its evidence names (`MESH_INTERFACE →
+The client's node list`). Which of these a node's failure is comes from the result's `refuseCode` — `unreachable`,
+`too-short`, `http`, `invalid`, a closed set the tool fills from the route's documented answers (`NODE_INTERFACE →
+Nipopow`) — never parsed out of the sentence beside it. **It warns and nothing more**: no read is blocked, no write
+but a send to a handle (→ "The verified names"); the client routes reads away from a node its check found behind or
+caught (`MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows"`), and the status
+corner is where the verdict shows (→ The status corner). What a verdict says is the trust model's and no more: headers
+and work, never a body; nothing about a balance, a name or a post the page shows — the loaded key's own two figures,
+the names the page shows and each post's binding to its author are the exceptions, below; nothing with fewer than two
+nodes answering; and two nodes under one operator and one DNS zone answer for one box lying, not for the operator.
+
+> ⚠ **AHEAD OF CODE (2026-11-05).** The mesh client's check as the extension's tip, and the table above; until then a run asks the
+> node being read and then every other base of the seed list for a proof, one after another — at start, on a press,
+> every ten minutes while the tab is visible and on a name check — and the verdict is that node's, with `refused` ·
+> *outworked* where another node's chain won and its suffix does not carry that node's tip.
+
+**The chain's name.** A check answers `chain` beside its verdict and its anchor: the hash of block 1 the client's
+chain keeps — the first header of the proof that seated it, the header `verifyProof` holds to the profile's
+`genesisId` where one is pinned (`NIPOPOW_INTERFACE → verifyProof`), the tool's `genesisHash` for that proof. It is
+non-null whenever the client's chain is seated, under `verified` and under `thin` alike: naming a chain takes a proof that verifies,
 not a second witness. It names the post cache (→ "The post cache") and nothing else reads it.
 
-**The verified figures.** The extension proves what the reading node lists for the loaded key — **the plain
+**The verified figures.** The extension proves what a node lists for the loaded key — the node the client routes the
+run to, which answers each of its reads — **the plain
 listings**, `GET /karma/:key` and `GET /credits/:key`, the confirmed state the profile's rep and the wallet's balance
 stand on — against the state the verified chain committed, **the key's holdings read whole, by range**, and says
 beneath each figure what does not hold, and what the figure is where it is not the plain listing's: the figures are
-the views', the node's word (→ The wallet → "The spendable views are the node's pending view"). **The anchor**: a tip run answers `{ verdict, anchor, chain }`, `anchor` being the **reading
-node's own** verified `tip` and `suffixHead` headers from its proof, non-null when and only when the verdict is
-`verified` — under it they are PoW-verified, on the best chain (`behind` carried them), and heights of the reading
-node's own chain, where the winner's tip may be a block it has not seen — heights it proves at while they are in its
-proof window (`NODE_INTERFACE → "A height of the proof window with no kept root is served from the store"`). The anchor is held beside the verdict, written by the
-run that writes it, cleared with it, dropped with it on a node change; nothing is stored. **The run** is `proveFigures`
+the views', the node's word (→ The wallet → "The spendable views are the node's pending view"). **The anchor**: a check answers `{ verdict, anchor, chain }`, `anchor` being the two ends of the client's chain —
+its tip and the header `k − 1` below it, the suffix head a proof of that tip carries — non-null when and only when the
+verdict is `verified`: each header PoW-verified and linked by the proof or the gossip that brought it
+(`MESH_INTERFACE → The client's node list → "The client's chain"`). **It moves with the chain**: a block the gossip
+links moves both ends by one, and a check that seats another chain answers a new anchor; a node proves at those
+heights while they are in its proof window (`NODE_INTERFACE → "A height of the proof window with no kept root is served
+from the store"`). The anchor is held beside the verdict, written by the check that writes it, cleared with it; nothing is stored. **The run** is `proveFigures`
 of `@dagsocial/nipopow-client` — the code the command-line light client runs — which reads **what the key holds, by
 range**, and judges **the plain listing** — read whole beside every read of the view its row shows — against it, in
 this order: at `suffixHead.height`, against its
@@ -463,7 +523,7 @@ held at `tip` and not at `suffixHead`: real, inside the region a reorg can still
 own re-read, proven against the anchor standing, reads its new box *not checked yet* until the next verified tip;
 **`absent`** —
 not held at `tip`, and `heightAfter` equal to `tip.height`: listed at a height the chain's state does not hold it at, **the
-node lists what the chain does not hold** (the anchor predates the listing, so the reading node's height at the listing
+node lists what the chain does not hold** (the anchor predates the listing, so the listing node's height at the listing
 was at least the tip's, and a node whose height fell between the reads shows as `unchecked` or a proof failure on the
 next run, never as a false `absent`); **`unlisted`** — held at `tip`, named nowhere in the listing of its ledger, and
 `heightAfter` equal to `tip.height`: **the chain holds what the node did not list**, a class of the run's own beside
@@ -497,7 +557,7 @@ the proven spendable sum is the balance row's rule over the
 `proven` credit boxes, each lock read from the proven candidate. Both remainders are non-negative by construction: the
 proven set is the listed set less what is younger than `suffixHead`, and a record proven there has clocks no later than
 the live one. **It proves a listing read after its anchor, and never one read before it** — the order is what makes
-`absent` exact: the anchor predates the listing, so the reading node's height at the listing was at least the tip's,
+`absent` exact: the anchor predates the listing, so the listing node's height at the listing was at least the tip's,
 where a listing read before the anchor may name a box spent since, which the chain rightly no longer holds. **It
 runs**, in the extension build alone and only with an identity and an anchor: right after every tip run that ends
 `verified`, **reading the reader's plain listings first, beside their views** — `/karma` always, `/credits` while the
@@ -584,12 +644,12 @@ to the key the proven box names; `none` is *no one holds that name.*; `unchecked
 the anchor standing may be minutes old — and the check against its anchor decides: `proven` to the flow, a second
 `unchecked` *@bob is too new to check yet.*, and a `young` **refused**, *@bob is too new to send to by name — send to a
 key instead.*, with no key beneath the field. The tip's `stateRoot` stands beneath its own header alone
-(`NIPOPOW_INTERFACE → The trust model`), a block the reading node can mine over the honest tip with a root that binds
+(`NIPOPOW_INTERFACE → The trust model`), a block the node answering the lookup can mine over the honest tip with a root that binds
 the name to a key of its own, so a name is sent to by key until it is `k` deep. Every other status refuses and nothing
 is signed; with no anchor the press asks for a tip run and waits for its verdict, and `thin` or `refused` refuses.
 **What it means**: a handle in ink is one no check has caught — under `proven` it stands beside the key whose box the
 verified chain holds under that name at `suffixHead`, `k` deep; under `young`, beside the key the tip's `stateRoot`
-binds it to, with the tip's own header the only work behind it — the reading node's word as much as the chain's, which
+binds it to, with the tip's own header the only work behind it — the answering node's word as much as the chain's, which
 is why a send refuses it; under `unchecked`, beside a box no anchor has reached yet. A node that shows a key bare, or
 answers *no one holds that name.* for a held one, is not caught — omission is what reading both nodes as a union is for — and a name burned in
 the last `k` blocks still proves for its old holder, as a box spent since `suffixHead` still proves there.
@@ -611,16 +671,15 @@ place"`). **The name on a slot is the node's word, unchecked**: a name is proven
 and the key arrives with the post. A slot's id goes to the resolve (→ "The resolve"), and the slot becomes the card or
 leaves. **Of a thread's answer the subject and `descendants` are resolved**; a pane draws neither `ancestors` nor
 `pending`, which give ids and nothing more. **Every list read is the reader's act** — the start, a `↻`, `load older`,
-`more`, a window opened, a change of node or identity — so a slot fills or leaves only inside a read the reader began
+`more`, a window opened, a change of identity — so a slot fills or leaves only inside a read the reader began
 (`HOUSE_STYLE → Motion → "A read the reader asked for may move what it is landing"`). The web build asks no `light` and
 draws no slot.
 
-**The resolve.** The posts a list lacks are read by id, from the seed list's nodes in turn. **The nodes** are the node
-being read and then every other base of the seed list, duplicates dropped — two bases that differ by a closing `/` are
-one. **A request** is `POST /posts/batch` with
+**The resolve.** The posts a list lacks are read by id, from the nodes in turn. **The nodes** are the client's order
+for an older read — the nodes it reaches over the mesh, then the API bases of the rest (→ "The mesh is the extension's
+first path") — duplicates dropped, two bases that differ by a closing `/` being one. **A request** is `POST /posts/batch` with
 `tx=1` and at most `BATCH_READ_MAX` ids (`NODE_INTERFACE → Posts → "The batch read answers posts by id"`; `CONSTANTS →
-HTTP view bounds`), **and carries no `viewer`**: a node other than the one being read learns the ids a reader lacks and
-never whose reading it is. **A pointer walks the nodes**: a resolve's first requests go to the node at the pointer and
+HTTP view bounds`), **and carries no `viewer`**: a node learns the ids a reader lacks and never whose reading it is. **A pointer walks the nodes**: a resolve's first requests go to the node at the pointer and
 the ones after it, one each, and the pointer moves on by as many as they leave — round robin across the requests of a
 resolve and across resolves, one begun while another is in flight among them. **An answer is read by id**: of the rows
 a node sends, the first under each id the request asked, and no other row, go through the post check as one batch
@@ -641,9 +700,12 @@ what is left, *no new posts* or *no older posts* at none (`HOUSE_STYLE → Motio
 move what it is landing"`). A line anything else has written since is not rewritten. A thread's `↻` reports the change
 in the node's own count of replies, which a leaving slot does not move.
 **One resolve serves every list**: an id asked for is not asked again while its answer is awaited, and an answer lands
-wherever a slot stands under its id; one that returns after a change of node or identity lands nowhere and enters no
+wherever a slot stands under its id; one that returns after a change of identity lands nowhere and enters no
 cache (→ Reading the feed and threads → "No answer overwrites a newer one") — the read that change starts asks again.
 It is the extension build's alone: the web build names no `posts/batch`.
+
+> ⚠ **AHEAD OF CODE (2026-11-05).** The client's order as the nodes; until then they are the node being read and then every other
+> base of the seed list, and a change of node lands an answer nowhere as a change of identity does.
 
 **The post check.** The extension shows a post only when the transaction that created it binds it. Every row
 that carries a post's bytes — each row of a batch answer (→ "The resolve"), the single post read's, asked with `tx=1`
@@ -857,8 +919,9 @@ preference.
 
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
 reference, none of the verifiers' request paths — `nipopow/proof`, the tip's; `api/v1/proof`, the figures' and
-the names'; `api/v1/range`, the figures' — no `posts/batch`, the resolve's, and no `notis.posts.`, the post cache's
-name, in a build that is handed no verifier.
+the names'; `api/v1/range`, the figures' — no `posts/batch`, the resolve's, no `notis.posts.`, the post cache's
+name, and no mesh — no `notis-mesh://`, no `webrtc-direct`, no `/meshsub/`, the mesh client's and libp2p's — in a build
+that is handed no verifier.
 `build-release.sh` checks each, and that the shell's `notis-network` is empty; `build-extension.sh` checks the
 extension's shell has no inline
 script, its background and its bridge have no `import`, its manifests parse, their one content-script match is
@@ -911,7 +974,8 @@ hold what the route serves (`CONSTANTS → Client reads`), the NiPoPoW proof rou
 — and a body longer than its cap is read no further and reads as a body that will not parse: no honest node sends one,
 so the node's answer failed, not the transport. **Every reader names its route's cap**; none reads a body whole. A
 request not answered within `REQUEST_TIMEOUT_MS` (`CONSTANTS → Client reads`) is ended and reads as a transport
-failure — for a write, the flight's ending for one (→ The wallet). **A failure the deadline ended says so**: beside
+failure — for a write, the end of that send: in the extension the same bytes then go to the next node (→ The
+extension → "The mesh is the extension's first path"), and in the web build it is the flight's ending (→ The wallet). **A failure the deadline ended says so**: beside
 the transport failure's `status: 0` it carries `timedOut: true`, whether the deadline fell before the answer began or
 while its body was read, so a reader can tell a node that did not answer from one it could not reach. The faucet
 answers the first 504 and the second 502 (`NODE_INTERFACE → Faucet`); this client and the light client read both as
@@ -926,7 +990,7 @@ a transport failure.
 | A thread | `GET /posts/:id/thread` | `limit`, `after`, `viewer` |
 | — the extension build | the feed, the author window's list and a thread | `light=1` beside the rest (→ The extension → "The light read") |
 | — the extension build | `GET /posts/:id` | `tx=1` beside `viewer` (→ The extension → "The post check") |
-| — the extension build | `POST /posts/batch` — `{ ids }`, of the seed list's nodes in turn | `tx=1`, and no `viewer` (→ The extension → "The resolve") |
+| — the extension build | `POST /posts/batch` — `{ ids }`, of the nodes in turn | `tx=1`, and no `viewer` (→ The extension → "The resolve") |
 | Node status | `GET /status` | — |
 | The tip | `GET /blocks/current` | — |
 
@@ -1143,7 +1207,8 @@ chain stands; **muted** when the last read failed, or none has run — the numbe
 corner reads `GET /blocks/current` every thirty seconds while the tab is visible (`document.visibilityState`) and
 stops while it is hidden: one request per half minute per visible tab, and the bounded landing poll is untouched
 (→ The wallet). Every height the corner reads feeds `viewerTip`, as every read does (→ The identity display). **A change of the node being read drops the corner's tip and its rise with everything else
-loaded, and reads the new node at once** — the number beside the dot is never another node's. **A
+loaded, and reads the new node at once** — the number beside the dot is never another node's. In the extension
+the corner's read is routed as every read is (→ The extension → "The mesh is the extension's first path"). **A
 press re-reads at once** — the corner is a control at the size the pointer needs (`HOUSE_STYLE → Interaction`), and
 the read it makes is the refresh it reports: the number moves in place, never animates, and no other surface
 changes but, in the extension, the two figures the verified tip re-reads and re-proves, each in its own slot (→ The
@@ -1159,12 +1224,16 @@ stands, or the verdict reads `thin`; **clay with the height clay too** — the f
 until the first verdict returns. **Where more than one holds, the first of these decides the dot and the title:** a
 failed read · no read yet · `refused` · the first verdict not returned · `thin` · the chain standing · green. One hue at two weights, as `HOUSE_STYLE → Gold and clay are not interchangeable`
 separates a heads-up from the full rule; on a dot this small the weight is the height's beside it. The `title` names
-the case, a node by its host and never by a URL (`HOUSE_STYLE → Voice`): *verified across 2 nodes · tip 7766* · *only
-one node could be checked · tip 7766* · *the chain is too short to check yet · tip 12* · *this node served no proof ·
-tip 7766* · *the nodes share no block to compare · tip 7766* · *this node's proof did not verify · tip 7766* ·
-*node02.notis.fun holds more work than this node · tip 7766* · *checking the chain · tip 7766*. A winner whose address
-does not parse reads *another node holds more work than this node*, and a state that reaches the title without its
-verdict *the chain could not be checked*. The number stays the
+the case and never a URL or an address (`HOUSE_STYLE → Voice`): *verified across 2 nodes · tip 7766* · *only one node
+could be checked · tip 7766* · *the chain is too short to check yet · tip 12* · *no node served a proof · tip 7766* ·
+*a node names a tip off this chain · tip 7766* · *no node's proof verified · tip 7766* · *only nodes this build does
+not name could be checked · tip 7766* · *checking the chain · tip 7766*; a state that reaches the title without its
+verdict reads *the chain could not be checked*.
+
+> ⚠ **AHEAD OF CODE (2026-11-05).** The titles above; until then they name the node being read — *this node served no proof*,
+> *the nodes share no block to compare*, *this node's proof did not verify*, *node02.notis.fun holds more work than this
+> node* — and there is no *no-anchor* title.
+ The number stays the
 live read — the verified height is rendered nowhere — and a press re-reads the tip and runs a verification. **A build
 with no verifier keeps the rule of the paragraph above, word for word**: the web build's corner has nothing to fail.
 
@@ -1585,9 +1654,12 @@ nothing signed, nothing sent. A change of the key takes the press's step with ev
 ever sees it: `notSigned`") — its step undone, and the decline's line wherever the press's surface stands when the
 press ends: the composer still open with its text and *post not sent.*, a row's flight its own *… not sent.*, a card's
 in the report line of each list that holds its post — none where the change has drawn no such list yet (→ The settings
-window). A send queues the same way on the
+window). **In the extension no press is made under a node**: it is sent where the client's order names when its
+turn comes (→ The extension → "The mesh is the extension's first path"), so a change of the key alone ends one, and a
+node added by hand ends none. A send queues the same way on the
 credits view, apart from the rep spends; an unvouch spends a `vouch` box, no view's, and queues with neither. A spend
-from another page, or another browser, can still meet a box this page selected: the node's 409 (→ "Nothing retries").
+from another page, or another browser, can still meet a box this page selected: the node's 409 (→ "Nothing retries a
+rejection").
 
 **A credits amount crosses the API in base units and reaches the face in $NOTIS.** Every `value` on the wire
 is a decimal string of base units — 10⁻⁸ of a credit (`TYPES_INTERFACE → Denomination`) — and the face never
@@ -1597,9 +1669,12 @@ decimals, nothing else. One
 module does both, and every surface that shows a credits amount reads it — the `$NOTIS` row, its confirm and
 flight lines, and the extension's prompt (→ The extension). Rep is indivisible and stays a plain integer.
 
-**Nothing retries.** A rejection is one `Rejection { status, message }`, normalised from both body
+**Nothing retries a rejection.** A rejection is one `Rejection { status, message }`, normalised from both body
 shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; the reader sees the rejection, and
-the next spend reads the views anew. **A rejection's words follow the node's message, never its status alone**: a
+the next spend reads the views anew. **A send that ends with no answer is no rejection**: in the extension the same
+bytes go to the next node in the client's order, and the first answer of any status is the send's (→ The extension →
+"The mesh is the extension's first path"); in the web build, and in the extension once every node is tried, it ends
+the flight as a transport failure (→ Reading a node's answer). **A rejection's words follow the node's message, never its status alone**: a
 409 is the pool's conflict over a box another pooled spend holds (`MEMPOOL_INTERFACE → getBoxWithPending`), which
 reads *that rep is still tied up in a spend that has not landed.* on every rep surface, and a like the node already
 holds reads *you have already liked this post* only from the node's own words for it.
@@ -1650,7 +1725,8 @@ expired once the tip passes its `expiresAtHeight`; on landing the reader's own `
 row's balance moves in place (→ The wallet window). A pending credits grant is landed when `GET /credits/<key>` lists
 the box the faucet named (→ The faucet step).
 
-**Every ending of a pending entry is the reading node's word, in both builds**: a row it answers, a 404, a list that
+**Every ending of a pending entry is the node's word, in both builds** — the node read, in the extension the node the
+client routes the read to: a row it answers, a 404, a list that
 names the box or does not, and the height `/blocks/current` answers. A node that answers a height past every entry's
 ends them all, as it could by a 404 each; an ending changes neither view, which is the node's already. No ending
 moves value. **A landing reads the plain listings, never `pending=1`**, which lists a pooled box before any block
@@ -1803,7 +1879,7 @@ With no box spendable at the `/status` height: the faucet step when a faucet is 
 yet.* — both only once a `/status` answer stands; until then the row reads `—` in their place. **The balance
 takes a new value whenever one is read** — the window's opening and `↻`, every 2xx of the reader's own send and every
 landing of one (a send's and a grant's landing are read off the plain `/credits` itself, open or closed — → The
-wallet → "Every ending of a pending entry is the reading node's word, in both builds"), and in the extension every
+wallet → "Every ending of a pending entry is the node's word, in both builds"), and in the extension every
 verified tip while the window is open (`HOUSE_STYLE → Motion`). **In the extension, one more muted line of the same element stands beneath the figure only when the verified-figures run could
 not prove the whole balance** — *87.5 $NOTIS proven at block 9005 · 12.5 $NOTIS landed since*, *… · 12.5 $NOTIS not
 checked yet*, *the node served no proof for 12.5 $NOTIS*, *not checked — the chain is not verified* — or when the
@@ -1875,7 +1951,13 @@ chosen tint. They are not controls: no handler, no pointer, hidden from assistiv
 press with no re-render, since the tint is the root's attribute and custom properties — the press moves the four
 words' pressed state in place and rebuilds nothing, so the pressed word keeps the keyboard's focus. **The `node` row** holds
 the effective base: any origin works, blank resets to the build's default, and a change drops everything loaded
-and re-reads it from the new node (→ The client is served from the node's own origin). **The window draws whatever a
+and re-reads it from the new node (→ The client is served from the node's own origin). **In the extension the row
+adds a node by hand**: the address a node prints at start, its `/p2p/` id included and no DNS component, kept in the
+page's storage and handed to the client as an anchor (`MESH_INTERFACE → Discovery → "A node added by hand"`); blank
+removes it, and adding or removing one drops nothing loaded.
+
+> ⚠ **AHEAD OF CODE (2026-11-05).** The extension's row; until then it holds the effective base there as in the web build.
+ **The window draws whatever a
 node answers**: it reads nothing from the node, and no answer a node gives reaches it unchecked (→ Reading a node's
 answer), so the way to another node is always open. **The policy row**, *sign
 each rep action: don't ask · ask*, is the background's policy (→ The extension), read through `state` and set
@@ -2150,15 +2232,17 @@ client that expects to announce itself first is built against an endpoint that d
   secure context gates (→ The identity module).
 - **In the workspace the client depends on `@dagsocial/types`, on `@dagsocial/node-reads` for reading a node's
   answers in both builds (→ Reading a node's answer), and on `@dagsocial/nipopow-client` for the extension's
-  verifier**, which brings `@dagsocial/nipopow` and `@dagsocial/validation` with it; tree-shaking keeps `validation`'s
-  signature path out of every bundle, and the web build's assets carry none of the three (→ The extension, the build
-  check).
+  verifier**, which brings `@dagsocial/nipopow` and `@dagsocial/validation` with it, and on `@dagsocial/net`'s browser
+  entry with `libp2p` and the `@libp2p/*` packages for the extension's mesh, each at the version `MESH_INTERFACE → Place
+  in the workspace → "libp2p is pinned"` names; tree-shaking keeps `validation`'s signature path out of every bundle,
+  and the web build's assets carry none of them (→ The extension, the build check).
 - **Manifest V3, and nothing added.** The `chrome.*` surface the extension uses is declared in the
   package's own `chrome.d.ts`; `@types/chrome` is not a dependency, and no polyfill is (→ The extension).
 
 ## Preconditions
 
-- `@dagsocial/node` HTTP API reachable from the client's origin — the node answers every origin
+- `@dagsocial/node` HTTP API reachable from the client's origin — the node answers every origin — and, for the
+  extension's mesh, a node's endpoint by its key (`MESH_INTERFACE → The node endpoint`)
 - Static assets served, fonts among them — self-hosted, never fetched from a third party
 - The standalone path `<base>p/<id>` answered with the client's shell — by the node's `GET /shell/:id`
   behind the host's proxy for a preview, or the shell plain without one (→ Links)
