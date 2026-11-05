@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-mesh/
 dist-page/
 *.db
 *.db-wal

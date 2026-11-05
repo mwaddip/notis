@@ -9,7 +9,7 @@
 // supplies.
 
 import { MeshKeyError } from '@dagsocial/net/browser';
-import { RETRY_BASE_MS, RETRY_CAP_MS } from '../protocols.js';
+import { RETRY_BASE_MS, RETRY_CAP_MS } from './protocols.js';
 
 export interface Anchor {
   notisId: string;

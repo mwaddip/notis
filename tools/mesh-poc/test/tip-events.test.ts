@@ -8,7 +8,7 @@
 // guess: `tipEvent` throws.
 
 import { describe, it, expect } from 'vitest';
-import { tipEvent, type TipEvent } from '../src/client/tip-events.js';
+import { tipEvent, type TipEvent } from '@dagsocial/web/mesh';
 import { meshBaseUrl, idOfMeshUrl } from '@dagsocial/net/browser';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 

@@ -29,7 +29,7 @@ import {
   attributeAggregateDialErrors,
   createDialProgressRecorder,
   unwrapAggregate,
-} from '../src/client/mesh-client.js';
+} from '@dagsocial/web/mesh';
 
 /**
  * Bind a TCP server on a kernel-chosen loopback port and keep it open

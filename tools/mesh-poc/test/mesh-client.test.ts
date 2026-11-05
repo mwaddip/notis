@@ -1,15 +1,14 @@
 // MESH_INTERFACE → Transports / Discovery / The client's node list / The
 // node endpoint — the client, in Node, against mesh nodes over
 // WebRTC-direct with upstream stubs and a fake `resolve`. The DNS and ICE
-// refusals and the dist/lib.js scan live here too: refusals held under
-// their own cases, the browser-safety scan reads the built bundle a
-// `src/lib.ts` reaches.
+// refusals live here too, held under their own cases. The
+// browser-safety scan — the bundle `packages/web/src/mesh/index.ts`
+// reaches — lives beside the barrel as `packages/web/test/mesh/no-node-reach.test.ts`.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPair, bytesToHex } from '@dagsocial/types';
@@ -19,12 +18,12 @@ import type { NetworkProfile, NetworkType, OrderingBlock } from '@dagsocial/type
 import type { NodeTipResult } from '@dagsocial/nipopow-client';
 import type { Connection } from '@libp2p/interface';
 import { nodeKeyFromKeyPair, peerIdFromNotisId, meshBaseUrl } from '@dagsocial/net/browser';
-import { MeshConfigError } from '../src/config.js';
-import { assertClientConfig, cappedTimerMs, MAX_TIMER_MS, pickConnectionForRead } from '../src/client/mesh-client.js';
+import { MeshConfigError } from '@dagsocial/web/mesh';
+import { assertClientConfig, cappedTimerMs, MAX_TIMER_MS, pickConnectionForRead } from '@dagsocial/web/mesh';
 import { MeshFetchError, MeshUrlError } from '@dagsocial/net/browser';
 import { NetNode } from '@dagsocial/net';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
-import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import { startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
 import { multiaddr } from '@multiformats/multiaddr';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain } from './helpers/devnet-block.js';
@@ -961,23 +960,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       'reading on a closed-only connection returns null',
     ).toBeNull();
   });
-
-  it('the client imports nothing from node:', async () => {
-    const distLib = fileURLToPath(new URL('../dist/lib.js', import.meta.url));
-    expect(existsSync(distLib), `dist/lib.js must exist — run pnpm build first (${distLib})`).toBe(true);
-    const code = readFileSync(distLib, 'utf8');
-    const { builtinModules } = await import('node:module');
-    // tsup externalises Node builtins, but it rewrites `node:fs` to `fs` in
-    // its output: the refuse-node-builtins script checks both forms, so the
-    // scan does the same (packages/web/scripts/refuse-node-builtins.mjs).
-    const importRe = /(?:from\s*['"]|require\s*\(\s*['"]|import\s*\(\s*['"])([^'"\s)]+)['"]/g;
-    const banned: string[] = [];
-    for (const match of code.matchAll(importRe)) {
-      const importSpecifier = match[1]!;
-      if (importSpecifier.startsWith('node:') || builtinModules.includes(importSpecifier)) banned.push(importSpecifier);
-    }
-    expect(banned, `banned Node imports in dist/lib.js: ${banned.join(', ')}`).toEqual([]);
-  }, 30_000);
 
   it('a node tied with the winner reads ok after a check', async () => {
     // MESH_INTERFACE → The client's node list — the node-list table's

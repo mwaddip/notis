@@ -34,6 +34,7 @@ export default defineConfig({
       '@dagsocial/net': src('net'),
       '@dagsocial/node': src('node'),
       '@dagsocial/node-reads': src('node-reads'),
+      '@dagsocial/web/mesh': fileURLToPath(new URL('./packages/web/src/mesh/index.ts', import.meta.url)),
     },
   },
 });

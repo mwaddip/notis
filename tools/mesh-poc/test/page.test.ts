@@ -9,11 +9,11 @@ import { execSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { ClientState, MeshClient } from '../src/client/mesh-client.js';
-import { emptyTraffic } from '../src/client/mesh-client.js';
-import type { NodeEntry } from '../src/client/node-list.js';
-import type { ReadNeed } from '../src/client/server-pick.js';
-import { MeshConfigError } from '../src/config.js';
+import type { ClientState, MeshClient } from '@dagsocial/web/mesh';
+import { emptyTraffic } from '@dagsocial/web/mesh';
+import type { NodeEntry } from '@dagsocial/web/mesh';
+import type { ReadNeed } from '@dagsocial/web/mesh';
+import { MeshConfigError } from '@dagsocial/web/mesh';
 import { MeshFetchError } from '@dagsocial/net/browser';
 import { render } from '../page/render.js';
 import { runMain } from '../page/main.js';
@@ -965,7 +965,7 @@ describe('page/build output', () => {
   // gossip net
   // (`TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"`), and a string in the bundle is not a DNS lookup.
   // The browser never dials a DNS anchor — that is held at runtime by
-  // `assertClientConfig` on every anchor, and `src/config.ts`'s DNS guard
+  // `assertClientConfig` on every anchor, and `packages/web/src/mesh/config.ts`'s DNS guard
   // names the three prefixes in the source itself.
   beforeAll(() => {
     execSync('pnpm --filter @dagsocial/mesh-poc page:build', {

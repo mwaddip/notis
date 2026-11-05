@@ -10,8 +10,8 @@
 // `[data-role="state-root"]`, so a render replaces only the state
 // subtree and leaves the form untouched.
 
-import type { MeshClient } from '../src/client/mesh-client.js';
-import { MeshConfigError } from '../src/config.js';
+import type { MeshClient } from '@dagsocial/web/mesh';
+import { MeshConfigError } from '@dagsocial/web/mesh';
 
 export interface AttachHandFormOptions {
   root: HTMLElement;

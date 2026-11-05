@@ -1,10 +1,14 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2022", "DOM"],
     "types": [],
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@dagsocial/*": ["../../packages/*/src/index.ts"],
+      "@dagsocial/web/mesh": ["../../packages/web/src/mesh/index.ts"],
+      "@dagsocial/net/browser": ["../../packages/net/src/browser.ts"]
+    }
   },
-  "include": [],
-  "files": ["src/lib.ts"]
+  "include": ["page"]
 }

@@ -12,7 +12,7 @@
 // Web Crypto (CryptoSubtle) in every browser Notis supports, and in
 // Node 20+ as a built-in; no `node:crypto` import.
 
-import type { MeshClient } from '../src/client/mesh-client.js';
+import type { MeshClient } from '@dagsocial/web/mesh';
 import { meshBaseUrl } from '@dagsocial/net/browser';
 
 export interface ProbeResult {

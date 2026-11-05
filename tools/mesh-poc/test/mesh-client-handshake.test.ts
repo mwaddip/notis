@@ -23,7 +23,7 @@ import {
   MAX_HANDSHAKE_FRAME_BYTES,
 } from '@dagsocial/net/browser';
 import { NetNode } from '@dagsocial/net';
-import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import { startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain } from './helpers/devnet-block.js';

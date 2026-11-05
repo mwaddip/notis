@@ -13,7 +13,7 @@
 // workspace`).
 
 import type { NodeStatus } from './node-list.js';
-import { FAST_SET_FACTOR, FAST_SET_SLACK_MS } from '../protocols.js';
+import { FAST_SET_FACTOR, FAST_SET_SLACK_MS } from './protocols.js';
 
 export type ReadNeed = 'tip' | 'older';
 

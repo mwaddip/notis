@@ -7,7 +7,7 @@
 // allowed.
 
 import { describe, it, expect } from 'vitest';
-import { pickServer, type PickCandidate } from '../src/client/server-pick.js';
+import { pickServer, type PickCandidate } from '@dagsocial/web/mesh';
 
 function cand(id: string, over: Partial<PickCandidate> = {}): PickCandidate {
   return {

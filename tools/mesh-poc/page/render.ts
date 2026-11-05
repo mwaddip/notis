@@ -9,8 +9,8 @@
 // row) stays a string. Pure, no fetch, no timer; the caller drives
 // re-renders.
 
-import type { ClientState } from '../src/client/mesh-client.js';
-import type { NodeEntry } from '../src/client/node-list.js';
+import type { ClientState } from '@dagsocial/web/mesh';
+import type { NodeEntry } from '@dagsocial/web/mesh';
 
 // MESH_INTERFACE → No anchor reached — the words the page says when
 // `anchorReached` is false, byte-for-byte.

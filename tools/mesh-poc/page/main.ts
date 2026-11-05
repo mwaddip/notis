@@ -21,11 +21,11 @@
 
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
-import { startMeshClient } from '../src/client/mesh-client.js';
-import type { Anchor } from '../src/client/node-list.js';
-import type { NetworkName } from '../src/protocols.js';
-import type { ReadNeed } from '../src/client/server-pick.js';
-import { MeshConfigError } from '../src/config.js';
+import { startMeshClient } from '@dagsocial/web/mesh';
+import type { Anchor } from '@dagsocial/web/mesh';
+import type { NetworkName } from '@dagsocial/web/mesh';
+import type { ReadNeed } from '@dagsocial/web/mesh';
+import { MeshConfigError } from '@dagsocial/web/mesh';
 import { render } from './render.js';
 import { runProbe } from './probe.js';
 import { attachHandForm } from './form.js';

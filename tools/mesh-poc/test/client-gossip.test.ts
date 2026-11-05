@@ -38,7 +38,7 @@ import {
 import { verifierProfile } from '@dagsocial/nipopow-client';
 import { gossipTopics } from '@dagsocial/net/browser';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
-import { lieTarget, startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import { lieTarget, startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
 import type { BlockVerdict } from '@dagsocial/net/browser';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain, makeBlockAt } from './helpers/devnet-block.js';

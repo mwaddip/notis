@@ -10,10 +10,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { profileFor, generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
 import { nodeKeyFromKeyPair } from '@dagsocial/net/browser';
-import { stunServersFor } from '../src/client/stun-list.js';
-import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
-import type { NodeEntry, NodeStatus } from '../src/client/node-list.js';
-import { STUN_SERVERS_MAX } from '../src/protocols.js';
+import { stunServersFor } from '@dagsocial/web/mesh';
+import { startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
+import type { NodeEntry, NodeStatus } from '@dagsocial/web/mesh';
+import { STUN_SERVERS_MAX } from '@dagsocial/web/mesh';
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 

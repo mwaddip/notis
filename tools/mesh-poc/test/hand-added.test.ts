@@ -27,8 +27,8 @@ import {
   createDialProgressRecorder,
   startMeshClient,
   type MeshClient,
-} from '../src/client/mesh-client.js';
-import { MeshConfigError } from '../src/config.js';
+} from '@dagsocial/web/mesh';
+import { MeshConfigError } from '@dagsocial/web/mesh';
 import { peerIdFromNotisId, nodeKeyFromKeyPair } from '@dagsocial/net/browser';
 import { NetNode } from '@dagsocial/net';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';

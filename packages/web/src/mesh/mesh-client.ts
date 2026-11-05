@@ -60,7 +60,7 @@ import {
 } from '@dagsocial/net/browser';
 import { HeldChain, type Placement } from './held-chain.js';
 import { headerFromJson } from './header-json.js';
-import { MeshConfigError, assertNoDns } from '../config.js';
+import { MeshConfigError, assertNoDns } from './config.js';
 import {
   NodeList,
   type Anchor,
@@ -78,7 +78,7 @@ import {
   STUN_SERVERS_MAX,
   BLOCK_READ_BYTES,
   type NetworkName,
-} from '../protocols.js';
+} from './protocols.js';
 export type { ReadNeed } from './server-pick.js';
 
 /**

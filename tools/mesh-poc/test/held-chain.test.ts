@@ -9,7 +9,7 @@ import {
   blockHash,
 } from '@dagsocial/validation';
 import { verifierProfile } from '@dagsocial/nipopow-client';
-import { HeldChain } from '../src/client/held-chain.js';
+import { HeldChain } from '@dagsocial/web/mesh';
 import { makeBlockAt, makeLinkedChain } from './helpers/devnet-block.js';
 
 // MESH_INTERFACE → The client's node list → "The client's chain" — the

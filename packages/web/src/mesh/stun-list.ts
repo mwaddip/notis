@@ -11,7 +11,7 @@
 import { multiaddr } from '@multiformats/multiaddr';
 import { isPrivate } from '@libp2p/utils';
 import type { NodeEntry, NodeStatus } from './node-list.js';
-import { STUN_PORT } from '../protocols.js';
+import { STUN_PORT } from './protocols.js';
 
 export function stunServersFor(entries: readonly NodeEntry[], max: number): string[] {
   // Preserve input order as a tiebreak via the entry's index. The

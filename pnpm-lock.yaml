@@ -343,6 +343,9 @@ importers:
 
   packages/web:
     dependencies:
+      '@dagsocial/net':
+        specifier: workspace:*
+        version: link:../net
       '@dagsocial/nipopow-client':
         specifier: workspace:*
         version: link:../../tools/nipopow-client
@@ -352,6 +355,24 @@ importers:
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../types
+      '@dagsocial/validation':
+        specifier: workspace:*
+        version: link:../validation
+      '@libp2p/gossipsub':
+        specifier: 17.2.1
+        version: 17.2.1
+      '@libp2p/interface':
+        specifier: 3.4.0
+        version: 3.4.0
+      '@libp2p/peer-id':
+        specifier: 6.0.18
+        version: 6.0.18
+      '@libp2p/utils':
+        specifier: 7.4.5
+        version: 7.4.5
+      '@multiformats/multiaddr':
+        specifier: 13.0.3
+        version: 13.0.3
       '@noble/ciphers':
         specifier: ^2.2.0
         version: 2.4.0
@@ -361,6 +382,9 @@ importers:
       '@noble/hashes':
         specifier: 2.2.0
         version: 2.2.0
+      libp2p:
+        specifier: 3.5.1
+        version: 3.5.1
     devDependencies:
       fake-indexeddb:
         specifier: ^6.2.5
@@ -368,6 +392,9 @@ importers:
       happy-dom:
         specifier: ^20.13.2
         version: 20.13.2
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
@@ -475,6 +502,9 @@ importers:
       '@dagsocial/validation':
         specifier: workspace:*
         version: link:../../packages/validation
+      '@dagsocial/web':
+        specifier: workspace:*
+        version: link:../../packages/web
       '@libp2p/bootstrap':
         specifier: 12.0.36
         version: 12.0.36
@@ -512,7 +542,7 @@ importers:
         specifier: 8.0.7
         version: 8.0.7
       '@multiformats/multiaddr':
-        specifier: ^13.0.0
+        specifier: 13.0.3
         version: 13.0.3
       '@noble/curves':
         specifier: 2.2.0
@@ -533,9 +563,6 @@ importers:
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
-      tsup:
-        specifier: ^8.0.0
-        version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)
       typescript:
         specifier: ^5.4.0
         version: 5.9.3

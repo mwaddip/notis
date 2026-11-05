@@ -96,10 +96,10 @@ vi.mock('../stage/lib/measure.mjs', async (importOriginal) => {
   };
 });
 
-import { classifyConnectionAddr, decorateEntries, pickConnectionForLabel } from '../src/client/mesh-client.js';
+import { classifyConnectionAddr, decorateEntries, pickConnectionForLabel } from '@dagsocial/web/mesh';
 import { peerIdFromNotisId } from '@dagsocial/net/browser';
 import type { Connection } from '@libp2p/interface';
-import type { NodeEntry } from '../src/client/node-list.js';
+import type { NodeEntry } from '@dagsocial/web/mesh';
 import { verdictIceServers, verdictS2Priv1, verdictS2Priv2 } from '../stage/lib/verdicts.mjs';
 import { readTopology } from '../stage/lib/topology.mjs';
 import { ICE_RECORD_INSTALL_SRC } from '../stage/cdp.mjs';
@@ -111,8 +111,9 @@ import * as s2Scenario from '../stage/scenarios/s2-nat.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
+const REPO_ROOT = dirname(dirname(PACKAGE_ROOT));
 const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
-const SRC_MESH_CLIENT = join(PACKAGE_ROOT, 'src', 'client', 'mesh-client.ts');
+const SRC_MESH_CLIENT = join(REPO_ROOT, 'packages', 'web', 'src', 'mesh', 'mesh-client.ts');
 const TOPOLOGY_PATH = join(PACKAGE_ROOT, 'stage', 'topology.json');
 
 // --- NAT routers drop unsolicited inbound ----------------------------------
@@ -245,7 +246,7 @@ describe('classifyConnectionAddr reads transport/path from the multiaddr\'s comp
 
   // The client dials `/wss/` addresses (secure WebSocket, a single
   // multiaddr component) alongside the two-component `/tls/ws/` form:
-  // `src/client/mesh-client.ts`'s `isWSSAddr` reader skips only plain
+  // `packages/web/src/mesh/mesh-client.ts`'s `isWSSAddr` reader skips only plain
   // `/ws/`. A `wss` component before any `p2p-circuit` names `wss`.
   it('a plain wss address classifies as { wss, direct }', () => {
     const ma = `/ip4/11.100.0.11/tcp/443/wss/p2p/${TARGET}`;

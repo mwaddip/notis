@@ -4,7 +4,7 @@ import {
   profileFor,
 } from '@dagsocial/types';
 import type { BlockHeader } from '@dagsocial/types';
-import { headerFromJson } from '../src/client/header-json.js';
+import { headerFromJson } from '@dagsocial/web/mesh';
 import { makeLinkedChain } from './helpers/devnet-block.js';
 
 // MESH_INTERFACE → The client's node list → "The client's chain" — the
