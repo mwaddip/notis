@@ -8332,6 +8332,14 @@ async function main() {
   await sleep(3000);
   const transfer12b = cx10.events.slice(events12bStart).find((e) =>
     e.method === 'Network.responseReceived' && (e.params.response.url || '').includes('/credits/transfer'));
+  // Under --mesh a write goes over the mesh and leaves no HTTP request
+  // behind (WEB_INTERFACE → The extension → "The mesh is the extension's
+  // first path"), so no `POST /credits/transfer` reaches the Network
+  // domain. The other builds expect the 2xx answer at the API base.
+  const transferPostSeen12b = cx10.events.slice(events12bStart).some((e) =>
+    e.method === 'Network.requestWillBeSent'
+    && e.params?.request?.method === 'POST'
+    && (e.params?.request?.url || '').includes('/credits/transfer'));
   // The row re-reads /credits?pending=1 at the 2xx: a short bound covers the
   // re-read's own fetch, and the faucet's plain /credits is read at the row
   // reading to tell a pooled window from one closed before the payment lands
@@ -8371,11 +8379,16 @@ async function main() {
   const amountOk12b = promptShape12b?.[1]?.cls === 'amount' && promptShape12b?.[1]?.text === '12.5 $NOTIS';
   const targetOk12b = promptShape12b?.[2]?.cls === 'target' && promptShape12b?.[2]?.label === 'to:' && promptShape12b?.[2]?.value === DEVNET_FAUCET_KEY;
   const noFeeLine12b = !(promptShape12b || []).some((l) => l.cls === 'fee');
-  const transferOk12b = transfer12b?.params.response.status === 200;
+  const transferOk12b = MESH
+    ? !transferPostSeen12b
+    : transfer12b?.params.response.status === 200;
+  const transferDetail12b = MESH
+    ? `POST /credits/transfer over HTTP=${transferPostSeen12b} (expect false under --mesh — the write goes over the mesh)`
+    : `transfer=${transfer12b?.params.response.status ?? 'null'}`;
   const rowOk12b = rowAt2xx12b;
   record('12b',
     noConfirm12b && resolvedOk12b && whatOk12b && amountOk12b && targetOk12b && noFeeLine12b && transferOk12b && rowOk12b && payment12b.landed && clientLanding12bLanded && shotSaved12b,
-    `no .pf-confirm=${noConfirm12b}, resolved-key='${(resolvedKey12b ?? '').slice(0, 8)}…${(resolvedKey12b ?? '').slice(-4)}'=whole=${resolvedOk12b}, lines=${JSON.stringify((promptShape12b || []).map((l) => `${l.cls}:${l.text}`))}, transfer=${transfer12b?.params.response.status ?? 'null'}, row read 87.5 within 20 s of the 2xx=${rowOk12b}, pre-send faucet boxes=${faucetPreBoxIds12b.length}, pooled window at the row reading: ${pooledWindow12b}, payment landed on faucet /credits (box outside pre-send set)=${payment12b.landed} (elapsed=${(payment12b.elapsedMs / 1000).toFixed(0)}s, boxId=${(payment12b.boxId ?? '').slice(0, 12)}…, atHeight=${payment12b.atHeight ?? 'null'}), client-side landing: .credits-flight .stage='sent' within 180 s of the node-side landing=${clientLanding12bLanded} (elapsed=${(clientLanding12bMs / 1000).toFixed(0)}s), screenshot saved=${shotSaved12b}`);
+    `no .pf-confirm=${noConfirm12b}, resolved-key='${(resolvedKey12b ?? '').slice(0, 8)}…${(resolvedKey12b ?? '').slice(-4)}'=whole=${resolvedOk12b}, lines=${JSON.stringify((promptShape12b || []).map((l) => `${l.cls}:${l.text}`))}, ${transferDetail12b}, row read 87.5 within 20 s of the 2xx=${rowOk12b}, pre-send faucet boxes=${faucetPreBoxIds12b.length}, pooled window at the row reading: ${pooledWindow12b}, payment landed on faucet /credits (box outside pre-send set)=${payment12b.landed} (elapsed=${(payment12b.elapsedMs / 1000).toFixed(0)}s, boxId=${(payment12b.boxId ?? '').slice(0, 12)}…, atHeight=${payment12b.atHeight ?? 'null'}), client-side landing: .credits-flight .stage='sent' within 180 s of the node-side landing=${clientLanding12bLanded} (elapsed=${(clientLanding12bMs / 1000).toFixed(0)}s), screenshot saved=${shotSaved12b}`);
 
   // --- 12c — same extension arm, decline at the prompt. Both form inputs kept,
   // flight "send not sent.", no /credits/transfer (WEB_INTERFACE → The wallet
