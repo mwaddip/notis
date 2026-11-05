@@ -4318,6 +4318,24 @@ const NAME_LABEL_ARMS = [
   },
 ];
 
+// The names block reads R's handles and R's author window at the tiling width
+// (WEB_INTERFACE → The workspace, → The identity display): the header renders
+// `@handle` at two or more columns and a glyph at one, and the author window's
+// move-to-the-right control exists only with a second column to move into. The
+// names block set the width on its main `cx` before step 26; every fresh page
+// the lie arms open inherits none of that override (a CDP session carries its
+// own emulation state) and defaults to the headless browser's narrow window,
+// which draws the header glyph and leaves `.hdr-word` absent. This helper sets
+// the override the lie arms assert against.
+async function setNamesViewport(cx) {
+  await cx.call('Emulation.setDeviceMetricsOverride', {
+    width: NAMES_VIEWPORT.width, height: NAMES_VIEWPORT.height, deviceScaleFactor: 1, mobile: false,
+  });
+  await cx.waitFor(
+    `!matchMedia('(max-width: 955px)').matches && !!document.querySelector('[aria-label="open profile"].hdr-word') && !!document.querySelector('.corner')`,
+    'the header at a tiling width (fresh page in the names block)', 30000);
+}
+
 async function runNamesLieArms(cx, bcx, rKey, rName, sHeld) {
   // The names block's lie arms (27a · 27b · 27c · 27d · 28a · 28b) ride the
   // two tip relays in their name modes, their mode set on both at once: a
@@ -4397,6 +4415,7 @@ async function runNameLabelArm(bcx, relays, arm, ctx) {
     const changeAt = Date.now();
     page = await openFreshExtensionPage(bcx);
     const fcx = page.cx;
+    await setNamesViewport(fcx);
     const changeIdx = fcx.events.length;
     const reached = await waitForCornerState(fcx, cornerVerified,
       `led fresh + verified across N nodes (fresh page under ${arm.mode}, ${arm.step})`, 60000);
@@ -4617,6 +4636,7 @@ async function runNamesStep27d(bcx, relays, ctx) {
     // a column of its own, its name row in ink.
     page = await openFreshExtensionPage(bcx);
     const fcx = page.cx;
+    await setNamesViewport(fcx);
     await waitForCornerState(fcx, cornerVerified,
       'led fresh + verified across N nodes (fresh page under honest, 27d)', 60000);
     const placed = await authorWindowAlone(fcx, rKey, rIds);
@@ -4807,6 +4827,7 @@ async function runNameSendArm(bcx, relays, arm, { sHeld }) {
     const changeAt = Date.now();
     page = await openFreshExtensionPage(bcx);
     const fcx = page.cx;
+    await setNamesViewport(fcx);
     const changeIdx = fcx.events.length;
     const reached = await waitForCornerState(fcx, cornerVerified,
       `led fresh + verified across N nodes (fresh page under ${arm.mode}, ${arm.step})`, 60000);
