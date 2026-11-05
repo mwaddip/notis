@@ -2097,14 +2097,18 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     // ---- Step 19c — RLA upstream-D with D lighter than B, D's tip off the
     // chain's last `k` headers. D mines just past `m + k + 4` so its proof
     // exists (`NODE_INTERFACE → Nipopow`, the proof route answers 404 below
-    // `m + k`) and shares no block with A past genesis (D is isolated and
-    // its block 2+ are its own). B's proof wins the compare (`NIPOPOW_INTERFACE
-    // → compareProofs`) and the client seats B's chain; A (read through RLA's
-    // upstream-switch to D) names D's tip, off A's chain's last `k` headers
-    // → `offChain = 1`, row 5 fires → `thin · split`, title *a node names a
-    // tip off this chain · tip N* (`WEB_INTERFACE → The extension → "The
-    // verified tip"`, `MESH_INTERFACE → No anchor reached → "The agreement
-    // counts"`). The corner's tip is B's chain's own — the seated chain.
+    // `m + k`) and shares no block with A past genesis (D is isolated and its
+    // block 2+ are its own). Devnet pins no `genesisId`, so RLA's proof (D)
+    // and RLB's proof (B) share no block and `compareProofs` answers
+    // `incomparable`; the client keeps the chain it seated first
+    // (`NIPOPOW_INTERFACE → compareProofs`, `MESH_INTERFACE → The client's
+    // node list → "A check"`). The other node then names a tip off the
+    // seated chain's last `k` headers → `offChain = 1`, row 5 fires → `thin
+    // · split`, title *a node names a tip off this chain · tip N*
+    // (`WEB_INTERFACE → The extension → "The verified tip"`, `MESH_INTERFACE
+    // → No anchor reached → "The agreement counts"`). Which chain seats
+    // depends on which proof the first check read first, so the corner's tip
+    // is B's height or D's — the record names which it was.
     const dLightTarget = TIP_M + TIP_K + 4;
     console.log(`[vt] 19c: mining D to height ${dLightTarget + 1} (lighter than A)`);
     spawnDaemon('d-miner', MINER_SCRIPT, {
@@ -2143,16 +2147,18 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
         }
         const hAnow = await currentHeight(NODE);
         const hBnow = await currentHeight(B_ORIGIN);
+        const hDnow = await currentHeight(D_ORIGIN);
         const titleTip = tipFromTitle(reading?.title ?? '');
+        const matchesB = typeof hBnow === 'number' && typeof titleTip === 'number' && Math.abs(hBnow - titleTip) <= 5;
+        const matchesD = typeof hDnow === 'number' && typeof titleTip === 'number' && Math.abs(hDnow - titleTip) <= 5;
+        const seated = matchesB && !matchesD ? 'B' : matchesD && !matchesB ? 'D' : matchesB && matchesD ? 'either' : 'neither';
         const ok = !reached.timedOut
           && reading?.ledClass === 'led thin'
           && reading?.tipClass === 'tip mono'
           && /^a node names a tip off this chain · tip \d+$/.test(reading?.title ?? '')
-          && typeof titleTip === 'number'
-          && typeof hBnow === 'number'
-          && Math.abs(hBnow - titleTip) <= 5;
+          && (matchesB || matchesD);
         record('19c', ok,
-          `led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, title tip=${titleTip} vs B height=${hBnow} (seated chain), A height=${hAnow}, D height=${hDafterLight}`);
+          `led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, title tip=${titleTip} vs B height=${hBnow}, D height=${hDnow} (seated chain=${seated}), A height=${hAnow}, D at mine stop=${hDafterLight}`);
       } finally {
         try { page.cx.s.close(); } catch {}
         await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
