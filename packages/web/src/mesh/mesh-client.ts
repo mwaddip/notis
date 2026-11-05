@@ -63,7 +63,7 @@ import { headerFromJson } from './header-json.js';
 import { MeshConfigError, assertNoDns } from './config.js';
 import {
   NodeList,
-  type Anchor,
+  type MeshAnchor,
   type FailureKind,
   type NodeEntry,
 } from './node-list.js';
@@ -141,8 +141,8 @@ class HandshakeNoChainServiceError extends Error {
  * that is not `stun:<IPv4>:<port>` / `stun:[<IPv6>]:<port>`.
  */
 export function assertClientConfig(o: {
-  anchors: readonly Anchor[];
-  seeds?: readonly Anchor[];
+  anchors: readonly MeshAnchor[];
+  seeds?: readonly MeshAnchor[];
 }): void {
   for (const a of o.anchors) assertNoDns('anchor', a.addrs);
   if (o.seeds !== undefined) {
@@ -367,16 +367,28 @@ export interface MeshClient {
 }
 
 export interface StartMeshClientOptions {
-  anchors: Anchor[];
+  anchors: MeshAnchor[];
   /**
    * MESH_INTERFACE → Discovery → "Seeds" — contacts the client holds without
    * trusting them. A seed is a candidate like any node the DHT finds; no answer
    * from one makes `anchorReached` true. Addresses meet the same refusals as
    * an anchor's.
    */
-  seeds?: Anchor[];
+  seeds?: MeshAnchor[];
   network: NetworkName;
   profile: NetworkProfile;
+  /**
+   * NET_INTERFACE → Handshake — the agent name the reader's handshake
+   * declares. One string per caller: the page passes `notis-mesh-poc`,
+   * the extension its own.
+   */
+  agentName: string;
+  /**
+   * The client's own log sink; a line per unexpected event the client
+   * catches — a periodic check that threw, a state listener that threw.
+   * Absent: nothing is logged.
+   */
+  log?: (line: string) => void;
   /**
    * MESH_INTERFACE → "Two clocks" — the retry timers' clock. The list and
    * every per-entry deadline reads this; a clock that steps never holds a
@@ -506,6 +518,8 @@ class MeshClientImpl implements MeshClient {
   private readonly clock: () => number;
   private readonly resolveFn: typeof resolveTip;
   private readonly profile: NetworkProfile;
+  private readonly agentName: string;
+  private readonly log: ((line: string) => void) | undefined;
   private readonly nodeList: NodeList;
   private readonly listeners = new Set<(s: ClientState) => void>();
   private readonly state_: ClientState;
@@ -604,6 +618,8 @@ class MeshClientImpl implements MeshClient {
     this.random = random;
     this.resolveFn = resolveFn;
     this.profile = o.profile;
+    this.agentName = o.agentName;
+    this.log = o.log;
     this.nodeList = new NodeList(o.anchors, ownId, clock);
     this.chain = new HeldChain(o.profile, DEFAULT_K);
     // MESH_INTERFACE → Discovery → "Seeds" — a seed is a candidate like
@@ -1023,8 +1039,7 @@ class MeshClientImpl implements MeshClient {
           // A check that threw is a bug — `runCheck` catches each phase's
           // own failures. Log it and carry on: the periodic cadence keeps
           // the client alive, and the next check sees the current state.
-          // eslint-disable-next-line no-console
-          console.error('[mesh-client] check threw', e);
+          this.log?.(`[mesh-client] check threw: ${messageOf(e)}`);
         })
         .finally(() => this.scheduleNextCheck(CHECK_INTERVAL_MS));
     }, ms);
@@ -1869,7 +1884,7 @@ class MeshClientImpl implements MeshClient {
     const result = await readerHandshake(conn, {
       magic: this.profile.magic,
       protocolVersion: PROTOCOL_VERSION,
-      agentName: 'notis-mesh-poc',
+      agentName: this.agentName,
       chainHeight,
       timeoutMs: 10_000,
     });
@@ -1938,8 +1953,7 @@ class MeshClientImpl implements MeshClient {
         // A listener's own throw must not take the client down nor silence
         // the next one — log it (a listener that throws is a bug) and
         // carry on. The state write already happened.
-        // eslint-disable-next-line no-console
-        console.error('[mesh-client] onState listener threw', e);
+        this.log?.(`[mesh-client] onState listener threw: ${messageOf(e)}`);
       }
     }
   }

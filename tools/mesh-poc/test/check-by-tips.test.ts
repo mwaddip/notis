@@ -128,6 +128,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -182,6 +183,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -235,6 +237,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -289,6 +292,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -336,6 +340,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -374,6 +379,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls) => {
         resolveUrls.push([...urls]);
         return { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
@@ -437,6 +443,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: otherNode.id, addrs: [otherNode.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -478,6 +485,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => chain, K),
     });
     clients.push(client);
@@ -524,6 +532,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => chain, K),
     });
     clients.push(client);
@@ -591,6 +600,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -646,6 +656,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -705,6 +716,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => {
         resolveUrls.push([...urls]);
         return underlying(urls, ...rest);
@@ -761,6 +773,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -808,6 +821,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b2.id, addrs: [b2.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => {
         resolveUrls.push([...urls]);
         return underlying(urls, ...rest);
@@ -871,6 +885,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -918,6 +933,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => {
         resolveUrls.push([...urls]);
         return underlying(urls, ...rest);
@@ -962,6 +978,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => {
         resolveUrls.push([...urls]);
         return underlying(urls, ...rest);
@@ -1002,6 +1019,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1055,6 +1073,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1106,6 +1125,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1157,6 +1177,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1225,6 +1246,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1289,6 +1311,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: d.id, addrs: [d.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1355,6 +1378,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: other.id, addrs: [other.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1412,6 +1436,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: other.id, addrs: [other.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1449,6 +1474,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1485,6 +1511,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
@@ -1552,6 +1579,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: x.id, addrs: [x.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve,
     });
     clients.push(client);

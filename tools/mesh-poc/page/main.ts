@@ -22,7 +22,7 @@
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import { startMeshClient } from '@dagsocial/web/mesh';
-import type { Anchor } from '@dagsocial/web/mesh';
+import type { MeshAnchor } from '@dagsocial/web/mesh';
 import type { NetworkName } from '@dagsocial/web/mesh';
 import type { ReadNeed } from '@dagsocial/web/mesh';
 import { MeshConfigError } from '@dagsocial/web/mesh';
@@ -39,13 +39,13 @@ export interface ByHandEntry {
 
 export interface PageConfig {
   network: NetworkName;
-  anchors: Anchor[];
+  anchors: MeshAnchor[];
   /**
    * MESH_INTERFACE → Discovery → "Seeds" — contacts without trust. Optional;
    * default none. A seed's addresses meet the same refusals as an anchor's,
    * and no answer from a seed makes `anchorReached` true.
    */
-  seeds?: Anchor[];
+  seeds?: MeshAnchor[];
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — entries
    * applied through `client.addByHand` after start, in the given
@@ -89,6 +89,7 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
       ...(config.seeds !== undefined ? { seeds: config.seeds } : {}),
       network: config.network,
       profile,
+      agentName: 'notis-mesh-poc',
     });
   } catch (e) {
     if (e instanceof MeshConfigError) {
@@ -193,12 +194,12 @@ function validateConfig(raw: unknown): PageConfig {
   // it must be an array (its addresses are refused by `assertClientConfig`,
   // not here).
   const seedsRaw = o['seeds'];
-  let seeds: Anchor[] | undefined;
+  let seeds: MeshAnchor[] | undefined;
   if (seedsRaw !== undefined) {
     if (!Array.isArray(seedsRaw)) {
       throw new Error('config.seeds must be an array when present');
     }
-    seeds = seedsRaw as Anchor[];
+    seeds = seedsRaw as MeshAnchor[];
   }
   // MESH_INTERFACE → Discovery → "A node added by hand" — optional
   // list of `{ notisId, addrs, trusted }`. Shape only here; the
@@ -214,7 +215,7 @@ function validateConfig(raw: unknown): PageConfig {
   }
   return {
     network: net,
-    anchors: anchors as Anchor[],
+    anchors: anchors as MeshAnchor[],
     ...(seeds !== undefined ? { seeds } : {}),
     ...(byHand !== undefined ? { byHand } : {}),
   };

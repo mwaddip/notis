@@ -142,6 +142,7 @@ describe('iceConfiguration — client-level', () => {
     const client = await startMeshClient({
       anchors: [{ notisId: anchorKey.notisId, addrs: ['/ip4/10.0.0.1/udp/0/webrtc-direct'] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
     });
     clients.push(client);
@@ -156,6 +157,7 @@ describe('iceConfiguration — client-level', () => {
         addrs: ['/ip4/11.100.0.11/udp/9999/webrtc-direct'],
       }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
     });
     clients.push(client);

@@ -132,6 +132,7 @@ describe('mesh-client — the reader handshake', () => {
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => CHAIN, K),
     });
     clients.push(client);
@@ -161,6 +162,7 @@ describe('mesh-client — the reader handshake', () => {
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => CHAIN, K),
     });
     clients.push(client);
@@ -191,6 +193,7 @@ describe('mesh-client — the reader handshake', () => {
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => CHAIN, K),
     });
     clients.push(client);
@@ -236,6 +239,7 @@ describe('mesh-client — the reader handshake', () => {
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => CHAIN, K),
     });
     clients.push(client);
@@ -278,6 +282,7 @@ describe('mesh-client — the reader handshake', () => {
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => CHAIN, K),
     });
     clients.push(client);

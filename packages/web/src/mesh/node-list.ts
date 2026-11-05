@@ -11,7 +11,7 @@
 import { MeshKeyError } from '@dagsocial/net/browser';
 import { RETRY_BASE_MS, RETRY_CAP_MS } from './protocols.js';
 
-export interface Anchor {
+export interface MeshAnchor {
   notisId: string;
   addrs: string[];
 }
@@ -143,7 +143,7 @@ export class NodeList {
   private readonly entries_: Map<string, InternalEntry> = new Map();
   private readonly clock: () => number;
 
-  constructor(anchors: Anchor[], ownId: string, clock: () => number) {
+  constructor(anchors: MeshAnchor[], ownId: string, clock: () => number) {
     assertNotisId(ownId);
     this.clock = clock;
     for (const a of anchors) {

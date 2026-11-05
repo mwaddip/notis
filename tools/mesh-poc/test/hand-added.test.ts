@@ -206,6 +206,7 @@ describe('MeshClient.addByHand — refusals', () => {
       anchors: [],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: emptyResolve(),
     });
   }
@@ -287,6 +288,7 @@ describe('MeshClient.addByHand — anchorReached', () => {
       anchors: [],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => CHAIN, K),
     });
 
@@ -312,6 +314,7 @@ describe('MeshClient.addByHand — anchorReached', () => {
       anchors: [],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => CHAIN, K),
     });
 

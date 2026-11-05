@@ -89,6 +89,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
           anchors: [{ notisId: anchorKey.notisId, addrs: [prefix] }],
           network: 'devnet',
           profile: PROFILE,
+          agentName: 'notis-mesh-poc',
           resolve: chainResolve(() => SHARED_CHAIN, K),
         });
       } catch (e) {
@@ -129,6 +130,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       seeds: [{ notisId: seedKey.notisId, addrs: [] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       // No check runs here: the state is read before the scheduled first
       // check fires, so the seed is still in its initial `new` status —
       // `new` is one of the four candidate rows (MESH_INTERFACE → The
@@ -165,6 +167,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       seeds: [{ notisId: seed.id, addrs: [seed.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       // The chainResolve would make the seed verified if phase 2
       // reached it — but the gater refuses the seed's loopback-private
       // address before libp2p dials, so phase 1 ends the seed in retry
@@ -195,6 +198,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
@@ -235,6 +239,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       // Both checks keep A as winner, B as trailing; after A stops it
       // falls out of candidates and B stands alone.
       resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
@@ -318,6 +323,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve((u) => (u.includes(good.id) ? SHARED_CHAIN : 'unreachable'), K),
     });
     clients.push(client);
@@ -368,6 +374,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: onlyRealGoodResolve(good.id),
     });
     clients.push(client);
@@ -413,6 +420,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve((u) => (u.includes(good.id) ? SHARED_CHAIN : 'unreachable'), K),
     });
     clients.push(client);
@@ -453,6 +461,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: a.id, addrs: [b.webrtcAddr, a.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
@@ -477,6 +486,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       // 'invalid' answers like `invalidWithProof`: refuseCode 'invalid'
       // with a non-null proof stand-in, which `tipEvent` reads as a
       // `lie` evidence of kind `proof-invalid`.
@@ -507,6 +517,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       // No candidate reachable — resolve may still be called with an
       // empty list; `unreachable` is harmless when it is.
       resolve: chainResolve(() => 'unreachable', K),
@@ -557,6 +568,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       ],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       // Pin the fast-set pick to the first candidate so the first read
       // reliably reaches A.
       random: () => 0,
@@ -606,6 +618,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
@@ -659,6 +672,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
@@ -727,6 +741,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
@@ -827,6 +842,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
@@ -875,6 +891,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       anchors: [{ notisId: k2.notisId, addrs: [k1.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: callingHttpFetchResolve(),
     });
     clients.push(client);
@@ -979,6 +996,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
@@ -1008,6 +1026,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       random: () => randValues[randIdx++ % randValues.length]!,
       resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
@@ -1044,6 +1063,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1097,6 +1117,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       random: () => {
         const v = randIdx / 50;
         randIdx = (randIdx + 1) % 50;
@@ -1131,6 +1152,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       // 0 picks the first fast-set entry, 0.99 picks the last — so we
       // can force both nodes in turn.
       random: () => [0, 0.99][randIdx++ % 2]!,
@@ -1177,6 +1199,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1229,6 +1252,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
@@ -1256,6 +1280,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_2 : CHAIN_K_PLUS_2_TRAIL), K),
     });
     clients.push(client);
@@ -1282,6 +1307,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
@@ -1317,6 +1343,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
     clients.push(client);
@@ -1355,6 +1382,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       random: () => 0,
       resolve: chainResolve((url) => (url.includes(a.id) ? CHAIN_K_PLUS_1 : CHAIN_K_PLUS_1_TRAIL), K),
     });
@@ -1413,6 +1441,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const client = await startMeshClient({
       anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => SHARED_CHAIN, K),
     });
     clients.push(client);
@@ -1459,6 +1488,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: resolveStub,
       // Explicitly set wallClock to a fake that is clearly wall-clock
       // (ms since epoch >> 1e12).
@@ -1497,6 +1527,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const client = await startMeshClient({
       anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: probingResolve,
     });
     clients.push(client);
@@ -1560,6 +1591,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       // random=0.99 picks the last entry of the fast set — a one-entry
       // fast set (A only) returns A; a two-entry fast set (A, B)
       // returns B.

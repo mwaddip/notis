@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   NodeList,
-  type Anchor,
+  type MeshAnchor,
   type FailureKind,
   type LieEvidence,
 } from '@dagsocial/web/mesh';
@@ -228,7 +228,7 @@ describe('node-list', () => {
   });
 
   it("the client's own key is dropped and duplicate anchors are merged", () => {
-    const anchors: Anchor[] = [
+    const anchors: MeshAnchor[] = [
       { notisId: idA, addrs: [a1] },
       { notisId: idA, addrs: [a2] },
       { notisId: own, addrs: [a3] },
