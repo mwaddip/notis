@@ -107,13 +107,21 @@ export interface Api {
 }
 
 export class NodeClient implements Api {
-  // The origin is read fresh on every call, never captured — the settings
+  // The base is read fresh on every call, never captured — the settings
   // window can repoint it to any origin (NODE_INTERFACE → Cross-origin requests).
-  // The default is same-origin: an empty base.
-  constructor(private origin: () => string) {}
+  // The default is same-origin: an empty base. The `fetch` the client runs
+  // every request through is the caller's, taken once; in the extension the
+  // mesh client hands a fetch that reaches a node by key over libp2p
+  // (WEB_INTERFACE → The extension → "The mesh is the extension's first path").
+  private readonly base: () => string;
+  private readonly httpFetch: HttpFetch;
+  constructor(opts: { base: () => string; fetch: HttpFetch }) {
+    this.base = opts.base;
+    this.httpFetch = opts.fetch;
+  }
 
   private url(path: string, query?: Record<string, string | number | undefined>): string {
-    const base = trimBase(this.origin());
+    const base = trimBase(this.base());
     const qs = query
       ? Object.entries(query)
           .filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -122,10 +130,6 @@ export class NodeClient implements Api {
       : '';
     return base + path + (qs ? '?' + qs : '');
   }
-
-  /** Call `fetchJson` with the live `fetch`, so a `vi.stubGlobal('fetch', …)`
-   *  takes effect per call. */
-  private httpFetch: HttpFetch = (url, init) => fetch(url, init);
 
   /** The parsed body of a 2xx, or a throw: a non-2xx is `ApiError`, a
    *  transport failure or a timeout `ApiError` with status `0`, and a 2xx

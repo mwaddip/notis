@@ -553,8 +553,8 @@ export class App {
     postCache?: PostCache | null,
     postResolver?: PostResolver | null,
   ) {
-    this.client = client ?? new NodeClient(() => prefs.node);
-    this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
+    this.client = client ?? new NodeClient({ base: () => prefs.node, fetch: (url, init) => fetch(url, init) });
+    this.writeClient = writeClient ?? new WriteClient({ bases: () => [prefs.node], fetch: (url, init) => fetch(url, init) });
     this.idm = identity ?? identitySingleton;
     this.faucetClient = new FaucetClient(() => prefs.faucet);
     this.requestFaucetOrigin = requestFaucetOrigin ?? null;
@@ -2143,7 +2143,7 @@ export class App {
     for (const base of BUILD_NODES) {
       if (seen.has(base)) continue;
       seen.add(base);
-      const probe = new NodeClient(() => base);
+      const probe = new NodeClient({ base: () => base, fetch: (url, init) => fetch(url, init) });
       let res: FeedResult;
       try {
         res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.listLight());

@@ -30,7 +30,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const write = (): WriteClient => new WriteClient(() => '');
+const write = (): WriteClient => new WriteClient({ bases: () => [''], fetch: (url, init) => fetch(url, init) });
 
 describe('write client — request envelopes', () => {
   it('submitPost POSTs { tx, content } to /posts and returns the 2xx body', async () => {
@@ -247,5 +247,92 @@ describe('write client — submitSend', () => {
   it('a rejection body normalises', async () => {
     mockResponse({ status: 400, body: { error: 400, reason: 'insufficient credit inputs' } });
     expect(await write().submitSend({})).toEqual({ status: 400, message: 'insufficient credit inputs' });
+  });
+});
+
+// WEB_INTERFACE → The extension → "A write goes to one node and, with no
+// answer, to the next": a send reads `bases()` once, posts the same bytes to
+// each in turn, and stops on the first response of any status. Every base
+// failing reads as today's transport failure, `timedOut: true` carried when
+// the last attempt was ended by the deadline. The web build hands
+// `[prefs.node]` and the behaviour is unchanged.
+
+const TX_OK = 'ff'.repeat(32);
+function okLikeBody(): unknown {
+  return { status: 'pending', txId: TX_OK, expiresAtHeight: 5720 };
+}
+function timeoutError(): Error {
+  // The error `AbortSignal.timeout` aborts with — `fetchJson` reads the
+  // deadline off its `name` (WEB_INTERFACE → Reading a node's answer →
+  // "A failure the deadline ended says so").
+  return Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+}
+
+describe('a write with no answer goes again, the same bytes, to the next node', () => {
+  interface Attempt { url: string; body: string | undefined }
+  function stubBases(bases: string[], per: Array<(a: Attempt) => Response | Promise<Response> | Error>): Attempt[] {
+    const attempts: Attempt[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const attempt: Attempt = { url: String(url), body: init?.body as string | undefined };
+      attempts.push(attempt);
+      const step = per[attempts.length - 1];
+      if (step === undefined) throw new Error(`no step for attempt ${attempts.length}`);
+      const out = step(attempt);
+      if (out instanceof Error) throw out;
+      return out;
+    }));
+    void bases; // the write client reads bases() itself; the stub only answers per attempt
+    return attempts;
+  }
+  function writeOver(bases: string[]): WriteClient {
+    return new WriteClient({ bases: () => bases, fetch: (url, init) => fetch(url, init) });
+  }
+
+  it.fails('every base failing reads as today\'s transport failure — `timedOut: true` the last attempt\'s', async () => {
+    const attempts = stubBases(['http://a', 'http://b'], [
+      () => new Error('ECONNREFUSED'),
+      () => timeoutError(),
+    ]);
+    const res = await writeOver(['http://a', 'http://b']).submitLike({});
+    expect(attempts.length).toBe(2);
+    expect(isRejection(res)).toBe(true);
+    if (!isRejection(res)) return;
+    expect(res.status).toBe(0);
+    expect(res.timedOut).toBe(true);
+    expect(res.message).toBe('timed out');
+  });
+
+  it.fails('two attempts carry the same body bytes', async () => {
+    const attempts = stubBases(['http://a', 'http://b'], [
+      () => timeoutError(),
+      () => new Response(JSON.stringify(okLikeBody()), { status: 200 }),
+    ]);
+    const tx = { inputs: ['cc'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1 };
+    await writeOver(['http://a', 'http://b']).submitLike(tx);
+    expect(attempts.length).toBe(2);
+    expect(attempts[0]!.body).toBeDefined();
+    expect(attempts[0]!.body).toBe(attempts[1]!.body);
+  });
+
+  it('a 400 from the first base is the answer — no second request', async () => {
+    const attempts = stubBases(['http://a', 'http://b'], [
+      () => new Response(JSON.stringify({ error: 400, reason: 'bad' }), { status: 400 }),
+    ]);
+    const res = await writeOver(['http://a', 'http://b']).submitLike({});
+    expect(attempts.length).toBe(1);
+    expect(isRejection(res)).toBe(true);
+    if (!isRejection(res)) return;
+    expect(res.status).toBe(400);
+    expect(res.message).toBe('bad');
+  });
+
+  it('one base in the list — one request, as the web build sends', async () => {
+    const attempts = stubBases(['http://a'], [
+      () => new Response(JSON.stringify(okLikeBody()), { status: 200 }),
+    ]);
+    const res = await writeOver(['http://a']).submitLike({});
+    expect(attempts.length).toBe(1);
+    expect(attempts[0]!.url).toBe('http://a/likes');
+    expect(isRejection(res)).toBe(false);
   });
 });

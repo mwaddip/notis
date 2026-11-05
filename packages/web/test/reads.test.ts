@@ -154,7 +154,7 @@ describe("the /karma reader rebuilds a row with `income` of the mark's domain", 
   afterEach(() => { vi.unstubAllGlobals(); });
 
   const readFor = async (): Promise<unknown> => {
-    const client = new NodeClient(() => '');
+    const client = new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) });
     return readBuildContext(client, AUTHOR);
   };
 
