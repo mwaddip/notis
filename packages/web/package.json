@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && tsup src/mesh/index.ts --format esm --dts --out-dir dist-mesh",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.browser.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
