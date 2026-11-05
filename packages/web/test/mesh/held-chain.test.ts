@@ -496,3 +496,83 @@ describe('HeldChain — headerAt', () => {
     expect(held.headerAt(100)).toBeNull();
   });
 });
+
+// MESH_INTERFACE → The client's node list → "The client's chain";
+// WEB_INTERFACE → The extension → "The verified figures" → "The anchor";
+// WEB_INTERFACE → The extension → "The chain's name" — the chain's two
+// ends and its name, read off the window and block 1.
+
+describe('HeldChain — suffixHead', () => {
+  it.fails('before settle the suffix head is null', () => {
+    const h = new HeldChain(devnetProfile, K);
+    expect(h.suffixHead()).toBeNull();
+  });
+
+  it.fails('after settle the suffix head is the window\'s first header (tip less k−1)', () => {
+    const { chain, held } = seatedChain(10);
+    // Window spans heights 6..10 (k = 5); the suffix head is at height 6.
+    const head = held.suffixHead();
+    expect(head).not.toBeNull();
+    expect(head!.height).toBe(6);
+    expect(hashOf(head!)).toBe(hashOf(chain[5]!.header));
+  });
+
+  it.fails('after an extend by one the suffix head and tip each move by one', () => {
+    const { chain, held } = seatedChain(10);
+    const parent = chain[9]!.header;
+    const parentHash = hashOf(parent);
+    const scheduled = asertTargetBits(retarget, chain[0]!.header.createdAt, {
+      height: parent.height,
+      createdAt: parent.createdAt,
+    });
+    const b11 = makeBlockAt(11, PROTOCOL_VERSION, {
+      prevBlockHash: parentHash,
+      createdAt: parent.createdAt + devnetProfile.orderingBlockIdealMs,
+      powTargetBits: scheduled,
+    });
+    expect(held.extend(b11.header)).toBe('extended');
+    expect(held.tip()!.height).toBe(11);
+    // The window shifted — the suffix head is at height 7, no longer 6.
+    expect(held.suffixHead()!.height).toBe(7);
+  });
+
+  it.fails('after a second settle with another chain, the suffix head is that chain\'s', () => {
+    const chainA = makeLinkedChain(10, devnetProfile);
+    const held = new HeldChain(devnetProfile, K);
+    held.settle(chainA.slice(5).map(b => b.header), chainA[0]!.header);
+    expect(held.suffixHead()!.height).toBe(6);
+
+    const chainB = makeLinkedChain(12, devnetProfile);
+    held.settle(chainB.slice(7).map(b => b.header), chainB[0]!.header);
+    // The new window spans heights 8..12; the suffix head is at height 8.
+    const head = held.suffixHead();
+    expect(head).not.toBeNull();
+    expect(head!.height).toBe(8);
+    expect(hashOf(head!)).toBe(hashOf(chainB[7]!.header));
+  });
+});
+
+describe('HeldChain — block1Hash', () => {
+  it.fails('before settle the block1 hash is null', () => {
+    const h = new HeldChain(devnetProfile, K);
+    expect(h.block1Hash()).toBeNull();
+  });
+
+  it.fails('after settle the block1 hash equals blockHash of the proof\'s first header', () => {
+    const { chain, held } = seatedChain(10);
+    expect(held.block1Hash()).toBe(hashOf(chain[0]!.header));
+  });
+
+  it.fails('after a second settle with another chain, the block1 hash is the new chain\'s', () => {
+    const chainA = makeLinkedChain(10, devnetProfile);
+    const held = new HeldChain(devnetProfile, K);
+    held.settle(chainA.slice(5).map(b => b.header), chainA[0]!.header);
+    expect(held.block1Hash()).toBe(hashOf(chainA[0]!.header));
+
+    const chainB = makeLinkedChain(12, devnetProfile);
+    held.settle(chainB.slice(7).map(b => b.header), chainB[0]!.header);
+    expect(held.block1Hash()).toBe(hashOf(chainB[0]!.header));
+    // The old block 1 is gone.
+    expect(held.block1Hash()).not.toBe(hashOf(chainA[0]!.header));
+  });
+});

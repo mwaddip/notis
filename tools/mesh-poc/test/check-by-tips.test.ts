@@ -1611,4 +1611,84 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     // suffix.
     expect(client.state().tip?.height).toBe(K + 2);
   }, 180_000);
+
+  it.fails('seated, anchor and chain move with the chain', async () => {
+    // WEB_INTERFACE → The extension → "The verified figures" → "The anchor";
+    // WEB_INTERFACE → The extension → "The chain's name" — after the first
+    // check `state.seated` is true, `state.anchor` names the proof's tip and
+    // its suffix head, and `state.chain` is the proof's genesisHash (block
+    // 1's blockHash). After a gossiped block links, both ends of the anchor
+    // move by one.
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const upA = await chainUpstream(chain); ups.push(upA);
+    const upB = await chainUpstream(chain); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[] } = { a: chain, b: chain };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, K),
+    });
+    clients.push(client);
+
+    // Before any check: no anchor, no chain, not seated.
+    const before = client.state();
+    expect(before.seated).toBe(false);
+    expect(before.anchor).toBeNull();
+    expect(before.chain).toBeNull();
+
+    await client.check(); // settle at K+1
+    const s1 = client.state();
+    expect(s1.seated).toBe(true);
+    // The anchor's tip is the proof's tip header; `chainResolve`'s proof is
+    // the chain's last `k` headers, so the tip header is `chain[K]` (height
+    // K+1) and the suffix head is `chain[chain.length - K]` (height 2).
+    expect(s1.anchor).not.toBeNull();
+    expect(s1.anchor!.tip.height).toBe(K + 1);
+    expect(s1.anchor!.suffixHead.height).toBe(2);
+    expect(blockHash(s1.anchor!.tip)).toBe(blockHash(chain[K]!.header));
+    expect(blockHash(s1.anchor!.suffixHead)).toBe(blockHash(chain[1]!.header));
+    // The chain name is the proof's genesisHash — blockHash of block 1.
+    expect(s1.chain).toBe(blockHash(chain[0]!.header));
+
+    // Gossip one block linked onto the tip. Build it off `chain[K]` and
+    // publish from A's mesh node so the client's gossip handler links it.
+    const extraBlock = makeChildBlock(
+      chain[K]!.header,
+      chain[0]!.header.createdAt,
+      PROFILE,
+    );
+    const TOPIC = gossipTopics(MAGIC_DEVNET).orderingBlock;
+    await vi.waitFor(() => {
+      expect(pubsubOf(client.libp2p).getMeshPeers(TOPIC))
+        .toContain(a.libp2p.peerId.toString());
+      expect(pubsubOf(a.libp2p).getMeshPeers(TOPIC))
+        .toContain(client.libp2p.peerId.toString());
+    }, { timeout: 60_000, interval: 300 });
+    await pubsubOf(a.libp2p).publish(TOPIC, encodeOrderingBlock(extraBlock));
+    await vi.waitFor(() => {
+      expect(client.state().tip?.height).toBe(K + 2);
+    }, { timeout: 15_000, interval: 50 });
+
+    const s2 = client.state();
+    // After the link, each end of the anchor is one higher.
+    expect(s2.anchor).not.toBeNull();
+    expect(s2.anchor!.tip.height).toBe(s1.anchor!.tip.height + 1);
+    expect(s2.anchor!.suffixHead.height).toBe(s1.anchor!.suffixHead.height + 1);
+    // The chain's name does not change — the block 1 is the same.
+    expect(s2.chain).toBe(s1.chain);
+  }, 180_000);
 });

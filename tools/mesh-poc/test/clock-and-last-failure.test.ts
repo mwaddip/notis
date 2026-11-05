@@ -68,6 +68,10 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     checks: over.checks ?? 0,
     traffic: over.traffic ?? emptyTraffic(),
     nodes: over.nodes ?? [],
+    seated: over.seated ?? false,
+    proofs: over.proofs ?? null,
+    anchor: over.anchor ?? null,
+    chain: over.chain ?? null,
   };
 }
 

@@ -57,6 +57,10 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     checks: over.checks ?? 0,
     traffic: over.traffic ?? emptyTraffic(),
     nodes: over.nodes ?? [],
+    seated: over.seated ?? false,
+    proofs: over.proofs ?? null,
+    anchor: over.anchor ?? null,
+    chain: over.chain ?? null,
   };
 }
 
@@ -178,6 +182,7 @@ describe('page/probe.ts', () => {
     let state: ClientState = {
       nodeId: null, transport: null, path: null, lastLeft: null,
       anchorReached: false, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     const fetched: string[] = [];
     const client: FakeClient = {
@@ -242,6 +247,7 @@ describe('page/probe.ts', () => {
     let state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct', lastLeft: null,
       anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     const client: FakeClient = {
       fetch: async () => new Response(body as unknown as BodyInit, { status: 200 }),
@@ -267,6 +273,7 @@ describe('page/probe.ts survives a render', () => {
     const state: ClientState = {
       nodeId: opts.nodeId, transport: 'webrtc-direct', path: 'direct',
       lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     return {
       fetch: async () => new Response(opts.body as unknown as BodyInit, { status: 200 }),
@@ -286,6 +293,7 @@ describe('page/probe.ts survives a render', () => {
     const state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
       lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     render(state, root);
     const after = root.querySelector('pre#probe');
@@ -302,6 +310,7 @@ describe('page/probe.ts survives a render', () => {
     const state1: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
       lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     render(state1, root);
     const state2: ClientState = { ...state1, tip: { height: 7, hash: 'c'.repeat(64) } };
@@ -367,6 +376,10 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
     checks: init.checks ?? 0,
     traffic: emptyTraffic(),
     nodes: init.nodes ?? [],
+    seated: false,
+    proofs: null,
+    anchor: null,
+    chain: null,
   };
   const calls: FakeClient['calls'] = { addByHand: [], read: [], stop: 0 };
   const readQueue: Array<{ nodeId: string } | { error: string }> = (init.readAnswers ?? []).slice();

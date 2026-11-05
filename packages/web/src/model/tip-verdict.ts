@@ -10,7 +10,7 @@ import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
 export type TipVerdict =
   | { kind: 'verified'; nodes: number; height: number }
-  | { kind: 'thin'; reason: 'no-proof' | 'too-short' | 'one-node' | 'split'; height: number | null }
+  | { kind: 'thin'; reason: 'no-proof' | 'too-short' | 'one-node' | 'split' | 'no-anchor'; height: number | null }
   | { kind: 'refused'; reason: 'invalid-proof' | 'outworked'; by: string | null; height: number | null };
 
 export function tipVerdict(result: TipResult): TipVerdict {

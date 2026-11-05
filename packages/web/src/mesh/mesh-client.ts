@@ -28,6 +28,7 @@ import { peerIdFromString } from '@libp2p/peer-id';
 import { decodeOrderingBlock, generateKeyPair, PROTOCOL_VERSION } from '@dagsocial/types';
 import type { NetworkProfile, OrderingBlock } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
+import type { Anchor } from '@dagsocial/nipopow-client';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { isNonNegSafeInt } from '@dagsocial/node-reads';
@@ -308,6 +309,36 @@ export interface ClientState {
   checks: number;
   traffic: ClientTraffic;
   nodes: NodeEntry[];
+  /**
+   * The chain is settled — a proof has verified and seated the window and
+   * block 1 (MESH_INTERFACE → The client's node list → "The client's chain").
+   * `false` at start; `true` from the first check that settles a chain and
+   * for every state write after.
+   */
+  seated: boolean;
+  /**
+   * The last check's proof reads, counted from its `NodeTipResult`s: `asked`
+   * per URL asked, `verified` the number verified, `invalid` the number with
+   * `refuseCode === 'invalid'`, `tooShort` the number with `refuseCode ===
+   * 'too-short'`. `null` before the first check and on a check that read no
+   * proof — a check that places every tip reads none, and the field then
+   * keeps the last check's that read one.
+   */
+  proofs: { asked: number; verified: number; invalid: number; tooShort: number } | null;
+  /**
+   * The two ends of the client's chain — the tip and the suffix head — moving
+   * with every gossiped block the chain links and every re-seat
+   * (WEB_INTERFACE → The extension → "The verified figures" → "The anchor").
+   * Non-null when and only when the chain is seated and the window holds `k`.
+   */
+  anchor: Anchor | null;
+  /**
+   * The lowercase hex `blockHash` of block 1 — the chain's name
+   * (WEB_INTERFACE → The extension → "The chain's name"). Non-null whenever
+   * the chain is seated; the post cache's database name reads it, and nothing
+   * else does.
+   */
+  chain: string | null;
 }
 
 export interface MeshClient {
@@ -645,6 +676,10 @@ class MeshClientImpl implements MeshClient {
       checks: 0,
       traffic: emptyTraffic(),
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
+      seated: false,
+      proofs: null,
+      anchor: null,
+      chain: null,
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — the client's reads open their stream on a
