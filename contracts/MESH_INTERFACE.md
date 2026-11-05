@@ -31,11 +31,18 @@ are at an exact version, one version per package across the three.
 They reach places libp2p does not promise to keep — its `components` object, for a listener added after start (the
 secure WebSocket, a private node's relay listens) and for the listener addresses a private node prints; the dial
 queue's `dial-queue:calculated-addresses` progress event and its `AggregateError` order, for per-address attribution
-— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Two pinned
+— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Three pinned
 packages carry local patches** (pnpm's `patchedDependencies`, the diffs under `patches/`), each held by a case against
 the patched package: `@libp2p/webrtc`, whose certificate renewal timer re-arms past Node's timer limit (→ Transports →
-"The WebRTC-direct certificate persists"), and `@libp2p/http-utils`, whose `readHeaders` hands a request's body back to
-its stream and whose Node-side server adapter is kept out of the browser's import path. A pin that moves carries its
+"The WebRTC-direct certificate persists"); `@libp2p/http-utils`, whose `readHeaders` hands a request's body back to its
+stream and whose Node-side server adapter is kept out of the browser's import path; and `@libp2p/http-fetch`, whose
+request line carries the URL's query, whose string and bytes bodies keep the `content-type` the caller set, and whose
+string body is counted in UTF-8 bytes for its `content-length` — so a mesh read keeps its query and a mesh write its
+JSON body, as over HTTP (→ The node endpoint).
+
+> ⚠ **AHEAD OF CODE (2026-11-05).** `@libp2p/http-fetch`'s patch; until then a mesh request loses its query, a string or
+> bytes body is sent as `text/plain` or `application/octet-stream` whatever the caller set, and a string body's
+> `content-length` counts characters. A pin that moves carries its
 patch to the new version, the cases deciding that it still applies and still holds.
 
 > ⚠ **AHEAD OF CODE (2026-11-05).** The client in `@dagsocial/web`; until then it is `tools/mesh-poc`'s `src/`, its `src/lib.ts`
