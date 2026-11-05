@@ -7744,9 +7744,10 @@ async function main() {
 
   // --- Step 1 — read surface: seed list drives the feed; no `new post` button.
   // The expected first node matches the extension build the run was given —
-  // RA under --light (seed list [RA, RB]), else A (seed list [A, B]) — and
-  // the shell check at the top refuses any other build.
-  const expectedFirstNode = LIGHT ? RA_ORIGIN : RLA_ORIGIN;
+  // A' under --mesh (seed list [A', B']), RA under --light (seed list
+  // [RA, RB]), else RLA (seed list [RLA, RLB]) — and the shell check at the
+  // top refuses any other build.
+  const expectedFirstNode = MESH ? AP_ORIGIN : LIGHT ? RA_ORIGIN : RLA_ORIGIN;
   const s1 = await cx.eval(`(() => ({
     nodes: document.querySelector('meta[name="notis-nodes"]').content,
     newPost: !!document.querySelector('[data-composer-open="@feed"]'),
