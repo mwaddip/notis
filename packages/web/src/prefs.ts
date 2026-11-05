@@ -7,6 +7,7 @@
 // (WEB_INTERFACE → "A faucet is a fact of the deployment, not of the network").
 
 import { NETWORK_PROFILES, type NetworkType } from '@dagsocial/types';
+import type { MeshAnchor } from './mesh';
 import { trimBase } from './base';
 
 export type Theme = 'light' | 'dark';
@@ -83,6 +84,13 @@ export const BUILD_FAUCET_BASE = readMeta('notis-faucet');
 export const BUILD_NODES = readNodesMeta();
 export const BUILD_PUBLIC = readPublicMeta();
 export const BUILD_NETWORK = readNetworkMeta();
+
+// WEB_INTERFACE → The client is served from the node's own origin → "The three
+// later tags" — the effective base of each seed-list entry (a string's own, a
+// node's `api`) and the node entries as `MeshAnchor`. AHEAD OF CODE until the
+// feat commit for the mesh parsing lands beside this stub.
+export const BUILD_NODE_BASES: string[] = [];
+export const BUILD_ANCHORS: MeshAnchor[] = [];
 
 // The wash percentages are large because the wash colour sits at the ground's
 // own lightness — the mix controls how much hue comes through and nothing else,
