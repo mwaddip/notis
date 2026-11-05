@@ -956,12 +956,27 @@ class MeshClientImpl implements MeshClient {
   }
 
   state(): ClientState {
+    // MESH_INTERFACE → The client's node list → "The client's chain";
+    // WEB_INTERFACE → The extension → "The verified figures" → "The anchor",
+    // → "The chain's name" — `seated`, `anchor` and `chain` are the chain's
+    // own answers, read off the live `HeldChain` so a gossiped block linked
+    // between a write and a read of state carries through to `onState`.
+    const seated = this.chain.settled();
+    const tipHdr = this.chain.tip();
+    const suffixHeadHdr = this.chain.suffixHead();
+    const anchor: Anchor | null = tipHdr !== null && suffixHeadHdr !== null
+      ? { tip: tipHdr, suffixHead: suffixHeadHdr }
+      : null;
+    const chain = this.chain.block1Hash();
     return {
       ...this.state_,
       nodes: decorateEntries(this.nodeList.entries(), this.libp2p.getConnections(), {
         readMs: this.readMsMap,
         behindBy: this.behindByMap,
       }),
+      seated,
+      anchor,
+      chain,
     };
   }
 
@@ -1088,6 +1103,12 @@ class MeshClientImpl implements MeshClient {
     for (const e of this.nodeList.entries()) {
       if (e.status === 'ok' || e.status === 'trailing') okTrailingBefore.add(e.notisId);
     }
+
+    // WEB_INTERFACE → The extension → "The verified tip" — the last check's
+    // proof reads, accumulated across every `resolveFn` call in phase 4; the
+    // field is written at end-of-check only when `asked > 0`, so a check that
+    // places every tip and reads no proof leaves the previous value standing.
+    const proofsThisCheck = { asked: 0, verified: 0, invalid: 0, tooShort: 0 };
 
     // Phase 1: pre-dial every candidate the client has not already
     // connected to, so libp2p's unexpected-peer failure is caught per
@@ -1305,6 +1326,17 @@ class MeshClientImpl implements MeshClient {
         timedFetch,
       );
 
+      // WEB_INTERFACE → The extension → "The verified tip" — count this
+      // resolveFn's reads into the check's running total. `asked` is the
+      // nodes asked, `verified`, `invalid` and `tooShort` the classes the
+      // verdict's rows 2 and 3 read.
+      for (const n of result.nodes) {
+        proofsThisCheck.asked += 1;
+        if (n.verified) proofsThisCheck.verified += 1;
+        if (n.refuseCode === 'invalid') proofsThisCheck.invalid += 1;
+        if (n.refuseCode === 'too-short') proofsThisCheck.tooShort += 1;
+      }
+
       const nowMs = this.clock();
       for (const n of result.nodes) {
         const nid = idOfMeshUrl(n.url);
@@ -1459,6 +1491,12 @@ class MeshClientImpl implements MeshClient {
     this.state_.agreement = agreementCounts(entries);
 
     this.state_.anchorReached = this.nodeList.anchorReached();
+    // WEB_INTERFACE → The extension → "The verified tip" — the field keeps
+    // the last check's that read one, so a check that placed every tip and
+    // read no proof leaves `proofs` standing.
+    if (proofsThisCheck.asked > 0) {
+      this.state_.proofs = proofsThisCheck;
+    }
     // MESH_INTERFACE → The client's node list → "A routed read goes
     // to a node its need allows" — "how many checks it has completed,
     // so a reader can tell one check's state from the next". The

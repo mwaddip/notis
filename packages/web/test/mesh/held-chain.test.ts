@@ -503,12 +503,12 @@ describe('HeldChain — headerAt', () => {
 // ends and its name, read off the window and block 1.
 
 describe('HeldChain — suffixHead', () => {
-  it.fails('before settle the suffix head is null', () => {
+  it('before settle the suffix head is null', () => {
     const h = new HeldChain(devnetProfile, K);
     expect(h.suffixHead()).toBeNull();
   });
 
-  it.fails('after settle the suffix head is the window\'s first header (tip less k−1)', () => {
+  it('after settle the suffix head is the window\'s first header (tip less k−1)', () => {
     const { chain, held } = seatedChain(10);
     // Window spans heights 6..10 (k = 5); the suffix head is at height 6.
     const head = held.suffixHead();
@@ -517,7 +517,7 @@ describe('HeldChain — suffixHead', () => {
     expect(hashOf(head!)).toBe(hashOf(chain[5]!.header));
   });
 
-  it.fails('after an extend by one the suffix head and tip each move by one', () => {
+  it('after an extend by one the suffix head and tip each move by one', () => {
     const { chain, held } = seatedChain(10);
     const parent = chain[9]!.header;
     const parentHash = hashOf(parent);
@@ -536,7 +536,7 @@ describe('HeldChain — suffixHead', () => {
     expect(held.suffixHead()!.height).toBe(7);
   });
 
-  it.fails('after a second settle with another chain, the suffix head is that chain\'s', () => {
+  it('after a second settle with another chain, the suffix head is that chain\'s', () => {
     const chainA = makeLinkedChain(10, devnetProfile);
     const held = new HeldChain(devnetProfile, K);
     held.settle(chainA.slice(5).map(b => b.header), chainA[0]!.header);
@@ -553,17 +553,17 @@ describe('HeldChain — suffixHead', () => {
 });
 
 describe('HeldChain — block1Hash', () => {
-  it.fails('before settle the block1 hash is null', () => {
+  it('before settle the block1 hash is null', () => {
     const h = new HeldChain(devnetProfile, K);
     expect(h.block1Hash()).toBeNull();
   });
 
-  it.fails('after settle the block1 hash equals blockHash of the proof\'s first header', () => {
+  it('after settle the block1 hash equals blockHash of the proof\'s first header', () => {
     const { chain, held } = seatedChain(10);
     expect(held.block1Hash()).toBe(hashOf(chain[0]!.header));
   });
 
-  it.fails('after a second settle with another chain, the block1 hash is the new chain\'s', () => {
+  it('after a second settle with another chain, the block1 hash is the new chain\'s', () => {
     const chainA = makeLinkedChain(10, devnetProfile);
     const held = new HeldChain(devnetProfile, K);
     held.settle(chainA.slice(5).map(b => b.header), chainA[0]!.header);

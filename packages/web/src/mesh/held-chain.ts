@@ -74,21 +74,21 @@ export class HeldChain {
    * anchor a figures run proves against
    * (WEB_INTERFACE → The extension → "The verified figures" → "The anchor").
    * `null` otherwise — before the first settle, or while the window is still
-   * growing. Stubbed; the implementation lands with the verdict and anchor
-   * wiring (feat commit).
+   * growing.
    */
   suffixHead(): BlockHeader | null {
-    throw new Error('HeldChain.suffixHead(): not implemented');
+    if (this.window.length < this.k) return null;
+    return this.window[0] ?? null;
   }
 
   /**
    * The lowercase hex `blockHash` of the block 1 the chain holds — the chain's
    * name, non-null whenever the chain is seated
    * (WEB_INTERFACE → The extension → "The chain's name"). `null` before `settle`.
-   * Stubbed; the implementation lands with the verdict and anchor wiring.
    */
   block1Hash(): string | null {
-    throw new Error('HeldChain.block1Hash(): not implemented');
+    if (this.block1 === null) return null;
+    return blockHash(this.block1);
   }
 
   place(hash: string | null, height: number): Placement {

@@ -1612,14 +1612,17 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(client.state().tip?.height).toBe(K + 2);
   }, 180_000);
 
-  it.fails('seated, anchor and chain move with the chain', async () => {
+  it('seated, anchor and chain move with the chain', async () => {
     // WEB_INTERFACE → The extension → "The verified figures" → "The anchor";
     // WEB_INTERFACE → The extension → "The chain's name" — after the first
     // check `state.seated` is true, `state.anchor` names the proof's tip and
     // its suffix head, and `state.chain` is the proof's genesisHash (block
     // 1's blockHash). After a gossiped block links, both ends of the anchor
-    // move by one.
-    const chain = makeLinkedChain(K + 1, PROFILE);
+    // move by one. The HeldChain's `k` is `DEFAULT_K`, so the proof must carry
+    // that many suffix headers for the window to settle full and the suffix
+    // head to be non-null.
+    const K_DEFAULT = 20;
+    const chain = makeLinkedChain(K_DEFAULT + 1, PROFILE);
     const upA = await chainUpstream(chain); ups.push(upA);
     const upB = await chainUpstream(chain); ups.push(upB);
     const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
@@ -1640,7 +1643,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       ],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      resolve: chainResolve(chainOf, K),
+      resolve: chainResolve(chainOf, K_DEFAULT),
     });
     clients.push(client);
 
@@ -1650,24 +1653,25 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(before.anchor).toBeNull();
     expect(before.chain).toBeNull();
 
-    await client.check(); // settle at K+1
+    await client.check(); // settle at K_DEFAULT + 1
     const s1 = client.state();
     expect(s1.seated).toBe(true);
     // The anchor's tip is the proof's tip header; `chainResolve`'s proof is
-    // the chain's last `k` headers, so the tip header is `chain[K]` (height
-    // K+1) and the suffix head is `chain[chain.length - K]` (height 2).
+    // the chain's last `K_DEFAULT` headers, so the tip header is
+    // `chain[K_DEFAULT]` (height K_DEFAULT + 1) and the suffix head is
+    // `chain[chain.length - K_DEFAULT]` (height 2).
     expect(s1.anchor).not.toBeNull();
-    expect(s1.anchor!.tip.height).toBe(K + 1);
+    expect(s1.anchor!.tip.height).toBe(K_DEFAULT + 1);
     expect(s1.anchor!.suffixHead.height).toBe(2);
-    expect(blockHash(s1.anchor!.tip)).toBe(blockHash(chain[K]!.header));
+    expect(blockHash(s1.anchor!.tip)).toBe(blockHash(chain[K_DEFAULT]!.header));
     expect(blockHash(s1.anchor!.suffixHead)).toBe(blockHash(chain[1]!.header));
     // The chain name is the proof's genesisHash — blockHash of block 1.
     expect(s1.chain).toBe(blockHash(chain[0]!.header));
 
-    // Gossip one block linked onto the tip. Build it off `chain[K]` and
-    // publish from A's mesh node so the client's gossip handler links it.
+    // Gossip one block linked onto the tip. Build it off `chain[K_DEFAULT]`
+    // and publish from A's mesh node so the client's gossip handler links it.
     const extraBlock = makeChildBlock(
-      chain[K]!.header,
+      chain[K_DEFAULT]!.header,
       chain[0]!.header.createdAt,
       PROFILE,
     );
@@ -1680,7 +1684,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     }, { timeout: 60_000, interval: 300 });
     await pubsubOf(a.libp2p).publish(TOPIC, encodeOrderingBlock(extraBlock));
     await vi.waitFor(() => {
-      expect(client.state().tip?.height).toBe(K + 2);
+      expect(client.state().tip?.height).toBe(K_DEFAULT + 2);
     }, { timeout: 15_000, interval: 50 });
 
     const s2 = client.state();
