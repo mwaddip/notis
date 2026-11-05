@@ -183,19 +183,53 @@ describe('cornerTitle — verdict-aware titles, word for word', () => {
   it('checking says checking the chain', () => {
     expect(cornerTitle('checking', 7766)).toBe('checking the chain · tip 7766');
   });
-  it('thin has one wording per reason', () => {
+  it.fails('thin has one wording per reason — the new wordings name no node', () => {
+    // WEB_INTERFACE → The status corner — the new titles replace every
+    // "this node" phrasing with words that describe the whole check.
     expect(cornerTitle('thin', 7766, THIN_ONE)).toBe('only one node could be checked · tip 7766');
     expect(cornerTitle('thin', 12, THIN_SHORT)).toBe('the chain is too short to check yet · tip 12');
-    expect(cornerTitle('thin', 7766, THIN_NO)).toBe('this node served no proof · tip 7766');
-    expect(cornerTitle('thin', 7766, THIN_SPLIT)).toBe('the nodes share no block to compare · tip 7766');
+    expect(cornerTitle('thin', 7766, THIN_NO)).toBe('no node served a proof · tip 7766');
+    expect(cornerTitle('thin', 7766, THIN_SPLIT)).toBe('a node names a tip off this chain · tip 7766');
   });
-  it('refused invalid-proof: this node\'s proof did not verify', () => {
-    expect(cornerTitle('refused', 7766, REFUSED_INVALID)).toBe("this node's proof did not verify · tip 7766");
+  it.fails('thin no-anchor reads: only nodes this build does not name could be checked', () => {
+    const THIN_NO_ANCHOR: TipVerdict = { kind: 'thin', reason: 'no-anchor', height: 7766 };
+    expect(cornerTitle('thin', 7766, THIN_NO_ANCHOR))
+      .toBe('only nodes this build does not name could be checked · tip 7766');
   });
-  it('a null tip reads as — in every verdict-aware title', () => {
+  it.fails('refused invalid-proof: no node\'s proof verified', () => {
+    expect(cornerTitle('refused', 7766, REFUSED_INVALID)).toBe("no node's proof verified · tip 7766");
+  });
+  it.fails('a null tip reads as — in every verdict-aware title', () => {
     expect(cornerTitle('checking', null)).toBe('checking the chain · tip —');
     expect(cornerTitle('thin', null, THIN_ONE)).toBe('only one node could be checked · tip —');
-    expect(cornerTitle('refused', null, REFUSED_INVALID)).toBe("this node's proof did not verify · tip —");
+    expect(cornerTitle('refused', null, REFUSED_INVALID)).toBe("no node's proof verified · tip —");
+  });
+  it('no title names a node, carries a URL or carries an address', () => {
+    // Every corner title for every verdict + state pair — none contains a
+    // host, a URL or a multiaddr-shaped fragment (WEB_INTERFACE → The
+    // status corner).
+    const THIN_NO_ANCHOR: TipVerdict = { kind: 'thin', reason: 'no-anchor', height: 7766 };
+    const titles = [
+      cornerTitle('fresh', 7766, VERIFIED),
+      cornerTitle('fresh', 7766),
+      cornerTitle('stale', 7766, VERIFIED),
+      cornerTitle('down', 7766),
+      cornerTitle('none', null),
+      cornerTitle('checking', 7766),
+      cornerTitle('thin', 7766, THIN_ONE),
+      cornerTitle('thin', 7766, THIN_NO),
+      cornerTitle('thin', 7766, THIN_SPLIT),
+      cornerTitle('thin', 7766, THIN_SHORT),
+      cornerTitle('thin', 7766, THIN_NO_ANCHOR),
+      cornerTitle('refused', 7766, REFUSED_INVALID),
+    ];
+    for (const t of titles) {
+      expect(t).not.toMatch(/https?:\/\//);
+      expect(t).not.toMatch(/\/ip4\//);
+      expect(t).not.toMatch(/\/p2p\//);
+      expect(t).not.toMatch(/\bnotis\.fun\b/);
+      expect(t).not.toMatch(/\bnode02\b/);
+    }
   });
 });
 
