@@ -186,7 +186,7 @@ describe("settings window — the extension's node row adds a node by hand", () 
   // with a line beside the field; blank removes.
   const VALID_ADDR = '/ip4/127.0.0.1/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
 
-  it.fails('with a handNode seam, the row holds its stored address and the hint names what to paste', () => {
+  it('with a handNode seam, the row holds its stored address and the hint names what to paste', () => {
     const body = render(handlers({
       handNode: {
         address: () => VALID_ADDR,
@@ -200,7 +200,7 @@ describe("settings window — the extension's node row adds a node by hand", () 
     expect(hint.textContent).toMatch(/the address a node prints at start/);
   });
 
-  it.fails('a commit calling the seam leaves the field unchanged and no error line stands', () => {
+  it('a commit calling the seam leaves the field unchanged and no error line stands', () => {
     const commit = vi.fn(() => null);
     const body = render(handlers({
       handNode: { address: () => '', commit },
@@ -213,7 +213,7 @@ describe("settings window — the extension's node row adds a node by hand", () 
     expect(field.querySelector('.error')).toBeNull();
   });
 
-  it.fails('an error from the seam shows a line beside the field', () => {
+  it('an error from the seam shows a line beside the field', () => {
     const commit = vi.fn(() => 'addresses with DNS names are not accepted');
     const body = render(handlers({
       handNode: { address: () => '', commit },
@@ -227,7 +227,7 @@ describe("settings window — the extension's node row adds a node by hand", () 
     expect(line!.textContent).toBe('addresses with DNS names are not accepted');
   });
 
-  it.fails('blank commits an empty string to the seam', () => {
+  it('blank commits an empty string to the seam', () => {
     const commit = vi.fn(() => null);
     const body = render(handlers({
       handNode: { address: () => VALID_ADDR, commit },
