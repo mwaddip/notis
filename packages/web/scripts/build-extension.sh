@@ -56,7 +56,7 @@ export VITE_API_BASE=""
 # (WEB_INTERFACE → The extension → "The manifest").
 export VITE_FAUCET_BASE=${VITE_FAUCET_BASE-https://notis.fun/testnet/faucet}
 export VITE_PUBLIC_ORIGIN=${VITE_PUBLIC_ORIGIN:-https://notis.fun}
-export VITE_NODES=${VITE_NODES:-'["https://notis.fun/testnet/api","https://node02.notis.fun/testnet/api"]'}
+export VITE_NODES=${VITE_NODES:-'[{"notisId":"68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09","addrs":["/ip4/64.176.70.50/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa"],"api":"https://notis.fun/testnet/api"},{"notisId":"e6380c4a6f836f44d6076cde32c8226324b159ef1d909e88dcafdd96a5ca9e72","addrs":["/ip4/65.20.105.28/udp/9733/webrtc-direct/certhash/uEiANgUbw3RldQddGIXGt_xk6i52NPumh1hAIG2nMKkHQRQ/p2p/12D3KooWRK3WSeTr9LZQtEVz1FsdmfMMbZk59qJwpv5dW4ECrKvq"],"api":"https://node02.notis.fun/testnet/api"}]'}
 # `-` (not `:-`): only unset falls back to the default; an explicit empty
 # string reaches the emitter as the empty base, so no bridge and no
 # `content_scripts` (WEB_INTERFACE → "The build's `notis-public`").
@@ -132,6 +132,37 @@ if [ -n "$VITE_NETWORK" ]; then
   [ "$matched" = 1 ] \
     || { echo "FAIL: VITE_NETWORK=$VITE_NETWORK is not one of the network names ($NETWORK_NAMES)"; exit 1; }
 fi
+
+# Every entry of `notis-nodes` is a node — a JSON object with `notisId`,
+# `addrs` and `api` — and no address carries a DNS component
+# (WEB_INTERFACE → The extension → "The seed list, the faucet's base and the
+# network's name"). `parseNodesMeta` in `src/prefs.ts` refuses a bare API base
+# or a `/dns…/` address at load; this build-time check refuses the zip the
+# same way, naming which entry and why. An empty array (mainnet) passes.
+VITE_NODES_CHECK=$(node -e "
+const nodes = JSON.parse(process.argv[1]);
+if (!Array.isArray(nodes)) { process.stdout.write('is not a JSON array'); process.exit(0); }
+for (let i = 0; i < nodes.length; i++) {
+  const e = nodes[i];
+  if (typeof e !== 'object' || e === null || Array.isArray(e)) {
+    process.stdout.write('entry ' + i + ' is not a node (a bare API base): ' + JSON.stringify(e));
+    process.exit(0);
+  }
+  const addrs = e.addrs;
+  if (!Array.isArray(addrs)) {
+    process.stdout.write('entry ' + i + ' has no addrs array: ' + JSON.stringify(e));
+    process.exit(0);
+  }
+  for (const a of addrs) {
+    if (typeof a === 'string' && (a.includes('/dns4/') || a.includes('/dns6/') || a.includes('/dnsaddr/'))) {
+      process.stdout.write('entry ' + i + ' address carries a DNS component: ' + a);
+      process.exit(0);
+    }
+  }
+}
+" "$VITE_NODES")
+[ -z "$VITE_NODES_CHECK" ] \
+  || { echo "FAIL: VITE_NODES $VITE_NODES_CHECK"; exit 1; }
 
 # Firefox's `browser_specific_settings` — the whole object stated literally
 # here, a second statement of the contract's object on purpose: a check that
