@@ -1,15 +1,12 @@
-import { applyPrefs, BUILD_NODE_BASES, BUILD_ANCHORS, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE, prefs } from './prefs';
+import { applyPrefs, BUILD_ANCHORS, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE } from './prefs';
 import { App } from './app';
 import { decideMode } from './mode';
 import { createTabs, type Tabs } from './tabs';
 import { identity } from './identity/identity';
 import { bootstrapProxy } from './extension/proxy';
 import { wrapTabs } from './extension/handover';
-import { createFiguresVerifier } from './extension/figures-verifier';
-import { createNamesVerifier } from './extension/names-verifier';
 import { createPostsVerifier } from './extension/posts-verifier';
 import { createPostCache, rememberedChain } from './extension/post-cache';
-import { createPostResolver } from './extension/post-resolver';
 import type { Api } from './api/client';
 import type { WriteClient } from './api/write';
 import type { HandNodeSeam } from './view/settings';
@@ -44,31 +41,26 @@ const mode = decideMode(location.pathname, WEB_BASE);
 // `isExtension` keeps `handover.ts` out of the web bundle (build-release.sh's `chrome.` check).
 const tabs: Tabs = isExtension ? wrapTabs(createTabs(), chrome) : createTabs();
 
-// WEB_INTERFACE → The extension → "The post check" — the posts verifier is
-// handed under the extension build alone, so Rollup dead-code-eliminates
-// createPostsVerifier and `checkPosts` from the web bundle.
-const postsVerifier: PostsVerifier | undefined = isExtension && BUILD_NETWORK !== null
-  ? createPostsVerifier()
-  : undefined;
-// WEB_INTERFACE → The extension → "The post cache" — the cache is built
-// under the same static condition.
-const postCache: PostCache | undefined = isExtension && BUILD_NETWORK !== null
-  ? createPostCache()
-  : undefined;
-if (postCache) {
-  const chain = rememberedChain();
-  if (chain !== null) void postCache.open(chain);
-}
-
 let readClient: Api | undefined;
 let writeClientSeam: WriteClient | undefined;
 let verifier: TipVerifier | undefined;
 let figuresVerifier: FiguresVerifier | undefined;
 let namesVerifier: NamesVerifier | undefined;
+let postsVerifier: PostsVerifier | undefined;
+let postCache: PostCache | undefined;
 let postResolver: PostResolver | undefined;
 let handNodeSeam: HandNodeSeam | undefined;
 
-if (isExtension && BUILD_NETWORK !== null && postsVerifier !== undefined) {
+if (isExtension && BUILD_NETWORK !== null) {
+  // WEB_INTERFACE → The extension → "The post check" and "The post cache" —
+  // the posts verifier and the cache are handed under the extension build
+  // alone, so Rollup dead-code-eliminates createPostsVerifier, createPostCache
+  // and `checkPosts` from the web bundle.
+  postsVerifier = createPostsVerifier();
+  postCache = createPostCache();
+  const chain = rememberedChain();
+  if (chain !== null) void postCache.open(chain);
+
   // WEB_INTERFACE → The extension → "The mesh is the extension's first
   // path" — the extension build starts the mesh client with the build's
   // anchors, and the seams module wraps its `fetch` and `base`/`order` as
@@ -99,17 +91,6 @@ if (isExtension && BUILD_NETWORK !== null && postsVerifier !== undefined) {
   namesVerifier = seams.namesVerifier;
   postResolver = seams.postResolver;
   handNodeSeam = seams.handNodeSeam;
-} else if (isExtension && BUILD_NETWORK !== null) {
-  // An extension build with a network but no posts verifier is a defect; keep
-  // the figures/names paths off so the App does not receive one without the
-  // other. The condition above folds `postsVerifier !== undefined`.
-  figuresVerifier = createFiguresVerifier({ network: BUILD_NETWORK, fetch: fetch.bind(globalThis) });
-  namesVerifier = createNamesVerifier({ fetch: fetch.bind(globalThis) });
-  postResolver = createPostResolver({
-    nodes: (): string[] => [prefs.node, ...BUILD_NODE_BASES].filter((b) => b !== ''),
-    fetch: fetch.bind(globalThis),
-    check: (): never => { throw new Error('a posts verifier is handed without a post resolver'); },
-  });
 }
 
 new App(
