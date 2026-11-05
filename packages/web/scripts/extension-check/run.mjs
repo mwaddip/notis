@@ -4130,7 +4130,8 @@ function nameChecksFromRelayLog(log, since, boxId) {
   const checks = [];
   let open = null;
   for (const e of log.filter((x) => x.at >= since).sort((a, b) => a.at - b.at)) {
-    const u = new URL(e.path, 'http://relay');
+    // Tip-relay log entries carry the request's `url` (startTipRelay's pushes).
+    const u = new URL(e.url, 'http://relay');
     if (u.pathname.toLowerCase() === proofPath) {
       const height = Number(u.searchParams.get('atHeight'));
       if (open !== null && open.tip === null && height === open.suffixHead + TIP_K - 1) {
@@ -4157,8 +4158,9 @@ function nameChecksFromRelayLog(log, since, boxId) {
 // decided it), a press of the corner (within 3 s of one), or unexplained — the
 // ten-minute clock among what that leaves.
 function tipRunsFromRelayLog(log, since, { presses = [], checks = [] } = {}) {
+  // Tip-relay log entries carry the request's `url` (startTipRelay's pushes).
   return log
-    .filter((e) => e.at >= since && new URL(e.path, 'http://relay').pathname.startsWith('/nipopow/proof/'))
+    .filter((e) => e.at >= since && new URL(e.url, 'http://relay').pathname.startsWith('/nipopow/proof/'))
     .sort((a, b) => a.at - b.at)
     .map((e, i) => {
       let why = 'unexplained';
