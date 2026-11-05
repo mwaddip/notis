@@ -1759,10 +1759,8 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
 
   it('a read before the first check ends is served by an anchor at its API base', async () => {
     // MESH_INTERFACE → The client's node list → "Before the first check
-    // ends an anchor serves any need, over its connection or at its API
-    // base, since a verdict never blocks a read" — with no check yet
-    // completed the read reaches the anchor's api, not a transport
-    // failure.
+    // ends an anchor serves any need" — with no check yet completed the
+    // read reaches the anchor's api, not a transport failure.
     const chain = makeLinkedChain(5, PROFILE);
     const up = await chainUpstream(chain); ups.push(up);
     const k = nodeKeyFromKeyPair(generateKeyPair());
@@ -1788,11 +1786,11 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 60_000);
 
   it("one anchor's certhash wrong: its reads go to api, the other anchor's over the mesh", async () => {
-    // MESH_INTERFACE → The client's node list → the "address answers
-    // with another key" row and the "An entry may carry an API base"
-    // row — a dial whose certhash does not match the peer's fails as
-    // transport, and the entry falls back to its api. The reachable
-    // anchor's reads stay on the mesh. The route the client picks is
+    // MESH_INTERFACE → The client's node list → "An entry may carry an
+    // API base" — a dial whose certhash does not match the peer's
+    // fails as transport, and the entry falls back to its api. The
+    // reachable anchor's reads stay on the mesh. The route the client
+    // picks is
     // visible on each entry's `transport`/`path` pair.
     const K_DEFAULT = 20;
     const chain = makeLinkedChain(K_DEFAULT + 1, PROFILE);

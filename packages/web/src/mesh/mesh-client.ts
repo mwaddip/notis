@@ -1030,10 +1030,9 @@ class MeshClientImpl implements MeshClient {
     }
 
     // MESH_INTERFACE → The client's node list → "Before the first check
-    // ends an anchor serves any need, over its connection or at its API
-    // base, since a verdict never blocks a read". Status alone does not
-    // refuse here — but `blacklisted` always does (the "lie" row stays
-    // "never a candidate" at every stage).
+    // ends an anchor serves any need". Status alone does not refuse
+    // here — but `blacklisted` always does (the "lie" row stays "never
+    // a candidate" at every stage).
     const firstCheckEnded = this.state_.checks > 0;
     if (pickedId === null && !firstCheckEnded) {
       for (const e of entries) {

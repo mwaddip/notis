@@ -190,9 +190,8 @@ describe('orderServers', () => {
 
   it('before the first check ends, every anchor serves any need; others do not', () => {
     // MESH_INTERFACE → The client's node list → "Before the first check
-    // ends an anchor serves any need, over its connection or at its API
-    // base". A non-anchor's status alone would allow nothing — until a
-    // check reads it.
+    // ends an anchor serves any need". A non-anchor's status alone
+    // would allow nothing — until a check reads it.
     const nodes: OrderCandidate[] = [
       ocand(idA, { status: 'new', meshUsable: true, anchor: true, api: 'https://a.example' }),
       ocand(idB, { status: 'new', meshUsable: false, anchor: true, api: 'https://b.example' }),
@@ -207,8 +206,8 @@ describe('orderServers', () => {
   });
 
   it('a blacklisted anchor is never in the order, at any stage', () => {
-    // MESH_INTERFACE → The client's node list → "A `blacklisted` node
-    // is never one [a candidate]" — the before-first-check branch
+    // MESH_INTERFACE → The client's node list → "Candidates" — a
+    // `blacklisted` node is never one, the before-first-check branch
     // honours this too; and a blacklisted node is not need-allowed in
     // the after-first-check branch.
     const nodes: OrderCandidate[] = [
