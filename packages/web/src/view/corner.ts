@@ -81,13 +81,14 @@ export function cornerTitle(state: CornerState, tip: number | null, verdict?: Ti
     if (verdict && verdict.kind === 'thin') {
       if (verdict.reason === 'one-node') return `only one node could be checked · tip ${t}`;
       if (verdict.reason === 'too-short') return `the chain is too short to check yet · tip ${t}`;
-      if (verdict.reason === 'no-proof') return `this node served no proof · tip ${t}`;
-      if (verdict.reason === 'split') return `the nodes share no block to compare · tip ${t}`;
+      if (verdict.reason === 'no-proof') return `no node served a proof · tip ${t}`;
+      if (verdict.reason === 'split') return `a node names a tip off this chain · tip ${t}`;
+      if (verdict.reason === 'no-anchor') return `only nodes this build does not name could be checked · tip ${t}`;
     }
     return `the chain could not be checked · tip ${t}`;
   }
   // state === 'refused'
-  return `this node's proof did not verify · tip ${t}`;
+  return `no node's proof verified · tip ${t}`;
 }
 
 /** The corner is a `<button>` holding the dot and the height, rendered in place

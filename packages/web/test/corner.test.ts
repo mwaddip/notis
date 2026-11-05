@@ -183,7 +183,7 @@ describe('cornerTitle — verdict-aware titles, word for word', () => {
   it('checking says checking the chain', () => {
     expect(cornerTitle('checking', 7766)).toBe('checking the chain · tip 7766');
   });
-  it.fails('thin has one wording per reason — the new wordings name no node', () => {
+  it('thin has one wording per reason — the new wordings name no node', () => {
     // WEB_INTERFACE → The status corner — the new titles replace every
     // "this node" phrasing with words that describe the whole check.
     expect(cornerTitle('thin', 7766, THIN_ONE)).toBe('only one node could be checked · tip 7766');
@@ -191,15 +191,15 @@ describe('cornerTitle — verdict-aware titles, word for word', () => {
     expect(cornerTitle('thin', 7766, THIN_NO)).toBe('no node served a proof · tip 7766');
     expect(cornerTitle('thin', 7766, THIN_SPLIT)).toBe('a node names a tip off this chain · tip 7766');
   });
-  it.fails('thin no-anchor reads: only nodes this build does not name could be checked', () => {
+  it('thin no-anchor reads: only nodes this build does not name could be checked', () => {
     const THIN_NO_ANCHOR: TipVerdict = { kind: 'thin', reason: 'no-anchor', height: 7766 };
     expect(cornerTitle('thin', 7766, THIN_NO_ANCHOR))
       .toBe('only nodes this build does not name could be checked · tip 7766');
   });
-  it.fails('refused invalid-proof: no node\'s proof verified', () => {
+  it('refused invalid-proof: no node\'s proof verified', () => {
     expect(cornerTitle('refused', 7766, REFUSED_INVALID)).toBe("no node's proof verified · tip 7766");
   });
-  it.fails('a null tip reads as — in every verdict-aware title', () => {
+  it('a null tip reads as — in every verdict-aware title', () => {
     expect(cornerTitle('checking', null)).toBe('checking the chain · tip —');
     expect(cornerTitle('thin', null, THIN_ONE)).toBe('only one node could be checked · tip —');
     expect(cornerTitle('refused', null, REFUSED_INVALID)).toBe("no node's proof verified · tip —");
@@ -256,7 +256,7 @@ describe('renderCorner — the tip\'s weight rides its own span', () => {
   it('the verdict-aware title is written onto the host', () => {
     const host = document.createElement('button');
     renderCorner(host, 'refused', 7766, REFUSED_INVALID);
-    expect(host.getAttribute('title')).toBe("this node's proof did not verify · tip 7766");
+    expect(host.getAttribute('title')).toBe("no node's proof verified · tip 7766");
     renderCorner(host, 'checking', 7766);
     expect(host.getAttribute('title')).toBe('checking the chain · tip 7766');
     renderCorner(host, 'thin', 7766, THIN_ONE);
