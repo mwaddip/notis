@@ -185,7 +185,7 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     expect(p.BUILD_ANCHORS).toEqual([]);
   });
 
-  it.fails('a node entry with an empty addrs is an anchor reached at its api base alone', async () => {
+  it('a node entry with an empty addrs is an anchor reached at its api base alone', async () => {
     const entry = { notisId: NID, addrs: [], api: 'https://b.example/api' };
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();

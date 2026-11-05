@@ -38,8 +38,8 @@ export function readMeta(name: string): string {
 
 /** The per-network seed list the shell carries, parsed from the `notis-nodes`
  *  meta. An entry is an API base string or a node
- *  `{ notisId, addrs, api }` — a key, the addresses the mesh dials it at,
- *  each ending in its `/p2p/` id and none with a `/dns4/`, `/dns6/` or
+ *  `{ notisId, addrs, api }` — a key, the addresses the mesh dials it at (none
+ *  is allowed), each ending in its `/p2p/` id and none with a `/dns4/`, `/dns6/` or
  *  `/dnsaddr/` component, and the base its API answers at
  *  (WEB_INTERFACE → The client is served from the node's own origin → "The
  *  three later tags"). Anything that is not a JSON array of such entries
@@ -71,13 +71,17 @@ function parseNodesMetaImpl(): ParsedNodes | null {
   return { bases, anchors };
 }
 
+/** One node entry. `addrs` is an array and may be empty — such a node is
+ *  reached at its `api` base alone (WEB_INTERFACE → The client is served from
+ *  the node's own origin → "The three later tags"; MESH_INTERFACE → The
+ *  client's node list → "An entry may carry an API base"). */
 function parseAnchorEntry(v: unknown): MeshAnchor | null {
   if (typeof v !== 'object' || v === null) return null;
   const o = v as Record<string, unknown>;
   const id = o['notisId'];
   if (typeof id !== 'string' || !/^[0-9a-f]{64}$/.test(id)) return null;
   const addrsRaw = o['addrs'];
-  if (!Array.isArray(addrsRaw) || addrsRaw.length === 0) return null;
+  if (!Array.isArray(addrsRaw)) return null;
   const addrs: string[] = [];
   for (const a of addrsRaw) {
     if (typeof a !== 'string') return null;
