@@ -7246,9 +7246,17 @@ async function teardownMeshStack() {
 // --- M1
 // WEB_INTERFACE → The extension → "The mesh is the extension's first path"
 // — a read goes to a node its need allows over the mesh, and to an API
-// base only when no such node is reached over the mesh. A fresh page's
-// first tip run is over the mesh and the Network domain records no HTTP
-// request to AP_ORIGIN or BP_ORIGIN.
+// base only when no such node is reached over the mesh. MESH_INTERFACE →
+// The client's node list → "A routed read goes to a node its need allows"
+// ("Before the first check ends an anchor serves any need"): an anchor
+// serves a read over its connection if it holds one, else at its API base,
+// so a page's first reads go out while its WebRTC-direct connections come
+// up — those count as HTTP. The assertion is on reads routed after a
+// check: once the verdict reads `verified across 2 nodes`, M1 marks the
+// event count, presses the feed's refresh and the corner once, waits for
+// the refresh to land, and asserts no HTTP request to AP_ORIGIN or
+// BP_ORIGIN after the mark. The pre-mark count is a measurement, not
+// asserted.
 async function runMeshStepM1(bcx) {
   let page = null;
   try {
@@ -7260,23 +7268,57 @@ async function runMeshStepM1(bcx) {
       'verified across 2 nodes',
       60000,
     );
-    // CDP's Network domain counts every fetch the page makes. A mesh read
-    // opens a libp2p stream on an already-held WebRTC-direct connection,
-    // which is not a fetch — these counters stay 0 while a check runs.
-    const httpToNodes = page.cx.events.filter((ev) => {
-      if (ev.method !== 'Network.requestWillBeSent') return false;
-      const url = ev.params?.request?.url ?? '';
-      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
-    }).length;
+    const titleOk = /^verified across 2 nodes/.test(verdict.last?.title ?? '');
     const feedHasContent = await page.cx.eval(`(() => {
       const rep = document.querySelector('#feed .report');
       const cards = document.querySelectorAll('#feed .card').length;
       return rep !== null || cards > 0;
     })()`);
-    const titleOk = /^verified across 2 nodes/.test(verdict.last?.title ?? '');
+    // Pre-mark: HTTP requests to A'/B' before the verdict settled — the
+    // first-paint reads that went out before the WebRTC connections came
+    // up. Reported for the record, not asserted.
+    const httpPreMark = page.cx.events.filter((ev) => {
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
+    }).length;
+    // Mark the event count: every HTTP request to A'/B' before this index
+    // is a first-paint read; every request after this index is a read
+    // routed by the mesh client (MESH_INTERFACE → The client's node list
+    // → "A routed read goes to a node its need allows").
+    const markIdx = page.cx.events.length;
+    await page.cx.waitFor(`!!document.querySelector('.feed-head .ctl')`, 'feed refresh ctl m1', 10000);
+    const reportBefore = await page.cx.eval(`document.querySelector('#feed .report')?.textContent ?? null`);
+    await page.cx.eval(`document.querySelector('.feed-head .ctl').click()`, true);
+    await pressCorner(page.cx);
+    // Wait for the refresh to land: `.feed .report` reads the newPostsLine
+    // format `no new posts` or `N new post(s)` (`app.ts` `recountFeedLine`
+    // and `newPostsLine`). A refresh's reads are routed by the mesh client,
+    // so the signal is the report text updating — the reads themselves
+    // leave no HTTP request when the mesh serves them.
+    const landed = await (async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 30000) {
+        const text = await page.cx.eval(`document.querySelector('#feed .report')?.textContent ?? null`).catch(() => null);
+        if (typeof text === 'string'
+            && /^(no new posts|\d+ new posts?)$/.test(text)
+            && text !== reportBefore) {
+          return true;
+        }
+        await sleep(200);
+      }
+      return false;
+    })();
+    const httpPostMark = page.cx.events.filter((ev, i) => {
+      if (i < markIdx) return false;
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
+    }).length;
+    const reportAfter = await page.cx.eval(`document.querySelector('#feed .report')?.textContent ?? null`).catch(() => null);
     record('M1',
-      !verdict.timedOut && titleOk && httpToNodes === 0 && feedHasContent,
-      `corner.title=${JSON.stringify(verdict.last?.title)}, feedHasContent=${feedHasContent}, HTTP requests to AP_ORIGIN or BP_ORIGIN=${httpToNodes} (expect 0 — a mesh read is no HTTP request; WEB_INTERFACE → The extension → "The mesh is the extension's first path")`);
+      !verdict.timedOut && titleOk && feedHasContent && landed && httpPostMark === 0,
+      `corner.title=${JSON.stringify(verdict.last?.title)}, feedHasContent=${feedHasContent}, refresh landed=${landed} (report ${JSON.stringify(reportBefore)} → ${JSON.stringify(reportAfter)}), HTTP requests to AP_ORIGIN or BP_ORIGIN before the mark=${httpPreMark} (measurement — first-paint reads before the WebRTC connections came up), after the mark=${httpPostMark} (expect 0 — a mesh read is no HTTP request; MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows")`);
   } catch (e) {
     record('M1', false, `error: ${e?.stack ?? String(e)}`);
   } finally {
