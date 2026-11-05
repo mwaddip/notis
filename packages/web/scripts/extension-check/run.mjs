@@ -37,6 +37,24 @@
 // in front of node B — each in one of eight modes at a time (honest, text,
 // drop, hold, hang, list-down, list-replay, down); its own node D (L13) is
 // spawned on 19820.
+// The mesh block (M1 · M2 · M3 · M4) proves the mesh path in the built
+// extension — WEB_INTERFACE → The extension → "The mesh is the extension's
+// first path", → "Nothing retries a rejection"'s **A send that ends with no
+// answer is no rejection**; MESH_INTERFACE → The client's node list → "A
+// routed read goes to a node its need allows", → "The client's order for a
+// need", → "A write goes to one node at a time". The block owns two nodes
+// A' and B' spawned from --node-dist with MESH_ROLE=public, MESH_LISTEN=
+// /ip4/127.0.0.1/udp/<port>/webrtc-direct and MESH_STUN=off (two public
+// nodes on one loopback cannot share STUN_PORT), both bootstrapped off A
+// (--node-p2p) so they are peers on A's chain. The extension built for
+// --mesh names each node in its seed list as `{notisId, addrs:[<webrtc-
+// direct multiaddr with certhash and /p2p/>], api:<HTTP base>}`, and the
+// harness refuses to run unless the shell's `notis-nodes` carries exactly
+// that shape — printing the VITE_NODES to rebuild with. Chromium takes
+// `--allow-loopback-in-peer-connection` for a --mesh run (a harness switch
+// for a loopback stage, not a product setting): without it a browser
+// refuses the RTCPeerConnection to 127.0.0.1 and no mesh connection
+// opens.
 //
 // The seed list the extension is built with carries two node entries whose
 // addrs are empty and whose api names the harness's own base — RLA and RLB
@@ -61,10 +79,14 @@
 //  4. The extension was built via build-extension.sh with devnet values
 //     — VITE_NODES points at [{notisId:<A>, addrs:[], api:RLA},
 //     {notisId:<B>, addrs:[], api:RLB}] for --verified-{tip,figures,names},
-//     and at [{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[],
-//     api:RB}] for --light. The two builds differ and a run takes one;
-//     --light is refused together with any of the other three verified flags.
-//     Each `notisId` is read from its api's node's start line.
+//     at [{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[],
+//     api:RB}] for --light, and at [{notisId:<A'>, addrs:[<A' webrtc-
+//     direct>], api:<A' HTTP base>}, {notisId:<B'>, addrs:[<B' webrtc-
+//     direct>], api:<B' HTTP base>}] for --mesh. The builds differ and a
+//     run takes one; --light and --mesh each refuse combination with any
+//     other verified flag. Each `notisId` is read from its node's start
+//     line; the mesh build's addrs[0] is the webrtc-direct multiaddr that
+//     start line names in `multiaddrs`.
 //  5. For --verified-names: a second throwaway S promoted as R is, holding a
 //     name `claim-name.mjs` (beside this file) claimed; S's clear file lives
 //     in a scratch path as R's does, and the harness reads its public key
@@ -96,6 +118,16 @@
 //     build whose notis-nodes is exactly [RA, RB], not [A, B]; the harness
 //     refuses to run on anything else, and refuses combination with any
 //     --verified-{tip,figures,names} flag.
+//   --mesh: M1·M2·M3·M4. Reads over the mesh, reads at the API base when no
+//     mesh node serves, a write over the mesh, and a write with no answer
+//     going to the next node (WEB_INTERFACE → The extension → "The mesh is
+//     the extension's first path"; MESH_INTERFACE → The client's node list).
+//     Requires --r-key, --node-dist, --scratch and --node-p2p (A' bootstraps
+//     from --node-p2p so A'/B' are peers on A's chain and R's karma reaches
+//     them). Takes an extension build whose notis-nodes is exactly
+//     [{notisId:<A'>, addrs:[<A' webrtc-direct>], api:<A' HTTP base>},
+//     {notisId:<B'>, …}]; refuses otherwise, and refuses combination with
+//     --verified-{tip,figures,names} or --light.
 //   20, 25, 30 and L14 read the hosted web build, and read NOT RUN without
 //     --public and --web-dist.
 //   No --r-key and no --verified-tip: every step reads NOT RUN by name.
@@ -107,6 +139,7 @@
 //     [--verified-figures --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--light --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
+//     [--mesh --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
@@ -121,7 +154,7 @@ import { matchPatternFor } from '../../extension/match-pattern.mjs';
 // Boolean flags — never consume the next argument. Without this the parser
 // below reads the following flag as the flag's value, and every arg after
 // `--verified-tip` shifts by one silently.
-const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light']);
+const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light', 'mesh']);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -176,6 +209,22 @@ const VERIFIED_NAMES = args.get('verified-names') === true;
 // hold, hang, list-down, list-replay, down); its own node D on 19820 for L13.
 // Absent, every step reads NOT RUN by name.
 const LIGHT = args.get('light') === true;
+// The mesh block — WEB_INTERFACE → The extension → "The mesh is the
+// extension's first path", `→ "Nothing retries a rejection"`'s `**A send
+// that ends with no answer is no rejection**`;
+// MESH_INTERFACE → The client's node list → "A routed read goes to a node
+// its need allows", "The client's order for a need", "A write goes to one
+// node at a time". Steps M1 · M2 · M3 · M4: reads over the mesh with zero
+// HTTP, reads at the API base when no mesh node serves, a write over the
+// mesh landing on both nodes, and a write with no answer going to the next
+// node. The block owns its own two mesh nodes A' and B' (spawned from
+// NODE_DIST with MESH_ROLE=public, MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/
+// webrtc-direct, MESH_STUN=off; B' bootstrapped from A') and refuses to
+// run unless the extension under check was built with the seed list naming
+// each as `{notisId:<key>, addrs:[<webrtc-direct multiaddr with certhash>],
+// api:<HTTP base>}` — the harness prints the VITE_NODES to rebuild with
+// when the shape disagrees. Absent, every step reads NOT RUN by name.
+const MESH = args.get('mesh') === true;
 // S's clear file — its public key is the recipient step 29 expects.
 const S_KEY = args.get('s-key') ?? null;
 const NODE_DIST = args.get('node-dist') ?? null;
@@ -249,6 +298,38 @@ const DL_HTTP_PORT = 19820;
 const DL_ADMIN_PORT = 19821;
 const DL_P2P_PORT = 19822;
 const DL_ORIGIN = `http://127.0.0.1:${DL_HTTP_PORT}`;
+// The mesh block's two nodes A' and B' — each spawned with
+// MESH_ROLE=public, MESH_LISTEN=/ip4/127.0.0.1/udp/<AP_MESH_PORT or
+// BP_MESH_PORT>/webrtc-direct, MESH_STUN=off (two public nodes on one
+// loopback cannot share STUN_PORT 3478, and the brief names off). Ports
+// clear of the tip block's (B on 19770-72), the tip relays (19780-81), D
+// (19795-97), the light relays (19810/15) and DL (19820-22). A' and B'
+// are reached by the extension at their HTTP origins directly (the api
+// field of each seed-list entry), and over the mesh at their webrtc-
+// direct addresses (the addrs field of each entry — one address a piece,
+// with certhash and /p2p/<peerId>, read from the start line the node
+// prints — NODE_INTERFACE → Configuration → "A mesh node prints its
+// identity line"). For M4 one node's HTTP is moved aside and a tip relay
+// (startTipRelay) stands in front of its api, in `hold-posts` mode — a
+// read passes through, a POST /posts is held past REQUEST_TIMEOUT_MS so
+// the client's write rule moves the same bytes to the next entry
+// (MESH_INTERFACE → The client's node list → "A write goes to one node
+// at a time").
+const AP_HTTP_PORT = 19830;
+const AP_ADMIN_PORT = 19831;
+const AP_P2P_PORT = 19832;
+const AP_MESH_PORT = 19833;
+const AP_ORIGIN = `http://127.0.0.1:${AP_HTTP_PORT}`;
+const BP_HTTP_PORT = 19835;
+const BP_ADMIN_PORT = 19836;
+const BP_P2P_PORT = 19837;
+const BP_MESH_PORT = 19838;
+const BP_ORIGIN = `http://127.0.0.1:${BP_HTTP_PORT}`;
+// For M4's relay-in-front stage: the alternate HTTP port A' is restarted
+// on so the tip relay can take over AP_HTTP_PORT with A' as its upstream.
+// The node's p2p listen (AP_P2P_PORT) and mesh listen (AP_MESH_PORT) stay
+// on their own ports — only the HTTP listener is moved.
+const AP_ALT_HTTP_PORT = 19834;
 // The devnet faucet's public key — devnet-only and public by design: the key
 // steps 12 and 21 send to, the owner of the real box the figures relay lists
 // under R's key in step 22b, and the owner the relay names for S's handle in
@@ -308,14 +389,23 @@ if (LIGHT && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
   process.exit(2);
 }
 
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT) {
+// --mesh builds a seed list whose entries carry non-empty addrs (the
+// WebRTC-direct multiaddrs of A' and B') and HTTP api bases of A' and B'
+// (AP_ORIGIN, BP_ORIGIN) — every other block names addrs: [] with relay
+// apis in front. The builds differ and a run takes one.
+if (MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT)) {
+  console.error('--mesh cannot be combined with --verified-tip, --verified-figures, --verified-names or --light — the extension builds differ (seed list [{notisId,addrs:[<webrtc-direct>],api:<node HTTP>},{…}] vs [{notisId,addrs:[],api:<relay>},{…}]) and a run takes one');
+  process.exit(2);
+}
+
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
   try {
     const clientUrl = import.meta.resolve('@dagsocial/nipopow-client');
     const { DEFAULT_M, DEFAULT_K } = await import(clientUrl);
     TIP_M = DEFAULT_M;
     TIP_K = DEFAULT_K;
   } catch (e) {
-    console.error(`--verified-{tip,figures,names} and --light require the built @dagsocial/nipopow-client (its DEFAULT_M and DEFAULT_K; pnpm -r build): ${e.message}`);
+    console.error(`--verified-{tip,figures,names}, --light and --mesh require the built @dagsocial/nipopow-client (its DEFAULT_M and DEFAULT_K; pnpm -r build): ${e.message}`);
     process.exit(2);
   }
 }
@@ -421,6 +511,37 @@ if (LIGHT) {
   }
 }
 
+// --mesh runs 1–16 against the extension's seed list — the two mesh nodes
+// A' and B' this block owns — and then M1–M4. A' bootstraps from the
+// operator's A over p2p (the --node-p2p multiaddr), so A' and B' are
+// peers on A's chain and R's karma (promoted by the operator on A) is
+// read through them like any other block. --r-key for R's identity,
+// --node-dist for the spawn's entry, --scratch for the two stores
+// (ap.db and bp.db), --node-p2p for A''s bootstrap peer — the same
+// lifecycle arguments the figures block reads, with the same shapes.
+if (MESH) {
+  if (!R_KEY) {
+    console.error('--mesh requires --r-key <path> — R\'s identity is what steps 2–12 import and M3 signs with');
+    process.exit(2);
+  }
+  if (!NODE_DIST || !existsSync(NODE_DIST)) {
+    console.error('--mesh requires --node-dist <packages/node/dist/index.js> — spawns the two mesh nodes A\' and B\'');
+    process.exit(2);
+  }
+  if (!SCRATCH) {
+    console.error('--mesh requires --scratch <dir> — the mesh block writes ap.db and bp.db there');
+    process.exit(2);
+  }
+  if (!existsSync(SCRATCH)) {
+    console.error(`--scratch not found: ${SCRATCH}`);
+    process.exit(2);
+  }
+  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
+    console.error('--mesh requires --node-p2p <multiaddr> — A\'s p2p bootstrap for A\', e.g. /ip4/127.0.0.1/tcp/19742 — so A\' syncs A\'s chain and R\'s karma is read through A\'/B\'');
+    process.exit(2);
+  }
+}
+
 // --public and --web-dist come together — pass both or neither. Without them
 // the twelve run as today and steps 13–16 are reported NOT RUN by name
 // (WEB_INTERFACE → The extension → "Links into the extension").
@@ -495,7 +616,7 @@ if (R_KEY) {
 // carries is not checked against a live value here — the invoker baked the
 // key of each api's node into the build before this harness ran — only its
 // shape.
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT) {
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
   const networkMetaMatch = shellHtml.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
   const shellNetwork = networkMetaMatch ? networkMetaMatch[1] : null;
   if (shellNetwork !== 'devnet') {
@@ -514,40 +635,68 @@ if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT) {
   try { shellNodes = JSON.parse(shellNodesRaw ?? ''); } catch {}
   // The two apis this run's build names, in order — the verified blocks name
   // RLA in front of A and RLB in front of B (`startTipRelay`), the --light
-  // block names the two light relays RA and RB. The verified blocks' reads
-  // pass through RLA / RLB verbatim in `honest` mode, so steps that do not set
-  // another mode see the node's own answers (WEB_INTERFACE → The extension →
-  // "The verified tip"). Mainnet's [] and testnet's live JSON are not valid
-  // here — the run is for a devnet stack with the harness's own bases.
-  const expectedApis = LIGHT
-    ? [RA_ORIGIN, RB_ORIGIN]
-    : [RLA_ORIGIN, RLB_ORIGIN];
+  // block names the two light relays RA and RB, and --mesh names A' and B'
+  // at their direct HTTP bases (the mesh block reaches each at its base and
+  // over the mesh at the address the seed-list entry names in `addrs`).
+  // The verified blocks' reads pass through RLA / RLB verbatim in `honest`
+  // mode, so steps that do not set another mode see the node's own answers
+  // (WEB_INTERFACE → The extension → "The verified tip"). Mainnet's [] and
+  // testnet's live JSON are not valid here — the run is for a devnet stack
+  // with the harness's own bases.
+  const expectedApis = MESH
+    ? [AP_ORIGIN, BP_ORIGIN]
+    : LIGHT
+      ? [RA_ORIGIN, RB_ORIGIN]
+      : [RLA_ORIGIN, RLB_ORIGIN];
   const hex64 = /^[0-9a-f]{64}$/;
-  const entryOk = (e, i) =>
-    e !== null
-    && typeof e === 'object'
-    && typeof e.notisId === 'string'
-    && hex64.test(e.notisId)
-    && Array.isArray(e.addrs)
-    && e.addrs.length === 0
-    && typeof e.api === 'string'
-    && e.api.replace(/\/+$/, '') === expectedApis[i];
+  // For --mesh each entry's `addrs` carries exactly one WebRTC-direct
+  // multiaddr naming the node's own mesh listen port, with certhash and
+  // /p2p/<peerId> — the shape libp2p prints. MESH_INTERFACE → Discovery →
+  // "A node added by hand" holds the shape of an address the client dials;
+  // the shell check here reads the port, the webrtc-direct segment, a
+  // certhash and a /p2p/ segment, and leaves the specific certhash and
+  // peerId to the setup's identity-line read (setupMeshStack).
+  const expectedMeshPorts = MESH ? [AP_MESH_PORT, BP_MESH_PORT] : null;
+  const meshAddrOk = (addr, i) => {
+    if (typeof addr !== 'string') return false;
+    const re = new RegExp(
+      `^/ip4/127\\.0\\.0\\.1/udp/${expectedMeshPorts[i]}/webrtc-direct/certhash/[^/]+/p2p/[^/]+$`,
+    );
+    return re.test(addr);
+  };
+  const entryOk = (e, i) => {
+    if (e === null || typeof e !== 'object') return false;
+    if (typeof e.notisId !== 'string' || !hex64.test(e.notisId)) return false;
+    if (typeof e.api !== 'string' || e.api.replace(/\/+$/, '') !== expectedApis[i]) return false;
+    if (!Array.isArray(e.addrs)) return false;
+    if (MESH) {
+      return e.addrs.length === 1 && meshAddrOk(e.addrs[0], i);
+    }
+    return e.addrs.length === 0;
+  };
   const nodesOk = Array.isArray(shellNodes)
     && shellNodes.length === expectedApis.length
     && shellNodes.every(entryOk);
   if (!nodesOk) {
-    const expectedShape = expectedApis.map((api) => ({
+    const expectedShape = expectedApis.map((api, i) => ({
       notisId: '<the api\'s node\'s 64-hex key, from its start line>',
-      addrs: [],
+      addrs: MESH
+        ? [`/ip4/127.0.0.1/udp/${expectedMeshPorts[i]}/webrtc-direct/certhash/<multihash>/p2p/<the api\'s node\'s peerId, from its start line>`]
+        : [],
       api,
     }));
     console.error(`FAIL: shell notis-nodes=${shellNodesRaw} is not the two-node shape this run expects`);
     console.error(`      rebuild with VITE_NODES set to a JSON array of two entries in this shape, each entry's api in order:`);
     console.error(`      ${JSON.stringify(expectedShape)}`);
-    console.error(`      each notisId is the 64-hex key its api's node prints as the first JSON line of its start output`);
+    console.error(`      each notisId is the 64-hex key its api's node prints as the first JSON line of its start output${MESH ? ', and each addrs[0] is the WebRTC-direct multiaddr that line names in `multiaddrs`' : ''}`);
     process.exit(2);
   }
-  console.log(`shell notis-nodes=${shellNodesRaw} matches ${LIGHT ? '[{api: RA, …}, {api: RB, …}]' : '[{api: A, …}, {api: B, …}]'}`);
+  const shapeLabel = MESH
+    ? '[{api: A\', addrs: [A\' webrtc-direct], …}, {api: B\', addrs: [B\' webrtc-direct], …}]'
+    : LIGHT
+      ? '[{api: RA, …}, {api: RB, …}]'
+      : '[{api: A, …}, {api: B, …}]';
+  console.log(`shell notis-nodes=${shellNodesRaw} matches ${shapeLabel}`);
 }
 
 // The build's public base is the shell's `notis-public` — WEB_INTERFACE →
@@ -682,10 +831,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function launchChromium(extensionDir) {
   const chromePort = 19200 + Math.floor(Math.random() * 500);
   const profileDir = mkdtempSync(join(tmpdir(), 'notis-ext-proof-'));
+  // Chromium refuses WebRTC connections to 127.0.0.1 unless started with
+  // --allow-loopback-in-peer-connection. The flag is a harness switch for
+  // a loopback stage, not a product setting: the --mesh block's A' and B'
+  // listen on /ip4/127.0.0.1/udp/<port>/webrtc-direct and the extension
+  // dials them over RTCPeerConnection, which the browser blocks without
+  // this flag (WEB_INTERFACE → The extension → "The mesh is the extension's
+  // first path"). Added only for a --mesh run, so every other block runs
+  // on the same browser defaults a reader's browser carries
+  // (memory `runs-on-browser-defaults`).
+  const meshArgs = MESH ? ['--allow-loopback-in-peer-connection'] : [];
   const chromeProc = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
     `--remote-debugging-port=${chromePort}`, `--user-data-dir=${profileDir}`,
     `--load-extension=${extensionDir}`, `--disable-extensions-except=${extensionDir}`,
+    ...meshArgs,
     'about:blank',
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
   chromeProc.stderr.on('data', () => {}); // absorb chrome's noise
@@ -1066,6 +1226,20 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 //                      from /blocks/current, D's proof, D's blocks. The
 //                      relay's mode stays `honest` under upstream-D: the one
 //                      edit is the upstream swap, not a per-route lie.
+//   `hold-posts`     — the --mesh block's M4 mode: GET /HEAD /OPTIONS pass
+//                      through verbatim; POST /posts is held — the body
+//                      drained, no response — past the client's
+//                      REQUEST_TIMEOUT_MS, which lets the client's write
+//                      rule move the same bytes to the next entry
+//                      (`MESH_INTERFACE → The client's node list → "A
+//                      write goes to one node at a time"`). The relay
+//                      ends the hold on the response's close event with
+//                      no reply, which `WEB_INTERFACE → The extension →
+//                      "Nothing retries a rejection"`'s `**A send that
+//                      ends with no answer is no rejection**` reads as
+//                      no answer. One POST through the relay lands no
+//                      bytes upstream; the retry's bytes reach the next
+//                      node and land once there.
 // With `relay.rKey` and (for the names block) `relay.sName` set, the relay
 // also carries the figures and names modes — one relay type, named on both
 // tip relays so a lie on both is a lie the run meets whichever node answers
@@ -1145,6 +1319,32 @@ async function startTipRelay(upstream, port) {
     try {
       const method = req.method ?? 'GET';
       const url = req.url ?? '/';
+      const mode0 = relay.mode;
+      // `hold-posts` — the --mesh block's M4 mode: POST /posts is held past
+      // REQUEST_TIMEOUT_MS so the client's write rule moves the same bytes
+      // to the next entry (MESH_INTERFACE → The client's node list → "A
+      // write goes to one node at a time"). Reads pass through verbatim;
+      // the mode acts on POST /posts alone.
+      const isPostsWrite = method === 'POST' && (url === '/posts' || url.startsWith('/posts?'));
+      if (mode0 === 'hold-posts' && isPostsWrite) {
+        // Drain the body so the client sees its send arrive; never write a
+        // response. A close on the response (writableEnded still false)
+        // ends the hold as "client closed", which is the same signal the
+        // light relay's hold uses for its hang mode.
+        const closed = new Promise((resolve) => {
+          res.on('close', () => { if (!res.writableEnded) resolve('client-closed'); });
+        });
+        try {
+          await new Promise((resolve) => {
+            req.on('data', () => {});
+            req.on('end', resolve);
+            req.on('error', resolve);
+          });
+        } catch { /* body left undrained */ }
+        await closed;
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode: 'hold-posts', upstream: relay.upstream, status: 'client-closed', edit: 'hold-posts' });
+        return;
+      }
       if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
         res.writeHead(405, { 'access-control-allow-origin': '*' });
         res.end('tip relay serves reads only');
@@ -6753,6 +6953,564 @@ async function lightSteps(cx, targetId = 'unknown') {
 }
 
 // ---------------------------------------------------------------------------
+// The --mesh block — M1 · M2 · M3 · M4
+//
+// The extension's first path is the mesh (`WEB_INTERFACE → The extension →
+// "The mesh is the extension's first path"`, `→ "Nothing retries a
+// rejection"`'s `**A send that ends with no answer is no rejection**`;
+// `MESH_INTERFACE → The client's node list → "A routed read goes to a node
+// its need allows"`, `→ "The client's order for a need"`, `→ "A write goes
+// to one node at a time"`). The block owns two mesh-capable nodes A' and
+// B', each spawned with `MESH_ROLE=public`, `MESH_LISTEN=/ip4/127.0.0.1/
+// udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one
+// loopback cannot share `STUN_PORT`). B' is bootstrapped from A''s p2p
+// listen. The nodes' identity lines are read from each start line and
+// their notisId/multiaddrs checked against the extension's seed list.
+//
+// The four steps, each on its own fresh extension page:
+//   M1 — reads over the mesh: `verified across 2 nodes`, 0 HTTP requests
+//        to AP_ORIGIN or BP_ORIGIN (a mesh read is no HTTP request).
+//   M2 — the API base when no mesh node serves: both nodes restarted
+//        without `MESH_ROLE`, the client's mesh dials fail, the entries
+//        fall back to their api bases; the verdict is `verified`.
+//   M3 — a write over the mesh: a post the composer writes lands on both
+//        nodes, with no `POST /posts` in the fresh page's Network domain.
+//   M4 — a write with no answer goes to the next node: both nodes on api
+//        bases alone, a `startTipRelay` in `hold-posts` mode in front of
+//        one base, the client's POST held past REQUEST_TIMEOUT_MS, the
+//        same bytes sent to the next node, the post landing once.
+// ---------------------------------------------------------------------------
+
+const MESH_STEPS = ['M1', 'M2', 'M3', 'M4'];
+
+// The pair of mesh nodes `setupMeshStack` sets up before the browser
+// launches when --mesh is given. Each holds the DB path (so a restart
+// across steps can be fired by name), the ports the node takes on every
+// restart, and the identity line the mesh-on spawn read. `apHttp` is the
+// HTTP port the node currently listens on — equal to `ports.http` at rest
+// and equal to `AP_ALT_HTTP_PORT` during M4 while the M4 relay owns the
+// base port.
+const meshNodes = {
+  ap: null, // { identity, ports, dbPath, mesh: boolean, apHttp: number }
+  bp: null, // { identity, ports, dbPath, mesh: boolean }
+};
+
+// The M4 relay stood up only during M4 — a `startTipRelay` in front of A'
+// at `AP_HTTP_PORT` with upstream `http://127.0.0.1:AP_ALT_HTTP_PORT`, set
+// to `hold-posts` after a fresh page's tip run has returned verified so
+// the client's first write goes through the held POST.
+let m4Relay = null;
+
+function markMeshNotRun(reason) {
+  for (const s of MESH_STEPS) record(s, 'NOT RUN', reason);
+}
+
+function markMeshFail(reason) {
+  for (const s of MESH_STEPS) record(s, false, reason);
+}
+
+const AP_PORTS = {
+  http: AP_HTTP_PORT, admin: AP_ADMIN_PORT, p2p: AP_P2P_PORT, mesh: AP_MESH_PORT, altHttp: AP_ALT_HTTP_PORT,
+};
+const BP_PORTS = {
+  http: BP_HTTP_PORT, admin: BP_ADMIN_PORT, p2p: BP_P2P_PORT, mesh: BP_MESH_PORT,
+};
+
+// The env one mesh node takes — mesh on or off, and (for B') the bootstrap
+// multiaddr naming A''s p2p listen. `httpPort` overrides `ports.http` when
+// the relay-in-front stage moves the node off its base port.
+function meshNodeEnv({ ports, dbPath, withMesh, bootstrap, httpPort }) {
+  const env = {
+    NETWORK_TYPE: 'devnet',
+    NODE_ROLE: 'server',
+    PORT: String(httpPort ?? ports.http),
+    ADMIN_PORT: String(ports.admin),
+    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${ports.p2p}`,
+    DB_PATH: dbPath,
+  };
+  env.BOOTSTRAP_PEERS = bootstrap ?? '';
+  if (withMesh) {
+    env.MESH_ROLE = 'public';
+    env.MESH_LISTEN = `/ip4/127.0.0.1/udp/${ports.mesh}/webrtc-direct`;
+    env.MESH_STUN = 'off';
+  }
+  return env;
+}
+
+// Spawn a mesh-on node and read its identity line (the first JSON line of
+// its stdout with `notisId`, `peerId` and `multiaddrs`) —
+// `NODE_INTERFACE → Configuration → "A mesh node prints its identity
+// line"`. Returns the child, its exit promise, the parsed identity and
+// the ports the spawn used. `spawnDaemon`'s log pipe runs through dynamic
+// import and attaches after a tick; this helper attaches a 'data' listener
+// synchronously after `spawn`, buffers until the identity line arrives,
+// then writes every chunk to the log file (so the identity is in the log
+// too, with no race against the pipe).
+async function spawnMeshNode(name, env, timeoutMs = 60000) {
+  const logPath = SCRATCH ? join(SCRATCH, `${name}.log`) : null;
+  const child = spawn(process.execPath, [NODE_DIST], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const exited = new Promise((res) => child.on('exit', (code, sig) => {
+    vtChildren.delete(name);
+    console.log(`[vm] ${name} exited: code=${code} signal=${sig}`);
+    res();
+  }));
+  vtChildren.set(name, { child, exited });
+  let logStream = null;
+  if (logPath) {
+    const { createWriteStream } = await import('node:fs');
+    logStream = createWriteStream(logPath, { flags: 'a' });
+    child.stderr?.pipe(logStream);
+  }
+  let buf = '';
+  let identity = null;
+  const identityPromise = new Promise((resolve, reject) => {
+    const to = setTimeout(() => {
+      if (identity === null) reject(new Error(`${name} never printed an identity line within ${timeoutMs}ms`));
+    }, timeoutMs);
+    const onData = (chunk) => {
+      const text = chunk.toString('utf8');
+      logStream?.write(text);
+      if (identity !== null) return;
+      buf += text;
+      let idx;
+      while ((idx = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        try {
+          const parsed = JSON.parse(line);
+          if (typeof parsed?.notisId === 'string'
+              && typeof parsed?.peerId === 'string'
+              && Array.isArray(parsed?.multiaddrs)) {
+            identity = parsed;
+            clearTimeout(to);
+            resolve(parsed);
+            return;
+          }
+        } catch { /* not a JSON identity line, next */ }
+      }
+    };
+    child.stdout?.on('data', onData);
+    child.on('exit', () => {
+      clearTimeout(to);
+      if (identity === null) reject(new Error(`${name} exited before printing an identity line`));
+    });
+  });
+  const id = await identityPromise;
+  return { child, exited, identity: id };
+}
+
+// Spawn a mesh-off node — plain `spawnDaemon` and wait for HTTP. The DB
+// path and the node's identity (notisId) are kept across restarts, so a
+// restart without MESH_ROLE leaves every seed-list entry's notisId still
+// matching its node's key.
+async function spawnPlainNode(name, env, httpOrigin, timeoutMs = 60000) {
+  spawnDaemon(name, NODE_DIST, env);
+  const up = await waitForHttpUp(httpOrigin, timeoutMs);
+  if (!up) throw new Error(`${name} did not answer /blocks/current at ${httpOrigin} within ${timeoutMs}ms`);
+}
+
+// The webrtc-direct multiaddr in the identity line's `multiaddrs` that
+// names the node's own mesh listen port — the one an anchor's `addrs`
+// entry carries (`MESH_INTERFACE → Discovery → "A node added by hand"`,
+// `→ The client's node list → "An entry may carry an API base"`). The
+// identity line lists every address libp2p announced, including local
+// WebRTC-direct entries; for a loopback public node the only external
+// address is also loopback, so the match is by port and shape.
+function pickWebRtcDirectAddr(identity, meshPort) {
+  if (identity === null || !Array.isArray(identity.multiaddrs)) return null;
+  const re = new RegExp(`^/ip4/127\\.0\\.0\\.1/udp/${meshPort}/webrtc-direct/certhash/[^/]+/p2p/[^/]+$`);
+  for (const a of identity.multiaddrs) {
+    if (typeof a === 'string' && re.test(a)) return a;
+  }
+  return null;
+}
+
+// `setupMeshStack` — spawn A' and B' with mesh on, read each identity,
+// and check that the extension's seed list names each exactly. Called
+// once before the browser launches, so the extension's first paint reads
+// the two entries that stand up (`WEB_INTERFACE → The extension → "The
+// mesh is the extension's first path"`: a page reaches nodes by key over
+// libp2p through the mesh client at load).
+async function setupMeshStack() {
+  if (!MESH) return;
+  const apDb = join(SCRATCH, 'ap.db');
+  const bpDb = join(SCRATCH, 'bp.db');
+  // The mesh state directory is named for the store
+  // (`NODE_INTERFACE → Configuration`: `DB_PATH` with `.mesh`), so it
+  // stays with the store across restarts.
+  for (const p of [apDb, apDb + '-shm', apDb + '-wal', bpDb, bpDb + '-shm', bpDb + '-wal']) {
+    try { rmSync(p, { force: true }); } catch {}
+  }
+  // A' spawns first with mesh, bootstrapped from the operator's A at
+  // --node-p2p so A' is a peer on A's chain and inherits R's karma
+  // (operator-promoted on A); B' bootstraps from A''s p2p listen, so
+  // B' syncs through A' and reaches A's chain too.
+  console.log(`[vm] spawning A': http=${AP_HTTP_PORT} admin=${AP_ADMIN_PORT} p2p=${AP_P2P_PORT} mesh=${AP_MESH_PORT} db=${apDb} bootstrap=${NODE_P2P}`);
+  const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
+    ports: AP_PORTS, dbPath: apDb, withMesh: true, bootstrap: NODE_P2P,
+  }));
+  const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
+  if (!apUp) throw new Error(`A' did not answer /blocks/current at ${AP_ORIGIN}`);
+  console.log(`[vm] A' up: notisId=${apSpawn.identity.notisId.slice(0, 16)}…, peerId=${apSpawn.identity.peerId}, multiaddrs=${JSON.stringify(apSpawn.identity.multiaddrs)}`);
+  const bpBootstrap = `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${apSpawn.identity.peerId}`;
+  console.log(`[vm] spawning B': http=${BP_HTTP_PORT} admin=${BP_ADMIN_PORT} p2p=${BP_P2P_PORT} mesh=${BP_MESH_PORT} db=${bpDb} bootstrap=${bpBootstrap}`);
+  const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
+    ports: BP_PORTS, dbPath: bpDb, withMesh: true, bootstrap: bpBootstrap,
+  }));
+  const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
+  if (!bpUp) throw new Error(`B' did not answer /blocks/current at ${BP_ORIGIN}`);
+  console.log(`[vm] B' up: notisId=${bpSpawn.identity.notisId.slice(0, 16)}…, peerId=${bpSpawn.identity.peerId}, multiaddrs=${JSON.stringify(bpSpawn.identity.multiaddrs)}`);
+  meshNodes.ap = {
+    identity: apSpawn.identity, ports: AP_PORTS, dbPath: apDb, mesh: true, apHttp: AP_HTTP_PORT,
+  };
+  meshNodes.bp = {
+    identity: bpSpawn.identity, ports: BP_PORTS, dbPath: bpDb, mesh: true,
+  };
+  // The build's shell was shape-checked at the top (`notis-nodes` carries
+  // two entries with one webrtc-direct addr each on the expected ports);
+  // here we validate the identity values — notisId and the addrs[0]
+  // string — against what the nodes actually printed. The invoker baked
+  // these into the build, and a mismatch names the exact rebuild line.
+  const shellMatch = shellHtml.match(/<meta[^>]+name="notis-nodes"[^>]+content=(?:"([^"]*)"|'([^']*)')[^>]*>/);
+  const shellNodesRaw = shellMatch ? (shellMatch[1] ?? shellMatch[2]) : '';
+  let parsed = null;
+  try { parsed = JSON.parse(shellNodesRaw); } catch {}
+  const apAddr = pickWebRtcDirectAddr(apSpawn.identity, AP_MESH_PORT);
+  const bpAddr = pickWebRtcDirectAddr(bpSpawn.identity, BP_MESH_PORT);
+  const expected = [
+    { notisId: apSpawn.identity.notisId, addrs: [apAddr], api: AP_ORIGIN },
+    { notisId: bpSpawn.identity.notisId, addrs: [bpAddr], api: BP_ORIGIN },
+  ];
+  const entryMatches = (shell, exp) =>
+    shell !== null && typeof shell === 'object'
+    && typeof shell.notisId === 'string' && shell.notisId.toLowerCase() === exp.notisId.toLowerCase()
+    && Array.isArray(shell.addrs) && shell.addrs.length === 1 && shell.addrs[0] === exp.addrs[0]
+    && typeof shell.api === 'string' && shell.api.replace(/\/+$/, '') === exp.api;
+  const ok = Array.isArray(parsed) && parsed.length === 2
+    && entryMatches(parsed[0], expected[0]) && entryMatches(parsed[1], expected[1]);
+  if (!ok || apAddr === null || bpAddr === null) {
+    console.error(`FAIL: shell notis-nodes=${shellNodesRaw} does not match the two mesh nodes' identities`);
+    console.error(`      rebuild with VITE_NODES set exactly to:`);
+    console.error(`      ${JSON.stringify(expected)}`);
+    console.error(`      each notisId is the 64-hex key its node prints as "notisId" on its first JSON start line, and each addrs[0] is the WebRTC-direct multiaddr that line names in "multiaddrs"`);
+    process.exit(2);
+  }
+  console.log(`[vm] shell notis-nodes matches A' and B''s identities`);
+}
+
+async function teardownMeshStack() {
+  if (m4Relay) { closeRelay(m4Relay); m4Relay = null; }
+  if (MESH) {
+    await stopChild('ap').catch(() => {});
+    await stopChild('ap-m4').catch(() => {});
+    await stopChild('bp').catch(() => {});
+  }
+}
+
+// --- M1
+// WEB_INTERFACE → The extension → "The mesh is the extension's first path"
+// — a read goes to a node its need allows over the mesh, and to an API
+// base only when no such node is reached over the mesh. A fresh page's
+// first tip run is over the mesh and the Network domain records no HTTP
+// request to AP_ORIGIN or BP_ORIGIN.
+async function runMeshStepM1(bcx) {
+  let page = null;
+  try {
+    page = await openFreshExtensionPage(bcx);
+    await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m1', 30000);
+    const verdict = await waitForCornerState(
+      page.cx,
+      (r) => /^verified across \d+ nodes/.test(r.title ?? ''),
+      'verified across 2 nodes',
+      60000,
+    );
+    // CDP's Network domain counts every fetch the page makes. A mesh read
+    // opens a libp2p stream on an already-held WebRTC-direct connection,
+    // which is not a fetch — these counters stay 0 while a check runs.
+    const httpToNodes = page.cx.events.filter((ev) => {
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
+    }).length;
+    const feedHasContent = await page.cx.eval(`(() => {
+      const rep = document.querySelector('#feed .report');
+      const cards = document.querySelectorAll('#feed .card').length;
+      return rep !== null || cards > 0;
+    })()`);
+    const titleOk = /^verified across 2 nodes/.test(verdict.last?.title ?? '');
+    record('M1',
+      !verdict.timedOut && titleOk && httpToNodes === 0 && feedHasContent,
+      `corner.title=${JSON.stringify(verdict.last?.title)}, feedHasContent=${feedHasContent}, HTTP requests to AP_ORIGIN or BP_ORIGIN=${httpToNodes} (expect 0 — a mesh read is no HTTP request; WEB_INTERFACE → The extension → "The mesh is the extension's first path")`);
+  } catch (e) {
+    record('M1', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+}
+
+// --- M2
+// WEB_INTERFACE → The extension → "The mesh is the extension's first path"
+// (`A read goes to a node its need allows over the mesh, and to an API
+// base only when no such node is reached over the mesh`) and
+// MESH_INTERFACE → The client's node list → "A routed read goes to a node
+// its need allows" (`Over the mesh first: a read goes to an API base only
+// when no node its need allows is reached over the mesh`). Both nodes
+// restart without MESH_ROLE — the client's mesh dials fail, the entries
+// fall back to their api bases, the feed reads again, and the verdict
+// stays `verified` because the proofs are read at the bases.
+async function runMeshStepM2(bcx) {
+  let page = null;
+  try {
+    await stopChild('ap');
+    await stopChild('bp');
+    await spawnPlainNode('ap', meshNodeEnv({
+      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P,
+    }), AP_ORIGIN);
+    await spawnPlainNode('bp', meshNodeEnv({
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false,
+      bootstrap: `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${meshNodes.ap.identity.peerId}`,
+    }), BP_ORIGIN);
+    meshNodes.ap.mesh = false;
+    meshNodes.bp.mesh = false;
+    page = await openFreshExtensionPage(bcx);
+    await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m2', 30000);
+    const verdict = await waitForCornerState(
+      page.cx,
+      (r) => /^verified/.test(r.title ?? ''),
+      'verified',
+      90000,
+    );
+    const httpToNodes = page.cx.events.filter((ev) => {
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
+    }).length;
+    const titleOk = /^verified across/.test(verdict.last?.title ?? '');
+    record('M2',
+      !verdict.timedOut && titleOk && httpToNodes > 0,
+      `corner.title=${JSON.stringify(verdict.last?.title)}, HTTP requests to AP_ORIGIN or BP_ORIGIN=${httpToNodes} (expect > 0 — reads at the api bases when no mesh node serves)`);
+  } catch (e) {
+    record('M2', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+}
+
+// --- M3
+// WEB_INTERFACE → The extension → "The mesh is the extension's first path"
+// (`A write goes to one node and, with no answer, to the next`) — both
+// nodes back with their mesh role; a post written in the composer lands
+// in the feed, on both nodes (`GET /posts/:id` on each), with no `POST
+// /posts` over HTTP in the Network domain.
+async function runMeshStepM3(bcx) {
+  let page = null;
+  try {
+    await stopChild('ap');
+    await stopChild('bp');
+    const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
+      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: true, bootstrap: NODE_P2P,
+    }));
+    const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
+    if (!apUp) throw new Error(`A' did not answer at ${AP_ORIGIN} after M3 restart`);
+    const bpBootstrap = `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${apSpawn.identity.peerId}`;
+    const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: true, bootstrap: bpBootstrap,
+    }));
+    const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
+    if (!bpUp) throw new Error(`B' did not answer at ${BP_ORIGIN} after M3 restart`);
+    meshNodes.ap = { ...meshNodes.ap, identity: apSpawn.identity, mesh: true };
+    meshNodes.bp = { ...meshNodes.bp, identity: bpSpawn.identity, mesh: true };
+
+    page = await openFreshExtensionPage(bcx);
+    await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m3', 30000);
+    await waitForCornerState(
+      page.cx,
+      (r) => /^verified across 2 nodes/.test(r.title ?? ''),
+      'verified across 2 nodes (M3 preamble)',
+      60000,
+    );
+    await page.cx.waitFor(`!!document.querySelector('.feed-head .btn-primary')`, 'new post button', 30000);
+    const sinceIdx = page.cx.events.length;
+    const CONTENT = 'mesh-m3-' + Date.now();
+    await page.cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
+    await page.cx.waitFor(`document.querySelector('.composer textarea')`, 'composer opened');
+    await page.cx.eval(`(() => {
+      const ta = document.querySelector('.composer textarea');
+      ta.value = ${JSON.stringify(CONTENT)};
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`, true);
+    await page.cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer post enabled', 30000);
+    await page.cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
+    // Wait for the pending card or for the content to appear in the feed
+    // (silent karma policy signs through the background and lands; the
+    // proxy's `sign` resolves without a prompt page for a rep write).
+    const landed = await (async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 60000) {
+        // A `GET /posts/:id` on each node for CONTENT's post id after
+        // its submit is the brief's assertion; probing each node's /posts
+        // by author is enough to prove the post landed on both.
+        const [a, b] = await Promise.all([
+          fetch(`${AP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=10`).then((r) => r.json()).catch(() => null),
+          fetch(`${BP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=10`).then((r) => r.json()).catch(() => null),
+        ]);
+        const inA = Array.isArray(a?.posts) && a.posts.some((p) => p?.content === CONTENT);
+        const inB = Array.isArray(b?.posts) && b.posts.some((p) => p?.content === CONTENT);
+        if (inA && inB) return true;
+        await sleep(1000);
+      }
+      return false;
+    })();
+    // POST /posts in the page's Network domain since the composer opened.
+    const postsOverHttp = page.cx.events.filter((ev) => {
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      if (ev.params?.request?.method !== 'POST') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url === `${AP_ORIGIN}/posts` || url === `${BP_ORIGIN}/posts`
+        || url.startsWith(`${AP_ORIGIN}/posts?`) || url.startsWith(`${BP_ORIGIN}/posts?`);
+    });
+    record('M3',
+      landed && postsOverHttp.length === 0,
+      `post landed on both nodes=${landed}, POST /posts over HTTP in Network domain=${postsOverHttp.length} (expect 0 — a write goes over the mesh)`);
+  } catch (e) {
+    record('M3', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+}
+
+// --- M4
+// WEB_INTERFACE → The extension → "The mesh is the extension's first path"
+// (`A write goes to one node and, with no answer, to the next: the same
+// bytes, the nodes reached over the mesh first and then the API bases, in
+// the client's order, and the first answer of any status is the write's`)
+// and MESH_INTERFACE → The client's node list → "A write goes to one node
+// at a time", and WEB_INTERFACE → The wallet → "Nothing retries a
+// rejection"'s `**A send that ends with no answer is no rejection**`.
+// Both nodes are reached at their api bases alone (`MESH_ROLE` off, as
+// M2); a tip relay at AP_HTTP_PORT, with A' restarted on AP_ALT_HTTP_PORT
+// as its upstream, holds `POST /posts` past REQUEST_TIMEOUT_MS. The
+// client's write rule moves the same bytes to the next entry; the post
+// lands on B' (and, through p2p propagation, on A') once.
+async function runMeshStepM4(bcx) {
+  let page = null;
+  try {
+    await stopChild('ap');
+    await stopChild('bp');
+    // A' restarts on its alt HTTP port (p2p and mesh ports unchanged).
+    // No MESH_ROLE — M4 reaches each at its api base alone. A' still
+    // bootstraps from --node-p2p so it stays on A's chain.
+    await spawnPlainNode('ap-m4', meshNodeEnv({
+      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P, httpPort: AP_ALT_HTTP_PORT,
+    }), `http://127.0.0.1:${AP_ALT_HTTP_PORT}`);
+    await spawnPlainNode('bp', meshNodeEnv({
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false,
+      bootstrap: `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${meshNodes.ap.identity.peerId}`,
+    }), BP_ORIGIN);
+    meshNodes.ap.apHttp = AP_ALT_HTTP_PORT;
+    meshNodes.ap.mesh = false;
+    meshNodes.bp.mesh = false;
+    // The tip relay on AP_HTTP_PORT with A''s alt HTTP as upstream — the
+    // build's api for A' still names AP_ORIGIN, so every client read of
+    // A''s HTTP base routes through this relay. `hold-posts` holds POST
+    // /posts past REQUEST_TIMEOUT_MS; reads pass through.
+    m4Relay = await startTipRelay(`http://127.0.0.1:${AP_ALT_HTTP_PORT}`, AP_HTTP_PORT);
+    m4Relay.mode = 'honest';
+    console.log(`[vm] M4 relay up: ${m4Relay.origin} → ${m4Relay.upstream}`);
+
+    page = await openFreshExtensionPage(bcx);
+    await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m4', 30000);
+    await waitForCornerState(
+      page.cx,
+      (r) => /^verified across \d+ nodes/.test(r.title ?? ''),
+      'verified (M4 preamble)',
+      90000,
+    );
+    // Switch the relay to hold-posts after the tip run has settled; the
+    // write is the next press of the composer.
+    m4Relay.mode = 'hold-posts';
+    await page.cx.waitFor(`!!document.querySelector('.feed-head .btn-primary')`, 'new post button', 30000);
+    const CONTENT = 'mesh-m4-' + Date.now();
+    await page.cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
+    await page.cx.waitFor(`document.querySelector('.composer textarea')`, 'composer opened');
+    await page.cx.eval(`(() => {
+      const ta = document.querySelector('.composer textarea');
+      ta.value = ${JSON.stringify(CONTENT)};
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`, true);
+    await page.cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer post enabled', 30000);
+    await page.cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
+    // While the first POST is held, the card reads pending. On the retry,
+    // the same bytes reach B' and land there, then propagate to A'.
+    let pendingSeen = false;
+    const pendingSeenUntil = Date.now() + 10000;
+    while (Date.now() < pendingSeenUntil) {
+      const p = await page.cx.eval(`!!document.querySelector('.card.pending')`).catch(() => false);
+      if (p) { pendingSeen = true; break; }
+      await sleep(250);
+    }
+    // The content lands exactly once on each node (one post per node, not
+    // two). Wait up to 90s for both to carry it.
+    const landed = await (async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 90000) {
+        const [a, b] = await Promise.all([
+          fetch(`http://127.0.0.1:${AP_ALT_HTTP_PORT}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
+          fetch(`${BP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
+        ]);
+        const inA = Array.isArray(a?.posts) ? a.posts.filter((p) => p?.content === CONTENT).length : 0;
+        const inB = Array.isArray(b?.posts) ? b.posts.filter((p) => p?.content === CONTENT).length : 0;
+        if (inA === 1 && inB === 1) return { inA, inB, landed: true };
+        if (inA > 1 || inB > 1) return { inA, inB, landed: false };
+        await sleep(1000);
+      }
+      return { inA: 0, inB: 0, landed: false };
+    })();
+    const heldOnce = m4Relay.log.filter((l) => l.edit === 'hold-posts').length === 1;
+    const rejected = await page.cx.eval(`!!document.querySelector('.card.rejected') || document.body.textContent.includes('refused')`).catch(() => false);
+    record('M4',
+      landed.landed && heldOnce && pendingSeen && !rejected,
+      `post lands once on each node (A'=${landed.inA}, B'=${landed.inB}, expect 1/1), relay held POSTs=${m4Relay.log.filter((l) => l.edit === 'hold-posts').length} (expect 1), pending card seen=${pendingSeen}, rejected=${rejected} (expect false — MESH_INTERFACE → The client's node list → "A write goes to one node at a time", WEB_INTERFACE → The extension → "Nothing retries a rejection"'s **A send that ends with no answer is no rejection**)`);
+    // Clean the relay away — it fronted AP_HTTP_PORT, and leaving it up
+    // after M4 would block a subsequent block's A' from reclaiming that
+    // port.
+    closeRelay(m4Relay);
+    m4Relay = null;
+  } catch (e) {
+    record('M4', false, `error: ${e?.stack ?? String(e)}`);
+    if (m4Relay) { closeRelay(m4Relay); m4Relay = null; }
+  } finally {
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+}
+
+// The mesh block's four steps, each on its own fresh extension page.
+// Precondition: `setupMeshStack` ran before the browser launched, so A'
+// and B' are up with mesh and the identity-line/shell check holds.
+async function meshSteps(cx, bcx, targetId = 'unknown') {
+  if (meshNodes.ap === null || meshNodes.bp === null) {
+    markMeshFail(`setupMeshStack did not complete; target=${targetId}`);
+    return;
+  }
+  await runMeshStepM1(bcx);
+  await runMeshStepM2(bcx);
+  await runMeshStepM3(bcx);
+  await runMeshStepM4(bcx);
+}
+
+// ---------------------------------------------------------------------------
 // The run.
 // ---------------------------------------------------------------------------
 
@@ -6854,6 +7612,26 @@ async function runVerifiedBlocks(bcx) {
   } else {
     markLightNotRun('no --light');
   }
+
+  // The mesh block runs alone after steps 1–16, on a session of its own.
+  // Its two nodes A' and B' are up from before the browser launched
+  // (`setupMeshStack`); the block owns them end to end. It runs on the
+  // extension page live at this moment, or a fresh one where none is open;
+  // storage restores R's identity, as the other blocks do.
+  if (MESH) {
+    let mPage = await findExt('index.html');
+    if (!mPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      mPage = await findExt('index.html');
+    }
+    if (!mPage) throw new Error('mesh block: no extension page');
+    const mCx = await openSession(mPage.webSocketDebuggerUrl);
+    await meshSteps(mCx, bcx, mPage.id);
+    try { mCx.s.close(); } catch {}
+  } else {
+    markMeshNotRun('no --mesh');
+  }
 }
 
 // The blocks on a run whose links steps end early — no --public, or no root of
@@ -6921,6 +7699,10 @@ async function main() {
     markVerifiedFiguresNotRun('no --r-key — the verified-figures block does not run');
     markVerifiedNamesNotRun('no --r-key — the verified-names block does not run');
     markLightNotRun('no --r-key — the light block does not run');
+    // The mesh block requires --r-key for M3's signed post; without it,
+    // every step reads NOT RUN by name. --mesh without --r-key is a config
+    // error caught at the top.
+    markMeshNotRun('no --r-key — the mesh block does not run');
     return;
   }
 
@@ -8401,6 +9183,7 @@ let exitCode = 0;
 try {
   await setupTipRelays();
   await setupLightRelays();
+  await setupMeshStack();
   await main();
 } catch (e) {
   console.error('proof failed:', e);
@@ -8408,6 +9191,7 @@ try {
 }
 await teardownTipRelays();
 await teardownLightRelays();
+await teardownMeshStack();
 
 console.log('\n=== SUMMARY ===');
 for (const r of findings) console.log(`  step ${r.step}: ${r.status} — ${r.detail}`);
