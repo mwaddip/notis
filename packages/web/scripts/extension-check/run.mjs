@@ -1202,9 +1202,9 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 // stands in front of one node (A for RLA, B for RLB) and passes every request
 // through to `relay.upstream`, with `access-control-allow-origin: *` added on
 // the answer so the extension page can read it (as the figures and light
-// relays do). Methods other than GET / HEAD / OPTIONS land 405, since the
-// tip block reads only; the figures and names blocks' writes go to A
-// directly, not through this relay (`verifiedFiguresSteps` / `verifiedNamesSteps`).
+// relays do). Every method reaches the upstream with the request's body bytes
+// and content-type, and the upstream's status, content-type and body come
+// back: the extension's writes and its batch resolve go through the relay.
 // `relay.upstream` is reassignable: a step sets it to `D_ORIGIN` for the
 // `upstream-D` mode and back to its node origin after.
 //
@@ -1345,19 +1345,28 @@ async function startTipRelay(upstream, port) {
         relay.log.push({ at, doneAt: Date.now(), method, url, mode: 'hold-posts', upstream: relay.upstream, status: 'client-closed', edit: 'hold-posts' });
         return;
       }
-      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-        res.writeHead(405, { 'access-control-allow-origin': '*' });
-        res.end('tip relay serves reads only');
-        return;
-      }
       if (method === 'OPTIONS') {
         res.writeHead(204, {
           'access-control-allow-origin': '*',
-          'access-control-allow-methods': 'GET, HEAD, OPTIONS',
-          'access-control-allow-headers': '*',
+          'access-control-allow-methods': 'GET, HEAD, POST, OPTIONS',
+          'access-control-allow-headers': 'content-type',
         });
         res.end();
         return;
+      }
+      // Every other method reaches the upstream with the request's body bytes
+      // and its content-type.
+      const upstreamInit = { method };
+      if (method !== 'GET' && method !== 'HEAD') {
+        const chunks = [];
+        await new Promise((resolve, reject) => {
+          req.on('data', (c) => chunks.push(c));
+          req.on('end', resolve);
+          req.on('error', reject);
+        });
+        upstreamInit.body = Buffer.concat(chunks);
+        const ct = req.headers['content-type'];
+        if (ct) upstreamInit.headers = { 'content-type': ct };
       }
       const mode = relay.mode;
       const upstreamAtArrival = relay.upstream;
@@ -1394,7 +1403,7 @@ async function startTipRelay(upstream, port) {
         res.end(JSON.stringify({ error: 'Identity holds no name' }));
         return;
       }
-      const upstreamRes = await fetch(upstreamAtArrival + url, { method });
+      const upstreamRes = await fetch(upstreamAtArrival + url, upstreamInit);
       let body = Buffer.from(await upstreamRes.arrayBuffer());
       let edit = null;
       // `proof-invalid` — one byte of the proof's bytes flipped so the
