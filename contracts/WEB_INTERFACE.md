@@ -442,10 +442,13 @@ stateless checks and linked onto the chain the client holds, a proof asked again
 (`MESH_INTERFACE → The client's node list → "A check"`, `→ Block gossip`). The verifier is `resolveTip` of
 `@dagsocial/nipopow-client` — the code the command-line light client runs, never a second implementation of a trust
 decision — inside the mesh client the extension build alone hands the App, as the identity proxy is; **the web build
-is handed none**, since a verifier served by the host it checks says nothing about that host. A check runs at start,
-on a press of the status corner, at the client's own interval (`MESH_INTERFACE → The client's node list`), and when a
-name check asks for one (→ "The verified names"); one at a time, a trigger during a check being that check; a check
-that ends without a verdict leaves the corner where none has returned; nothing is stored. A check asks `GET
+is handed none**, since a verifier served by the host it checks says nothing about that host. **A tip run** runs a
+check and takes the verdict, the anchor and the chain's name from the client's state after it: at start, on a press of
+the status corner, every ten minutes while the tab is visible — a tab that becomes visible again runs one only when the
+last began ten minutes ago or more — and when a name check asks for one (→ "The verified names"); one at a time, a
+trigger during a run being that run; a run that ends without a verdict leaves the corner where none has returned;
+nothing is stored. The client's own checks between runs (`MESH_INTERFACE → The client's node list → "A check"`) route
+reads and move no verdict. A check asks `GET
 /nipopow/proof/24/20` — the tool's `DEFAULT_M` and `DEFAULT_K`, imported with `resolveTip`, never a second copy
 (`CONSTANTS → Client defaults`; `NODE_INTERFACE → Nipopow`) — of each node it reads a proof from, over the mesh, or at
 the node's API base where it holds no connection to it (→ "The mesh is the extension's first path"), each under the
@@ -484,7 +487,7 @@ nodes answering; and two nodes under one operator and one DNS zone answer for on
 > every ten minutes while the tab is visible and on a name check — and the verdict is that node's, with `refused` ·
 > *outworked* where another node's chain won and its suffix does not carry that node's tip.
 
-**The chain's name.** A check answers `chain` beside its verdict and its anchor: the hash of block 1 the client's
+**The chain's name.** A tip run answers `chain` beside its verdict and its anchor: the hash of block 1 the client's
 chain keeps — the first header of the proof that seated it, the header `verifyProof` holds to the profile's
 `genesisId` where one is pinned (`NIPOPOW_INTERFACE → verifyProof`), the tool's `genesisHash` for that proof. It is
 non-null whenever the client's chain is seated, under `verified` and under `thin` alike: naming a chain takes a proof that verifies,
@@ -495,13 +498,13 @@ run to, which answers each of its reads — **the plain
 listings**, `GET /karma/:key` and `GET /credits/:key`, the confirmed state the profile's rep and the wallet's balance
 stand on — against the state the verified chain committed, **the key's holdings read whole, by range**, and says
 beneath each figure what does not hold, and what the figure is where it is not the plain listing's: the figures are
-the views', the node's word (→ The wallet → "The spendable views are the node's pending view"). **The anchor**: a check answers `{ verdict, anchor, chain }`, `anchor` being the two ends of the client's chain —
+the views', the node's word (→ The wallet → "The spendable views are the node's pending view"). **The anchor**: a tip run answers `{ verdict, anchor, chain }`, `anchor` being the two ends of the client's chain —
 its tip and the header `k − 1` below it, the suffix head a proof of that tip carries — non-null when and only when the
 verdict is `verified`: each header PoW-verified and linked by the proof or the gossip that brought it
 (`MESH_INTERFACE → The client's node list → "The client's chain"`). **It moves with the chain**: a block the gossip
 links moves both ends by one, and a check that seats another chain answers a new anchor; a node proves at those
 heights while they are in its proof window (`NODE_INTERFACE → "A height of the proof window with no kept root is served
-from the store"`). The anchor is held beside the verdict, written by the check that writes it, cleared with it; nothing is stored. **The run** is `proveFigures`
+from the store"`). The App holds the anchor beside the verdict, written by the tip run that writes it, cleared with it; nothing is stored. **The run** is `proveFigures`
 of `@dagsocial/nipopow-client` — the code the command-line light client runs — which reads **what the key holds, by
 range**, and judges **the plain listing** — read whole beside every read of the view its row shows — against it, in
 this order: at `suffixHead.height`, against its
