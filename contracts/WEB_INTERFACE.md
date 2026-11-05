@@ -212,7 +212,8 @@ read takes the element's attribute through the URL constructor, never `document.
 **The three later tags.** `notis-nodes` is a JSON array — the build's **seed list**, one per network, the
 extension build's way of naming a node without a hosted page (→ The extension). An entry is an API base, or a
 **node**: `{ "notisId": <64 lowercase hex>, "addrs": [<multiaddr>, …], "api": <API base> }` — its key, the addresses
-the mesh dials it at, each ending in its `/p2p/` id and none with a DNS component, and the base its API answers at.
+the mesh dials it at, each ending in its `/p2p/` id and none with a DNS component, and the base its API answers at;
+`addrs` may be empty, a node then reached at its API base alone.
 The web build reads an entry's API base — a node's `api` — and the extension its node (→ The extension → "The mesh is
 the extension's first path"); anything that is not a JSON array of such entries reads as `[]`. `notis-public` is an origin and base, opening with a
 scheme and closing with `/`, or empty — the URL `link` copies from (→ Links): a page whose own location

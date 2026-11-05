@@ -231,7 +231,7 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 | the same at an entry's API base | the host, not the key — HTTPS authenticates a name, never a node key | `retry`, as a transport failure; never `blacklisted` |
 
 **An entry may carry an API base.** An anchor the list gives one is read there, over HTTPS, wherever the client holds
-no connection to its key: a check's tip, header and proof reads, and a routed read no node serves over the mesh (→ "A
+no connection to its key — always, for an anchor the list gives no address: a check's tip, header and proof reads, and a routed read no node serves over the mesh (→ "A
 routed read goes to a node its need allows"). It is one entry whichever way it answers — one witness in every count —
 and the pairing of a base with a key is the list's word. A read at an API base holds no connection and dials nothing.
 
