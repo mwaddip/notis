@@ -1712,7 +1712,7 @@ describe('the seed walk under a resolver', () => {
     const fresh = await import('../src/prefs');
     const { App: FreshApp } = await import('../src/app');
     // The build's seed list reads the meta: SEED1 is the initial node.
-    expect(fresh.BUILD_NODES).toEqual([SEED1, SEED2]);
+    expect(fresh.BUILD_NODE_BASES).toEqual([SEED1, SEED2]);
     expect(fresh.prefs.node).toBe(SEED1);
 
     const la = light('a');

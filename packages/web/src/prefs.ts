@@ -36,23 +36,79 @@ export function readMeta(name: string): string {
   return trimBase(el.content.trim());
 }
 
-/** Parse the `notis-nodes` meta as a JSON array of strings — anything else
- *  answers `[]` (WEB_INTERFACE → "The client is served from the node's own
- *  origin"). The build injects the per-network seed list. */
-export function readNodesMeta(): string[] {
+/** The per-network seed list the shell carries, parsed from the `notis-nodes`
+ *  meta. An entry is an API base string or a node
+ *  `{ notisId, addrs, api }` — a key, the addresses the mesh dials it at,
+ *  each ending in its `/p2p/` id and none with a `/dns4/`, `/dns6/` or
+ *  `/dnsaddr/` component, and the base its API answers at
+ *  (WEB_INTERFACE → The client is served from the node's own origin → "The
+ *  three later tags"). Anything that is not a JSON array of such entries
+ *  reads as `[]`, and any malformed entry refuses the whole list.
+ *  The bases list and the anchors list are read from one parse. */
+interface ParsedNodes { bases: string[]; anchors: MeshAnchor[] }
+
+function parseNodesMetaImpl(): ParsedNodes | null {
   const el = document.querySelector<HTMLMetaElement>('meta[name="notis-nodes"]');
-  if (!el) return [];
+  if (!el) return { bases: [], anchors: [] };
   const raw = el.content.trim();
-  if (raw === '') return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const out: string[] = [];
-    for (const v of parsed) if (typeof v === 'string' && v !== '') out.push(v);
-    return out;
-  } catch {
-    return [];
+  if (raw === '') return { bases: [], anchors: [] };
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+  if (!Array.isArray(parsed)) return null;
+  const bases: string[] = [];
+  const anchors: MeshAnchor[] = [];
+  for (const v of parsed) {
+    if (typeof v === 'string') {
+      if (v === '') return null;
+      bases.push(v);
+      continue;
+    }
+    const a = parseAnchorEntry(v);
+    if (a === null) return null;
+    bases.push(a.api!);
+    anchors.push(a);
   }
+  return { bases, anchors };
+}
+
+function parseAnchorEntry(v: unknown): MeshAnchor | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  const id = o['notisId'];
+  if (typeof id !== 'string' || !/^[0-9a-f]{64}$/.test(id)) return null;
+  const addrsRaw = o['addrs'];
+  if (!Array.isArray(addrsRaw) || addrsRaw.length === 0) return null;
+  const addrs: string[] = [];
+  for (const a of addrsRaw) {
+    if (typeof a !== 'string') return null;
+    if (a.includes('/dns4/') || a.includes('/dns6/') || a.includes('/dnsaddr/')) return null;
+    if (!/\/p2p\/[^/]+$/.test(a)) return null;
+    addrs.push(a);
+  }
+  const apiRaw = o['api'];
+  if (typeof apiRaw !== 'string') return null;
+  if (!apiRaw.startsWith('http://') && !apiRaw.startsWith('https://')) return null;
+  const api = apiRaw.endsWith('/') ? apiRaw.slice(0, -1) : apiRaw;
+  return { notisId: id, addrs, api };
+}
+
+function parseNodesMeta(): ParsedNodes {
+  return parseNodesMetaImpl() ?? { bases: [], anchors: [] };
+}
+
+/** The effective bases of the seed list — a string entry's own, a node
+ *  entry's `api` — anything else, `[]` (WEB_INTERFACE → The client is served
+ *  from the node's own origin → "The three later tags"). */
+export function readNodesMeta(): string[] {
+  return parseNodesMeta().bases;
+}
+
+/** The node entries of the seed list — the anchors the extension's mesh
+ *  client starts from (WEB_INTERFACE → The extension → "The seed list, the
+ *  faucet's base and the network's name"; MESH_INTERFACE → Discovery →
+ *  "Anchors"). Same validation rules as `readNodesMeta`. */
+export function readAnchorsMeta(): MeshAnchor[] {
+  return parseNodesMeta().anchors;
 }
 
 /** Read `notis-public` — the origin + base a link to a post should carry, or
@@ -81,16 +137,16 @@ export function readNetworkMeta(): NetworkType | null {
 export const WEB_BASE = readBase();
 export const BUILD_BASE = readMeta('notis-api');
 export const BUILD_FAUCET_BASE = readMeta('notis-faucet');
-export const BUILD_NODES = readNodesMeta();
 export const BUILD_PUBLIC = readPublicMeta();
 export const BUILD_NETWORK = readNetworkMeta();
 
 // WEB_INTERFACE → The client is served from the node's own origin → "The three
 // later tags" — the effective base of each seed-list entry (a string's own, a
-// node's `api`) and the node entries as `MeshAnchor`. AHEAD OF CODE until the
-// feat commit for the mesh parsing lands beside this stub.
-export const BUILD_NODE_BASES: string[] = [];
-export const BUILD_ANCHORS: MeshAnchor[] = [];
+// node's `api`) and the node entries as `MeshAnchor`, read from one parse of
+// the `notis-nodes` meta.
+const _parsedNodes = parseNodesMeta();
+export const BUILD_NODE_BASES: string[] = _parsedNodes.bases;
+export const BUILD_ANCHORS: MeshAnchor[] = _parsedNodes.anchors;
 
 // The wash percentages are large because the wash colour sits at the ground's
 // own lightness — the mix controls how much hue comes through and nothing else,
@@ -134,7 +190,7 @@ export function removeStore(key: string): void {
 function initialNode(): string {
   const stored = readStore(KEY_NODE);
   if (stored) return stored;
-  if (BUILD_NODES.length > 0) return BUILD_NODES[0]!;
+  if (BUILD_NODE_BASES.length > 0) return BUILD_NODE_BASES[0]!;
   return BUILD_BASE;
 }
 
@@ -187,7 +243,7 @@ export function setNode(origin: string): void {
     writeStore(KEY_NODE, trimmed);
   } else {
     // Cleared — reset to the first of the seed list or the same-origin default.
-    prefs.node = BUILD_NODES[0] ?? BUILD_BASE;
+    prefs.node = BUILD_NODE_BASES[0] ?? BUILD_BASE;
     removeStore(KEY_NODE);
   }
 }

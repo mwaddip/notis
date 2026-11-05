@@ -11,7 +11,7 @@ import type { Mode } from './mode';
 import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll, endForm } from './dom';
 import { contentHashHex } from './integrity';
-import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_NETWORK, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
+import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODE_BASES, BUILD_NETWORK, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { mountRow, type CardRow, type RowControl } from './view/card';
 import { renderPanesInto, renderRegionOver, renderBars } from './view/panes';
@@ -2078,7 +2078,7 @@ export class App {
       // served from the node's own origin"). When none answers, the friendly
       // line names the state. An adoption moves the generation, and its page
       // lands under the generation the adoption opened.
-      if (readStore(KEY_NODE) === null && BUILD_NODES.length > 0) {
+      if (readStore(KEY_NODE) === null && BUILD_NODE_BASES.length > 0) {
         const walked = await this.walkSeedList(gen);
         if (walked !== null) {
           if (walked.gen !== this.readerGen) return;
@@ -2140,7 +2140,7 @@ export class App {
    *  opened. */
   private async walkSeedList(gen: number): Promise<{ res: FeedResult; gen: number } | null> {
     const seen = new Set([prefs.node]);
-    for (const base of BUILD_NODES) {
+    for (const base of BUILD_NODE_BASES) {
       if (seen.has(base)) continue;
       seen.add(base);
       const probe = new NodeClient({ base: () => base, fetch: (url, init) => fetch(url, init) });

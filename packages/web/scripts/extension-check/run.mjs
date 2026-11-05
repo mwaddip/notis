@@ -1453,7 +1453,7 @@ async function setNodeViaUi(cx, origin) {
 }
 
 async function readPrefsNode(cx) {
-  // `setNode('')` removes the key and prefs.node adopts BUILD_NODES[0] at boot;
+  // `setNode('')` removes the key and prefs.node adopts BUILD_NODE_BASES[0] at boot;
   // the stored value is what a re-read of the input mirrors. Read localStorage
   // directly so no settings window needs to be open here.
   return cx.eval(`localStorage.getItem('notis.node')`);

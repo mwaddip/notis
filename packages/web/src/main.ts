@@ -1,4 +1,4 @@
-import { applyPrefs, BUILD_NODES, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE, prefs } from './prefs';
+import { applyPrefs, BUILD_NODE_BASES, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE, prefs } from './prefs';
 import { App } from './app';
 import { decideMode } from './mode';
 import { createTabs, type Tabs } from './tabs';
@@ -49,7 +49,7 @@ const tabs: Tabs = isExtension ? wrapTabs(createTabs(), chrome) : createTabs();
 const verifier: TipVerifier | undefined = isExtension && BUILD_NETWORK !== null
   ? createTipVerifier({
       network: BUILD_NETWORK,
-      nodes: BUILD_NODES,
+      nodes: BUILD_NODE_BASES,
       fetch: fetch.bind(globalThis),
       now: Date.now,
     })
@@ -102,7 +102,7 @@ if (postCache) {
 // verifier is created under the same condition and so is defined here.
 const postResolver: PostResolver | undefined = isExtension && BUILD_NETWORK !== null && postsVerifier !== undefined
   ? createPostResolver({
-      nodes: (): string[] => [prefs.node, ...BUILD_NODES].filter((b) => b !== ''),
+      nodes: (): string[] => [prefs.node, ...BUILD_NODE_BASES].filter((b) => b !== ''),
       fetch: fetch.bind(globalThis),
       check: postsVerifier.check.bind(postsVerifier),
     })
