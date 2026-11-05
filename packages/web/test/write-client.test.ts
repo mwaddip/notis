@@ -288,7 +288,7 @@ describe('a write with no answer goes again, the same bytes, to the next node', 
     return new WriteClient({ bases: () => bases, fetch: (url, init) => fetch(url, init) });
   }
 
-  it.fails('every base failing reads as today\'s transport failure — `timedOut: true` the last attempt\'s', async () => {
+  it('every base failing reads as today\'s transport failure — `timedOut: true` the last attempt\'s', async () => {
     const attempts = stubBases(['http://a', 'http://b'], [
       () => new Error('ECONNREFUSED'),
       () => timeoutError(),
@@ -302,7 +302,7 @@ describe('a write with no answer goes again, the same bytes, to the next node', 
     expect(res.message).toBe('timed out');
   });
 
-  it.fails('two attempts carry the same body bytes', async () => {
+  it('two attempts carry the same body bytes', async () => {
     const attempts = stubBases(['http://a', 'http://b'], [
       () => timeoutError(),
       () => new Response(JSON.stringify(okLikeBody()), { status: 200 }),

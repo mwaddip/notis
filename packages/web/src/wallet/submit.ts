@@ -39,8 +39,10 @@ import { isRejection } from '../api/write';
 // whether or not its body carries `expiresAtHeight`; the ledger bounds the
 // expiry it holds by the height the transaction was built at (WEB_INTERFACE →
 // The wallet → "A pending entry's expiry is the client's, and a node's answer
-// can only bring it sooner"). Nothing retries (WEB_INTERFACE → "Nothing retries"):
-// a rejection comes straight back for the caller to show.
+// can only bring it sooner"). A rejection is never retried and comes straight
+// back for the caller to show; a send with no answer goes, the same bytes, to
+// the next base in the client's order (WEB_INTERFACE → The wallet → "Nothing
+// retries a rejection").
 
 /** The four things a sign attempt can end in (WEB_INTERFACE → The identity
  *  module). The in-page module answers `signature`, `locked` or `refused` and

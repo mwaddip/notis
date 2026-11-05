@@ -52,7 +52,8 @@ export class PendingLedger {
   }
 
   /** Drop an entry — a landed or expired one, or a 409 whose transaction the
-   *  node's mempool never accepted (WEB_INTERFACE → "Nothing retries"). */
+   *  node's mempool never accepted: a rejection is never retried
+   *  (WEB_INTERFACE → The wallet → "Nothing retries a rejection"). */
   remove(txId: string): void {
     if (this.entries.delete(txId)) this.persist();
   }

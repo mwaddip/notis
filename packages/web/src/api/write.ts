@@ -232,36 +232,64 @@ export class WriteClient {
     body: unknown,
     reader: (data: unknown) => T | null,
   ): Promise<T | Rejection> {
-    const base = this.bases()[0] ?? '';
-    let res: Response;
-    try {
-      res = await this.httpFetch(trimBase(base) + path, {
-        method,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (e) {
-      return clientRefusal(e instanceof Error ? e.message : String(e));
-    }
-    const read = await readCappedJson<unknown>(res, WRITE_ANSWER_READ_BYTES);
-    if (!read.ok) {
-      if (res.status >= 200 && res.status < 300) {
-        // An over-cap 2xx or a 2xx that does not parse ends the flight as a
-        // transport failure does (WEB_INTERFACE → Reading a node's answer).
-        return clientRefusal(read.body);
+    // `bases()` is read once per send, and the same body bytes go to each base
+    // in turn (WEB_INTERFACE → The extension → "A write goes to one node and,
+    // with no answer, to the next"). An empty list answers the transport
+    // failure with no request, and every base failing answers today's transport
+    // failure carrying the last attempt's message and `timedOut` (WEB_INTERFACE
+    // → Reading a node's answer → "A failure the deadline ended says so").
+    const bases = this.bases();
+    const bodyBytes = JSON.stringify(body);
+    let last: Rejection = { status: 0, message: 'no node to send to' };
+    for (const base of bases) {
+      let res: Response;
+      try {
+        res = await this.httpFetch(trimBase(base) + path, {
+          method,
+          headers: { 'content-type': 'application/json' },
+          body: bodyBytes,
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+      } catch (e) {
+        last = transportFailureFrom(e);
+        continue;
       }
-      return normalizeRejection(res.status, res.statusText, read.body);
+      const read = await readCappedJson<unknown>(res, WRITE_ANSWER_READ_BYTES);
+      if (!read.ok && read.status === 0) {
+        // The deadline ended the body stream, or the body stream rejected
+        // mid-read — the attempt ended with no complete answer.
+        last = { status: 0, message: read.body, ...(read.timedOut ? { timedOut: true as const } : {}) };
+        continue;
+      }
+      // The first response of any status is the send's answer: read as today.
+      if (!read.ok) {
+        if (res.status >= 200 && res.status < 300) {
+          // An over-cap 2xx or a 2xx that does not parse ends the flight as a
+          // transport failure does (WEB_INTERFACE → Reading a node's answer).
+          return clientRefusal(read.body);
+        }
+        return normalizeRejection(res.status, res.statusText, read.body);
+      }
+      const rebuilt = reader(read.data);
+      if (rebuilt === null) {
+        // A 2xx whose fields the flow reads are not their types (WEB_INTERFACE →
+        // The wallet → "A pending entry's expiry is the client's, and a node's
+        // answer can only bring it sooner").
+        return clientRefusal(`the node answered with ${res.status} but its body is not the route's shape.`);
+      }
+      return rebuilt;
     }
-    const rebuilt = reader(read.data);
-    if (rebuilt === null) {
-      // A 2xx whose fields the flow reads are not their types (WEB_INTERFACE →
-      // The wallet → "A pending entry's expiry is the client's, and a node's
-      // answer can only bring it sooner").
-      return clientRefusal(`the node answered with ${res.status} but its body is not the route's shape.`);
-    }
-    return rebuilt;
+    return last;
   }
+}
+
+// The deadline fires with a `TimeoutError`, which `fetchJson` recognises off
+// the `.name` (WEB_INTERFACE → Reading a node's answer → "A failure the
+// deadline ended says so"); any other rejection is a plain transport failure.
+function transportFailureFrom(e: unknown): Rejection {
+  const message = e instanceof Error ? e.message : String(e);
+  const timedOut = typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError';
+  return timedOut ? { status: 0, message, timedOut: true } : { status: 0, message };
 }
 
 /**

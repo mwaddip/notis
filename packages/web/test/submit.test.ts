@@ -1354,9 +1354,10 @@ describe('a withdraw entry holds no input and no change', () => {
 
 describe('a send with no answer goes, the same bytes, to the next node', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
-  it.fails('the first base times out and the second answers 201 — one ledger entry, the card pending, never rejected', async () => {
+  it('the first base times out and the second answers 201 — one ledger entry, the card pending, never rejected', async () => {
     const BASE_A = 'http://a';
     const BASE_B = 'http://b';
+    const NEW_POST_ID = '99'.repeat(32);
     const attempts: Array<{ url: string }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
       void init;
@@ -1367,7 +1368,7 @@ describe('a send with no answer goes, the same bytes, to the next node', () => {
       // The second node answers the transaction its pool already holds as held:
       // the pooled entry's `expiresAtHeight` with its own txId. The flow checks
       // the id against the one it signed, so the node echoes `lastSignedTxId`.
-      return new Response(JSON.stringify({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: lastSignedTxId() }), { status: 201 });
+      return new Response(JSON.stringify({ postId: NEW_POST_ID, status: 'pending', expiresAtHeight: 6720, txId: lastSignedTxId() }), { status: 201 });
     }));
     const writeClient = new WriteClient({ bases: () => [BASE_A, BASE_B], fetch: (url, init) => fetch(url, init) });
     const ledger = new PendingLedger(PUB);
@@ -1375,7 +1376,7 @@ describe('a send with no answer goes, the same bytes, to the next node', () => {
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.entry).toMatchObject({ kind: 'post', postId: 'newpost', expiresAtHeight: 6720 });
+    expect(res.entry).toMatchObject({ kind: 'post', postId: NEW_POST_ID, expiresAtHeight: 6720 });
     expect(ledger.all().map((e) => e.txId)).toEqual([res.entry.txId]);
     expect(attempts.length).toBe(2);
     expect(attempts[0]!.url).toBe('http://a/posts');
