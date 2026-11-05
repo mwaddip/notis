@@ -137,6 +137,15 @@ interface InternalEntry {
   notisId: string;
   anchor: boolean;
   byHand: boolean;
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — true for an
+   * entry the constructor's anchor list named, never cleared. A
+   * `removeByHand` leaves such an entry alone, so a build anchor
+   * added again by hand stays after a blank commit; one not in the
+   * build list is dropped (`anchor && !fromAnchorList` is the pure
+   * hand-added anchor case).
+   */
+  fromAnchorList: boolean;
   status: NodeStatus;
   failures: number;
   clockAtFailure: number;
@@ -190,6 +199,7 @@ export class NodeList {
           notisId: a.notisId,
           anchor: true,
           byHand: false,
+          fromAnchorList: true,
           status: 'new',
           failures: 0,
           clockAtFailure: 0,
@@ -220,6 +230,7 @@ export class NodeList {
       notisId: id,
       anchor: false,
       byHand: false,
+      fromAnchorList: false,
       status: 'new',
       failures: 0,
       clockAtFailure: 0,
@@ -264,6 +275,7 @@ export class NodeList {
       notisId: id,
       anchor: trusted,
       byHand: true,
+      fromAnchorList: false,
       status: 'new',
       failures: 0,
       clockAtFailure: 0,
@@ -276,6 +288,18 @@ export class NodeList {
       lastFailures: {},
       api: null,
     });
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
+   * entry a reader added by hand. An entry the constructor's anchor
+   * list named — the build anchor — is left alone: `fromAnchorList`
+   * is true for it, and never cleared. An entry this method can drop
+   * is one `byHand === true && fromAnchorList === false`; anything
+   * else is a no-op. An id the list does not hold is a no-op.
+   */
+  removeByHand(_id: string): void {
+    throw new Error('NodeList.removeByHand(): not implemented');
   }
 
   /**

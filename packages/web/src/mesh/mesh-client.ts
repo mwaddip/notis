@@ -405,6 +405,26 @@ export interface MeshClient {
    */
   addByHand(notisId: string, addrs: string[], trusted: boolean): void;
   /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
+   * entry a reader added by hand. An entry that is also a build
+   * anchor is not removed: anchors are the client's own trust, not
+   * something the settings row can take away. An id the list does
+   * not hold is a no-op. Refuses with `MeshConfigError` an id that
+   * is not 64 lowercase hex.
+   */
+  removeByHand(notisId: string): void;
+  /**
+   * MESH_INTERFACE → The client's node list → "A routed read goes
+   * to a node its need allows" — the base a routed read of the
+   * given need would use now: the first pick `read` makes, by the
+   * same order — mesh first, the fast set at random, else an API
+   * base, else an anchor before the first check ends. `null` when
+   * no node is allowed for the need. Pure — the client's state
+   * stays unchanged; no connection is opened; the random source
+   * is read once.
+   */
+  base(need: ReadNeed): string | null;
+  /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — the
    * addresses the client's own configuration names for the key: an
    * anchor's given addresses and those entered by hand, never one
@@ -1158,6 +1178,28 @@ class MeshClientImpl implements MeshClient {
     }
     this.nodeList.addByHand(notisId, addrs, trusted);
     this.triggerImmediateCheck();
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
+   * entry a reader added by hand. A build anchor is never removed:
+   * the `NodeList.removeByHand` check guards that. Refuses with
+   * `MeshConfigError` an id that is not 64 lowercase hex, then
+   * delegates; an id the list does not hold is a no-op.
+   */
+  removeByHand(_notisId: string): void {
+    throw new Error('MeshClient.removeByHand(): not implemented');
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "A routed read goes
+   * to a node its need allows" — the base a routed read of the
+   * given need would use now. Mirrors `read`'s pick: mesh first,
+   * the fast set at random, else an API base, else an anchor
+   * before the first check ends. `null` when no node is allowed.
+   */
+  base(_need: ReadNeed): string | null {
+    throw new Error('MeshClient.base(): not implemented');
   }
 
   /**

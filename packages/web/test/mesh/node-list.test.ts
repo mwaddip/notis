@@ -340,6 +340,34 @@ describe('node-list', () => {
     expect(list.candidates()).toContain(idA);
   });
 
+  it.fails('removeByHand drops a hand-added entry; a build anchor is left alone', () => {
+    // MESH_INTERFACE → Discovery → "A node added by hand" — the settings row's
+    // commit path. A build anchor (constructor's list) keeps its
+    // `fromAnchorList`, and `removeByHand` leaves it even when it was also
+    // hand-added. A pure hand-added entry is dropped.
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    list.addByHand(idB, [a2], true);
+    expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
+    list.removeByHand(idB);
+    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
+    // `removeByHand` on a build anchor is a no-op, whether or not it was also
+    // added by hand after start.
+    list.addByHand(idA, [a2], true);
+    list.removeByHand(idA);
+    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
+  });
+
+  it.fails('removeByHand on an id the list does not hold is a no-op', () => {
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    list.removeByHand(idC);
+    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
+  });
+
+  it.fails('removeByHand refuses a non-64-hex id', () => {
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    expect(() => list.removeByHand('abc')).toThrow(MeshKeyError);
+  });
+
   it('an event for an id the list does not hold throws', () => {
     // Every correct caller sends an event only for an id it `add`ed or saw
     // through `candidates()`; an unknown id is a bug in the caller, so the
