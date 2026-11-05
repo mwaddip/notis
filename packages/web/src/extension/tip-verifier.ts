@@ -71,5 +71,5 @@ function anchorFromReading(node: NodeTipResult | undefined): Anchor | null {
   if (node === undefined) return null;
   const vr = node.verifyResult;
   if (vr === null || vr.ok !== true) return null;
-  return { tip: vr.tip, suffixHead: vr.suffixHead };
+  return { tip: vr.tip, suffixHead: vr.suffixHead.header };
 }

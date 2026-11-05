@@ -1,15 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createTipVerifier } from '../src/extension/tip-verifier';
 import { DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
-import type { Anchor, TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
+import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 import type { BlockHeader, NetworkProfile, NetworkType } from '@dagsocial/types';
 import { profileFor } from '@dagsocial/types';
 
 // PoPowHeader / VerifyResult reach the web through nipopow-client, so tests
 // derive them from the exposed shapes rather than importing @dagsocial/nipopow
 // directly (not a web dep).
-type PoPowHeader = Anchor['suffixHead'];
 type VerifyResult = NonNullable<NodeTipResult['verifyResult']>;
+type PoPowHeader = Extract<VerifyResult, { ok: true }>['suffixHead'];
 
 // createTipVerifier is the extension's seam over `resolveTip`
 // (WEB_INTERFACE → The extension → "The verified tip"). It asks the reading
@@ -337,7 +337,7 @@ describe('createTipVerifier — the anchor beside the verdict', () => {
     // The anchor is the READING node's own `tip` and `suffixHead`, not the winner's.
     expect(run.anchor).not.toBeNull();
     expect(run.anchor!.tip).toBe(readingTip);
-    expect(run.anchor!.suffixHead).toBe(readingSuffix);
+    expect(run.anchor!.suffixHead).toBe(readingSuffix.header);
   });
 
   // Each of the six non-verified verdict rows leaves the anchor null.

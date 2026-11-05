@@ -86,7 +86,7 @@ export async function runCli(
     return { tip: tipResult, run: null, post: null, exitCode: 0 };
   }
 
-  const anchor: Anchor = { tip: tipResult.tip, suffixHead: tipResult.suffixHead };
+  const anchor: Anchor = { tip: tipResult.tip, suffixHead: tipResult.suffixHead.header };
   const listingResult = await fetchListing(tipResult.winner.url, config.user, httpFetch);
   if (!listingResult.ok) {
     return {

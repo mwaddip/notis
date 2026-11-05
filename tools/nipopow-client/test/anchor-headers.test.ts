@@ -8,7 +8,6 @@ import { computeCandidateBoxId, EMPTY_IDENTITY_RECORD } from '@dagsocial/types';
 import {
   avlProofJson,
   boxInsertion,
-  boxProofKeyHex,
   buildAvlWithInsertions,
   buildHoldingsFixture,
   devnetProfile,
@@ -36,7 +35,7 @@ function plainAnchor(stateRootAtTip: string, stateRootAtSuffix: string): Anchor 
 }
 
 describe('an anchor of two plain headers', () => {
-  it.fails('proveFigures proves a listed box at both heights', async () => {
+  it('proveFigures proves a listed box at both heights', async () => {
     const userHex = 'ab'.repeat(32);
     const user = hexToBytes(userHex) as UserId;
     const karma = karmaBoxFor(user, 100n, 1);
@@ -56,7 +55,7 @@ describe('an anchor of two plain headers', () => {
     expect(result.failed).toBe(false);
   });
 
-  it.fails('proveName proves a name at both heights', async () => {
+  it('proveName proves a name at both heights', async () => {
     const bob = 'bb'.repeat(32);
     const txid = 'cd'.repeat(32) as TxId;
     const box: AnyBoxCandidate = {

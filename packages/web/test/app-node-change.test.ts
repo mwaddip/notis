@@ -256,7 +256,7 @@ function fakeHeader(height: number, tag: string): BlockHeader {
 }
 const anchorAt = (height: number, tag: string): Anchor => ({
   tip: fakeHeader(height, tag),
-  suffixHead: { header: fakeHeader(height - 19, tag), interlinks: [] },
+  suffixHead: fakeHeader(height - 19, tag),
 });
 const verified = (height: number): TipVerdict => ({ kind: 'verified', nodes: 2, height });
 function emptyResult(): FiguresResult {

@@ -1613,7 +1613,7 @@ function stubHeader(over: Partial<BlockHeader> = {}): BlockHeader {
 function pfAnchor(suffixHeight = 9005, tipHeight = 9020): Anchor {
   return {
     tip: stubHeader({ height: tipHeight }),
-    suffixHead: { header: stubHeader({ height: suffixHeight }), interlinks: [] },
+    suffixHead: stubHeader({ height: suffixHeight }),
   };
 }
 function pfBox(over: Partial<FigureBox> & Pick<FigureBox, 'boxClass' | 'status'>): FigureBox {

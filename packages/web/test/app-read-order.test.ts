@@ -231,7 +231,7 @@ function fakeHeader(height: number): BlockHeader {
 }
 const verified = (height: number): { verdict: TipVerdict; anchor: Anchor; chain: string | null } => ({
   verdict: { kind: 'verified', nodes: 2, height },
-  anchor: { tip: fakeHeader(height), suffixHead: { header: fakeHeader(height - 19), interlinks: [] } },
+  anchor: { tip: fakeHeader(height), suffixHead: fakeHeader(height - 19) },
   chain: null,
 });
 function emptyResult(): FiguresResult {

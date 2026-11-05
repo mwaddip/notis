@@ -456,10 +456,6 @@ import type { TipVerdict } from '../src/model/tip-verdict';
 import type { BlockHeader } from '@dagsocial/types';
 import { prefs, setNode } from '../src/prefs';
 
-// PoPowHeader reaches the web through the tool's Anchor type — @dagsocial/nipopow
-// is not a direct web dep.
-type PoPowHeader = Anchor['suffixHead'];
-
 interface TipRunLike {
   verdict: TipVerdict;
   anchor: Anchor | null;
@@ -563,10 +559,9 @@ const fakeHeader = (height: number, tag: string): BlockHeader => ({
   interlinkRoot: '00'.repeat(32),
   adProofsRoot: '00'.repeat(32),
 });
-const fakePopow = (h: BlockHeader): PoPowHeader => ({ header: h, interlinks: [] });
 const anchorFor = (height: number, tag: string): Anchor => ({
   tip: fakeHeader(height, tag),
-  suffixHead: fakePopow(fakeHeader(height - 19, tag)),
+  suffixHead: fakeHeader(height - 19, tag),
 });
 const verifiedRun = (nodes: number, height: number, tag = 'aa'): TipRunLike => ({
   verdict: verified(nodes, height),

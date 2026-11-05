@@ -17,7 +17,7 @@ export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: num
 
 /** What the App holds when a figures verifier run has returned — the tool's
  *  full result and the anchor it was proven against. The anchor's
- *  `suffixHead.header.height` is the height the *proven at block N* clause
+ *  `suffixHead.height` is the height the *proven at block N* clause
  *  names; the anchor's presence beside the result lets a later run drop a
  *  result that no longer belongs to the anchor the App now holds
  *  (WEB_INTERFACE → The extension → "The verified figures"). The App's

@@ -71,14 +71,8 @@ function fakeHeader(height: number, tag: string): BlockHeader {
   };
 }
 
-type PoPowHeader = Anchor['suffixHead'];
-
-function fakePopow(h: BlockHeader): PoPowHeader {
-  return { header: h, interlinks: [] };
-}
-
 function anchorFor(h: number, tag = 'aa'): Anchor {
-  return { tip: fakeHeader(h, tag), suffixHead: fakePopow(fakeHeader(h - 19, tag)) };
+  return { tip: fakeHeader(h, tag), suffixHead: fakeHeader(h - 19, tag) };
 }
 
 function emptyResult(heightAfter = 6001): FiguresResult {

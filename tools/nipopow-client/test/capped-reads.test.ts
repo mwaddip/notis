@@ -200,7 +200,7 @@ describe('every reader passes its route\'s cap', () => {
       const fake = async () => new Response(over, { status: 200 });
       const anchor = {
         tip: makeHeader(100),
-        suffixHead: { header: makeHeader(50), interlinks: [] as string[] },
+        suffixHead: makeHeader(50),
       };
       const result = await proveName('http://node', { name: 'Alice' }, anchor, fake);
       // control — nothing was proven
@@ -222,7 +222,7 @@ describe('every reader passes its route\'s cap', () => {
       };
       const anchor = {
         tip: makeHeader(100),
-        suffixHead: { header: makeHeader(50), interlinks: [] as string[] },
+        suffixHead: makeHeader(50),
       };
       const result = await proveName('http://node', { name: 'A'.repeat(24) }, anchor, fake);
       // last — the lookup was read; the box proof fails downstream, so the

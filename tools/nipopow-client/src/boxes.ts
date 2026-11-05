@@ -22,7 +22,6 @@ import type {
   NetworkProfile,
   UserId,
 } from '@dagsocial/types';
-import type { PoPowHeader } from '@dagsocial/nipopow';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import {
   KARMA_LISTING_MAX,
@@ -61,9 +60,14 @@ export interface Listing {
 
 export type ListingResult = { ok: true; listing: Listing } | { ok: false; reason: string };
 
+/**
+ * The two ends of the verified chain a run proves against: the tip and the
+ * header `k − 1` blocks below it; the proofs read each one's `height` and
+ * `stateRoot` (WEB_INTERFACE → The extension → "The verified figures").
+ */
 export interface Anchor {
   tip: BlockHeader;
-  suffixHead: PoPowHeader;
+  suffixHead: BlockHeader;
 }
 
 /**
@@ -526,8 +530,8 @@ export async function proveFigures(
 ): Promise<FiguresResult> {
   const userLowerHex = user.toLowerCase();
   const userBytes = hexToBytes(userLowerHex) as UserId;
-  const suffixHeight = anchor.suffixHead.header.height;
-  const suffixStateRoot = anchor.suffixHead.header.stateRoot;
+  const suffixHeight = anchor.suffixHead.height;
+  const suffixStateRoot = anchor.suffixHead.stateRoot;
   const tipHeight = anchor.tip.height;
   const tipStateRoot = anchor.tip.stateRoot;
   const suffixHeader = { height: suffixHeight, stateRoot: suffixStateRoot };

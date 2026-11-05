@@ -11,8 +11,6 @@ import { profileFor } from '@dagsocial/types';
 // hand every other argument through unchanged. The tests inject a `prove`
 // stub so the wire is asserted without a real proof engine.
 
-type PoPowHeader = Anchor['suffixHead'];
-
 function header(height: number, tag: string): BlockHeader {
   const suffix = tag.padStart(2, '0');
   return {
@@ -30,12 +28,8 @@ function header(height: number, tag: string): BlockHeader {
   };
 }
 
-function popow(h: BlockHeader): PoPowHeader {
-  return { header: h, interlinks: [] };
-}
-
 function anchorFor(h: number): Anchor {
-  return { tip: header(h, 'aa'), suffixHead: popow(header(h - 19, 'bb')) };
+  return { tip: header(h, 'aa'), suffixHead: header(h - 19, 'bb') };
 }
 
 function emptyResult(): FiguresResult {
