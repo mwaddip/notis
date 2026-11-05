@@ -454,7 +454,7 @@ describe('the App status corner — a timer independent of the bounded poll', ()
 import type { Anchor, TipVerifier } from '../src/model/state';
 import type { TipVerdict } from '../src/model/tip-verdict';
 import type { BlockHeader } from '@dagsocial/types';
-import { prefs, setNode } from '../src/prefs';
+import { setNode } from '../src/prefs';
 
 interface TipRunLike {
   verdict: TipVerdict;

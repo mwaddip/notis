@@ -179,6 +179,75 @@ describe('settings window — the node row', () => {
   });
 });
 
+describe("settings window — the extension's node row adds a node by hand", () => {
+  // WEB_INTERFACE → The settings window → "In the extension the row adds a
+  // node by hand" — the address a node prints at start, parsed as a multiaddr
+  // ending in `/p2p/<peer id>`; a DNS component or a malformed one is refused
+  // with a line beside the field; blank removes.
+  const VALID_ADDR = '/ip4/127.0.0.1/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
+
+  it.fails('with a handNode seam, the row holds its stored address and the hint names what to paste', () => {
+    const body = render(handlers({
+      handNode: {
+        address: () => VALID_ADDR,
+        commit: () => null,
+      },
+    }));
+    const field = rowField(body, 'node')!;
+    const input = field.querySelector('input') as HTMLInputElement;
+    expect(input.value).toBe(VALID_ADDR);
+    const hint = field.querySelector('.hint')!;
+    expect(hint.textContent).toMatch(/the address a node prints at start/);
+  });
+
+  it.fails('a commit calling the seam leaves the field unchanged and no error line stands', () => {
+    const commit = vi.fn(() => null);
+    const body = render(handlers({
+      handNode: { address: () => '', commit },
+    }));
+    const field = rowField(body, 'node')!;
+    const input = field.querySelector('input') as HTMLInputElement;
+    input.value = VALID_ADDR;
+    input.dispatchEvent(new Event('change'));
+    expect(commit).toHaveBeenCalledWith(VALID_ADDR);
+    expect(field.querySelector('.error')).toBeNull();
+  });
+
+  it.fails('an error from the seam shows a line beside the field', () => {
+    const commit = vi.fn(() => 'addresses with DNS names are not accepted');
+    const body = render(handlers({
+      handNode: { address: () => '', commit },
+    }));
+    const field = rowField(body, 'node')!;
+    const input = field.querySelector('input') as HTMLInputElement;
+    input.value = '/dns4/notis.fun/p2p/x';
+    input.dispatchEvent(new Event('change'));
+    const line = field.querySelector('.error');
+    expect(line).not.toBeNull();
+    expect(line!.textContent).toBe('addresses with DNS names are not accepted');
+  });
+
+  it.fails('blank commits an empty string to the seam', () => {
+    const commit = vi.fn(() => null);
+    const body = render(handlers({
+      handNode: { address: () => VALID_ADDR, commit },
+    }));
+    const field = rowField(body, 'node')!;
+    const input = field.querySelector('input') as HTMLInputElement;
+    input.value = '';
+    input.dispatchEvent(new Event('change'));
+    expect(commit).toHaveBeenCalledWith('');
+  });
+
+  it('without a handNode seam (the web build), the row is the web form unchanged', () => {
+    const body = render(handlers());
+    const field = rowField(body, 'node')!;
+    const hint = field.querySelector('.hint')!;
+    // The web build's hint names the build default and that any origin works.
+    expect(hint.textContent).toMatch(/blank resets to the build default/);
+  });
+});
+
 // WEB_INTERFACE → The workspace → "A draw updates a standing body in place",
 // → "A window's controls act on the state as it stands at the press".
 describe('settings window — the body across a draw', () => {

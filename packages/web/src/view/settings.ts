@@ -31,6 +31,11 @@ export interface SettingsHandlers {
   setTheme: (t: Theme) => void;
   setIdTint: (m: IdTint) => void;
   setNode: (origin: string) => void;
+  // The extension's hand-added node — the row renders the hand-added form
+  // when this hook is present, else the web build's `node` row stands
+  // (WEB_INTERFACE → The settings window → "In the extension the row adds
+  // a node by hand").
+  handNode?: HandNodeSeam;
   // The extension's binary sign policy — the row renders only when both hooks
   // are present (WEB_INTERFACE → The settings window; the extension's proxy).
   policy?: () => 'silent' | 'ask';
@@ -40,6 +45,16 @@ export interface SettingsHandlers {
   // in a build whose `notis-public` is not empty).
   links?: () => 'site' | 'here';
   setLinks?: (v: 'site' | 'here') => Promise<void>;
+}
+
+/** The extension's hand-added node seam (WEB_INTERFACE → The settings window →
+ *  "In the extension the row adds a node by hand"). `address` reads the stored
+ *  address, or `''` when none. `commit` parses, calls the mesh client's
+ *  `addByHand` or `removeByHand`, and answers `null` on success, or an error
+ *  line to show beside the field. */
+export interface HandNodeSeam {
+  address(): string;
+  commit(addr: string): string | null;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
