@@ -2131,7 +2131,16 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
             && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
           'led thin + "a node names a tip off this chain · tip N" (19c, D lighter)',
           60000);
-        const reading = reached.last;
+        // The first number on a fresh page can be an anchor's read before the
+        // check ends; a press re-reads the tip through the routed read, which
+        // goes to a node the check placed on the chain
+        // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows").
+        let reading = reached.last;
+        if (!reached.timedOut) {
+          await pressCorner(page.cx);
+          await sleep(2000);
+          reading = await readCorner(page.cx);
+        }
         const hAnow = await currentHeight(NODE);
         const hBnow = await currentHeight(B_ORIGIN);
         const titleTip = tipFromTitle(reading?.title ?? '');
@@ -2188,7 +2197,16 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
             && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
           'led thin + "a node names a tip off this chain · tip N" (19b, D heavier)',
           60000);
-        const reading = reached.last;
+        // The first number on a fresh page can be an anchor's read before the
+        // check ends; a press re-reads the tip through the routed read, which
+        // goes to a node the check placed on the chain
+        // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows").
+        let reading = reached.last;
+        if (!reached.timedOut) {
+          await pressCorner(page.cx);
+          await sleep(2000);
+          reading = await readCorner(page.cx);
+        }
         const hDnow = await currentHeight(D_ORIGIN);
         const hBnow = await currentHeight(B_ORIGIN);
         const titleTip = tipFromTitle(reading?.title ?? '');
