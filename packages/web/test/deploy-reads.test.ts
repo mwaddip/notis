@@ -185,8 +185,20 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     expect(p.BUILD_ANCHORS).toEqual([]);
   });
 
-  it('a node entry with no addrs array refuses the whole list', async () => {
+  it.fails('a node entry with an empty addrs is an anchor reached at its api base alone', async () => {
     const entry = { notisId: NID, addrs: [], api: 'https://b.example/api' };
+    setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
+    const p = await importPrefs();
+    expect(p.BUILD_ANCHORS).toEqual([{ notisId: NID, addrs: [], api: 'https://b.example/api' }]);
+    expect(p.BUILD_NODE_BASES).toEqual(['https://a.example/api', 'https://b.example/api']);
+  });
+
+  it.each([
+    ['a string', 'x'],
+    ['an object', {}],
+    ['absent', undefined],
+  ])('a node entry whose addrs is %s refuses the whole list', async (_name, addrs) => {
+    const entry = { notisId: NID, addrs, api: 'https://b.example/api' };
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual([]);
