@@ -343,7 +343,7 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
     for (const d of dirs.splice(0)) { rmSync(d, { recursive: true, force: true }); }
   });
 
-  it.fails('a hand-added node is dropped by `removeByHand`', async () => {
+  it('a hand-added node is dropped by `removeByHand`', async () => {
     client = await startMeshClient({
       anchors: [],
       network: 'devnet',
@@ -360,7 +360,7 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
     expect(client.state().nodes.find((n) => n.notisId === k.notisId)).toBeUndefined();
   }, 15_000);
 
-  it.fails('a build anchor added by hand again is left alone by `removeByHand`', async () => {
+  it('a build anchor added by hand again is left alone by `removeByHand`', async () => {
     const k = nodeKeyFromKeyPair(generateKeyPair());
     const peerIdStr = peerIdFromNotisId(k.notisId).toString();
     const addr = `/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/p2p/${peerIdStr}`;
@@ -376,7 +376,7 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
     expect(client.state().nodes.find((n) => n.notisId === k.notisId)).toBeDefined();
   }, 15_000);
 
-  it.fails('a non-64-hex id refuses with `MeshConfigError`', async () => {
+  it('a non-64-hex id refuses with `MeshConfigError`', async () => {
     client = await startMeshClient({
       anchors: [],
       network: 'devnet',
@@ -413,7 +413,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
     return await startNetPublicMesh({ upstream: upstream.base, stateDir: dir });
   }
 
-  it.fails('before the first check ends, `base` answers an anchor\'s api when the anchor has one', async () => {
+  it('before the first check ends, `base` answers an anchor\'s api when the anchor has one', async () => {
     const k = nodeKeyFromKeyPair(generateKeyPair());
     const peerIdStr = peerIdFromNotisId(k.notisId).toString();
     const addr = `/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/p2p/${peerIdStr}`;
@@ -430,7 +430,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
     expect(b).toBe('https://a.example');
   }, 15_000);
 
-  it.fails('after a check a reached anchor is picked at its mesh base', async () => {
+  it('after a check a reached anchor is picked at its mesh base', async () => {
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'base-m-')); dirs.push(dir);
     const n = await startNode(up, dir); nodes.push(n.node);
@@ -447,7 +447,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
     expect(b).toContain(n.id);
   }, 60_000);
 
-  it.fails('`base(\'tip\')` answers `null` when no node is allowed and the first check has ended', async () => {
+  it('`base(\'tip\')` answers `null` when no node is allowed and the first check has ended', async () => {
     client = await startMeshClient({
       anchors: [],
       network: 'devnet',

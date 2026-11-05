@@ -1187,8 +1187,11 @@ class MeshClientImpl implements MeshClient {
    * `MeshConfigError` an id that is not 64 lowercase hex, then
    * delegates; an id the list does not hold is a no-op.
    */
-  removeByHand(_notisId: string): void {
-    throw new Error('MeshClient.removeByHand(): not implemented');
+  removeByHand(notisId: string): void {
+    if (!HEX64_RE.test(notisId)) {
+      throw new MeshConfigError(`removeByHand key refused: ${notisId} is not 64 lowercase hex characters`);
+    }
+    this.nodeList.removeByHand(notisId);
   }
 
   /**
@@ -1198,8 +1201,43 @@ class MeshClientImpl implements MeshClient {
    * the fast set at random, else an API base, else an anchor
    * before the first check ends. `null` when no node is allowed.
    */
-  base(_need: ReadNeed): string | null {
-    throw new Error('MeshClient.base(): not implemented');
+  base(need: ReadNeed): string | null {
+    const entries = this.nodeList.entries();
+    const meshCandidates = entries.map((e) => ({
+      id: e.notisId,
+      status: e.status,
+      readMs: this.readMsMap.get(e.notisId) ?? null,
+      usable: this.pickReadyConnection(e.notisId) !== null,
+    }));
+    const meshPicked = pickServer(meshCandidates, need, this.random);
+    if (meshPicked !== null) return meshBaseUrl(meshPicked);
+
+    const apiCandidates = entries
+      .filter((e) => e.api !== null)
+      .map((e) => ({
+        id: e.notisId,
+        status: e.status,
+        readMs: this.readMsMap.get(e.notisId) ?? null,
+        usable: true,
+      }));
+    const apiPicked = pickServer(apiCandidates, need, this.random);
+    if (apiPicked !== null) {
+      const entry = entries.find((e) => e.notisId === apiPicked);
+      if (entry && entry.api !== null) return entry.api;
+    }
+
+    const firstCheckEnded = this.state_.checks > 0;
+    if (!firstCheckEnded) {
+      for (const e of entries) {
+        if (!e.anchor) continue;
+        if (e.status === 'blacklisted') continue;
+        if (this.pickReadyConnection(e.notisId) !== null) {
+          return meshBaseUrl(e.notisId);
+        }
+        if (e.api !== null) return e.api;
+      }
+    }
+    return null;
   }
 
   /**

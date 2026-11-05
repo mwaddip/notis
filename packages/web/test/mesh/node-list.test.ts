@@ -340,7 +340,7 @@ describe('node-list', () => {
     expect(list.candidates()).toContain(idA);
   });
 
-  it.fails('removeByHand drops a hand-added entry; a build anchor is left alone', () => {
+  it('removeByHand drops a hand-added entry; a build anchor is left alone', () => {
     // MESH_INTERFACE → Discovery → "A node added by hand" — the settings row's
     // commit path. A build anchor (constructor's list) keeps its
     // `fromAnchorList`, and `removeByHand` leaves it even when it was also
@@ -357,13 +357,13 @@ describe('node-list', () => {
     expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
   });
 
-  it.fails('removeByHand on an id the list does not hold is a no-op', () => {
+  it('removeByHand on an id the list does not hold is a no-op', () => {
     const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
     list.removeByHand(idC);
     expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
   });
 
-  it.fails('removeByHand refuses a non-64-hex id', () => {
+  it('removeByHand refuses a non-64-hex id', () => {
     const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
     expect(() => list.removeByHand('abc')).toThrow(MeshKeyError);
   });

@@ -298,8 +298,13 @@ export class NodeList {
    * is one `byHand === true && fromAnchorList === false`; anything
    * else is a no-op. An id the list does not hold is a no-op.
    */
-  removeByHand(_id: string): void {
-    throw new Error('NodeList.removeByHand(): not implemented');
+  removeByHand(id: string): void {
+    assertNotisId(id);
+    const e = this.entries_.get(id);
+    if (!e) return;
+    if (e.fromAnchorList) return;
+    if (!e.byHand) return;
+    this.entries_.delete(id);
   }
 
   /**
