@@ -21,10 +21,12 @@
 // carry an API base"`), so every read the extension makes passes through one
 // of them. A fresh page is a fresh client (`WEB_INTERFACE → The extension →
 // "The contexts, and what each may hold"`) — each tip-block step opens its
-// own after the relays' modes are set. The verified-figures block brings up a B of its own and, for its
-// six lie arms, the figures relay (22a · 22b · 22c · 22d · 22e · 23); the
-// verified-names block brings up a B of its own too, and the figures relay
-// again for its lie arms, in its name modes (27a–d · 28a–b). The light block
+// own after the relays' modes are set. The verified-figures block brings up
+// a B of its own and, for its six lie arms (22a · 22b · 22c · 22d · 22e · 23),
+// sets each figures mode on both tip relays and opens a fresh page per arm;
+// the verified-names block brings up a B of its own too, and each of its lie
+// arms (27a–d · 28a–b) sets its name mode on both tip relays the same way.
+// The light block
 // (L1 … L14) covers how the extension reads its lists light with ids and the
 // node's word, draws cached posts at once, shows slots for the rest and
 // resolves those through POST /posts/batch across the client's order for an
@@ -155,8 +157,8 @@ let TIP_K = null;
 const VERIFIED_TIP = args.get('verified-tip') === true;
 // The verified-figures block — WEB_INTERFACE → The extension → "The verified
 // figures", steps 21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25: the honest
-// states read A, and the six lie arms read the figures relay. Absent, every
-// step reads NOT RUN by name.
+// states read A, and the six lie arms read the two tip relays with their mode
+// set on both. Absent, every step reads NOT RUN by name.
 const VERIFIED_FIGURES = args.get('verified-figures') === true;
 // The verified-names block — WEB_INTERFACE → The extension → "The verified
 // names", steps 26 · 29 · 30: a claimed name in ink on every surface, a send
@@ -193,8 +195,10 @@ const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
 // addrs: [], api: RLB}]`), each entry reached at its api alone
 // (`MESH_INTERFACE → The client's node list → "An entry may carry an API
 // base"`), so every read the extension makes passes through one of them. Each
-// relay carries a mode the harness sets between steps — the one hostile edit
-// per mode (WEB_INTERFACE → The extension → "The verified tip"):
+// relay carries a mode the harness sets between steps, on both relays at once
+// — the one hostile edit per mode is the one the run meets whichever relay
+// the client routes a read to (WEB_INTERFACE → The extension → "The verified
+// tip", "The verified figures", "The verified names"):
 //   `honest`         — none; everything passes to upstream verbatim.
 //   `proof-invalid`  — the `/nipopow/proof/<m>/<k>` answer altered so it does
 //                      not verify (one byte flipped ten from the end), every
@@ -206,15 +210,20 @@ const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
 //   `upstream-D`     — every request passed to D, an isolated node on another
 //                      chain, so the relay's base names D's tip and serves
 //                      D's proof.
+//   Figures modes (set on both relays with `rKey` named): `credits-fake`,
+//   `credits-foreign`, `credits-drop`, `credits-drop-tipplus1`, `karma-drop`,
+//   `avl-flip` (WEB_INTERFACE → The extension → "The verified figures").
+//   Names modes (set on both relays with `rKey` and `sName` named):
+//   `label-rename`, `owner-404`, `owner-fakebox`, `name-owner`, `name-fakebox`
+//   (WEB_INTERFACE → The extension → "The verified names"). A figures or
+//   names arm opens on a fresh extension page whose tip run has returned
+//   `verified` (the arms prove against an anchor), reads the row through
+//   whichever relay the client routes to, and sets both relays back to
+//   `honest` on the way out.
 const RLA_PORT = 19780;
 const RLA_ORIGIN = `http://127.0.0.1:${RLA_PORT}`;
 const RLB_PORT = 19781;
 const RLB_ORIGIN = `http://127.0.0.1:${RLB_PORT}`;
-// The figures relay — the lie arms 22a · 22b · 22c · 22d · 22e · 23, and in its
-// name modes the lie arms 27a–d · 28a–b, on a port of its own beside the two
-// tip relays.
-const FIG_RELAY_PORT = 19785;
-const FIG_RELAY_ORIGIN = `http://127.0.0.1:${FIG_RELAY_PORT}`;
 // Node D — isolated, mined on demand: for 19b the block mines D past A's tip
 // so D's chain is heavier than A/B's, and the client seats D's chain and B's
 // tip reads off it; for 19c the block mines D past m + k + 4 and keeps it
@@ -1057,9 +1066,47 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 //                      from /blocks/current, D's proof, D's blocks. The
 //                      relay's mode stays `honest` under upstream-D: the one
 //                      edit is the upstream swap, not a per-route lie.
+// With `relay.rKey` and (for the names block) `relay.sName` set, the relay
+// also carries the figures and names modes — one relay type, named on both
+// tip relays so a lie on both is a lie the run meets whichever node answers
+// (WEB_INTERFACE → The extension → "The verified figures", "The verified
+// names"):
+//   `credits-fake`    — R's first /credits page lists one more box, a fresh
+//                       random id holding 12.5 $NOTIS; the chain holds no
+//                       such key.
+//   `credits-foreign` — R's first /credits page lists the devnet faucet's
+//                       largest credit box — a real box of another key; the
+//                       range R's boxes are read from does not hold it.
+//   `credits-drop`    — R's first /credits page serves one fewer box,
+//                       `boxCount` and `total` consistent with the listing.
+//   `karma-drop`      — the same on R's first /karma page.
+//   `credits-drop-tipplus1` — `credits-drop` AND `/blocks/current` one above
+//                       the node's own, so `heightAfter` slips past the
+//                       anchor's tip and the dropped box reads `undecided`.
+//   `avl-flip`        — every /api/v1/proof/ AND /api/v1/range/ answer
+//                       carries its proof with one byte flipped ten from the
+//                       end, the JSON otherwise as served.
+//   `label-rename`    — every row of a /posts answer whose `author` is R, or
+//                       (a light row) whose `authorName` is R's name, is
+//                       answered carrying `relay.renameTo` as its authorName.
+//   `owner-404`       — /usernames?owner=<R> answers 404 `{error:'Identity
+//                       holds no name'}`, the node's own words for a key
+//                       holding none.
+//   `owner-fakebox`   — /usernames?owner=<R> answers `relay.fakeBoxId` as its
+//                       boxId, every other field as served.
+//   `name-owner`      — /usernames/<S's name> answers the devnet faucet's key
+//                       as its owner, the boxId as served.
+//   `name-fakebox`    — /usernames/<S's name> answers `relay.fakeBoxId` as
+//                       its boxId.
 // `relay.flips` counts each flipped proof answer; `relay.shorts` counts each
-// 404 chain-too-short answered; `relay.log` holds each request's url, method,
-// mode-at-arrival, upstream-at-arrival and status for the REPORT.
+// 404 chain-too-short answered; `relay.edits[mode]` counts each figures or
+// names mode's edited answers; `relay.renamed` counts the rows label-rename
+// renamed; `relay.log` holds each request's url, method, mode-at-arrival,
+// upstream-at-arrival, status and, for /blocks/current, the height forwarded
+// — the outside record the name arms read a check's heights and a tip run's
+// start from. `relay.fakeBox`, `relay.foreignBox`, `relay.droppedCreditsBox`
+// and `relay.droppedKarmaBox` hold the box the figures mode last edited R's
+// listing with — the one the arm asserts the figures line names.
 async function startTipRelay(upstream, port) {
   const relay = {
     server: null,
@@ -1068,6 +1115,29 @@ async function startTipRelay(upstream, port) {
     mode: 'honest',
     flips: { total: 0 },
     shorts: { total: 0 },
+    // Names context — mutable; the figures block sets `rKey` before its
+    // arms run, the names block sets `rKey` and `sName`.
+    rKey: null,
+    sName: null,
+    // `label-rename` state — set by each label arm.
+    renameFrom: null,
+    renameTo: null,
+    renamed: 0,
+    // The fake box id a name arm sets — owner-fakebox / name-fakebox.
+    fakeBoxId: null,
+    // The box each figures-mode's edit points at, read by the arm's row
+    // assertion.
+    fakeBox: null,
+    foreignBox: null,
+    droppedCreditsBox: null,
+    droppedKarmaBox: null,
+    // Per-mode edit counters, shared across figures and names modes.
+    edits: {
+      'credits-fake': 0, 'credits-foreign': 0, 'avl-flip': 0,
+      'credits-drop': 0, 'karma-drop': 0, 'credits-drop-tipplus1': 0,
+      'label-rename': 0, 'owner-404': 0, 'owner-fakebox': 0,
+      'name-owner': 0, 'name-fakebox': 0,
+    },
     log: [],
   };
   relay.server = createServer(async (req, res) => {
@@ -1091,6 +1161,7 @@ async function startTipRelay(upstream, port) {
       }
       const mode = relay.mode;
       const upstreamAtArrival = relay.upstream;
+      const target = new URL(url, upstreamAtArrival);
       const isProof = /^\/nipopow\/proof\/\d+\/\d+/.test(url);
       // `proof-short` — the 404 shape a node whose chain is shorter than
       // m + k answers it with (`NODE_INTERFACE → Nipopow`): the tool classifies
@@ -1106,164 +1177,15 @@ async function startTipRelay(upstream, port) {
         relay.log.push({ at, doneAt: Date.now(), method, url, mode, upstream: upstreamAtArrival, status: 404 });
         return;
       }
-      const upstreamRes = await fetch(upstreamAtArrival + url, { method });
-      const buf = Buffer.from(await upstreamRes.arrayBuffer());
-      let body = buf;
-      // `proof-invalid` — one byte of the proof's bytes flipped so the
-      // tool reads `refuseCode: 'invalid'` (WEB_INTERFACE → The extension →
-      // "The verified tip"; the `applyEvent` route-at-API-base rule holds
-      // the entry at `retry`, never `blacklisted`).
-      if (mode === 'proof-invalid' && isProof && upstreamRes.status === 200 && buf.length >= 11) {
-        body = Buffer.from(buf);
-        body[body.length - 10] = body[body.length - 10] ^ 0x01;
-        relay.flips.total += 1;
-      }
-      const headers = {
-        'access-control-allow-origin': '*',
-        'content-type': upstreamRes.headers.get('content-type') ?? 'application/octet-stream',
-        'cache-control': 'no-store',
-      };
-      res.writeHead(upstreamRes.status, headers);
-      res.end(body);
-      relay.log.push({ at, doneAt: Date.now(), method, url, mode, upstream: upstreamAtArrival, status: upstreamRes.status });
-    } catch (e) {
-      res.writeHead(502, { 'access-control-allow-origin': '*' });
-      res.end(String(e));
-      relay.log.push({ at, doneAt: Date.now(), method: req.method ?? '', url: req.url ?? '', mode: relay.mode, upstream: relay.upstream, status: 502 });
-    }
-  });
-  await new Promise((res, rej) => {
-    relay.server.on('error', rej);
-    relay.server.listen(port, '127.0.0.1', res);
-  });
-  return relay;
-}
-
-// The figures relay — WEB_INTERFACE → The extension → "The verified figures",
-// the lie arms 22a · 22b · 22c · 22d · 22e · 23. Every GET is proxied to `upstream` with
-// `access-control-allow-origin: *`, as 19a's relay does, and every
-// /nipopow/proof/ answer passes verbatim in every mode: the reading node's tip
-// proof is A's own, so the corner stays verified and the anchor stands. The
-// step sets `relay.mode` between arms, and the mode is the one hostile edit:
-//   honest          — none;
-//   credits-fake    — R's first /credits page lists one more box, a fresh
-//                     random id holding 12.5 $NOTIS: its proofs come from A,
-//                     which holds no such key;
-//   credits-foreign — R's first /credits page lists the devnet faucet's
-//                     largest credit box, read from upstream at the request —
-//                     a real box of another key;
-//   avl-flip        — every /api/v1/proof/ AND /api/v1/range/ answer carries
-//                     its proof with one byte flipped ten from the end, the
-//                     JSON otherwise as served: the flip is made in the decoded
-//                     proof, never in the JSON text, so what fails is the
-//                     proof's verification. For the range route this fires on
-//                     the first page's proof the ledger reads, which is enough
-//                     to make the whole range's status `unproven` — the walk
-//                     stops at the first failure.
-//   credits-drop    — R's first /credits page serves one fewer box, `boxCount`
-//                     and `total` consistent with the listing it serves. The
-//                     dropped box is held by the chain, so the figures run
-//                     reads it `unlisted` and the balance row reads
-//                     *the chain holds N $NOTIS the node does not list*.
-//   karma-drop      — the same on R's first /karma page.
-//   credits-drop-tipplus1 — the same `credits` drop as `credits-drop`, AND
-//                     `/blocks/current` answers one height above the node's
-//                     own: the figures run reads the dropped box `undecided`
-//                     (held at tip, named nowhere in the listing, and
-//                     `heightAfter` not `tip.height`), the balance row reads
-//                     muted *not checked yet* with the gold as the node
-//                     gave it — never clay, never silent.
-// With `names` — R's key and S's name — the name modes of WEB_INTERFACE → The
-// extension → "The verified names", the lie arms 27a–d · 28a–b, every
-// /api/v1/proof/ answer passing verbatim as well:
-//   label-rename    — every row of a /posts answer — the feed's, a thread's
-//                     post, ancestors, descendants and pending, one post's,
-//                     a light row (`WEB_INTERFACE → The extension → "The
-//                     light read"`: `authorName` and no `author`) — whose
-//                     `author` is R, or carrying no `author` whose
-//                     `authorName` is the name R holds, carries
-//                     `relay.renameTo` as its authorName;
-//   owner-404       — /usernames?owner=<R> answers 404 { error: 'Identity
-//                     holds no name' }, the node's own words for a key holding
-//                     none;
-//   owner-fakebox   — /usernames?owner=<R> answers `relay.fakeBoxId` as its
-//                     boxId, every other field as served;
-//   name-owner      — /usernames/<S's name>, in any case, answers the devnet
-//                     faucet's key as its owner, the boxId as served: another
-//                     key over S's real box;
-//   name-fakebox    — /usernames/<S's name>, in any case, answers
-//                     `relay.fakeBoxId` as its boxId.
-// `relay.edits` counts each mode's edited answers, `relay.renamed` the rows
-// label-rename renamed, and `relay.log` holds every request the relay served —
-// its arrival and answer times, status and edit, and for /blocks/current the
-// height it forwarded: the outside record the name arms read a check's heights
-// and a tip run's start from.
-async function startFiguresRelay(upstream, port, names = null) {
-  const relay = {
-    server: null,
-    origin: `http://127.0.0.1:${port}`,
-    mode: 'honest',
-    edits: {
-      'credits-fake': 0, 'credits-foreign': 0, 'avl-flip': 0,
-      'credits-drop': 0, 'karma-drop': 0, 'credits-drop-tipplus1': 0,
-      'label-rename': 0, 'owner-404': 0, 'owner-fakebox': 0, 'name-owner': 0, 'name-fakebox': 0,
-    },
-    renamed: 0,
-    renameFrom: null,
-    renameTo: null,
-    fakeBoxId: null,
-    // The box the credits-side lie points at — the arm asserts the line names
-    // this box's value scaled to $NOTIS, so a lie that moved to another
-    // amount is caught.
-    //   `fakeBox`           — the latest fabricated box served in credits-fake
-    //                         (its value is a constant 12.5 $NOTIS, but kept
-    //                         for symmetry with the other arms).
-    //   `foreignBox`        — the faucet's largest credit box, read from
-    //                         upstream the first time credits-foreign serves
-    //                         R's first page.
-    //   `droppedCreditsBox` — the latest box dropped from R's first /credits
-    //                         page under credits-drop.
-    //   `droppedKarmaBox`   — the latest box dropped from R's first /karma
-    //                         page under karma-drop.
-    fakeBox: null,
-    foreignBox: null,
-    droppedCreditsBox: null,
-    droppedKarmaBox: null,
-    log: [],
-  };
-  const ownCreditsPath = `/credits/${R_JSON.pubKeyHex.toLowerCase()}`;
-  const ownKarmaPath = `/karma/${R_JSON.pubKeyHex.toLowerCase()}`;
-  const rKey = names?.rKey ?? null;
-  const sName = names?.sName ?? null;
-  relay.server = createServer(async (req, res) => {
-    const at = Date.now();
-    try {
-      const method = req.method ?? 'GET';
-      const url = req.url ?? '/';
-      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-        res.writeHead(405, { 'access-control-allow-origin': '*' });
-        res.end('figures relay serves reads only');
-        return;
-      }
-      if (method === 'OPTIONS') {
-        res.writeHead(204, {
-          'access-control-allow-origin': '*',
-          'access-control-allow-methods': 'GET, HEAD, OPTIONS',
-          'access-control-allow-headers': '*',
-        });
-        res.end();
-        return;
-      }
-      const mode = relay.mode;
-      const target = new URL(url, upstream);
-      const ownerLookup = rKey !== null && target.pathname === '/usernames'
-        && (target.searchParams.get('owner') ?? '').toLowerCase() === rKey;
+      // `owner-404` — /usernames?owner=<R> answers 404 before upstream.
+      const ownerLookup = relay.rKey !== null && target.pathname === '/usernames'
+        && (target.searchParams.get('owner') ?? '').toLowerCase() === relay.rKey;
       const looked = handleLookupName(target.pathname);
-      const sLookup = sName !== null && looked !== null && looked.toLowerCase() === sName.toLowerCase();
+      const sLookup = relay.sName !== null && looked !== null
+        && looked.toLowerCase() === relay.sName.toLowerCase();
       if (mode === 'owner-404' && method === 'GET' && ownerLookup) {
         relay.edits['owner-404'] += 1;
-        relay.log.push({ at, doneAt: Date.now(), path: url, status: 404, edit: 'owner-404' });
-        console.log(`[vn] relay owner-404 edit ${relay.edits['owner-404']}: ${url}`);
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode, upstream: upstreamAtArrival, status: 404, edit: 'owner-404' });
         res.writeHead(404, {
           'access-control-allow-origin': '*',
           'content-type': 'application/json; charset=utf-8',
@@ -1272,17 +1194,30 @@ async function startFiguresRelay(upstream, port, names = null) {
         res.end(JSON.stringify({ error: 'Identity holds no name' }));
         return;
       }
-      const upstreamRes = await fetch(upstream + url, { method });
+      const upstreamRes = await fetch(upstreamAtArrival + url, { method });
       let body = Buffer.from(await upstreamRes.arrayBuffer());
-      const entry = { at, doneAt: null, path: url, status: upstreamRes.status, edit: null };
-      if (method === 'GET' && upstreamRes.status === 200) {
+      let edit = null;
+      // `proof-invalid` — one byte of the proof's bytes flipped so the
+      // tool reads `refuseCode: 'invalid'` (WEB_INTERFACE → The extension →
+      // "The verified tip"; the `applyEvent` route-at-API-base rule holds
+      // the entry at `retry`, never `blacklisted`).
+      if (mode === 'proof-invalid' && isProof && upstreamRes.status === 200 && body.length >= 11) {
+        body = Buffer.from(body);
+        body[body.length - 10] = body[body.length - 10] ^ 0x01;
+        relay.flips.total += 1;
+      }
+      // Figures and names modes act only when R's key is named on the relay
+      // (set by the figures and names blocks before their arms run).
+      if (method === 'GET' && upstreamRes.status === 200 && relay.rKey !== null) {
+        const ownCreditsPath = `/credits/${relay.rKey}`;
+        const ownKarmaPath = `/karma/${relay.rKey}`;
         const ownCreditsFirstPage = target.pathname.toLowerCase() === ownCreditsPath && !target.searchParams.has('after');
         const ownKarmaFirstPage = target.pathname.toLowerCase() === ownKarmaPath && !target.searchParams.has('after');
         if ((mode === 'credits-fake' || mode === 'credits-foreign') && ownCreditsFirstPage) {
           const listing = JSON.parse(body.toString('utf8'));
           const box = mode === 'credits-fake'
             ? { boxId: randomBytes(32).toString('hex'), value: '1250000000' }
-            : (relay.foreignBox ?? await largestCreditBox(upstream, DEVNET_FAUCET_KEY));
+            : (relay.foreignBox ?? await largestCreditBox(upstreamAtArrival, DEVNET_FAUCET_KEY));
           if (box !== null) {
             listing.boxes.push(box);
             listing.boxCount += 1;
@@ -1290,17 +1225,14 @@ async function startFiguresRelay(upstream, port, names = null) {
             relay.edits[mode] += 1;
             if (mode === 'credits-fake') relay.fakeBox = { boxId: box.boxId, value: box.value };
             else relay.foreignBox = { boxId: box.boxId, value: box.value };
-            console.log(`[vf] figures relay ${mode} edit ${relay.edits[mode]}: ${box.boxId.slice(0, 12)}… (${box.value}) listed under R`);
+            edit = mode;
           }
         } else if ((mode === 'credits-drop' || mode === 'credits-drop-tipplus1') && ownCreditsFirstPage) {
           // Drop one listed credit box from R's first /credits page, keeping
-          // boxes/boxCount/total consistent with the listing served. The run
-          // reads the dropped box `unlisted` — the chain holds what the node
-          // did not list (WEB_INTERFACE → The extension → "The verified
-          // figures" — "the chain holds N $NOTIS the node does not list").
-          // Under `credits-drop-tipplus1` the drop is paired with a lie on
-          // /blocks/current one above the node's own, so the run reads the
-          // dropped box `undecided`.
+          // boxes/boxCount/total consistent (WEB_INTERFACE → The extension →
+          // "The verified figures"). Under `credits-drop-tipplus1` the drop
+          // is paired with /blocks/current one above the node's own, so the
+          // dropped box reads `undecided`.
           const listing = JSON.parse(body.toString('utf8'));
           if (Array.isArray(listing.boxes) && listing.boxes.length > 0) {
             const dropped = listing.boxes.shift();
@@ -1311,15 +1243,9 @@ async function startFiguresRelay(upstream, port, names = null) {
             body = Buffer.from(JSON.stringify(listing));
             relay.droppedCreditsBox = { boxId: dropped.boxId, value: dropped.value };
             relay.edits[mode] += 1;
-            console.log(`[vf] figures relay ${mode} edit ${relay.edits[mode]}: ${dropped.boxId.slice(0, 12)}… (${dropped.value}) withheld from R's listing`);
+            edit = mode;
           }
         } else if (mode === 'karma-drop' && ownKarmaFirstPage) {
-          // Drop one listed karma box from R's first /karma page, keeping
-          // boxes/boxCount/total consistent with the listing served and
-          // `effective` passed through as served. The run reads the dropped
-          // box `unlisted` — the chain holds what the node did not list. The
-          // id and value are recorded on `relay.droppedKarmaBox` so the arm
-          // asserts the line names this box's value as rep.
           const listing = JSON.parse(body.toString('utf8'));
           if (Array.isArray(listing.boxes) && listing.boxes.length > 0) {
             const dropped = listing.boxes.shift();
@@ -1330,15 +1256,12 @@ async function startFiguresRelay(upstream, port, names = null) {
             body = Buffer.from(JSON.stringify(listing));
             relay.droppedKarmaBox = { boxId: dropped.boxId, value: dropped.value };
             relay.edits['karma-drop'] += 1;
-            console.log(`[vf] figures relay karma-drop edit ${relay.edits['karma-drop']}: ${dropped.boxId.slice(0, 12)}… (${dropped.value}) withheld from R's listing`);
+            edit = 'karma-drop';
           }
         } else if (mode === 'avl-flip' && (target.pathname.startsWith('/api/v1/proof/') || target.pathname.startsWith('/api/v1/range/'))) {
           // A one-byte flip ten from the end of the proof, decoded then
-          // re-encoded, the JSON otherwise as served. For a range proof the
-          // first page's `BatchAVLVerifier` refuses the digest, which fails
-          // the whole range `unproven` — the walk stops at the first failure
-          // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
-          // route").
+          // re-encoded, the JSON otherwise as served (NODE_INTERFACE → AVL+
+          // State Root → "avl-endpoint, the range route").
           const answer = JSON.parse(body.toString('utf8'));
           const proof = Buffer.from(answer.proof, 'base64');
           if (proof.length >= 11) {
@@ -1346,16 +1269,16 @@ async function startFiguresRelay(upstream, port, names = null) {
             answer.proof = proof.toString('base64');
             body = Buffer.from(JSON.stringify(answer));
             relay.edits['avl-flip'] += 1;
+            edit = 'avl-flip';
           }
         } else if (mode === 'label-rename' && (target.pathname === '/posts' || target.pathname.startsWith('/posts/'))) {
           const answer = JSON.parse(body.toString('utf8'));
-          const rows = renameRows(answer, rKey, relay.renameFrom, relay.renameTo);
+          const rows = renameRows(answer, relay.rKey, relay.renameFrom, relay.renameTo);
           if (rows > 0) {
             body = Buffer.from(JSON.stringify(answer));
             relay.edits['label-rename'] += 1;
             relay.renamed += rows;
-            entry.edit = `label-rename ×${rows}`;
-            console.log(`[vn] relay label-rename edit ${relay.edits['label-rename']}: ${rows} row(s) of R as @${relay.renameTo} in ${url.slice(0, 80)}`);
+            edit = `label-rename ×${rows}`;
           }
         } else if ((mode === 'owner-fakebox' && ownerLookup) || ((mode === 'name-owner' || mode === 'name-fakebox') && sLookup)) {
           const answer = JSON.parse(body.toString('utf8'));
@@ -1363,41 +1286,39 @@ async function startFiguresRelay(upstream, port, names = null) {
           else answer.boxId = relay.fakeBoxId;
           body = Buffer.from(JSON.stringify(answer));
           relay.edits[mode] += 1;
-          entry.edit = mode;
-          console.log(`[vn] relay ${mode} edit ${relay.edits[mode]}: ${url} → ${mode === 'name-owner' ? `owner ${DEVNET_FAUCET_KEY.slice(0, 12)}…` : `boxId ${relay.fakeBoxId.slice(0, 12)}…`}`);
+          edit = mode;
         }
-        if (target.pathname === '/blocks/current') {
-          // `credits-drop-tipplus1` reports `/blocks/current` one above the
-          // node's own, so the run's heightAfter sits above the anchor's
-          // tip and the dropped box reads `undecided` (WEB_INTERFACE → The
-          // extension → "The verified figures" — "`undecided` — held at
-          // `tip`, named nowhere in the listing of its ledger, and
-          // `heightAfter` not `tip.height`").
-          if (mode === 'credits-drop-tipplus1') {
-            try {
-              const now = JSON.parse(body.toString('utf8'));
-              if (typeof now.height === 'number') {
-                now.height = now.height + 1;
-                body = Buffer.from(JSON.stringify(now));
-                relay.edits['credits-drop-tipplus1'] += 1;
-                entry.edit = 'credits-drop-tipplus1 blocks/current+1';
-              }
-            } catch {}
-          }
-          try { entry.height = JSON.parse(body.toString('utf8')).height ?? null; } catch { entry.height = null; }
+        // `credits-drop-tipplus1` — /blocks/current one above the node's own
+        // (WEB_INTERFACE → The extension → "The verified figures" — `undecided`
+        // when `heightAfter` is not `tip.height`).
+        if (mode === 'credits-drop-tipplus1' && target.pathname === '/blocks/current') {
+          try {
+            const now = JSON.parse(body.toString('utf8'));
+            if (typeof now.height === 'number') {
+              now.height = now.height + 1;
+              body = Buffer.from(JSON.stringify(now));
+              relay.edits['credits-drop-tipplus1'] += 1;
+              edit = 'credits-drop-tipplus1 blocks/current+1';
+            }
+          } catch {}
         }
       }
-      entry.doneAt = Date.now();
-      relay.log.push(entry);
-      res.writeHead(upstreamRes.status, {
+      const headers = {
         'access-control-allow-origin': '*',
         'content-type': upstreamRes.headers.get('content-type') ?? 'application/octet-stream',
         'cache-control': 'no-store',
-      });
+      };
+      res.writeHead(upstreamRes.status, headers);
       res.end(body);
+      const entry = { at, doneAt: Date.now(), method, url, mode, upstream: upstreamAtArrival, status: upstreamRes.status, edit };
+      if (target.pathname === '/blocks/current') {
+        try { entry.height = JSON.parse(body.toString('utf8')).height ?? null; } catch { entry.height = null; }
+      }
+      relay.log.push(entry);
     } catch (e) {
       res.writeHead(502, { 'access-control-allow-origin': '*' });
       res.end(String(e));
+      relay.log.push({ at, doneAt: Date.now(), method: req.method ?? '', url: req.url ?? '', mode: relay.mode, upstream: relay.upstream, status: 502 });
     }
   });
   await new Promise((res, rej) => {
@@ -1488,61 +1409,6 @@ async function readCorner(cx) {
 // The corner has no user-activation gate.
 async function pressCorner(cx) {
   await cx.eval(`document.querySelector('.corner')?.click()`, true);
-}
-
-// Set prefs.node through the settings window's real row (WEB_INTERFACE →
-// The settings window: the input commits on `change`). Empty resets to the
-// build default. The changeNode handler drops the verdict to `null` (checking)
-// and starts a new run.
-//
-// The `change` dispatch ends the settings body synchronously (WEB_INTERFACE →
-// The workspace → "What ends a form in a window": a change of the node read
-// builds every body anew; a form that has ended is not drawn again and its
-// fields are emptied), so a read of the input the dispatch returned on is of
-// a form that has ended, value emptied. Mark the input before the dispatch,
-// then read the value of the input that stands once the new body has drawn
-// (bounded, the shape of the links-row read above).
-async function setNodeViaUi(cx, origin) {
-  await cx.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
-  await cx.waitFor(`!!document.querySelector('[aria-label="the node this client reads"]')`, 'settings node row', 10000);
-  const mark = 'setnode-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  await cx.eval(`(() => {
-    const input = document.querySelector('[aria-label="the node this client reads"]');
-    input.setAttribute('data-notis-mark', ${JSON.stringify(mark)});
-    input.focus();
-    input.value = ${JSON.stringify(origin)};
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-  })()`, true);
-  const t0 = Date.now();
-  let applied = '';
-  let drew = false;
-  while (Date.now() - t0 < 5000) {
-    const next = await cx.eval(`(() => {
-      const input = document.querySelector('[aria-label="the node this client reads"]');
-      if (!input) return { present: false };
-      return {
-        present: true,
-        marked: input.getAttribute('data-notis-mark') === ${JSON.stringify(mark)},
-        value: input.value,
-      };
-    })()`);
-    if (next.present && !next.marked) {
-      applied = next.value ?? '';
-      drew = true;
-      break;
-    }
-    await sleep(50);
-  }
-  // Let the corner's render settle before the caller reads it.
-  await sleep(200);
-  return drew ? applied : applied + ' (the new settings body did not draw within 5 s)';
-}
-
-async function readPrefsNode(cx) {
-  // `setNode('')` removes the key and prefs.node adopts BUILD_NODE_BASES[0] at boot;
-  // the stored value is what a re-read of the input mirrors. Read localStorage
-  // directly so no settings window needs to be open here.
-  return cx.eval(`localStorage.getItem('notis.node')`);
 }
 
 function proofRequestsSince(events, startIdx) {
@@ -1647,32 +1513,6 @@ async function pressAndReadVerdict(cx, opts = {}) {
     cx, startIdx, opts.atLeast ?? 2, opts.ms ?? 30000, opts.quietMs ?? 1500);
   await sleep(200);
   return { proofs, reading: await readCorner(cx) };
-}
-
-// Set the node row, then wait for the verifier's run driven by the change to
-// reach one of the caller's readings. Blanking the row is its own call, with
-// the verified-across-N-nodes predicate. Records the intermediate values so
-// the caller can build the step's detail line.
-async function changeNodeAndAwait(cx, origin, predicate, description, ms = 60000) {
-  // From before the row is set: changeNode drops the verdict and starts a new
-  // run inside setNodeViaUi's own change event, so the count starting here
-  // covers that run's own requests, not only ones after it is already moving.
-  const startIdx = cx.events.length;
-  const applied = await setNodeViaUi(cx, origin);
-  const stored = await readPrefsNode(cx);
-  // Nothing to press: the change itself started the run above.
-  const reached = await waitForCornerState(cx, predicate, description, ms);
-  const reading = reached.last ?? await readCorner(cx);
-  const proofs = proofRequestsSince(cx.events, startIdx);
-  return { applied, stored, reached, reading, proofs };
-}
-
-async function blankNodeAndAwaitVerified(cx, ms = 60000) {
-  return changeNodeAndAwait(
-    cx, '',
-    (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
-    'led fresh + verified across N nodes (after blank)',
-    ms);
 }
 
 // Bring node B up, bootstrapped from A. B's role is server; its store is
@@ -2396,7 +2236,7 @@ async function waitForNodeTip(target, ms = 12 * 60 * 1000, pollMs = 10000) {
   return { reached: false, last, elapsedMs: Date.now() - t0 };
 }
 
-async function verifiedFiguresSteps(cx, targetId = 'unknown') {
+async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   // Liveness probe — same shape as the tip block's, a three-second wall around
   // `1+1` against the session. A dead session records every step false with
   // the reason.
@@ -2497,7 +2337,7 @@ async function verifiedFiguresSteps(cx, targetId = 'unknown') {
     // ---- Steps 22a · 22b · 22c · 22d · 22e · 23 — the lie arms, through the
     // figures relay, while B is up: the relay's verdict is read across the
     // relay, A and B.
-    await runFiguresLieArms(cx);
+    await runFiguresLieArms(cx, bcx);
 
     // ---- Step 25 — no verifier, no /api/v1/proof/ request on the hosted origin.
     await runFiguresStep25();
@@ -3120,23 +2960,33 @@ function matchesAmount(amount, expected) {
   return expected !== null && amount !== null && amount === BigInt(expected.value);
 }
 
-function lieArms(relay) {
+// A figures lie is set on both relays (`WEB_INTERFACE → The extension →
+// "The verified figures"`: the node the client routes the run to answers
+// each of its reads), so the box the arm reads from the relay is whichever
+// relay served its lie. `armBox` scans both and answers the first non-null.
+function armBox(relays, field) {
+  for (const r of relays) if (r[field] !== null && r[field] !== undefined) return r[field];
+  return null;
+}
+
+function lieArms(relays) {
   return [
     {
       // A fabricated 12.5 $NOTIS box: `absent` where `heightAfter` equals the
       // anchor's tip, `unchecked` where a block landed since (pressed again,
       // up to five times). The amount the line names is the box the relay
-      // listed, scaled: the arm asserts the match against `relay.fakeBox`.
-      // The rep row is not clay.
+      // listed, scaled: the arm asserts the match against the relay that
+      // served the lie (whichever of RLA / RLB the client routed to). The
+      // rep row is not clay.
       step: '22a',
       mode: 'credits-fake',
-      box: () => relay.fakeBox,
+      box: () => armBox(relays, 'fakeBox'),
       creditsSettled: (r) => r.present && (
         creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE) !== null
         || creditsAmountIn(r.figHintText, CREDITS_UNCHECKED_TAIL_RE) !== null
       ),
       creditsOk: (r) => r.present
-        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), relay.fakeBox)
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), armBox(relays, 'fakeBox'))
         && r.figHintHasClay && r.goldHasClay,
       presses: 5,
       karmaSettled: (k) => k.present && k.monoText !== null,
@@ -3145,19 +2995,19 @@ function lieArms(relay) {
     {
       // The faucet's largest credit box listed under R — a real box of
       // another key, whose amount is whatever that box holds. The arm reads
-      // its id and value from the relay (`relay.foreignBox`): the row's line
+      // its id and value from the relay that served the lie: the row's line
       // names the box's amount scaled to $NOTIS, and under `heightAfter`
       // slipping past the anchor the line reads the box's amount as the
       // `unchecked` tail. The rep row is not clay.
       step: '22b',
       mode: 'credits-foreign',
-      box: () => relay.foreignBox,
+      box: () => armBox(relays, 'foreignBox'),
       creditsSettled: (r) => r.present && (
         creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE) !== null
         || creditsAmountIn(r.figHintText, CREDITS_UNCHECKED_TAIL_RE) !== null
       ),
       creditsOk: (r) => r.present
-        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), relay.foreignBox)
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), armBox(relays, 'foreignBox'))
         && r.figHintHasClay && r.goldHasClay,
       presses: 5,
       karmaSettled: (k) => k.present && k.monoText !== null,
@@ -3177,13 +3027,13 @@ function lieArms(relay) {
       // not clay.
       step: '22c',
       mode: 'credits-drop',
-      box: () => relay.droppedCreditsBox,
+      box: () => armBox(relays, 'droppedCreditsBox'),
       creditsSettled: (r) => r.present && (
         creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE) !== null
         || NOT_CHECKED_YET_LINE(r.figHintText)
       ),
       creditsOk: (r) => r.present
-        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE), relay.droppedCreditsBox)
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE), armBox(relays, 'droppedCreditsBox'))
         && r.figHintHasClay
         && (r.goldText === null || r.goldHasClay),
       presses: 5,
@@ -3196,19 +3046,19 @@ function lieArms(relay) {
       // number clay where one stands (the node's `effective` is passed
       // through as served) where `heightAfter` equals tip, and muted *not
       // checked yet* where a block landed since. The arm reads the dropped
-      // box from `relay.droppedKarmaBox` and asserts N equals its value.
-      // The balance row is not clay. As 22c, pressed on `not checked yet`
-      // until the clay stands; a silent or honest-looking reading fails
+      // box from the relay that served the lie and asserts N equals its
+      // value. The balance row is not clay. As 22c, pressed on `not checked
+      // yet` until the clay stands; a silent or honest-looking reading fails
       // the arm.
       step: '22d',
       mode: 'karma-drop',
-      box: () => relay.droppedKarmaBox,
+      box: () => armBox(relays, 'droppedKarmaBox'),
       karmaSettled: (k) => k.present && (
         karmaAmountIn(k.hintText, KARMA_UNLISTED_RE) !== null
         || NOT_CHECKED_YET_LINE(k.hintText)
       ),
       karmaOk: (k) => k.present
-        && matchesAmount(karmaAmountIn(k.hintText, KARMA_UNLISTED_RE), relay.droppedKarmaBox)
+        && matchesAmount(karmaAmountIn(k.hintText, KARMA_UNLISTED_RE), armBox(relays, 'droppedKarmaBox'))
         && k.hintHasClay
         && (k.monoText === null || k.monoHasClay),
       presses: 5,
@@ -3228,14 +3078,14 @@ function lieArms(relay) {
       // is drawn to turn clay, and the ledger's own facts speak alone
       // (→ "An empty listing takes these lines as any listing does"), so
       // `goldHasClay` reads false either way. Every reading of the
-      // balance row — after the change and after each of two presses —
+      // balance row — after the fresh page and after each of two presses —
       // holds that shape; a node that answers another height must read
       // undecided however often the reader asks. `pressesAtLeast: 2`
       // keeps the loop from short-circuiting on an already-ok first
       // reading.
       step: '22e',
       mode: 'credits-drop-tipplus1',
-      box: () => relay.droppedCreditsBox,
+      box: () => armBox(relays, 'droppedCreditsBox'),
       creditsSettled: (r) => r.present && NOT_CHECKED_YET_LINE(r.figHintText),
       creditsOk: (r) => r.present
         && NOT_CHECKED_YET_LINE(r.figHintText)
@@ -3287,56 +3137,73 @@ function requestsTo(events, startIdx, prefix) {
   return n;
 }
 
-async function runFiguresLieArms(cx) {
+async function runFiguresLieArms(cx, bcx) {
   // The figures block's lie arms (22a · 22b · 22c · 22d · 22e · 23) ride the
-  // figures relay the same way 19a's lying relay rides: the retired rule
-  // routed reads through the relay by setting the node row to its origin.
-  // The settings row no longer switches the reading base — it adds a mesh
-  // anchor by hand — and the figures relay is an HTTP endpoint with no
-  // webrtc-direct listen, so addByHand refuses it. The lie arms are marked
-  // NOT RUN until the mechanism is wired at stack-level; the retargeted
-  // rules (the two rows clay, the line in words — the contract above is
-  // unchanged) ride the same `/api/v1/proof/` and `/api/v1/range/` relay
-  // lies and will read verbatim once the relay stands in the client's list.
-  for (const s of LIE_ARM_STEPS) {
-    record(s, 'NOT RUN',
-      `the figures relay's lies read through the client only when the relay stands in client.state().nodes; the settings row's addByHand asks for a /webrtc-direct/ address the relay's HTTP origin is not — wiring the relay as a reachable mesh node is a stack-level change the recipe main runs will carry.`);
+  // two tip relays, their mode set on both at once: the client routes each
+  // read to whichever node it picks, and both relays serve the lie — so a
+  // lie on both is a lie the run meets whichever node answers (WEB_INTERFACE
+  // → The extension → "The verified figures"). Each arm opens a fresh page
+  // whose tip run has returned `verified` (the arms prove against an
+  // anchor) and asserts the row shapes the arm claims.
+  void cx;
+  const relays = [tipRelays.a, tipRelays.b].filter((r) => r !== null);
+  if (relays.length !== 2) {
+    for (const s of LIE_ARM_STEPS) record(s, 'NOT RUN',
+      `the two tip relays did not both start: RLA=${tipRelays.a?.origin ?? 'null'}, RLB=${tipRelays.b?.origin ?? 'null'}`);
+    return;
+  }
+  // The names context — R's key — is set on both relays for every figures
+  // mode's lie to fire; it stays through the names block, which adds S's
+  // name.
+  const rKey = R_JSON.pubKeyHex.toLowerCase();
+  for (const r of relays) r.rKey = rKey;
+  try {
+    for (const arm of lieArms(relays)) await runLieArm(bcx, relays, arm);
+  } finally {
+    for (const r of relays) r.mode = 'honest';
+    console.log(`[vf] relays set back to honest; edits=${JSON.stringify(relays.map((r) => r.edits))}`);
   }
 }
 
-async function runLieArm(cx, relay, arm) {
-  let onRelay = false;
+// One figures lie arm — 22a · 22b · 22c · 22d · 22e · 23: (1) its mode on both
+// relays, (2) a fresh page's tip run reaches `verified`, (3) the rows read,
+// the lying row retried up to `arm.presses` where the arm allows it, (4) the
+// relays set back to `honest` and the fresh page's next figures run reads the
+// balance row silent.
+async function runLieArm(bcx, relays, arm) {
+  let page = null;
+  const editsBefore = relays.map((r) => r.edits[arm.mode]);
+  // (1) The mode on both relays.
+  for (const r of relays) r.mode = arm.mode;
   try {
-    const editsBefore = relay.edits[arm.mode];
-    // (1) The relay's mode, with @wallet and @profile open.
-    relay.mode = arm.mode;
-    await raiseWindow(cx, 'open profile');
-    await raiseWindow(cx, 'open wallet');
-
-    // (2) The node row set to the relay; the corner reads verified across the
-    // relay, A and B.
-    const changeIdx = cx.events.length;
-    onRelay = true;
-    const change = await changeNodeAndAwait(cx, relay.origin,
+    // (2) A fresh page whose tip run returns verified across N nodes.
+    page = await openFreshExtensionPage(bcx);
+    const fcx = page.cx;
+    await raiseWindow(fcx, 'open profile');
+    await raiseWindow(fcx, 'open wallet');
+    const changeIdx = fcx.events.length;
+    const reached = await waitForCornerState(fcx,
       (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
-      'led fresh + verified across N nodes (reading the figures relay)', 60000);
-    const verified = !change.reached.timedOut && change.stored === relay.origin;
+      `led fresh + verified across N nodes (fresh page under ${arm.mode})`, 60000);
+    const verified = !reached.timedOut;
+    const changeReading = reached.last ?? { ledClass: 'null', title: null };
 
-    // (3) The rows, once the relay's run lands; the lying row awaited with a
-    // 15 s bound. `pressWhen` names the lying row — `credits` by default,
-    // `karma` on karma-drop. The loop continues while `presses < arm.presses`
-    // AND (`presses < arm.pressesAtLeast` OR `!arm.<side>Ok(last)`): a
-    // `pressesAtLeast` of 2 (22e) presses twice whatever the first reading
-    // was, so a shape already ok after the change does not short-circuit;
-    // the drop arms (22a–d, 22e) take `settled` as the "in the step's
-    // line" check — a wait that times out means the row ended on silence
-    // or an honest-looking line, and `creditsInLine` / `karmaInLine` go
-    // false. The arm's verdict is `ok` AND every reading of the lying row
-    // was in line. `presses === 0` (step 23) leaves no room for retry.
-    await raiseWindow(cx, 'open wallet');
-    const relayRun = verified ? await waitForFiguresRun(cx, changeIdx, 60000, 2000, relay.origin) : [];
-    let credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
-    const creditsReadings = [`after the change: ${creditsSeen(credits.last)}`];
+    // (3) The rows, once the fresh page's figures run lands; the lying row
+    // awaited with a 15 s bound. `pressWhen` names the lying row — `credits`
+    // by default, `karma` on karma-drop. The loop continues while
+    // `presses < arm.presses` AND (`presses < arm.pressesAtLeast` OR
+    // `!arm.<side>Ok(last)`): a `pressesAtLeast` of 2 (22e) presses twice
+    // whatever the first reading was, so a shape already ok after the fresh
+    // page does not short-circuit; the drop arms (22a–d, 22e) take
+    // `settled` as the "in the step's line" check — a wait that times out
+    // means the row ended on silence or an honest-looking line, and
+    // `creditsInLine` / `karmaInLine` go false. The arm's verdict is `ok`
+    // AND every reading of the lying row was in line. `presses === 0`
+    // (step 23) leaves no room for retry.
+    await raiseWindow(fcx, 'open wallet');
+    const relayRun = verified ? await waitForFiguresRun(fcx, changeIdx, 60000, 2000, null) : [];
+    let credits = await waitForRow(readCreditsRow, fcx, arm.creditsSettled, 15000);
+    const creditsReadings = [`after the fresh page: ${creditsSeen(credits.last)}`];
     const pressWhen = arm.pressWhen ?? 'credits';
     const pressesAtLeast = arm.pressesAtLeast ?? 0;
     let presses = 0;
@@ -3348,15 +3215,15 @@ async function runLieArm(cx, relay, arm) {
         && (presses < pressesAtLeast || !arm.creditsOk(credits.last))
       ) {
         presses += 1;
-        await pressCornerAndReadFigures(cx);
-        credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
+        await pressCornerAndReadFigures(fcx);
+        credits = await waitForRow(readCreditsRow, fcx, arm.creditsSettled, 15000);
         creditsReadings.push(`press ${presses}: ${creditsSeen(credits.last)}`);
         if (credits.timedOut) creditsInLine = false;
       }
     }
-    await raiseWindow(cx, 'open profile');
-    let karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
-    const karmaReadings = [`after the change: ${karmaSeen(karma.last)}`];
+    await raiseWindow(fcx, 'open profile');
+    let karma = await waitForRow(readKarmaField, fcx, arm.karmaSettled, 15000);
+    const karmaReadings = [`after the fresh page: ${karmaSeen(karma.last)}`];
     let karmaInLine = pressWhen === 'karma' ? !karma.timedOut : true;
     if (pressWhen === 'karma') {
       while (
@@ -3365,8 +3232,8 @@ async function runLieArm(cx, relay, arm) {
         && (presses < pressesAtLeast || !arm.karmaOk(karma.last))
       ) {
         presses += 1;
-        await pressCornerAndReadFigures(cx);
-        karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
+        await pressCornerAndReadFigures(fcx);
+        karma = await waitForRow(readKarmaField, fcx, arm.karmaSettled, 15000);
         karmaReadings.push(`press ${presses}: ${karmaSeen(karma.last)}`);
         if (karma.timedOut) karmaInLine = false;
       }
@@ -3381,22 +3248,46 @@ async function runLieArm(cx, relay, arm) {
     // pushed into `creditsReadings` so the record line names it as the
     // verdict's source.
     if (pressWhen === 'karma') {
-      await raiseWindow(cx, 'open wallet');
-      credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
+      await raiseWindow(fcx, 'open wallet');
+      credits = await waitForRow(readCreditsRow, fcx, arm.creditsSettled, 15000);
       creditsReadings.push(`verdict re-read: ${creditsSeen(credits.last)}`);
     }
     const creditsOk = arm.creditsOk(credits.last);
     const karmaOk = arm.karmaOk(karma.last);
-    const corner = await readCorner(cx);
+    const corner = await readCorner(fcx);
     const cornerOk = corner.ledClass === 'led fresh';
-    const edits = relay.edits[arm.mode] - editsBefore;
-    const creditsReads = requestsTo(cx.events, changeIdx, `${relay.origin}/credits/${R_JSON.pubKeyHex}`);
-    const karmaReads = requestsTo(cx.events, changeIdx, `${relay.origin}/karma/${R_JSON.pubKeyHex}`);
+    const edits = relays.reduce((sum, r, i) => sum + (r.edits[arm.mode] - editsBefore[i]), 0);
+    const creditsReads = relays.reduce((sum, r) =>
+      sum + requestsTo(fcx.events, changeIdx, `${r.origin}/credits/${R_JSON.pubKeyHex}`), 0);
+    const karmaReads = relays.reduce((sum, r) =>
+      sum + requestsTo(fcx.events, changeIdx, `${r.origin}/karma/${R_JSON.pubKeyHex}`), 0);
     const nodeCredits = await fetch(`${NODE}/credits/${R_JSON.pubKeyHex}`).then((r) => r.json()).catch(() => null);
 
-    // (4) Back to A: the balance row silent again once A's own run lands.
-    const back = await leaveFiguresRelay(cx);
-    onRelay = false;
+    // (4) Both relays back to `honest`; the fresh page's next figures run
+    // reads the balance row silent again. The press triggers a new tip run
+    // → verified → figures run on the now-honest answers.
+    for (const r of relays) r.mode = 'honest';
+    let back;
+    if (verified) {
+      const backIdx = fcx.events.length;
+      await pressCorner(fcx);
+      const backReached = await waitForCornerState(fcx,
+        (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
+        'led fresh + verified across N nodes (relays back to honest)', 60000);
+      const backVerified = !backReached.timedOut;
+      const backReading = backReached.last ?? { ledClass: 'null', title: null };
+      const aRun = backVerified ? await waitForFiguresRun(fcx, backIdx, 60000, 2000, null) : [];
+      await raiseWindow(fcx, 'open wallet');
+      const row = await waitForRow(readCreditsRow, fcx,
+        (r) => r.present && r.goldText !== null && r.figHintText === null && !r.goldHasClay, 15000);
+      back = {
+        ok: backVerified && aRun.length > 0 && !row.timedOut,
+        detail: `led=${backReading.ledClass}, title=${JSON.stringify(backReading.title)}, figures proof requests=${aRun.length}, balance ${creditsSeen(row.last)}`,
+      };
+    } else {
+      back = { ok: false, detail: 'skipped — the fresh page never verified' };
+    }
+
     // The box the lie points at — the one the arm asserts the line names.
     // `null` for 23 (avl-flip), whose sentences carry no amount.
     const lieBox = arm.box ? arm.box() : null;
@@ -3404,38 +3295,23 @@ async function runLieArm(cx, relay, arm) {
       ? 'none (the sentence carries no amount)'
       : `${lieBox.boxId.slice(0, 12)}… (${lieBox.value})`;
     record(arm.step, verified && creditsOk && karmaOk && creditsInLine && karmaInLine && cornerOk && back.ok,
-      `relay ${arm.mode} edits=${edits}; lie box=${lieBoxText}; ` +
-      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
-      `through the relay: /credits reads=${creditsReads}, /karma reads=${karmaReads}, figures proof requests=${relayRun.length}; ` +
+      `relays ${arm.mode} edits=${edits} (${relays.map((r, i) => `${r.origin}: ${r.edits[arm.mode] - editsBefore[i]}`).join(', ')}); lie box=${lieBoxText}; ` +
+      `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}, verified=${verified}; ` +
+      `through the two relays: /credits reads=${creditsReads}, /karma reads=${karmaReads}, figures proof requests=${relayRun.length}; ` +
       `balance ${creditsReadings.join(' | ')} (A's /credits total=${nodeCredits?.total ?? 'null'} base units), ok=${creditsOk}, in line=${creditsInLine}; ` +
       `rep ${karmaReadings.join(' | ')}, ok=${karmaOk}, in line=${karmaInLine}; ` +
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
-      `back to A: ${back.detail}, ok=${back.ok}`);
+      `back to honest on both: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
     record(arm.step, false, `error: ${e?.stack ?? String(e)}`);
-    // An arm that failed on the relay hands the next one A, as every arm
-    // leaves it.
-    if (onRelay) {
-      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vf] ${arm.step}: blank back to A failed: ${String(err)}`));
+  } finally {
+    // Modes back to honest, fresh page closed — the next arm starts clean.
+    for (const r of relays) r.mode = 'honest';
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
-}
-
-// Step (4) of every lie arm — the node row blanked back to A, and the balance
-// row silent once A's own figures run lands: before that run the row holds no
-// result, which reads silent too.
-async function leaveFiguresRelay(cx) {
-  const blankIdx = cx.events.length;
-  const blank = await blankNodeAndAwaitVerified(cx);
-  const verified = !blank.reached.timedOut;
-  await raiseWindow(cx, 'open wallet');
-  const aRun = verified ? await waitForFiguresRun(cx, blankIdx, 60000, 2000, NODE.replace(/\/+$/, '')) : [];
-  const row = await waitForRow(readCreditsRow, cx,
-    (r) => r.present && r.goldText !== null && r.figHintText === null && !r.goldHasClay, 15000);
-  return {
-    ok: verified && aRun.length > 0 && !row.timedOut,
-    detail: `led=${blank.reading.ledClass}, title=${JSON.stringify(blank.reading.title)}, A's figures proof requests=${aRun.length}, balance ${creditsSeen(row.last)}`,
-  };
 }
 
 // Step 25 — the hosted build has no verifier, so no `.credits-line .hint` or
@@ -3722,7 +3598,7 @@ function siteSeen(x) {
   return x === null ? 'absent' : `${JSON.stringify(x.text)} (clay=${x.clay})`;
 }
 
-async function verifiedNamesSteps(cx, targetId = 'unknown') {
+async function verifiedNamesSteps(cx, bcx, targetId = 'unknown') {
   // Liveness probe — the other blocks' shape, a three-second wall around `1+1`.
   const alive = await (async () => {
     const timeout = new Promise((_, rej) =>
@@ -3810,7 +3686,7 @@ async function verifiedNamesSteps(cx, targetId = 'unknown') {
 
     // ---- Steps 27a–d and 28a–b — the lie arms, through the figures relay in
     // its name modes, each switched back to A and read honest again.
-    await runNamesLieArms(cx, rKey, rName, sHeld);
+    await runNamesLieArms(cx, bcx, rKey, rName, sHeld);
 
     // ---- Step 30 — no verifier on the hosted web build.
     await runNamesStep30(rName);
@@ -4204,105 +4080,154 @@ const NAME_LABEL_ARMS = [
   },
 ];
 
-async function runNamesLieArms(cx, rKey, rName, sHeld) {
+async function runNamesLieArms(cx, bcx, rKey, rName, sHeld) {
   // The names block's lie arms (27a · 27b · 27c · 27d · 28a · 28b) ride the
-  // relay in its name modes the same way the figures block's lie arms do:
-  // the retired rule routed reads through the relay by setting the node row
-  // to its origin, the settings row no longer switches the reading base, and
-  // the relay's HTTP origin fails addByHand's /webrtc-direct/ check. The lie
-  // arms are marked NOT RUN until the mechanism is wired at stack-level; the
-  // retargeted rules (R's handles clay, the author window's clay line, the
-  // send refused, the contract above) ride the same relay lies and will
-  // read verbatim once the relay stands in the client's list.
-  // Unused parameters silenced — rKey/rName/sHeld shape the relay context in
-  // the recipe main runs; the function keeps its signature so main can
-  // restore the body in one edit once the mechanism is wired.
-  void rKey; void rName; void sHeld;
-  for (const s of [...NAMES_LABEL_STEPS, ...NAMES_SEND_STEPS]) {
-    record(s, 'NOT RUN',
-      `the relay's name modes read through the client only when the relay stands in client.state().nodes; the settings row's addByHand asks for a /webrtc-direct/ address the relay's HTTP origin is not — wiring the relay as a reachable mesh node is a stack-level change the recipe main runs will carry.`);
+  // two tip relays in their name modes, their mode set on both at once: a
+  // lie on both is a lie the run meets whichever node answers (WEB_INTERFACE
+  // → The extension → "The verified names"). Each arm opens a fresh page
+  // whose tip run has returned `verified` (the arms prove against an
+  // anchor) and asserts R's handles, the author window's landing, or a send
+  // refused as the arm claims.
+  void cx;
+  const relays = [tipRelays.a, tipRelays.b].filter((r) => r !== null);
+  if (relays.length !== 2) {
+    for (const s of [...NAMES_LABEL_STEPS, ...NAMES_SEND_STEPS]) record(s, 'NOT RUN',
+      `the two tip relays did not both start: RLA=${tipRelays.a?.origin ?? 'null'}, RLB=${tipRelays.b?.origin ?? 'null'}`);
+    return;
+  }
+  // The names context — R's key and S's name — on both relays. The figures
+  // block already set `rKey`, this reaffirms it in the same lowercase form
+  // and adds S's name for the send arms.
+  for (const r of relays) {
+    r.rKey = rKey;
+    r.sName = sHeld?.name ?? null;
+  }
+  try {
+    if (rName === null) {
+      for (const s of NAMES_LABEL_STEPS) record(s, false, `R holds no name on A — step 26 claimed none, so no row of R's carries a name`);
+    } else {
+      const ctx = { rKey, rName, rIds: await liveRootIds(rKey), renameTo: await freeName('Mallory') };
+      console.log(`[vn] label arms: R @${rName}, ${ctx.rIds.length} live roots of R on A, rows renamed to @${ctx.renameTo}`);
+      for (const arm of NAME_LABEL_ARMS) {
+        if (arm.mode === 'label-rename' && ctx.renameTo === null) {
+          record(arm.step, false, `no free name to rename R's rows to — Mallory and two hex tails of it are all held on A`);
+          continue;
+        }
+        await runNameLabelArm(bcx, relays, arm, ctx);
+      }
+      await runNamesStep27d(bcx, relays, ctx);
+    }
+    if (sHeld === null) {
+      for (const s of NAMES_SEND_STEPS) record(s, false, `S ${S_PUB.slice(0, 8)}… holds no name on A — claim-name.mjs claims one before the run`);
+    } else {
+      for (const arm of NAME_SEND_ARMS) await runNameSendArm(bcx, relays, arm, { sHeld });
+    }
+  } finally {
+    for (const r of relays) r.mode = 'honest';
+    console.log(`[vn] relays set back to honest; edits=${JSON.stringify(relays.map((r) => r.edits))}, rows renamed=${relays.reduce((s, r) => s + r.renamed, 0)}`);
   }
 }
 
-// One label arm — 27a · 27b · 27c: (1) the mode, (2) the node row set to the
-// relay and the corner verified across the relay, A and B, (3) R's handles once
-// the checks go quiet, the corner pressed again where the arm allows it, (4)
-// back to A and every handle of R's in ink again.
-async function runNameLabelArm(cx, relay, arm, ctx) {
-  let onRelay = false;
-  try {
-    const editsBefore = relay.edits[arm.mode];
-    const renamedBefore = relay.renamed;
-    // (1) The mode — R's rows renamed to a name no identity holds, or a fresh
-    // made-up box.
-    relay.mode = arm.mode;
-    relay.renameFrom = ctx.rName;
-    relay.renameTo = ctx.renameTo;
-    if (arm.mode === 'owner-fakebox') relay.fakeBoxId = randomBytes(32).toString('hex');
+// The merged log of both relays, sorted by arrival time — a check or a run
+// landed on whichever relay the client routed to, and the arms read against
+// the merged timeline.
+function mergedLog(relays) {
+  return relays.flatMap((r) => r.log).sort((a, b) => a.at - b.at);
+}
 
-    // (2) The node row set to the relay.
+// One label arm — 27a · 27b · 27c: (1) its mode on both relays, (2) a fresh
+// page's tip run reaches `verified`, (3) R's handles once the name checks go
+// quiet, the corner pressed again where the arm allows it, (4) the relays set
+// back to `honest` and R's handles read in ink again.
+async function runNameLabelArm(bcx, relays, arm, ctx) {
+  let page = null;
+  const editsBefore = relays.map((r) => r.edits[arm.mode]);
+  const renamedBefore = relays.reduce((s, r) => s + r.renamed, 0);
+  // (1) The mode on both relays — R's rows renamed to a name no identity
+  // holds, or a fresh made-up box. The same fakeBoxId on both so every relay
+  // serves the same fake box (`WEB_INTERFACE → The extension → "The verified
+  // names"`).
+  const fakeBoxId = arm.mode === 'owner-fakebox' ? randomBytes(32).toString('hex') : null;
+  for (const r of relays) {
+    r.mode = arm.mode;
+    r.renameFrom = ctx.rName;
+    r.renameTo = ctx.renameTo;
+    if (arm.mode === 'owner-fakebox') r.fakeBoxId = fakeBoxId;
+  }
+  try {
+    // (2) A fresh page whose tip run returns verified across N nodes.
     const changeAt = Date.now();
-    const changeIdx = cx.events.length;
-    onRelay = true;
-    const change = await changeNodeAndAwait(cx, relay.origin, cornerVerified,
-      `led fresh + verified across N nodes (reading the relay, ${arm.step})`, 60000);
-    const verified = !change.reached.timedOut && change.stored === relay.origin;
+    page = await openFreshExtensionPage(bcx);
+    const fcx = page.cx;
+    const changeIdx = fcx.events.length;
+    const reached = await waitForCornerState(fcx, cornerVerified,
+      `led fresh + verified across N nodes (fresh page under ${arm.mode}, ${arm.step})`, 60000);
+    const verified = !reached.timedOut;
+    const changeReading = reached.last ?? { ledClass: 'null', title: null };
 
     // (3) R's handles, once the checks go quiet; pressed again, up to the
     // arm's presses, while they do not read as the lie makes them.
     const readings = [];
     const presses = [];
-    let seen = verified ? await readRHandlesQuiet(cx, changeIdx, ctx.rKey, ctx.rIds) : null;
-    if (seen !== null) readings.push(`after the change: ${rHandlesSeen(seen.reading)}`);
+    let seen = verified ? await readRHandlesQuiet(fcx, changeIdx, ctx.rKey, ctx.rIds) : null;
+    if (seen !== null) readings.push(`after the fresh page: ${rHandlesSeen(seen.reading)}`);
     while (seen !== null && presses.length < arm.presses && !arm.relayOk(seen.reading, ctx)) {
       presses.push(Date.now());
-      const pressIdx = cx.events.length;
-      await pressCorner(cx);
-      seen = await readRHandlesQuiet(cx, pressIdx, ctx.rKey, ctx.rIds);
+      const pressIdx = fcx.events.length;
+      await pressCorner(fcx);
+      seen = await readRHandlesQuiet(fcx, pressIdx, ctx.rKey, ctx.rIds);
       readings.push(`press ${presses.length}: ${rHandlesSeen(seen.reading)}`);
     }
     const relayOk = seen !== null && arm.relayOk(seen.reading, ctx);
-    const corner = await readCorner(cx);
+    const corner = await readCorner(fcx);
     const cornerOk = cornerVerified(corner);
-    const edits = relay.edits[arm.mode] - editsBefore;
-    const checks = arm.mode === 'owner-fakebox' ? nameChecksFromRelayLog(relay.log, changeAt, relay.fakeBoxId) : [];
-    const runs = tipRunsFromRelayLog(relay.log, changeAt, { presses, checks });
+    const edits = relays.reduce((sum, r, i) => sum + (r.edits[arm.mode] - editsBefore[i]), 0);
+    const log = mergedLog(relays);
+    const checks = arm.mode === 'owner-fakebox' ? nameChecksFromRelayLog(log, changeAt, fakeBoxId) : [];
+    const runs = tipRunsFromRelayLog(log, changeAt, { presses, checks });
     const asked = runs.filter((r) => r.why === 'asked').length;
-    const pageTipProofs = proofRequestsSince(cx.events, changeIdx).length;
+    const pageTipProofs = proofRequestsSince(fcx.events, changeIdx).length;
 
-    // (4) Back to A, and the honest state read again.
-    const back = await leaveNamesRelay(cx, ctx);
-    onRelay = false;
+    // (4) Relays back to `honest`; R's handles in ink once the next name
+    // checks run.
+    for (const r of relays) r.mode = 'honest';
+    const back = await honestNamesRead(fcx, ctx);
+    const renamed = relays.reduce((s, r) => s + r.renamed, 0) - renamedBefore;
     record(arm.step, verified && relayOk && cornerOk && back.ok,
-      `relay ${arm.mode} edits=${edits}` +
-      (arm.mode === 'label-rename' ? ` (rows of R renamed @${ctx.renameTo}: ${relay.renamed - renamedBefore})` : '') +
-      (arm.mode === 'owner-fakebox' ? ` (made-up box ${relay.fakeBoxId.slice(0, 12)}…)` : '') + '; ' +
-      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
-      `on the relay: ${readings.join(' | ')}, ok=${relayOk}; ` +
-      (arm.mode === 'owner-fakebox' ? `the made-up box's checks (the relay's log): ${checksSeen(checks)}; ` : '') +
-      `tip runs through the relay: ${runsSeen(runs, changeAt)} — asked by a check: ${asked}; page /nipopow/proof/ requests=${pageTipProofs}; ` +
+      `relays ${arm.mode} edits=${edits} (${relays.map((r, i) => `${r.origin}: ${r.edits[arm.mode] - editsBefore[i]}`).join(', ')})` +
+      (arm.mode === 'label-rename' ? ` (rows of R renamed @${ctx.renameTo}: ${renamed})` : '') +
+      (arm.mode === 'owner-fakebox' ? ` (made-up box ${fakeBoxId.slice(0, 12)}…)` : '') + '; ' +
+      `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}, verified=${verified}; ` +
+      `through the two relays: ${readings.join(' | ')}, ok=${relayOk}; ` +
+      (arm.mode === 'owner-fakebox' ? `the made-up box's checks (the merged relay log): ${checksSeen(checks)}; ` : '') +
+      `tip runs through the two relays: ${runsSeen(runs, changeAt)} — asked by a check: ${asked}; page /nipopow/proof/ requests=${pageTipProofs}; ` +
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
-      `back on A: ${back.detail}, ok=${back.ok}`);
+      `back to honest on both: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
     record(arm.step, false, `error: ${e?.stack ?? String(e)}`);
-    // An arm that failed on the relay hands the next one A, as every arm
-    // leaves it.
-    if (onRelay) {
-      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] ${arm.step}: blank back to A failed: ${String(err)}`));
+  } finally {
+    for (const r of relays) r.mode = 'honest';
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
 }
 
-// Step (4) of a label arm — the node row blanked back to A, and every handle of
-// R's read in ink once A's checks go quiet.
-async function leaveNamesRelay(cx, ctx) {
-  const blankIdx = cx.events.length;
-  const blank = await blankNodeAndAwaitVerified(cx);
-  const verified = !blank.reached.timedOut;
-  const seen = verified ? await readRHandlesQuiet(cx, blankIdx, ctx.rKey, ctx.rIds) : null;
+// Step (4) of a label arm — the relays set back to honest, the corner pressed
+// on the fresh page, and every handle of R's read in ink once the next name
+// checks go quiet.
+async function honestNamesRead(fcx, ctx) {
+  const blankIdx = fcx.events.length;
+  await pressCorner(fcx);
+  const reached = await waitForCornerState(fcx, cornerVerified,
+    'led fresh + verified across N nodes (relays back to honest)', 60000);
+  const verified = !reached.timedOut;
+  const reading = reached.last ?? { ledClass: 'null', title: null };
+  const seen = verified ? await readRHandlesQuiet(fcx, blankIdx, ctx.rKey, ctx.rIds) : null;
   return {
     ok: verified && seen !== null && honestNames(seen.reading, ctx.rName),
-    detail: `led=${blank.reading.ledClass}, title=${JSON.stringify(blank.reading.title)}, ${seen === null ? 'not read' : rHandlesSeen(seen.reading)}`,
+    detail: `led=${reading.ledClass}, title=${JSON.stringify(reading.title)}, ${seen === null ? 'not read' : rHandlesSeen(seen.reading)}`,
   };
 }
 
@@ -4441,65 +4366,95 @@ function snapsSeen(snaps, t0) {
 // result, and the check's `absent` lands after — the handle turns clay in
 // place, no line beneath it, the rows below where they rendered. The window's
 // ↻ is a render, and draws the line. Back on A: ink, no line.
-async function runNamesStep27d(cx, relay, ctx) {
+async function runNamesStep27d(bcx, relays, ctx) {
   const { rKey, rName, rIds } = ctx;
-  const inkOnA = `(() => { const s = ${authorNameRowJs(rKey)}; return s.state === 'handle' && s.text === ${JSON.stringify('@' + rName)} && !s.clay && s.line === null; })()`;
-  let onRelay = false;
+  const inkOnHonest = `(() => { const s = ${authorNameRowJs(rKey)}; return s.state === 'handle' && s.text === ${JSON.stringify('@' + rName)} && !s.clay && s.line === null; })()`;
+  let page = null;
   let recording = false;
+  // Both relays honest at the start — the fresh page's first tip run reads
+  // verified and the author window renders R's name ink.
+  for (const r of relays) r.mode = 'honest';
   try {
-    // (0) R's author window in a column of its own, its name row in ink on A.
-    const placed = await authorWindowAlone(cx, rKey, rIds);
-    await cx.waitFor(inkOnA, 'R\'s author window, its name row in ink on A', 30000);
+    // (0) A fresh page whose tip run reads `verified`, R's author window in
+    // a column of its own, its name row in ink.
+    page = await openFreshExtensionPage(bcx);
+    const fcx = page.cx;
+    await waitForCornerState(fcx, cornerVerified,
+      'led fresh + verified across N nodes (fresh page under honest, 27d)', 60000);
+    const placed = await authorWindowAlone(fcx, rKey, rIds);
+    await fcx.waitFor(inkOnHonest, 'R\'s author window, its name row in ink on the honest relays', 30000);
 
-    // (1) The mode, set again over a fresh made-up box; the row recorded.
-    const editsBefore = relay.edits['owner-fakebox'];
-    relay.mode = 'owner-fakebox';
-    relay.fakeBoxId = randomBytes(32).toString('hex');
-    await recordAuthorNameRow(cx, rKey);
+    // (1) owner-fakebox on both relays over a shared fresh made-up box; the
+    // row recorded.
+    const editsBefore = relays.map((r) => r.edits['owner-fakebox']);
+    const fakeBoxId = randomBytes(32).toString('hex');
+    await recordAuthorNameRow(fcx, rKey);
     recording = true;
+    for (const r of relays) {
+      r.mode = 'owner-fakebox';
+      r.fakeBoxId = fakeBoxId;
+    }
 
-    // (2) The node row set to the relay.
+    // (2) The corner pressed — the tip run under owner-fakebox reaches
+    // verified (the lie is on name lookups, not on the tip proof), and the
+    // name check lands after the window's render.
     const changeAt = Date.now();
-    const changeIdx = cx.events.length;
-    onRelay = true;
-    const change = await changeNodeAndAwait(cx, relay.origin, cornerVerified,
-      'led fresh + verified across N nodes (reading the relay, 27d)', 60000);
-    const verified = !change.reached.timedOut && change.stored === relay.origin;
+    const changeIdx = fcx.events.length;
+    await pressCorner(fcx);
+    const reached = await waitForCornerState(fcx, cornerVerified,
+      'led fresh + verified across N nodes (owner-fakebox pressed, 27d)', 60000);
+    const verified = !reached.timedOut;
+    const changeReading = reached.last ?? { ledClass: 'null', title: null };
 
-    // (3) The window's states from the change until the checks go quiet — the
-    // render, then the landing — then its ↻, which draws the line.
-    if (verified) await waitForNameChecks(cx, changeIdx, { ms: 90000, quietMs: 3000 });
-    const landing = authorLanding((await authorRecord(cx)).filter((s) => s.t >= changeAt), rName);
-    await cx.eval(`${authorBarJs(rKey)}.querySelector('[aria-label="refresh this author"]').click()`, true);
-    const lineDrawn = await cx.waitFor(`(${authorNameRowJs(rKey)}).line !== null`, 'the author window\'s line after ↻', 30000)
+    // (3) The window's states from the press until the name checks go quiet —
+    // the render, then the landing — then its ↻, which draws the line.
+    if (verified) await waitForNameChecks(fcx, changeIdx, { ms: 90000, quietMs: 3000 });
+    const landing = authorLanding((await authorRecord(fcx)).filter((s) => s.t >= changeAt), rName);
+    await fcx.eval(`${authorBarJs(rKey)}.querySelector('[aria-label="refresh this author"]').click()`, true);
+    const lineDrawn = await fcx.waitFor(`(${authorNameRowJs(rKey)}).line !== null`, 'the author window\'s line after ↻', 30000)
       .then(() => true, () => false);
-    const refreshed = await cx.eval(authorNameRowJs(rKey));
-    const snaps = (await authorRecord(cx, true)).filter((s) => s.t >= changeAt);
+    const refreshed = await fcx.eval(authorNameRowJs(rKey));
+    const snaps = (await authorRecord(fcx, true)).filter((s) => s.t >= changeAt);
     recording = false;
     const refreshOk = lineDrawn && refreshed.state === 'handle' && refreshed.text === '@' + rName && refreshed.clay && refreshed.line === NAME_LINE;
-    const edits = relay.edits['owner-fakebox'] - editsBefore;
-    const checks = nameChecksFromRelayLog(relay.log, changeAt, relay.fakeBoxId);
-    const runs = tipRunsFromRelayLog(relay.log, changeAt, { checks });
+    const edits = relays.reduce((sum, r, i) => sum + (r.edits['owner-fakebox'] - editsBefore[i]), 0);
+    const log = mergedLog(relays);
+    const checks = nameChecksFromRelayLog(log, changeAt, fakeBoxId);
+    const runs = tipRunsFromRelayLog(log, changeAt, { checks });
 
-    // (4) Back to A: the window drawn again, its handle ink and no line.
-    const back = await leaveNamesRelay(cx, ctx);
-    onRelay = false;
-    const inkBack = await cx.waitFor(inkOnA, 'R\'s author window in ink again on A', 30000).then(() => true, () => false);
-    const backRow = await cx.eval(authorNameRowJs(rKey));
+    // (4) Both relays back to `honest`; the window drawn again, its handle
+    // ink and no line.
+    for (const r of relays) r.mode = 'honest';
+    const backIdx = fcx.events.length;
+    await pressCorner(fcx);
+    const backReached = await waitForCornerState(fcx, cornerVerified,
+      'led fresh + verified across N nodes (relays back to honest, 27d)', 60000);
+    const backVerified = !backReached.timedOut;
+    const backReading = backReached.last ?? { ledClass: 'null', title: null };
+    const backHandles = backVerified ? await readRHandlesQuiet(fcx, backIdx, rKey, rIds) : null;
+    const back = {
+      ok: backVerified && backHandles !== null && honestNames(backHandles.reading, rName),
+      detail: `led=${backReading.ledClass}, title=${JSON.stringify(backReading.title)}, ${backHandles === null ? 'not read' : rHandlesSeen(backHandles.reading)}`,
+    };
+    const inkBack = await fcx.waitFor(inkOnHonest, 'R\'s author window in ink again on the honest relays', 30000).then(() => true, () => false);
+    const backRow = await fcx.eval(authorNameRowJs(rKey));
     record('27d', verified && landing.ok && refreshOk && back.ok && inkBack,
-      `relay owner-fakebox edits=${edits} (made-up box ${relay.fakeBoxId.slice(0, 12)}…); ` +
+      `relays owner-fakebox edits=${edits} (made-up box ${fakeBoxId.slice(0, 12)}…); ` +
       `R's author window ${placed.opened ? 'opened from R\'s card' : 'open'}${placed.moved ? ', moved to a column of its own' : ', alone in its column'}; ` +
-      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
+      `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}, verified=${verified}; ` +
       `the run saw: ${landing.seen}, ok=${landing.ok}; ` +
       `after ↻: ${JSON.stringify(refreshed.text)} ${refreshed.clay ? 'clay' : 'ink'}, line ${JSON.stringify(refreshed.line)}, ok=${refreshOk}; ` +
-      `the name row's states from the change: ${snapsSeen(snaps, changeAt)}; ` +
-      `the made-up box's checks (the relay's log): ${checksSeen(checks)}; tip runs through the relay: ${runsSeen(runs, changeAt)}; ` +
-      `back on A: ${back.detail}; the name row ${JSON.stringify(backRow.text)} ${backRow.clay ? 'clay' : 'ink'}, line ${JSON.stringify(backRow.line)}, ok=${back.ok && inkBack}`);
+      `the name row's states from the press: ${snapsSeen(snaps, changeAt)}; ` +
+      `the made-up box's checks (the merged relay log): ${checksSeen(checks)}; tip runs through the two relays: ${runsSeen(runs, changeAt)}; ` +
+      `back to honest on both: ${back.detail}; the name row ${JSON.stringify(backRow.text)} ${backRow.clay ? 'clay' : 'ink'}, line ${JSON.stringify(backRow.line)}, ok=${back.ok && inkBack}`);
   } catch (e) {
-    if (recording) await authorRecord(cx, true).catch(() => {});
+    if (recording && page) await authorRecord(page.cx, true).catch(() => {});
     record('27d', false, `error: ${e?.stack ?? String(e)}`);
-    if (onRelay) {
-      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] 27d: blank back to A failed: ${String(err)}`));
+  } finally {
+    for (const r of relays) r.mode = 'honest';
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
 }
@@ -4588,64 +4543,70 @@ const SEND_ANSWER_JS = `(() => {
   };
 })()`;
 
-// One send arm — 28a · 28b: (1) the mode, (2) the node row set to the relay,
-// (3) the send row pressed twice with S's handle typed — for 28b once A has
-// mined past the height the anchor was written at — and pressed again while a
-// block landing inside the retry reads *too new*, (4) back to A, where the
-// send to S's handle proves and its prompt is declined.
-async function runNameSendArm(cx, relay, arm, { sHeld }) {
+// One send arm — 28a · 28b: (1) its mode on both relays, (2) a fresh page's
+// tip run reaches `verified`, (3) the send row pressed twice with S's handle
+// typed — for 28b once A has mined past the height the anchor was written
+// at — and pressed again while a block landing inside the retry reads *too
+// new*, (4) both relays back to `honest` and a send to S's handle proving
+// against the honest answers, declined at the prompt.
+async function runNameSendArm(bcx, relays, arm, { sHeld }) {
   const handle = '@' + sHeld.name;
   const lie = `this node's answer for ${handle} did not verify.`;
   const young = `${handle} is too new to check yet.`;
   const checking = `checking ${handle}…`;
-  let onRelay = false;
+  let page = null;
+  const editsBefore = relays.map((r) => r.edits[arm.mode]);
+  // (1) The mode on both relays — another key as the owner, or a fresh
+  // made-up box shared across relays.
+  const fakeBoxId = arm.mode === 'name-fakebox' ? randomBytes(32).toString('hex') : null;
+  for (const r of relays) {
+    r.mode = arm.mode;
+    if (arm.mode === 'name-fakebox') r.fakeBoxId = fakeBoxId;
+  }
+  const boxId = arm.mode === 'name-fakebox' ? fakeBoxId : sHeld.boxId.toLowerCase();
   try {
-    const editsBefore = relay.edits[arm.mode];
-    // (1) The mode — another key as the owner, or a fresh made-up box.
-    relay.mode = arm.mode;
-    if (arm.mode === 'name-fakebox') relay.fakeBoxId = randomBytes(32).toString('hex');
-    const boxId = arm.mode === 'name-fakebox' ? relay.fakeBoxId : sHeld.boxId.toLowerCase();
-
-    // (2) The node row set to the relay.
+    // (2) A fresh page whose tip run reads `verified`.
     const changeAt = Date.now();
-    const changeIdx = cx.events.length;
-    onRelay = true;
-    const change = await changeNodeAndAwait(cx, relay.origin, cornerVerified,
-      `led fresh + verified across N nodes (reading the relay, ${arm.step})`, 60000);
-    const verified = !change.reached.timedOut && change.stored === relay.origin;
+    page = await openFreshExtensionPage(bcx);
+    const fcx = page.cx;
+    const changeIdx = fcx.events.length;
+    const reached = await waitForCornerState(fcx, cornerVerified,
+      `led fresh + verified across N nodes (fresh page under ${arm.mode}, ${arm.step})`, 60000);
+    const verified = !reached.timedOut;
+    const changeReading = reached.last ?? { ledClass: 'null', title: null };
     if (!verified) {
-      const back = await leaveSendRelay(cx, { sHeld });
-      onRelay = false;
-      record(arm.step, false, `relay ${arm.mode}: the corner never read verified on the relay — stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}; back on A: ${back.detail}`);
+      record(arm.step, false, `relays ${arm.mode}: the fresh page never read verified — led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}`);
       return;
     }
 
-    // (3) The send row, once the checks the change began have gone quiet; for
-    // 28b, the anchor made stale — A mines past the height it stood at.
-    await raiseWindow(cx, 'open wallet');
-    await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, `the send form ${arm.step}`, 60000);
-    await waitForNameChecks(cx, changeIdx, { ms: 90000, quietMs: 3000 });
+    // (3) The send row, once the checks the fresh page began have gone
+    // quiet; for 28b, the anchor made stale — A mines past the height it
+    // stood at.
+    await raiseWindow(fcx, 'open wallet');
+    await fcx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, `the send form ${arm.step}`, 60000);
+    await waitForNameChecks(fcx, changeIdx, { ms: 90000, quietMs: 3000 });
     let stale = null;
     if (arm.staleAnchor) {
       // A tip run begun while A mines — the ten-minute clock — writes a fresh
       // anchor, and the wait begins again from the height after it.
       for (let waits = 1; waits <= 3; waits++) {
-        const runsBefore = tipRunsFromRelayLog(relay.log, changeAt).length;
+        const runsBefore = tipRunsFromRelayLog(mergedLog(relays), changeAt).length;
         const standing = await currentHeight(NODE);
         stale = { standing, reached: await waitForHeight(NODE, standing + 1, 180000), waits };
-        if (stale.reached === null || tipRunsFromRelayLog(relay.log, changeAt).length === runsBefore) break;
+        if (stale.reached === null || tipRunsFromRelayLog(mergedLog(relays), changeAt).length === runsBefore) break;
       }
     }
     const presses = [];
     while (presses.length < arm.presses) {
-      const p = await pressSendTwice(cx, handle);
+      const p = await pressSendTwice(fcx, handle);
       presses.push(p);
       if (p.answer.refusal !== young) break;
     }
-    const checks = nameChecksFromRelayLog(relay.log, changeAt, boxId);
-    const runs = tipRunsFromRelayLog(relay.log, changeAt, { checks });
+    const log = mergedLog(relays);
+    const checks = nameChecksFromRelayLog(log, changeAt, boxId);
+    const runs = tipRunsFromRelayLog(log, changeAt, { checks });
     const seen = presses.map((p) => {
-      const lookups = nameRequestsSince(cx.events, p.pressIdx, { handle: sHeld.name, endIdx: p.answerIdx }).handleLookups;
+      const lookups = nameRequestsSince(fcx.events, p.pressIdx, { handle: sHeld.name, endIdx: p.answerIdx }).handleLookups;
       const own = checks.filter((c) => c.at >= p.pressAt && c.at <= p.answerAt);
       const asked = runs.filter((r) => r.why === 'asked' && r.at >= p.pressAt && r.at <= p.answerAt).length;
       const ok = p.second.pressed && p.second.flight === checking && p.texts.includes(checking)
@@ -4664,67 +4625,75 @@ async function runNameSendArm(cx, relay, arm, { sHeld }) {
     const first = seen[0];
     const pathOk = !arm.staleAnchor || (first !== undefined && first.own[0]?.status === 'unchecked' && first.asked === 1
       && (seen.length > 1 || first.own[1]?.status === 'absent'));
-    const corner = await readCorner(cx);
+    const corner = await readCorner(fcx);
     const cornerOk = cornerVerified(corner);
-    const edits = relay.edits[arm.mode] - editsBefore;
+    const edits = relays.reduce((sum, r, i) => sum + (r.edits[arm.mode] - editsBefore[i]), 0);
 
-    // (4) Back to A — the send to S's handle proves there.
-    const back = await leaveSendRelay(cx, { sHeld });
-    onRelay = false;
+    // (4) Both relays back to `honest` — the send to S's handle proves and
+    // its prompt is declined on the same fresh page.
+    for (const r of relays) r.mode = 'honest';
+    const back = await honestSendOnFreshPage(fcx, { sHeld });
     record(arm.step, seen.every((s) => s.ok) && endOk && pathOk && cornerOk && back.ok,
-      `relay ${arm.mode} edits=${edits}${arm.mode === 'name-fakebox' ? ` (made-up box ${relay.fakeBoxId.slice(0, 12)}…)` : ` (owner ${DEVNET_FAUCET_KEY.slice(0, 12)}… over S's box ${sHeld.boxId.slice(0, 12)}…)`}; ` +
-      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}; ` +
-      (stale === null ? '' : `the anchor made stale: A stood at ${stale.standing} after the ${stale.waits === 1 ? 'change\'s checks' : `tip run during wait ${stale.waits - 1}`}, mined to ${stale.reached ?? 'nothing within 3 min'}; `) +
+      `relays ${arm.mode} edits=${edits} (${relays.map((r, i) => `${r.origin}: ${r.edits[arm.mode] - editsBefore[i]}`).join(', ')})${arm.mode === 'name-fakebox' ? ` (made-up box ${fakeBoxId.slice(0, 12)}…)` : ` (owner ${DEVNET_FAUCET_KEY.slice(0, 12)}… over S's box ${sHeld.boxId.slice(0, 12)}…)`}; ` +
+      `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}; ` +
+      (stale === null ? '' : `the anchor made stale: A stood at ${stale.standing} after the ${stale.waits === 1 ? 'fresh page\'s checks' : `tip run during wait ${stale.waits - 1}`}, mined to ${stale.reached ?? 'nothing within 3 min'}; `) +
       `typed ${JSON.stringify(handle)} and ${NAMES_SEND_AMOUNT} $NOTIS; ` +
       seen.map((s, i) => `press ${i + 1}: ${s.line}`).join(' | ') + '; ' +
       `ends ${JSON.stringify(last?.answer.refusal ?? null)}, ok=${endOk}${arm.staleAnchor ? `, the path unchecked → asked run → absent ok=${pathOk}` : ''}; ` +
-      `tip runs through the relay: ${runsSeen(runs, changeAt)}; ` +
+      `tip runs through the two relays: ${runsSeen(runs, changeAt)}; ` +
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
-      `back on A: ${back.detail}, ok=${back.ok}`);
+      `back to honest on both: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
     record(arm.step, false, `error: ${e?.stack ?? String(e)}`);
-    if (onRelay) {
-      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] ${arm.step}: blank back to A failed: ${String(err)}`));
+  } finally {
+    for (const r of relays) r.mode = 'honest';
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
 }
 
-// Step (4) of a send arm — the node row blanked back to A, and the send to S's
-// handle proving there: S's key beneath the field and on the prompt's `to:`
-// line, the prompt declined, nothing sent.
-async function leaveSendRelay(cx, { sHeld }) {
-  const blankIdx = cx.events.length;
-  const blank = await blankNodeAndAwaitVerified(cx);
-  const corner = `led=${blank.reading.ledClass}, title=${JSON.stringify(blank.reading.title)}`;
-  if (blank.reached.timedOut) return { ok: false, detail: `${corner} — A never read verified` };
-  await raiseWindow(cx, 'open wallet');
-  await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, 'the send form back on A', 60000);
-  await waitForNameChecks(cx, blankIdx, { ms: 90000, quietMs: 3000 });
+// Step (4) of a send arm — the corner pressed on the fresh page after both
+// relays are back to honest, and the send to S's handle proving there: S's
+// key beneath the field and on the prompt's `to:` line, the prompt declined,
+// nothing sent.
+async function honestSendOnFreshPage(fcx, { sHeld }) {
+  const blankIdx = fcx.events.length;
+  await pressCorner(fcx);
+  const reached = await waitForCornerState(fcx, cornerVerified,
+    'led fresh + verified across N nodes (send arm back to honest)', 60000);
+  const reading = reached.last ?? { ledClass: 'null', title: null };
+  const corner = `led=${reading.ledClass}, title=${JSON.stringify(reading.title)}`;
+  if (reached.timedOut) return { ok: false, detail: `${corner} — the honest run never read verified` };
+  await raiseWindow(fcx, 'open wallet');
+  await fcx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, 'the send form back to honest', 60000);
+  await waitForNameChecks(fcx, blankIdx, { ms: 90000, quietMs: 3000 });
   const handle = '@' + sHeld.name;
   const promptsBefore = await promptTargetIds();
-  const pressIdx = cx.events.length;
-  await cx.eval(`(() => {
+  const pressIdx = fcx.events.length;
+  await fcx.eval(`(() => {
     const form = document.querySelector('.credits-field form.credits-form');
     const inputs = form.querySelectorAll('input');
     inputs[0].value = ${JSON.stringify(handle)};
     inputs[1].value = ${JSON.stringify(NAMES_SEND_AMOUNT)};
     [...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'send').click();
   })()`, true);
-  await cx.waitFor(SEND_ANSWERED_JS, 'the send row\'s answer back on A', 90000);
-  const answer = await cx.eval(SEND_ANSWER_JS);
+  await fcx.waitFor(SEND_ANSWERED_JS, 'the send row\'s answer back to honest', 90000);
+  const answer = await fcx.eval(SEND_ANSWER_JS);
   if (answer.unlock) {
-    await cx.eval(`(() => {
+    await fcx.eval(`(() => {
       const form = document.querySelector('.credits-field .card-unlock form.pf');
       form.querySelector('input[type="password"]').value = ${JSON.stringify(PASSPHRASE)};
       form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
     })()`, true);
   }
   const { prompt, lines, declined } = answer.key !== null
-    ? await readAndDeclinePrompt(promptsBefore, 'back on A')
+    ? await readAndDeclinePrompt(promptsBefore, 'back to honest')
     : { prompt: null, lines: null, declined: false };
-  const notSent = await cx.waitFor(`document.querySelector('.credits-field .credits-flight .stage')?.textContent?.trim() === 'send not sent.'`,
-    'send not sent back on A', 30000).then(() => true, () => false);
-  const transfers = cx.events.slice(pressIdx).filter((ev) =>
+  const notSent = await fcx.waitFor(`document.querySelector('.credits-field .credits-flight .stage')?.textContent?.trim() === 'send not sent.'`,
+    'send not sent back to honest', 30000).then(() => true, () => false);
+  const transfers = fcx.events.slice(pressIdx).filter((ev) =>
     ev.method === 'Network.requestWillBeSent' && ev.params.request.url.includes('/credits/transfer')).length;
   const promptKey = lines?.find((l) => l.cls === 'target')?.value ?? null;
   return {
@@ -6840,7 +6809,7 @@ async function runVerifiedBlocks(bcx) {
     try {
       await vfCx.waitFor(`!!document.querySelector('[aria-label="open wallet"]')`, 'header wallet control 25', 30000);
     } catch {}
-    await verifiedFiguresSteps(vfCx, vfPage.id);
+    await verifiedFiguresSteps(vfCx, bcx, vfPage.id);
     try { vfCx.s.close(); } catch {}
   } else {
     markVerifiedFiguresNotRun('no --verified-figures');
@@ -6860,7 +6829,7 @@ async function runVerifiedBlocks(bcx) {
     }
     if (!vnPage) throw new Error('verified-names block: no extension page');
     const vnCx = await openSession(vnPage.webSocketDebuggerUrl);
-    await verifiedNamesSteps(vnCx, vnPage.id);
+    await verifiedNamesSteps(vnCx, bcx, vnPage.id);
     try { vnCx.s.close(); } catch {}
   } else {
     markVerifiedNamesNotRun('no --verified-names');
