@@ -73,8 +73,9 @@ and the proxy reads a `sign` that ends without an answer as `refused`; every rea
 Web Lock `notis.prompt` (`navigator.locks`, which `install` takes; the tests pass `fakeLockManager()`), one prompt at a
 time and a record whose window is gone declined; credits always prompted in the prompt window, rep silent while unlocked unless the
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
-the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips; **the
-chain it reads checked by NiPoPoW proofs from the seed list's nodes, the verdict folded into the status corner**
+the shell's `notis-nodes` seed list (strings and nodes alike parsed to `BUILD_NODE_BASES` and `BUILD_ANCHORS`) and
+`notis-public` link origin; one manifest template → two zips; **the chain it reads checked by the mesh client's own
+check, the verdict folded into the status corner**
 (`WEB_INTERFACE → The extension → "The verified tip"`), **and the wallet's balance and the profile's rep judged against
 everything the key holds on that chain, each ledger's range read whole, a line beneath a figure only when something is
 not whole** (`→ "The verified figures"`), **and
@@ -401,21 +402,17 @@ verifier, and a name no network profile answers to refuses the build. ⚠ **A bu
 *this node's proof did not verify*. `VITE_NODES` defaults to testnet's two nodes, `notis.fun` first.
 
 **The verified tip** (`WEB_INTERFACE → The extension → "The verified tip"`, `→ The status corner`): the extension
-checks the chain it reads. `src/extension/tip-verifier.ts` (`createTipVerifier`) asks the reading node first and then
-every other base of the seed list for `GET /nipopow/proof/24/20` through `resolveTip` of `@dagsocial/nipopow-client` —
-the code the command-line light client runs, never a second implementation — with the profile of the build's
-`notis-network`, **never a node's `/status`**; `src/model/tip-verdict.ts` (`tipVerdict`, pure) reads the result into
-`verified` · `thin` · `refused`, deciding for itself (an unverified reading node never reads `verified`, whatever
-code stands beside it; a `behind` that is not a non-negative integer is `null`); the App runs it at start, on a press
-of the corner and every ten minutes while visible, one run at a time, a generation dropping a run made for the node
-before; the corner is green only while blocks progress **and** the verdict is `verified`. **A reading node that lost
-the comparison is outworked only when the winner's suffix does not carry its tip** (the tool's `behind` is `null`) —
-the nodes answer one after another, so a follower one block behind loses the fold at every block it lags. `main.ts`
-hands the verifier to the App in the extension build alone, and only under a non-empty `notis-network`; the web
-build is handed none and `build-release.sh` refuses `nipopow/proof` in its assets. `@dagsocial/validation` verifies
-Ed25519 through `@noble/curves` and hashes through `@dagsocial/types`' `hash32`, importing nothing Node
-(`WEB_INTERFACE → The client's builds substitute nothing`); **what a build does to those bytes `pnpm test` cannot see**
-— the binding check and the proof's write steps are its only proof.
+checks the chain it reads through the mesh client's own check — `src/extension/mesh-tip-verifier.ts`
+(`createMeshTipVerifier`) awaits one `client.check()` and answers `tipRunOf(client.state())` from
+`src/model/mesh-verdict.ts` (`meshVerdict`, pure): the first row of the seven-row table that holds, with `no-anchor`
+as row 4 for a seated chain no anchor stands on, and totality on the counts folded in before the rows. The App runs
+it at start, on a press of the corner, every ten minutes while visible, on a visibility rise ten minutes past the
+last run, and when a name check asks for one; one run at a time. The corner is green only while blocks progress
+**and** the verdict is `verified`; `src/view/corner.ts` writes the new titles, none naming a node or carrying a URL
+or an address. `main.ts` hands the verifier to the App in the extension build alone, and only under a non-empty
+`notis-network`; the web build is handed none and `build-release.sh` refuses `nipopow/proof` in its assets. The
+per-run `resolveTip` over the seed list, `tipVerdict`'s `outworked` reason and its `by`, and `src/extension/tip-verifier.ts`
+retired together once the mesh client's check carried the verdict.
 
 **The verified figures** (`WEB_INTERFACE → The extension → "The verified figures"`, `→ The profile window`, `→ The
 wallet window`): the extension proves the reader's rep and balance against the verified chain. **The rep row's number
@@ -471,7 +468,8 @@ control) — in a thread at the depth its `parentRefs` gives. A light page not h
 (`src/api/light-page.ts`) and reads as a failed listing. After each read writes state, `resolveSlots` claims every
 slot standing — the feed's, each author window's, each thread's subject and descendants — reads the cache once more,
 and asks the resolver for the rest: `POST <base>/posts/batch?tx=1`, at most `BATCH_READ_MAX` ids a request, no
-`viewer`, to the reading node and then each other base of the seed list in turn, a pointer walking the nodes across
+`viewer`, to the nodes of the client's order for an older read in turn (`client.order('older')` — the nodes the
+mesh client reaches first, then the API bases of the entries the need allows), a pointer walking the nodes across
 resolves, one limit of `BATCH_RESOLVE_MS` over all of a resolve's requests and every request it beats aborted
 (`src/model/post-resolve.ts`, pure, over seams). Each answer's rows pass the post check as one batch; a `bound`,
 well-formed row with text enters the cache and `fillSlots` turns its slot into its card — in the feed by replacing

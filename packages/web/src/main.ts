@@ -1,4 +1,4 @@
-import { applyPrefs, BUILD_NODE_BASES, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE, prefs } from './prefs';
+import { applyPrefs, BUILD_NODE_BASES, BUILD_ANCHORS, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE, prefs } from './prefs';
 import { App } from './app';
 import { decideMode } from './mode';
 import { createTabs, type Tabs } from './tabs';
@@ -10,6 +10,9 @@ import { createNamesVerifier } from './extension/names-verifier';
 import { createPostsVerifier } from './extension/posts-verifier';
 import { createPostCache, rememberedChain } from './extension/post-cache';
 import { createPostResolver } from './extension/post-resolver';
+import type { Api } from './api/client';
+import type { WriteClient } from './api/write';
+import type { HandNodeSeam } from './view/settings';
 import type { AppIdentity, TipVerifier, FiguresVerifier, NamesVerifier, PostsVerifier, PostCache, PostResolver } from './model/state';
 
 // Theme is already on <html> from the head's theme.js; this re-applies it and
@@ -40,45 +43,15 @@ const mode = decideMode(location.pathname, WEB_BASE);
 // seam with the handover, so the holder asks the background for waiting threads; the static
 // `isExtension` keeps `handover.ts` out of the web bundle (build-release.sh's `chrome.` check).
 const tabs: Tabs = isExtension ? wrapTabs(createTabs(), chrome) : createTabs();
-// WEB_INTERFACE → The extension → "The verified tip" — the verifier is handed
-// to the App by the extension build alone; an extension with an empty
-// `notis-network` is handed none, exactly as the web build. AHEAD OF CODE
-// (2026-11-05): the seams module lands the `MeshTipVerifier` over the mesh
-// client; until then the extension build is handed `undefined`.
-const verifier: TipVerifier | undefined = undefined;
-// WEB_INTERFACE → The extension → "The verified figures" — the figures verifier
-// is handed to the App under the same static condition as the tip verifier, so
-// the web build's substitution renders this a static false and Rollup dead-
-// code-eliminates createFiguresVerifier (build-release.sh's `api/v1/proof`
-// check).
-const figuresVerifier: FiguresVerifier | undefined = isExtension && BUILD_NETWORK !== null
-  ? createFiguresVerifier({
-      network: BUILD_NETWORK,
-      fetch: fetch.bind(globalThis),
-    })
-  : undefined;
-// WEB_INTERFACE → The extension → "The verified names" — the names verifier is
-// handed to the App under the same static condition, so Rollup dead-code-
-// eliminates createNamesVerifier from the web bundle (build-release.sh's
-// `api/v1/proof` check).
-const namesVerifier: NamesVerifier | undefined = isExtension && BUILD_NETWORK !== null
-  ? createNamesVerifier({ fetch: fetch.bind(globalThis) })
-  : undefined;
+
 // WEB_INTERFACE → The extension → "The post check" — the posts verifier is
-// handed under the same static condition as the three others, so Rollup
-// dead-code-eliminates createPostsVerifier and `checkPosts` from the web
-// bundle (build-release.sh's `notis.posts.` check refuses the post cache's
-// IndexedDB prefix in the bundle; this verifier itself leaves no literal to
-// key on).
+// handed under the extension build alone, so Rollup dead-code-eliminates
+// createPostsVerifier and `checkPosts` from the web bundle.
 const postsVerifier: PostsVerifier | undefined = isExtension && BUILD_NETWORK !== null
   ? createPostsVerifier()
   : undefined;
 // WEB_INTERFACE → The extension → "The post cache" — the cache is built
-// under the same static condition as the four verifiers, so Rollup dead-
-// code-eliminates `createPostCache` and the IndexedDB name's `notis.posts.`
-// prefix from the web bundle (build-release.sh refuses it there). The last
-// chain's name opens the cache before the first tip run returns and where
-// none does.
+// under the same static condition.
 const postCache: PostCache | undefined = isExtension && BUILD_NETWORK !== null
   ? createPostCache()
   : undefined;
@@ -86,20 +59,64 @@ if (postCache) {
   const chain = rememberedChain();
   if (chain !== null) void postCache.open(chain);
 }
-// WEB_INTERFACE → The extension → "The resolve" — the resolver is handed
-// under the same static condition as the four verifiers and the cache, so
-// Rollup dead-code-eliminates `createPostResolver` and `posts/batch` from
-// the web bundle (build-release.sh refuses it there). `nodes()` is read at
-// each call since the reading node changes under the reader; the posts
-// verifier is created under the same condition and so is defined here.
-const postResolver: PostResolver | undefined = isExtension && BUILD_NETWORK !== null && postsVerifier !== undefined
-  ? createPostResolver({
-      nodes: (): string[] => [prefs.node, ...BUILD_NODE_BASES].filter((b) => b !== ''),
-      fetch: fetch.bind(globalThis),
-      check: postsVerifier.check.bind(postsVerifier),
-    })
-  : undefined;
-new App(undefined, undefined, idm, undefined, tabs, requestFaucetOrigin, verifier, figuresVerifier, namesVerifier, postsVerifier, postCache, postResolver).start(appbar, feed, panes, mode);
+
+let readClient: Api | undefined;
+let writeClientSeam: WriteClient | undefined;
+let verifier: TipVerifier | undefined;
+let figuresVerifier: FiguresVerifier | undefined;
+let namesVerifier: NamesVerifier | undefined;
+let postResolver: PostResolver | undefined;
+let handNodeSeam: HandNodeSeam | undefined;
+
+if (isExtension && BUILD_NETWORK !== null && postsVerifier !== undefined) {
+  // WEB_INTERFACE → The extension → "The mesh is the extension's first
+  // path" — the extension build starts the mesh client with the build's
+  // anchors, and the seams module wraps its `fetch` and `base`/`order` as
+  // the App's read client, write client, tip verifier, figures and names
+  // verifiers, post resolver and hand-added-node seam. `pagehide` stops
+  // the client once. A stored hand-added address re-enters as a by-hand
+  // anchor after start, so `removeByHand` can later drop it. The mesh
+  // module is reached by a dynamic import so Rollup drops every byte of
+  // it from the web bundle (`build-release.sh`'s mesh grep).
+  const [{ startExtensionMesh }, { startMeshClient }] = await Promise.all([
+    import('./extension/mesh-seams'),
+    import('./mesh'),
+  ]);
+  const { seams } = await startExtensionMesh({
+    anchors: [...BUILD_ANCHORS],
+    network: BUILD_NETWORK,
+    agentName: 'notis-extension',
+    httpFetch: fetch.bind(globalThis),
+    check: postsVerifier.check.bind(postsVerifier),
+    storage: window.localStorage,
+    window,
+    startMeshClient,
+  });
+  readClient = seams.readClient;
+  writeClientSeam = seams.writeClient;
+  verifier = seams.tipVerifier;
+  figuresVerifier = seams.figuresVerifier;
+  namesVerifier = seams.namesVerifier;
+  postResolver = seams.postResolver;
+  handNodeSeam = seams.handNodeSeam;
+} else if (isExtension && BUILD_NETWORK !== null) {
+  // An extension build with a network but no posts verifier is a defect; keep
+  // the figures/names paths off so the App does not receive one without the
+  // other. The condition above folds `postsVerifier !== undefined`.
+  figuresVerifier = createFiguresVerifier({ network: BUILD_NETWORK, fetch: fetch.bind(globalThis) });
+  namesVerifier = createNamesVerifier({ fetch: fetch.bind(globalThis) });
+  postResolver = createPostResolver({
+    nodes: (): string[] => [prefs.node, ...BUILD_NODE_BASES].filter((b) => b !== ''),
+    fetch: fetch.bind(globalThis),
+    check: (): never => { throw new Error('a posts verifier is handed without a post resolver'); },
+  });
+}
+
+new App(
+  readClient, writeClientSeam, idm, undefined, tabs, requestFaucetOrigin,
+  verifier, figuresVerifier, namesVerifier, postsVerifier, postCache, postResolver,
+  handNodeSeam,
+).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
 // transition-suppressing class only after the first paint (HOUSE_STYLE → Motion).

@@ -143,7 +143,7 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
     const handNode = handlers.handNode;
     const { row: r, field } = row('node');
     const input = el('input') as HTMLInputElement;
-    input.placeholder = '/ip4/…/webrtc-direct/…/p2p/…';
+    input.placeholder = '/ip4/…/udp/…/p2p/…';
     input.setAttribute('aria-label', 'the node this client adds by hand');
     const errLine = el('div', 'error');
     errLine.hidden = true;

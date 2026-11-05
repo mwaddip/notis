@@ -40,7 +40,7 @@ import { profileBody, type ProfileBody } from './view/profile';
 import {
   walletBody, sendUnlockRow, type WalletBody, type ResolvedRecipient, type SendAnswer, type SendRecipient,
 } from './view/wallet';
-import { settingsBody } from './view/settings';
+import { settingsBody, type HandNodeSeam } from './view/settings';
 import { authorBody, type AuthorCtx, type YourVouch } from './view/author';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
@@ -479,6 +479,13 @@ export class App {
   // list's nodes in turn by `resolveSlots`. The web build is handed none and
   // sends no `light`.
   private postResolver: PostResolver | null;
+  // WEB_INTERFACE → The settings window → "In the extension the row adds a
+  // node by hand" — the extension hands the App a seam that parses a typed
+  // address, stores it, and calls the mesh client's
+  // `addByHand`/`removeByHand`. The settings view's `node` row renders the
+  // hand-added form only when the seam is present; the web build's row is
+  // the same without it.
+  private handNodeSeam: HandNodeSeam | null;
   // The ids a resolve was asked for and has not answered (WEB_INTERFACE →
   // The extension → "One resolve serves every list" → "an id asked for is
   // not asked again while its answer is awaited"). `dropReaderState` empties
@@ -552,6 +559,7 @@ export class App {
     postsVerifier?: PostsVerifier | null,
     postCache?: PostCache | null,
     postResolver?: PostResolver | null,
+    handNodeSeam?: HandNodeSeam | null,
   ) {
     this.client = client ?? new NodeClient({ base: () => prefs.node, fetch: (url, init) => fetch(url, init) });
     this.writeClient = writeClient ?? new WriteClient({ bases: () => [prefs.node], fetch: (url, init) => fetch(url, init) });
@@ -564,6 +572,7 @@ export class App {
     this.postsVerifier = postsVerifier ?? null;
     this.postCache = postCache ?? null;
     this.postResolver = postResolver ?? null;
+    this.handNodeSeam = handNodeSeam ?? null;
     // The posts verifier and the post resolver are handed together or not at
     // all — the extension build is the one build that holds either, and it
     // holds both (WEB_INTERFACE → The extension → "The post check",
@@ -670,6 +679,10 @@ export class App {
             setLinks: async (v) => { await this.idm.setLinks!(v); this.renderRegionsFor('@settings'); },
           }
         : {}),
+      // WEB_INTERFACE → The settings window → "In the extension the row adds
+      // a node by hand" — the hand-added-node seam is wired as a settings
+      // handler only in the extension build (the web build is handed none).
+      ...(this.handNodeSeam ? { handNode: this.handNodeSeam } : {}),
     };
   }
 

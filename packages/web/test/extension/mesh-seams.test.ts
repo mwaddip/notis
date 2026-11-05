@@ -79,26 +79,26 @@ function fakeStorage(initial: Record<string, string> = {}): StorageLike & { map:
 const check: (rows: unknown[]) => PostCheck[] = (rows) => rows.map((): PostCheck => ({ status: 'unbound', reason: 'no-tx', verdict: 'no-tx' }));
 
 describe('parseHandNodeAddress', () => {
-  it.fails('parses an ip4 webrtc-direct address ending in /p2p/<peer id>', () => {
+  it('parses an ip4 webrtc-direct address ending in /p2p/<peer id>', () => {
     const r = parseHandNodeAddress(VALID_PEER_ADDR);
     expect('notisId' in r).toBe(true);
     if ('notisId' in r) expect(r.notisId).toBe(PEER_HEX);
   });
-  it.fails('refuses a DNS address', () => {
+  it('refuses a DNS address', () => {
     const r = parseHandNodeAddress('/dns4/notis.fun/p2p/x');
     expect(r).toEqual({ error: 'addresses with DNS names are not accepted' });
   });
-  it.fails('refuses an address missing /p2p/<id>', () => {
+  it('refuses an address missing /p2p/<id>', () => {
     const r = parseHandNodeAddress('/ip4/127.0.0.1/udp/9733/webrtc-direct/certhash/uEiA');
     expect(r).toEqual({ error: 'address must end in /p2p/<peer id>' });
   });
-  it.fails('refuses a blank address', () => {
+  it('refuses a blank address', () => {
     expect(parseHandNodeAddress('')).toEqual({ error: 'the address is blank' });
   });
 });
 
 describe('createMeshSeams — the seams the App takes', () => {
-  it.fails('the readClient fetches at client.base(\'tip\')', async () => {
+  it('the readClient fetches at client.base(\'tip\')', async () => {
     const urls: string[] = [];
     const client = fakeClient({
       base: () => 'https://a.example',
@@ -111,7 +111,7 @@ describe('createMeshSeams — the seams the App takes', () => {
     expect(urls[0]).toBe('https://a.example/status');
   });
 
-  it.fails('the readClient fetches at the empty base when client.base answers null', async () => {
+  it('the readClient fetches at the empty base when client.base answers null', async () => {
     const urls: string[] = [];
     const client = fakeClient({
       base: () => null,
@@ -122,7 +122,7 @@ describe('createMeshSeams — the seams the App takes', () => {
     expect(urls[0]).toBe('/status');
   });
 
-  it.fails('the writeClient walks client.order(\'tip\') — the first base answered, then the next, then the next', async () => {
+  it('the writeClient walks client.order(\'tip\') — the first base answered, then the next, then the next', async () => {
     const urls: string[] = [];
     const client = fakeClient({
       order: () => ['https://a.example', 'https://b.example'],
@@ -139,7 +139,7 @@ describe('createMeshSeams — the seams the App takes', () => {
     expect(urls).toEqual(['https://a.example/likes', 'https://b.example/likes']);
   });
 
-  it.fails('the tip verifier awaits one check and answers tipRunOf(state)', async () => {
+  it('the tip verifier awaits one check and answers tipRunOf(state)', async () => {
     let checkCalls = 0;
     const client = fakeClient({
       check: () => { checkCalls++; return Promise.resolve(); },
@@ -153,7 +153,7 @@ describe('createMeshSeams — the seams the App takes', () => {
     expect(run.chain).toBeNull();
   });
 
-  it.fails('the resolver reads client.order(\'older\') for its nodes', async () => {
+  it('the resolver reads client.order(\'older\') for its nodes', async () => {
     const urls: string[] = [];
     const client = fakeClient({
       order: (need): string[] => need === 'older' ? ['https://older.example'] : ['https://tip.example'],
@@ -164,14 +164,14 @@ describe('createMeshSeams — the seams the App takes', () => {
     expect(urls[0]).toContain('https://older.example/posts/batch');
   });
 
-  it.fails('the handNodeSeam.address reads the stored key', () => {
+  it('the handNodeSeam.address reads the stored key', () => {
     const storage = fakeStorage({ [HAND_NODE_KEY]: VALID_PEER_ADDR });
     const client = fakeClient();
     const seams = createMeshSeams({ client, network: 'devnet', check, storage });
     expect(seams.handNodeSeam.address()).toBe(VALID_PEER_ADDR);
   });
 
-  it.fails('a valid commit calls client.addByHand and stores the address', () => {
+  it('a valid commit calls client.addByHand and stores the address', () => {
     const calls: Array<{ id: string; addrs: string[]; trusted: boolean }> = [];
     const client = fakeClient({ addByHand: (id, addrs, trusted) => { calls.push({ id, addrs, trusted }); } });
     const storage = fakeStorage();
@@ -185,7 +185,7 @@ describe('createMeshSeams — the seams the App takes', () => {
     expect(storage.map.get(HAND_NODE_KEY)).toBe(VALID_PEER_ADDR);
   });
 
-  it.fails('a blank commit calls client.removeByHand and clears the stored address', () => {
+  it('a blank commit calls client.removeByHand and clears the stored address', () => {
     const calls: string[] = [];
     const client = fakeClient({ removeByHand: (id) => { calls.push(id); } });
     const storage = fakeStorage({ [HAND_NODE_KEY]: VALID_PEER_ADDR });
@@ -196,7 +196,7 @@ describe('createMeshSeams — the seams the App takes', () => {
     expect(storage.map.has(HAND_NODE_KEY)).toBe(false);
   });
 
-  it.fails('a DNS commit returns the error and stores nothing', () => {
+  it('a DNS commit returns the error and stores nothing', () => {
     const calls: Array<{ id: string; addrs: string[] }> = [];
     const client = fakeClient({ addByHand: (id, addrs) => { calls.push({ id, addrs }); } });
     const storage = fakeStorage();
@@ -209,7 +209,7 @@ describe('createMeshSeams — the seams the App takes', () => {
 });
 
 describe('startExtensionMesh — the lifecycle', () => {
-  it.fails('awaits startMeshClient, kicks a check without awaiting, and attaches pagehide', async () => {
+  it('awaits startMeshClient, kicks a check without awaiting, and attaches pagehide', async () => {
     let checkCalls = 0;
     let stopCalls = 0;
     const client = fakeClient({
@@ -238,7 +238,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     expect(stopCalls).toBe(1);
   });
 
-  it.fails('a stored hand-added address is re-added via addByHand after start', async () => {
+  it('a stored hand-added address is re-added via addByHand after start', async () => {
     const addCalls: string[] = [];
     const client = fakeClient({ addByHand: (id) => { addCalls.push(id); } });
     const startMeshClient = vi.fn(async (): Promise<MeshClient> => client);
@@ -250,7 +250,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     expect(addCalls).toEqual([PEER_HEX]);
   });
 
-  it.fails('two pages are two seams on two fake clients — pagehide on one stops only its client; the other\'s reads go on', async () => {
+  it('two pages are two seams on two fake clients — pagehide on one stops only its client; the other\'s reads go on', async () => {
     // WEB_INTERFACE → The extension → "The page holds the extension's
     // reader" — "one per page, started at load and stopped at pagehide;
     // two pages are two readers". The test mirrors that rule by booting
