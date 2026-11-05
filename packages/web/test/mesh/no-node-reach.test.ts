@@ -51,7 +51,7 @@ const GLOBAL_RES: { name: string; re: RegExp }[] = [
 ];
 
 describe('@dagsocial/web/mesh — the bundle reaches no Node built-in', () => {
-  it.fails('dist-mesh/ carries no node: import, no bare Node built-in import, and no Node global', async () => {
+  it('dist-mesh/ carries no node: import, no bare Node built-in import, and no Node global', async () => {
     expect(
       existsSync(DIST_MESH),
       `dist-mesh/ must exist — run \`pnpm --filter @dagsocial/web build\` first (${DIST_MESH})`,
