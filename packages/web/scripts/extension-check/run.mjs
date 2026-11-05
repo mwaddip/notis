@@ -7659,8 +7659,9 @@ async function meshSteps(cx, bcx, targetId = 'unknown') {
 // The three blocks after the links steps, in order, each on its flag and NOT
 // RUN by name without it — reached on every run with --r-key, whether the links
 // steps ran or not. `bcx` is the browser session that opens an extension page
-// where none is live.
-async function runVerifiedBlocks(bcx) {
+// where none is live. `opts.skipMesh` keeps the mesh block out — main's
+// --public path runs it after `13-uncancelled` through `runMeshBlock`.
+async function runVerifiedBlocks(bcx, opts = {}) {
   // The verified-tip block after the 1–16 pass and before the browser-context
   // arm. 17b's press train runs under A's live miner; 17a sets both tip
   // relays to `proof-short` and opens a fresh extension page; 19a sets RLA
@@ -7755,11 +7756,20 @@ async function runVerifiedBlocks(bcx) {
     markLightNotRun('no --light');
   }
 
-  // The mesh block runs alone after steps 1–16, on a session of its own.
-  // Its two nodes A' and B' are up from before the browser launched
-  // (`setupMeshStack`); the block owns them end to end. It runs on the
-  // extension page live at this moment, or a fresh one where none is open;
-  // storage restores R's identity, as the other blocks do.
+  if (!opts.skipMesh) {
+    await runMeshBlock(bcx);
+  }
+}
+
+// The mesh block runs alone after steps 1–16, on a session of its own.
+// Its two nodes A' and B' are up from before the browser launched
+// (`setupMeshStack`); the block owns them end to end. It runs on the
+// extension page live at this moment, or a fresh one where none is open;
+// storage restores R's identity, as the other blocks do. Split out of
+// `runVerifiedBlocks` so main's --public path can run it after
+// `13-uncancelled` — the browser-context arm leaves a CDP state the
+// mesh block's fresh pages do not boot under.
+async function runMeshBlock(bcx) {
   if (MESH) {
     let mPage = await findExt('index.html');
     if (!mPage) {
@@ -9216,7 +9226,11 @@ async function main() {
     try { if (cx15) cx15.s.close(); } catch {}
   }
 
-  await runVerifiedBlocks(bcx);
+  // The verified blocks run before `13-uncancelled`, with the mesh block
+  // held back — it runs after the arm. A browser-context arm's CDP state
+  // can shadow a subsequent step's fresh page, so the mesh block's
+  // fresh-page openings sit after it.
+  await runVerifiedBlocks(bcx, { skipMesh: true });
 
   // ------- Step 13-uncancelled — the browser-context arm, last after the
   // verified-tip block. The extension does not load in a
@@ -9273,6 +9287,11 @@ async function main() {
       try { if (cxObserver) cxObserver.s.close(); } catch {}
     }
   }
+
+  // The mesh block runs after `13-uncancelled` — the arm's browser-context
+  // CDP state can shadow a subsequent fresh page, and the mesh block's
+  // steps each open one of their own.
+  await runMeshBlock(bcx);
 
   try { bcx.s.close(); } catch {}
 }
