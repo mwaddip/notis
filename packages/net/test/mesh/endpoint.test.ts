@@ -51,7 +51,14 @@ const validators: NetValidators = {
   verifyPostBody,
 };
 
-type Rec = { method: string; path: string; contentType: string | null; body: Buffer };
+type Rec = {
+  method: string;
+  path: string;
+  query: string;
+  contentType: string | null;
+  contentLength: string | null;
+  body: Buffer;
+};
 
 interface Stub {
   server: Server;
@@ -65,10 +72,14 @@ async function makeStub(handler: (req: IncomingMessage, res: ServerResponse) => 
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => { chunks.push(c); });
     req.on('end', () => {
+      const raw = req.url ?? '';
+      const q = raw.indexOf('?');
       received.push({
         method: req.method ?? '',
-        path: req.url ?? '',
+        path: raw,
+        query: q >= 0 ? raw.slice(q) : '',
         contentType: req.headers['content-type'] ?? null,
+        contentLength: req.headers['content-length'] ?? null,
         body: Buffer.concat(chunks),
       });
       handler(req, res);
@@ -388,5 +399,106 @@ describe('mesh — the node endpoint', () => {
     expect(stub!.received[0]!.method).toBe('POST');
     expect(stub!.received[0]!.path).toBe(path);
     expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bodyBytes))).toBe(0);
+  }, 30_000);
+
+  // MESH_INTERFACE → Place in the workspace → "libp2p is pinned" — the
+  // three-defect patch on `@libp2p/http-fetch@4.0.4`: a mesh request
+  // keeps its query (the request line is `url.pathname + url.search`);
+  // a string or bytes body keeps the caller's `content-type`; a string
+  // body's `content-length` is the UTF-8 byte length.
+
+  // `it.fails` while the patch on `@libp2p/http-fetch@4.0.4` is
+  // AHEAD OF CODE (`MESH_INTERFACE → Place in the workspace → "libp2p
+  // is pinned"`); the next commit lands the patch and flips it to `it`.
+  it.fails('a GET with a query reaches the upstream with that query byte for byte', async () => {
+    const { meshFetch } = await bringUp((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    const r = await meshFetch('/posts?a=1&b=two');
+    expect(r.status).toBe(200);
+    expect(stub!.received).toHaveLength(1);
+    expect(stub!.received[0]!.method).toBe('GET');
+    expect(stub!.received[0]!.path).toBe('/posts?a=1&b=two');
+    expect(stub!.received[0]!.query).toBe('?a=1&b=two');
+  }, 30_000);
+
+  it.fails('a POST with a string body and a caller content-type keeps that content-type and its bytes', async () => {
+    const { meshFetch } = await bringUp((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"accepted":1}');
+    });
+    const bodyText = '{"hello":"world"}';
+    const r = await meshFetch('/tx', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: bodyText,
+    });
+    expect(r.status).toBe(200);
+    expect(stub!.received).toHaveLength(1);
+    expect(stub!.received[0]!.method).toBe('POST');
+    expect(stub!.received[0]!.path).toBe('/tx');
+    expect(stub!.received[0]!.contentType).toBe('application/json');
+    expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bodyText, 'utf8'))).toBe(0);
+  }, 30_000);
+
+  it.fails('a POST with a non-ASCII string body reaches the upstream whole, its content-length the UTF-8 byte length', async () => {
+    const { meshFetch } = await bringUp((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"accepted":1}');
+    });
+    const bodyText = 'é😀 hello';
+    const utf8 = Buffer.from(bodyText, 'utf8');
+    const r = await meshFetch('/tx', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: bodyText,
+    });
+    expect(r.status).toBe(200);
+    expect(stub!.received).toHaveLength(1);
+    expect(stub!.received[0]!.contentLength).toBe(`${utf8.byteLength}`);
+    expect(stub!.received[0]!.body.byteLength).toBe(utf8.byteLength);
+    expect(Buffer.compare(stub!.received[0]!.body, utf8)).toBe(0);
+  }, 30_000);
+
+  it.fails('a POST with a Uint8Array body and a caller content-type keeps that content-type', async () => {
+    const { meshFetch } = await bringUp((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"accepted":1}');
+    });
+    const bytes = new TextEncoder().encode('{"accepted":"bytes"}');
+    const r = await meshFetch('/raw', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: bytes,
+    });
+    expect(r.status).toBe(200);
+    expect(stub!.received).toHaveLength(1);
+    expect(stub!.received[0]!.contentType).toBe('application/json');
+    expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bytes))).toBe(0);
+  }, 30_000);
+
+  it('a POST with a Uint8Array body and no caller content-type keeps application/octet-stream', async () => {
+    const { meshFetch } = await bringUp((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('ok');
+    });
+    const bytes = new TextEncoder().encode('opaque');
+    const r = await meshFetch('/raw', { method: 'POST', body: bytes });
+    expect(r.status).toBe(200);
+    expect(stub!.received).toHaveLength(1);
+    expect(stub!.received[0]!.contentType).toBe('application/octet-stream');
+    expect(Buffer.compare(stub!.received[0]!.body, Buffer.from(bytes))).toBe(0);
+  }, 30_000);
+
+  it('a POST with a string body and no caller content-type keeps text/plain; charset="UTF-8"', async () => {
+    const { meshFetch } = await bringUp((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('ok');
+    });
+    const r = await meshFetch('/raw', { method: 'POST', body: 'plain text' });
+    expect(r.status).toBe(200);
+    expect(stub!.received).toHaveLength(1);
+    expect(stub!.received[0]!.contentType).toBe('text/plain; charset="UTF-8"');
   }, 30_000);
 });
