@@ -31,6 +31,9 @@ node_modules
 /packages/web
 # The mesh suite is a test suite.
 /tools/e2e
+# The mesh's stage and page; the node runs neither, and their chain through
+# @dagsocial/web passes Windows' path limit in the installer.
+/tools/mesh-poc
 
 # Working scaffolding and cross-session notes.
 prompts
