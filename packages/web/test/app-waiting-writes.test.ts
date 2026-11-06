@@ -676,4 +676,79 @@ describe('the web build never waits', () => {
   });
 });
 
+// -------------------------------------------------------------------------
+// The composer's affordability read: WEB_INTERFACE → Invariants →
+// "Affordability is known before the attempt" — a read no node answers takes
+// the waiting view's `effective` instead, so a composer opened while no node
+// answers offers `post` as the post it would make can wait.
+// -------------------------------------------------------------------------
+
+const postBtnOf = (el: HTMLElement): HTMLButtonElement => [...el.querySelectorAll('button')].find((b) => b.textContent === 'post' || b.textContent === 'working…') as HTMLButtonElement;
+const karmaText = (el: HTMLElement): string | null => el.querySelector('.karma')?.textContent ?? null;
+
+describe('a composer opened while no node answers offers post against the waiting view', () => {
+  it('a recorded base with effective >= the price → post enabled; pressing it waits (one waiting entry, no POST)', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    await resolveTipRunVerified(h);
+    primeBases(h); // effective 227, well over the thread price of 5
+    h.setReadsNoAnswer(true);
+    h.drive.openComposer(null);
+    await flush();
+    const ctrl = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
+    // The composer reads the waiting view's `effective` (227) and enables post;
+    // the foot carries the price, not the error line.
+    expect(karmaText(ctrl.el)).not.toBe("can't read your rep right now");
+    // Type some content so the content gate passes, then press `post`.
+    const ta = ctrl.el.querySelector('textarea') as HTMLTextAreaElement;
+    ta.value = 'a thread';
+    ta.dispatchEvent(new Event('input'));
+    expect(postBtnOf(ctrl.el).disabled).toBe(false);
+    await h.drive.submitComposer(null, 'a thread');
+    await flush();
+    // The press waits: no POST goes out, one waiting entry in the ledger.
+    expect(h.postPosts()).toBe(0);
+    const waiting = h.drive.ledger.all().filter((e) => e.kind === 'post' && e.waiting === true);
+    expect(waiting).toHaveLength(1);
+  });
+});
+
+describe('a waiting view below the price disables post and says so', () => {
+  it('a recorded base with effective < the price → post stays disabled with the floor line', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    await resolveTipRunVerified(h);
+    // Record a rep base that cannot afford a thread (price 5): effective 2.
+    const store = h.drive.waitingStore!;
+    store.recordBase('rep', {
+      spendable: [{ boxId: BOX, value: 2n }],
+      effective: 2n, height: 6000, era: 1, author: PUB,
+    }, CHAIN);
+    h.setReadsNoAnswer(true);
+    h.drive.openComposer(null);
+    await flush();
+    const ctrl = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
+    expect(karmaText(ctrl.el)).toBe('not enough rep to post right now');
+    const ta = ctrl.el.querySelector('textarea') as HTMLTextAreaElement;
+    ta.value = 'a thread';
+    ta.dispatchEvent(new Event('input'));
+    expect(postBtnOf(ctrl.el).disabled).toBe(true);
+  });
+});
+
+describe('with no waiting view the composer foot reads the failed-read line', () => {
+  it('no recorded base: the foot says it could not be read, post stays disabled', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    await resolveTipRunVerified(h);
+    // No primeBases: there is no waiting view to fall back on.
+    h.setReadsNoAnswer(true);
+    h.drive.openComposer(null);
+    await flush();
+    const ctrl = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
+    expect(karmaText(ctrl.el)).toBe("can't read your rep right now");
+    const ta = ctrl.el.querySelector('textarea') as HTMLTextAreaElement;
+    ta.value = 'a thread';
+    ta.dispatchEvent(new Event('input'));
+    expect(postBtnOf(ctrl.el).disabled).toBe(true);
+  });
+});
+
 void computePostIdForTx; // keep the helper available for future tests

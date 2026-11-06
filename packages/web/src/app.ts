@@ -33,6 +33,7 @@ import {
 } from './wallet/ledger';
 import type { PendingEntry, EntryOutcome } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
+import { isNoAnswer } from './api/errors';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { WaitingStore, type WaitingStorage } from './wallet/waiting';
 import { flushWaiting, type FlushDeps, type FlushOutcome } from './wallet/flush';
@@ -3270,9 +3271,20 @@ export class App {
       // WEB_INTERFACE → The wallet → "The floor is the client's to know":
       // the composer's `post` reads the view's `effective`, not the face.
       this.composers.get(key)?.setAffordable(ctx.effective >= price);
-    } catch {
-      // The spendable view could not be read; the foot says so and post stays
-      // disabled, rather than a disabled button with no reason.
+    } catch (e) {
+      // WEB_INTERFACE → Invariants → "Affordability is known before the attempt":
+      // a read no node answers takes the waiting view's `effective` instead, so
+      // the composer offers `post` as the post it would make can wait; with no
+      // waiting view the foot reads as on any other failed read.
+      const store = this.waitingStore;
+      const chain = this.tipChain ?? rememberedChain();
+      if (isNoAnswer(e) && store !== null && chain !== null) {
+        const view = store.repView(chain);
+        if (view !== null) {
+          this.composers.get(key)?.setAffordable(view.effective >= price);
+          return;
+        }
+      }
       this.composers.get(key)?.setKarmaError("can't read your rep right now");
     }
   }
