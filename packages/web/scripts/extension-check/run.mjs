@@ -5370,15 +5370,15 @@ async function runNamesStep30(rName) {
 //        chain's database at a time": opening another closes every
 //        previous), so the block first re-reads A's chain with both relays
 //        `honest` and D gone: a fresh page whose corner settles on A's
-//        tip, then a feed `↻` and a thread open so the reads after the
-//        seat land in A's database (reads before it wrote to D's, which
-//        the seat deleted); the page's `notis.posts.<A>` `entries` store
-//        is counted until it is at least three — less than three at the
+//        tip and is then reloaded — with A's database open from the
+//        start, the reload's feed reads check every bound row and the
+//        puts land. The page's `notis.posts.<A>` `entries` store is
+//        counted until it is at least three — less than three at the
 //        bound is W1 FAIL before `down` is set — then the page is
 //        closed. Then a second fresh page under `down` on both relays:
 //        the feed and R's author-posts window each read a transport
 //        failure on their first page; the cache fallback draws the roots
-//        the re-read populated beneath the error line, no `more` / `load
+//        the reload populated beneath the error line, no `more` / `load
 //        older` control.
 //   W2 — the same page, relays still `down`: a like on a cached card the
 //        reader has not liked, and a root post from the composer. Each
@@ -5553,15 +5553,17 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   // non-null under `verified` and under `thin` alike, "naming a chain
   // takes a proof that verifies, not a second witness" (→ "The chain's
   // name"), so the seat lands whether the second relay's upstream answers
-  // or not. **Puts of a list read made before the chain was named land in
-  // the database open at load — the remembered chain's, D's — and the
-  // seat deletes that database**, so the page's initial feed read writes
-  // nothing that stands. The reads that populate A's cache are the ones
-  // after the seat: a feed `↻` and a thread opened, then a `count()` on
-  // A's `entries` store (`src/extension/post-cache.ts`, `STORE =
-  // 'entries'`) polled until it is at least three. Less than three at the
-  // bound is a prep that has not landed and W1 records FAIL before `down`
-  // is set.
+  // or not. **A page's puts land only in the database open at load**: the
+  // rows the initial feed read checked write to D's database and the seat
+  // on A then deletes that database, and a `↻` is a re-read of the same
+  // listing whose posts the App already holds — so the re-read checks
+  // nothing and puts nothing. **A reload fills A's cache at once**: with
+  // the remembered chain's database open from the start, the reload's
+  // feed reads check every bound row and the puts land. After the reload
+  // A's `notis.posts.<A>` `entries` store (`src/extension/post-cache.ts`,
+  // `STORE = 'entries'`) is counted from the page and polled until it is
+  // at least three. Less than three at the bound records W1 FAIL before
+  // `down` is set.
   setBothRelayModes('honest');
   const prepDGone = (await currentHeight(D_ORIGIN)) === null;
   const prepABlock1 = await block1HashOn(NODE);
@@ -5572,15 +5574,15 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   const prepCachedBoundMs = 60000;
   let prepChainDb = null;
   let prepCornerTitle = null;
-  let prepFeedRefreshed = false;
-  let prepThreadOpened = false;
+  let prepReloaded = false;
+  let prepCornerAfterReload = null;
   let prepCached = 0;
   let prepCachedIds = [];
   let prepError = null;
   let prepPage = null;
   try {
     prepPage = await openFreshExtensionPage(bcx);
-    const pCx = prepPage.cx;
+    let pCx = prepPage.cx;
     await pCx.waitFor(`!!document.querySelector('#feed')`, 'feed root prep', 30000);
     // Wait for the corner's tip run to settle — the title names a tip once
     // the client's chain is seated. Either shape is acceptable: step 17's
@@ -5604,29 +5606,25 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       return dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
     })()`);
     prepChainDb = Array.isArray(chainDbs) && chainDbs.length > 0 ? chainDbs[0] : null;
-    // Press the feed's own ↻ (`refresh the feed`): the reads this fires
-    // land in the database open now, A's, where the initial reads at
-    // load landed in D's (which the seat has since deleted).
-    prepFeedRefreshed = await refreshFeed(pCx);
-    await sleep(2500);
-    // Open one thread by pressing a drawn card's strip: the pane's reads
-    // of the subject and its descendants write their bound rows into
-    // A's database beside the feed's, widening W4's set of non-R cards
-    // the reader has not liked.
-    try {
-      const opened = await pCx.eval(`(() => {
-        const c = document.querySelector('#feed .card[data-post-id]');
-        if (c === null) return false;
-        const s = c.querySelector('button.strip');
-        if (s === null) return false;
-        s.click();
-        return true;
-      })()`, true);
-      if (opened === true) {
-        prepThreadOpened = true;
-        await sleep(3000);
-      }
-    } catch {}
+    // Reload the page: with A's database open from the start, the
+    // reload's feed reads check every bound row and the puts land.
+    await pCx.call('Page.reload');
+    await sleep(3500);
+    const reloadedPage = await findExt('index.html');
+    if (reloadedPage?.webSocketDebuggerUrl) {
+      try { pCx.s.close(); } catch {}
+      pCx = await openSession(reloadedPage.webSocketDebuggerUrl);
+      prepPage.cx = pCx;
+      prepPage.targetId = reloadedPage.id;
+    }
+    prepReloaded = true;
+    await pCx.waitFor(`!!document.querySelector('.corner')`, 'corner after reload', 30000);
+    await pCx.waitFor(`!!document.querySelector('#feed')`, 'feed root after reload', 30000);
+    await pCx.waitFor(
+      `document.querySelectorAll('#feed .card[data-post-id]').length >= 1`,
+      'feed cards after reload', 60000,
+    ).catch(() => {});
+    prepCornerAfterReload = (await readCorner(pCx))?.title ?? null;
     // Count entries in A's `notis.posts.<chain>` database from the page
     // — the one source that answers whether a row stands. Poll under a
     // bound until it is at least `prepCachedTarget`.
@@ -5671,7 +5669,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     }
   }
 
-  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), feed-refreshed=${prepFeedRefreshed}, thread-opened=${prepThreadOpened}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''})${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
+  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), reloaded=${prepReloaded}, corner-after-reload=${JSON.stringify(prepCornerAfterReload)}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''})${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
   if (prepCached < prepCachedTarget) {
     record('W1', false, prepDetail);
     for (const s of ['W2', 'W3', 'W4']) {
