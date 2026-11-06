@@ -1707,7 +1707,9 @@ failure.
 
 **The waiting view.** Per ledger, the last spendable view a flow of the identity read — its boxes, its `effective`,
 the `/status` height and era — recorded at every read a node answered, and advanced by each waiting write on that
-ledger in the order they were made: its inputs out, its change in, `effective` less what it took. A waiting write's
+ledger in the order they were made: its inputs out, its change in, `effective` less what it took. **Every spend the
+client sends and a node takes advances it the same way** — a write answered 2xx at once as well as a waiting write
+sent later — so the view never offers a box the reader's own sent spend has used. A waiting write's
 outputs declare the view's height, never above a height a node answered, so no output claims a height the chain has
 not reached. **A flow with no waiting view ends as a transport failure** — there is nothing on this browser to build
 from. **The view and every waiting write carry the chain's name** (→ The extension → "The chain's name"), and a view of
@@ -1737,7 +1739,8 @@ waiting write of another chain than the one the verified tip names ends unsent, 
 ends in its surface's line, where a rejection reads.
 
 **A waiting write is drawn as pending** — the pending card, the like's overlay, a row's flight — its stage line
-*waiting for a node*. The status corner is unchanged: its muted dot is how the reader sees that no node answers
+*waiting for a node*, and after a reload as before it: a waiting post's pending card is drawn from its record — its
+text and its parent — where no node lists it. The status corner is unchanged: its muted dot is how the reader sees that no node answers
 (→ The status corner).
 
 **Reconcile runs on the reader's own refresh and on the bounded poll below.** A pending post is landed
