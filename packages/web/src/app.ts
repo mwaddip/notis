@@ -3217,6 +3217,18 @@ export class App {
       if (r === 'cancelled') {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' }; // node change: end as a decline (onSigned never fired)
+      } else if ('waiting' in r && r.waiting) {
+        // The App passes no `waiting` deps yet, so the arm cannot occur here;
+        // guarded so the ok branch never silently handles one as submitted.
+        if (submission === null) {
+          ctrl.setSending(false);
+          ctrl.setNotSent("can't reach the node right now.");
+        } else {
+          submission.stage = 'rejected';
+          submission.reason = "can't reach the node right now.";
+          this.renderForParent(parentId);
+        }
+        return;
       } else {
         result = r;
       }
@@ -3287,6 +3299,10 @@ export class App {
       // still offered — a key change clears `state.submissions` through
       // `onIdentityChange` beforehand, which hides even that.
       if (r === 'cancelled') return { ok: false, notSigned: 'declined' as const, reason: '' } as const;
+      // The App passes no `waiting` deps yet, so the waiting arm cannot occur;
+      // it reaches `flight` as a transport-style throw rather than slipping
+      // into the ok arm as a submitted entry.
+      if ('waiting' in r && r.waiting) throw new Error('no node to send to');
       return r;
     });
   }
@@ -3371,6 +3387,13 @@ export class App {
       if (r === 'cancelled') {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' }; // node change: end as a decline
+      } else if ('waiting' in r && r.waiting) {
+        // The App passes no `waiting` deps yet, so the arm cannot occur.
+        this.optimisticLikes.delete(postId);
+        this.setReportForPost(postId, "like rejected: can't reach the node right now.");
+        this.renderRegionsForPost(postId);
+        if (this.feedHasPost(postId)) this.renderFeed();
+        return;
       } else {
         result = r;
       }
@@ -3417,6 +3440,12 @@ export class App {
       if (r === 'cancelled') {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press (withdrawFlights cleared)
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else if ('waiting' in r && r.waiting) {
+        // The App passes no `waiting` deps yet, so the arm cannot occur.
+        this.withdrawFlights.delete(postId);
+        this.setReportForPost(postId, "withdraw rejected: can't reach the node right now.");
+        this.renderRegionsForPost(postId);
+        return;
       } else {
         result = r;
       }
@@ -3748,6 +3777,12 @@ export class App {
       if (r === 'cancelled') {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else if ('waiting' in r && r.waiting) {
+        // The App passes no `waiting` deps yet, so the arm cannot occur.
+        this.optimisticVouches.delete(key);
+        if (d) d.flight = { stage: 'rejected', reason: "vouch rejected: can't reach the node right now." };
+        this.renderRegionsFor(authorWindowId(key));
+        return;
       } else {
         result = r;
       }
@@ -4047,6 +4082,11 @@ export class App {
       if (r === 'cancelled') {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else if ('waiting' in r && r.waiting) {
+        // The App passes no `waiting` deps yet, so the arm cannot occur.
+        this.inviteFlight = { stage: 'rejected', reason: "invite rejected: can't reach the node right now." };
+        this.renderInvitesRowInPlace();
+        return;
       } else {
         result = r;
       }
@@ -4115,6 +4155,12 @@ export class App {
       if (r === 'cancelled') {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else if ('waiting' in r && r.waiting) {
+        // The App passes no `waiting` deps yet, so the arm cannot occur.
+        this.usernameInFlight = null;
+        this.usernameFlight = { stage: 'rejected', reason: "claim rejected: can't reach the node right now." };
+        this.renderUsernameRowInPlace();
+        return;
       } else {
         result = r;
       }
@@ -4401,6 +4447,11 @@ export class App {
       if (r === 'cancelled') {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
+      } else if ('waiting' in r && r.waiting) {
+        // The App passes no `waiting` deps yet, so the arm cannot occur.
+        this.sendFlight = { stage: 'rejected', reason: "send rejected: can't reach the node right now." };
+        this.renderCreditsRowInPlace();
+        return;
       } else {
         result = r;
       }

@@ -1,4 +1,4 @@
-import { encodeTx, txToJson, hexToBytes, KARMA_MINIMUM, LIKE_KARMA_COST, POST_PRICE_THREAD, POST_PRICE_REPLY, USERNAME_BURN_PRICE, VOUCH_MIN_BALANCE } from '@dagsocial/types';
+import { computePostId, encodeTx, txToJson, hexToBytes, KARMA_MINIMUM, LIKE_KARMA_COST, POST_PRICE_THREAD, POST_PRICE_REPLY, USERNAME_BURN_PRICE, VOUCH_MIN_BALANCE } from '@dagsocial/types';
 import type { UtxoTransaction, NetworkType } from '@dagsocial/types';
 import { LEDGER_READ_MAX } from '@dagsocial/node-reads';
 import { readBuildContext, readCreditContext } from './reads';
@@ -6,11 +6,13 @@ import { readWholeList } from '../api/whole-list';
 import { networkNumbers } from '../model/network-numbers';
 import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend, InsufficientKarma, InsufficientCredits, BelowFloor, InvalidKey } from './builders';
 import { formatCredits } from '../model/credits';
+import { isNoAnswer } from '../api/errors';
 import type { PendingLedger } from './ledger';
-import type { BuildContext } from './builders';
-import type { PendingEntry } from './types';
+import type { BuildContext, BuiltTx, RepBuildContext } from './builders';
+import type { PendingEntry, ChangeRef, SendRef } from './types';
 import type { Api } from '../api/client';
 import type { VouchesVoucherResult } from './../api/dto';
+import type { WaitingStore, WaitingLedger, WaitingKind } from './waiting';
 
 // WEB_INTERFACE → The wallet → "The floor is the client's to know" — the one
 // sentence a judged flow refuses with when the rule bites. `N` is
@@ -73,6 +75,27 @@ export interface Signer {
   sign(txBytes: Uint8Array, txIdHex: string, pubKeyHex: string, hint?: { content?: string }): Promise<SignResult>;
 }
 
+/** The seam a waitable flow uses when the extension carries a waiting store
+ *  (WEB_INTERFACE → The wallet → "A write no node answers waits"). Absent in
+ *  the web build. */
+export interface WaitingDeps {
+  /** The persisted store of this identity's waiting writes and the last
+   *  spendable view each ledger read (WEB_INTERFACE → The wallet →
+   *  "The waiting store keeps every waiting write as a record of its own"). */
+  store: WaitingStore;
+  /** The chain the client last read, else the remembered one — null while no
+   *  verified tip has named one. The waiting arm is inactive while null
+   *  (WEB_INTERFACE → The wallet → "The view and every waiting write carry
+   *  the chain's name"). */
+  chain(): string | null;
+  /** The post cache entry's author for a post id, or null for an entry the
+   *  cache lacks. A reply's parent or a like's target that the node did not
+   *  answer for takes its author from here; a null ends the flow as a
+   *  transport failure (WEB_INTERFACE → The wallet → "A write no node answers
+   *  waits"). */
+  cachedAuthor(postId: string): Promise<string | null>;
+}
+
 export interface SubmitDeps {
   reads: Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'>;
   write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitUnvouch' | 'submitInvite' | 'submitWithdraw' | 'submitClaim' | 'submitBurn' | 'submitSend'>;
@@ -95,12 +118,29 @@ export interface SubmitDeps {
    *  (WEB_INTERFACE → The extension → "The post cache"). Only
    *  submitPostFlow calls it; every other flow leaves it unset. */
   onCachePost?: (info: { signedTx: UtxoTransaction; txId: string }) => void;
+  /** The extension's waiting seam — the whole flow runs under its lock, a
+   *  read that got no answer builds from the view the store holds, and a
+   *  write no node answers is kept in it (WEB_INTERFACE → The wallet → "A
+   *  write no node answers waits"). The web build leaves it unset and every
+   *  flow is exactly today's. */
+  waiting?: WaitingDeps;
 }
 
 export type SubmitResult<B> =
-  | { ok: true; entry: PendingEntry; body: B }
+  | { ok: true; entry: PendingEntry; body: B; waiting?: undefined }
+  | { ok: true; waiting: true; entry: PendingEntry }
   | { ok: false; rejection: Rejection }
   | { ok: false; notSigned: 'locked' | 'declined' | 'refused'; reason: string };
+
+/** The result shape of a waitable flow — today's `SubmitResult`, with the
+ *  waiting arm the extension can take: signed, kept in the waiting store,
+ *  with a ledger entry marked waiting (WEB_INTERFACE → The wallet → "A write
+ *  no node answers waits"). The ok arms discriminate on `waiting`:
+ *  `undefined` for a sent 2xx, `true` for a waiting write. The union includes
+ *  the waiting arm in `SubmitResult` too, so unvouch and burn, which answer
+ *  `SubmitResult<B>` and never produce the arm, stay shaped the way a caller
+ *  that puts every flow's promise under one annotation needs them. */
+export type WaitableResult<B> = SubmitResult<B> | { ok: true; waiting: true; entry: PendingEntry };
 
 /** A client-side refusal (no HTTP round trip) — status 0, message shown as-is. */
 function clientRejection(message: string): { ok: false; rejection: Rejection } {
@@ -139,140 +179,193 @@ export async function submitPostFlow(
   deps: SubmitDeps,
   content: string,
   parentId: string | null,
-): Promise<SubmitResult<PostSubmitResult>> {
+): Promise<WaitableResult<PostSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitPostFlow: no identity loaded');
 
-  let parent: { id: string; authorHex: string } | undefined;
-  if (parentId !== null) {
-    const p = await deps.reads.post(parentId, id.pubKeyHex);
-    if (!p || p.confirmedAuthor === null) {
-      return clientRejection('that post has no confirmed author to reply under.');
+  const run = async (): Promise<WaitableResult<PostSubmitResult>> => {
+    // A reply resolves its parent's `confirmedAuthor`: first from the node,
+    // and in the waiting arm — with no answer — from the post cache
+    // (WEB_INTERFACE → The wallet → "A write no node answers waits").
+    let parent: { id: string; authorHex: string } | undefined;
+    if (parentId !== null) {
+      const resolved = await resolveParentOrCached(deps, parentId, id.pubKeyHex);
+      if ('rejection' in resolved) return { ok: false, rejection: resolved.rejection };
+      parent = { id: parentId, authorHex: resolved.authorHex };
     }
-    parent = { id: parentId, authorHex: p.confirmedAuthor };
-  }
+    const ledgerSide: WaitingLedger = 'rep';
+    const r = await readsOrWaitingRep(deps, id.pubKeyHex);
+    const ctx = r.ctx;
+    // The floor against `effective`, read from the view's first page — the
+    // same rule the composer holds (WEB_INTERFACE → The wallet → "The floor is
+    // the client's to know"): a post refused is a client refusal, not a
+    // notSigned ("a post the rule refuses is a client refusal").
+    const price = parent ? POST_PRICE_REPLY : POST_PRICE_THREAD;
+    if (ctx.effective < price) return clientRejection('not enough rep to post right now.');
+    let built;
+    try {
+      built = buildPost(ctx, content, parent);
+    } catch (e) {
+      if (e instanceof InsufficientKarma) return clientRejection('not enough rep to post right now.');
+      if (e instanceof InvalidKey) return clientRejection("that post's author key is not valid.");
+      throw e;
+    }
+    // The post's content is the one hint the prompt verifies against the commit
+    // (WEB_INTERFACE → "The summary the prompt shows is derived from the
+    // transaction"). Every other flow passes no hint.
+    const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex, { content });
+    if (!signed.ok) return signed;
+    // Between the sign and the POST — the composer collapses here (WEB_INTERFACE →
+    // The wallet). Post is the only flow that carries onSigned.
+    deps.onSigned?.();
+    // The reader's own post enters the extension's post cache at its submit —
+    // the signed transaction the client built, under the id it derived
+    // (WEB_INTERFACE → The extension → "The post cache"). Fired for a waiting
+    // post as for a submitted one; the web build hands no cache seam.
+    deps.onCachePost?.({ signedTx: built.tx, txId: built.txId });
+    if (r.waiting) {
+      // A read got no answer: build and sign against the view, send nothing,
+      // keep (WEB_INTERFACE → The wallet → "A write no node answers waits").
+      const entry = keepWaiting(deps, ledgerSide, ctx, built, {
+        kind: 'post',
+        postId: computePostId(built.txId, 0),
+        tx: signed.body,
+        content,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    const body = await deps.write.submitPost(signed.body, content);
+    if (sendIsWaiting(deps, body)) {
+      const entry = keepWaiting(deps, ledgerSide, ctx, built, {
+        kind: 'post',
+        postId: computePostId(built.txId, 0),
+        tx: signed.body,
+        content,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    if (isRejection(body)) return { ok: false, rejection: body };
+    // The node echoes the id it computed over the same transaction; a mismatch
+    // means the two encodings diverged, so the entry is refused rather than
+    // tracked under an id the node does not share.
+    if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
-  // The floor against `effective`, read from the view's first page — the
-  // same rule the composer holds (WEB_INTERFACE → The wallet → "The floor is
-  // the client's to know"): a post refused is a client refusal, not a
-  // notSigned ("a post the rule refuses is a client refusal").
-  const price = parent ? POST_PRICE_REPLY : POST_PRICE_THREAD;
-  if (ctx.effective < price) return clientRejection('not enough rep to post right now.');
-  // The composer checks affordability first, but the spendable view is re-read
-  // here and can have moved; a shortfall comes back as one rejection shape, not a
-  // bare throw the app would have to special-case.
-  let built;
-  try {
-    built = buildPost(ctx, content, parent);
-  } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to post right now.');
-    if (e instanceof InvalidKey) return clientRejection("that post's author key is not valid.");
-    throw e;
-  }
-  // The post's content is the one hint the prompt verifies against the commit
-  // (WEB_INTERFACE → "The summary the prompt shows is derived from the
-  // transaction"). Every other flow passes no hint.
-  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex, { content });
-  if (!signed.ok) return signed;
-  // Between the sign and the POST — the composer collapses here (WEB_INTERFACE →
-  // The wallet). Post is the only flow that carries onSigned.
-  deps.onSigned?.();
-  const body = await deps.write.submitPost(signed.body, content);
-  if (isRejection(body)) return { ok: false, rejection: body };
-  // The node echoes the id it computed over the same transaction; a mismatch
-  // means the two encodings diverged, so the entry is refused rather than
-  // tracked under an id the node does not share.
-  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
-
-  const entry = deps.ledger.add({
-    txId: built.txId,
-    kind: 'post',
-    postId: body.postId, // the node's own id — authoritative, never derived here
-    expiresAtHeight: body.expiresAtHeight,
-    submittedAtHeight: ctx.height,
-  });
-  // The reader's own post enters the extension's post cache at its submit —
-  // the signed transaction the client built, under the id it derived
-  // (WEB_INTERFACE → The extension → "The post cache"). The web build hands
-  // the App no cache, which leaves this callback unset.
-  deps.onCachePost?.({ signedTx: built.tx, txId: built.txId });
-  return { ok: true, entry, body };
+    const entry = deps.ledger.add({
+      txId: built.txId,
+      kind: 'post',
+      postId: body.postId, // the node's own id — authoritative, never derived here
+      expiresAtHeight: body.expiresAtHeight,
+      submittedAtHeight: ctx.height,
+    });
+    return { ok: true, entry, body };
+  };
+  return runUnderLock(deps, run);
 }
 
 /** Submit a like: resolve the target's confirmedAuthor, then build and POST. */
-export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promise<SubmitResult<LikeSubmitResult>> {
+export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promise<WaitableResult<LikeSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitLikeFlow: no identity loaded');
 
-  const target = await deps.reads.post(targetId, id.pubKeyHex);
-  if (!target || target.confirmedAuthor === null) {
-    return clientRejection('that post has no confirmed author to like.');
-  }
+  const run = async (): Promise<WaitableResult<LikeSubmitResult>> => {
+    const resolved = await resolveTargetAuthorOrCached(deps, targetId, id.pubKeyHex, 'like');
+    if ('rejection' in resolved) return { ok: false, rejection: resolved.rejection };
+    const targetAuthor = resolved.authorHex;
 
-  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
-  // The floor against `effective` — a like leaves KARMA_MINIMUM standing
-  // (WEB_INTERFACE → The wallet → "The floor is the client's to know"); a
-  // like refused ends as a refused signature does.
-  if (ctx.effective - LIKE_KARMA_COST < KARMA_MINIMUM) return flooredRefusal();
-  let built;
-  try {
-    built = buildLike(ctx, targetId, target.confirmedAuthor);
-  } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to like right now.');
-    if (e instanceof InvalidKey) return clientRejection("that post's author key is not valid.");
-    throw e;
-  }
-  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
-  if (!signed.ok) return signed;
-  const body = await deps.write.submitLike(signed.body);
-  if (isRejection(body)) return { ok: false, rejection: body };
-  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
+    const r = await readsOrWaitingRep(deps, id.pubKeyHex);
+    const ctx = r.ctx;
+    // The floor against `effective` — a like leaves KARMA_MINIMUM standing
+    // (WEB_INTERFACE → The wallet → "The floor is the client's to know"); a
+    // like refused ends as a refused signature does.
+    if (ctx.effective - LIKE_KARMA_COST < KARMA_MINIMUM) return flooredRefusal();
+    let built;
+    try {
+      built = buildLike(ctx, targetId, targetAuthor);
+    } catch (e) {
+      if (e instanceof InsufficientKarma) return clientRejection('not enough rep to like right now.');
+      if (e instanceof InvalidKey) return clientRejection("that post's author key is not valid.");
+      throw e;
+    }
+    const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+    if (!signed.ok) return signed;
+    if (r.waiting) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'like', postId: targetId, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    const body = await deps.write.submitLike(signed.body);
+    if (sendIsWaiting(deps, body)) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'like', postId: targetId, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    if (isRejection(body)) return { ok: false, rejection: body };
+    if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry = deps.ledger.add({
-    txId: built.txId,
-    kind: 'like',
-    postId: targetId, // a like has no post id of its own; its target
-    expiresAtHeight: body.expiresAtHeight,
-    submittedAtHeight: ctx.height,
-  });
-  return { ok: true, entry, body };
+    const entry = deps.ledger.add({
+      txId: built.txId,
+      kind: 'like',
+      postId: targetId, // a like has no post id of its own; its target
+      expiresAtHeight: body.expiresAtHeight,
+      submittedAtHeight: ctx.height,
+    });
+    return { ok: true, entry, body };
+  };
+  return runUnderLock(deps, run);
 }
 
 /** Submit a vouch for an identity. Karma in, one `vouch` box out; the mark's
  *  optimistic state is the App's, this is the flight (WEB_INTERFACE → The
  *  identity display). */
-export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Promise<SubmitResult<VouchSubmitResult>> {
+export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Promise<WaitableResult<VouchSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitVouchFlow: no identity loaded');
 
-  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
-  // The floor against `effective` — a vouch leaves KARMA_MINIMUM standing
-  // over its stake (WEB_INTERFACE → The wallet → "The floor is the client's
-  // to know"); a vouch refused ends as a refused signature does.
-  if (ctx.effective < VOUCH_MIN_BALANCE) return flooredRefusal();
-  let built;
-  try {
-    built = buildVouch(ctx, targetKey);
-  } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to vouch right now.');
-    if (e instanceof InvalidKey) return clientRejection('that is not a valid key.');
-    throw e;
-  }
-  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
-  if (!signed.ok) return signed;
-  const body = await deps.write.submitVouch(signed.body);
-  if (isRejection(body)) return { ok: false, rejection: body };
-  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
+  const run = async (): Promise<WaitableResult<VouchSubmitResult>> => {
+    const r = await readsOrWaitingRep(deps, id.pubKeyHex);
+    const ctx = r.ctx;
+    // The floor against `effective` — a vouch leaves KARMA_MINIMUM standing
+    // over its stake (WEB_INTERFACE → The wallet → "The floor is the client's
+    // to know"); a vouch refused ends as a refused signature does.
+    if (ctx.effective < VOUCH_MIN_BALANCE) return flooredRefusal();
+    let built;
+    try {
+      built = buildVouch(ctx, targetKey);
+    } catch (e) {
+      if (e instanceof InsufficientKarma) return clientRejection('not enough rep to vouch right now.');
+      if (e instanceof InvalidKey) return clientRejection('that is not a valid key.');
+      throw e;
+    }
+    const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+    if (!signed.ok) return signed;
+    if (r.waiting) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'vouch', postId: targetKey, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    const body = await deps.write.submitVouch(signed.body);
+    if (sendIsWaiting(deps, body)) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'vouch', postId: targetKey, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    if (isRejection(body)) return { ok: false, rejection: body };
+    if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry = deps.ledger.add({
-    txId: built.txId,
-    kind: 'vouch',
-    postId: targetKey, // the identity vouched for
-    expiresAtHeight: body.expiresAtHeight,
-    submittedAtHeight: ctx.height,
-  });
-  return { ok: true, entry, body };
+    const entry = deps.ledger.add({
+      txId: built.txId,
+      kind: 'vouch',
+      postId: targetKey, // the identity vouched for
+      expiresAtHeight: body.expiresAtHeight,
+      submittedAtHeight: ctx.height,
+    });
+    return { ok: true, entry, body };
+  };
+  return runUnderLock(deps, run);
 }
 
 /** Submit an unvouch. The box is resolved at the press from
@@ -324,97 +417,145 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
 
 /** Submit an invite: karma in, one `bond` box out of the chosen amount to the
  *  invitee key (WEB_INTERFACE → The profile window). */
-export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bond: bigint): Promise<SubmitResult<InviteSubmitResult>> {
+export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bond: bigint): Promise<WaitableResult<InviteSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitInviteFlow: no identity loaded');
 
-  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
-  // The floor against `effective` — an invite leaves KARMA_MINIMUM standing
-  // over the bond (WEB_INTERFACE → The wallet → "The floor is the client's
-  // to know"); an invite refused ends as a refused signature does.
-  if (ctx.effective - bond < KARMA_MINIMUM) return flooredRefusal();
-  let built;
-  try {
-    built = buildInvite(ctx, inviteeKey, bond);
-  } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to cover the bond right now.');
-    if (e instanceof InvalidKey) return clientRejection('that is not a valid key.');
-    throw e;
-  }
-  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
-  if (!signed.ok) return signed;
-  const body = await deps.write.submitInvite(signed.body);
-  if (isRejection(body)) return { ok: false, rejection: body };
-  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
+  const run = async (): Promise<WaitableResult<InviteSubmitResult>> => {
+    const r = await readsOrWaitingRep(deps, id.pubKeyHex);
+    const ctx = r.ctx;
+    // The floor against `effective` — an invite leaves KARMA_MINIMUM standing
+    // over the bond (WEB_INTERFACE → The wallet → "The floor is the client's
+    // to know"); an invite refused ends as a refused signature does.
+    if (ctx.effective - bond < KARMA_MINIMUM) return flooredRefusal();
+    let built;
+    try {
+      built = buildInvite(ctx, inviteeKey, bond);
+    } catch (e) {
+      if (e instanceof InsufficientKarma) return clientRejection('not enough rep to cover the bond right now.');
+      if (e instanceof InvalidKey) return clientRejection('that is not a valid key.');
+      throw e;
+    }
+    const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+    if (!signed.ok) return signed;
+    if (r.waiting) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'invite', postId: inviteeKey, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    const body = await deps.write.submitInvite(signed.body);
+    if (sendIsWaiting(deps, body)) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'invite', postId: inviteeKey, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    if (isRejection(body)) return { ok: false, rejection: body };
+    if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry = deps.ledger.add({
-    txId: built.txId,
-    kind: 'invite',
-    postId: inviteeKey, // the key invited
-    expiresAtHeight: body.expiresAtHeight,
-    submittedAtHeight: ctx.height,
-  });
-  return { ok: true, entry, body };
+    const entry = deps.ledger.add({
+      txId: built.txId,
+      kind: 'invite',
+      postId: inviteeKey, // the key invited
+      expiresAtHeight: body.expiresAtHeight,
+      submittedAtHeight: ctx.height,
+    });
+    return { ok: true, entry, body };
+  };
+  return runUnderLock(deps, run);
 }
 
 /** Submit a withdrawal of the reader's own post. The smallest karma box in, one
  *  equal karma output back out, `postWithdraw` naming the post (WEB_INTERFACE →
  *  The withdraw control). */
-export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Promise<SubmitResult<WithdrawSubmitResult>> {
+export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Promise<WaitableResult<WithdrawSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitWithdrawFlow: no identity loaded');
 
-  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
-  let built;
-  try {
-    built = buildWithdraw(ctx, postId);
-  } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('no rep box to sign a withdrawal with.');
-    throw e;
-  }
-  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
-  if (!signed.ok) return signed;
-  const body = await deps.write.submitWithdraw(postId, signed.body);
-  if (isRejection(body)) return { ok: false, rejection: body };
-  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
+  const run = async (): Promise<WaitableResult<WithdrawSubmitResult>> => {
+    const r = await readsOrWaitingRep(deps, id.pubKeyHex);
+    const ctx = r.ctx;
+    let built;
+    try {
+      built = buildWithdraw(ctx, postId);
+    } catch (e) {
+      if (e instanceof InsufficientKarma) return clientRejection('no rep box to sign a withdrawal with.');
+      throw e;
+    }
+    const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+    if (!signed.ok) return signed;
+    if (r.waiting) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'withdraw', postId, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    const body = await deps.write.submitWithdraw(postId, signed.body);
+    if (sendIsWaiting(deps, body)) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'withdraw', postId, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    if (isRejection(body)) return { ok: false, rejection: body };
+    if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry = deps.ledger.add({
-    txId: built.txId,
-    kind: 'withdraw',
-    postId, // the post the withdrawal empties
-    expiresAtHeight: body.expiresAtHeight,
-    submittedAtHeight: ctx.height,
-  });
-  return { ok: true, entry, body };
+    const entry = deps.ledger.add({
+      txId: built.txId,
+      kind: 'withdraw',
+      postId, // the post the withdrawal empties
+      expiresAtHeight: body.expiresAtHeight,
+      submittedAtHeight: ctx.height,
+    });
+    return { ok: true, entry, body };
+  };
+  return runUnderLock(deps, run);
 }
 
 /** Submit a claim for a username (WEB_INTERFACE → The username row). */
-export async function submitClaimFlow(deps: SubmitDeps, name: string): Promise<SubmitResult<ClaimSubmitResult>> {
+export async function submitClaimFlow(deps: SubmitDeps, name: string): Promise<WaitableResult<ClaimSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitClaimFlow: no identity loaded');
 
-  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
-  let built;
-  try {
-    built = buildClaim(ctx, name);
-  } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('no rep box to sign a claim with.');
-    throw e;
-  }
-  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
-  if (!signed.ok) return signed;
-  const body = await deps.write.submitClaim(signed.body);
-  if (isRejection(body)) return { ok: false, rejection: body };
-  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
+  const run = async (): Promise<WaitableResult<ClaimSubmitResult>> => {
+    const r = await readsOrWaitingRep(deps, id.pubKeyHex);
+    const ctx = r.ctx;
+    let built;
+    try {
+      built = buildClaim(ctx, name);
+    } catch (e) {
+      if (e instanceof InsufficientKarma) return clientRejection('no rep box to sign a claim with.');
+      throw e;
+    }
+    const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+    if (!signed.ok) return signed;
+    if (r.waiting) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'claim', postId: name, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    const body = await deps.write.submitClaim(signed.body);
+    if (sendIsWaiting(deps, body)) {
+      const entry = keepWaiting(deps, 'rep', ctx, built, {
+        kind: 'claim', postId: name, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    if (isRejection(body)) return { ok: false, rejection: body };
+    if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry = deps.ledger.add({
-    txId: built.txId,
-    kind: 'claim',
-    postId: name,
-    expiresAtHeight: body.expiresAtHeight,
-    submittedAtHeight: ctx.height,
-  });
-  return { ok: true, entry, body };
+    const entry = deps.ledger.add({
+      txId: built.txId,
+      kind: 'claim',
+      postId: name,
+      expiresAtHeight: body.expiresAtHeight,
+      submittedAtHeight: ctx.height,
+    });
+    return { ok: true, entry, body };
+  };
+  return runUnderLock(deps, run);
 }
 
 /** Submit a burn. The held name and its box are resolved at the press through
@@ -466,43 +607,252 @@ export async function submitSendFlow(
   toHex: string,
   toName: string | null,
   amount: bigint,
-): Promise<SubmitResult<SendSubmitResult>> {
+): Promise<WaitableResult<SendSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitSendFlow: no identity loaded');
 
-  const ctx = await readCreditContext(deps.reads, id.pubKeyHex);
-  let built;
-  try {
-    built = buildSend(ctx, toHex, amount);
-  } catch (e) {
-    if (e instanceof InsufficientCredits) return clientRejection('not enough $NOTIS.');
-    if (e instanceof InvalidKey) return clientRejection('that is not a valid key.');
-    if (e instanceof BelowFloor) {
-      const floor = formatCredits(e.floor);
-      return clientRejection(
-        e.which === 'payment'
-          ? `send at least ${floor} $NOTIS.`
-          : `that leaves change under ${floor} $NOTIS — send a little more, or all of it.`,
-      );
+  const run = async (): Promise<WaitableResult<SendSubmitResult>> => {
+    const r = await readsOrWaitingCredits(deps, id.pubKeyHex);
+    const ctx = r.ctx;
+    let built;
+    try {
+      built = buildSend(ctx, toHex, amount);
+    } catch (e) {
+      if (e instanceof InsufficientCredits) return clientRejection('not enough $NOTIS.');
+      if (e instanceof InvalidKey) return clientRejection('that is not a valid key.');
+      if (e instanceof BelowFloor) {
+        const floor = formatCredits(e.floor);
+        return clientRejection(
+          e.which === 'payment'
+            ? `send at least ${floor} $NOTIS.`
+            : `that leaves change under ${floor} $NOTIS — send a little more, or all of it.`,
+        );
+      }
+      throw e;
     }
-    throw e;
-  }
-  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
-  if (!signed.ok) return signed;
-  const body = await deps.write.submitSend(signed.body);
-  if (isRejection(body)) return { ok: false, rejection: body };
-  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
+    const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+    if (!signed.ok) return signed;
+    const send: SendRef = { toHex, toName, amount, boxId: built.paymentBoxId };
+    if (r.waiting) {
+      const entry = keepWaiting(deps, 'credits', ctx, built, {
+        kind: 'send', postId: toHex, send, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    const body = await deps.write.submitSend(signed.body);
+    if (sendIsWaiting(deps, body)) {
+      const entry = keepWaiting(deps, 'credits', ctx, built, {
+        kind: 'send', postId: toHex, send, tx: signed.body,
+      });
+      return { ok: true, waiting: true, entry };
+    }
+    if (isRejection(body)) return { ok: false, rejection: body };
+    if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry = deps.ledger.add({
+    const entry = deps.ledger.add({
+      txId: built.txId,
+      kind: 'send',
+      postId: toHex, // a send's subject is the recipient's key
+      send,
+      expiresAtHeight: body.expiresAtHeight,
+      submittedAtHeight: ctx.height,
+    });
+    return { ok: true, entry, body };
+  };
+  return runUnderLock(deps, run);
+}
+
+// ---------------------------------------------------------------------------
+// The waiting arm — WEB_INTERFACE → The wallet → "A write no node answers
+// waits". Each helper takes `deps`, so a flow called without `deps.waiting`
+// or with `deps.waiting.chain()` null runs exactly today's path: the lock
+// wrapper is a no-op, the reads throw their own errors, and `sendIsWaiting`
+// stays false.
+// ---------------------------------------------------------------------------
+
+/** True once the extension carries a waiting seam AND a verified tip has
+ *  named a chain (WEB_INTERFACE → The wallet → "The view and every waiting
+ *  write carry the chain's name"). Any other state runs today's path. */
+function activeWaiting(deps: SubmitDeps): { store: WaitingStore; chain: string; cachedAuthor: WaitingDeps['cachedAuthor'] } | null {
+  const w = deps.waiting;
+  if (w === undefined) return null;
+  const chain = w.chain();
+  if (chain === null) return null;
+  return { store: w.store, chain, cachedAuthor: w.cachedAuthor };
+}
+
+/** Run a flow under the identity's waiting lock when the arm is active, so
+ *  two pages build in turn — with no arm, a direct call (WEB_INTERFACE → The
+ *  wallet → "The waiting store keeps every waiting write as a record of its
+ *  own"). */
+function runUnderLock<T>(deps: SubmitDeps, fn: () => Promise<T>): Promise<T> {
+  const active = activeWaiting(deps);
+  if (active === null) return fn();
+  return active.store.withLock(fn);
+}
+
+/** The rep-side reader, else the waiting view with no answer, else today's
+ *  error (WEB_INTERFACE → The wallet → "The waiting view"). When the arm is
+ *  active the flow builds from `repView(chain)`: the base alone when nothing
+ *  waits, the base advanced by every waiting write when some do, so a press
+ *  never spends a box a waiting write spent. */
+async function readsOrWaitingRep(deps: SubmitDeps, author: string): Promise<{ ctx: RepBuildContext; waiting: boolean }> {
+  const active = activeWaiting(deps);
+  try {
+    const ctx = await readBuildContext(deps.reads, author);
+    if (active === null) return { ctx, waiting: false };
+    active.store.recordBase('rep', ctx, active.chain);
+    const advanced = active.store.repView(active.chain);
+    // Totality: the base was just recorded for this chain, so the view is
+    // never null — the fallthrough keeps the recorded base, as `repView`
+    // would answer.
+    return { ctx: advanced ?? ctx, waiting: false };
+  } catch (e) {
+    if (active === null || !isNoAnswer(e)) throw e;
+    const view = active.store.repView(active.chain);
+    if (view === null) throw e;
+    return { ctx: view, waiting: true };
+  }
+}
+
+/** The credit-side counterpart (WEB_INTERFACE → The wallet → "The waiting
+ *  view"). */
+async function readsOrWaitingCredits(deps: SubmitDeps, author: string): Promise<{ ctx: BuildContext; waiting: boolean }> {
+  const active = activeWaiting(deps);
+  try {
+    const ctx = await readCreditContext(deps.reads, author);
+    if (active === null) return { ctx, waiting: false };
+    active.store.recordBase('credits', ctx, active.chain);
+    const advanced = active.store.creditView(active.chain);
+    return { ctx: advanced ?? ctx, waiting: false };
+  } catch (e) {
+    if (active === null || !isNoAnswer(e)) throw e;
+    const view = active.store.creditView(active.chain);
+    if (view === null) throw e;
+    return { ctx: view, waiting: true };
+  }
+}
+
+/** Resolve a reply's parent: `reads.post` as today, with the cache as the
+ *  waiting fallback (WEB_INTERFACE → The wallet → "A write no node answers
+ *  waits"). Null `confirmedAuthor` is the client rejection the parent flow
+ *  carries whatever the arm. */
+async function resolveParentOrCached(
+  deps: SubmitDeps,
+  parentId: string,
+  viewerKey: string,
+): Promise<{ authorHex: string } | { rejection: Rejection }> {
+  const active = activeWaiting(deps);
+  try {
+    const p = await deps.reads.post(parentId, viewerKey);
+    if (!p || p.confirmedAuthor === null) {
+      return { rejection: { status: 0, message: 'that post has no confirmed author to reply under.' } };
+    }
+    return { authorHex: p.confirmedAuthor };
+  } catch (e) {
+    if (active === null || !isNoAnswer(e)) throw e;
+    const cached = await active.cachedAuthor(parentId);
+    if (cached === null) throw e;
+    return { authorHex: cached };
+  }
+}
+
+/** Resolve a like's target author: `reads.post` as today, cache as the
+ *  waiting fallback. */
+async function resolveTargetAuthorOrCached(
+  deps: SubmitDeps,
+  targetId: string,
+  viewerKey: string,
+  _flow: 'like',
+): Promise<{ authorHex: string } | { rejection: Rejection }> {
+  const active = activeWaiting(deps);
+  try {
+    const t = await deps.reads.post(targetId, viewerKey);
+    if (!t || t.confirmedAuthor === null) {
+      return { rejection: { status: 0, message: 'that post has no confirmed author to like.' } };
+    }
+    return { authorHex: t.confirmedAuthor };
+  } catch (e) {
+    if (active === null || !isNoAnswer(e)) throw e;
+    const cached = await active.cachedAuthor(targetId);
+    if (cached === null) throw e;
+    return { authorHex: cached };
+  }
+}
+
+/** The write-client's *no answer* mark — the status-0 `noAnswer: true`
+ *  rejection the `send` loop answers with once every base has failed
+ *  (WEB_INTERFACE → The wallet → "A write no node answers waits"). True only
+ *  when the waiting arm is active: with no arm, the web build's send takes
+ *  today's transport-failure path through the rejection. */
+function sendIsWaiting(deps: SubmitDeps, body: unknown): boolean {
+  if (activeWaiting(deps) === null) return false;
+  return typeof body === 'object' && body !== null
+    && (body as { status?: unknown }).status === 0
+    && (body as { noAnswer?: unknown }).noAnswer === true;
+}
+
+/** Keep one waiting write and its ledger entry: the record under the store's
+ *  lock seq, and a pending entry marked waiting with no expiry while it
+ *  waits (WEB_INTERFACE → The wallet → "A write no node answers waits",
+ *  → "A pending entry's expiry is the client's, and a node's answer can
+ *  only bring it sooner"). The caller holds the active arm. */
+function keepWaiting(
+  deps: SubmitDeps,
+  ledger: WaitingLedger,
+  ctx: BuildContext | RepBuildContext,
+  built: BuiltTx,
+  spec: { kind: WaitingKind; postId: string; send?: SendRef; tx: Record<string, unknown>; content?: string },
+): PendingEntry {
+  const active = activeWaiting(deps);
+  if (active === null) {
+    // Unreachable in the waitable flows — guarded by the caller — but kept
+    // total so a future caller cannot slip into a waiting path with no store.
+    throw new Error('keepWaiting: no active waiting arm');
+  }
+  const spent = built.tx.inputs;
+  const change: ChangeRef | null = built.change;
+  const cost = costOf(ctx.spendable, spent, change);
+  active.store.keep({
+    chain: active.chain,
+    ledger,
     txId: built.txId,
-    kind: 'send',
-    postId: toHex, // a send's subject is the recipient's key
-    send: { toHex, toName, amount, boxId: built.paymentBoxId },
-    expiresAtHeight: body.expiresAtHeight,
+    kind: spec.kind,
+    postId: spec.postId,
+    ...(spec.send !== undefined ? { send: spec.send } : {}),
+    tx: spec.tx,
+    ...(spec.content !== undefined ? { content: spec.content } : {}),
+    spent: [...spent],
+    change,
+    cost,
+    builtAtHeight: ctx.height,
+  });
+  return deps.ledger.add({
+    txId: built.txId,
+    kind: spec.kind,
+    postId: spec.postId,
+    ...(spec.send !== undefined ? { send: spec.send } : {}),
+    waiting: true,
+    expiresAtHeight: null,
     submittedAtHeight: ctx.height,
   });
-  return { ok: true, entry, body };
 }
+
+/** The waiting write's `cost`: the sum of the spent boxes' values in the
+ *  view, less the change's value (WEB_INTERFACE → The wallet → "The waiting
+ *  store keeps every waiting write as a record of its own"). */
+function costOf(
+  spendable: readonly { boxId: string; value: bigint }[],
+  spent: readonly string[],
+  change: ChangeRef | null,
+): bigint {
+  const spentSet = new Set(spent);
+  let sum = 0n;
+  for (const b of spendable) if (spentSet.has(b.boxId)) sum += b.value;
+  return sum - (change?.value ?? 0n);
+}
+
+// ---------------------------------------------------------------------------
 
 /** The reader's live `vouch` box naming `targetKey`, resolved at the press by
  *  reading `GET /vouches?voucher=<me>` whole — null when the pair stands no
