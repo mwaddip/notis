@@ -399,7 +399,7 @@ takes testnet's faucet, an explicit `VITE_FAUCET_BASE=''` builds a faucet-less e
 optional host. `VITE_NETWORK` too: unset is `testnet`, an explicit `VITE_NETWORK=''` builds an extension with no tip
 verifier, and a name no network profile answers to refuses the build. ⚠ **A build for a devnet stack needs
 `VITE_NETWORK=devnet`** — left unset it verifies devnet's proofs against testnet's profile and every one reads
-*this node's proof did not verify*. `VITE_NODES` defaults to testnet's two nodes, `notis.fun` first.
+*no node's proof verified*. `VITE_NODES` defaults to testnet's two nodes, `notis.fun` first.
 
 **The verified tip** (`WEB_INTERFACE → The extension → "The verified tip"`, `→ The status corner`): the extension
 checks the chain it reads through the mesh client's own check — `src/extension/mesh-tip-verifier.ts`
@@ -410,9 +410,7 @@ it at start, on a press of the corner, every ten minutes while visible, on a vis
 last run, and when a name check asks for one; one run at a time. The corner is green only while blocks progress
 **and** the verdict is `verified`; `src/view/corner.ts` writes the new titles, none naming a node or carrying a URL
 or an address. `main.ts` hands the verifier to the App in the extension build alone, and only under a non-empty
-`notis-network`; the web build is handed none and `build-release.sh` refuses `nipopow/proof` in its assets. The
-per-run `resolveTip` over the seed list, `tipVerdict`'s `outworked` reason and its `by`, and `src/extension/tip-verifier.ts`
-retired together once the mesh client's check carried the verdict.
+`notis-network`; the web build is handed none and `build-release.sh` refuses `nipopow/proof` in its assets.
 
 **The verified figures** (`WEB_INTERFACE → The extension → "The verified figures"`, `→ The profile window`, `→ The
 wallet window`): the extension proves the reader's rep and balance against the verified chain. **The rep row's number
@@ -420,8 +418,9 @@ is `/karma?pending=1`'s `effective` and the balance row's figure is `/credits?pe
 views, the `remaining` admission the node judges a spend against; **the plain listings `/karma` and `/credits` are
 read beside the views and the verified-figures run proves them** (`→ The profile window → "The `rep` row is the rep
 view's `effective` alone"`, `→ The wallet window → "The `balance` row"`, `→ The wallet → "A landing reads the plain
-listings, never `pending=1`"`). A tip run answers `{ verdict, anchor }` — the reading node's own verified `tip` and
-`suffixHead`, under `verified` alone — and `src/extension/figures-verifier.ts` (`createFiguresVerifier`) runs
+listings, never `pending=1`"`). A tip run answers `{ verdict, anchor, chain }` (`tipRunOf`, `src/model/mesh-verdict.ts`) — `anchor` the two
+ends of the client's chain, its `tip` and the header `k − 1` below it, `suffixHead`, under `verified` alone, moving with
+the chain — and `src/extension/figures-verifier.ts` (`createFiguresVerifier`) runs
 `proveFigures` of `@dagsocial/nipopow-client` over the plain listings: the identity record at `suffixHead` under
 `identityKey`, each ledger's range at `suffixHead` and again at `tip` — `GET /api/v1/range/:kind/:owner`, page by
 page, each page replayed by `consensus`' `holdingsPage` over the node's proof — then `/blocks/current`; **a listed
@@ -499,8 +498,8 @@ expiry height, never expired as on a 404 — and the rebuilt row, not the node's
 landings read. The web build is handed no verifier, sends no `tx` and shows every row the node serves.
 
 **The post cache** (`WEB_INTERFACE → The extension → "The post cache"`): `src/extension/post-cache.ts`, IndexedDB at the
-extension page's origin, the database `notis.posts.<chain>` — `chain` the tip run's (`TipRun.chain`, the reading
-node's `genesisHash`), the last name remembered in `localStorage` under `notis.posts.chain`. **One chain's database at
+extension page's origin, the database `notis.posts.<chain>` — `chain` the tip run's (`TipRun.chain`, the hash of
+block 1 the client's chain stands on), the last name remembered in `localStorage` under `notis.posts.chain`. **One chain's database at
 a time**: once a chain's database opens, every other `notis.posts.*` database `indexedDB.databases()` lists is deleted,
 the open not waiting on the deletes, and the module's connection closes on `versionchange`. An entry holds the
 transaction's bytes, the row as the node last gave it, the author and the parent as the transaction states them, its
@@ -610,26 +609,34 @@ from the tab that became the workspace (two backs at one column: the workspace's
 `target="_blank"` link as the control, found by its `openerId`; last, the bridge-less arm in a
 `Target.createBrowserContext` context, where the press switches the hosted page in place. Without the two flags
 13–16 read `NOT RUN`. **With `--verified-tip` (and `--node-dist`, `--miner`, `--scratch`, `--node-p2p`) the
-verified-tip block**, for which the harness owns every node but A — a peer **B** of A, an in-process **relay** that
-serves A's reads and flips one byte of its proof, a node **C** that syncs from A and is then restarted cut off
-(an empty bootstrap and a new listen port — a node with no seed dials nobody) to mine three blocks of its own, and a fresh isolated **D**
-— each step asserting the rendered corner (the dot's class, the tip span's classes, the `title`, the tip in it
-being the reading node's own) and counting `/nipopow/proof/` requests from CDP: **17a** the `node` row on D at
-height 0 — *the chain is too short to check yet · tip 0*; **17** *verified across 2 nodes*, one proof request per
-node per press, none unasked in twenty seconds; **17b** thirty presses reading A and thirty reading B under A's
-live miner, every one green; **18** B stopped — *only one node could be checked* — and green again once it
-rejoins; **19a** the row on the relay — *this node's proof did not verify*, the height clay, the feed still
-rendering; **19b** the row on C once A's proof out-scores C's fork — `resolveTip` over `[C, A]` read until C verifies,
-A wins and C's `behind` is `null`, since a fork a few blocks deep can tie A on the score and a tie keeps the reading
-node — *127.0.0.1:19740 holds more work than this node*; **19c**
-the row on D mined past `m + k + 4` (48) — *the nodes share no block to compare*; **20** the hosted web build — the first
-paragraph's title and no `/nipopow/` request. In a full run the block runs after step 16 on a session opened on
-the extension page live at that moment (step 15 closes the first one), and the browser-context arm runs last. The
-extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES` naming A then B; the harness refuses
-otherwise. **With `--verified-figures` as well (it needs `--r-key` and the lifecycle arguments `bringUpNodeB` reads)
-the verified-figures block** runs next, owning a B of its own (a verified tip needs a second verified node) and a
-**figures relay** on its own port that passes every `/nipopow/proof/` answer through — so the corner stays green —
-and lies in one mode at a time: `credits-fake` (a fabricated box on R's first `/credits` page), `credits-foreign` (the
+verified-tip block**, for which the harness owns every node but A — a peer **B** of A, a node **C** that syncs from A
+and is then restarted cut off (an empty bootstrap and a new listen port — a node with no seed dials nobody) to mine
+three blocks of its own, and a fresh isolated **D** — and two switchable **tip relays**, **RLA** in front of A and
+**RLB** in front of B (`RLA_PORT`, `RLB_PORT`), each in one mode the harness sets between steps: `honest` (every
+request passed through), `proof-invalid` (one byte of the `/nipopow/proof/` answer flipped), `proof-short` (the proof
+route answered 404 chain-too-short), `upstream-D` (every request passed to D) and, in the mesh block, `hold-posts`.
+The build's `notis-nodes` names the two relays as node entries — `{notisId, addrs: [], api: <relay>}`, an entry with no
+`addrs` reached at its API base alone — so every read the extension makes passes through one of them, and **a page is a
+client**: each step sets the relays' modes and then opens a fresh extension page, whose first check reads through
+them. Each step asserts the rendered corner (the dot's class, the tip span's classes, the `title`): **17a** both relays
+`proof-short` — *the chain is too short to check yet · tip N*; **17** *verified across 2 nodes* on a fresh page and
+after two presses, the proof counts reported and not asserted (a check that places every tip asks no proof), none
+unasked in twenty seconds; **17b** thirty presses one second apart under A's live miner, every one `led fresh` and
+*verified across 2 nodes*; **18** B stopped — *only one node could be checked* — and green again once it rejoins;
+**19a** `proof-invalid` on RLA, RLB honest — *verified across 2 nodes* (a node counts without serving a proof of its
+own), then `proof-invalid` on both on a second fresh page — *no node's proof verified*; **19c** RLA `upstream-D` with
+D mined just past `m + k + 4` (48), lighter than B and sharing no block with A past genesis — `thin · split`, *a node
+names a tip off this chain*, the corner's tip B's height or D's, whichever chain the first check seated, the record
+naming which; **19b** D mined past A by 50 — the client seats D's chain, B names a tip off it: `thin · split`, the
+corner's tip D's height; **20** the hosted web build — the first paragraph's title and no `/nipopow/` request in
+twenty seconds or after a press. In a full run the block runs after step 16 on a session opened on the extension page
+live at that moment (step 15 closes the first one), and `13-uncancelled`, the browser-context arm, runs after the
+verified blocks and before the mesh block. The extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES`
+naming the two relays, each `notisId` read from its node's start line; the harness refuses otherwise.
+**With `--verified-figures` as well (it needs `--r-key` and the lifecycle arguments `bringUpNodeB` reads)
+the verified-figures block** runs next, owning a B of its own (a verified tip needs a second verified node) and
+sets the figures lie modes on **both tip relays** at once — every `/nipopow/proof/` answer passed through, so the corner
+stays green — one mode at a time: `credits-fake` (a fabricated box on R's first `/credits` page), `credits-foreign` (the
 devnet faucet's largest credit box listed under R), `credits-drop` and `karma-drop` (one box withheld from R's first
 `/credits` or `/karma` page), `credits-drop-tipplus1` (the credits drop, and `/blocks/current` answered one above the
 node's own), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a send —
@@ -646,9 +653,10 @@ hold another key's; **22c** clay *the chain holds … $NOTIS the node does not l
 drop emptied the listing; **22d** clay *the chain holds … rep the node does not list*; **22e** the node that
 withholds and answers another height — the balance row muted *not checked yet* after the change and after each of
 two presses, never silent and never clay; **23** both rows clay, *this node's proof of … did not verify*; each arm
-compares the amount its line names with the box the relay lied about, presses again while a block landed between
-the anchor and the run's `/blocks/current` — the lying row reading *not checked yet* there, and any silent or
-honest-looking reading of it failing the arm — and is switched back to A and silent again; **25** the hosted web
+opens a fresh page whose tip run reads *verified across N nodes*, compares the amount its line names with the box the
+relays lied about, presses again while a block landed between the anchor and the run's `/blocks/current` — the lying
+row reading *not checked yet* there, and any silent or honest-looking reading of it failing the arm — and has the
+relays set back to `honest` and the balance row silent again; **25** the hosted web
 build — no line and
 no `/api/v1/proof/` or `/api/v1/range/` request. A figures run asks the record, each ledger's range at the two
 heights, and `/blocks/current` — ten requests with the wallet open. ⚠ **The figures block needs a throwaway that has
@@ -657,22 +665,27 @@ not run steps 11–12**: on a key already granted `$NOTIS` the faucet step is no
 runs on a B of its own, a second identity **S** holding a name — S promoted as R is and its name claimed by
 `scripts/extension-check/claim-name.mjs` through the web's own `submitClaimFlow` (⚠ a second `promote.mjs` is refused
 once by the faucet, whose in-memory chain names a change `promote.mjs` spent outside it — run it again) — and the
-figures relay's five **name modes** (`label-rename`, `owner-404`, `owner-fakebox`, `name-owner`, `name-fakebox`, every
-proof passed through verbatim so the corner stays green): **26** R claims a name through the `username` row — the
+five **name modes** on both tip relays (`label-rename`, `owner-404`, `owner-fakebox`, `name-owner`, `name-fakebox`,
+every proof passed through verbatim so the corner stays green), each arm on a fresh page read under routed reads — the
+client takes whichever relay its need allows, and the lie is on both: **26** R claims a name through the `username` row — the
 header, R's cards, a thread, R's author window and the row read it in ink, the checks in the log; **29** a send typed
 to S's handle once S's box is `k` deep, after a fresh tip run — *checking @S…*, one box proof at `suffixHead`, S's key
 beneath the field and on the prompt's `to:`, declined; **27a** a renamed label
-clay; **27b** a withheld name — R's cards clay, the header R's key prefix (the own-name read falls to the same 404: the
+clay on R's cards, the header's name read from the own-name lookup and any handle drawn from it standing in ink (the
+lie never touched that route); **27b** a withheld name — R's cards clay, the header R's key prefix (the own-name read falls to the same 404: the
 omission the rule leaves uncaught); **27c** a made-up box clay, each check's heights and each tip run's cause in the
 relay's log; **27d** the author window's name row turning clay in place with no line and the rows unmoved, its `↻`
 drawing the line; **28a** Eve's key over S's box and **28b** a made-up box refused at the press with no prompt — 28b
 pressed once A has mined past the anchor, so its first check reads `unchecked`, asks one tip run and the retry reads
-`absent`; **30** the hosted web build — no clay and no `/api/v1/proof/`. Each lie arm switched back to A and ink again.
+`absent`; **30** the hosted web build — no clay and no `/api/v1/proof/`. **No lie stands in ink** — an honest handle
+may stand beside a clay one, and an omission is the one lie the rule leaves uncaught (27b's header). Each lie arm has
+the relays set back to `honest` and reads the honest state again.
 **With `--light` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; `--public` and `--web-dist`
 for its last step; it takes no other verified flag) the light block**, L1–L14, runs alone after steps 1–16. **Every
-base the extension knows is a relay of the harness's own**: `RA` on `:19810` in front of node A and `RB` on `:19815`
-in front of a second node B, started before the browser, so the extension for it is built with `VITE_NODES` naming
-those two and the harness refuses any other seed list. Each relay passes every request through — every
+node entry the extension knows reaches a relay of the harness's own at its API base** (`addrs: []`): `RA` on `:19810`
+in front of node A and `RB` on `:19815` in front of a second node B, started before the browser, so the extension for
+it is built with `VITE_NODES` naming `[{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[], api:RB}]` and the
+harness refuses any other seed list. Each relay passes every request through — every
 `/nipopow/proof/` among them — logs it as it arrives, and lies over `POST /posts/batch` in one mode at a time: `text`
 (one row's text swapped), `drop` (no row answered), `hold` (answered at `release()`), `hang` (never answered), and
 beside them `list-down` (the list reads answer 503), `list-replay` (a recorded light page), `down` (every connection
@@ -689,6 +702,27 @@ rows; **L12** a withdrawal — the withdrawn card, the entry's text gone, no bat
 in front of an isolated node **D** on another chain — D's database listed and A's not, the list polled until the
 delete lands and A's name never opened after the switch (an `indexedDB.open` of a missing database creates it), a
 replayed listing drawing nothing from the first chain's entries; **L14** the hosted web build — no `light`, no `tx`, no batch, no database.
+**With `--mesh` (it needs `--r-key`, `--node-dist`, `--scratch`, `--node-p2p`; it takes no verified flag and not
+`--light`) the mesh block**, M1–M4, proves the mesh path in the built extension and runs after `13-uncancelled`. The
+harness owns two public nodes **A′** and **B′**, spawned from `--node-dist` with `MESH_ROLE=public`,
+`MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one loopback cannot
+share `STUN_PORT`), both bootstrapped off A (`--node-p2p`) so they are peers on A's chain and R's rep reaches them. The
+extension for it is built with `VITE_NODES` naming `[{notisId:<A′>, addrs:[<A′'s webrtc-direct multiaddr>], api:<A′'s
+HTTP base>}, {notisId:<B′>, …}]` — the multiaddr, certhash and `/p2p/` included, as the node's start line gives it —
+and the harness refuses any other shape, printing the `VITE_NODES` to rebuild with. Chromium takes
+`--allow-loopback-in-peer-connection` on a `--mesh` run: a harness switch for a loopback stage, not a product setting,
+without which a browser refuses the `RTCPeerConnection` to 127.0.0.1. Each step runs on a fresh extension page:
+**M1** *verified across 2 nodes*, then a refresh of the feed and a press of the corner after the verdict — the report
+text updates and **no HTTP request reaches A′ or B′ after the mark** (a page's first reads, before its WebRTC
+connections are up, go to the API bases and are counted, not asserted); **M2** both nodes restarted without
+`MESH_ROLE` — the dials fail, the entries are read at their API bases, the verdict is `verified` and the page made HTTP
+requests to the nodes; **M3** both back with the mesh role — a post from the composer lands on both nodes with no
+`POST /posts` over HTTP in the page's Network domain; **M4** both nodes at their API bases alone, A′ restarted on an
+alternate HTTP port behind a tip relay in `hold-posts` mode at its base port, A′ and B′ at A's tip before the press —
+the first `POST /posts` is held past `REQUEST_TIMEOUT_MS`, the card reads pending and not rejected, the same bytes go
+to the next node, and the post stands once on each node. The two-pass recipe for `VITE_NODES` of any block: start the
+nodes, read each `notisId` (and, for `--mesh`, the multiaddr) from its start line, build the extension with them, then
+run the harness.
 ⚠ **The workspace restores its open windows on every reload, and each restored thread is a resolve of its own**: a
 step that reads the feed alone closes every pane first. ⚠ **The pointer walks**: a page session's second resolve
 starts at the other relay, so a step that holds or hangs it sets both. ⚠ **A request's `close` fires when its body
@@ -701,9 +735,9 @@ hash route. ⚠ **Opening a thread that is already open reads nothing**: a step 
 ⚠ **A second `promote.mjs` on one stack is refused once** (`No karma box input found in transaction`) and passes on
 the next try; each run of the block needs a member that has not run steps 11–12.
 **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
-race that is wide only for a follower under a fast miner**: reading B at about three blocks a second, a build
-whose verdict read every lost comparison as *outworked* showed the alarm on 24 of 30 presses; under the paced
-miner of a full run the two fetches mostly see one height. The web build for it: `VITE_WEB_BASE=/web/ VITE_API_BASE=<the devnet node's origin>
+race that is wide only for a follower under a fast miner**: a press that reads a node a block behind the other must
+read *verified across 2 nodes*, never the alarm; at about three blocks a second the two reads see different heights,
+under the paced miner of a full run they mostly see one. The web build for it: `VITE_WEB_BASE=/web/ VITE_API_BASE=<the devnet node's origin>
 VITE_FAUCET_BASE='' VITE_NODES='[]' VITE_PUBLIC='' VITE_PUBLIC_ORIGIN='' npx vite build --outDir <scratch>`; the
 extension with `VITE_PUBLIC=<--public>`. All of it against a local
 devnet **started by hand on ports above 19000** — `packages/node/dist/index.js` with `NETWORK_TYPE=devnet
