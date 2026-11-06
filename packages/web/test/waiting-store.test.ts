@@ -201,6 +201,88 @@ describe('remove', () => {
   });
 });
 
+describe('absorb — a sent write folds into the base', () => {
+  it('absorb folds a sent write into the base and the view is unchanged', () => {
+    const storage = fakeStorage();
+    const locks = fakeLockManager();
+    const s = new WaitingStore(KEY, { storage, locks });
+    // Base: effective 100, one box.
+    s.recordBase('rep', repBase(100n, [{ boxId: 'a', value: 100n }]), CHAIN_A);
+    // Two waiting likes — the first spends `a` (change `c1` 99, cost 1), the
+    // second spends `c1` (change `c2` 98, cost 1). The view is `c2`/98.
+    s.keep(repWrite({ txId: 't1', spent: ['a'], change: { boxId: 'c1', value: 99n, createdAtBlock: 50 }, cost: 1n }));
+    s.keep(repWrite({ txId: 't2', spent: ['c1'], change: { boxId: 'c2', value: 98n, createdAtBlock: 50 }, cost: 1n }));
+    const before = s.repView(CHAIN_A)!;
+    // Absorb the first — the view the remaining write advances is the same.
+    s.absorb('t1');
+    expect(s.list().map((w) => w.txId)).toEqual(['t2']);
+    const after = s.repView(CHAIN_A)!;
+    expect(after.spendable).toEqual(before.spendable);
+    expect(after.effective).toBe(before.effective);
+    // And absorbing the second leaves the base at the tip — the store is empty,
+    // the view the base itself.
+    s.absorb('t2');
+    expect(s.list()).toEqual([]);
+    const final = s.repView(CHAIN_A)!;
+    expect(final.spendable).toEqual(before.spendable);
+    expect(final.effective).toBe(before.effective);
+  });
+
+  it('credits-side absorb folds the same way, with no effective', () => {
+    const storage = fakeStorage();
+    const locks = fakeLockManager();
+    const s = new WaitingStore(KEY, { storage, locks });
+    s.recordBase('credits', creditBase([
+      { boxId: 'b1', value: 1000n },
+      { boxId: 'b2', value: 500n },
+    ]), CHAIN_A);
+    s.keep(creditWrite({ txId: 'cs1', spent: ['b1'], change: { boxId: 'c1', value: 900n, createdAtBlock: 50 }, cost: 100n }));
+    s.keep(creditWrite({ txId: 'cs2', spent: ['b2'], change: null, cost: 500n }));
+    const before = s.creditView(CHAIN_A)!;
+    s.absorb('cs1');
+    const after = s.creditView(CHAIN_A)!;
+    expect(after.spendable).toEqual(before.spendable);
+  });
+
+  it('absorb with no base only removes', () => {
+    const storage = fakeStorage();
+    const locks = fakeLockManager();
+    const s = new WaitingStore(KEY, { storage, locks });
+    // Keep a write without first recording a base — the record still lives in
+    // storage. Absorb finds no base and only removes.
+    s.keep(repWrite({ txId: 't1', spent: ['a'], change: { boxId: 'c1', value: 99n, createdAtBlock: 50 }, cost: 1n }));
+    expect(s.list().map((w) => w.txId)).toEqual(['t1']);
+    s.absorb('t1');
+    expect(s.list()).toEqual([]);
+    expect(s.repView(CHAIN_A)).toBeNull();
+  });
+
+  it('absorb of a write of another chain only removes', () => {
+    const storage = fakeStorage();
+    const locks = fakeLockManager();
+    const s = new WaitingStore(KEY, { storage, locks });
+    // Record a base on CHAIN_A, keep a waiting write naming CHAIN_B.
+    s.recordBase('rep', repBase(100n, [{ boxId: 'a', value: 100n }]), CHAIN_A);
+    s.keep(repWrite({ chain: CHAIN_B, txId: 't1', spent: ['a'], change: null, cost: 1n }));
+    s.absorb('t1');
+    expect(s.list()).toEqual([]);
+    // The base on CHAIN_A was not touched.
+    const v = s.repView(CHAIN_A)!;
+    expect(v.spendable).toEqual([{ boxId: 'a', value: 100n }]);
+    expect(v.effective).toBe(100n);
+  });
+
+  it('absorb of an unknown id is a no-op', () => {
+    const storage = fakeStorage();
+    const locks = fakeLockManager();
+    const s = new WaitingStore(KEY, { storage, locks });
+    s.recordBase('rep', repBase(100n, [{ boxId: 'a', value: 100n }]), CHAIN_A);
+    s.keep(repWrite({ txId: 't1', spent: [], change: null, cost: 0n }));
+    s.absorb('unknown');
+    expect(s.list().map((w) => w.txId)).toEqual(['t1']);
+  });
+});
+
 describe('per-identity isolation', () => {
   it('a store of another key sees none of this key\'s writes', () => {
     const storage = fakeStorage();

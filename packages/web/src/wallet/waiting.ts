@@ -348,6 +348,53 @@ export class WaitingStore {
     removeRaw(this.storage, this.wPrefix + txId);
   }
 
+  /** Fold a sent write into its ledger's base and drop its record
+   *  (WEB_INTERFACE → The wallet → "Waiting writes go out at the first
+   *  answer"): the write's `spent` boxes leave the base's `spendable`, its
+   *  `change` joins it, and on the rep side the base's `effective` drops by
+   *  its `cost`. The view the remaining writes advance is unchanged — a press
+   *  made with no node answering builds past the sent write, never on a box
+   *  it spent. A record whose base is missing or of another chain is only
+   *  removed; an unknown id is a no-op. */
+  absorb(txId: string): void {
+    const raw = readRaw(this.storage, this.wPrefix + txId);
+    if (raw === null) return;
+    let w: WaitingWrite;
+    try {
+      w = parseStoredWrite(raw);
+    } catch {
+      removeRaw(this.storage, this.wPrefix + txId);
+      return;
+    }
+    const base = this.readBase(w.ledger);
+    if (base === null || base.chain !== w.chain) {
+      removeRaw(this.storage, this.wPrefix + txId);
+      return;
+    }
+    const spent = new Set(w.spent);
+    const nextSpendable: SpendableBox[] = [];
+    for (const b of base.ctx.spendable) if (!spent.has(b.boxId)) nextSpendable.push(b);
+    if (w.change !== null) nextSpendable.push({ boxId: w.change.boxId, value: w.change.value });
+    if (w.ledger === 'rep') {
+      const repCtx = base.ctx as RepBuildContext;
+      this.recordBase('rep', {
+        spendable: nextSpendable,
+        effective: repCtx.effective - w.cost,
+        height: repCtx.height,
+        era: repCtx.era,
+        author: repCtx.author,
+      }, base.chain);
+    } else {
+      this.recordBase('credits', {
+        spendable: nextSpendable,
+        height: base.ctx.height,
+        era: base.ctx.era,
+        author: base.ctx.author,
+      }, base.chain);
+    }
+    removeRaw(this.storage, this.wPrefix + txId);
+  }
+
   // -------------------------------------------------------------------------
 
   private readBase(ledger: WaitingLedger): { chain: string; ctx: BuildContext | RepBuildContext } | null {
