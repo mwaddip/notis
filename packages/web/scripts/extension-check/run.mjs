@@ -5374,12 +5374,18 @@ async function runNamesStep30(rName) {
 //        start, the reload's feed reads check every bound row and the
 //        puts land. The page's `notis.posts.<A>` `entries` store is
 //        counted until it is at least three — less than three at the
-//        bound is W1 FAIL before `down` is set — then the page is
-//        closed. Then a second fresh page under `down` on both relays:
-//        the feed and R's author-posts window each read a transport
-//        failure on their first page; the cache fallback draws the roots
-//        the reload populated beneath the error line, no `more` / `load
-//        older` control.
+//        bound is W1 FAIL before `down` is set. A strip-press on a
+//        cached non-R root then opens one thread so its reads of the
+//        subject and its descendants write into the cache too,
+//        widening W4's set of non-R cards R has not liked. The page is
+//        then closed. Then a second fresh page under `down` on both
+//        relays: the feed and R's author-posts window each read a
+//        transport failure on their first page; the cache fallback
+//        draws the roots the reload populated beneath the error line,
+//        no `more` / `load older` control; the author window is opened
+//        by pressing a cached R-authored card's author button (a card
+//        renders no data-author, so R is picked by id against
+//        `prepRRootIds`).
 //   W2 — the same page, relays still `down`: a like on a cached card the
 //        reader has not liked, and a root post from the composer. Each
 //        waits — the post's pending card and the like's muted overlay both
@@ -5544,6 +5550,22 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     return;
   }
 
+  // Every page the block opens is tracked, and the top-level finally closes
+  // whichever are still live — a step that threw past its own close leaves
+  // the page open, and the next block's `findExt` would return it. The
+  // initial extension page `main()` opens is not tracked and never closed
+  // here; 13-uncancelled opens its CDP session on that one.
+  const blockPages = [];
+  const trackPage = (page) => { if (page) blockPages.push(page); return page; };
+  const closeBlockPage = async (page) => {
+    if (!page) return;
+    const i = blockPages.indexOf(page);
+    if (i >= 0) blockPages.splice(i, 1);
+    try { page.cx?.s.close(); } catch {}
+    await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+  };
+
+  try {
   // ----- Preparation — the verified-tip block's 19c and 19b seated D's
   // chain (WEB_INTERFACE → The extension → "The post cache" — "One chain's
   // database at a time": opening another closes every previous), so the
@@ -5563,7 +5585,10 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   // A's `notis.posts.<A>` `entries` store (`src/extension/post-cache.ts`,
   // `STORE = 'entries'`) is counted from the page and polled until it is
   // at least three. Less than three at the bound records W1 FAIL before
-  // `down` is set.
+  // `down` is set. A strip-press on a cached non-R root then opens one
+  // thread: its reads of the subject and its descendants write into the
+  // cache beside the feed, widening W4's set of non-R cards R has not
+  // liked.
   setBothRelayModes('honest');
   const prepDGone = (await currentHeight(D_ORIGIN)) === null;
   const prepABlock1 = await block1HashOn(NODE);
@@ -5572,16 +5597,28 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     : null;
   const prepCachedTarget = 3;
   const prepCachedBoundMs = 60000;
+  // R's root post ids on the node, read for the prep's intersection with
+  // the cache and for W1's author-window press (a card renders no
+  // data-author; R's root is picked by id).
+  let prepRRootIds = [];
+  try {
+    const r = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`);
+    const j = await r.json();
+    const rows = Array.isArray(j?.posts) ? j.posts : [];
+    prepRRootIds = rows.map((p) => (typeof p?.id === 'string' ? p.id : null)).filter((id) => id !== null);
+  } catch {}
   let prepChainDb = null;
   let prepCornerTitle = null;
   let prepReloaded = false;
   let prepCornerAfterReload = null;
   let prepCached = 0;
   let prepCachedIds = [];
+  let prepRCachedRootIds = [];
+  let prepThreadOpened = false;
   let prepError = null;
   let prepPage = null;
   try {
-    prepPage = await openFreshExtensionPage(bcx);
+    prepPage = trackPage(await openFreshExtensionPage(bcx));
     let pCx = prepPage.cx;
     await pCx.waitFor(`!!document.querySelector('#feed')`, 'feed root prep', 30000);
     // Wait for the corner's tip run to settle — the title names a tip once
@@ -5660,16 +5697,46 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
         await sleep(1000);
       }
     }
+    // Intersect R's root ids (read from the node before the page opened)
+    // with the cache's ids: a card W1 can click has its id in both.
+    const cachedSet = new Set(prepCachedIds);
+    prepRCachedRootIds = prepRRootIds.filter((id) => cachedSet.has(id));
+    // Strip-press one feed root to open a thread — its reads of the
+    // subject and its descendants write their bound rows into A's
+    // database, widening W4's set of non-R cards R has not liked
+    // beyond the feed's own roots. Prefer a non-R cached root so the
+    // thread's non-R replies cache naturally; fall back to any cached
+    // feed root.
+    const rRoots = new Set(prepRRootIds);
+    try {
+      const opened = await pCx.eval(`(() => {
+        const my = ${JSON.stringify(R_JSON.pubKeyHex)};
+        const rRoots = new Set(${JSON.stringify(Array.from(rRoots))});
+        const cached = new Set(${JSON.stringify(prepCachedIds)});
+        const cards = [...document.querySelectorAll('#feed .card[data-post-id]')];
+        const nonR = cards.find((c) => {
+          const id = c.getAttribute('data-post-id');
+          return cached.has(id) && !rRoots.has(id) && c.querySelector('button.strip') !== null;
+        });
+        const anyCached = cards.find((c) => cached.has(c.getAttribute('data-post-id')) && c.querySelector('button.strip') !== null);
+        const target = nonR ?? anyCached;
+        if (!target) return false;
+        target.querySelector('button.strip').click();
+        return true;
+      })()`, true);
+      if (opened === true) {
+        prepThreadOpened = true;
+        // Give the thread's reads time to land and the cache's puts to commit.
+        await sleep(4000);
+      }
+    } catch {}
   } catch (e) {
     prepError = e?.stack ?? String(e);
   } finally {
-    if (prepPage) {
-      try { prepPage.cx.s.close(); } catch {}
-      await bcx.call('Target.closeTarget', { targetId: prepPage.targetId }).catch(() => {});
-    }
+    await closeBlockPage(prepPage);
   }
 
-  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), reloaded=${prepReloaded}, corner-after-reload=${JSON.stringify(prepCornerAfterReload)}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''})${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
+  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), reloaded=${prepReloaded}, corner-after-reload=${JSON.stringify(prepCornerAfterReload)}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
   if (prepCached < prepCachedTarget) {
     record('W1', false, prepDetail);
     for (const s of ['W2', 'W3', 'W4']) {
@@ -5693,7 +5760,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   let w1Ok = false;
   let w1Detail = '';
   try {
-    w1Page = await openFreshExtensionPage(bcx);
+    w1Page = trackPage(await openFreshExtensionPage(bcx));
     const w1Cx = w1Page.cx;
     await w1Cx.waitFor(`!!document.querySelector('#feed')`, 'feed root W1', 30000);
     // The feed's error line — a cold first page under `down` reads a
@@ -5724,12 +5791,15 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     let authorMoreBtn = false;
     try {
       // The @profile window carries no "open my author window" shortcut, so
-      // the path through the feed is the only one. With no card to click
-      // under `down` the author window stays unreached — recorded as such.
+      // the path through the feed is the only one. A card renders no
+      // data-author (`src/view/card.ts`: only `dataset.postId`), so R's
+      // card is picked by id — a cached R root whose data-post-id matches
+      // one in `prepRCachedRootIds`. With no such card in the DOM under
+      // `down` the author window stays unreached and the detail names so.
       const rCard = await w1Cx.eval(`(() => {
-        const my = ${JSON.stringify(R_JSON.pubKeyHex)};
+        const rCached = new Set(${JSON.stringify(prepRCachedRootIds)});
         const c = [...document.querySelectorAll('#feed .card[data-post-id]')]
-          .find((c) => c.getAttribute('data-author') === my
+          .find((c) => rCached.has(c.getAttribute('data-post-id'))
             && c.querySelector('.who button.authorbtn') !== null);
         return c ? c.getAttribute('data-post-id') : null;
       })()`);
@@ -5778,50 +5848,81 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   try {
     if (w1Page === null) throw new Error('W1 did not open a page — W2 has nothing to press on');
     const w2Cx = w1Page.cx;
-    // Pick a cached card the reader has not liked — a non-R card the
-    // feed drew (the cache fallback) whose id stands in A's database,
-    // and which carries the `like` word.
-    const target = await w2Cx.eval(`(() => {
-      const my = ${JSON.stringify(R_JSON.pubKeyHex)};
-      const cached = new Set(${JSON.stringify(prepCachedIds)});
-      const cards = [...document.querySelectorAll('#feed .card[data-post-id]')];
-      const nonOwn = cards.filter((c) => c.getAttribute('data-author') !== my);
-      for (const c of nonOwn) {
-        const id = c.getAttribute('data-post-id');
-        if (!cached.has(id)) continue;
-        const likeBtn = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
-        if (likeBtn !== null) return { id, author: c.getAttribute('data-author') };
-      }
-      return null;
-    })()`);
     // Mark positions in the relays' logs now, so W2's forwarded-POST
     // assertion reads only what this step's presses produced.
     const w2LogAIdx = tipRelays.a.log.length;
     const w2LogBIdx = tipRelays.b.log.length;
-    let likePressed = false;
-    if (target !== null) {
-      w2CardLikedId = target.id;
-      await w2Cx.eval(`(() => {
-        const c = document.querySelector('[data-post-id="${target.id}"]');
-        const lb = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
-        lb.click();
-      })()`, true);
-      likePressed = true;
-      await sleep(2000);
-    }
+    // Pick a cached card R has not liked and press its `like` word in
+    // one eval — a split picker and presser can race a redraw of the
+    // cache fallback (the card's `like` word may be gone by the time
+    // the press runs); doing both under one lookup also reports which
+    // element was missing where. A card renders no data-author (`src/
+    // view/card.ts`: only `dataset.postId`), so non-R is tested against
+    // `prepRRootIds` instead. The eval answers `{ok, id, reason}`.
+    const likePress = await w2Cx.eval(`(() => {
+      const rRoots = new Set(${JSON.stringify(prepRRootIds)});
+      const cached = new Set(${JSON.stringify(prepCachedIds)});
+      const cards = [...document.querySelectorAll('#feed .card[data-post-id]')];
+      if (cards.length === 0) return { ok: false, reason: 'no feed cards in DOM' };
+      let found = null;
+      for (const c of cards) {
+        const id = c.getAttribute('data-post-id');
+        if (!cached.has(id)) continue;
+        if (rRoots.has(id)) continue;
+        const likeBtn = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
+        if (likeBtn !== null) { found = { id, btn: likeBtn }; break; }
+      }
+      if (found === null) return { ok: false, reason: 'no non-R cached card with the like word' };
+      found.btn.click();
+      return { ok: true, id: found.id };
+    })()`, true);
+    const likePressed = likePress?.ok === true;
+    const target = likePressed ? { id: likePress.id } : null;
+    if (likePressed) w2CardLikedId = likePress.id;
+    if (likePressed) await sleep(2000);
     // A root post from the composer — the "new post" button is in the
     // feed-head and renders even under error (feed-head is drawn before
-    // the error-return in `renderFeedInto`).
+    // the error-return in `renderFeedInto`). Each lookup reports what
+    // it did instead of throwing when an element is missing — a red
+    // then names the element the harness failed on, not a stack.
     w2PostContent = 'ww-waiting-post-' + Date.now();
-    await w2Cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
-    await w2Cx.waitFor(`document.querySelector('.composer textarea')`, 'composer opened W2', 15000);
-    await w2Cx.eval(`(() => {
-      const ta = document.querySelector('.composer textarea');
-      ta.value = ${JSON.stringify(w2PostContent)};
-      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    const composerOpened = await w2Cx.eval(`(() => {
+      const b = document.querySelector('[data-composer-open="@feed"]');
+      if (b === null) return false;
+      b.click();
+      return true;
     })()`, true);
-    await w2Cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer post enabled W2', 30000);
-    await w2Cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
+    let composerReady = false;
+    if (composerOpened === true) {
+      composerReady = await w2Cx.waitFor(`document.querySelector('.composer textarea')`, 'composer opened W2', 15000)
+        .then(() => true, () => false);
+    }
+    let composerFilled = false;
+    if (composerReady) {
+      composerFilled = await w2Cx.eval(`(() => {
+        const ta = document.querySelector('.composer textarea');
+        if (ta === null) return false;
+        ta.value = ${JSON.stringify(w2PostContent)};
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      })()`, true) === true;
+    }
+    let postBtnEnabled = false;
+    if (composerFilled) {
+      postBtnEnabled = await w2Cx.waitFor(
+        `(() => { const b = document.querySelector('.composer .btn-primary'); return b !== null && !b.disabled; })()`,
+        'composer post enabled W2', 30000,
+      ).then(() => true, () => false);
+    }
+    let postBtnClicked = false;
+    if (postBtnEnabled) {
+      postBtnClicked = await w2Cx.eval(`(() => {
+        const b = document.querySelector('.composer .btn-primary');
+        if (b === null) return false;
+        b.click();
+        return true;
+      })()`, true) === true;
+    }
     // Give the submit flow time to run: signRun -> write attempt -> waiting.
     // The write proxy to the background takes a tick; silent policy signs
     // through the extension without a prompt window.
@@ -5857,16 +5958,22 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     const forwardedPostsB = w2NewB.filter((e) => e.method === 'POST' && e.edit !== 'down');
 
     // Reload the page; the pending ledger and the waiting store are per-
-    // identity local-storage records, so both entries come back.
+    // identity local-storage records, so both entries come back. The
+    // target id stays the same across `Page.reload`, so `findExt` is
+    // narrowed to w1Page.targetId — a bare `findExt('index.html')`
+    // returns the first match in `/json/list`, which may be the initial
+    // page `main()` opens, and the misidentification would then have
+    // W3's close end `main()`'s page while this page kept running — a
+    // later block's `Page.enable` on the orphan stalls out.
     await w2Cx.call('Page.reload');
     await sleep(3500);
-    const reloadedPage = await findExt('index.html');
+    const reloadedList = await jsonList();
+    const reloadedPage = reloadedList.find((t) => t.id === w1Page.targetId) ?? null;
     let reloadedCx = w2Cx;
     if (reloadedPage?.webSocketDebuggerUrl) {
       try { w2Cx.s.close(); } catch {}
       reloadedCx = await openSession(reloadedPage.webSocketDebuggerUrl);
       w1Page.cx = reloadedCx;
-      w1Page.targetId = reloadedPage.id;
     }
     await reloadedCx.waitFor(`!!document.querySelector('#feed')`, 'feed root W2 after reload', 30000);
     await sleep(2000);
@@ -5897,10 +6004,11 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     const likeWaitingAfterReload = target === null
       || (likeOverlayAfterReload?.present === true && likeOverlayAfterReload?.settled === false);
     const noForwardedPosts = forwardedPostsA.length === 0 && forwardedPostsB.length === 0;
-    const w2Ok = likePressed && postWaiting && likeWaiting
+    const composerStageOk = composerOpened === true && composerReady && composerFilled && postBtnEnabled && postBtnClicked;
+    const w2Ok = likePressed && composerStageOk && postWaiting && likeWaiting
       && postWaitingAfterReload && likeWaitingAfterReload && noForwardedPosts;
     record('W2', w2Ok,
-      `like target=${target !== null ? target.id.slice(0, 8) + '…' : 'none (no cached non-R card with the like word)'}; pressed=${likePressed}; post stage='${postStage}' (expect 'waiting for a node'); like overlay=${JSON.stringify(likeOverlay)} (expect present, not settled); after reload: post stage='${postStageAfterReload}', like overlay=${JSON.stringify(likeOverlayAfterReload)}; forwarded POSTs via RLA=${forwardedPostsA.length} (${forwardedPostsA.map((e) => `${e.method} ${e.url}`).join(', ')}), via RLB=${forwardedPostsB.length} (${forwardedPostsB.map((e) => `${e.method} ${e.url}`).join(', ')}) — expect 0/0 under both relays 'down'`);
+      `like: pressed=${likePressed}, target=${target !== null ? target.id.slice(0, 8) + '…' : `none (${likePress?.reason ?? 'unknown'})`}; composer: opened=${composerOpened}, ready=${composerReady}, filled=${composerFilled}, post-enabled=${postBtnEnabled}, post-clicked=${postBtnClicked}; post stage='${postStage}' (expect 'waiting for a node'); like overlay=${JSON.stringify(likeOverlay)} (expect present, not settled); after reload: post stage='${postStageAfterReload}', like overlay=${JSON.stringify(likeOverlayAfterReload)}; forwarded POSTs via RLA=${forwardedPostsA.length} (${forwardedPostsA.map((e) => `${e.method} ${e.url}`).join(', ')}), via RLB=${forwardedPostsB.length} (${forwardedPostsB.map((e) => `${e.method} ${e.url}`).join(', ')}) — expect 0/0 under both relays 'down'`);
   } catch (e) {
     record('W2', false, `error: ${e?.stack ?? String(e)}`);
   }
@@ -5979,11 +6087,8 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     record('W3', false, `error: ${e?.stack ?? String(e)}`);
   } finally {
     // Clean up W1/W2/W3's page before W4 opens its own fresh one.
-    if (w1Page) {
-      try { w1Page.cx.s.close(); } catch {}
-      await bcx.call('Target.closeTarget', { targetId: w1Page.targetId }).catch(() => {});
-      w1Page = null;
-    }
+    await closeBlockPage(w1Page);
+    w1Page = null;
   }
 
   // ----- W4 — a fresh page under `down` on both relays: two likes pressed
@@ -5995,42 +6100,91 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   // second ends unsent — *not sent: the one before it was refused.*
   // (WEB_INTERFACE → The wallet → "A refusal ends what it strands") —
   // with no POST for it going out.
+  let w4Page = null;
   try {
     setBothRelayModes('down');
     const w4LogAIdx = tipRelays.a.log.length;
     const w4LogBIdx = tipRelays.b.log.length;
-    const w4Page = await openFreshExtensionPage(bcx);
+    w4Page = trackPage(await openFreshExtensionPage(bcx));
     const w4Cx = w4Page.cx;
     try {
       await w4Cx.waitFor(`!!document.querySelector('#feed')`, 'feed root W4', 30000);
-      // Two targets the reader has not liked — cards that carry the `like`
-      // word under the author's non-R key. Under `down` the feed renders
-      // what the cache fallback puts on it; where the cache fallback does
-      // not reach the DOM, `pressable` is empty and the record names why.
-      const pressable = await w4Cx.eval(`(() => {
-        const my = ${JSON.stringify(R_JSON.pubKeyHex)};
-        const cards = [...document.querySelectorAll('#feed .card[data-post-id]')];
-        return cards
-          .filter((c) => c.getAttribute('data-author') !== my)
-          .map((c) => ({ id: c.getAttribute('data-post-id'), hasLike: [...c.querySelectorAll('button.word')].some((b) => (b.textContent ?? '').trim() === 'like') }))
-          .filter((x) => x.hasLike);
+      // Two targets R has not liked — cards that carry the `like` word,
+      // taken from anywhere in the page, not just the feed: a card
+      // renders no data-author (`src/view/card.ts`), so non-R is tested
+      // against `prepRRootIds`, and the picker's net is widened over
+      // `#feed` and any open pane. The feed alone may hold one non-R
+      // unliked root (step 4 liked the other); a thread opened on the
+      // W4 page draws its cached replies (the prep populated them),
+      // and non-R replies become targets too. The picker walks the
+      // cached non-R roots trying each thread until two likes stand
+      // or every root is tried.
+      const pickPressable = async () => w4Cx.eval(`(() => {
+        const rRoots = new Set(${JSON.stringify(prepRRootIds)});
+        const cards = [...document.querySelectorAll('.card[data-post-id]')];
+        const seen = new Set();
+        const pressable = [];
+        for (const c of cards) {
+          const id = c.getAttribute('data-post-id');
+          if (id === null || seen.has(id)) continue;
+          if (rRoots.has(id)) continue;
+          const likeBtn = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
+          if (likeBtn === null) continue;
+          seen.add(id);
+          pressable.push({ id });
+        }
+        return pressable;
       })()`);
+      let pressable = await pickPressable();
+      if (pressable.length < 2) {
+        // Try opening each cached root's thread in turn: the cache's
+        // replies draw beneath the pane's error line (the fallback for
+        // a thread the cache holds, under `down`). Break as soon as
+        // the picker reaches two.
+        const roots = await w4Cx.eval(`(() => {
+          const cached = new Set(${JSON.stringify(prepCachedIds)});
+          return [...document.querySelectorAll('#feed .card[data-post-id]')]
+            .map((c) => c.getAttribute('data-post-id'))
+            .filter((id) => id !== null && cached.has(id));
+        })()`);
+        for (const rootId of (roots ?? [])) {
+          try {
+            await w4Cx.eval(`(() => {
+              const c = document.querySelector('#feed [data-post-id="${rootId}"]');
+              const s = c?.querySelector('button.strip');
+              if (s === null || s === undefined) return false;
+              s.click();
+              return true;
+            })()`, true);
+          } catch {}
+          await sleep(2500);
+          pressable = await pickPressable();
+          if (pressable.length >= 2) break;
+        }
+      }
+      // Press each pick in one eval that re-finds the card and its `like`
+      // word under the id — the DOM may redraw between the picker and
+      // the press, so each click does its own lookup.
+      const pressLike = async (id) => w4Cx.eval(`(() => {
+        const c = document.querySelector('[data-post-id="${id}"]');
+        if (c === null) return false;
+        const b = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
+        if (b === null || b === undefined) return false;
+        b.click();
+        return true;
+      })()`, true);
       let firstLikeId = null;
+      let firstPressed = false;
       let secondLikeId = null;
+      let secondPressed = false;
       if (pressable.length >= 1) {
         firstLikeId = pressable[0].id;
-        await w4Cx.eval(`(() => {
-          const c = document.querySelector('[data-post-id="${pressable[0].id}"]');
-          [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like').click();
-        })()`, true);
+        firstPressed = await pressLike(firstLikeId) === true;
         await sleep(2000);
       }
       if (pressable.length >= 2) {
         secondLikeId = pressable[1].id;
-        await w4Cx.eval(`(() => {
-          const c = document.querySelector('[data-post-id="${pressable[1].id}"]');
-          [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like').click();
-        })()`, true);
+        secondPressed = await pressLike(secondLikeId) === true;
         await sleep(2000);
       }
       // Replace R's karma box on the chain through the node's HTTP write
@@ -6071,17 +6225,21 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
         // the rejection; the second like's forward never leaves (the
         // write is stranded).
         firstLikeForwarded = merged.length;
-        // A rejection landed in the feed as the card's report line.
-        rejectionLine = await w4Cx.eval(`(() => {
-          const c = document.querySelector('[data-post-id="${firstLikeId ?? ''}"]');
-          if (c === null) return null;
-          return c.querySelector('.report')?.textContent ?? null;
-        })()`).catch(() => null);
-        strandedLine = secondLikeId === null ? null : await w4Cx.eval(`(() => {
-          const c = document.querySelector('[data-post-id="${secondLikeId}"]');
-          if (c === null) return null;
-          return c.querySelector('.report')?.textContent ?? null;
-        })()`).catch(() => null);
+        // A like's rejection lands in the report line of every list that
+        // holds the post (`src/app.ts` → `applyRejectedOutcome` →
+        // `setReportForPost`): the feed's `#feed > .report` when the
+        // feed holds it, and a column's `.region > .report` when a
+        // thread the post is in is in front. Not inside the card.
+        const reportLines = await w4Cx.eval(`(() => {
+          const feedRep = document.querySelector('#feed > .report')?.textContent ?? null;
+          const colReps = [...document.querySelectorAll('#panes .region > .report')].map((r) => r.textContent ?? null);
+          return { feed: feedRep, columns: colReps };
+        })()`).catch(() => ({ feed: null, columns: [] }));
+        const allReportTexts = [reportLines?.feed ?? null, ...(reportLines?.columns ?? [])]
+          .filter((s) => typeof s === 'string' && s.trim() !== '');
+        rejectionLine = allReportTexts.find((s) => s.includes('like rejected') || s.includes('not sent'))
+          ?? allReportTexts[0] ?? null;
+        strandedLine = allReportTexts.find((s) => s.includes('not sent: the one before it was refused')) ?? null;
         if (firstLikeForwarded >= 1 && rejectionLine !== null && (secondLikeId === null || strandedLine !== null)) break;
         await sleep(1500);
       }
@@ -6097,21 +6255,30 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       const strandedTextOk = secondLikeId === null
         || (typeof strandedLine === 'string' && strandedLine.includes('not sent: the one before it was refused'));
       const firstRefused = typeof rejectionLine === 'string' && rejectionLine.trim() !== '';
-      const w4Ok = spent.ok && replaced !== null && firstLikeForwarded >= 1 && firstRefused && strandedTextOk && secondLikeForwarded === 0;
+      const twoPressed = firstPressed && secondPressed;
+      const w4Ok = spent.ok && replaced !== null && twoPressed && firstLikeForwarded >= 1 && firstRefused && strandedTextOk && secondLikeForwarded === 0;
       record('W4', w4Ok,
-        `pressable likes in feed=${pressable.length} (≥2 expected); outside spend status=${spent.status ?? spent.reason}; preFirstBoxId=${(preFirstBoxId ?? '').slice(0, 12)}…; R's karma box replaced=${replaced !== null} (new boxId=${(replaced ?? '').slice(0, 12)}…); first like forwarded POST count=${firstLikeForwarded} (≥1 expected); first like's rejection line=${JSON.stringify(rejectionLine)} (non-empty expected); second like forwarded POST count=${secondLikeForwarded} (0 expected — stranded); second like's stranding line=${JSON.stringify(strandedLine)} (expect 'not sent: the one before it was refused.')`);
+        `pressable cards=${pressable.length} (≥2 expected); first pressed=${firstPressed} (id=${(firstLikeId ?? '').slice(0, 8)}…), second pressed=${secondPressed} (id=${(secondLikeId ?? '').slice(0, 8)}…); outside spend status=${spent.status ?? spent.reason}; preFirstBoxId=${(preFirstBoxId ?? '').slice(0, 12)}…; R's karma box replaced=${replaced !== null} (new boxId=${(replaced ?? '').slice(0, 12)}…); first like forwarded POST count=${firstLikeForwarded} (≥1 expected); first like's rejection line=${JSON.stringify(rejectionLine)} (non-empty expected); second like forwarded POST count=${secondLikeForwarded} (0 expected — stranded); second like's stranding line=${JSON.stringify(strandedLine)} (expect 'not sent: the one before it was refused.')`);
     } finally {
-      try { w4Cx.s.close(); } catch {}
-      await bcx.call('Target.closeTarget', { targetId: w4Page.targetId }).catch(() => {});
+      await closeBlockPage(w4Page);
     }
   } catch (e) {
     record('W4', false, `error: ${e?.stack ?? String(e)}`);
+  }
   } finally {
-    // Clean every step up: relays back to `honest`, previous log entries
-    // left in place — the record's own slice is what the block's own
-    // steps read.
+    // Every path through the block ends with: relays back to `honest`,
+    // and every page the block opened closed. A step that threw past
+    // its own close would leave its target in `/json/list`, and a
+    // later block's `findExt` could return the orphan — opening a CDP
+    // session on an orphan the browser has detached stalls out on
+    // `Page.enable` until the 60 s wall. `void prevLogA` / `prevLogB`
+    // keeps the two snapshots in place for a debug read of the block's
+    // own entries.
     setBothRelayModes('honest');
-    void prevLogA; void prevLogB; // kept for the record's debug reads
+    void prevLogA; void prevLogB;
+    for (const p of [...blockPages]) {
+      await closeBlockPage(p);
+    }
   }
 }
 
