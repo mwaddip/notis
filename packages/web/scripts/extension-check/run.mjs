@@ -7239,6 +7239,19 @@ async function waitForAppliedBlockInLog(logPath, sinceOffset, ms = 180000) {
   return false;
 }
 
+// `GET /blocks/current` of a node as `{height, hash}` or null; a height-0
+// chain reads `{height: 0, hash: null}` (`NODE_INTERFACE → Blocks` —
+// `/blocks/current`).
+async function currentTip(origin) {
+  try {
+    const r = await fetch(`${origin}/blocks/current`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (typeof j.height !== 'number') return null;
+    return { height: j.height, hash: typeof j.hash === 'string' ? j.hash : null };
+  } catch { return null; }
+}
+
 // The webrtc-direct multiaddr in the identity line's `multiaddrs` that
 // names the node's own mesh listen port — the one an anchor's `addrs`
 // entry carries (`MESH_INTERFACE → Discovery → "A node added by hand"`,
@@ -7670,6 +7683,39 @@ async function runMeshStepM4(bcx) {
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     })()`, true);
     await page.cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer post enabled', 30000);
+    // A write walks the client's order for the tip (`MESH_INTERFACE → The
+    // client's node list → "A write goes to one node at a time"`), `ok`
+    // nodes only: a node a block behind (`trailing`) is not in the order.
+    // Both A' and B' must stand at A's own tip at the press — height and
+    // hash — so each is `ok` when the client's order reads them. Poll
+    // until all three match, then press at once: the recipe's miner is
+    // paused 40 s in every 43, so a write made right after both reach a
+    // fresh block has the 10 s hold and the resend inside a quiet window.
+    const pressTips = await (async () => {
+      const t0 = Date.now();
+      let last = { a: null, apTip: null, bpTip: null };
+      while (Date.now() - t0 < 120000) {
+        const a = await currentTip(NODE);
+        if (a !== null && a.height > 0 && a.hash !== null) {
+          const [apTip, bpTip] = await Promise.all([
+            currentTip(`http://127.0.0.1:${AP_ALT_HTTP_PORT}`),
+            currentTip(BP_ORIGIN),
+          ]);
+          last = { a, apTip, bpTip };
+          if (apTip !== null && bpTip !== null
+              && apTip.height === a.height && apTip.hash === a.hash
+              && bpTip.height === a.height && bpTip.hash === a.hash) {
+            return { ok: true, ...last };
+          }
+        }
+        await sleep(200);
+      }
+      return { ok: false, ...last };
+    })();
+    if (!pressTips.ok) {
+      throw new Error(`M4: A' and B' did not reach A's tip within 120 s before the composer press — A=${pressTips.a?.height ?? '?'}/${pressTips.a?.hash?.slice(0, 16) ?? '?'}…, A'=${pressTips.apTip?.height ?? '?'}/${pressTips.apTip?.hash?.slice(0, 16) ?? '?'}…, B'=${pressTips.bpTip?.height ?? '?'}/${pressTips.bpTip?.hash?.slice(0, 16) ?? '?'}…`);
+    }
+    console.log(`[vm] M4 press: A=${pressTips.a.height}/${pressTips.a.hash.slice(0, 16)}…, A'=${pressTips.apTip.height}/${pressTips.apTip.hash.slice(0, 16)}…, B'=${pressTips.bpTip.height}/${pressTips.bpTip.hash.slice(0, 16)}…`);
     await page.cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
     // While the first POST is held, the card reads pending. On the retry,
     // the same bytes reach B' and land there, then propagate to A'.
@@ -7703,7 +7749,7 @@ async function runMeshStepM4(bcx) {
     const rejected = await page.cx.eval(`!!document.querySelector('.card.rejected') || document.body.textContent.includes('refused')`).catch(() => false);
     record('M4',
       landed.landed && heldOnce && pendingSeen && !rejected,
-      `post lands once on each node (A'=${landed.inA}, B'=${landed.inB}, expect 1/1), relay held POSTs=${m4Relay.log.filter((l) => l.edit === 'hold-posts').length} (expect 1), pending card seen=${pendingSeen}, rejected=${rejected} (expect false — MESH_INTERFACE → The client's node list → "A write goes to one node at a time", WEB_INTERFACE → The extension → "Nothing retries a rejection"'s **A send that ends with no answer is no rejection**)`);
+      `at the press A=${pressTips.a.height}/${pressTips.a.hash.slice(0, 16)}…, A'=${pressTips.apTip.height}/${pressTips.apTip.hash.slice(0, 16)}…, B'=${pressTips.bpTip.height}/${pressTips.bpTip.hash.slice(0, 16)}…; post lands once on each node (A'=${landed.inA}, B'=${landed.inB}, expect 1/1), relay held POSTs=${m4Relay.log.filter((l) => l.edit === 'hold-posts').length} (expect 1), pending card seen=${pendingSeen}, rejected=${rejected} (expect false — MESH_INTERFACE → The client's node list → "A write goes to one node at a time", WEB_INTERFACE → The extension → "Nothing retries a rejection"'s **A send that ends with no answer is no rejection**)`);
     // Clean the relay away — it fronted AP_HTTP_PORT, and leaving it up
     // after M4 would block a subsequent block's A' from reclaiming that
     // port.
