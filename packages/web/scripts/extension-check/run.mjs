@@ -5365,11 +5365,17 @@ async function runNamesStep30(rName) {
 // shell's seed list reaches each at its api base alone — and switches both
 // relays' modes between steps the same way the verified blocks do.
 //
-//   W1 — a fresh page under `down` on both relays: the feed and R's
-//        author-posts window each read a transport failure on their first
-//        page; the cache fallback draws the roots the earlier steps
-//        populated beneath the error line, no `more` / `load older`
-//        control.
+//   W1 — the verified-tip block's 19c and 19b seated D's chain in the post
+//        cache (WEB_INTERFACE → The extension → "The post cache" — "One
+//        chain's database at a time": opening another closes every
+//        previous), so the block first re-reads A's chain with both relays
+//        `honest` and D gone: a fresh page whose corner settles on A's
+//        tip and whose feed draws A's roots into the cache, then closed.
+//        Then a second fresh page under `down` on both relays: the feed
+//        and R's author-posts window each read a transport failure on
+//        their first page; the cache fallback draws the roots the
+//        re-read populated beneath the error line, no `more` / `load
+//        older` control.
 //   W2 — the same page, relays still `down`: a like on a cached card the
 //        reader has not liked, and a root post from the composer. Each
 //        waits — the post's pending card and the like's muted overlay both
@@ -5534,11 +5540,98 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     return;
   }
 
-  // ----- W1 — a fresh page under `down` on both relays. The feed and R's
-  // author-posts window each read a transport failure on their first page.
-  // The contract (WEB_INTERFACE → The extension → "A failed listing draws
-  // the cache") says cached roots stand beneath the error line with no next
-  // page.
+  // ----- Preparation — the verified-tip block's 19c and 19b seated D's
+  // chain (WEB_INTERFACE → The extension → "The post cache" — "One chain's
+  // database at a time": opening another closes every previous), so the
+  // remembered chain is D's and its cache is empty. With both tip relays
+  // honest and D gone (the verified-tip block's cleanup stops it), open a
+  // fresh page: its tip run re-seats A's chain and the feed's reads write
+  // A's roots into the cache as it draws them. The chain's name is
+  // non-null under `verified` and under `thin` alike — "naming a chain
+  // takes a proof that verifies, not a second witness" (→ "The chain's
+  // name") — so the seat lands whether the second relay's upstream
+  // answers or not. A thread-strip press on one of the drawn cards
+  // widens the cache's parent-with-child set for W4's targets where the
+  // feed alone would be thin.
+  setBothRelayModes('honest');
+  const prepDGone = (await currentHeight(D_ORIGIN)) === null;
+  const prepABlock1 = await block1HashOn(NODE);
+  const prepExpectedDb = typeof prepABlock1 === 'string' && /^[0-9a-f]{64}$/i.test(prepABlock1)
+    ? 'notis.posts.' + prepABlock1.toLowerCase()
+    : null;
+  let prepChainDb = null;
+  let prepCards = 0;
+  let prepCornerTitle = null;
+  let prepThreadOpened = false;
+  let prepError = null;
+  let prepPage = null;
+  try {
+    prepPage = await openFreshExtensionPage(bcx);
+    const pCx = prepPage.cx;
+    await pCx.waitFor(`!!document.querySelector('#feed')`, 'feed root prep', 30000);
+    // Wait for the corner's tip run to settle — the title names a tip once
+    // the client's chain is seated. Either shape is acceptable: step 17's
+    // "verified across N nodes · tip N" (both relays' upstreams answered)
+    // or step 18's "only one node could be checked · tip N" (B is down
+    // after the verified-tip block's cleanup). Each seats the chain.
+    const reached = await waitForCornerState(
+      pCx,
+      (c) => (c.ledClass === 'led fresh' || c.ledClass === 'led thin')
+        && / tip \d+$/.test(c.title ?? ''),
+      'corner seated on A\'s chain (verified across N nodes · tip N, or only one node could be checked · tip N)',
+      90000,
+    );
+    prepCornerTitle = reached.last?.title ?? null;
+    // Wait for the feed to draw at least one card; the cache stores each
+    // bound row as the feed reads it (→ "The post cache" — "Only `bound`
+    // rows enter"). With no card the cache stays empty and W1 falls back
+    // to the error line alone.
+    await pCx.waitFor(
+      `document.querySelectorAll('#feed .card[data-post-id]').length >= 1`,
+      'feed cards prep', 60000,
+    ).catch(() => {});
+    prepCards = await pCx.eval(`document.querySelectorAll('#feed .card[data-post-id]').length`);
+    // Press one card's thread strip open so the cache holds a thread's
+    // parent beside a drawn child — W4's targets want more than one
+    // non-R card the reader has not liked, and a thread read brings in
+    // the children of the pressed root.
+    try {
+      const opened = await pCx.eval(`(() => {
+        const c = document.querySelector('#feed .card[data-post-id]');
+        if (c === null) return false;
+        const s = c.querySelector('button.strip');
+        if (s === null) return false;
+        s.click();
+        return true;
+      })()`, true);
+      if (opened === true) {
+        prepThreadOpened = true;
+        await sleep(2500);
+      }
+    } catch {}
+    // Read the chain the cache opened under — one `notis.posts.<chain>`
+    // database at the page's origin; the remembered chain in
+    // localStorage names the same.
+    const chainDbs = await pCx.eval(`(async () => {
+      if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return null;
+      const dbs = await indexedDB.databases();
+      return dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
+    })()`);
+    prepChainDb = Array.isArray(chainDbs) && chainDbs.length > 0 ? chainDbs[0] : null;
+  } catch (e) {
+    prepError = e?.stack ?? String(e);
+  } finally {
+    if (prepPage) {
+      try { prepPage.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: prepPage.targetId }).catch(() => {});
+    }
+  }
+
+  // ----- W1 — a second fresh page under `down` on both relays. The feed and
+  // R's author-posts window each read a transport failure on their first
+  // page. The contract (WEB_INTERFACE → The extension → "A failed listing
+  // draws the cache") says cached roots stand beneath the error line with
+  // no next page.
   setBothRelayModes('down');
   // Clear each relay's log so forwarded-POST assertions in later steps read
   // only what this block produced; the previous blocks' entries are kept
@@ -5618,7 +5711,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     const feedPass = errorPresent === true && feedCards >= 1 && feedLoadOlder === false;
     const authorPass = authorOpened && authorErrorPresent === true && authorCards >= 1 && authorMoreBtn === false;
     w1Ok = feedPass && authorPass;
-    w1Detail = `feed: error=${errorPresent} (${JSON.stringify(feedStateSnapshot.error)}), cards=${feedStateSnapshot.cards} (≥1 expected), load-older=${feedLoadOlder} (false expected); author-posts: opened=${authorOpened}, error=${authorErrorPresent}, cards=${authorCards} (≥1 expected), more=${authorMoreBtn} (false expected)`;
+    w1Detail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), cards=${prepCards}, thread-opened=${prepThreadOpened}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}; feed: error=${errorPresent} (${JSON.stringify(feedStateSnapshot.error)}), cards=${feedStateSnapshot.cards} (≥1 expected), load-older=${feedLoadOlder} (false expected); author-posts: opened=${authorOpened}, error=${authorErrorPresent}, cards=${authorCards} (≥1 expected), more=${authorMoreBtn} (false expected)`;
     record('W1', w1Ok, w1Detail);
   } catch (e) {
     record('W1', false, `error: ${e?.stack ?? String(e)}`);
