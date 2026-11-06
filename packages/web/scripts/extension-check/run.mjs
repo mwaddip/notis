@@ -7212,6 +7212,33 @@ async function waitForOutboundHandshakeInLog(logPath, peerId, sinceOffset, ms = 
   return false;
 }
 
+// Wait for a node's log to carry an `Applied ordering block height=…` line
+// past the restart offset — the one `announceAppliedBlock` writes per
+// applied block (`packages/node/src/services/block-apply.ts`). The restart's
+// pull-sync catches the node up to the tip A announced at handshake and
+// fires its `sync_complete` before any newer block lands; a subsequent
+// block A mines reaches this node through gossip, because a peer whose
+// handshake completed is not yet a gossip peer — the router's subscription
+// exchange and mesh follow the connection (`NET_INTERFACE → Postconditions`
+// — "Connected to bootstrap peers, handshake exchanged, and meshed on all
+// subscribed gossip topics"; `NET_INTERFACE → Gossip Topics`). So the
+// first applied line past the restart offset proves this node's router
+// exchanges the ordering-block topic with A, and a write it admits next
+// relays to A through that mesh (`NET_INTERFACE → Forwarding Rule`).
+// Returns true on match, false on timeout.
+async function waitForAppliedBlockInLog(logPath, sinceOffset, ms = 180000) {
+  const needle = 'Applied ordering block height=';
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const data = readFileSync(logPath, 'utf8');
+      if (data.length > sinceOffset && data.slice(sinceOffset).includes(needle)) return true;
+    } catch {}
+    await sleep(500);
+  }
+  return false;
+}
+
 // The webrtc-direct multiaddr in the identity line's `multiaddrs` that
 // names the node's own mesh listen port — the one an anchor's `addrs`
 // entry carries (`MESH_INTERFACE → Discovery → "A node added by hand"`,
@@ -7482,6 +7509,20 @@ async function runMeshStepM3(bcx) {
     if (!apHandshakeWithA) throw new Error(`A' did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M3 restart`);
     const bpHandshakeWithA = await waitForOutboundHandshakeInLog(bpLog, aPeerId, bpLogOff, 180000);
     if (!bpHandshakeWithA) throw new Error(`B' did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M3 restart`);
+    // The handshake is not the signal a write can be carried: a peer whose
+    // handshake completed is not yet a gossip peer — the router's
+    // subscription exchange and mesh follow the connection
+    // (`NET_INTERFACE → Postconditions`; `NET_INTERFACE → Gossip Topics`).
+    // So wait for an `Applied ordering block height=` line on each node's
+    // log past the restart offset: a block A mined after this node's
+    // restart has reached it, which can only happen once their gossipsub
+    // routers mesh on the ordering-block topic — so a write this node
+    // admits next relays to A through that same mesh
+    // (`NET_INTERFACE → Forwarding Rule`).
+    const apGossipedBlock = await waitForAppliedBlockInLog(apLog, apLogOff, 180000);
+    if (!apGossipedBlock) throw new Error(`A' did not receive a gossiped ordering block from A within 180 s after M3 restart (the handshake completed but gossip mesh did not form)`);
+    const bpGossipedBlock = await waitForAppliedBlockInLog(bpLog, bpLogOff, 180000);
+    if (!bpGossipedBlock) throw new Error(`B' did not receive a gossiped ordering block from A within 180 s after M3 restart (the handshake completed but gossip mesh did not form)`);
 
     page = await openFreshExtensionPage(bcx);
     await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m3', 30000);
@@ -7588,6 +7629,18 @@ async function runMeshStepM4(bcx) {
     if (!apHandshakeWithA) throw new Error(`ap-m4 did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M4 restart`);
     const bpHandshakeWithA = await waitForOutboundHandshakeInLog(bpLog, aPeerId, bpLogOff, 180000);
     if (!bpHandshakeWithA) throw new Error(`B' did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M4 restart`);
+    // Same wait as M3 (`Applied ordering block height=` past the restart
+    // offset): a peer whose handshake completed is not yet a gossip peer
+    // (`NET_INTERFACE → Postconditions`; `NET_INTERFACE → Gossip Topics`),
+    // and a write a plain node admits only relays to A over gossip
+    // (`NET_INTERFACE → Forwarding Rule`). Both nodes run without
+    // `MESH_ROLE`, which gates the mesh (WebRTC-direct and its readers)
+    // and not standard gossipsub: the ordering-block topic is subscribed
+    // either way.
+    const apGossipedBlock = await waitForAppliedBlockInLog(apM4Log, apM4LogOff, 180000);
+    if (!apGossipedBlock) throw new Error(`ap-m4 did not receive a gossiped ordering block from A within 180 s after M4 restart (the handshake completed but gossip mesh did not form)`);
+    const bpGossipedBlock = await waitForAppliedBlockInLog(bpLog, bpLogOff, 180000);
+    if (!bpGossipedBlock) throw new Error(`B' did not receive a gossiped ordering block from A within 180 s after M4 restart (the handshake completed but gossip mesh did not form)`);
     // The tip relay on AP_HTTP_PORT with A''s alt HTTP as upstream — the
     // build's api for A' still names AP_ORIGIN, so every client read of
     // A''s HTTP base routes through this relay. `hold-posts` holds POST
