@@ -1719,9 +1719,9 @@ records its write under one lock per identity (`navigator.locks`), so two pages 
 first's change. A record that does not parse is dropped alone. A waiting write of a key not loaded stays stored, and
 goes out when that key is loaded and a node answers.
 
-**Waiting writes go out at the first answer.** At the corner's 15-second read a node answers (→ The status corner),
-at a feed's first page a node answers, and at every verified tip run that names a new chain — once the client's verified
-tip has named the chain — the page sends each ledger's waiting writes in the order they were made, one at a time, by the
+**Waiting writes go out at the first answer.** At every corner read a node answers (→ The status corner), at every
+first page of the feed a node answers, and at a verified tip run that names a new chain — once the client's verified tip
+has named the chain — the page sends each ledger's waiting writes in the order they were made, one at a time, by the
 write rule (→ The extension → "The mesh is the extension's first path"), the first answer of any status each one's; a
 send that again reaches no node leaves it, and those after it, waiting. A ledger's pass runs as a spend in that ledger's queue (→ "The reader's spends run one at a time, per
 ledger"), one page sends at a time under a lock, and every page sends every waiting write of the loaded identity,
