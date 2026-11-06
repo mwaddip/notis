@@ -4286,11 +4286,20 @@ const NAME_LABEL_ARMS = [
     // Another name on R's rows: the label's lookup names R's real box, whose
     // name is not the row's — unproven, clay wherever a row carries it. The
     // header reads R's own name from /usernames?owner=, answered as served —
-    // ink, as every handle drawn from that answer is.
+    // ink, as every handle drawn from that answer is. Back to honest: the feed
+    // listing is not refetched by a corner press, so its rows still carry the
+    // lie label; a name check on (R, renameTo) reads `none` against the honest
+    // /usernames/<renameTo> 404 and stays clay (→ "The verified names": a lie
+    // a check catches reads clay), while handles drawn from the own-name read
+    // stay ink (that route the lie never touched).
     step: '27a',
     mode: 'label-rename',
     presses: 0,
     relayOk: (r, { rName, renameTo }) => r.header !== null && r.header.handle && r.header.text === '@' + rName && !r.header.clay
+      && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + renameTo && c.clay)
+      && r.handles.every((h) => (h.text === '@' + renameTo && h.clay) || (h.text === '@' + rName && !h.clay))
+      && r.otherClay.length === 0,
+    backOk: (r, { rName, renameTo }) => r.header !== null && r.header.handle && r.header.text === '@' + rName && !r.header.clay
       && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + renameTo && c.clay)
       && r.handles.every((h) => (h.text === '@' + renameTo && h.clay) || (h.text === '@' + rName && !h.clay))
       && r.otherClay.length === 0,
@@ -4300,7 +4309,10 @@ const NAME_LABEL_ARMS = [
     // every handle a row draws. The App's own-name read falls to the same 404,
     // so the header draws R's key prefix in mono: no handle to turn clay — the
     // omission the rule leaves uncaught (→ "The verified names": a node that
-    // shows a key bare is not caught).
+    // shows a key bare is not caught; omission is what reading both nodes as a
+    // union is for). Back to honest: the own-name read is not retried and the
+    // header stays bare, while the next name check on (R, R's name) proves
+    // against the honest lookup and the feed rows and their handles flip ink.
     step: '27b',
     mode: 'owner-404',
     presses: 0,
@@ -4309,11 +4321,18 @@ const NAME_LABEL_ARMS = [
       && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + rName && c.clay)
       && r.handles.every((h) => h.text === '@' + rName && h.clay)
       && r.otherClay.length === 0,
+    backOk: (r, { rKey, rName }) => r.header !== null && !r.header.handle && r.header.mono && !r.header.clay
+      && r.header.text === rKey.slice(0, 16) + '…'
+      && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + rName && !c.clay)
+      && r.handles.every((h) => h.text === '@' + rName && !h.clay)
+      && r.otherClay.length === 0,
   },
   {
     // A box the chain does not hold — absent, clay on every handle of R's, the
     // header's among them; the corner pressed again while a block landing
-    // inside a check leaves the pair unchecked, up to five presses.
+    // inside a check leaves the pair unchecked, up to five presses. Back to
+    // honest: /usernames?owner=R returns R's real box at the next check and
+    // every pair flips ink.
     step: '27c',
     mode: 'owner-fakebox',
     presses: 5,
@@ -4321,6 +4340,7 @@ const NAME_LABEL_ARMS = [
       && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + rName && c.clay)
       && r.handles.length > 0 && r.handles.every((h) => h.text === '@' + rName && h.clay)
       && r.otherClay.length === 0,
+    backOk: (r, { rName }) => honestNames(r, rName),
   },
 ];
 
@@ -4451,10 +4471,11 @@ async function runNameLabelArm(bcx, relays, arm, ctx) {
     const asked = runs.filter((r) => r.why === 'asked').length;
     const pageTipProofs = proofRequestsSince(fcx.events, changeIdx).length;
 
-    // (4) Relays back to `honest`; R's handles in ink once the next name
-    // checks run.
+    // (4) Relays back to `honest`; R's handles read against the arm's
+    // `backOk` once the next name checks run (routed reads keep the lie's
+    // listing on the surfaces whose rows the corner press does not refetch).
     for (const r of relays) r.mode = 'honest';
-    const back = await honestNamesRead(fcx, ctx);
+    const back = await honestNamesRead(fcx, ctx, arm.backOk);
     const renamed = relays.reduce((s, r) => s + r.renamed, 0) - renamedBefore;
     record(arm.step, verified && relayOk && cornerOk && back.ok,
       `relays ${arm.mode} edits=${edits} (${relays.map((r, i) => `${r.origin}: ${r.edits[arm.mode] - editsBefore[i]}`).join(', ')})` +
@@ -4478,9 +4499,12 @@ async function runNameLabelArm(bcx, relays, arm, ctx) {
 }
 
 // Step (4) of a label arm — the relays set back to honest, the corner pressed
-// on the fresh page, and every handle of R's read in ink once the next name
-// checks go quiet.
-async function honestNamesRead(fcx, ctx) {
+// on the fresh page, and R's handles read after the next name checks go quiet.
+// Each arm names its own `backOk`: a listing the corner press does not refetch
+// still carries the lie's label, the own-name read is not retried, and only
+// the pairs a name check runs on can flip — the arm's `backOk` says which of
+// those flip ink and which stay clay (→ "The verified names").
+async function honestNamesRead(fcx, ctx, backOk) {
   const blankIdx = fcx.events.length;
   await pressCorner(fcx);
   const reached = await waitForCornerState(fcx, cornerVerified,
@@ -4489,7 +4513,7 @@ async function honestNamesRead(fcx, ctx) {
   const reading = reached.last ?? { ledClass: 'null', title: null };
   const seen = verified ? await readRHandlesQuiet(fcx, blankIdx, ctx.rKey, ctx.rIds) : null;
   return {
-    ok: verified && seen !== null && honestNames(seen.reading, ctx.rName),
+    ok: verified && seen !== null && backOk(seen.reading, ctx),
     detail: `led=${reading.ledClass}, title=${JSON.stringify(reading.title)}, ${seen === null ? 'not read' : rHandlesSeen(seen.reading)}`,
   };
 }
