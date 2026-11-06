@@ -5780,12 +5780,15 @@ The reference miner unit, `packages/node/scripts/dagsocial-miner.service`, carri
 `MINER_PUBKEY` as `Environment=` lines for the operator to fill, and `gen-miner-key.mjs` writes the miner key with
 the process's default mode.
 
-**The packages carry the node and its tools, never the client or the mesh suite.** `scripts/package-excludes.txt`,
-the one exclude list the `.deb`, the tarball and the Windows installer share, leaves out `packages/web` — the web
-client ships as its own zip (→ The node serves no client) — and `tools/e2e`, the test suite. On Windows it is also
-what keeps the installer buildable: Inno Setup follows pnpm's hoisted workspace links, and each link a chain
-crosses lengthens the path, so the deepest path the staged app holds is 270 characters with the two and 242
-without (measured 2026-10-28 under the runner's `D:\a\_temp\notis-stage\app\` prefix) against Windows' 260.
+**The packages carry the node and its tools, never the client, the mesh suite or the mesh stage.**
+`scripts/package-excludes.txt`, the one exclude list the `.deb`, the tarball and the Windows installer share, leaves
+out `packages/web` — the web client ships as its own zip (→ The node serves no client) — `tools/e2e`, the test suite,
+and `tools/mesh-poc`, the mesh's stage and page (`MESH_INTERFACE → Place in the workspace`). On Windows it is also
+what keeps the installer buildable: Inno Setup follows pnpm's hoisted workspace links, and each link a chain crosses
+lengthens the path. With `tools/mesh-poc` staged, its chain through `@dagsocial/web` and `@dagsocial/nipopow-client`
+reaches 275 characters and 133 paths pass 260; without it the deepest is 242, inside `@libp2p/webrtc` (measured
+2026-11-06 on a production install of the staged tree, links followed, under the runner's
+`D:\a\_temp\notis-stage\app\` prefix) against Windows' 260.
 
 **The bundled Node runtime is the one nodejs.org serves.** `scripts/build-tarball.sh` and
 `scripts/windows/build-bundle.ps1` download the build host's Node version from `https://nodejs.org/dist/` over
