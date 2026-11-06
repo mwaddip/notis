@@ -3007,12 +3007,11 @@ the file rather than adding a convention.
 **What must hold is that two chains meant to stand apart never share a payload; what is inside one need
 not be anything more.** The payload is what binds every id of a chain to that chain (→ Mint identity), so the
 three networks' payloads differ, and a reset mints a new one for the network it resets
-(`ARCHITECTURE → Deploy gate → "A reset mints a new genesis proof payload"`). **Testnet's names its release
-line**: the UTF-8 bytes of `dagsocial/testnet/genesis-proof/<major>.<minor>`, the two numbers the root
-`package.json`'s version opens with. `network.test.ts` compares the two, so the minor a reset moves
-(`ARCHITECTURE → Deploy gate → "The release version counts resets and milestones"`) leaves that suite red until
-the payload moves with it — and the payload moves the genesis state root, which the node refuses to start
-without. Mainnet's and devnet's are mock content (user, 2026-08-13). Mainnet has not launched, and real
+(`ARCHITECTURE → Deploy gate → "A reset mints a new genesis proof payload"`). **Testnet's is the UTF-8 bytes of
+`dagsocial/testnet/genesis-proof/0.4`**, the string the 2026-10-28 reset chose and nothing more: its `0.4` names no
+release and no version reads it (`ARCHITECTURE → Deploy gate → "The release version is the repository's, one for
+every distributable"`), and the next reset replaces it with a string no chain has used. The payload moves the genesis
+state root, which the node refuses to start without. Mainnet's and devnet's are mock content (user, 2026-08-13). Mainnet has not launched, and real
 no-premine evidence there is a value change, not a format change. **Devnet's is one value for every run**: a
 devnet chain is a debugging run, a transaction of one resolves on another seeded the same way, and nothing rests
 on its not doing so. This is a fourth entry in the per-network set, whose burden §Network Identity puts on the

@@ -1580,23 +1580,18 @@ package reaches the box.
 **A reset mints a new genesis proof payload.** Every id of a chain descends from mint ids that open with
 its payload (§How the network is committed), so a reset that kept the payload would let the retired
 chain's transactions resolve on the new one. The reset's first act on the profile is therefore a new
-payload, and then the `genesisStateRoot` measured under it. **Testnet's payload names its release line,
-and a `types` case holds the two together** (`TYPES_INTERFACE → Network profiles`): the minor a reset
-moves (→ "The release version counts resets and milestones") leaves `types`' suite red until the payload
-names it, and the node refuses to start until the pinned root is the one seeded under the new payload
-(`NODE_INTERFACE → The genesis state root is checked fail-stop`). What nothing checks is the first link —
-that a release shipping a reset moves the minor. Mainnet has not launched and its payload is mock
-content; devnet's is one value for every run, and a devnet chain holds nothing a replay could take.
+payload, and then the `genesisStateRoot` measured under it: a string no chain has used — testnet's is
+`dagsocial/testnet/genesis-proof/0.4` (`TYPES_INTERFACE → Network profiles`), and it names no release — and the node
+refuses to start until the pinned root is the one seeded under the new payload (`NODE_INTERFACE → The genesis state
+root is checked fail-stop`). Mainnet has not launched and its payload is mock content; devnet's is one value for
+every run, and a devnet chain holds nothing a replay could take.
 
-**The release version counts resets and milestones.** The repository carries one version, the root
-`package.json`'s, and every distributable of a release carries it — the node's packages, the web client's zip
-and the extension (`WEB_INTERFACE → "The client ships as its own product"`). A release that ships a reset moves
-the minor; a milestone release that owes none moves the patch. It is not `protocolVersion`, which the chain
-schedules by height (→ Protocol Versioning) and no release number moves.
-
-> ⚠ **UNENFORCED — verified 2026-10-28.** Nothing checks a bump against this register. The five tags conform:
-> `v0.1.1` and `v0.3.1` shipped without a reset, `v0.2.0` and `v0.3.0` each with one; the 2026-10-28 reset ships as
-> 0.4.0, moving the minor.
+**The release version is the repository's, one for every distributable.** The repository carries one version, the
+root `package.json`'s, and every distributable of a release carries it — the node's packages, the web client's zip
+and the extension (`WEB_INTERFACE → "The client ships as its own product"`). It moves with what the release ships —
+the minor for a feature, the patch for a fix — and with nothing else: a reset is a new genesis proof payload (→ "A
+reset mints a new genesis proof payload"), never a version. It is not `protocolVersion`, which the chain schedules by
+height (→ Protocol Versioning) and no release number moves.
 
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
 >

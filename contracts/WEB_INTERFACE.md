@@ -172,7 +172,8 @@ it was installed with and learns no other. The branch holds the update manifest 
 appends its entry once the signed asset is up. The entry is built, appended and read back through
 `packages/web/extension/update-manifest.mjs`, which takes the id, the minimum and the repository from the signed
 build's own `manifest.json` and restates none of them. The version is the repository's
-(`ARCHITECTURE → Deploy gate → "The release version counts resets and milestones"`), and a number Mozilla has
+(`ARCHITECTURE → Deploy gate → "The release version is the repository's, one for every distributable"`), and a number
+Mozilla has
 seen is spent: a re-publish is the next release.
 
 **The deployment is six tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
