@@ -211,6 +211,144 @@ describe('PendingLedger — persistence and removal', () => {
   });
 });
 
+// WEB_INTERFACE → The wallet → "A write no node answers waits": a waiting
+// entry has no expiry while it waits, and `release` is the one transition
+// into the plain case — the answer carried the answered height or not, the
+// client's own expiry runs from the send.
+describe('a waiting entry', () => {
+  it('restores with no expiry — the ledger ignores the stored height', () => {
+    // A stored waiting entry added at height 10, carrying a bounded height,
+    // restores unbounded.
+    const stored = {
+      txId: 'w1', kind: 'post', postId: 'wp1',
+      submittedAtHeight: 10, expiresAtHeight: 730, waiting: true,
+    };
+    localStorage.setItem(STORE, JSON.stringify([stored]));
+    const [restored] = new PendingLedger(KEY).all();
+    expect(restored?.waiting).toBe(true);
+    expect(restored?.expiresAtHeight).toBe(Number.MAX_SAFE_INTEGER);
+    expect(restored?.submittedAtHeight).toBe(10);
+  });
+
+  it('add holds it unbounded and persists `waiting: true`', () => {
+    const ledger = new PendingLedger(KEY);
+    const held = ledger.add({ txId: 'w2', kind: 'like', postId: 'target1', submittedAtHeight: 5000, expiresAtHeight: undefined, waiting: true });
+    expect(held.expiresAtHeight).toBe(Number.MAX_SAFE_INTEGER);
+    expect(held.waiting).toBe(true);
+    const raw = localStorage.getItem(STORE);
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw!);
+    expect(parsed[0]?.waiting).toBe(true);
+  });
+
+  it('release starts the expiry at the send', () => {
+    const ledger = new PendingLedger(KEY);
+    const held = ledger.add({ txId: 'w3', kind: 'post', postId: 'wp3', submittedAtHeight: 10, expiresAtHeight: undefined, waiting: true });
+    expect(held.waiting).toBe(true);
+    const released = ledger.release('w3', undefined, 900);
+    expect(released).not.toBeNull();
+    expect(released?.submittedAtHeight).toBe(900);
+    expect(released?.expiresAtHeight).toBe(900 + MEMPOOL_EXPIRY_BLOCKS);
+    expect(released?.waiting).toBeUndefined();
+    // The stored row no longer carries `waiting`.
+    const parsed = JSON.parse(localStorage.getItem(STORE)!);
+    expect(parsed[0]?.waiting).toBeUndefined();
+    expect(parsed[0]?.submittedAtHeight).toBe(900);
+    expect(parsed[0]?.expiresAtHeight).toBe(900 + MEMPOOL_EXPIRY_BLOCKS);
+    // A later restore reads it as the plain entry.
+    expect(new PendingLedger(KEY).all()[0]?.waiting).toBeUndefined();
+  });
+
+  it('release takes a block-height answeredExpiry that is sooner than the client\'s bound', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add({ txId: 'w4', kind: 'like', postId: 'target1', submittedAtHeight: 10, expiresAtHeight: undefined, waiting: true });
+    const sooner = 900 + MEMPOOL_EXPIRY_BLOCKS - 1;
+    const released = ledger.release('w4', sooner, 900);
+    expect(released?.expiresAtHeight).toBe(sooner);
+  });
+
+  it('release answers null for an entry that is not waiting', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(postEntry); // a plain post entry
+    expect(ledger.release('t1', undefined, 900)).toBeNull();
+    // The entry is untouched.
+    expect(ledger.all()[0]).toEqual({ ...postEntry, expiresAtHeight: 5720 });
+  });
+
+  it('release answers null for an id the ledger does not hold', () => {
+    const ledger = new PendingLedger(KEY);
+    expect(ledger.release('unknown', undefined, 900)).toBeNull();
+  });
+
+  it('every reconcile answers pending for a waiting entry, before reading anything', () => {
+    // Each case is fed the answer that would land a plain entry — a reconcile
+    // that dropped through to its node-reading step would answer `landed`; the
+    // waiting guard runs first and answers `pending`. The tip is above the
+    // bounded expiry of a plain entry built at the same height, so a reconcile
+    // that dropped through to its tip-passed step would answer `expired`;
+    // under `waiting` the entry has no expiry and the guard still answers
+    // `pending`. The tip is set past the (plain) expiry to prove neither
+    // bound is read.
+    const waitingBase = { submittedAtHeight: 10, expiresAtHeight: Number.MAX_SAFE_INTEGER, waiting: true as const };
+    const TIP_WAY_PAST = 1e9;
+
+    // A post that would be confirmed.
+    const w = { ...postEntry, ...waitingBase };
+    expect(reconcilePost(w, postResult({ status: 'confirmed' }), TIP_WAY_PAST)).toBe('pending');
+    // A like whose row says liked.
+    const w2 = { ...likeEntry, ...waitingBase };
+    expect(reconcileLike(w2, postResult({ likedByViewer: true }), TIP_WAY_PAST)).toBe('pending');
+    // A faucet grant with a /karma showing a box.
+    const w3 = { ...grantEntry, ...waitingBase };
+    expect(reconcileGrant(w3, karmaResult({ boxCount: 1 }), TIP_WAY_PAST)).toBe('pending');
+    // A send whose recipient lists the payment box.
+    const w4: PendingEntry = { ...sendEntry, ...waitingBase };
+    expect(reconcileSend(w4, [{ boxId: PAYMENT_BOX }], TIP_WAY_PAST)).toBe('pending');
+    // A credits grant whose /credits lists the box.
+    const w5 = { ...creditGrantEntry, ...waitingBase };
+    const withBox: CreditsResult = { userId: KEY, total: '10', boxes: [{ boxId: CREDIT_GRANT_BOX, value: '10' }], boxCount: 1, next: null };
+    expect(reconcileCreditGrant(w5, withBox, TIP_WAY_PAST)).toBe('pending');
+    // A vouch whose pair is listed.
+    const w6 = { ...vouchEntry, ...waitingBase };
+    expect(reconcileVouch(w6, [{ targetId: TARGET }], TIP_WAY_PAST)).toBe('pending');
+    // An unvouch whose pair is gone.
+    const w7 = { ...unvouchEntry, ...waitingBase };
+    expect(reconcileUnvouch(w7, [], TIP_WAY_PAST)).toBe('pending');
+    // An invite whose bond is listed.
+    const w8 = { ...inviteEntry, ...waitingBase };
+    expect(reconcileInvite(w8, [{ inviteePublicKey: INVITEE }], TIP_WAY_PAST)).toBe('pending');
+    // A withdrawal whose /posts answers the tombstone.
+    const w9 = { ...withdrawEntry, ...waitingBase };
+    const tomb: WithdrawnJson & { confirmedAuthor: string | null } = {
+      kind: 'withdrawn', id: WITHDRAW_TARGET, author: KEY, withdrawnAtHeight: 5050, parentRefs: [],
+      descendantCount: 0, authorName: null, confirmedAuthor: null, txId: 'ff'.repeat(32),
+    };
+    expect(reconcileWithdraw(w9, tomb, TIP_WAY_PAST)).toBe('pending');
+    // A claim whose /usernames names the right name.
+    const w10 = { ...claimEntry, ...waitingBase };
+    expect(reconcileClaim(w10, { name: 'Alice_01', owner: KEY, boxId: 'x', claimedAtBlock: 5050 }, TIP_WAY_PAST)).toBe('pending');
+    // A burn whose /usernames answers no name.
+    const w11 = { ...burnEntry, ...waitingBase };
+    expect(reconcileBurn(w11, null, TIP_WAY_PAST)).toBe('pending');
+  });
+
+  it('a malformed `waiting` value drops the whole ledger — all or nothing', () => {
+    const good = {
+      txId: 't1', kind: 'post', postId: 'p1',
+      expiresAtHeight: 5720, submittedAtHeight: 5000,
+    };
+    for (const bad of ['true', 1, false, null]) {
+      localStorage.setItem(STORE, JSON.stringify([{ ...good, waiting: bad }]));
+      expect(new PendingLedger(KEY).size, JSON.stringify(bad)).toBe(0);
+    }
+    // `true` loads as waiting; absent loads as plain; both are valid.
+    localStorage.setItem(STORE, JSON.stringify([{ ...good, waiting: true }]));
+    expect(new PendingLedger(KEY).all()[0]?.waiting).toBe(true);
+    localStorage.setItem(STORE, JSON.stringify([good]));
+    expect(new PendingLedger(KEY).all()[0]?.waiting).toBeUndefined();
+  });
+});
+
 describe('reconcile', () => {
   it('a post lands when confirmed, expires on 404 or past the tip, else pending', () => {
     expect(reconcilePost(postEntry, postResult({ status: 'confirmed' }), 5100)).toBe('landed');

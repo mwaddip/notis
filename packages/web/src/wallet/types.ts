@@ -54,7 +54,11 @@ export interface SendRef {
  *  `expiresAtHeight` is the ledger's: that height plus `MEMPOOL_EXPIRY_BLOCKS`,
  *  or the answered height when that is a block height below it (WEB_INTERFACE →
  *  The wallet → "A pending entry's expiry is the client's, and a node's answer
- *  can only bring it sooner"). */
+ *  can only bring it sooner"). `waiting` marks an entry whose write waits for a
+ *  node: a waiting entry has no expiry while it waits, and a node's answer
+ *  brings it out of waiting through `release` (WEB_INTERFACE → The wallet →
+ *  "A write no node answers waits", → "A pending entry's expiry is the client's,
+ *  and a node's answer can only bring it sooner"). */
 export interface PendingEntry {
   txId: string;
   kind: EntryKind;
@@ -62,6 +66,7 @@ export interface PendingEntry {
   send?: SendRef;
   expiresAtHeight: number;
   submittedAtHeight: number;
+  waiting?: true;
 }
 
 /** An entry on its way into the ledger, its `expiresAtHeight` as an answer
