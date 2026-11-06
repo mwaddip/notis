@@ -2590,8 +2590,6 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   (`MESH_INTERFACE → Place in the workspace`), built by tsup beside the client's own vite build, running in the browser
   as written, held by the member's `tsconfig.browser.json` and by the stage page's build, which refuses any Node
   built-in.
-  > ⚠ **AHEAD OF CODE (2026-11-05).** `@dagsocial/web/mesh`; until then the mesh client is `tools/mesh-poc`'s `src/lib.ts` and
-  > `@dagsocial/web` exports nothing.
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in
@@ -2640,9 +2638,10 @@ the repo root and merged into every package's vitest config.
 Six rules govern it:
 
 1. **Uniform across all nine packages** — `types`, `avltree`, `wire`, `validation`, `nipopow`, `consensus`,
-   `net`, `node` and `node-reads`. Aliasing some and not others puts two copies of the same
-   module in one process — one transpiled from `src`, one bundled inside `dist`. `instanceof` fails
-   across that boundary and every module-level singleton exists twice.
+   `net`, `node` and `node-reads` — and the two subpath entries beside them, `@dagsocial/net/browser` to
+   `packages/net/src/browser.ts` and `@dagsocial/web/mesh` to `packages/web/src/mesh/index.ts`. Aliasing some and
+   not others puts two copies of the same module in one process — one transpiled from `src`, one bundled inside
+   `dist`. `instanceof` fails across that boundary and every module-level singleton exists twice.
 2. **The alias target is `src/index.ts`, not `src/`.** The barrel stays the surface under test, so a
    symbol exported from a module but missing from `index.ts` still fails at import.
 3. **`pnpm test` no longer proves a package builds.** Nothing in the unit-test path executes `tsup`,

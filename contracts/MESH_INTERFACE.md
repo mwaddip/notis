@@ -38,15 +38,8 @@ the patched package: `@libp2p/webrtc`, whose certificate renewal timer re-arms p
 stream and whose Node-side server adapter is kept out of the browser's import path; and `@libp2p/http-fetch`, whose
 request line carries the URL's query, whose string and bytes bodies keep the `content-type` the caller set, and whose
 string body is counted in UTF-8 bytes for its `content-length` — so a mesh read keeps its query and a mesh write its
-JSON body, as over HTTP (→ The node endpoint).
-
-> ⚠ **AHEAD OF CODE (2026-11-05).** `@libp2p/http-fetch`'s patch; until then a mesh request loses its query, a string or
-> bytes body is sent as `text/plain` or `application/octet-stream` whatever the caller set, and a string body's
-> `content-length` counts characters. A pin that moves carries its
-patch to the new version, the cases deciding that it still applies and still holds.
-
-> ⚠ **AHEAD OF CODE (2026-11-05).** The client in `@dagsocial/web`; until then it is `tools/mesh-poc`'s `src/`, its `src/lib.ts`
-> the entry the page imports, and `@dagsocial/web` depends on no libp2p package.
+JSON body, as over HTTP (→ The node endpoint). A pin that moves carries its patch to the new version, the cases deciding
+that it still applies and still holds.
 
 ## Identity
 
@@ -320,9 +313,6 @@ bases of the entries it allows, in the same order — before the first check end
 node at a time**: a `POST` the caller hands the client goes to the first node of the order for the tip and, when it ends
 with no answer — a transport failure or `REQUEST_TIMEOUT_MS` — the same bytes go to the next; the first answer of any
 status is the write's (`WEB_INTERFACE → The extension → "The mesh is the extension's first path"`).
-
-> ⚠ **AHEAD OF CODE (2026-11-05).** API bases, the order and the write; until then an entry is reached over the mesh alone and the
-> client sends no write.
 
 | Name | Value | Reads as |
 |---|---|---|

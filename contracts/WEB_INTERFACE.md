@@ -25,9 +25,6 @@ over libp2p, and over a node's API base where no mesh node serves (→ The exten
 first path") — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
-> ⚠ **AHEAD OF CODE (2026-11-05).** The mesh in the extension; until then the extension reaches the seed list's API bases over
-> HTTPS alone, and its verified tip asks each of them for a proof on every run.
-
 > **This client is a standalone product.** The node serves no client (`NODE_INTERFACE → The node serves no client`):
 > this is one implementation of the client side of the node's contract, a static bundle any host serves
 > beside the API, and another implementation may be written against the same API. The builders'
@@ -232,9 +229,6 @@ answered — set one in settings*, and the settings window's `node` row is where
 **In the extension no one node is talked to**: the mesh client routes each read (→ The extension → "The mesh is the
 extension's first path"), and the `node` row adds a node by hand (→ The settings window).
 
-> ⚠ **AHEAD OF CODE (2026-11-05).** An entry as a node, and the extension's routing; until then an entry is an API base alone and
-> the extension resolves its node as the web build does.
-
 **The shell carries the site's preview card, and the picture's URL is the seventh configured value.** After the
 six tags the head carries `description`, `og:type` website, `og:site_name` Notis, `og:title` Notis,
 `og:description`, `og:image` with `og:image:type` image/png, `og:image:width` 1200, `og:image:height` 630 and
@@ -408,8 +402,6 @@ A certhash is the node's for the life of its key while its mesh directory is kep
 "The WebRTC-direct certificate persists"`); a node whose certhash changed is reached at its API base until a release
 names the new one.
 
-> ⚠ **AHEAD OF CODE (2026-11-05).** Testnet's entries as nodes; the build writes the two API bases alone until then.
-
 **The mesh is the extension's first path.** The page reaches nodes by key over libp2p through the mesh client
 (`MESH_INTERFACE → The client's node list`), the client's own `src/mesh/`, which the extension build alone hands the
 App: one reader per page — a key made for the page, `net`'s reader options and handshake (`NET_INTERFACE → The
@@ -427,9 +419,6 @@ safe because a node answers a transaction its pool already holds as held (`NODE_
 → "A transaction the pool already holds is answered as held"`); one confirmed between two sends is refused by the
 second node, its input spent, and the flight reads that refusal until the post or the box lands. The faucet is no node
 and is reached at its base alone (→ The faucet step).
-
-> ⚠ **AHEAD OF CODE (2026-11-05).** Everything in this paragraph; until then the extension reads and writes over HTTPS alone, at the
-> node being read, and a write goes to that node and nowhere else.
 
 **Every answer is read under its route's cap.** Each read the light client makes — `@dagsocial/nipopow-client`'s,
 which the command line and the extension both run — and the resolve's batch read (→ "The resolve") is read, over the
@@ -482,11 +471,6 @@ corner is where the verdict shows (→ The status corner). What a verdict says i
 and work, never a body; nothing about a balance, a name or a post the page shows — the loaded key's own two figures,
 the names the page shows and each post's binding to its author are the exceptions, below; nothing with fewer than two
 nodes answering; and two nodes under one operator and one DNS zone answer for one box lying, not for the operator.
-
-> ⚠ **AHEAD OF CODE (2026-11-05).** The mesh client's check as the extension's tip, and the table above; until then a run asks the
-> node being read and then every other base of the seed list for a proof, one after another — at start, on a press,
-> every ten minutes while the tab is visible and on a name check — and the verdict is that node's, with `refused` ·
-> *outworked* where another node's chain won and its suffix does not carry that node's tip.
 
 **The chain's name.** A tip run answers `chain` beside its verdict and its anchor: the hash of block 1 the client's
 chain keeps — the first header of the proof that seated it, the header `verifyProof` holds to the profile's
@@ -707,9 +691,6 @@ in the node's own count of replies, which a leaving slot does not move.
 wherever a slot stands under its id; one that returns after a change of identity lands nowhere and enters no
 cache (→ Reading the feed and threads → "No answer overwrites a newer one") — the read that change starts asks again.
 It is the extension build's alone: the web build names no `posts/batch`.
-
-> ⚠ **AHEAD OF CODE (2026-11-05).** The client's order as the nodes; until then they are the node being read and then every other
-> base of the seed list, and a change of node lands an answer nowhere as a change of identity does.
 
 **The post check.** The extension shows a post only when the transaction that created it binds it. Every row
 that carries a post's bytes — each row of a batch answer (→ "The resolve"), the single post read's, asked with `tx=1`
@@ -1232,12 +1213,7 @@ the case and never a URL or an address (`HOUSE_STYLE → Voice`): *verified acro
 could be checked · tip 7766* · *the chain is too short to check yet · tip 12* · *no node served a proof · tip 7766* ·
 *a node names a tip off this chain · tip 7766* · *no node's proof verified · tip 7766* · *only nodes this build does
 not name could be checked · tip 7766* · *checking the chain · tip 7766*; a state that reaches the title without its
-verdict reads *the chain could not be checked*.
-
-> ⚠ **AHEAD OF CODE (2026-11-05).** The titles above; until then they name the node being read — *this node served no proof*,
-> *the nodes share no block to compare*, *this node's proof did not verify*, *node02.notis.fun holds more work than this
-> node* — and there is no *no-anchor* title.
- The number stays the
+verdict reads *the chain could not be checked*. The number stays the
 live read — the verified height is rendered nowhere — and a press re-reads the tip and runs a verification. **A build
 with no verifier keeps the rule of the paragraph above, word for word**: the web build's corner has nothing to fail.
 
@@ -1958,10 +1934,7 @@ the effective base: any origin works, blank resets to the build's default, and a
 and re-reads it from the new node (→ The client is served from the node's own origin). **In the extension the row
 adds a node by hand**: the address a node prints at start, its `/p2p/` id included and no DNS component, kept in the
 page's storage and handed to the client as an anchor (`MESH_INTERFACE → Discovery → "A node added by hand"`); blank
-removes it, and adding or removing one drops nothing loaded.
-
-> ⚠ **AHEAD OF CODE (2026-11-05).** The extension's row; until then it holds the effective base there as in the web build.
- **The window draws whatever a
+removes it, and adding or removing one drops nothing loaded. **The window draws whatever a
 node answers**: it reads nothing from the node, and no answer a node gives reaches it unchecked (→ Reading a node's
 answer), so the way to another node is always open. **The policy row**, *sign
 each rep action: don't ask · ask*, is the background's policy (→ The extension), read through `state` and set
