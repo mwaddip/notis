@@ -35,7 +35,7 @@ import type { PendingEntry, EntryOutcome } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { isNoAnswer } from './api/errors';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
-import { WaitingStore, type WaitingStorage } from './wallet/waiting';
+import { WaitingStore, type WaitingStorage, type WaitingWrite } from './wallet/waiting';
 import { flushWaiting, type FlushDeps, type FlushOutcome } from './wallet/flush';
 import { rememberedChain } from './extension/post-cache';
 import type { LockManager } from './locks';
@@ -617,6 +617,11 @@ export class App {
       posts: new Map(),
       submissions: [],
     };
+    // A reload with the identity loaded may carry waiting posts in the store;
+    // each becomes a submission at stage `waiting` so its pending card is
+    // drawn without a node listing (WEB_INTERFACE → The wallet → "A waiting
+    // write is drawn as pending").
+    this.hydrateWaitingSubmissions();
     this.handlers = {
       openThread: (id, origin) => this.openThread(id, origin),
       refreshFeed: () => void this.refreshFeed(),
@@ -2908,6 +2913,7 @@ export class App {
     // wallet → "The waiting store keeps every waiting write as a record of
     // its own").
     this.waitingStore = this.buildWaitingStore();
+    this.hydrateWaitingSubmissions();
     this.releaseOrphanWaiting();
     this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
     this.endBodies();
@@ -3183,6 +3189,37 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return null;
     return new WaitingStore(cur.pubKeyHex, this.waitingSeam);
+  }
+
+  /** Draw every waiting write of kind `post` the store holds for the loaded
+   *  key as a submission at stage `waiting`, so a reload or an identity
+   *  change draws the pending card from the record where no node lists it
+   *  (WEB_INTERFACE → The wallet → "A waiting write is drawn as pending").
+   *  The text and the parent come from the record; the id is the record's,
+   *  so the send pass's outcome finds and moves the submission as it moves
+   *  a pressed one. */
+  private hydrateWaitingSubmissions(): void {
+    const store = this.waitingStore;
+    if (store === null) return;
+    const cur = this.idm.current();
+    if (cur === null) return;
+    for (const w of store.list()) {
+      if (w.kind !== 'post') continue;
+      if (w.content === undefined) continue; // malformed record; skip
+      this.state.submissions.push({
+        localKey: 'local-' + ++this.submitSeq,
+        content: w.content,
+        parentId: parentIdOfPostWrite(w),
+        author: cur.pubKeyHex,
+        contentHash: contentHashHex(w.content),
+        stage: 'waiting',
+        txId: w.txId,
+        postId: w.postId,
+        blockHeight: null,
+        expiresAtHeight: null,
+        reason: null,
+      });
+    }
   }
 
   /** The post flow's cache hook (WEB_INTERFACE → The extension → "The post
@@ -6264,4 +6301,19 @@ export class App {
       );
     }
   }
+}
+
+/** The parent post id a waiting post names, from its stored transaction's
+ *  commit: `w.tx.post.parentRefs[0]` for a reply, `null` for a root
+ *  (WEB_INTERFACE → The wallet → "A waiting write is drawn as pending"). The
+ *  stored `w.tx` is `txToJson` of the signed transaction; the field is held
+ *  to the 64-hex id shape through `@dagsocial/types`' `isHex64`, and anything
+ *  unexpected reads as a root — a malformed record still draws its card. */
+function parentIdOfPostWrite(w: WaitingWrite): string | null {
+  const post = (w.tx as { post?: unknown }).post;
+  if (typeof post !== 'object' || post === null) return null;
+  const refs = (post as { parentRefs?: unknown }).parentRefs;
+  if (!Array.isArray(refs) || refs.length === 0) return null;
+  const first = refs[0];
+  return isHex64(first) ? first : null;
 }

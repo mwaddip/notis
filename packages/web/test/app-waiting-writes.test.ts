@@ -103,7 +103,7 @@ interface Harness {
     cornerTick(): Promise<void>;
     startVerification(): void;
     optimisticLikes: Set<string>;
-    state: { feed: unknown; submissions: Array<{ stage: string; txId: string | null; postId: string | null; reason: string | null }> };
+    state: { feed: unknown; submissions: Array<{ stage: string; txId: string | null; postId: string | null; reason: string | null; content: string; parentId: string | null }> };
     ledger: PendingLedger;
     pollTimer: unknown;
     composers: Map<string, { el: HTMLElement }>;
@@ -466,6 +466,90 @@ describe('a reload with waiting entries draws them waiting and sends them at the
     expect(posts).toBe(1);
     const e = h2.drive.ledger.all()[0]!;
     expect(e.waiting).toBeUndefined();
+  });
+});
+
+// -------------------------------------------------------------------------
+// A waiting post's pending card is drawn from its record after a reload
+// (WEB_INTERFACE → The wallet → "A waiting write is drawn as pending").
+// -------------------------------------------------------------------------
+
+describe('a waiting post is drawn as pending across a reload', () => {
+  it('a reload draws a waiting post\'s pending card from its record, waiting for a node', async () => {
+    const h1 = harness({ rememberChain: CHAIN });
+    await resolveTipRunVerified(h1);
+    primeBases(h1);
+    h1.setReadsNoAnswer(true);
+    h1.drive.openComposer(null);
+    await h1.drive.submitComposer(null, 'a thread');
+    await flush();
+    const waiting1 = h1.drive.ledger.all().find((e) => e.waiting === true)!;
+    const storedTxId = waiting1.txId;
+    const storedPostId = waiting1.postId;
+    // A fresh App over the same localStorage — the waiting store rehydrates
+    // the submission so the pending card can be drawn without a node listing.
+    document.body.innerHTML = '';
+    const h2 = harness({ rememberChain: CHAIN });
+    await flush();
+    const subs = h2.drive.state.submissions;
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.stage).toBe('waiting');
+    expect(subs[0]!.txId).toBe(storedTxId);
+    expect(subs[0]!.postId).toBe(storedPostId);
+    expect(subs[0]!.content).toBe('a thread');
+    expect(subs[0]!.parentId).toBeNull(); // a root
+  });
+
+  it('a waiting reply drawn after a reload sits under its parent', async () => {
+    const parentId = 'c2'.repeat(32);
+    const cache = new Map<string, string>([[parentId, AUTHOR]]);
+    const h1 = harness({ rememberChain: CHAIN, cachedAuthors: cache });
+    await resolveTipRunVerified(h1);
+    primeBases(h1);
+    h1.setReadsNoAnswer(true);
+    h1.drive.openComposer(parentId);
+    await h1.drive.submitComposer(parentId, 'a reply');
+    await flush();
+    const waiting1 = h1.drive.ledger.all().find((e) => e.waiting === true)!;
+    expect(waiting1.kind).toBe('post');
+    document.body.innerHTML = '';
+    const h2 = harness({ rememberChain: CHAIN, cachedAuthors: cache });
+    await flush();
+    const subs = h2.drive.state.submissions;
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.parentId).toBe(parentId);
+    expect(subs[0]!.content).toBe('a reply');
+    expect(subs[0]!.stage).toBe('waiting');
+  });
+
+  it('the drawn card goes on as submitted when the send pass sends it', async () => {
+    const h1 = harness({ rememberChain: CHAIN });
+    await resolveTipRunVerified(h1);
+    primeBases(h1);
+    h1.setReadsNoAnswer(true);
+    h1.drive.openComposer(null);
+    await h1.drive.submitComposer(null, 'a thread');
+    await flush();
+    const waiting1 = h1.drive.ledger.all().find((e) => e.waiting === true)!;
+    const txIdOfStored = waiting1.txId;
+    // A fresh App over the same storage: submission hydrates waiting, ledger
+    // restores waiting. Override the write client to echo the stored txId —
+    // in production the node computes the id from the signed bytes.
+    document.body.innerHTML = '';
+    const h2 = harness({ rememberChain: CHAIN });
+    const { computePostId } = await import('@dagsocial/types');
+    const wc = (h2.app as unknown as { writeClient: { submitPost: (b: unknown, c: string) => Promise<unknown> } }).writeClient;
+    wc.submitPost = async (): Promise<PostSubmitResult> => ({
+      postId: computePostId(txIdOfStored, 0), status: 'pending', expiresAtHeight: 6720, txId: txIdOfStored,
+    });
+    await resolveTipRunVerified(h2);
+    await h2.drive.cornerTick();
+    await flush();
+    const subs = h2.drive.state.submissions;
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.stage).toBe('submitted');
+    expect(subs[0]!.txId).toBe(txIdOfStored);
+    expect(subs[0]!.postId).toBe(computePostId(txIdOfStored, 0));
   });
 });
 
