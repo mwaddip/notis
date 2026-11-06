@@ -621,6 +621,37 @@ describe('app-post-cache — a failed feed listing draws the cached roots under 
     expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([b.id, subject.id]);
     expect(h.drive.state.feed.next).toBeNull();
   });
+
+  // WEB_INTERFACE → The extension → "A failed listing draws the cache": the
+  // rows the state holds reach the page beneath the error line, as cards.
+  it('a failed listing shows the cached cards on the page beneath the error line', async () => {
+    const a = row('a');
+    const b = row('b');
+    const sv = scriptedVerifier((r) => BOUND(r as PostJson));
+    const { cache } = makeCache();
+    await cache.open('C');
+    const BA = BOUND(a);
+    if (BA.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: a.id, txBytes: BA.txBytes, row: { ...a, blockHeight: 10 }, author: a.author, parent: null, own: false });
+    const BB = BOUND(b);
+    if (BB.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: b.id, txBytes: BB.txBytes, row: { ...b, blockHeight: 20 }, author: b.author, parent: null, own: false });
+
+    const h = harness({ verifier: sv.verifier, cache, feedThrows: true });
+    await h.drive.loadFeed();
+    await settle();
+    // The feed container holds both an `.error` and the two `.card`s, in that
+    // order. `data-post-id` carries the id a cache fallback wrote.
+    const err = h.feedEl.querySelector<HTMLElement>('.error');
+    expect(err).not.toBeNull();
+    const cards = [...h.feedEl.querySelectorAll('.card')] as HTMLElement[];
+    expect(cards.map((c) => c.dataset['postId'])).toEqual([b.id, a.id]);
+    // The error line comes before the first card in the feed container.
+    const errIdx = [...h.feedEl.children].indexOf(err!);
+    const firstCardIdx = [...h.feedEl.children].indexOf(cards[0]!);
+    expect(errIdx).toBeGreaterThanOrEqual(0);
+    expect(firstCardIdx).toBeGreaterThan(errIdx);
+  });
 });
 
 describe("app-post-cache — an author window's failed listing draws that author's cached posts", () => {

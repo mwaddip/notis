@@ -292,13 +292,16 @@ export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLEle
   }
   if (feed.error) {
     b.appendChild(el('div', 'error', `can't load these posts — ${feed.error}`));
-    return b;
+    // Fall through to draw the rows the cache fallback wrote beneath the
+    // error line (WEB_INTERFACE → The extension → "A failed listing draws
+    // the cache"); `feed.next` is null so the foot carries no `more posts`,
+    // and the `no posts yet` line stays off since the node did not answer.
   }
   // The withheld line at the window's head (WEB_INTERFACE → The extension
   // → "The post check").
   const wl = withheldLine(feed.unboundCount);
   if (wl) b.appendChild(wl);
-  if (feed.posts.length === 0) {
+  if (feed.posts.length === 0 && feed.error === null) {
     b.appendChild(el('div', 'empty', 'no posts yet'));
     return b;
   }
