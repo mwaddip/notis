@@ -4918,9 +4918,14 @@ async function runNameSendArm(bcx, relays, arm, { sHeld }) {
     const last = presses[presses.length - 1];
     const endOk = last !== undefined && last.answer.refusal === lie;
     // 28b's path — the first press's first check against the stale anchor
-    // `unchecked`, one tip run asked, the retry `absent`.
+    // `unchecked`, the retry `absent`. The tip run a check that ends
+    // `unchecked` asks for may ride the mesh client over libp2p and leave no
+    // request through either HTTP relay (→ "The mesh is the extension's first
+    // path"), so the path reads the retry alone — the second check against a
+    // fresh anchor landing on either `absent` within this press, or a second
+    // press on the next.
     const first = seen[0];
-    const pathOk = !arm.staleAnchor || (first !== undefined && first.own[0]?.status === 'unchecked' && first.asked === 1
+    const pathOk = !arm.staleAnchor || (first !== undefined && first.own[0]?.status === 'unchecked'
       && (seen.length > 1 || first.own[1]?.status === 'absent'));
     const corner = await readCorner(fcx);
     const cornerOk = cornerVerified(corner);
