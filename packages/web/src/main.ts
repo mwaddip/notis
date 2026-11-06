@@ -10,6 +10,8 @@ import { createPostCache, rememberedChain } from './extension/post-cache';
 import type { Api } from './api/client';
 import type { WriteClient } from './api/write';
 import type { HandNodeSeam } from './view/settings';
+import type { WaitingStorage } from './wallet/waiting';
+import type { LockManager } from './locks';
 import type { AppIdentity, TipVerifier, FiguresVerifier, NamesVerifier, PostsVerifier, PostCache, PostResolver } from './model/state';
 
 // Theme is already on <html> from the head's theme.js; this re-applies it and
@@ -50,6 +52,11 @@ let postsVerifier: PostsVerifier | undefined;
 let postCache: PostCache | undefined;
 let postResolver: PostResolver | undefined;
 let handNodeSeam: HandNodeSeam | undefined;
+// WEB_INTERFACE → The wallet → "A write no node answers waits". The extension
+// build holds a waiting store over `window.localStorage` and the browser's
+// `navigator.locks` (the same adapter the background uses); the web build
+// hands none, and a write no node answers ends as a transport failure.
+let waitingSeam: { storage: WaitingStorage; locks: LockManager } | undefined;
 
 if (isExtension && BUILD_NETWORK !== null) {
   // WEB_INTERFACE → The extension → "The post check" and "The post cache" —
@@ -91,12 +98,20 @@ if (isExtension && BUILD_NETWORK !== null) {
   namesVerifier = seams.namesVerifier;
   postResolver = seams.postResolver;
   handNodeSeam = seams.handNodeSeam;
+  waitingSeam = {
+    storage: window.localStorage,
+    locks: {
+      request<T>(name: string, callback: () => Promise<T>): Promise<T> {
+        return navigator.locks.request(name, () => callback()) as Promise<T>;
+      },
+    },
+  };
 }
 
 new App(
   readClient, writeClientSeam, idm, undefined, tabs, requestFaucetOrigin,
   verifier, figuresVerifier, namesVerifier, postsVerifier, postCache, postResolver,
-  handNodeSeam,
+  handNodeSeam, waitingSeam,
 ).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the

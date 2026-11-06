@@ -28,12 +28,16 @@ import { WriteClient, type Rejection } from './api/write';
 import { FaucetClient, faucetLine } from './api/faucet';
 import {
   PendingLedger, reconcilePost, reconcileLike, reconcileGrant, reconcileVouch, reconcileUnvouch, reconcileInvite, reconcileWithdraw,
-  reconcileClaim, reconcileBurn, reconcileSend, reconcileCreditGrant, pendingUsernameEntry, pendingSendEntries,
+  reconcileClaim, reconcileBurn, reconcileSend, reconcileCreditGrant,
   pendingLikeTargets, pendingVouchTargets, pendingWithdrawTargets,
 } from './wallet/ledger';
 import type { PendingEntry, EntryOutcome } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
+import { WaitingStore, type WaitingStorage } from './wallet/waiting';
+import { flushWaiting, type FlushDeps, type FlushOutcome } from './wallet/flush';
+import { rememberedChain } from './extension/post-cache';
+import type { LockManager } from './locks';
 import { FlowQueue } from './wallet/queue';
 import { identity as identitySingleton } from './identity/identity';
 import { profileBody, type ProfileBody } from './view/profile';
@@ -486,6 +490,15 @@ export class App {
   // hand-added form only when the seam is present; the web build's row is
   // the same without it.
   private handNodeSeam: HandNodeSeam | null;
+  // The waiting store — WEB_INTERFACE → The wallet → "A write no node answers
+  // waits". Non-null only when the extension build hands the App a seam and an
+  // identity is loaded. Rebuilt in `onIdentityChange` beside the ledger.
+  private readonly waitingSeam: { storage: WaitingStorage; locks: LockManager } | null;
+  private waitingStore: WaitingStore | null;
+  // The send pass flags — one pass per ledger at a time
+  // (WEB_INTERFACE → The wallet → "Waiting writes go out at the first answer").
+  private flushRepInFlight = false;
+  private flushCreditsInFlight = false;
   // The ids a resolve was asked for and has not answered (WEB_INTERFACE →
   // The extension → "One resolve serves every list" → "an id asked for is
   // not asked again while its answer is awaited"). `dropReaderState` empties
@@ -560,6 +573,7 @@ export class App {
     postCache?: PostCache | null,
     postResolver?: PostResolver | null,
     handNodeSeam?: HandNodeSeam | null,
+    waitingSeam?: { storage: WaitingStorage; locks: LockManager } | null,
   ) {
     this.client = client ?? new NodeClient({ base: () => prefs.node, fetch: (url, init) => fetch(url, init) });
     this.writeClient = writeClient ?? new WriteClient({ bases: () => [prefs.node], fetch: (url, init) => fetch(url, init) });
@@ -573,6 +587,11 @@ export class App {
     this.postCache = postCache ?? null;
     this.postResolver = postResolver ?? null;
     this.handNodeSeam = handNodeSeam ?? null;
+    this.waitingSeam = waitingSeam ?? null;
+    // The waiting store is per identity (WEB_INTERFACE → The wallet → "The
+    // waiting store keeps every waiting write as a record of its own"); with
+    // no seam, or no identity loaded, there is none.
+    this.waitingStore = this.buildWaitingStore();
     // The posts verifier and the post resolver are handed together or not at
     // all — the extension build is the one build that holds either, and it
     // holds both (WEB_INTERFACE → The extension → "The post check",
@@ -1025,7 +1044,9 @@ export class App {
       ownNameLoaded: this.ownNameLoaded,
       nameClay: (key, name) => this.nameClay(key, name),
       usernameFlight: this.usernameFlight,
-      pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
+      pendingUsername: this.usernameInFlight !== null
+        ? { ...this.usernameInFlight, waiting: false }
+        : this.pendingUsernameEntryWithWaiting(),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
       canAffordBurn: this.canAffordBurn(),
       // The wallet's balance row (WEB_INTERFACE → The wallet window → "The
@@ -1036,7 +1057,7 @@ export class App {
       creditsPlain: this.walletCreditsPlain,
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
-      pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
+      pendingSend: this.pendingSendWithWaiting(),
       sendCheck: this.sendCheck,
       sendAnswer: this.sendAnswer,
       // The web build's identity module has no `policy`; the extension's proxy
@@ -1066,11 +1087,38 @@ export class App {
   }
 
   /** The withdraw slot's state for a post: 'pending' when the ledger holds its
-   *  entry — the durable 'submitted' that survives a reload — else the transient
-   *  flight, or null (WEB_INTERFACE → The withdraw control). */
-  private withdrawState(postId: string): 'pending' | Flight | null {
-    if (pendingWithdrawTargets(this.ledger.all()).has(postId)) return 'pending';
+   *  entry — the durable 'submitted' that survives a reload — 'waiting' for
+   *  an entry whose write no node has answered (WEB_INTERFACE → The wallet →
+   *  "A waiting write is drawn as pending"), else the transient flight, or
+   *  null (WEB_INTERFACE → The withdraw control). */
+  private withdrawState(postId: string): 'pending' | 'waiting' | Flight | null {
+    for (const e of this.ledger.all()) {
+      if (e.kind === 'withdraw' && e.postId === postId) {
+        return e.waiting === true ? 'waiting' : 'pending';
+      }
+    }
     return this.withdrawFlights.get(postId) ?? null;
+  }
+
+  /** The first pending username entry in the ledger with its waiting flag
+   *  (WEB_INTERFACE → The wallet → "A waiting write is drawn as pending"). */
+  private pendingUsernameEntryWithWaiting(): { kind: 'claim' | 'burn'; name: string; waiting: boolean } | null {
+    for (const e of this.ledger.all()) {
+      if (e.kind === 'claim' || e.kind === 'burn') {
+        return { kind: e.kind, name: e.postId, waiting: e.waiting === true };
+      }
+    }
+    return null;
+  }
+
+  /** The first pending send in the ledger with its waiting flag
+   *  (WEB_INTERFACE → The wallet → "A waiting write is drawn as pending"). */
+  private pendingSendWithWaiting(): { toHex: string; toName: string | null; amount: bigint; waiting: boolean } | null {
+    for (const e of this.ledger.all()) {
+      if (e.kind !== 'send' || e.send === undefined) continue;
+      return { toHex: e.send.toHex, toName: e.send.toName, amount: e.send.amount, waiting: e.waiting === true };
+    }
+    return null;
   }
 
   /** The profile's `/karma` listing is non-empty — the courtesy gate the
@@ -2084,6 +2132,9 @@ export class App {
       const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true, this.listLight());
       if (gen !== this.readerGen) return;
       await this.takeFeedPage(res, since, gen);
+      // WEB_INTERFACE → The wallet → "Waiting writes go out at the first
+      // answer" — a successful first page is a read a node answered.
+      this.flushWaitingWrites();
     } catch (e) {
       if (gen !== this.readerGen) return;
       // No stored preference and a seed list — walk it, adopting the first one
@@ -2851,6 +2902,12 @@ export class App {
     this.sendFlight = null;
     this.dropReaderState();
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
+    // The waiting store is per identity — rebuild beside the ledger so a load
+    // of the previous key brings its waiting writes back (WEB_INTERFACE → The
+    // wallet → "The waiting store keeps every waiting write as a record of
+    // its own").
+    this.waitingStore = this.buildWaitingStore();
+    this.releaseOrphanWaiting();
     this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
     this.endBodies();
     this.renderHeader();
@@ -3090,7 +3147,41 @@ export class App {
   // -------------------------------------------------------------------------
 
   private submitDeps(): SubmitDeps {
-    return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm, network: BUILD_NETWORK };
+    const base: SubmitDeps = { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm, network: BUILD_NETWORK };
+    const store = this.waitingStore;
+    if (store === null) return base;
+    // `chain` is `this.tipChain ?? rememberedChain()` — a submit builds under
+    // the verified chain when one stands, else the last one the module
+    // remembered (WEB_INTERFACE → The wallet → "The view and every waiting
+    // write carry the chain's name", → The extension → "The post cache").
+    return {
+      ...base,
+      waiting: {
+        store,
+        chain: () => this.tipChain ?? rememberedChain(),
+        // The reply or like's parent or target author, from the post cache
+        // (WEB_INTERFACE → The wallet → "A write no node answers waits").
+        cachedAuthor: async (postId: string): Promise<string | null> => {
+          if (this.postCache === null) return null;
+          try {
+            const m = await this.postCache.getMany([postId]);
+            return m.get(postId)?.author ?? null;
+          } catch {
+            return null;
+          }
+        },
+      },
+    };
+  }
+
+  /** Build the waiting store for the loaded identity, or `null` when no seam
+   *  or no identity. The one place the construction rule lives, called from
+   *  the constructor and from `onIdentityChange`. */
+  private buildWaitingStore(): WaitingStore | null {
+    if (this.waitingSeam === null) return null;
+    const cur = this.idm.current();
+    if (cur === null) return null;
+    return new WaitingStore(cur.pubKeyHex, this.waitingSeam);
   }
 
   /** The post flow's cache hook (WEB_INTERFACE → The extension → "The post
@@ -3249,14 +3340,16 @@ export class App {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' }; // node change: end as a decline (onSigned never fired)
       } else if ('waiting' in r && r.waiting) {
-        // The App passes no `waiting` deps yet, so the arm cannot occur here;
-        // guarded so the ok branch never silently handles one as submitted.
-        if (submission === null) {
-          ctrl.setSending(false);
-          ctrl.setNotSent("can't reach the node right now.");
-        } else {
-          submission.stage = 'rejected';
-          submission.reason = "can't reach the node right now.";
+        // WEB_INTERFACE → The wallet → "A write no node answers waits" — the
+        // sign fired and onSigned collapsed the composer, so the submission
+        // stands; the ledger has a waiting entry, the card reads *waiting
+        // for a node*.
+        if (submission !== null) {
+          submission.stage = 'waiting';
+          submission.txId = r.entry.txId;
+          submission.postId = r.entry.postId;
+          submission.expiresAtHeight = null;
+          submission.reason = null;
           this.renderForParent(parentId);
         }
         return;
@@ -3320,6 +3413,7 @@ export class App {
     sub.blockHeight = null;
     this.renderForParent(sub.parentId);
     const pressGen = this.readerGen;
+    let waiting: { ok: true; waiting: true; entry: PendingEntry } | null = null;
     await this.flight(sub, async () => {
       const r = await this.repQueue.enqueue(
         () => submitPostFlow({ ...this.submitDeps(), onCachePost: this.cachePostFromSubmit(sub.content) }, sub.content, sub.parentId),
@@ -3330,12 +3424,21 @@ export class App {
       // still offered — a key change clears `state.submissions` through
       // `onIdentityChange` beforehand, which hides even that.
       if (r === 'cancelled') return { ok: false, notSigned: 'declined' as const, reason: '' } as const;
-      // The App passes no `waiting` deps yet, so the waiting arm cannot occur;
-      // it reaches `flight` as a transport-style throw rather than slipping
-      // into the ok arm as a submitted entry.
-      if ('waiting' in r && r.waiting) throw new Error('no node to send to');
+      // WEB_INTERFACE → The wallet → "A write no node answers waits" — the
+      // retry entered the waiting store; the submission reads waiting, and
+      // the card stands as a pending one does.
+      if ('waiting' in r && r.waiting) { waiting = r; return { ok: false, notSigned: 'declined' as const, reason: '' } as const; }
       return r;
     });
+    if (waiting !== null) {
+      const w = waiting as { entry: PendingEntry };
+      sub.stage = 'waiting';
+      sub.txId = w.entry.txId;
+      sub.postId = w.entry.postId;
+      sub.expiresAtHeight = null;
+      sub.reason = null;
+      this.renderForParent(sub.parentId);
+    }
   }
 
   /** Drive a submission's flight from a `try again`. notSigned there has no
@@ -3419,11 +3522,10 @@ export class App {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' }; // node change: end as a decline
       } else if ('waiting' in r && r.waiting) {
-        // The App passes no `waiting` deps yet, so the arm cannot occur.
-        this.optimisticLikes.delete(postId);
-        this.setReportForPost(postId, "like rejected: can't reach the node right now.");
-        this.renderRegionsForPost(postId);
-        if (this.feedHasPost(postId)) this.renderFeed();
+        // WEB_INTERFACE → The wallet → "A write no node answers waits" — the
+        // overlay stays, as a pending like's does; the ledger entry drives
+        // the muted overlay through `pendingLikeTargets`. No poll yet: a
+        // waiting write is at no node.
         return;
       } else {
         result = r;
@@ -3472,9 +3574,10 @@ export class App {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press (withdrawFlights cleared)
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
       } else if ('waiting' in r && r.waiting) {
-        // The App passes no `waiting` deps yet, so the arm cannot occur.
+        // WEB_INTERFACE → The wallet → "A write no node answers waits" — the
+        // ledger's waiting entry takes over, `withdrawState` reads *waiting
+        // for a node*; the transient flight steps aside.
         this.withdrawFlights.delete(postId);
-        this.setReportForPost(postId, "withdraw rejected: can't reach the node right now.");
         this.renderRegionsForPost(postId);
         return;
       } else {
@@ -3809,9 +3912,10 @@ export class App {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
       } else if ('waiting' in r && r.waiting) {
-        // The App passes no `waiting` deps yet, so the arm cannot occur.
-        this.optimisticVouches.delete(key);
-        if (d) d.flight = { stage: 'rejected', reason: "vouch rejected: can't reach the node right now." };
+        // WEB_INTERFACE → The wallet → "A write no node answers waits" — the
+        // mark reads muted via `pendingVouchTargets` (the ledger carries the
+        // waiting entry); the row's flight reads *waiting for a node*.
+        if (d) d.flight = { stage: 'waiting' };
         this.renderRegionsFor(authorWindowId(key));
         return;
       } else {
@@ -4138,8 +4242,9 @@ export class App {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change: onIdentityChange ended the press
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
       } else if ('waiting' in r && r.waiting) {
-        // The App passes no `waiting` deps yet, so the arm cannot occur.
-        this.inviteFlight = { stage: 'rejected', reason: "invite rejected: can't reach the node right now." };
+        // WEB_INTERFACE → The wallet → "A write no node answers waits" — the
+        // invite flight reads *waiting for a node* in its slot.
+        this.inviteFlight = { stage: 'waiting' };
         this.renderInvitesRowInPlace();
         return;
       } else {
@@ -4211,9 +4316,11 @@ export class App {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
       } else if ('waiting' in r && r.waiting) {
-        // The App passes no `waiting` deps yet, so the arm cannot occur.
+        // WEB_INTERFACE → The wallet → "A write no node answers waits" — the
+        // ledger's waiting entry carries the row, the profile reads *waiting
+        // for a node* through `pendingUsername.waiting`.
         this.usernameInFlight = null;
-        this.usernameFlight = { stage: 'rejected', reason: "claim rejected: can't reach the node right now." };
+        this.usernameFlight = null;
         this.renderUsernameRowInPlace();
         return;
       } else {
@@ -4503,8 +4610,12 @@ export class App {
         if (this.idm.current()?.pubKeyHex !== pressKey) return; // key change
         result = { ok: false as const, notSigned: 'declined' as const, reason: '' };
       } else if ('waiting' in r && r.waiting) {
-        // The App passes no `waiting` deps yet, so the arm cannot occur.
-        this.sendFlight = { stage: 'rejected', reason: "send rejected: can't reach the node right now." };
+        // WEB_INTERFACE → The wallet → "A write no node answers waits" — the
+        // ledger's waiting send entry carries the row through `pendingSend`,
+        // which reads *waiting for a node* in place of *submitted*.
+        this.sendFlight = null;
+        this.dropSendAnswer();
+        this.wallet()?.resetSend();
         this.renderCreditsRowInPlace();
         return;
       } else {
@@ -4744,6 +4855,10 @@ export class App {
         if (run.chain !== null && run.chain !== chainBefore && this.postCache !== null) {
           void this.postCache.open(run.chain);
         }
+        // WEB_INTERFACE → The wallet → "Waiting writes go out at the first
+        // answer" — a tip run that names a chain is the trigger. A later run
+        // under another chain triggers again so the pass re-reads tipChain.
+        if (run.chain !== null && run.chain !== chainBefore) this.flushWaitingWrites();
         this.renderCornerNow();
         // WEB_INTERFACE → The extension → "The verified figures" — a run proves
         // a listing read after its anchor, so a `verified` run reads the
@@ -5116,6 +5231,7 @@ export class App {
    *  reading node changed — touches no field, no `bumpTip`, no render. */
   private async cornerTick(): Promise<void> {
     const gen = this.cornerGen;
+    let answered = false;
     try {
       const b = await this.client.currentBlock();
       if (gen !== this.cornerGen) return;
@@ -5126,17 +5242,248 @@ export class App {
       this.cornerLastTip = b.height;
       this.cornerLastReadOk = true;
       this.bumpTip(b.height);
+      answered = true;
     } catch {
       if (gen !== this.cornerGen) return;
       this.cornerLastReadOk = false;
     }
     this.renderCornerNow();
+    // WEB_INTERFACE → The wallet → "Waiting writes go out at the first answer"
+    // — a read a node answered is the trigger.
+    if (answered) this.flushWaitingWrites();
+  }
+
+  // ---- the send pass (WEB_INTERFACE → The wallet → "Waiting writes go out
+  // at the first answer") ----
+
+  /** Every waiting entry whose `txId` the store no longer lists is released
+   *  as submitted (WEB_INTERFACE → The wallet → "Waiting writes go out at
+   *  the first answer"): another page of the extension may have sent or
+   *  ended it. Called at every send pass and at load. */
+  private releaseOrphanWaiting(): void {
+    const store = this.waitingStore;
+    if (store === null) return;
+    const listed = new Set(store.list().map((w) => w.txId));
+    let moved = false;
+    for (const e of this.ledger.all()) {
+      if (e.waiting === true && !listed.has(e.txId)) {
+        this.ledger.release(e.txId, undefined, this.viewerTip);
+        moved = true;
+      }
+    }
+    if (moved) this.startPoll();
+  }
+
+  /** Send the loaded identity's waiting writes — one pass per ledger at a
+   *  time, under its queue (WEB_INTERFACE → The wallet → "Waiting writes go
+   *  out at the first answer"). Called after a successful read a node
+   *  answered (a `cornerTick`, a `loadFeed` first page) and once the tip
+   *  run names `tipChain`. With no store, or `tipChain` not named, nothing
+   *  runs. */
+  private flushWaitingWrites(): void {
+    const store = this.waitingStore;
+    if (store === null) return;
+    if (this.tipChain === null) return;
+    const cur = this.idm.current();
+    if (cur === null) return;
+    const keyAtPress = cur.pubKeyHex;
+    const writes = store.list();
+    const hasRep = writes.some((w) => w.ledger === 'rep');
+    const hasCredits = writes.some((w) => w.ledger === 'credits');
+    const deps: FlushDeps = {
+      store,
+      ledger: this.ledger,
+      write: this.writeClient,
+      chain: () => this.tipChain, // the verified chain alone, never the remembered one
+      tip: () => this.viewerTip || null,
+    };
+    const isActive = (): boolean => this.idm.current()?.pubKeyHex === keyAtPress;
+    if (hasRep && !this.flushRepInFlight) {
+      this.flushRepInFlight = true;
+      void this.repQueue.enqueue(
+        () => flushWaiting(deps, 'rep'),
+        isActive,
+      ).then((r) => {
+        this.flushRepInFlight = false;
+        if (r === 'cancelled' || !isActive()) return;
+        this.applyFlushOutcomes(r);
+      }, (e) => {
+        this.flushRepInFlight = false;
+        console.error(e);
+      });
+    }
+    if (hasCredits && !this.flushCreditsInFlight) {
+      this.flushCreditsInFlight = true;
+      void this.sendQueue.enqueue(
+        () => flushWaiting(deps, 'credits'),
+        isActive,
+      ).then((r) => {
+        this.flushCreditsInFlight = false;
+        if (r === 'cancelled' || !isActive()) return;
+        this.applyFlushOutcomes(r);
+      }, (e) => {
+        this.flushCreditsInFlight = false;
+        console.error(e);
+      });
+    }
+  }
+
+  /** Walk the pass's outcomes: a sent write runs its kind's 2xx path
+   *  (`settle` for a post); a refused one reads the kind's rejection line
+   *  today; an unsent one reads *not sent: the one before it was refused.*
+   *  (`behind-refused`) or *not sent: the chain changed.* (`chain`)
+   *  (WEB_INTERFACE → The wallet → "Waiting writes go out at the first
+   *  answer", → "A refusal ends what it strands"). */
+  private applyFlushOutcomes(outcomes: FlushOutcome[]): void {
+    let repLanded = false;
+    let sendLanded = false;
+    for (const o of outcomes) {
+      const w = o.write;
+      if (o.outcome === 'sent') {
+        this.applySentOutcome(w, o.entry);
+        if (w.ledger === 'rep') repLanded = true;
+        else sendLanded = true;
+      } else if (o.outcome === 'refused') {
+        this.applyRejectedOutcome(w, this.rejectionLineFor(w, o.rejection));
+      } else {
+        const line = o.cause === 'chain'
+          ? 'not sent: the chain changed.'
+          : 'not sent: the one before it was refused.';
+        this.applyRejectedOutcome(w, line);
+      }
+    }
+    // After the pass, ledger entries whose waiting record was dropped
+    // elsewhere are released as submitted (WEB_INTERFACE → The wallet).
+    this.releaseOrphanWaiting();
+    if (outcomes.length > 0) {
+      // The poll runs on the newly submitted entries; the figures take a new
+      // value at each 2xx of a rep spend, and the wallet's balance at a send.
+      this.startPoll();
+      if (repLanded) void this.refreshOwnKarma();
+      if (sendLanded && openSet(this.state.workspace).has('@wallet')) void this.refreshWalletCredits();
+    }
+  }
+
+  /** The kind's rejection line as the press's own path reads it today. A
+   *  flush that refused reads the kind's rejection the way a press that
+   *  refused does (WEB_INTERFACE → The wallet → "A refusal ends what it
+   *  strands"). An unsent outcome bypasses this: its words are exact. */
+  private rejectionLineFor(w: { kind: string }, rejection: Rejection): string {
+    switch (w.kind) {
+      case 'post': return postRejectionCopy(rejection);
+      case 'like': return 'like rejected: ' + likeRejectionCopy(rejection);
+      case 'vouch': return 'vouch rejected: ' + vouchRejectionCopy(rejection);
+      case 'invite': return 'invite rejected: ' + inviteRejectionCopy(rejection);
+      case 'withdraw': return 'withdraw rejected: ' + withdrawRejectionCopy(rejection);
+      case 'claim': return 'claim rejected: ' + usernameRejectionCopy(rejection);
+      case 'send': return 'send rejected: ' + rejection.message;
+      default: return rejection.message;
+    }
+  }
+
+  /** The kind's 2xx path on a sent waiting write — the submission settles,
+   *  a vouch's or an invite's flight reads submitted, the rest ride the
+   *  ledger (WEB_INTERFACE → The wallet → "Waiting writes go out at the
+   *  first answer"). */
+  private applySentOutcome(w: { kind: string; postId: string; txId: string }, entry: PendingEntry): void {
+    if (w.kind === 'post') {
+      const sub = this.state.submissions.find((s) => s.txId === w.txId);
+      if (sub !== undefined) {
+        sub.stage = 'submitted';
+        sub.postId = entry.postId;
+        sub.expiresAtHeight = entry.expiresAtHeight;
+        sub.reason = null;
+        this.renderForParent(sub.parentId);
+      }
+      return;
+    }
+    if (w.kind === 'vouch') {
+      const d = this.authorData.get(w.postId);
+      if (d) d.flight = { stage: 'submitted' };
+      this.renderRegionsFor(authorWindowId(w.postId));
+      return;
+    }
+    if (w.kind === 'invite') {
+      this.inviteFlight = { stage: 'submitted' };
+      this.renderInvitesRowInPlace();
+      return;
+    }
+    if (w.kind === 'claim') {
+      this.usernameFlight = null;
+      this.renderUsernameRowInPlace();
+      return;
+    }
+    if (w.kind === 'withdraw') {
+      this.renderRegionsForPost(w.postId);
+      return;
+    }
+    if (w.kind === 'send') {
+      this.renderCreditsRowInPlace();
+      return;
+    }
+    // like: the overlay stays; the next reconcile folds it.
+  }
+
+  /** The kind's rejected path on a refused or stranded waiting write. The
+   *  entry is already gone from the store and the ledger — flush.ts removed
+   *  it — so the surface's line is the only state to move. */
+  private applyRejectedOutcome(w: { kind: string; postId: string; txId: string }, line: string): void {
+    if (w.kind === 'post') {
+      const sub = this.state.submissions.find((s) => s.txId === w.txId);
+      if (sub !== undefined) {
+        sub.stage = 'rejected';
+        sub.reason = line;
+        this.renderForParent(sub.parentId);
+      }
+      return;
+    }
+    if (w.kind === 'like') {
+      this.optimisticLikes.delete(w.postId);
+      this.setReportForPost(w.postId, line);
+      this.renderRegionsForPost(w.postId);
+      if (this.feedHasPost(w.postId)) this.renderFeed();
+      return;
+    }
+    if (w.kind === 'vouch') {
+      this.optimisticVouches.delete(w.postId);
+      const d = this.authorData.get(w.postId);
+      if (d) d.flight = { stage: 'rejected', reason: line };
+      this.renderRegionsFor(authorWindowId(w.postId));
+      return;
+    }
+    if (w.kind === 'invite') {
+      this.inviteFlight = { stage: 'rejected', reason: line };
+      this.renderInvitesRowInPlace();
+      return;
+    }
+    if (w.kind === 'withdraw') {
+      this.setReportForPost(w.postId, line);
+      this.renderRegionsForPost(w.postId);
+      return;
+    }
+    if (w.kind === 'claim') {
+      this.usernameFlight = { stage: 'rejected', reason: line };
+      this.renderUsernameRowInPlace();
+      return;
+    }
+    if (w.kind === 'send') {
+      this.sendFlight = { stage: 'rejected', reason: line };
+      this.renderCreditsRowInPlace();
+      return;
+    }
   }
 
   // ---- the bounded landing poll (WEB_INTERFACE → The wallet) ----
 
+  /** The ledger holds a non-waiting entry — the predicate the poll runs under
+   *  (WEB_INTERFACE → The wallet → "A waiting write is drawn as pending").
+   *  A waiting write is at no node, so the poll has nothing to reconcile. */
+  private hasNonWaitingEntry(): boolean {
+    return this.ledger.all().some((e) => e.waiting !== true);
+  }
+
   private startPoll(): void {
-    if (this.pollTimer !== null || this.ledger.size === 0) return;
+    if (this.pollTimer !== null || !this.hasNonWaitingEntry()) return;
     this.pollTimer = setInterval(() => void this.pollTick(), POLL_MS);
   }
 
@@ -5147,8 +5494,10 @@ export class App {
   }
 
   private async pollTick(): Promise<void> {
-    // Runs only while the client's own submissions are pending, and stops at zero.
-    if (this.ledger.size === 0) {
+    // Runs only while the client's own submissions are pending — a waiting
+    // write is at no node, so it is not reconciled here (WEB_INTERFACE → The
+    // wallet → "A waiting write is drawn as pending").
+    if (!this.hasNonWaitingEntry()) {
       this.stopPoll();
       return;
     }
@@ -5168,7 +5517,7 @@ export class App {
       // interval; the next tick retries.
       return;
     }
-    if (this.ledger.size === 0) this.stopPoll();
+    if (!this.hasNonWaitingEntry()) this.stopPoll();
   }
 
   /** Reconcile the ledger's entries against the node and nothing else — no feed,
