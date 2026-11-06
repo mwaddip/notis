@@ -8190,6 +8190,17 @@ async function runMeshStepM2(bcx) {
 // nodes back with their mesh role; a post written in the composer lands
 // in the feed, on both nodes (`GET /posts/:id` on each), with no `POST
 // /posts` over HTTP in the Network domain.
+//
+// Before the write, both mesh nodes must report a peer — each node's
+// admin `GET /health` `peers_connected ≥ 1` on its loopback admin port,
+// polled under a bound. A' bootstraps from --node-p2p and B' from A',
+// but a handshake completed is not yet a gossip peer (`NET_INTERFACE →
+// Postconditions`; `→ Gossip Topics`); the gossip mesh for the
+// ordering-block topic forms after the router's subscription exchange,
+// and the write the composer press admits relays over gossip to A's
+// miner. `peers_connected ≥ 1` names the state at which the node holds
+// at least one live connection, short of which the write would pile up
+// locally unmined.
 async function runMeshStepM3(bcx) {
   let page = null;
   try {
@@ -8233,6 +8244,21 @@ async function runMeshStepM3(bcx) {
     if (!apGossipedBlock) throw new Error(`A' did not receive a gossiped ordering block from A within 180 s after M3 restart (the handshake completed but gossip mesh did not form)`);
     const bpGossipedBlock = await waitForAppliedBlockInLog(bpLog, bpLogOff, 180000);
     if (!bpGossipedBlock) throw new Error(`B' did not receive a gossiped ordering block from A within 180 s after M3 restart (the handshake completed but gossip mesh did not form)`);
+
+    // Both mesh nodes report a peer — the admin `GET /health` on each node's
+    // loopback admin port answers `peers_connected ≥ 1`. The gossip-block
+    // wait above proves the ordering-block topic has formed its mesh on
+    // each node; peers_connected is the one admin figure that reports the
+    // connection count as the node sees it, and the write the composer
+    // press admits goes nowhere until each node holds at least one peer
+    // (`NET_INTERFACE → Forwarding Rule`).
+    const apPeersBound = 60000;
+    const apPeers = await waitForPeers(`http://127.0.0.1:${AP_ADMIN_PORT}`, 1, apPeersBound);
+    if (apPeers === null) throw new Error(`A' did not report peers_connected ≥ 1 on admin /health within ${apPeersBound / 1000} s after M3 restart`);
+    const bpPeersBound = 60000;
+    const bpPeers = await waitForPeers(`http://127.0.0.1:${BP_ADMIN_PORT}`, 1, bpPeersBound);
+    if (bpPeers === null) throw new Error(`B' did not report peers_connected ≥ 1 on admin /health within ${bpPeersBound / 1000} s after M3 restart`);
+    console.log(`[vm] M3 preflight: A' peers_connected=${apPeers}, B' peers_connected=${bpPeers}`);
 
     page = await openFreshExtensionPage(bcx);
     await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m3', 30000);
