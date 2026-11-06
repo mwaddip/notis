@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps, type SubmitResult, type SignResult,
+  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps, type WaitableResult, type SignResult,
 } from '../src/wallet/submit';
 import { PendingLedger } from '../src/wallet/ledger';
 import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
@@ -1057,7 +1057,7 @@ describe('the reservation expiry, every flow', () => {
     };
   }
 
-  const FLOWS: Array<{ kind: string; run: (deps: SubmitDeps) => Promise<SubmitResult<unknown>> }> = [
+  const FLOWS: Array<{ kind: string; run: (deps: SubmitDeps) => Promise<WaitableResult<unknown>> }> = [
     { kind: 'post', run: (d) => submitPostFlow(d, 'a thread', null) },
     { kind: 'like', run: (d) => submitLikeFlow(d, TARGET_ID) },
     { kind: 'vouch', run: (d) => submitVouchFlow(d, VOUCH_TARGET) },
@@ -1072,7 +1072,7 @@ describe('the reservation expiry, every flow', () => {
   /** Run every flow on a fresh ledger against one write client. */
   async function eachFlow(
     write: SubmitDeps['write'],
-    check: (kind: string, res: SubmitResult<unknown>, ledger: PendingLedger) => void,
+    check: (kind: string, res: WaitableResult<unknown>, ledger: PendingLedger) => void,
   ): Promise<void> {
     for (const f of FLOWS) {
       localStorage.clear();

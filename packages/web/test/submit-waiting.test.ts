@@ -652,6 +652,32 @@ describe('a waiting post\'s id is computePostId(txId, 0) and it reaches onCacheP
   });
 });
 
+describe('a post the node rejects never reaches onCachePost', () => {
+  it('a 409 on the send leaves onCachePost uncalled — a rejected post must not enter the own cache', async () => {
+    // onCachePost fires only where the post is a submit: a 2xx whose txId
+    // matches, or either waiting arm. A rejection is not a submit, so no
+    // cache entry (WEB_INTERFACE → The extension → "The post cache").
+    const storage = fakeStorage();
+    const events: string[] = [];
+    const ledger = new PendingLedger(PUB);
+    const w = waitingDeps(storage, CHAIN);
+    const rejection: Rejection = { status: 409, message: 'already in the mempool' };
+    const deps: SubmitDeps = {
+      reads: reads(),
+      write: write({ submitPost: async () => { writeCalls.push({ kind: 'post' }); return rejection; } }),
+      ledger, identity, network: null, waiting: w,
+      onSigned: () => events.push('onSigned'),
+      onCachePost: () => events.push('onCachePost'),
+    };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toEqual({ ok: false, rejection });
+    // onSigned fires (the signature happened); onCachePost does not.
+    expect(events).toEqual(['onSigned']);
+    expect(ledger.all()).toEqual([]);
+    expect(w.store.list()).toEqual([]);
+  });
+});
+
 describe('without waiting deps a read with no answer throws as today', () => {
   it('no waiting deps → the ApiError rethrows', async () => {
     const ledger = new PendingLedger(PUB);

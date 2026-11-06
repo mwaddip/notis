@@ -128,18 +128,16 @@ export interface SubmitDeps {
 
 export type SubmitResult<B> =
   | { ok: true; entry: PendingEntry; body: B; waiting?: undefined }
-  | { ok: true; waiting: true; entry: PendingEntry }
   | { ok: false; rejection: Rejection }
   | { ok: false; notSigned: 'locked' | 'declined' | 'refused'; reason: string };
 
-/** The result shape of a waitable flow — today's `SubmitResult`, with the
+/** The result shape of a waitable flow — today's `SubmitResult`, plus the
  *  waiting arm the extension can take: signed, kept in the waiting store,
  *  with a ledger entry marked waiting (WEB_INTERFACE → The wallet → "A write
  *  no node answers waits"). The ok arms discriminate on `waiting`:
- *  `undefined` for a sent 2xx, `true` for a waiting write. The union includes
- *  the waiting arm in `SubmitResult` too, so unvouch and burn, which answer
- *  `SubmitResult<B>` and never produce the arm, stay shaped the way a caller
- *  that puts every flow's promise under one annotation needs them. */
+ *  `undefined` for a sent 2xx, `true` for a waiting write. Unvouch and burn,
+ *  which answer `SubmitResult<B>`, can never produce the waiting arm — even
+ *  statically. */
 export type WaitableResult<B> = SubmitResult<B> | { ok: true; waiting: true; entry: PendingEntry };
 
 /** A client-side refusal (no HTTP round trip) — status 0, message shown as-is. */
@@ -202,6 +200,9 @@ export async function submitPostFlow(
     // notSigned ("a post the rule refuses is a client refusal").
     const price = parent ? POST_PRICE_REPLY : POST_PRICE_THREAD;
     if (ctx.effective < price) return clientRejection('not enough rep to post right now.');
+    // The composer checks affordability first, but the spendable view is re-read
+    // here and can have moved; a shortfall comes back as one rejection shape, not a
+    // bare throw the app would have to special-case.
     let built;
     try {
       built = buildPost(ctx, content, parent);
@@ -218,30 +219,33 @@ export async function submitPostFlow(
     // Between the sign and the POST — the composer collapses here (WEB_INTERFACE →
     // The wallet). Post is the only flow that carries onSigned.
     deps.onSigned?.();
-    // The reader's own post enters the extension's post cache at its submit —
-    // the signed transaction the client built, under the id it derived
-    // (WEB_INTERFACE → The extension → "The post cache"). Fired for a waiting
-    // post as for a submitted one; the web build hands no cache seam.
-    deps.onCachePost?.({ signedTx: built.tx, txId: built.txId });
     if (r.waiting) {
       // A read got no answer: build and sign against the view, send nothing,
       // keep (WEB_INTERFACE → The wallet → "A write no node answers waits").
+      // The waiting post is the reader's submit: it enters the post cache
+      // under the id the client derived (WEB_INTERFACE → The extension →
+      // "The post cache").
       const entry = keepWaiting(deps, ledgerSide, ctx, built, {
         kind: 'post',
         postId: computePostId(built.txId, 0),
         tx: signed.body,
         content,
       });
+      deps.onCachePost?.({ signedTx: built.tx, txId: built.txId });
       return { ok: true, waiting: true, entry };
     }
     const body = await deps.write.submitPost(signed.body, content);
     if (sendIsWaiting(deps, body)) {
+      // Send got no answer: the signed transaction waits, and the post
+      // enters the cache as a submit does (WEB_INTERFACE → The extension →
+      // "The post cache").
       const entry = keepWaiting(deps, ledgerSide, ctx, built, {
         kind: 'post',
         postId: computePostId(built.txId, 0),
         tx: signed.body,
         content,
       });
+      deps.onCachePost?.({ signedTx: built.tx, txId: built.txId });
       return { ok: true, waiting: true, entry };
     }
     if (isRejection(body)) return { ok: false, rejection: body };
@@ -257,6 +261,11 @@ export async function submitPostFlow(
       expiresAtHeight: body.expiresAtHeight,
       submittedAtHeight: ctx.height,
     });
+    // The reader's own post enters the extension's post cache at its submit —
+    // the signed transaction the client built, under the id it derived
+    // (WEB_INTERFACE → The extension → "The post cache"). The web build hands
+    // the App no cache, which leaves this callback unset.
+    deps.onCachePost?.({ signedTx: built.tx, txId: built.txId });
     return { ok: true, entry, body };
   };
   return runUnderLock(deps, run);
