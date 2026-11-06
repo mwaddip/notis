@@ -104,7 +104,39 @@ send** (`WEB_INTERFACE → The wallet window`, `→ The wallet`, `→ The faucet
 and `send` rows — the balance in gold, a send to a key or an `@handle` resolved at the press, the confirm row, the
 flight in the row, the row standing while a send's own line stands — on a `buildSend` frozen like the others, the spendable view the node's `pending=1` listing; the faucet's `$NOTIS` step
 beside the rep step; a credits amount is $NOTIS on the face and base units on the wire, through one module the
-extension's prompt reads too.
+extension's prompt reads too. **The waiting writes** (`WEB_INTERFACE → The wallet → "A write no node answers waits"`,
+`→ "The waiting view"`, `→ "The waiting store keeps every waiting write as a record of its own"`,
+`→ "Waiting writes go out at the first answer"`, `→ "A refusal ends what it strands"`): in the extension a post, a
+like, a vouch, an invite, a withdrawal, a claim and a send to a key wait when no node answers their reads before the
+write or their send past every node (`WriteClient.send` marks the exhausted send `noAnswer: true`, `src/api/write.ts`);
+unvouch, burn and send-to-handle resolve a box or a holder at the press from a node, never the cache, and end as a
+transport failure where none answers. The arm is active while the build hands `waitingSeam` and a verified tip has
+named a chain (`activeWaiting`, `src/wallet/submit.ts`); the web build hands none and a write no node answers ends its
+flight as a transport failure. **The waiting store** (`src/wallet/waiting.ts`) holds each write under
+`notis.waiting.<pubKeyHex>.w.<txId>` in `localStorage` — its txId, chain, ledger, kind, spent inputs, change ref, cost
+and the signed transaction — never one list rewritten whole, a record that does not parse dropped alone; the per-ledger
+base under `.base.rep` / `.base.credits` is the last spendable view each ledger read, recorded at every read a node
+answered. **The waiting view** (`WaitingStore.repView` / `creditView`) is the base of the current chain advanced by
+every waiting write in seq order: each write's `spent` boxes leave `spendable`, its `change` joins, and on rep
+`effective` drops by its `cost`; a view of another chain answers `null`, and a flow with no view ends as a transport
+failure (`readsOrWaitingRep` / `readsOrWaitingCredits`). **The lock** is `navigator.locks` under
+`notis.waiting.<pubKeyHex>` — every read-then-write of the store runs inside it, and the whole waitable flow runs under
+it through `runUnderLock` so two pages build in turn, the second on the first's change. **The send pass**
+(`flushWaiting`, `src/wallet/flush.ts`) walks one ledger's writes in seq order and submits each by its kind: a send
+with `noAnswer` stops the walk and leaves the rest waiting, a rejection ends that write and strands every later one
+that spends its change (`stranded` set) *not sent: the one before it was refused.*, a write of another chain ends
+unsent *not sent: the chain changed.*, a 2xx releases the ledger entry through `ledger.release` and folds the write's
+spend into the base through `store.absorb`, an id mismatch is a client rejection. **The triggers** are the corner's
+15-second read a node answered (`cornerTick`), a feed's first page a node answered (`loadFeed`), and a verified tip
+run that names a new chain — each runs `flushWaitingWrites`, which enqueues at most one pass per ledger through
+`repQueue` / `sendQueue` under `flushRepInFlight` / `flushCreditsInFlight` so no two passes on one ledger overlap.
+**The stage line** is *waiting for a node* on every surface a flight draws — the pending card (`view/card.ts`), the
+profile's row flights (`view/profile.ts`) and the wallet's `send` row (`view/wallet.ts`) — the pending entry carries
+`waiting: true` and `heldEntry` gives it `Number.MAX_SAFE_INTEGER` for expiry, which `release` resets to the tip the
+client read at the answer. **The orphan release** (`releaseOrphanWaiting`) runs beside the flush at every
+`cornerTick` with a tip and after every flush pass: a waiting ledger entry whose txId the store no longer lists is
+released as submitted — another page already sent it — needing a tip the node answered so `boundedExpiry` reads a
+block height.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/` or `prompts/`.
@@ -510,8 +542,12 @@ the single post read — and the reader's own post at its submit, composed from 
 through the same check. **A list is read against it first**: `getMany` answers the entries a page's ids name, an
 entry without text — a placeholder's, or one a withdrawal emptied — is not held, and `refresh` writes each held
 entry's row and last-seen from the listing. **A thread the cache holds is read from it when its read from the node
-throws** (`thread`), its rows written through `putThreadRows` beneath the pane's error line; the feed and an author
-window's list have no such fallback. A put is started and never awaited by a render; the module absorbs two
+throws** (`thread`), its rows written through `putThreadRows` beneath the pane's error line. **A failed feed or author
+first page draws the cache the same way** through `applyCachedRoots` and `applyCachedAuthor` (`src/app.ts`, over
+`postCache.roots` and `postCache.byAuthor`) — confirmed newest first by block height, ties by id, then the pending,
+at most a page (`compareEntries`) — each row passed through `liveRows` so no withdrawn row stands, beneath the pane's
+error line and with no next page; the web build keeps no cache and reads the error line alone. A put is started and
+never awaited by a render; the module absorbs two
 failures — a write the browser aborts, and no IndexedDB — and rejects on anything else. `build-release.sh` refuses
 `notis.posts.` in the web bundle. Tests run the real adapter over `fake-indexeddb`.
 
@@ -680,6 +716,23 @@ pressed once A has mined past the anchor, so its first check reads `unchecked`, 
 `absent`; **30** the hosted web build — no clay and no `/api/v1/proof/`. **No lie stands in ink** — an honest handle
 may stand beside a clay one, and an omission is the one lie the rule leaves uncaught (27b's header). Each lie arm has
 the relays set back to `honest` and reads the honest state again.
+**The waiting-writes block** (`WEB_INTERFACE → The wallet → "A write no node answers waits"`, `→ "Waiting writes go
+out at the first answer"`, `→ "A refusal ends what it strands"`, `→ "A waiting write is drawn as pending"`;
+`→ The extension → "A failed listing draws the cache"`) runs after the three verified blocks in the relays build,
+whenever any of `--verified-{tip,figures,names}` is passed with `--r-key` — the two tip relays stand, and R's identity
+is loaded. The relays take a `down` mode beside the figures and names modes (every request's connection destroyed,
+the client reads a transport failure). **W1** a fresh page under `down` on both relays — the feed's and R's author
+window's first pages read transport failures, the cache's roots and author entries draw beneath the error line, no
+`more` / `load older` control; **W2** same page, relays still `down` — a like on a cached card R has not liked and
+a root post from the composer, each waits (pending card and muted overlay reading *waiting for a node*), neither
+relay's log carries a forwarded `POST`, a reload draws them both from the waiting store still waiting; **W3** same
+page, both relays `honest` — pressing the corner is a read a node answered, `flushWaitingWrites` sends both to
+upstream in press order (the like before the post, per the rep queue's seq), both admitted and the post lands in the
+feed; **W4** another fresh page under `down` — two likes pressed, then R's karma box replaced on the chain through
+the node's HTTP write path by a withdraw the harness builds from `@dagsocial/types` primitives and signs with Node
+crypto (the same key as the page's, no page sees it), both relays set honest, the first like refused (its input box
+no longer stands) and the second ends unsent *not sent: the one before it was refused.* with no `POST` going out for
+it.
 **With `--light` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; `--public` and `--web-dist`
 for its last step; it takes no other verified flag) the light block**, L1–L14, runs alone after steps 1–16. **Every
 node entry the extension knows reaches a relay of the harness's own at its API base** (`addrs: []`): `RA` on `:19810`
@@ -716,7 +769,10 @@ without which a browser refuses the `RTCPeerConnection` to 127.0.0.1. Each step 
 text updates and **no HTTP request reaches A′ or B′ after the mark** (a page's first reads, before its WebRTC
 connections are up, go to the API bases and are counted, not asserted); **M2** both nodes restarted without
 `MESH_ROLE` — the dials fail, the entries are read at their API bases, the verdict is `verified` and the page made HTTP
-requests to the nodes; **M3** both back with the mesh role — a post from the composer lands on both nodes with no
+requests to the nodes; **M3** both back with the mesh role, each node's admin `GET /health` holding
+`peers_connected ≥ 1` under a 60 s bound before the press (`waitForPeers` on `AP_ADMIN_PORT` and `BP_ADMIN_PORT` — the
+ordering-block topic has formed its gossip mesh after the handshake, and a node with zero peers admits a write locally
+but relays it nowhere) — a post from the composer lands on both nodes with no
 `POST /posts` over HTTP in the page's Network domain; **M4** both nodes at their API bases alone, A′ restarted on an
 alternate HTTP port behind a tip relay in `hold-posts` mode at its base port, A′ and B′ at A's tip before the press —
 the first `POST /posts` is held past `REQUEST_TIMEOUT_MS`, the card reads pending and not rejected, the same bytes go
