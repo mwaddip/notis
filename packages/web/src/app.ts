@@ -2100,14 +2100,45 @@ export class App {
           if (gen !== this.readerGen) return;
           this.dropFeedRows();
           feed.error = 'no node answered — set one in settings';
+          // The seed walk's final ending — none of the nodes answered — reads
+          // the post cache (WEB_INTERFACE → The extension → "A failed listing
+          // draws the cache"). The cache is the extension build's alone.
+          await this.applyCachedRoots(feed, gen, since);
         }
       } else {
         this.dropFeedRows();
         feed.error = msg(e);
+        await this.applyCachedRoots(feed, gen, since);
       }
     }
     this.renderFeed();
     void this.resolveSlots();
+  }
+
+  /** Read the post cache's roots for a failed feed first page; write them
+   *  through the feed's own row path, under the same generation guard the
+   *  fetch used (WEB_INTERFACE → The extension → "A failed listing draws
+   *  the cache"). `liveRows` filters a withdrawn entry and a row whose
+   *  withdrawal the client saw land (→ Reading the feed and threads → "A
+   *  withdrawal the client has seen land is final on every write of rows"),
+   *  and `keeper` keeps a like that landed since the read began; `next` is
+   *  `null` — no page beyond the cache; nothing is asked of a node for the
+   *  rows. A read with no cache or one the cache does not hold is nothing —
+   *  the failed read's error line stands. */
+  private async applyCachedRoots(feed: FeedState, gen: number, since: number): Promise<void> {
+    if (this.postCache === null) return;
+    let held: HeldPost[];
+    try {
+      held = await this.postCache.roots(FEED_LIMIT);
+    } catch {
+      return;
+    }
+    if (gen !== this.readerGen) return;
+    if (held.length === 0) return;
+    const rows = held.map((h) => h.row);
+    feed.posts = this.liveRows(rows).map(this.keeper(feed.posts, since));
+    feed.next = null;
+    this.indexRows(rows);
   }
 
   /** A first page, read from when `landings` stood at `since`, replaces the
@@ -3982,10 +4013,34 @@ export class App {
     } catch (e) {
       if (gen !== this.readerGen) return;
       f.error = msg(e);
+      // The author window's cache fallback on a failed first page
+      // (WEB_INTERFACE → The extension → "A failed listing draws the cache").
+      await this.applyCachedAuthor(f, key, gen, since);
     }
     f.loading = false;
     this.renderPostsLoad(key);
     void this.resolveSlots();
+  }
+
+  /** Read the post cache's entries for an author whose first page failed;
+   *  write them through the author window's own row path, under the same
+   *  generation guard the fetch used (WEB_INTERFACE → The extension →
+   *  "A failed listing draws the cache"). Same filtering and `next: null`
+   *  rules as `applyCachedRoots`. */
+  private async applyCachedAuthor(f: FeedState, key: string, gen: number, since: number): Promise<void> {
+    if (this.postCache === null) return;
+    let held: HeldPost[];
+    try {
+      held = await this.postCache.byAuthor(key, FEED_LIMIT);
+    } catch {
+      return;
+    }
+    if (gen !== this.readerGen) return;
+    if (held.length === 0) return;
+    const rows = held.map((h) => h.row);
+    f.posts = this.liveRows(rows).map(this.keeper(f.posts, since));
+    f.next = null;
+    this.indexRows(rows);
   }
 
   /** The posts window's ↻ reports what it did through the feed's own reconcile,

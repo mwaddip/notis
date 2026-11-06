@@ -504,6 +504,21 @@ export interface PostCache {
    *  `WithdrawnJson` is left as it is — the node's word, and a lie costs a
    *  re-fetch. */
   refresh(rows: readonly PostJson[]): Promise<void>;
+  /** The entries held with no parent — the feed's cache fallback on a failed
+   *  first page (WEB_INTERFACE → The extension → "A failed listing draws the
+   *  cache"). Ordered newest first by block height — a withdrawn row by its
+   *  `withdrawnAtHeight`, confirmed — ties by id, then the rows with
+   *  `blockHeight: null`, ties by id; at most `limit`. One read-only
+   *  transaction over the entries store. A `limit` of zero or less, no
+   *  database or a transaction the browser refuses answers an empty list. */
+  roots(limit: number): Promise<HeldPost[]>;
+  /** The entries held for `author`, through the author index — the author
+   *  window's cache fallback on a failed first page (WEB_INTERFACE → The
+   *  extension → "A failed listing draws the cache"). The entry's `author`
+   *  is the transaction's, so the window carries every post the author
+   *  committed, roots and replies alike. Ordered and capped as `roots`;
+   *  absorbs the same failures. */
+  byAuthor(author: string, limit: number): Promise<HeldPost[]>;
 }
 
 /** One row held in the cache, as `getMany` answers. The row is the entry's
